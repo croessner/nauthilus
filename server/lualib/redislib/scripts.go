@@ -151,14 +151,14 @@ func uploadRedisScript(ctx context.Context, cfg config.File, client redis.Univer
 
 // RedisRunScript executes a Redis script with the provided keys and arguments, returning the result or an error as Lua values.
 // It expects three arguments: the script string, a table of keys, and a table of arguments. It returns two values: an error message (or nil) and the script result (or nil).
-func RedisRunScript(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisRunScript(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var (
 			keyList  []string
 			argsList []any
 		)
 
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		script := L.CheckString(2)
 		uploadScriptName := L.CheckString(3)
 		keys := L.CheckTable(4)
@@ -172,7 +172,7 @@ func RedisRunScript(ctx context.Context, cfg config.File) lua.LGFunction {
 			argsList = append(argsList, v.String())
 		})
 
-		result, err := evaluateRedisScript(ctx, cfg, client, script, uploadScriptName, keyList, argsList...)
+		result, err := evaluateRedisScript(ctx, cfg, conn, script, uploadScriptName, keyList, argsList...)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -188,13 +188,13 @@ func RedisRunScript(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisUploadScript uploads a Lua script to Redis, returns the SHA1 hash of the script or an error message on failure.
-func RedisUploadScript(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisUploadScript(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		script := L.CheckString(2)
 		uploadScriptName := L.CheckString(3)
 
-		sha1, err := uploadRedisScript(ctx, cfg, client, script)
+		sha1, err := uploadRedisScript(ctx, cfg, conn, script)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

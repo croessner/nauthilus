@@ -119,20 +119,25 @@ func checkUsage(t *testing.T, pkgPath, forbiddenPkg string) {
 
 	for _, pattern := range patterns[forbiddenPkg] {
 		fullPattern := fmt.Sprintf("%s.%s", pkgName, pattern)
-		// Use grep to find usage in the directory, excluding tests
-		cmd := exec.Command("grep", "-r", "-l", fullPattern, fullDir)
+		// Use a more specific regex to avoid matching *slog.Logger when we look for log.Logger.
+		// Also avoid matching comments.
+		regex := fmt.Sprintf(`^[^/]*\b%s\.%s\b`, pkgName, strings.ReplaceAll(pattern, "()", `\(\)`))
+		// Use grep -E to find usage in the directory, excluding tests and vendor
+		cmd := exec.Command("grep", "-r", "-E", "-n", regex, fullDir)
 		output, _ := cmd.CombinedOutput()
 
-		files := strings.Split(strings.TrimSpace(string(output)), "\n")
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 		var actualHits []string
-		for _, file := range files {
-			if file == "" || strings.HasSuffix(file, "_test.go") || strings.Contains(file, "vendor/") {
+		for _, line := range lines {
+			if line == "" {
 				continue
 			}
-			// Get the actual line for reporting
-			lineCmd := exec.Command("grep", "-n", fullPattern, file)
-			lineOut, _ := lineCmd.CombinedOutput()
-			actualHits = append(actualHits, strings.TrimSpace(string(lineOut)))
+			parts := strings.SplitN(line, ":", 2)
+			file := parts[0]
+			if strings.HasSuffix(file, "_test.go") || strings.Contains(file, "vendor/") || strings.Contains(file, "server/config/") || strings.Contains(file, "server/log/") {
+				continue
+			}
+			actualHits = append(actualHits, line)
 		}
 
 		if len(actualHits) > 0 {

@@ -98,18 +98,17 @@ func TestRedisZAdd(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -246,18 +245,17 @@ func TestRedisZRange(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -364,18 +362,17 @@ func TestRedisZRevRange(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -524,18 +521,17 @@ func TestRedisZRangeByScore(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -689,18 +685,17 @@ func TestRedisZRem(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -797,18 +792,17 @@ func TestRedisZRemRangeByScore(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -910,18 +904,17 @@ func TestRedisZRemRangeByRank(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -1007,18 +1000,17 @@ func TestRedisZRank(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -1121,18 +1113,17 @@ func TestRedisZCount(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -1225,18 +1216,17 @@ func TestRedisZIncrBy(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -1324,18 +1314,17 @@ func TestRedisZScore(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -1421,18 +1410,17 @@ func TestRedisZRevRank(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
 
@@ -1488,18 +1476,17 @@ func TestRedisZScoreWithCustomHandle(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			// Create a userdata with the Redis client
 			ud := L.NewUserData()
@@ -1559,18 +1546,17 @@ func TestRedisZRevRankWithCustomHandle(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			// Create a userdata with the Redis client
 			ud := L.NewUserData()

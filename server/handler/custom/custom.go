@@ -24,13 +24,14 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 )
 
 // CustomRequestHandler mirrors the original logic for executing custom Lua hooks.
-func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gin.HandlerFunc {
+func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey)
 		snap := cfgProvider.Current()
@@ -88,7 +89,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gi
 		)
 
 		// Execute the hook
-		if result, err := hook.RunLuaHook(ctx, snap.File, logger); err != nil {
+		if result, err := hook.RunLuaHook(ctx, snap.File, logger, redis); err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, fmt.Sprintf("Error executing hook: %s %s", hookMethod, hookName),

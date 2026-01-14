@@ -276,12 +276,12 @@ func collectCacheNames(
 
 // GetCacheNames retrieves cache names for the specified protocol from either LDAP, Lua, or both backends as per the input.
 // If no cache names are found, a default cache name "__default__" is returned.
-func GetCacheNames(cfg config.File, requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
+func GetCacheNames(cfg config.File, channel Channel, requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
 	cacheNames = config.NewStringSet()
 
-	if backends == definitions.CacheAll || backends == definitions.CacheLDAP {
+	if (backends == definitions.CacheAll || backends == definitions.CacheLDAP) && channel != nil && channel.GetLdapChannel() != nil {
 		collectCacheNames(
-			GetChannel().GetLdapChannel().GetPoolNames(),
+			channel.GetLdapChannel().GetPoolNames(),
 			requestedProtocol,
 			func(req, pool string) (cacheNamer, error) {
 				return cfg.GetLDAPSearchProtocol(req, pool)
@@ -290,9 +290,9 @@ func GetCacheNames(cfg config.File, requestedProtocol string, backends definitio
 		)
 	}
 
-	if backends == definitions.CacheAll || backends == definitions.CacheLua {
+	if (backends == definitions.CacheAll || backends == definitions.CacheLua) && channel != nil && channel.GetLuaChannel() != nil {
 		collectCacheNames(
-			GetChannel().GetLuaChannel().GetBackendNames(),
+			channel.GetLuaChannel().GetBackendNames(),
 			requestedProtocol,
 			func(req, backend string) (cacheNamer, error) {
 				return cfg.GetLuaSearchProtocol(req, backend)
@@ -439,9 +439,9 @@ func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.Fi
 
 // GetUserAccountFromCache fetches the user account name from Redis cache using the provided username.
 // Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
-func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, username string, guid string) (accountName string) {
+func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, username string, guid string) (accountName string) {
 	// First try in-process account cache when enabled
-	if acc, ok := accountcache.GetManager().Get(username); ok && acc != "" {
+	if acc, ok := accountCache.Get(username); ok && acc != "" {
 		return acc
 	}
 
@@ -461,7 +461,7 @@ func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.
 	}
 
 	// Store positive result in in-process cache
-	accountcache.GetManager().Set(username, accountName)
+	accountCache.Set(cfg, username, accountName)
 
 	return accountName
 }

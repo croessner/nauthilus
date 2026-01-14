@@ -19,8 +19,6 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/gin-gonic/gin"
 )
@@ -47,8 +45,7 @@ func (h *Handler) Register(router gin.IRouter) {
 		return
 	}
 
-	// Legacy path (will eventually be removed when all call sites migrate to NewWithDeps)
-	adminDeps := core.NewRestAdminDeps(core.GetDefaultConfigFile(), log.GetLogger(), rediscli.GetClient())
+	adminDeps := core.NewRestAdminDeps(h.deps.Cfg, h.deps.Logger, h.deps.Redis, h.deps.Channel)
 
 	bg.GET("/"+definitions.ServList, core.HandleBruteForceList(adminDeps))
 	bg.POST("/"+definitions.ServList, core.HandleBruteForceList(adminDeps))

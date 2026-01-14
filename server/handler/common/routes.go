@@ -18,6 +18,7 @@ package common
 import (
 	"log/slog"
 
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-contrib/sessions"
@@ -26,8 +27,8 @@ import (
 
 // RouterGroup creates a new group under the given path with the standard frontend middleware
 // and wires GET and POST handlers matching the old pattern.
-func RouterGroup(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, path string, router gin.IRouter, store sessions.Store, getHandler gin.HandlerFunc, postHandler gin.HandlerFunc) *gin.RouterGroup {
-	group := router.Group(path, CreateMiddlewareChain(cfg, logger, redisClient, store)...)
+func RouterGroup(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, path string, router gin.IRouter, store sessions.Store, getHandler gin.HandlerFunc, postHandler gin.HandlerFunc) *gin.RouterGroup {
+	group := router.Group(path, CreateMiddlewareChain(cfg, logger, redisClient, accountCache, store)...)
 
 	group.GET("/", getHandler)
 	group.GET("/:languageTag", getHandler)

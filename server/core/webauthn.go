@@ -23,7 +23,6 @@ import (
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/util"
@@ -105,7 +104,7 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 
 	// Registering a device
 	if user == nil {
-		if user, err = backend.GetWebAuthnFromRedis(a.Ctx(), a.Cfg(), a.Logger(), uniqueUserID); err != nil {
+		if user, err = backend.GetWebAuthnFromRedis(a.Ctx(), a.Cfg(), a.Logger(), a.Redis(), uniqueUserID); err != nil {
 			return nil, err
 		}
 	}
@@ -114,20 +113,23 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 }
 
 func (a *AuthState) putUser(user *backend.User) {
-	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
+	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
 }
 
 func (a *AuthState) updateUser(user *backend.User) {
-	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
+	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
 }
 
 // BeginRegistration Page: '/2fa/v1/webauthn/register/begin'
 func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
-			userName     string
-			displayName  string
-			uniqueUserID string
+			userName      string
+			displayName   string
+			uniqueUserID  string
+			passDB        definitions.Backend
+			assertOk      bool
+			credentialDBs []WebAuthnCredentialDBFunc
 		)
 
 		session := sessions.Default(ctx)
@@ -217,12 +219,12 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
-		user, err := auth.getUser(userName, uniqueUserID, displayName)
+		user, err := auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
 		if err != nil {
 			// If it does not exist, create a new one
 			user = backend.NewUser(userName, displayName, uniqueUserID)
 
-			auth.putUser(user)
+			auth.(*AuthState).putUser(user)
 		}
 
 		authSelect := protocol.AuthenticatorSelection{
@@ -254,6 +256,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			deps.Cfg,
 			deps.Logger,
 			definitions.DbgWebAuthn,
@@ -363,6 +366,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			deps.Cfg,
 			deps.Logger,
 			definitions.DbgWebAuthn,
@@ -405,7 +409,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
-		user, err := auth.getUser(userName, uniqueUserID, displayName)
+		user, err := auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, err.Error())
 
@@ -428,7 +432,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		user.AddCredential(*credential)
 
-		auth.updateUser(user)
+		auth.(*AuthState).updateUser(user)
 
 		ctx.JSON(http.StatusOK, "Registration success")
 	}

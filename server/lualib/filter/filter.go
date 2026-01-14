@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -421,7 +423,7 @@ func mergeMaps(m1, m2 map[any]any) map[any]any {
 
 // CallFilterLua executes Lua filter scripts in parallel. It merges backend results and remove-attributes
 // from all filters, returns action=true if any filter requested action, and returns the first error if any.
-func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.Logger) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
+func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
 	tr := monittrace.New("nauthilus/filters")
 	fctx, fsp := tr.Start(ctx.Request.Context(), "filters.call",
 		attribute.String("service", func() string {
@@ -703,7 +705,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			}
 
 			// 4) nauthilus_redis
-			if loader := redislib.LoaderModRedis(luaCtx, cfg); loader != nil {
+			if loader := redislib.LoaderModRedis(luaCtx, cfg, redisClient); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)
@@ -726,7 +728,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			}
 
 			// 6) nauthilus_psnet (connection monitoring)
-			if loader := connmgr.LoaderModPsnet(luaCtx, cfg); loader != nil {
+			if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)
@@ -737,7 +739,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			}
 
 			// 7) nauthilus_dns (DNS lookups)
-			if loader := lualib.LoaderModDNS(luaCtx, cfg); loader != nil {
+			if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)
@@ -751,7 +753,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			{
 				var loader lua.LGFunction
 				if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-					loader = lualib.LoaderModOTEL(luaCtx, cfg)
+					loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 				} else {
 					loader = lualib.LoaderOTELStateless()
 				}
@@ -768,7 +770,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			}
 
 			// 8) nauthilus_brute_force (toleration and blocking helpers)
-			if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+			if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)

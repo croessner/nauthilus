@@ -40,7 +40,7 @@ var (
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, poolName string) {
+func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string) {
 	// Ensure the LDAP-scoped shared TTL cache is initialized and its janitor is
 	// bound to this worker's lifecycle. This avoids running the TTL janitor when
 	// no LDAP backend is active.
@@ -122,14 +122,14 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, p
 
 	go func() {
 		wg.Wait()
-		trySignalDone(GetChannel().GetLdapChannel().GetLookupEndChan(poolName))
+		TrySignalDone(channel.GetLdapChannel().GetLookupEndChan(poolName))
 	}()
 }
 
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
 // It initializes the authentication connection pool, starts a resource management process, and handles requests or exits gracefully.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, poolName string) {
+func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string) {
 
 	ldapPool := ldappool.NewPool(ctx, cfg, logger, definitions.LDAPPoolAuth, poolName)
 
@@ -207,7 +207,7 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, p
 
 	go func() {
 		wg.Wait()
-		trySignalDone(GetChannel().GetLdapChannel().GetAuthEndChan(poolName))
+		TrySignalDone(channel.GetLdapChannel().GetAuthEndChan(poolName))
 	}()
 }
 

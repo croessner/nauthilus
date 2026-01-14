@@ -26,6 +26,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash"
+	stdlog "log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -33,6 +34,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -312,33 +315,71 @@ func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 	return re.ReplaceAllString(value, sep)
 }
 
+type cfgHolder struct {
+	cfg config.File
+}
+
+type loggerHolder struct {
+	logger *slog.Logger
+}
+
 var (
-	defaultConfigFile config.File
-	defaultLogger     *slog.Logger
+	defaultCfg atomic.Value
+	defaultLog atomic.Value
 )
 
+var (
+	warnMissingCfgOnce sync.Once
+	warnMissingLogOnce sync.Once
+)
+
+func init() {
+	defaultCfg.Store(cfgHolder{cfg: nil})
+	defaultLog.Store(loggerHolder{logger: nil})
+}
+
 func SetDefaultConfigFile(cfg config.File) {
-	defaultConfigFile = cfg
+	defaultCfg.Store(cfgHolder{cfg: cfg})
 }
 
 func SetDefaultLogger(logger *slog.Logger) {
-	defaultLogger = logger
+	defaultLog.Store(loggerHolder{logger: logger})
 }
 
 func getDefaultConfigFile() config.File {
-	if defaultConfigFile == nil {
-		return config.GetFile()
+	if v := defaultCfg.Load(); v != nil {
+		if h, ok := v.(cfgHolder); ok {
+			if h.cfg != nil {
+				return h.cfg
+			}
+		}
 	}
 
-	return defaultConfigFile
+	warnMissingCfgOnce.Do(func() {
+		stdlog.Printf("ERROR: util default config snapshot is not configured. Ensure the boundary calls util.SetDefaultConfigFile(...)\n")
+	})
+
+	panic("util: default config snapshot not configured")
 }
 
 func getDefaultLogger() *slog.Logger {
-	return defaultLogger
+	if v := defaultLog.Load(); v != nil {
+		if h, ok := v.(loggerHolder); ok {
+			if h.logger != nil {
+				return h.logger
+			}
+		}
+	}
+
+	warnMissingLogOnce.Do(func() {
+		stdlog.Printf("ERROR: util default logger is not configured. Ensure the boundary calls util.SetDefaultLogger(...)\n")
+	})
+
+	panic("util: default logger not configured")
 }
 
-func DebugModule(ctx context.Context, module definitions.DbgModule, keyvals ...any) {
-	DebugModuleWithCfg(ctx, getDefaultConfigFile(), getDefaultLogger(), module, keyvals...)
+func DebugModule(ctx context.Context, cfg config.File, logger *slog.Logger, module definitions.DbgModule, keyvals ...any) {
+	DebugModuleWithCfg(ctx, cfg, logger, module, keyvals...)
 }
 
 // DebugModuleWithCfg logs debug information for a specific module if it is enabled in the configuration and logger is specified.
@@ -442,8 +483,8 @@ func logIPChecking(ctx context.Context, cfg config.File, logger *slog.Logger, gu
 // The function logs any network errors encountered during the process.
 // The function logs the information about checking a network for the given authentication object.
 // The function logs the IP address of the client along with the IP address or network being checked.
-func IsInNetwork(ctx context.Context, networkList []string, guid, clientIP string) (matchIP bool) {
-	return IsInNetworkWithCfg(ctx, getDefaultConfigFile(), getDefaultLogger(), networkList, guid, clientIP)
+func IsInNetwork(ctx context.Context, cfg config.File, logger *slog.Logger, networkList []string, guid, clientIP string) (matchIP bool) {
+	return IsInNetworkWithCfg(ctx, cfg, logger, networkList, guid, clientIP)
 }
 
 func IsInNetworkWithCfg(ctx context.Context, cfg config.File, logger *slog.Logger, networkList []string, guid, clientIP string) (matchIP bool) {
@@ -480,13 +521,13 @@ func IsInNetworkWithCfg(ctx context.Context, cfg config.File, logger *slog.Logge
 
 // IsSoftWhitelisted checks whether a given clientIP is in the soft whitelist associated with a username.
 // Returns true if the clientIP matches any networks in the soft whitelist, otherwise false.
-func IsSoftWhitelisted(ctx context.Context, username, clientIP, guid string, softWhitelist config.SoftWhitelist) bool {
+func IsSoftWhitelisted(ctx context.Context, cfg config.File, logger *slog.Logger, username, clientIP, guid string, softWhitelist config.SoftWhitelist) bool {
 	networks := softWhitelist.Get(username)
 	if networks == nil {
 		return false
 	}
 
-	return IsInNetwork(ctx, networks, guid, clientIP)
+	return IsInNetwork(ctx, cfg, logger, networks, guid, clientIP)
 }
 
 // logForwarderFound logs the finding of the header "X-Forwarded-For" in the debug module.
@@ -718,7 +759,9 @@ func NewHTTPClientWithCfg(cfg config.File) *http.Client {
 
 // NewHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
 func NewHTTPClient() *http.Client {
-	return NewHTTPClientWithCfg(getDefaultConfigFile())
+	return &http.Client{
+		Timeout: 60 * time.Second,
+	}
 }
 
 // GetCtxWithDeadlineRedisRead creates a context with a timeout derived from the Redis read timeout configuration.

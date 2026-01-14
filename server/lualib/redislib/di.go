@@ -60,7 +60,7 @@ func getDefaultClient() rediscli.Client {
 	}
 
 	// Hard fail always.
-	// If this triggers, an entry point executed Lua redislib without configuring the default client.
+	// If this triggers, an entry point executed Lua redislib without configuring the default conn.
 	warnFallbackOnce.Do(func() {
 		stdlog.Printf("ERROR: lualib/redislib default Redis client is not configured. Ensure all entry points call redislib.SetDefaultClient(...)\n")
 	})

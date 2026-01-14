@@ -45,6 +45,8 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 	}
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
 	config.SetTestFile(cfg)
+	util.SetDefaultConfigFile(cfg)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	// Redis mock

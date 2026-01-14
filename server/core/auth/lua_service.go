@@ -19,7 +19,6 @@ import (
 	stderrors "errors"
 	"fmt"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -135,7 +134,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		CommonRequest:      commonRequest,
 	}
 
-	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx, auth.Cfg(), auth.Logger())
+	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
 	if err != nil {
 		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
 			// Include Lua stacktrace when available
@@ -223,7 +222,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	auth := input.View.Auth()
 	passDBResult := input.Result
 
-	if !config.GetFile().HaveLuaActions() {
+	if !auth.Cfg().HaveLuaActions() {
 		return
 	}
 
@@ -245,7 +244,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
 		StatusMessage: statusMessageCopy,
 		Request: lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
+			Debug:               auth.Cfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
 			Repeating:           auth.BFRepeating,
 			UserFound:           userFound,
 			Authenticated:       passDBResult.Authenticated,

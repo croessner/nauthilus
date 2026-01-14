@@ -34,6 +34,7 @@ import (
 	psnet "github.com/shirou/gopsutil/v4/net"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
+	"log/slog"
 )
 
 // GenericConnectionChan is a channel that carries GenericConnection updates reflecting the state of network connections.
@@ -390,7 +391,7 @@ func (m *ConnectionManager) luaRegisterTarget(ctx context.Context, cfg config.Fi
 // It creates a new Lua table, assigns functions from exportsModPsnet to it,
 // and pushes it onto the Lua stack. It returns 1 to indicate that one value
 // has been pushed onto the stack.
-func LoaderModPsnet(ctx context.Context, cfg config.File) lua.LGFunction {
+func LoaderModPsnet(ctx context.Context, cfg config.File, _ *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget(ctx, cfg),

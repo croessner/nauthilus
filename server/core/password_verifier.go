@@ -21,7 +21,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -73,7 +72,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		}
 
 		if e := ProcessPassDBResult(ctx, res, auth, passDB); e != nil {
-			level.Error(log.Logger).Log(
+			level.Error(auth.Logger()).Log(
 				definitions.LogKeyGUID, auth.GUID,
 				definitions.LogKeyMsg, "Error processing passdb result",
 				definitions.LogKeyError, e,

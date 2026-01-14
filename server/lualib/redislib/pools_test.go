@@ -27,11 +27,10 @@ import (
 
 func TestRegisterRedisConnection(t *testing.T) {
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	L := lua.NewState()
-
 	defer L.Close()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), nil))
 
 	tests := []struct {
 		name    string

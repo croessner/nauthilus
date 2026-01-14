@@ -24,7 +24,7 @@ import (
 // current `rediscli.GetClient()` instance.
 //
 // Tests in this package frequently call `rediscli.NewTestClient(db)` to swap the
-// underlying global test client. If we stored the returned interface value
+// underlying global test conn. If we stored the returned interface value
 // directly, it would not automatically follow later swaps.
 //
 // This adapter keeps tests compatible with hard-fail semantics in

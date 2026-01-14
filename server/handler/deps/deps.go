@@ -21,6 +21,9 @@ package deps
 import (
 	"log/slog"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -111,12 +114,12 @@ func NewDefaultServices(deps *Deps) *DefaultServices {
 
 // LoginGETHandler handles GET requests for the login page, performing login flow initiation and error handling.
 func (s *DefaultServices) LoginGETHandler() gin.HandlerFunc {
-	return core.LoginGETHandler(s.deps)
+	return core.LoginGETHandler(s.deps.Auth())
 }
 
 // LoginPOSTHandler handles POST requests for the login page, managing the login flow, validation, and 2FA logic.
 func (s *DefaultServices) LoginPOSTHandler() gin.HandlerFunc {
-	return core.LoginPOSTHandler(s.deps)
+	return core.LoginPOSTHandler(s.deps.Auth())
 }
 
 // Device/U2F/FIDO2 login
@@ -128,7 +131,7 @@ func (s *DefaultServices) DeviceGETHandler() gin.HandlerFunc {
 			Cfg:    s.deps.Cfg,
 			Logger: s.deps.Logger,
 			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
+			Redis:  s.deps.Redis, AccountCache: s.deps.AccountCache, Channel: s.deps.Channel,
 		})
 		h.DeviceGETHandler(ctx)
 	}
@@ -142,7 +145,7 @@ func (s *DefaultServices) DevicePOSTHandler() gin.HandlerFunc {
 			Cfg:    s.deps.Cfg,
 			Logger: s.deps.Logger,
 			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
+			Redis:  s.deps.Redis, AccountCache: s.deps.AccountCache, Channel: s.deps.Channel,
 		})
 		h.DevicePOSTHandler(ctx)
 	}
@@ -157,7 +160,7 @@ func (s *DefaultServices) ConsentGETHandler() gin.HandlerFunc {
 			Cfg:    s.deps.Cfg,
 			Logger: s.deps.Logger,
 			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
+			Redis:  s.deps.Redis, AccountCache: s.deps.AccountCache, Channel: s.deps.Channel,
 		})
 		h.ConsentGETHandler(ctx)
 	}
@@ -165,7 +168,7 @@ func (s *DefaultServices) ConsentGETHandler() gin.HandlerFunc {
 
 // ConsentPOSTHandler handles POST requests to the '/consent' endpoint, processing consent challenges and handling errors.
 func (s *DefaultServices) ConsentPOSTHandler() gin.HandlerFunc {
-	return core.ConsentPOSTHandler(s.deps)
+	return core.ConsentPOSTHandler(s.deps.Auth())
 }
 
 // Logout
@@ -177,7 +180,7 @@ func (s *DefaultServices) LogoutGETHandler() gin.HandlerFunc {
 			Cfg:    s.deps.Cfg,
 			Logger: s.deps.Logger,
 			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
+			Redis:  s.deps.Redis, AccountCache: s.deps.AccountCache, Channel: s.deps.Channel,
 		})
 		h.LogoutGETHandler(ctx)
 	}
@@ -190,7 +193,7 @@ func (s *DefaultServices) LogoutPOSTHandler() gin.HandlerFunc {
 			Cfg:    s.deps.Cfg,
 			Logger: s.deps.Logger,
 			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
+			Redis:  s.deps.Redis, AccountCache: s.deps.AccountCache, Channel: s.deps.Channel,
 		})
 		h.LogoutPOSTHandler(ctx)
 	}
@@ -205,7 +208,7 @@ func (s *DefaultServices) NotifyGETHandler() gin.HandlerFunc {
 			Cfg:    s.deps.Cfg,
 			Logger: s.deps.Logger,
 			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
+			Redis:  s.deps.Redis, AccountCache: s.deps.AccountCache, Channel: s.deps.Channel,
 		})
 		h.NotifyGETHandler(ctx)
 	}
@@ -215,48 +218,68 @@ func (s *DefaultServices) NotifyGETHandler() gin.HandlerFunc {
 
 // LoginGET2FAHandler handles GET requests for the 2FA registration page, managing session state and TOTP page display logic.
 func (s *DefaultServices) LoginGET2FAHandler() gin.HandlerFunc {
-	return core.LoginGET2FAHandler(s.deps)
+	return core.LoginGET2FAHandler(s.deps.Auth())
 }
 
 // LoginPOST2FAHandler handles POST requests for the '/2fa/v1/register/post' endpoint, managing TOTP-based 2FA processing.
 func (s *DefaultServices) LoginPOST2FAHandler() gin.HandlerFunc {
-	return core.LoginPOST2FAHandler(s.deps)
+	return core.LoginPOST2FAHandler(s.deps.Auth())
 }
 
 // Register2FAHomeHandler serves as the handler for the '/2fa/v1/register/home' endpoint, managing TOTP and WebAuthn setups.
 func (s *DefaultServices) Register2FAHomeHandler() gin.HandlerFunc {
-	return core.Register2FAHomeHandler(s.deps)
+	return core.Register2FAHomeHandler(s.deps.Auth())
 }
 
 // RegisterTotpGETHandler serves the TOTP registration page, handles session validation and CSRF protection.
 func (s *DefaultServices) RegisterTotpGETHandler() gin.HandlerFunc {
-	return core.RegisterTotpGETHandler(s.deps)
+	return core.RegisterTotpGETHandler(s.deps.Auth())
 }
 
 // RegisterTotpPOSTHandler handles POST requests for TOTP registration, validates the TOTP code, and completes the registration.
 func (s *DefaultServices) RegisterTotpPOSTHandler() gin.HandlerFunc {
-	return core.RegisterTotpPOSTHandler(s.deps)
+	return core.RegisterTotpPOSTHandler(s.deps.Auth())
 }
 
 // WebAuthn
 
 // BeginRegistration handles the initiation of WebAuthn registration, verifying user sessions and returning registration options.
 func (s *DefaultServices) BeginRegistration() gin.HandlerFunc {
-	return core.BeginRegistration(s.deps)
+	return core.BeginRegistration(s.deps.Auth())
 }
 
 // FinishRegistration handles the completion of WebAuthn registration by verifying user session data and creating credentials.
 func (s *DefaultServices) FinishRegistration() gin.HandlerFunc {
-	return core.FinishRegistration(s.deps)
+	return core.FinishRegistration(s.deps.Auth())
+}
+
+func (d *Deps) Auth() core.AuthDeps {
+	return core.AuthDeps{
+		Cfg:          d.Cfg,
+		Env:          d.Env,
+		Logger:       d.Logger,
+		Redis:        d.Redis,
+		AccountCache: d.AccountCache,
+		Channel:      d.Channel,
+	}
+}
+
+func (d *Deps) AuthPtr() *core.AuthDeps {
+	auth := d.Auth()
+
+	return &auth
 }
 
 // Deps aggregates top-level dependencies to be injected into handler modules.
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {
-	Cfg      config.File
-	Env      config.Environment
-	Logger   *slog.Logger
-	Redis    rediscli.Client
-	WebAuthn *webauthn.WebAuthn
-	Svc      Services
+	Cfg          config.File
+	CfgProvider  configfx.Provider
+	Env          config.Environment
+	Logger       *slog.Logger
+	Redis        rediscli.Client
+	WebAuthn     *webauthn.WebAuthn
+	AccountCache *accountcache.Manager
+	Channel      backend.Channel
+	Svc          Services
 }

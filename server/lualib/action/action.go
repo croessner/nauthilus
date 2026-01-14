@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -33,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -114,10 +116,14 @@ type Worker struct {
 	cfg config.File
 
 	logger *slog.Logger
+
+	redisClient rediscli.Client
+
+	env config.Environment
 }
 
 // NewWorker initializes and returns a new instance of Worker with preconfigured result mappings and request channel.
-func NewWorker(cfg config.File, logger *slog.Logger) *Worker {
+func NewWorker(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, env config.Environment) *Worker {
 	resultMap := make(map[int]string, 2)
 
 	resultMap[0] = definitions.LuaSuccess
@@ -125,9 +131,11 @@ func NewWorker(cfg config.File, logger *slog.Logger) *Worker {
 	RequestChan = make(chan *Action, definitions.MaxChannelSize)
 
 	return &Worker{
-		resultMap: resultMap,
-		cfg:       cfg,
-		logger:    logger,
+		resultMap:   resultMap,
+		cfg:         cfg,
+		logger:      logger,
+		redisClient: redisClient,
+		env:         env,
 	}
 }
 
@@ -362,7 +370,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 4) nauthilus_redis
-	if loader := redislib.LoaderModRedis(reqCtx, aw.cfg); loader != nil {
+	if loader := redislib.LoaderModRedis(reqCtx, aw.cfg, aw.redisClient); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -385,7 +393,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 6) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(reqCtx, aw.cfg); loader != nil {
+	if loader := connmgr.LoaderModPsnet(reqCtx, aw.cfg, aw.logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -396,7 +404,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 7) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(reqCtx, aw.cfg); loader != nil {
+	if loader := lualib.LoaderModDNS(reqCtx, aw.cfg, aw.logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -410,7 +418,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	{
 		var loader lua.LGFunction
 		if aw.cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(reqCtx, aw.cfg)
+			loader = lualib.LoaderModOTEL(reqCtx, aw.cfg, aw.logger)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -427,7 +435,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 8) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(reqCtx); loader != nil {
+	if loader := bflib.LoaderModBruteForce(reqCtx, aw.cfg, aw.logger, aw.redisClient, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -566,7 +574,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	L.Pop(1)
 
 	util.DebugModule(
-		aw.ctx,
+		aw.ctx, aw.cfg, aw.logger,
 		definitions.DbgAction,
 		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
 	)

@@ -41,7 +41,12 @@ func (DefaultBruteForceService) WaitDelay(maxWaitDelay, loginAttempt uint) int {
 func (DefaultBruteForceService) LoadHistories(ctx *gin.Context, auth *core.AuthState, accountName string) {
 	var bm bruteforce.BucketManager
 
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), auth.GUID, auth.ClientIP).
+	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), auth.GUID, auth.ClientIP, bruteforce.BucketManagerDeps{
+		Cfg:      auth.Cfg(),
+		Logger:   auth.Logger(),
+		Redis:    auth.Redis(),
+		Tolerate: auth.Tolerate,
+	}).
 		WithUsername(auth.Username).
 		WithPassword(auth.Password).
 		WithAccountName(accountName)

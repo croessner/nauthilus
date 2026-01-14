@@ -49,9 +49,10 @@ import (
 )
 
 type restAdminDeps struct {
-	Cfg    config.File
-	Logger *slog.Logger
-	Redis  rediscli.Client
+	Cfg     config.File
+	Logger  *slog.Logger
+	Redis   rediscli.Client
+	Channel backend.Channel
 }
 
 func (d restAdminDeps) effectiveLogger() *slog.Logger {
@@ -453,6 +454,14 @@ func listBlockedAccounts(ctx context.Context, deps restAdminDeps, filterCmd *bf.
 	return blockedAccounts, err
 }
 
+func (d restAdminDeps) effectiveChannel() backend.Channel {
+	if d.Channel != nil {
+		return d.Channel
+	}
+
+	return nil
+}
+
 func (d restAdminDeps) validate() error {
 	if d.Cfg == nil {
 		return stderrors.New("config is nil")
@@ -465,8 +474,8 @@ func (d restAdminDeps) validate() error {
 	return nil
 }
 
-func NewRestAdminDeps(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) restAdminDeps {
-	return restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+func NewRestAdminDeps(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) restAdminDeps {
+	return restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient, Channel: channel}
 }
 
 func HandleBruteForceList(deps restAdminDeps) gin.HandlerFunc {
@@ -869,8 +878,9 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 	}
 
 	protocols := cfg.GetAllProtocols()
+	channel := deps.effectiveChannel()
 	for index := range protocols {
-		cacheNames := backend.GetCacheNames(cfg, protocols[index], definitions.CacheAll)
+		cacheNames := backend.GetCacheNames(cfg, channel, protocols[index], definitions.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
 			userKeys.Set(prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 		}

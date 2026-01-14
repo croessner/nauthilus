@@ -28,6 +28,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -51,22 +52,24 @@ import (
 )
 
 type HTTPDeps struct {
-	Cfg    config.File
-	Logger *slog.Logger
-	Env    config.Environment
-	Redis  rediscli.Client
+	Cfg          config.File
+	Logger       *slog.Logger
+	Env          config.Environment
+	Redis        rediscli.Client
+	AccountCache *accountcache.Manager
 }
 
 // DefaultBootstrap wires the existing bootstrapping functions.
 type DefaultBootstrap struct {
-	cfg    config.File
-	logger *slog.Logger
-	env    config.Environment
-	redis  rediscli.Client
+	cfg          config.File
+	logger       *slog.Logger
+	env          config.Environment
+	redis        rediscli.Client
+	accountCache *accountcache.Manager
 }
 
 func NewDefaultBootstrap(deps HTTPDeps) DefaultBootstrap {
-	return DefaultBootstrap{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
+	return DefaultBootstrap{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
 }
 
 // InitSessionStore creates and returns the secure cookie-backed Gin session store
@@ -102,14 +105,15 @@ func (b DefaultBootstrap) InitGinLogging() {
 
 // DefaultRouterComposer builds the gin.Engine and registers routes/middlewares in the exact order.
 type DefaultRouterComposer struct {
-	cfg    config.File
-	logger *slog.Logger
-	env    config.Environment
-	redis  rediscli.Client
+	cfg          config.File
+	logger       *slog.Logger
+	env          config.Environment
+	redis        rediscli.Client
+	accountCache *accountcache.Manager
 }
 
 func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
-	return DefaultRouterComposer{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
+	return DefaultRouterComposer{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
 }
 
 // ComposeEngine creates a fresh gin.Engine without any default middleware.
@@ -121,8 +125,8 @@ func (c DefaultRouterComposer) ComposeEngine() *gin.Engine {
 		return ProtectEndpointMiddleware(cfg, logger)
 	})
 
-	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
-		return AccountMiddleware(cfg, logger, redisClient)
+	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager) gin.HandlerFunc {
+		return AccountMiddleware(cfg, logger, redisClient, accountCache)
 	})
 
 	return gin.New(func(e *gin.Engine) {
@@ -182,7 +186,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 
 	// Make the resolved account available as early as possible in the chain.
 	// This keeps account lookups consistent for all following middlewares/handlers.
-	r.Use(mdauth.AccountMiddleware(c.cfg, c.logger, c.redis))
+	r.Use(mdauth.AccountMiddleware(c.cfg, c.logger, c.redis, c.accountCache))
 }
 
 // ApplyCoreMiddlewares configures the router builder to add recovery, trusted
@@ -620,8 +624,8 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	})
 
 	// Register account resolution middleware factory
-	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
-		return AccountMiddleware(cfg, logger, redisClient)
+	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager) gin.HandlerFunc {
+		return AccountMiddleware(cfg, logger, redisClient, accountCache)
 	})
 
 	if err := a.Bootstrap.InitWebAuthn(); err != nil {

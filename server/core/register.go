@@ -768,7 +768,7 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 		userKeys := config.NewStringSet()
 		protocols := deps.Cfg.GetAllProtocols()
 
-		accountName, err = backend.LookupUserAccountFromRedis(auth.Ctx(), username)
+		accountName, err = backend.LookupUserAccountFromRedis(auth.Ctx(), deps.Cfg, deps.Redis, username)
 		if err != nil {
 			HandleErrWithDeps(ctx, err, deps)
 
@@ -776,7 +776,7 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 		}
 
 		for index := range protocols {
-			cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
+			cacheNames := backend.GetCacheNames(deps.Cfg, deps.Channel, protocols[index], definitions.CacheAll)
 
 			for _, cacheName := range cacheNames.GetStringSlice() {
 				userKeys.Set(deps.Cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)

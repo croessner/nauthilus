@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -27,9 +28,9 @@ import (
 )
 
 // RedisMGet retrieves the values of multiple keys from Redis.
-func RedisMGet(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisMGet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		keys := make([]string, L.GetTop()-1)
 
 		for i := 2; i <= L.GetTop(); i++ {
@@ -41,7 +42,7 @@ func RedisMGet(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.MGet(dCtx, keys...)
+		cmd := conn.MGet(dCtx, keys...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -65,7 +66,7 @@ func RedisMGet(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisMSet sets multiple key-value pairs in Redis.
-func RedisMSet(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisMSet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 3 || (L.GetTop()-1)%2 != 0 {
 			L.Push(lua.LNil)
@@ -74,7 +75,7 @@ func RedisMSet(ctx context.Context, cfg config.File) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		kvpairs := make([]any, L.GetTop()-1)
 
 		for i := 2; i <= L.GetTop(); i++ {
@@ -94,7 +95,7 @@ func RedisMSet(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.MSet(dCtx, kvpairs...)
+		cmd := conn.MSet(dCtx, kvpairs...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -109,9 +110,9 @@ func RedisMSet(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisKeys returns all keys matching a pattern.
-func RedisKeys(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisKeys(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		pattern := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -119,7 +120,7 @@ func RedisKeys(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.Keys(dCtx, pattern)
+		cmd := conn.Keys(dCtx, pattern)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -139,9 +140,9 @@ func RedisKeys(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisScan incrementally iterates over keys in Redis.
-func RedisScan(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisScan(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		cursor := uint64(L.CheckNumber(2))
 		match := L.OptString(3, "*")
 		count := int64(L.OptNumber(4, 10))
@@ -152,7 +153,7 @@ func RedisScan(ctx context.Context, cfg config.File) lua.LGFunction {
 		defer cancel()
 
 		// Use the Scan command to get a batch of keys
-		keys, cursor, err := client.Scan(dCtx, cursor, match, count).Result()
+		keys, cursor, err := conn.Scan(dCtx, cursor, match, count).Result()
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

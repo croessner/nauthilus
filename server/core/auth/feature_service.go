@@ -48,7 +48,7 @@ func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bo
 		CommonRequest:      commonRequest,
 	}
 
-	triggered, abort, err := featReq.CallFeatureLua(ctx, auth.Cfg(), auth.Logger())
+	triggered, abort, err := featReq.CallFeatureLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
 
 	// Provide logs and status
 	var logs []any

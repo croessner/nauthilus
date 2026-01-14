@@ -79,7 +79,7 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	auth.NewWithDeps(deps).Register(group)
 	bruteforce.New(deps).Register(group)
 	confighandler.NewWithDeps(deps).Register(group)
-	custom.New().Register(group)
+	custom.NewWithDeps(deps.CfgProvider, deps.Logger, deps.Redis).Register(group)
 	cache.NewWithDeps(deps).Register(group)
 	asyncjobs.NewWithDeps(deps).Register(group)
 }

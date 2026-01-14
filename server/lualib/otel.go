@@ -17,6 +17,7 @@ package lualib
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -35,13 +36,13 @@ import (
 
 // LoaderModOTEL provides a context-aware OpenTelemetry Lua module.
 // It binds helper functions and userdata to create and manage spans from Lua.
-func LoaderModOTEL(ctx context.Context, cfg config.File) lua.LGFunction {
+func LoaderModOTEL(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.NewTable()
 
 		// State holder (per-request)
 		enabled := cfg.GetServer().GetInsights().GetTracing().IsEnabled()
-		lstate := &luaOTEL{ctx: ctx, enabled: enabled}
+		lstate := &luaOTEL{ctx: ctx, enabled: enabled, logger: logger}
 
 		// Ensure metatables are registered once per state
 		ensureTracerMT(L)
@@ -92,6 +93,7 @@ func LoaderOTELStateless() lua.LGFunction {
 type luaOTEL struct {
 	ctx     context.Context
 	enabled bool
+	logger  *slog.Logger
 }
 
 func (s *luaOTEL) tracerFor(scope string) trace.Tracer {

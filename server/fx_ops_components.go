@@ -93,7 +93,7 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 	if err := bootfx.SetupLuaScripts(snap.File, logger); err != nil {
 		level.Error(logger).Log(definitions.LogKeyMsg, "Unable to setup Lua scripts", definitions.LogKeyError, err)
 	} else {
-		bootfx.RunLuaInitScript(ctx, snap.File, logger)
+		bootfx.RunLuaInitScript(ctx, snap.File, logger, r.store.redisClient)
 	}
 
 	bootfx.EnableBlockProfile(snap.File)
@@ -128,16 +128,16 @@ func (r *reloadOrchestrator) stopWorkersForConfig(ctx context.Context, cfg confi
 }
 
 func (r *reloadOrchestrator) stopLDAP(ctx context.Context, cfg config.File) {
-	if r.store == nil || r.store.ldapLookup == nil || r.store.ldapAuth == nil {
+	if r.store == nil || r.store.ldapLookup == nil || r.store.ldapAuth == nil || r.store.channel == nil {
 		return
 	}
 
 	stopContext(r.store.ldapLookup)
 
-	poolNames := backend.GetChannel().GetLdapChannel().GetPoolNames()
+	poolNames := r.store.channel.GetLdapChannel().GetPoolNames()
 	for _, poolName := range poolNames {
 		select {
-		case <-backend.GetChannel().GetLdapChannel().GetLookupEndChan(poolName):
+		case <-r.store.channel.GetLdapChannel().GetLookupEndChan(poolName):
 		case <-ctx.Done():
 			return
 		}
@@ -147,7 +147,7 @@ func (r *reloadOrchestrator) stopLDAP(ctx context.Context, cfg config.File) {
 	for _, poolName := range poolNames {
 		if !cfg.LDAPHavePoolOnly(poolName) {
 			select {
-			case <-backend.GetChannel().GetLdapChannel().GetAuthEndChan(poolName):
+			case <-r.store.channel.GetLdapChannel().GetAuthEndChan(poolName):
 			case <-ctx.Done():
 				return
 			}
@@ -156,15 +156,15 @@ func (r *reloadOrchestrator) stopLDAP(ctx context.Context, cfg config.File) {
 }
 
 func (r *reloadOrchestrator) stopLua(ctx context.Context) {
-	if r.store == nil || r.store.lua == nil {
+	if r.store == nil || r.store.lua == nil || r.store.channel == nil {
 		return
 	}
 
 	stopContext(r.store.lua)
 
-	for _, backendName := range backend.GetChannel().GetLuaChannel().GetBackendNames() {
+	for _, backendName := range r.store.channel.GetLuaChannel().GetBackendNames() {
 		select {
-		case <-backend.GetChannel().GetLuaChannel().GetLookupEndChan(backendName):
+		case <-r.store.channel.GetLuaChannel().GetLookupEndChan(backendName):
 		case <-ctx.Done():
 			return
 		}
@@ -261,14 +261,14 @@ func (r *reloadOrchestrator) startWorkersForConfig(ctx context.Context, cfg conf
 				continue
 			}
 
-			go setupLDAPWorker(r.store, ctx, cfg, getLogger(r.store))
+			go setupLDAPWorker(r.store, ctx, cfg, getLogger(r.store), r.store.channel)
 			ldapStarted = true
 		case definitions.BackendLua:
 			if luaStarted {
 				continue
 			}
 
-			setupLuaWorker(r.store, ctx, cfg, getLogger(r.store))
+			setupLuaWorker(r.store, ctx, cfg, getLogger(r.store), r.store.redisClient, r.store.channel)
 
 			luaStarted = true
 		case definitions.BackendCache:
@@ -575,9 +575,9 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 	}
 
 	cfg := getConfigFile(store)
-	if cfg != nil {
+	if cfg != nil && store != nil && store.channel != nil {
 		for _, backendType := range cfg.GetServer().GetBackends() {
-			if !waitForBackendShutdown(ctx, cfg, backendType) {
+			if !waitForBackendShutdown(ctx, cfg, store.channel, backendType) {
 				return
 			}
 		}
@@ -596,13 +596,13 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 //
 // It returns true if the backend was recognized and waited on, or false if the backend
 // type is unknown.
-func waitForBackendShutdown(ctx context.Context, cfg config.File, passDB *config.Backend) bool {
+func waitForBackendShutdown(ctx context.Context, cfg config.File, channel backend.Channel, passDB *config.Backend) bool {
 	switch passDB.Get() {
 	case definitions.BackendLDAP:
-		poolNames := backend.GetChannel().GetLdapChannel().GetPoolNames()
+		poolNames := channel.GetLdapChannel().GetPoolNames()
 		for _, poolName := range poolNames {
 			select {
-			case <-backend.GetChannel().GetLdapChannel().GetLookupEndChan(poolName):
+			case <-channel.GetLdapChannel().GetLookupEndChan(poolName):
 			case <-ctx.Done():
 				return false
 			}
@@ -614,15 +614,15 @@ func waitForBackendShutdown(ctx context.Context, cfg config.File, passDB *config
 			}
 
 			select {
-			case <-backend.GetChannel().GetLdapChannel().GetAuthEndChan(poolName):
+			case <-channel.GetLdapChannel().GetAuthEndChan(poolName):
 			case <-ctx.Done():
 				return false
 			}
 		}
 	case definitions.BackendLua:
-		for _, backendName := range backend.GetChannel().GetLuaChannel().GetBackendNames() {
+		for _, backendName := range channel.GetLuaChannel().GetBackendNames() {
 			select {
-			case <-backend.GetChannel().GetLuaChannel().GetLookupEndChan(backendName):
+			case <-channel.GetLuaChannel().GetLookupEndChan(backendName):
 			case <-ctx.Done():
 				return false
 			}

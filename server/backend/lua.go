@@ -24,6 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 
 	lua "github.com/yuin/gopher-lua"
@@ -72,7 +74,7 @@ func LoaderLDAPStateless() lua.LGFunction {
 // LuaMainWorker processes Lua script requests in a loop until the context is canceled.
 // It compiles the Lua script and handles requests using a dedicated goroutine for each.
 // It now uses a priority queue instead of channels for better request handling.
-func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, backendName string) (err error) {
+func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel Channel, backendName string) (err error) {
 	var (
 		numberOfWorkers int
 		scriptPath      string
@@ -170,14 +172,14 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, ba
 					return
 				}
 
-				handleLuaRequest(ctx, cfg, logger, luaRequest, compiledScript, vmPool)
+				handleLuaRequest(ctx, cfg, logger, redisClient, luaRequest, compiledScript, vmPool)
 			}
 		}()
 	}
 
 	go func() {
 		wg.Wait()
-		trySignalDone(GetChannel().GetLuaChannel().GetLookupEndChan(backendName))
+		TrySignalDone(channel.GetLuaChannel().GetLookupEndChan(backendName))
 	}()
 
 	return
@@ -189,7 +191,7 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, ba
 // - ctx: The context for the Lua execution, including cancellation and timeout.
 // - luaRequest: The LuaRequest object containing details about the script execution request.
 // - compiledScript: The precompiled Lua script to be executed.
-func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto, vmPool *vmpool.Pool) {
+func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto, vmPool *vmpool.Pool) {
 	var (
 		nret       int
 		luaCommand string
@@ -263,7 +265,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	// 3) nauthilus_redis
 	{
-		loader := redislib.LoaderModRedis(luaRequest.HTTPClientContext, cfg)
+		loader := redislib.LoaderModRedis(luaRequest.HTTPClientContext, cfg, redisClient)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -286,7 +288,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	}
 
 	// 5) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx, cfg); loader != nil {
+	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -297,7 +299,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	}
 
 	// 6) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx, cfg); loader != nil {
+	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -311,7 +313,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	{
 		var loader lua.LGFunction
 		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx, cfg)
+			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -328,7 +330,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	}
 
 	// 7) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -365,7 +367,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	// Handle the specific return types
 	if err == nil {
-		handleReturnTypes(luaCtx, L, nret, luaRequest, logs)
+		handleReturnTypes(luaCtx, cfg, logger, L, nret, luaRequest, logs)
 	}
 }
 
@@ -453,7 +455,7 @@ func executeAndHandleError(ctx context.Context, cfg config.File, logger *slog.Lo
 // L represents the Lua state machine, nret specifies the number of return values, luaRequest holds request context.
 // logs specifies the custom log key-value pairs. Validates the script output and dispatches appropriate Lua results.
 // An error is sent if the Lua script fails or returns invalid data for specified commands.
-func handleReturnTypes(ctx context.Context, L *lua.LState, nret int, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
+func handleReturnTypes(ctx context.Context, cfg config.File, logger *slog.Logger, L *lua.LState, nret int, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
@@ -479,7 +481,7 @@ func handleReturnTypes(ctx context.Context, L *lua.LState, nret int, luaRequest 
 				luaBackendResult.Logs = logs
 
 				util.DebugModule(
-					ctx,
+					ctx, cfg, logger,
 					definitions.DbgLua,
 					definitions.LogKeyGUID, luaRequest.Session,
 					"result", fmt.Sprintf("%+v", luaBackendResult),

@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
@@ -312,6 +313,12 @@ type State interface {
 	// IsMasterUser determines if the authenticated user has master-level privileges, returning true if they do.
 	IsMasterUser() bool
 
+	// AccountCache returns the AccountCache manager.
+	AccountCache() *accountcache.Manager
+
+	// Channel returns the backend channel.
+	Channel() backend.Channel
+
 	// GetOauth2SubjectAndClaims retrieves the subject and claims for OAuth2/OIDC.
 	GetOauth2SubjectAndClaims(client any) (string, map[string]any)
 }
@@ -561,7 +568,14 @@ func (a *AuthState) redis() rediscli.Client {
 	return a.Redis()
 }
 
-// GetLogger returns the injected logger for this state.
+func (a *AuthState) AccountCache() *accountcache.Manager {
+	return a.deps.AccountCache
+}
+
+func (a *AuthState) Channel() backend.Channel {
+	return a.deps.Channel
+}
+
 func (a *AuthState) GetLogger() *slog.Logger {
 	return a.deps.Logger
 }
@@ -1516,7 +1530,7 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 
 	// Use request/service context with bounded deadline to avoid leaks and reuse caller context
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(a.Ctx(), a.Cfg())
-	accountName = backend.GetUserAccountFromCache(dCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.Username, a.GUID)
+	accountName = backend.GetUserAccountFromCache(dCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Username, a.GUID)
 	cancel()
 
 	if accountName == "" {
@@ -2020,7 +2034,12 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm = bruteforce.NewBucketManager(a.Ctx(), a.GUID, a.ClientIP).
+			bm = bruteforce.NewBucketManagerWithDeps(a.Ctx(), a.GUID, a.ClientIP, bruteforce.BucketManagerDeps{
+				Cfg:      a.Cfg(),
+				Logger:   a.Logger(),
+				Redis:    a.Redis(),
+				Tolerate: a.deps.Tolerate,
+			}).
 				WithUsername(a.Username).
 				WithPassword(a.Password).
 				WithAccountName(accountName)
@@ -2074,7 +2093,7 @@ func (a *AuthState) GetUsedCacheBackend() (definitions.CacheNameBackend, error) 
 
 // GetCacheNameFor retrieves the cache name associated with the given backend, based on the protocol configured for the AuthState.
 func (a *AuthState) GetCacheNameFor(usedBackend definitions.CacheNameBackend) (cacheName string, err error) {
-	cacheNames := backend.GetCacheNames(a.Cfg(), a.Protocol.Get(), usedBackend)
+	cacheNames := backend.GetCacheNames(a.Cfg(), a.Channel(), a.Protocol.Get(), usedBackend)
 	if len(cacheNames) != 1 {
 		level.Error(a.Logger()).Log(
 			definitions.LogKeyGUID, a.GUID,
@@ -2345,7 +2364,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 	// Service-scoped read to avoid inheriting a canceled request context
 	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(nil, a.Cfg())
-	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.Username, a.GUID)
+	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Username, a.GUID)
 	cancelRead()
 
 	if accountName != "" {
@@ -2899,10 +2918,12 @@ func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
 // It gets an AuthState from the pool, sets the context to a copied HTTPClientContext and assigns the current time to the StartTime field.
 func NewAuthStateFromContext(ctx *gin.Context) State {
 	return NewAuthStateFromContextWithDeps(ctx, AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
+		Cfg:          getDefaultConfigFile(),
+		Env:          getDefaultEnvironment(),
+		Logger:       getDefaultLogger(),
+		Redis:        getDefaultRedisClient(),
+		AccountCache: getDefaultAccountCache(),
+		Channel:      getDefaultChannel(),
 	})
 }
 

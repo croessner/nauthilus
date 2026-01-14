@@ -25,11 +25,14 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
-	_ = action.NewWorker(config.GetFile(), log.GetLogger())
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	_ = action.NewWorker(config.GetFile(), log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
 
 	// Use definitions to avoid unused import
 	_ = definitions.LuaActionPost

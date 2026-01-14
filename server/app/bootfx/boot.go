@@ -125,7 +125,7 @@ func SetupConfiguration() error {
 
 // SetupLuaScripts pre-compiles Lua scripts for features, filters, init scripts, and hooks.
 func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
-	if err := PreCompileFeatures(cfg); err != nil {
+	if err := PreCompileFeatures(cfg, logger); err != nil {
 		return err
 	}
 
@@ -141,9 +141,9 @@ func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
 }
 
 // PreCompileFeatures pre-compiles Lua features if enabled.
-func PreCompileFeatures(cfg config.File) error {
+func PreCompileFeatures(cfg config.File, logger *slog.Logger) error {
 	if cfg.HaveLuaFeatures() {
-		if err := feature.PreCompileLuaFeatures(cfg); err != nil {
+		if err := feature.PreCompileLuaFeatures(cfg, logger); err != nil {
 			return err
 		}
 	}
@@ -237,10 +237,10 @@ func InitializeHTTPClients(cfg config.File) {
 }
 
 // RunLuaInitScript executes Lua init scripts (if configured).
-func RunLuaInitScript(ctx context.Context, cfg config.File, logger *slog.Logger) {
+func RunLuaInitScript(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) {
 	if cfg.HaveLuaInit() {
 		for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
-			_ = hook.RunLuaInit(ctx, cfg, logger, scriptPath)
+			_ = hook.RunLuaInit(ctx, cfg, logger, redis, scriptPath)
 		}
 	}
 }

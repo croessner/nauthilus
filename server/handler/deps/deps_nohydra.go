@@ -22,6 +22,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -125,10 +128,12 @@ func (s *DefaultServices) LogoutPOSTHandler() gin.HandlerFunc { return notFound(
 func (s *DefaultServices) NotifyGETHandler() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		core.NotifyGETHandlerWithDeps(ctx, core.AuthDeps{
-			Cfg:    s.deps.Cfg,
-			Logger: s.deps.Logger,
-			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
+			Cfg:          s.deps.Cfg,
+			Logger:       s.deps.Logger,
+			Env:          s.deps.Env,
+			Redis:        s.deps.Redis,
+			AccountCache: s.deps.AccountCache,
+			Channel:      s.deps.Channel,
 		})
 	}
 }
@@ -157,9 +162,12 @@ func (s *DefaultServices) FinishRegistration() gin.HandlerFunc { return notFound
 // Deps aggregates top-level dependencies to be injected into handler modules.
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {
-	Cfg    config.File
-	Env    config.Environment
-	Logger *slog.Logger
-	Redis  rediscli.Client
-	Svc    Services
+	Cfg          config.File
+	CfgProvider  configfx.Provider
+	Env          config.Environment
+	Logger       *slog.Logger
+	Redis        rediscli.Client
+	AccountCache *accountcache.Manager
+	Channel      backend.Channel
+	Svc          Services
 }

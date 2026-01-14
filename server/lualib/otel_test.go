@@ -21,6 +21,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel"
@@ -89,7 +90,7 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
 	defer L.Close()
 
 	// Preload module with a background context
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile()))
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -159,7 +160,7 @@ func TestOTEL_Span_Finish(t *testing.T) {
 	defer L.Close()
 
 	// Preload module with a background context
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile()))
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -214,7 +215,7 @@ func TestOTEL_BaggageAndPropagation(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile()))
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -277,7 +278,7 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile()))
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -335,7 +336,7 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
 	L2 := lua.NewState()
 	defer L2.Close()
 
-	L2.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile()))
+	L2.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	noOpScript := `
       local otel = require("nauthilus_opentelemetry")

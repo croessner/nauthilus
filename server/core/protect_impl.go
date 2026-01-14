@@ -91,7 +91,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 			result := GetPassDBResultFromPool()
 			auth.PostLuaAction(result)
 			PutPassDBResultToPool(result)
-			HandleErr(ctx, errors.ErrNoTLS)
+			HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
 			ctx.Abort()
 
 			return

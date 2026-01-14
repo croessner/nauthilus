@@ -16,12 +16,15 @@
 package jwtutil
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -32,9 +35,12 @@ func TestHasRole(t *testing.T) {
 
 	// Set up test configuration to avoid "FileSettings not loaded" error
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
-	config.SetTestFile(&config.FileSettings{
+	testFile := &config.FileSettings{
 		Server: &config.ServerSection{},
-	})
+	}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	// Set up logging
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
@@ -48,9 +54,10 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "No claims in context",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: false,
@@ -58,13 +65,14 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "Claims as *jwtclaims.Claims with matching role",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
 				ctx.Set(definitions.CtxJWTClaimsKey, &jwtclaims.Claims{
 					Username: "testuser",
 					Roles:    []string{"user", "admin"},
 				})
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: true,
@@ -72,13 +80,14 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "Claims as *jwtclaims.Claims with non-matching role",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
 				ctx.Set(definitions.CtxJWTClaimsKey, &jwtclaims.Claims{
 					Username: "testuser",
 					Roles:    []string{"user"},
 				})
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: false,
@@ -86,10 +95,11 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "Claims in unexpected format",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
 				ctx.Set(definitions.CtxJWTClaimsKey, "invalid-claims")
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: false,

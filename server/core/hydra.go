@@ -21,6 +21,7 @@ package core
 // See the markdown documentation for the login-, two-factor-, consent- and logout pages for a brief description.
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"net/http"
@@ -182,11 +183,11 @@ func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response, de
 // The function returns lang, needCookie, and needRedirect.
 //
 //goland:noinspection GoDfaConstantCondition
-func (a *ApiConfig) setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
+func (h *HydraHandlers) setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
 	switch {
 	case langFromURL == "" && langFromCookie == "":
 		// 1. No language from URL and no cookie is set
-		lang = a.deps.Cfg.GetServer().Frontend.GetDefaultLanguage()
+		lang = h.deps.Cfg.GetServer().Frontend.GetDefaultLanguage()
 		needCookie = true
 		needRedirect = true
 	case langFromURL == "" && langFromCookie != "":
@@ -249,6 +250,7 @@ func (h *HydraHandlers) WithLanguageMiddleware() gin.HandlerFunc {
 		baseName, _ := tag.Base()
 
 		util.DebugModuleWithCfg(
+			ctx,
 			h.deps.Cfg,
 			h.deps.Logger,
 			definitions.DbgHydra,
@@ -362,7 +364,7 @@ func (a *ApiConfig) handleLoginSkip(ctx *gin.Context) {
 		claims        map[string]any
 	)
 
-	util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, true))
+	util.DebugModuleWithCfg(a.ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, true))
 
 	oauth2Client := a.loginRequest.GetClient()
 
@@ -440,7 +442,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		errorMessage string
 	)
 
-	util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, false))
+	util.DebugModuleWithCfg(a.ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, false))
 
 	oauth2Client := a.loginRequest.GetClient()
 
@@ -510,6 +512,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 			a.ctx.HTML(http.StatusOK, "totp.html", twoFactorData)
 
 			util.DebugModuleWithCfg(
+				a.ctx.Request.Context(),
 				a.deps.Cfg,
 				a.deps.Logger,
 				definitions.DbgHydra,
@@ -1035,6 +1038,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 
 	if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && a.deps.Env.GetDevMode() {
 		util.DebugModuleWithCfg(
+			a.ctx.Request.Context(),
 			a.deps.Cfg,
 			a.deps.Logger,
 			definitions.DbgHydra,
@@ -1737,6 +1741,7 @@ func (a *ApiConfig) redirectWithConsent() {
 	rememberFor := int64(a.deps.Cfg.GetServer().Frontend.GetLoginRememberFor())
 
 	util.DebugModuleWithCfg(
+		a.ctx.Request.Context(),
 		a.deps.Cfg,
 		a.deps.Logger,
 		definitions.DbgHydra,
@@ -1758,6 +1763,7 @@ func (a *ApiConfig) redirectWithConsent() {
 
 	if needClaims {
 		util.DebugModuleWithCfg(
+			a.ctx.Request.Context(),
 			a.deps.Cfg,
 			a.deps.Logger,
 			definitions.DbgHydra,
@@ -1866,6 +1872,7 @@ func (h *HydraHandlers) ConsentGETHandler(ctx *gin.Context) {
 	apiConfig.clientName = oauth2Client.GetClientName()
 
 	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
 		h.deps.Cfg,
 		h.deps.Logger,
 		definitions.DbgHydra,
@@ -1944,6 +1951,7 @@ func (a *ApiConfig) processConsentAccept() {
 	}
 
 	util.DebugModuleWithCfg(
+		a.ctx.Request.Context(),
 		a.deps.Cfg,
 		a.deps.Logger,
 		definitions.DbgHydra,
@@ -1964,7 +1972,7 @@ func (a *ApiConfig) processConsentAccept() {
 	}
 
 	if needClaims {
-		util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, "Scope 'openid' found, need claims")
+		util.DebugModuleWithCfg(a.ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, "Scope 'openid' found, need claims")
 
 		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext, a.deps)
 	}
@@ -2220,7 +2228,7 @@ func (h *HydraHandlers) LogoutGETHandler(ctx *gin.Context) {
 
 	if apiConfig.logoutRequest.GetRpInitiated() {
 		// We could skip the UI
-		util.DebugModuleWithCfg(h.deps.Cfg, h.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, apiConfig.guid, definitions.LogKeyMsg, "rp_initiated==true")
+		util.DebugModuleWithCfg(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, apiConfig.guid, definitions.LogKeyMsg, "rp_initiated==true")
 	}
 
 	apiConfig.handleLogout()
@@ -2408,7 +2416,7 @@ func getClaimsFromConsentContext(guid string, acceptedScopes []string, consentCo
 		processCustomScopes(claimDict, claims, acceptedScopes, index, deps)
 	}
 
-	util.DebugModuleWithCfg(deps.Cfg, deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, guid, "claims", fmt.Sprintf("%+v", claims))
+	util.DebugModuleWithCfg(context.Background(), deps.Cfg, deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, guid, "claims", fmt.Sprintf("%+v", claims))
 
 	session = &openapi.AcceptOAuth2ConsentRequestSession{
 		IdToken: claims,

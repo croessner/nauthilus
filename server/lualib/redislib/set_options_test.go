@@ -25,13 +25,18 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRedisSet_WithOptionsTable(t *testing.T) {
-	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	now := time.Now().Add(2 * time.Hour).Truncate(time.Second)
 
 	tests := []struct {
@@ -133,19 +138,20 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.expect(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("k", lua.LString("k"))
 			L.SetGlobal("v", lua.LString("v"))
@@ -169,6 +175,11 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 }
 
 func TestRedisSet_WithOptionsTable_NilSemantics(t *testing.T) {
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	tests := []struct {
 		name       string
 		setArgs    redis.SetArgs
@@ -179,19 +190,20 @@ func TestRedisSet_WithOptionsTable_NilSemantics(t *testing.T) {
 		{name: "GET no old value returns nil no error", setArgs: redis.SetArgs{Get: true}, luaOptions: `{ get = true }`},
 	}
 
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			mock.ExpectSetArgs("k", "v", tt.setArgs).RedisNil()
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("k", lua.LString("k"))
 			L.SetGlobal("v", lua.LString("v"))

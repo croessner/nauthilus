@@ -23,6 +23,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/redis/go-redis/v9"
@@ -61,7 +62,7 @@ func setPipelineItem(L *lua.LState, item *lua.LTable, val any, err error) {
 //	})
 //
 // Returns a Lua table of results (one entry per command). For write-only commands the result is their native reply.
-func RedisPipeline(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisPipeline(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		// Args:
 		// 1: redis handle (userdata or "default")
@@ -87,10 +88,10 @@ func RedisPipeline(ctx context.Context, cfg config.File) lua.LGFunction {
 			defer cancel()
 		}
 
-		client := getRedisConnectionWithFallback(L, fallback)
+		conn := getRedisConnectionWithFallback(L, fallback)
 
 		// Create pipeline on selected client
-		pipe := client.Pipeline()
+		pipe := conn.Pipeline()
 
 		// build pipeline
 		var innerErr error

@@ -44,7 +44,7 @@ func TestBruteForceLogic(t *testing.T) {
 	backend.Set("cache")
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
-	config.SetTestFile(&config.FileSettings{
+	testFile := &config.FileSettings{
 		Server: &config.ServerSection{
 			Features: []*config.Feature{&feature},
 			Backends: []*config.Backend{&backend},
@@ -61,7 +61,10 @@ func TestBruteForceLogic(t *testing.T) {
 					IPv6:           false,
 					FailedRequests: 10,
 				}}},
-	})
+	}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
@@ -572,7 +575,7 @@ func TestBruteForceFilters(t *testing.T) {
 	backend.Set("cache")
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
-	config.SetTestFile(&config.FileSettings{
+	testFileFilters := &config.FileSettings{
 		Server: &config.ServerSection{
 			Features: []*config.Feature{&feature},
 			Backends: []*config.Backend{&backend},
@@ -593,7 +596,10 @@ func TestBruteForceFilters(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
+	config.SetTestFile(testFileFilters)
+	util.SetDefaultConfigFile(testFileFilters)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
@@ -670,7 +676,7 @@ func TestBruteForceFiltersNonMatching(t *testing.T) {
 	backend.Set("cache")
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
-	config.SetTestFile(&config.FileSettings{
+	testFileNonMatching := &config.FileSettings{
 		Server: &config.ServerSection{
 			Features: []*config.Feature{&feature},
 			Backends: []*config.Backend{&backend},
@@ -690,7 +696,10 @@ func TestBruteForceFiltersNonMatching(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
+	config.SetTestFile(testFileNonMatching)
+	util.SetDefaultConfigFile(testFileNonMatching)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
@@ -727,7 +736,7 @@ func TestSaveFailedPasswordCounterTotals(t *testing.T) {
 	backend.Set("cache")
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
-	config.SetTestFile(&config.FileSettings{
+	testFileTotals := &config.FileSettings{
 		Server: &config.ServerSection{
 			Features: []*config.Feature{&feature},
 			Backends: []*config.Backend{&backend},
@@ -746,7 +755,10 @@ func TestSaveFailedPasswordCounterTotals(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
+	config.SetTestFile(testFileTotals)
+	util.SetDefaultConfigFile(testFileTotals)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 

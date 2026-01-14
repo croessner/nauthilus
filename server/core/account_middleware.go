@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -32,7 +33,7 @@ import (
 // 2) If a username is available (header or BasicAuth), try local cache first.
 // 3) Fallback to Redis lookup.
 // Only the plain account string is stored; no additional fields are added.
-func AccountMiddleware(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc { //nolint:ireturn
+func AccountMiddleware(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager) gin.HandlerFunc { //nolint:ireturn
 	return func(c *gin.Context) {
 		guid := c.GetString(definitions.CtxGUIDKey)
 
@@ -82,7 +83,7 @@ func AccountMiddleware(cfg config.File, logger *slog.Logger, redisClient rediscl
 
 		// Prefer cached mapping (in-process/Redis) with bounded deadline
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(c, cfg)
-		account := backend.GetUserAccountFromCache(dCtx, cfg, logger, redisClient, username, guid)
+		account := backend.GetUserAccountFromCache(dCtx, cfg, logger, redisClient, accountCache, username, guid)
 		cancel()
 
 		if account == "" {

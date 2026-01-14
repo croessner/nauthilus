@@ -17,6 +17,7 @@ package stats
 
 import (
 	"context"
+	"log/slog"
 	"runtime"
 	"sync"
 	"time"
@@ -1004,12 +1005,12 @@ func MeasureCPU(ctx context.Context) {
 // The logging is performed using the Logger from the logging package.
 // Note: The declarations of log.Logger, definitions.LogKeyStatsAlloc, util.ByteSize,
 // and other related declarations are not shown here.
-func PrintStats() {
+func PrintStats(logger *slog.Logger) {
 	var memStats runtime.MemStats
 
 	runtime.ReadMemStats(&memStats)
 
-	level.Info(log.Logger).Log(
+	level.Info(logger).Log(
 		// Heap Stats
 		definitions.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
 		definitions.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),

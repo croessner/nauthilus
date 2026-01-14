@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -48,7 +50,7 @@ var LuaFeatures *PreCompiledLuaFeatures
 
 // PreCompileLuaFeatures pre-compiles Lua features listed in the configuration and initializes the global `LuaFeatures` variable.
 // Returns an error if the pre-compilation process or Lua feature initialization fails, otherwise returns nil.
-func PreCompileLuaFeatures(cfg config.File) (err error) {
+func PreCompileLuaFeatures(cfg config.File, _ *slog.Logger) (err error) {
 	if cfg.HaveLuaFeatures() {
 		if LuaFeatures == nil {
 			LuaFeatures = &PreCompiledLuaFeatures{}
@@ -155,7 +157,7 @@ type Request struct {
 // CallFeatureLua executes Lua scripts associated with features within the context of a request.
 // It triggers actions or aborts features based on script results.
 // Returns whether a feature was triggered, if features should be aborted, and any execution error.
-func (r *Request) CallFeatureLua(ctx *gin.Context, cfg config.File, logger *slog.Logger) (triggered bool, abortFeatures bool, err error) {
+func (r *Request) CallFeatureLua(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) (triggered bool, abortFeatures bool, err error) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
@@ -179,7 +181,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context, cfg config.File, logger *slog
 		Config: cfg,
 	})
 
-	triggered, abortFeatures, err = r.executeScripts(ctx, cfg, logger, pool)
+	triggered, abortFeatures, err = r.executeScripts(ctx, cfg, logger, redisClient, pool)
 
 	return
 }
@@ -196,7 +198,7 @@ func (r *Request) setRequest(cfg config.File, L *lua.LState) *lua.LTable {
 
 // executeScripts executes all Lua feature scripts in parallel. It waits for all to finish,
 // then aggregates their results considering error, abort, and triggered semantics.
-func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog.Logger, pool *vmpool.Pool) (triggered bool, abortFeatures bool, err error) {
+func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, pool *vmpool.Pool) (triggered bool, abortFeatures bool, err error) {
 	// Prepare synchronization primitives and results storage
 	type featResult struct {
 		name       string
@@ -343,7 +345,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			}
 
 			// 4) nauthilus_redis (use luaCtx deadline)
-			if loader := redislib.LoaderModRedis(luaCtx, cfg); loader != nil {
+			if loader := redislib.LoaderModRedis(luaCtx, cfg, redisClient); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)
@@ -366,7 +368,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			}
 
 			// 6) nauthilus_psnet (connection monitoring)
-			if loader := connmgr.LoaderModPsnet(luaCtx, cfg); loader != nil {
+			if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)
@@ -377,7 +379,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			}
 
 			// 7) nauthilus_dns (DNS lookups)
-			if loader := lualib.LoaderModDNS(luaCtx, cfg); loader != nil {
+			if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)
@@ -391,7 +393,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			{
 				var loader lua.LGFunction
 				if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-					loader = lualib.LoaderModOTEL(luaCtx, cfg)
+					loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 				} else {
 					loader = lualib.LoaderOTELStateless()
 				}
@@ -408,7 +410,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			}
 
 			// 8) nauthilus_brute_force (toleration and blocking helpers)
-			if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+			if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
 				_ = loader(Llocal)
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)

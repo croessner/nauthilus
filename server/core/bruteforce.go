@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
@@ -101,7 +100,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 					}
 
 					// Store into in-process account cache
-					accountcache.GetManager().Set(a.Username, acc)
+					a.AccountCache().Set(a.Cfg(), a.Username, acc)
 				}
 
 				if !isRepeating && rep {
@@ -301,7 +300,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	bfCfg := cfg.GetBruteForce()
 	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(cctx, a.Username, a.ClientIP, a.GUID, bfCfg.SoftWhitelist) {
+		if util.IsSoftWhitelisted(cctx, a.Cfg(), a.Logger(), a.Username, a.ClientIP, a.GUID, bfCfg.SoftWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
 
@@ -389,7 +388,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	// IMPORTANT: set request attributes before running checks
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.Username, a.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Username, a.GUID)
 	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
 	// Determine IP once
@@ -591,7 +590,12 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		break
 	}
 
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.GUID, a.ClientIP, bruteforce.BucketManagerDeps{
+		Cfg:      a.Cfg(),
+		Logger:   a.Logger(),
+		Redis:    a.Redis(),
+		Tolerate: a.deps.Tolerate,
+	})
 
 	// Set the protocol if available
 	if a.Protocol != nil && a.Protocol.Get() != "" {
@@ -607,13 +611,13 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	// Try to avoid Redis if possible: use state or in-process cache first
 	accountName := a.GetAccount()
 	if accountName == "" {
-		if acc, ok := accountcache.GetManager().Get(a.Username); ok {
+		if acc, ok := a.AccountCache().Get(a.Username); ok {
 			accountName = acc
 		}
 	}
 
 	if accountName == "" {
-		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.Username, a.GUID)
+		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Username, a.GUID)
 	}
 
 	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)

@@ -49,7 +49,7 @@ func NewDefaultStatsService(cfgProvider configfx.Provider, logger *slog.Logger, 
 		definitions.StatsDelay*time.Second,
 		stats.MeasureCPU,
 		func(ctx context.Context) {
-			stats.PrintStats()
+			stats.PrintStats(logger)
 
 			snap := cfgProvider.Current()
 			if snap.File == nil {

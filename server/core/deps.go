@@ -18,6 +18,8 @@ package core
 import (
 	"log/slog"
 
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -25,11 +27,13 @@ import (
 
 // AuthDeps bundles dependencies required by authentication request paths.
 type AuthDeps struct {
-	Cfg      config.File
-	Logger   *slog.Logger
-	Env      config.Environment
-	Redis    rediscli.Client
-	Tolerate tolerate.Tolerate
+	Cfg          config.File
+	Logger       *slog.Logger
+	Env          config.Environment
+	Redis        rediscli.Client
+	Tolerate     tolerate.Tolerate
+	AccountCache *accountcache.Manager
+	Channel      backend.Channel
 }
 
 type HydraHandlers struct {

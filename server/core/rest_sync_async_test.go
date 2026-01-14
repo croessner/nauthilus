@@ -72,11 +72,12 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	deps := HTTPDeps{
-		Cfg:    cfg,
-		Logger: logger,
-		Redis:  redisClient,
+		Cfg:          cfg,
+		Logger:       logger,
+		Redis:        redisClient,
+		AccountCache: nil,
 	}
-	adminDeps := NewRestAdminDeps(cfg, logger, redisClient)
+	adminDeps := NewRestAdminDeps(cfg, logger, redisClient, nil)
 
 	// router
 	composer := NewDefaultRouterComposer(deps)

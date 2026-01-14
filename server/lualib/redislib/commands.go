@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -31,9 +32,9 @@ import (
 )
 
 // RedisGet retrieves a value from Redis using the given key and pushes it to the Lua state based on a specified type.
-func RedisGet(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisGet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 		valueType := definitions.TypeString
 
@@ -46,7 +47,7 @@ func RedisGet(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		err := convert.StringCmd(client.Get(dCtx, key), valueType, L)
+		err := convert.StringCmd(conn.Get(dCtx, key), valueType, L)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -59,9 +60,9 @@ func RedisGet(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisSet provides a Lua function for setting a Redis key to a given value with optional expiration time in seconds.
-func RedisSet(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisSet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		value, err := convert.LuaValue(L.Get(3))
@@ -158,7 +159,7 @@ func RedisSet(ctx context.Context, cfg config.File) lua.LGFunction {
 		defer cancel()
 
 		if useArgs {
-			cmd := client.SetArgs(dCtx, key, value, args)
+			cmd := conn.SetArgs(dCtx, key, value, args)
 			if cmd.Err() != nil {
 				// Redis-conformant semantics for options-table path: redis.Nil means a legitimate nil reply
 				// e.g., NX/XX condition not met or GET with no previous value.
@@ -186,7 +187,7 @@ func RedisSet(ctx context.Context, cfg config.File) lua.LGFunction {
 			expiration = time.Duration(L.CheckInt(4)) * time.Second
 		}
 
-		cmd := client.Set(dCtx, key, value, expiration)
+		cmd := conn.Set(dCtx, key, value, expiration)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -201,9 +202,9 @@ func RedisSet(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisIncr increments the integer value of a Redis key by 1 and returns the new value or an error if it fails.
-func RedisIncr(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisIncr(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -211,7 +212,7 @@ func RedisIncr(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.Incr(dCtx, key)
+		cmd := conn.Incr(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -226,9 +227,9 @@ func RedisIncr(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisDel deletes a given Redis key and reports the number of keys removed or an error if the operation fails.
-func RedisDel(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisDel(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -236,7 +237,7 @@ func RedisDel(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.Del(dCtx, key)
+		cmd := conn.Del(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -251,9 +252,9 @@ func RedisDel(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisExpire sets an expiration time on a Redis key and returns true if successful, or nil and an error if it fails.
-func RedisExpire(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisExpire(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 		expiration := L.CheckNumber(3)
 
@@ -262,7 +263,7 @@ func RedisExpire(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.Expire(dCtx, key, time.Duration(expiration)*time.Second)
+		cmd := conn.Expire(dCtx, key, time.Duration(expiration)*time.Second)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -277,9 +278,9 @@ func RedisExpire(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisRename renames a Redis key to a new key; returns an error if the operation fails.
-func RedisRename(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisRename(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		oldKey := L.CheckString(2)
 		newKey := L.CheckString(3)
 
@@ -288,7 +289,7 @@ func RedisRename(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.Rename(dCtx, oldKey, newKey)
+		cmd := conn.Rename(dCtx, oldKey, newKey)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -303,16 +304,16 @@ func RedisRename(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisPing executes a Redis PING command and returns the result or an error message if it fails. Increases Redis read counter on success.
-func RedisPing(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisPing(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.Ping(dCtx)
+		cmd := conn.Ping(dCtx)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -327,9 +328,9 @@ func RedisPing(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisExists checks if a given key exists in Redis, returning the count of matching keys as a Lua number.
-func RedisExists(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisExists(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -337,7 +338,7 @@ func RedisExists(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.Exists(dCtx, key)
+		cmd := conn.Exists(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

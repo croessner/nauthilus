@@ -38,6 +38,16 @@ func InitHTTPClient(_ config.File) {}
 // HandleErr renders a minimal error response when Hydra is disabled.
 // It ensures core packages can signal errors uniformly across build variants.
 func HandleErr(ctx *gin.Context, err error) {
+	HandleErrWithDeps(ctx, err, AuthDeps{
+		Cfg:    getDefaultConfigFile(),
+		Env:    getDefaultEnvironment(),
+		Logger: getDefaultLogger(),
+		Redis:  getDefaultRedisClient(),
+	})
+}
+
+// HandleErrWithDeps is a DI-capable variant of HandleErr for non-hydra builds.
+func HandleErrWithDeps(ctx *gin.Context, err error, _ AuthDeps) {
 	if err == nil {
 		ctx.Status(http.StatusBadRequest)
 

@@ -28,8 +28,11 @@ import (
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
+	"github.com/croessner/nauthilus/server/backend/ldappool"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -37,6 +40,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 
 	"go.uber.org/fx"
 )
@@ -113,7 +117,7 @@ func newRedisDeps(lc fx.Lifecycle, _ *bootstrapped, cfgProvider configfx.Provide
 }
 
 // newActionWorkers constructs the action worker pool used by the legacy worker orchestration.
-func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider, logger *slog.Logger) ([]*action.Worker, error) {
+func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider, logger *slog.Logger, redisClient rediscli.Client, env config.Environment) ([]*action.Worker, error) {
 	if cfgProvider == nil {
 		return nil, fmt.Errorf("config provider is nil")
 	}
@@ -123,7 +127,7 @@ func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider, logger *sl
 		return nil, fmt.Errorf("config snapshot file is nil")
 	}
 
-	return initializeActionWorkers(snap.File, logger), nil
+	return initializeActionWorkers(snap.File, logger, redisClient, env), nil
 }
 
 // newContextStoreForRuntime constructs the runtime context store.
@@ -137,15 +141,27 @@ func newContextStoreForRuntime(
 	env envfx.Environment,
 	logger *slog.Logger,
 	redisClient redifx.Client,
+	channel backend.Channel,
+	accountCache *accountcache.Manager,
 ) *contextStore {
 	store := newContextStore()
 	store.cfgProvider = cfgProvider
 	store.env = env
 	store.logger = logger
 	store.redisClient = redisClient
+	store.channel = channel
+	store.accountCache = accountCache
 	store.action = newContextTuple(ctx)
 
 	return store
+}
+
+func newAccountCache(cfgProvider configfx.Provider) *accountcache.Manager {
+	return accountcache.NewManager(cfgProvider.Current().File)
+}
+
+func newBackendChannel(cfgProvider configfx.Provider) backend.Channel {
+	return backend.NewChannel(cfgProvider.Current().File)
 }
 
 type runtimeLifecycleParams struct {
@@ -158,6 +174,8 @@ type runtimeLifecycleParams struct {
 	StatsSvc      *loopsfx.StatsService
 	MonitoringSvc *loopsfx.BackendMonitoringService
 	ConnMgrSvc    *loopsfx.ConnMgrService
+	Env           config.Environment
+	Channel       backend.Channel
 }
 
 // registerRuntimeLifecycle wires the legacy startup/shutdown sequence into fx.Lifecycle.
@@ -182,6 +200,7 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			bootfx.EnableBlockProfile(snap.File)
 			bootfx.InitializeBruteForceTolerate(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
+			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 			bootfx.InitializeHTTPClients(snap.File)
 			core.InitPassDBResultPool()
 
@@ -192,8 +211,23 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			// Provide core defaults for legacy call sites that are not fully constructor-injected yet.
 			core.SetDefaultConfigFile(snap.File)
 			core.SetDefaultLogger(p.Store.logger)
-			p.ActionWorkers = initializeActionWorkers(snap.File, p.Store.logger)
-			setupWorkers(p.Ctx, p.Store, p.ActionWorkers, snap.File, p.Store.logger)
+			core.SetDefaultAccountCache(p.Store.accountCache)
+			core.SetDefaultChannel(p.Channel)
+			core.SetDefaultEnvironment(p.Env)
+
+			// Provide util defaults for legacy call sites.
+			util.SetDefaultConfigFile(snap.File)
+			util.SetDefaultLogger(p.Store.logger)
+			util.SetDefaultEnvironment(p.Env)
+
+			// Provide ldappool defaults.
+			ldappool.SetDefaultEnvironment(p.Env)
+
+			// Provide action defaults.
+			action.SetDefaultEnvironment(p.Env)
+
+			p.ActionWorkers = initializeActionWorkers(snap.File, p.Store.logger, p.Store.redisClient, p.Env)
+			setupWorkers(p.Ctx, p.Store, p.ActionWorkers, snap.File, p.Store.logger, p.Store.redisClient, p.Channel)
 
 			if err := setupRedis(p.Ctx, p.Ctx, snap.File, p.Store.logger, p.Store.redisClient); err != nil {
 				return err
@@ -214,7 +248,7 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			// Ensure Lua redislib has a configured default client before any Lua code runs.
 			redislib.SetDefaultClient(p.Store.redisClient)
 
-			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger)
+			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 			core.LoadStatsFromRedis(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 
 			if err := startHTTPServer(p.Ctx, p.Store); err != nil {

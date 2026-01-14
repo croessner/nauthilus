@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -27,9 +28,9 @@ import (
 )
 
 // RedisLPush adds one or more values to the beginning of a Redis list and returns the length of the list after the push operation.
-func RedisLPush(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisLPush(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 		values := make([]any, L.GetTop()-2)
 
@@ -50,7 +51,7 @@ func RedisLPush(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.LPush(dCtx, key, values...)
+		cmd := conn.LPush(dCtx, key, values...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -65,9 +66,9 @@ func RedisLPush(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisRPush adds one or more values to the end of a Redis list and returns the length of the list after the push operation.
-func RedisRPush(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisRPush(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 		values := make([]any, L.GetTop()-2)
 
@@ -88,7 +89,7 @@ func RedisRPush(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.RPush(dCtx, key, values...)
+		cmd := conn.RPush(dCtx, key, values...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -103,9 +104,9 @@ func RedisRPush(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisLPop removes and returns the first element of a Redis list.
-func RedisLPop(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisLPop(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -113,7 +114,7 @@ func RedisLPop(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.LPop(dCtx, key)
+		cmd := conn.LPop(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -128,9 +129,9 @@ func RedisLPop(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisRPop removes and returns the last element of a Redis list.
-func RedisRPop(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisRPop(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -138,7 +139,7 @@ func RedisRPop(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.RPop(dCtx, key)
+		cmd := conn.RPop(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -153,9 +154,9 @@ func RedisRPop(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisLRange returns a range of elements from a Redis list.
-func RedisLRange(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisLRange(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 		start := L.CheckInt64(3)
 		stop := L.CheckInt64(4)
@@ -165,7 +166,7 @@ func RedisLRange(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.LRange(dCtx, key, start, stop)
+		cmd := conn.LRange(dCtx, key, start, stop)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -185,9 +186,9 @@ func RedisLRange(ctx context.Context, cfg config.File) lua.LGFunction {
 }
 
 // RedisLLen returns the length of a Redis list.
-func RedisLLen(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisLLen(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -195,7 +196,7 @@ func RedisLLen(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.LLen(dCtx, key)
+		cmd := conn.LLen(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

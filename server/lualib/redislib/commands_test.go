@@ -24,12 +24,16 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRedisGet(t *testing.T) {
-	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	tests := []struct {
 		name             string
@@ -61,21 +65,20 @@ func TestRedisGet(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("valueType", lua.LString(tt.valueType))
@@ -100,6 +103,11 @@ func TestRedisGet(t *testing.T) {
 }
 
 func TestRedisSet(t *testing.T) {
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	tests := []struct {
 		name             string
 		key              string
@@ -144,21 +152,20 @@ func TestRedisSet(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("value", tt.value)
@@ -184,6 +191,11 @@ func TestRedisSet(t *testing.T) {
 }
 
 func TestRedisExpire(t *testing.T) {
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	tests := []struct {
 		name             string
 		key              string
@@ -224,21 +236,20 @@ func TestRedisExpire(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("expiration", tt.expiration)
@@ -263,6 +274,11 @@ func TestRedisExpire(t *testing.T) {
 }
 
 func TestRedisIncr(t *testing.T) {
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	tests := []struct {
 		name             string
 		key              string
@@ -299,21 +315,20 @@ func TestRedisIncr(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -337,6 +352,11 @@ func TestRedisIncr(t *testing.T) {
 }
 
 func TestRedisDel(t *testing.T) {
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	tests := []struct {
 		name             string
 		key              string
@@ -373,21 +393,20 @@ func TestRedisDel(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -411,6 +430,11 @@ func TestRedisDel(t *testing.T) {
 }
 
 func TestRedisRename(t *testing.T) {
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	tests := []struct {
 		name             string
 		oldKey           string
@@ -451,21 +475,20 @@ func TestRedisRename(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
 			L.SetGlobal("newKey", lua.LString(tt.newKey))
@@ -490,6 +513,11 @@ func TestRedisRename(t *testing.T) {
 }
 
 func TestPing(t *testing.T) {
+	testFile := &config.FileSettings{Server: &config.ServerSection{}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
 	tests := []struct {
 		name             string
 		mockError        error
@@ -517,21 +545,20 @@ func TestPing(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
-
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tt.prepareMockRedis(mock)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
 
-			rediscli.NewTestClient(db)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_ping("default")`)
 			if err != nil {

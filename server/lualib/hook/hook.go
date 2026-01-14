@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtutil"
@@ -36,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -449,7 +451,7 @@ func setupLogging(cfg config.File, L *lua.LState) *lua.LTable {
 // runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
 // Returns an error if the script is not found or if execution fails.
-func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, hook string) error {
+func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
 	tr := monittrace.New("nauthilus/hooks")
 	cctx, csp := tr.Start(ctx, "hooks.execute_common",
 		attribute.String("hook", hook),
@@ -519,7 +521,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	}
 
 	// 2) nauthilus_redis (use luaCtx deadline)
-	if loader := redislib.LoaderModRedis(luaCtx, cfg); loader != nil {
+	if loader := redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -542,7 +544,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	}
 
 	// 4) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx, cfg); loader != nil {
+	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -553,7 +555,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	}
 
 	// 5) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx, cfg); loader != nil {
+	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -567,7 +569,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	{
 		var loader lua.LGFunction
 		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx, cfg)
+			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -584,7 +586,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	}
 
 	// 6) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -606,7 +608,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 
 // runLuaCustomWrapper executes a precompiled Lua script and returns its result or any occurring error.
 // It retrieves the script based on the HTTP request context and dynamically registers Lua libraries before execution.
-func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger) (gin.H, error) {
+func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) (gin.H, error) {
 	tr := monittrace.New("nauthilus/hooks")
 	xctx, xsp := tr.Start(ctx.Request.Context(), "hooks.execute_custom",
 		attribute.String("path", ctx.Param("hook")),
@@ -720,7 +722,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 	}
 
 	// 4) nauthilus_redis (use luaCtx deadline)
-	if loader = redislib.LoaderModRedis(luaCtx, cfg); loader != nil {
+	if loader = redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -743,7 +745,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 	}
 
 	// 6) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx, cfg); loader != nil {
+	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -754,7 +756,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 	}
 
 	// 7) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx, cfg); loader != nil {
+	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -768,7 +770,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 	{
 		var loader lua.LGFunction
 		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx, cfg)
+			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -785,7 +787,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 	}
 
 	// 8) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -820,13 +822,12 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 }
 
 // RunLuaHook executes a precompiled Lua script based on a hook parameter from the gin.Context.
-func RunLuaHook(ctx *gin.Context, cfg config.File, logger *slog.Logger) (gin.H, error) {
-	return runLuaCustomWrapper(ctx, cfg, logger)
+func RunLuaHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) (gin.H, error) {
+	return runLuaCustomWrapper(ctx, cfg, logger, redis)
 }
 
-// RunLuaInit initializes and runs a Lua script based on the specified hook.
-func RunLuaInit(ctx context.Context, cfg config.File, logger *slog.Logger, hook string) error {
-	return runLuaCommonWrapper(ctx, cfg, logger, hook)
+func RunLuaInit(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
+	return runLuaCommonWrapper(ctx, cfg, logger, redis, hook)
 }
 
 // executeAndHandleError executes a Lua script, invoking a predefined hook and processing its results or errors.

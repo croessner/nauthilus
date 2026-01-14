@@ -54,7 +54,7 @@ type PoolStats struct {
 	Stats *redis.PoolStats
 }
 
-// ConfigValues holds the configuration parameters for a Redis client.
+// ConfigValues holds the configuration parameters for a Redis conn.
 type ConfigValues struct {
 	// Address refers to the address of the Redis server.
 	Address string
@@ -283,7 +283,7 @@ func RegisterRedisPool(L *lua.LState) int {
 
 // GetRedisConnection retrieves a Redis connection by name. Searches through standalone, failover, and cluster pools.
 // If found, it returns the connection as a Lua userdata object. If not found, it returns nil and an error message.
-// Special case: If the name is "default", it returns the process-wide default client.
+// Special case: If the name is "default", it returns the process-wide default conn.
 func GetRedisConnection(L *lua.LState) int {
 	var (
 		okay   bool
@@ -318,11 +318,16 @@ func GetRedisConnection(L *lua.LState) int {
 // getRedisConnectionWithFallback returns a Redis client from Lua state or a fallback client if the Lua state contains "default".
 func getRedisConnectionWithFallback(L *lua.LState, fallbackClient redis.UniversalClient) redis.UniversalClient {
 	ud := L.Get(1)
-	if ud == lua.LString("default") {
+	if ud.Type() == lua.LTString && ud.String() == "default" {
 		return fallbackClient
 	}
 
-	client, okay := ud.(*lua.LUserData).Value.(redis.UniversalClient)
+	userData, okay := ud.(*lua.LUserData)
+	if !okay || userData == nil {
+		return fallbackClient
+	}
+
+	client, okay := userData.Value.(redis.UniversalClient)
 	if !okay {
 		return fallbackClient
 	}

@@ -21,7 +21,9 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"
@@ -65,15 +67,21 @@ func TestRedisRunScript(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tc.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			testFile := &config.FileSettings{Server: &config.ServerSection{}}
+			config.SetTestFile(testFile)
+			util.SetDefaultConfigFile(testFile)
+			util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 			L := lua.NewState()
-
 			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			// Use default redis settings
 			L.Push(lua.LString("default"))
@@ -101,7 +109,7 @@ func TestRedisRunScript(t *testing.T) {
 			L.Push(args)
 
 			// Call function and check error
-			numReturned := RedisRunScript(context.Background(), config.GetFile())(L)
+			numReturned := RedisRunScript(context.Background(), testFile, client)(L)
 			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")
@@ -155,24 +163,29 @@ func TestRedisUploadScript(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tc.prepareRedisUpload(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			testFile := &config.FileSettings{Server: &config.ServerSection{}}
+			config.SetTestFile(testFile)
+			util.SetDefaultConfigFile(testFile)
+			util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 			L := lua.NewState()
-
 			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			// Use redis default settings
 			L.Push(lua.LString("default"))
 
-			// Set up script
 			L.Push(lua.LString(tc.script))
 			L.Push(lua.LString(tc.uploadScriptName))
 
-			numReturned := RedisUploadScript(context.Background(), config.GetFile())(L)
+			numReturned := RedisUploadScript(context.Background(), testFile, client)(L)
 			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")

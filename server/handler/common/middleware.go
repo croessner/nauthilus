@@ -18,6 +18,8 @@ package common
 import (
 	"log/slog"
 
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -34,11 +36,13 @@ import (
 
 // CreateMiddlewareChain constructs the standard middleware chain for frontend routes
 // including sessions, CSRF, Lua context, language handling and endpoint protection.
-func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, sessionStore sessions.Store) []gin.HandlerFunc {
+func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, sessionStore sessions.Store) []gin.HandlerFunc {
 	deps := core.AuthDeps{
-		Cfg:    cfg,
-		Logger: logger,
-		Redis:  redisClient,
+		Cfg:          cfg,
+		Logger:       logger,
+		Redis:        redisClient,
+		AccountCache: accountCache,
+		Channel:      backend.NewChannel(cfg),
 	}
 
 	return []gin.HandlerFunc{
@@ -46,7 +50,7 @@ func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, redisClient red
 		adapter.Wrap(nosurf.NewPure),
 		mdlua.LuaContextMiddleware(),
 		core.WithLanguageMiddleware(deps),
-		core.AccountMiddleware(cfg, logger, redisClient),
+		core.AccountMiddleware(cfg, logger, redisClient, accountCache),
 		mdauth.ProtectEndpointMiddleware(cfg, logger),
 	}
 }

@@ -177,7 +177,7 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 			var stringSlice []string
 
 			util.DebugModuleWithCfg(
-				a.deps.Ctx,
+				a.Ctx(),
 				a.Cfg(),
 				a.Logger(),
 				definitions.DbgAuth,
@@ -227,6 +227,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 			if claimValue, assertOk := claim.(string); assertOk {
 				if value, found := a.GetAttribute(claimValue); found {
 					util.DebugModuleWithCfg(
+						a.Ctx(),
 						a.Cfg(),
 						a.Logger(),
 						definitions.DbgAuth,
@@ -308,6 +309,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[str
 				clientIDFound = true
 
 				util.DebugModuleWithCfg(
+					a.Ctx(),
 					a.Cfg(),
 					a.Logger(),
 					definitions.DbgAuth,

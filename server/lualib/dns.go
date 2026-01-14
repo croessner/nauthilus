@@ -18,6 +18,7 @@ package lualib
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -33,10 +34,15 @@ import (
 
 // Resolve performs a DNS record lookup for the specified domain and record type using Lua and the provided context.
 // It supports record types such as A, AAAA, MX, NS, TXT, CNAME, and PTR and returns the result or an error to Lua.
-func Resolve(ctx context.Context, cfg config.File) lua.LGFunction {
+func Resolve(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		domain := L.CheckString(1)
 		recordType := strings.ToUpper(L.OptString(2, "A"))
+
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLua,
+			"domain", domain,
+			"kind", recordType,
+		)
 
 		result, err := lookupRecord(ctx, cfg, L, domain, recordType)
 		if err != nil {
@@ -243,10 +249,10 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 }
 
 // LoaderModDNS initializes and loads the DNS module for Lua, providing functions for DNS lookups and managing records.
-func LoaderModDNS(ctx context.Context, cfg config.File) lua.LGFunction {
+func LoaderModDNS(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnDNSResolve: Resolve(ctx, cfg),
+			"resolve": Resolve(ctx, cfg, logger),
 		})
 
 		L.Push(mod)

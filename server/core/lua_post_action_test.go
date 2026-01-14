@@ -25,13 +25,16 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 	// Initialize action channel
 	corepkg.SetDefaultConfigFile(config.GetFile())
-	_ = action.NewWorker(config.GetFile(), log.GetLogger())
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	_ = action.NewWorker(config.GetFile(), log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
 
 	done := make(chan struct{})
 	go func() {

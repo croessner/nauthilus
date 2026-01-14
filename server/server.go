@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/backend/ldappool"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
@@ -76,6 +77,12 @@ type contextStore struct {
 	// redisClient is the injected Redis facade for newly migrated code paths.
 	redisClient redifx.Client
 
+	// channel is the injected backend channel for newly migrated code paths.
+	channel backend.Channel
+
+	// accountCache is the injected account cache manager for newly migrated code paths.
+	accountCache *accountcache.Manager
+
 	// signals holds server lifecycle channels via the interface (no globals)
 	signals core.ServerSignals
 }
@@ -93,8 +100,6 @@ func newContextStoreWithDeps(cfg config.File, logger *slog.Logger, redis rediscl
 		logger:      logger,
 		redisClient: redis,
 	}
-
-	backend.SetChannel(backend.NewChannel(cfg))
 
 	return store
 }
@@ -137,31 +142,31 @@ func forEachConfiguredBackendName(cfg config.File, backendType definitions.Backe
 
 // startLDAPWorkers initializes and starts LDAP worker routines for lookup and authentication based on the configuration.
 // It launches the `LDAPMainWorker` for processing LDAP requests and, if applicable, `LDAPAuthWorker` for authentication.
-func startLDAPWorkers(store *contextStore, cfg config.File, logger *slog.Logger) {
+func startLDAPWorkers(store *contextStore, cfg config.File, logger *slog.Logger, channel backend.Channel) {
 	forEachConfiguredBackendName(cfg, definitions.BackendLDAP, func(poolName string) {
 		// The default pool is already present in the channel registry.
 		if poolName != definitions.DefaultBackendName {
-			backend.GetChannel().GetLdapChannel().AddChannel(poolName)
+			channel.GetLdapChannel().AddChannel(poolName)
 		}
 
-		backend.LDAPMainWorker(store.ldapLookup.ctx, cfg, logger, poolName)
+		backend.LDAPMainWorker(store.ldapLookup.ctx, cfg, logger, channel, poolName)
 
 		if !cfg.LDAPHavePoolOnly(poolName) {
-			backend.LDAPAuthWorker(store.ldapAuth.ctx, cfg, logger, poolName)
+			backend.LDAPAuthWorker(store.ldapAuth.ctx, cfg, logger, channel, poolName)
 		}
 	})
 }
 
 // startLuaWorkers starts a goroutine that runs the backend.LuaMainWorker function
-func startLuaWorkers(store *contextStore, cfg config.File, logger *slog.Logger) {
+func startLuaWorkers(store *contextStore, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) {
 	forEachConfiguredBackendName(cfg, definitions.BackendLua, func(backendName string) {
 		// The default backend is already present in the channel registry.
 		if backendName != definitions.DefaultBackendName {
-			backend.GetChannel().GetLuaChannel().AddChannel(backendName)
+			channel.GetLuaChannel().AddChannel(backendName)
 		}
 
 		go func() {
-			err := backend.LuaMainWorker(store.lua.ctx, cfg, logger, backendName)
+			err := backend.LuaMainWorker(store.lua.ctx, cfg, logger, redisClient, channel, backendName)
 			if err != nil {
 				level.Error(logger).Log(definitions.LogKeyMsg, "Lua backend worker failed", definitions.LogKeyError, err)
 			}
@@ -170,18 +175,18 @@ func startLuaWorkers(store *contextStore, cfg config.File, logger *slog.Logger) 
 }
 
 // initializeActionWorkers creates and initializes a slice of action workers based on the maximum workers configuration.
-func initializeActionWorkers(cfg config.File, logger *slog.Logger) []*action.Worker {
+func initializeActionWorkers(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, env config.Environment) []*action.Worker {
 	var workers []*action.Worker
 
 	for i := 0; i < int(cfg.GetLuaActionNumberOfWorkers()); i++ {
-		workers = append(workers, action.NewWorker(cfg, logger))
+		workers = append(workers, action.NewWorker(cfg, logger, redisClient, env))
 	}
 
 	return workers
 }
 
 // setupWorkers initializes action workers and backend workers (LDAP, Lua, etc.) based on the provided configuration.
-func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker, cfg config.File, logger *slog.Logger) {
+func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) {
 	var (
 		ldapStarted bool
 		luaStarted  bool
@@ -196,7 +201,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 				continue
 			}
 
-			setupLDAPWorker(store, ctx, cfg, logger)
+			setupLDAPWorker(store, ctx, cfg, logger, channel)
 
 			ldapStarted = true
 		case definitions.BackendLua:
@@ -204,7 +209,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 				continue
 			}
 
-			setupLuaWorker(store, ctx, cfg, logger)
+			setupLuaWorker(store, ctx, cfg, logger, redisClient, channel)
 
 			luaStarted = true
 		case definitions.BackendCache:
@@ -215,18 +220,18 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 }
 
 // setupLDAPWorker initializes the LDAP worker contexts and starts LDAP worker routines for processing requests and authentication.
-func setupLDAPWorker(store *contextStore, ctx context.Context, cfg config.File, logger *slog.Logger) {
+func setupLDAPWorker(store *contextStore, ctx context.Context, cfg config.File, logger *slog.Logger, channel backend.Channel) {
 	store.ldapLookup = newContextTuple(ctx)
 	store.ldapAuth = newContextTuple(ctx)
 
-	startLDAPWorkers(store, cfg, logger)
+	startLDAPWorkers(store, cfg, logger, channel)
 }
 
 // setupLuaWorker initializes the Lua worker context, channels, and starts the Lua worker goroutine.
-func setupLuaWorker(store *contextStore, ctx context.Context, cfg config.File, logger *slog.Logger) {
+func setupLuaWorker(store *contextStore, ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) {
 	store.lua = newContextTuple(ctx)
 
-	startLuaWorkers(store, cfg, logger)
+	startLuaWorkers(store, cfg, logger, redisClient, channel)
 }
 
 // checkRedisConnections validates the availability of both write and read Redis connections using Ping commands.
@@ -342,8 +347,16 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	// Make environment available to core subtrees without direct global access.
 	core.SetDefaultEnvironment(env)
 
+	// Provide core defaults for legacy call sites.
+	core.SetDefaultConfigFile(cfg)
+	core.SetDefaultLogger(logger)
+
 	// Make environment available to util subtrees without direct global access.
 	util.SetDefaultEnvironment(env)
+
+	// Provide util defaults for legacy call sites.
+	util.SetDefaultConfigFile(cfg)
+	util.SetDefaultLogger(logger)
 
 	// Make environment available to backend/ldappool without direct global access.
 	ldappool.SetDefaultEnvironment(env)
@@ -403,7 +416,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	// Frontend handlers only if enabled (keeps logic parity)
 	if cfg.GetServer().Frontend.Enabled {
 		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{Cfg: cfg, Logger: logger}).InitSessionStore()
-		deps := &handlerdeps.Deps{Cfg: cfg, Logger: logger}
+		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Logger: logger}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
 		if tags.HydraEnabled {
@@ -432,7 +445,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Backchannel API
 	setupBackchannel = func(e *gin.Engine) {
-		deps := &handlerdeps.Deps{Cfg: cfg, Env: env, Logger: logger, Redis: store.redisClient}
+		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Env: env, Logger: logger, Redis: store.redisClient}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		handlerbackchannel.SetupWithDeps(e, deps)
 	}

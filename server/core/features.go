@@ -95,7 +95,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		AdditionalFeatures: a.AdditionalFeatures,
 	}
 
-	triggered, abortFeatures, err = fr.CallFeatureLua(ctx, a.Cfg(), a.Logger())
+	triggered, abortFeatures, err = fr.CallFeatureLua(ctx, a.Cfg(), a.Logger(), a.Redis())
 
 	if err != nil {
 		return
@@ -371,7 +371,7 @@ func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) 
 		}
 
 		return relayDomains.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(fctx, a.Username, a.ClientIP, a.GUID, relayDomains.SoftWhitelist)
+			util.IsSoftWhitelisted(fctx, a.Cfg(), a.Logger(), a.Username, a.ClientIP, a.GUID, relayDomains.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -408,7 +408,7 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 		}
 
 		return rbls.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(fctx, a.Username, a.ClientIP, a.GUID, rbls.SoftWhitelist)
+			util.IsSoftWhitelisted(fctx, a.Cfg(), a.Logger(), a.Username, a.ClientIP, a.GUID, rbls.SoftWhitelist)
 	}
 
 	checkFunc := func() {

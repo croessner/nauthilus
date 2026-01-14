@@ -21,17 +21,21 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestConnectionManager(t *testing.T) {
 	ctx := context.Background()
 
-	config.SetTestFile(&config.FileSettings{
+	testFile := &config.FileSettings{
 		Server: &config.ServerSection{
 			DNS: config.DNS{
 				Timeout: 100 * time.Millisecond,
-			}}})
+			}}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	manager = GetConnectionManager()
 

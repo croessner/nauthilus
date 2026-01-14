@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -29,9 +30,9 @@ import (
 // RedisPFAdd adds the specified elements to the specified HyperLogLog (HLL) key.
 // Returns 1 if at least one internal register was altered, 0 otherwise.
 // Usage from Lua: nauthilus_redis.redis_pfadd(client_or_"default", key, element1, element2, ...)
-func RedisPFAdd(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisPFAdd(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		values := make([]any, 0, max(0, L.GetTop()-2))
@@ -52,7 +53,7 @@ func RedisPFAdd(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.PFAdd(dCtx, key, values...)
+		cmd := conn.PFAdd(dCtx, key, values...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -69,9 +70,9 @@ func RedisPFAdd(ctx context.Context, cfg config.File) lua.LGFunction {
 // RedisPFCount returns the approximated cardinality computed by the HyperLogLog at the specified keys.
 // When multiple keys are provided, returns the approximated cardinality of the union of the HyperLogLogs.
 // Usage from Lua: nauthilus_redis.redis_pfcount(client_or_"default", key1, [key2, ...])
-func RedisPFCount(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisPFCount(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 
 		if L.GetTop() < 2 {
 			L.Push(lua.LNil)
@@ -90,7 +91,7 @@ func RedisPFCount(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.PFCount(dCtx, keys...)
+		cmd := conn.PFCount(dCtx, keys...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -107,9 +108,9 @@ func RedisPFCount(ctx context.Context, cfg config.File) lua.LGFunction {
 // RedisPFMerge merges multiple HyperLogLogs into a destination key.
 // Returns "OK" on success.
 // Usage from Lua: nauthilus_redis.redis_pfmerge(client_or_"default", destKey, sourceKey1, [sourceKey2, ...])
-func RedisPFMerge(ctx context.Context, cfg config.File) lua.LGFunction {
+func RedisPFMerge(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 
 		dest := L.CheckString(2)
 		if L.GetTop() < 3 {
@@ -129,7 +130,7 @@ func RedisPFMerge(ctx context.Context, cfg config.File) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.PFMerge(dCtx, dest, sources...)
+		cmd := conn.PFMerge(dCtx, dest, sources...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

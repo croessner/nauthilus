@@ -46,6 +46,11 @@ func SetDefaultEnvironment(env config.Environment) {
 	defaultEnvironment.Store(envHolder{env: env})
 }
 
+// GetDefaultEnvironment returns the process-wide default environment for util.
+func GetDefaultEnvironment() config.Environment {
+	return getDefaultEnvironment()
+}
+
 func getDefaultEnvironment() config.Environment {
 	if v := defaultEnvironment.Load(); v != nil {
 		if h, ok := v.(envHolder); ok {

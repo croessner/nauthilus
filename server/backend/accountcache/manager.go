@@ -32,10 +32,6 @@ type Manager struct {
 	maxItems int
 }
 
-var (
-	mgr Manager
-)
-
 func (m *Manager) initCacheWithCfg(cfg config.File) {
 	m.once.Do(func() {
 		localCacheCfg := cfg.GetServer().GetRedis().GetAccountLocalCache()
@@ -50,23 +46,20 @@ func (m *Manager) initCacheWithCfg(cfg config.File) {
 	})
 }
 
-// GetManager returns the singleton cache manager instance.
-func GetManager() *Manager {
-	mgr.initCacheWithCfg(config.GetFile())
+// NewManager creates a new Manager instance.
+func NewManager(cfg config.File) *Manager {
+	m := &Manager{}
+	m.initCacheWithCfg(cfg)
 
-	return &mgr
+	return m
 }
 
 // Get returns a cached account name for the given username (if present).
 func (m *Manager) Get(username string) (string, bool) {
-	if m == nil {
+	if m == nil || m.cache == nil {
 		return "", false
 	}
-	m.initCacheWithCfg(config.GetFile())
 
-	if m.cache == nil {
-		return "", false
-	}
 	if v, ok := m.cache.Get(username); ok {
 		if s, ok2 := v.(string); ok2 {
 			return s, true
@@ -77,18 +70,13 @@ func (m *Manager) Get(username string) (string, bool) {
 }
 
 // Set stores the mapping with the configured TTL. If disabled, it is a no-op.
-func (m *Manager) Set(username, account string) {
-	if m == nil {
+func (m *Manager) Set(cfg config.File, username, account string) {
+	if m == nil || m.cache == nil {
 		return
 	}
-	m.initCacheWithCfg(config.GetFile())
 
 	// Only set when feature is enabled
-	if !config.GetFile().GetServer().GetRedis().GetAccountLocalCache().IsEnabled() {
-		return
-	}
-
-	if m.cache == nil {
+	if !cfg.GetServer().GetRedis().GetAccountLocalCache().IsEnabled() {
 		return
 	}
 

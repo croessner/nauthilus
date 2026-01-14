@@ -80,6 +80,8 @@ func main() {
 		fx.Provide(newLogger),
 		fx.Provide(newDbgModuleMapping),
 		fx.Provide(newRedisDeps),
+		fx.Provide(newAccountCache),
+		fx.Provide(newBackendChannel),
 		envfx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),

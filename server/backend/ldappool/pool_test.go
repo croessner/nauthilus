@@ -51,7 +51,7 @@ func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {}
 
 func (m *mockLDAPConnection) IsClosing() bool { return false }
 
-func (m *mockLDAPConnection) Search(_ config.File, _ *slog.Logger, req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+func (m *mockLDAPConnection) Search(_ context.Context, _ config.File, _ *slog.Logger, req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
 
 	// Count calls for tests that need to assert cache hits/misses.
 	atomic.AddInt32(&m.searchCalls, 1)
@@ -71,7 +71,7 @@ func (m *mockLDAPConnection) Search(_ config.File, _ *slog.Logger, req *bktype.L
 	return nil, nil, nil
 }
 
-func (m *mockLDAPConnection) Modify(_ config.File, _ *slog.Logger, _ *bktype.LDAPRequest) error {
+func (m *mockLDAPConnection) Modify(_ context.Context, _ config.File, _ *slog.Logger, _ *bktype.LDAPRequest) error {
 	if m.modifyError != nil {
 		return m.modifyError
 	}
@@ -97,7 +97,7 @@ func (m *mockLDAPConnection) Connect(_ string, _ config.File, _ *slog.Logger, _ 
 	return m.connError
 }
 
-func (m *mockLDAPConnection) Bind(_ string, _ config.File, _ *slog.Logger, _ *config.LDAPConf) error {
+func (m *mockLDAPConnection) Bind(_ context.Context, _ string, _ config.File, _ *slog.Logger, _ *config.LDAPConf) error {
 	return m.bindError
 }
 
