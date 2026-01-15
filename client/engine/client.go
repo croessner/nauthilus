@@ -18,6 +18,8 @@ import (
 	jsoniter "github.com/json-iterator/go"
 )
 
+var fastJson = jsoniter.ConfigFastest
+
 type AuthClient struct {
 	config       *Config
 	httpClient   *http.Client
@@ -119,7 +121,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 		}
 	}
 
-	body, _ := jsoniter.Marshal(payload)
+	body, _ := fastJson.Marshal(payload)
 
 	reqURL := c.config.Endpoint
 	if row.NoAuth {

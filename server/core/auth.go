@@ -2808,7 +2808,7 @@ func setupBodyBasedAuth(ctx *gin.Context, auth State) {
 
 		if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
 			processApplicationXWWWFormUrlencoded(ctx, auth)
-		} else if contentType == "application/json" {
+		} else if strings.HasPrefix(contentType, "application/json") {
 			processApplicationJSON(ctx, auth)
 		} else {
 			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
@@ -2875,7 +2875,11 @@ func setupAuth(ctx *gin.Context, auth State) {
 		setupHTTPBasicAuth(ctx, auth)
 	}
 
-	if ctx.Query("mode") != "list-accounts" && svc != definitions.ServBasic {
+	if ctx.IsAborted() {
+		return
+	}
+
+	if ctx.Query("mode") != "list-accounts" && ctx.Query("mode") != "no-auth" && svc != definitions.ServBasic {
 		if !util.ValidateUsername(auth.GetUsername()) {
 			auth.SetUsername("")
 			ctx.Error(errors.ErrInvalidUsername)

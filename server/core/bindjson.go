@@ -56,5 +56,9 @@ func HandleJSONError(ctx *gin.Context, err error) {
 		}
 
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"errors": errorMsgList})
+
+		return
 	}
+
+	ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 }
