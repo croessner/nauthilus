@@ -1,6 +1,4 @@
-//go:build !redislib_oop
-
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,108 +17,154 @@ package redislib
 
 import (
 	"context"
+	"errors"
 	"sort"
 
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
-
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// RedisZAdd adds members with scores to a Redis sorted set, returning the number of elements added to the set.
-func RedisZAdd(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		const errorMsg = "Expected a table of string-number pairs"
+// RedisZAdd adds one or more members to a sorted set, or updates its score if it already exists.
+func (rm *RedisManager) RedisZAdd(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		top := stack.GetTop()
+		var zValues []redis.Z
 
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			values := stack.CheckTable(3)
 
-		key := L.CheckString(2)
-		values := L.CheckTable(3)
+			zValues = rm.parseLuaTableToRedisZSet(L, values, "zadd expects a table of scores and values")
+		} else {
+			if top < 4 || (top-2)%2 != 0 {
+				return stack.PushError(errors.New("Invalid number of arguments"))
+			}
 
-		redisZSet := parseLuaTableToRedisZSet(L, values, errorMsg)
+			for i := 3; i <= top; i += 2 {
+				member := stack.CheckString(i)
+				score := float64(stack.CheckNumber(i + 1))
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+				zValues = append(zValues, redis.Z{
+					Member: member,
+					Score:  score,
+				})
+			}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZAdd(dCtx, key, redisZSet...)
-		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			sort.Slice(zValues, func(i, j int) bool {
+				return zValues[i].Member.(string) < zValues[j].Member.(string)
+			})
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
+		cmd := conn.ZAdd(ctx, key, zValues...)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
 
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// parseLuaTableToRedisZSet converts a Lua table of key-value pairs into a slice of Redis ZSet members with scores.
-func parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, errorMsg string) []redis.Z {
-	redisZSet := make([]redis.Z, 0)
+// parseLuaTableToRedisZSet is a helper function to parse a Lua table into a slice of redis.Z values.
+func (rm *RedisManager) parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, _ string) []redis.Z {
+	var zValues []redis.Z
 
-	elements := make([]struct {
-		Member string
-		Score  float64
-	}, 0)
-
-	values.ForEach(func(k, v lua.LValue) {
-		member := k.String()
-		if member == "" {
-			L.ArgError(1, errorMsg)
-		}
-
-		score := float64(lua.LVAsNumber(v))
-
-		elements = append(elements, struct {
-			Member string
-			Score  float64
-		}{
-			Member: member,
-			Score:  score,
+	values.ForEach(func(key lua.LValue, value lua.LValue) {
+		zValues = append(zValues, redis.Z{
+			Score:  float64(lua.LVAsNumber(value)),
+			Member: key.String(),
 		})
 	})
 
-	sort.Slice(elements, func(i, j int) bool {
-		return elements[i].Member < elements[j].Member
+	sort.Slice(zValues, func(i, j int) bool {
+		return zValues[i].Member.(string) < zValues[j].Member.(string)
 	})
 
-	for _, elem := range elements {
-		redisZSet = append(redisZSet, redis.Z{
-			Member: elem.Member,
-			Score:  elem.Score,
+	return zValues
+}
+
+// RedisZRange returns a range of members in a sorted set, by index.
+func (rm *RedisManager) RedisZRange(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		start := int64(stack.CheckInt(3))
+		stop := int64(stack.CheckInt(4))
+
+		cmd := conn.ZRange(ctx, key, start, stop)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
+
+		result := L.NewTable()
+
+		for _, val := range cmd.Val() {
+			result.Append(lua.LString(val))
+		}
+
+		return stack.PushResults(result, lua.LNil)
+	})
+}
+
+// RedisZRevRange returns a range of members in a sorted set, by index, with scores ordered from high to low.
+func (rm *RedisManager) RedisZRevRange(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		start := int64(stack.CheckInt(3))
+		stop := int64(stack.CheckInt(4))
+
+		cmd := conn.ZRevRange(ctx, key, start, stop)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
+
+		result := L.NewTable()
+
+		for _, val := range cmd.Val() {
+			result.Append(lua.LString(val))
+		}
+
+		return stack.PushResults(result, lua.LNil)
+	})
+}
+
+// RedisZRangeByScore returns a range of members in a sorted set, by score.
+func (rm *RedisManager) RedisZRangeByScore(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		min := stack.CheckString(3)
+		max := stack.CheckString(4)
+
+		var (
+			offset int64
+			count  int64
+		)
+
+		top := stack.GetTop()
+		if top >= 5 && L.Get(5) != lua.LNil {
+			if tbl, ok := L.Get(5).(*lua.LTable); ok {
+				if v := tbl.RawGetString("offset"); v.Type() == lua.LTNumber {
+					offset = int64(lua.LVAsNumber(v))
+				}
+
+				if v := tbl.RawGetString("count"); v.Type() == lua.LTNumber {
+					count = int64(lua.LVAsNumber(v))
+				}
+			} else {
+				offset = int64(stack.CheckInt(5))
+				if top >= 6 {
+					count = int64(stack.CheckInt(6))
+				}
+			}
+		}
+
+		cmd := conn.ZRangeByScore(ctx, key, &redis.ZRangeBy{
+			Min:    min,
+			Max:    max,
+			Offset: offset,
+			Count:  count,
 		})
-	}
-
-	return redisZSet
-}
-
-// RedisZRange retrieves a range of members from a sorted set in Redis based on their rank, defined by start and stop indexes.
-func RedisZRange(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-
-		key := L.CheckString(2)
-		start := int64(L.CheckNumber(3))
-		stop := int64(L.CheckNumber(4))
-
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRange(dCtx, key, start, stop)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
 		result := L.NewTable()
@@ -129,328 +173,149 @@ func RedisZRange(ctx context.Context, cfg config.File, client rediscli.Client) l
 			result.Append(lua.LString(val))
 		}
 
-		L.Push(result)
-
-		return 1
-	}
+		return stack.PushResults(result, lua.LNil)
+	})
 }
 
-// RedisZRevRange retrieves a range of elements from a sorted set in reverse order based on their indices.
-func RedisZRevRange(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-
-		key := L.CheckString(2)
-		start := int64(L.CheckNumber(3))
-		stop := int64(L.CheckNumber(4))
-
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRevRange(dCtx, key, start, stop)
-		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
-		}
-
-		result := L.NewTable()
-
-		for _, val := range cmd.Val() {
-			result.Append(lua.LString(val))
-		}
-
-		L.Push(result)
-
-		return 1
-	}
-}
-
-// RedisZRangeByScore retrieves elements from a sorted set in Redis based on a given score range and optional limits.
-func RedisZRangeByScore(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-
-		key := L.CheckString(2)
-		minScore := L.CheckString(3)    // The minimum score (e.g., "-inf" or a numeric value)
-		maxScore := L.CheckString(4)    // The maximum score (e.g., "+inf" or a numeric value)
-		optsTable := L.OptTable(5, nil) // Optional table for additional options like LIMIT
-
-		// Initialize options for ZRangeByScore
-		zrangeOpts := redis.ZRangeBy{
-			Min:    minScore,
-			Max:    maxScore,
-			Offset: 0, // Default value
-			Count:  0, // Default value
-		}
-
-		// If an optional table is provided, process its values
-		if optsTable != nil {
-			if offset := optsTable.RawGetString("offset"); offset != lua.LNil {
-				zrangeOpts.Offset = int64(lua.LVAsNumber(offset))
-			}
-
-			if count := optsTable.RawGetString("count"); count != lua.LNil {
-				zrangeOpts.Count = int64(lua.LVAsNumber(count))
-			}
-		}
-
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRangeByScore(dCtx, key, &zrangeOpts)
-		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
-		}
-
-		result := L.NewTable()
-
-		for _, val := range cmd.Val() {
-			result.Append(lua.LString(val))
-		}
-
-		L.Push(result)
-
-		return 1
-	}
-}
-
-// RedisZRem removes one or more members from a sorted set in Redis and returns the number of members removed.
-func RedisZRem(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
+// RedisZRem removes one or more members from a sorted set.
+func (rm *RedisManager) RedisZRem(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		top := stack.GetTop()
 		var members []any
 
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
+		// Check if the 3rd argument is a table. If so, use it as the members list.
+		// Otherwise, collect all arguments from the 3rd onwards.
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
 
-		key := L.CheckString(2)
-		membersTable := L.CheckTable(3) // Lua table containing the members to remove
-
-		// Convert the Lua table into a slice of strings (the members to remove)
-		membersTable.ForEach(func(_, v lua.LValue) {
-			member := v.String()
-			if member == "" {
-				L.ArgError(1, "Expected a table of string values")
+			tbl.ForEach(func(_, value lua.LValue) {
+				members = append(members, value.String())
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				members = append(members, stack.CheckString(i))
 			}
-
-			members = append(members, member)
-		})
-
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRem(dCtx, key, members...)
-		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
+		if len(members) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
 
-		return 1
-	}
+		cmd := conn.ZRem(ctx, key, members...)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
+
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisZRemRangeByScore removes all elements in a Redis sorted set with scores within the specified range.
-func RedisZRemRangeByScore(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
+// RedisZRemRangeByScore removes all members in a sorted set within the given scores.
+func (rm *RedisManager) RedisZRemRangeByScore(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		min := stack.CheckString(3)
+		max := stack.CheckString(4)
 
-		key := L.CheckString(2)      // The key of the sorted set
-		minScore := L.CheckString(3) // Minimum score (e.g., "-inf" or a numeric value)
-		maxScore := L.CheckString(4) // Maximum score (e.g., "+inf" or a numeric value)
-
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRemRangeByScore(dCtx, key, minScore, maxScore)
+		cmd := conn.ZRemRangeByScore(ctx, key, min, max)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisZRemRangeByRank removes all elements in a Redis sorted set with ranks within the specified range.
-// Added in version 1.7.20
-func RedisZRemRangeByRank(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
+// RedisZRemRangeByRank removes all members in a sorted set within the given indexes.
+func (rm *RedisManager) RedisZRemRangeByRank(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		start := int64(stack.CheckInt(3))
+		stop := int64(stack.CheckInt(4))
 
-		key := L.CheckString(2)  // The key of the sorted set
-		start := L.CheckInt64(3) // Start rank (0-based, inclusive)
-		stop := L.CheckInt64(4)  // Stop rank (0-based, inclusive)
-
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRemRangeByRank(dCtx, key, int64(start), int64(stop))
+		cmd := conn.ZRemRangeByRank(ctx, key, start, stop)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisZRank retrieves the rank of a member within a sorted set in Redis, returning the rank or an error if applicable.
-func RedisZRank(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-		key := L.CheckString(2)
-		member := L.CheckString(3) // The member whose rank needs to be retrieved
+// RedisZRank returns the rank of a member in a sorted set, with scores ordered from low to high.
+func (rm *RedisManager) RedisZRank(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		member := stack.CheckString(3)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRank(dCtx, key, member)
+		cmd := conn.ZRank(ctx, key, member)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisZCount counts the number of members in a sorted set with scores between min and max.
-// Added in version 1.7.7
-func RedisZCount(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-		key := L.CheckString(2)
-		minScore := L.CheckString(3) // Minimum score (e.g., "-inf" or a numeric value)
-		maxScore := L.CheckString(4) // Maximum score (e.g., "+inf" or a numeric value)
+// RedisZCount returns the number of members in a sorted set with scores within the given values.
+func (rm *RedisManager) RedisZCount(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		min := stack.CheckString(3)
+		max := stack.CheckString(4)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZCount(dCtx, key, minScore, maxScore)
+		cmd := conn.ZCount(ctx, key, min, max)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisZScore retrieves the score of a member in a sorted set.
-// Added in version 1.7.7
-func RedisZScore(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-		key := L.CheckString(2)
-		member := L.CheckString(3) // The member whose score needs to be retrieved
+// RedisZScore returns the score of a member in a sorted set.
+func (rm *RedisManager) RedisZScore(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		member := stack.CheckString(3)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZScore(dCtx, key, member)
+		cmd := conn.ZScore(ctx, key, member)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisZRevRank retrieves the rank of a member within a sorted set in Redis, with the scores ordered from high to low.
-// The rank is 0-based, meaning that the member with the highest score has rank 0.
-func RedisZRevRank(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-		key := L.CheckString(2)
-		member := L.CheckString(3) // The member whose rank needs to be retrieved
+// RedisZRevRank returns the rank of a member in a sorted set, with scores ordered from high to low.
+func (rm *RedisManager) RedisZRevRank(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		member := stack.CheckString(3)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZRevRank(dCtx, key, member)
+		cmd := conn.ZRevRank(ctx, key, member)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisZIncrBy increments the score of a member in a sorted set by the given increment value.
-// Added in version 1.7.18
-func RedisZIncrBy(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
-		key := L.CheckString(2)
-		increment := float64(L.CheckNumber(3)) // The increment value
-		member := L.CheckString(4)             // The member whose score needs to be incremented
+// RedisZIncrBy increments the score of a member in a sorted set.
+func (rm *RedisManager) RedisZIncrBy(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		increment := float64(stack.CheckNumber(3))
+		member := stack.CheckString(4)
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.ZIncrBy(dCtx, key, increment, member)
+		cmd := conn.ZIncrBy(ctx, key, increment, member)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }

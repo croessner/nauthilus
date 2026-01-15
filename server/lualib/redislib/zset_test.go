@@ -1,5 +1,3 @@
-//go:build !redislib_oop
-
 // Copyright (C) 2024 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
@@ -546,15 +544,11 @@ func TestRedisZRangeByScore(t *testing.T) {
 
 			if tt.optsTable != nil {
 				luaOpts := tt.optsTable(L)
-				optsTable := L.NewTable()
-
 				if luaOpts != nil {
-					luaOpts.ForEach(func(k, v lua.LValue) {
-						optsTable.RawSet(k, v)
-					})
+					L.SetGlobal("opts", luaOpts)
+				} else {
+					L.SetGlobal("opts", lua.LNil)
 				}
-
-				L.SetGlobal("opts", luaOpts)
 			} else {
 				L.SetGlobal("opts", lua.LNil)
 			}
@@ -575,9 +569,15 @@ func TestRedisZRangeByScore(t *testing.T) {
 			gotResult := L.GetGlobal("result")
 			expectedResult := tt.expected(L)
 
-			if expectedResult != nil && !luaTablesAreEqual(gotResult.(*lua.LTable), expectedResult) {
-				t.Errorf("redis_zrangebyscore() result = %s, want %s", gotResult, expectedResult)
-			} else if expectedResult == nil && gotResult != lua.LNil {
+			if expectedResult != nil {
+				if tbl, ok := gotResult.(*lua.LTable); ok {
+					if !luaTablesAreEqual(tbl, expectedResult) {
+						t.Errorf("redis_zrangebyscore() result = %s, want %s", gotResult, expectedResult)
+					}
+				} else {
+					t.Errorf("redis_zrangebyscore() result = %s, want %s", gotResult.Type(), expectedResult)
+				}
+			} else if gotResult != lua.LNil {
 				t.Errorf("redis_zrangebyscore() result = %s, want nil", gotResult)
 			}
 

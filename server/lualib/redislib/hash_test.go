@@ -1,5 +1,3 @@
-//go:build !redislib_oop
-
 // Copyright (C) 2024 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
@@ -86,12 +84,17 @@ func TestRedisHGet(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 			client := rediscli.NewTestClient(db)
+
 			SetDefaultClient(client)
+
 			L := lua.NewState()
+
 			defer L.Close()
+
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
+
 			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -162,9 +165,13 @@ func TestRedisHSet(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 			client := rediscli.NewTestClient(db)
+
 			SetDefaultClient(client)
+
 			L := lua.NewState()
+
 			defer L.Close()
+
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			if tt.prepareMockRedis != nil {
@@ -249,34 +256,45 @@ func TestRedisHDel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
+
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+
 			client := rediscli.NewTestClient(db)
+
 			SetDefaultClient(client)
+
 			L := lua.NewState()
+
 			defer L.Close()
+
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
+
 			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
+
 			for index, field := range tt.fields {
 				L.SetGlobal(fmt.Sprintf("field%d", index+1), lua.LString(field))
 			}
 
 			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hdel("default", key, %s)`, strings.Join(tt.fields, ", ")))
+
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
 
 			gotResult := L.GetGlobal("result")
+
 			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
 				t.Errorf("nauthilus.redis_hdel() gotResult = %v, want %v", gotResult, tt.expectedResult)
 			}
 
 			gotErr := L.GetGlobal("err")
+
 			if gotErr.Type() != tt.expectedErr.Type() && gotErr.String() != tt.expectedErr.String() {
 				t.Errorf("nauthilus.redis_hdel() gotErr = %v, want %v", gotErr.String(), tt.expectedErr)
 			}

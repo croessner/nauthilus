@@ -1,5 +1,3 @@
-//go:build !redislib_oop
-
 // Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
@@ -19,129 +17,106 @@ package redislib
 
 import (
 	"context"
+	"errors"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
-
+	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // RedisPFAdd adds the specified elements to the specified HyperLogLog (HLL) key.
-// Returns 1 if at least one internal register was altered, 0 otherwise.
-// Usage from Lua: nauthilus_redis.redis_pfadd(client_or_"default", key, element1, element2, ...)
-func RedisPFAdd(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
-		key := L.CheckString(2)
+func (rm *RedisManager) RedisPFAdd(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		top := stack.GetTop()
 
-		values := make([]any, 0, max(0, L.GetTop()-2))
-		for i := 3; i <= L.GetTop(); i++ {
-			val, err := convert.LuaValue(L.Get(i))
-			if err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
+		var values []any
 
-				return 2
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					values = append(values, stack.CheckAny(i).String())
+				} else {
+					values = append(values, val)
+				}
 			}
-
-			values = append(values, val)
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.PFAdd(dCtx, key, values...)
+		cmd := conn.PFAdd(ctx, key, values...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
 // RedisPFCount returns the approximated cardinality computed by the HyperLogLog at the specified keys.
-// When multiple keys are provided, returns the approximated cardinality of the union of the HyperLogLogs.
-// Usage from Lua: nauthilus_redis.redis_pfcount(client_or_"default", key1, [key2, ...])
-func RedisPFCount(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-
-		if L.GetTop() < 2 {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("at least one key required"))
-
-			return 2
+func (rm *RedisManager) RedisPFCount(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		top := stack.GetTop()
+		if top < 2 {
+			return stack.PushError(errors.New("at least one key required"))
 		}
 
-		keys := make([]string, 0, L.GetTop()-1)
-		for i := 2; i <= L.GetTop(); i++ {
-			keys = append(keys, L.CheckString(i))
+		keys := make([]string, 0, top-1)
+		for i := 2; i <= top; i++ {
+			keys = append(keys, stack.CheckString(i))
 		}
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.PFCount(dCtx, keys...)
+		cmd := conn.PFCount(ctx, keys...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
 // RedisPFMerge merges multiple HyperLogLogs into a destination key.
-// Returns "OK" on success.
-// Usage from Lua: nauthilus_redis.redis_pfmerge(client_or_"default", destKey, sourceKey1, [sourceKey2, ...])
-func RedisPFMerge(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
+func (rm *RedisManager) RedisPFMerge(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		dest := stack.CheckString(2)
+		top := stack.GetTop()
 
-		dest := L.CheckString(2)
-		if L.GetTop() < 3 {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("at least one source key required"))
+		var sources []string
 
-			return 2
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				sources = append(sources, value.String())
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				sources = append(sources, stack.CheckString(i))
+			}
 		}
 
-		sources := make([]string, 0, L.GetTop()-2)
-		for i := 3; i <= L.GetTop(); i++ {
-			sources = append(sources, L.CheckString(i))
+		if len(sources) == 0 {
+			return stack.PushResults(lua.LString("OK"), lua.LNil)
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.PFMerge(dCtx, dest, sources...)
+		cmd := conn.PFMerge(ctx, dest, sources...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LString(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
+	})
 }

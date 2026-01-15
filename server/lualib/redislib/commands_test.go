@@ -1,5 +1,3 @@
-//go:build !redislib_oop
-
 // Copyright (C) 2024 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
@@ -75,15 +73,11 @@ func TestRedisGet(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-
 			client := rediscli.NewTestClient(db)
-
 			SetDefaultClient(client)
 
 			L := lua.NewState()
-
 			defer L.Close()
-
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -166,15 +160,11 @@ func TestRedisSet(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-
 			client := rediscli.NewTestClient(db)
-
 			SetDefaultClient(client)
 
 			L := lua.NewState()
-
 			defer L.Close()
-
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))

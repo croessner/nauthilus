@@ -1,5 +1,3 @@
-//go:build !redislib_oop
-
 // Copyright (C) 2024 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
@@ -19,7 +17,6 @@ package redislib
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -67,7 +64,7 @@ func TestRegisterRedisConnection(t *testing.T) {
 		{
 			"Unknown mode",
 			[]lua.LValue{lua.LString("unknown"), lua.LString("unknown"), L.NewTable()},
-			[]lua.LValue{lua.LString("Unknown mode: unknown"), lua.LNil},
+			[]lua.LValue{lua.LNil, lua.LString("Unknown mode: unknown")},
 			false,
 		},
 	}
@@ -78,20 +75,35 @@ func TestRegisterRedisConnection(t *testing.T) {
 			L.SetGlobal("pool_mode", tt.args[1])
 			L.SetGlobal("pool_options", tt.args[2])
 
-			if err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); return nauthilus_redis.register_redis_pool(pool_name, pool_mode, pool_options)`); (err != nil) != tt.wantErr {
+			if err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.register_redis_pool(pool_name, pool_mode, pool_options)`); (err != nil) != tt.wantErr {
 				t.Errorf("register_redis_pool() error = %v, wantErr %v", err, tt.wantErr)
 
 				return
 			}
 
-			got := L.Get(-1)
-			if !reflect.DeepEqual(got, tt.want[len(tt.want)-1]) {
-				t.Errorf("register_redis_pool() = %v, want %v", got, tt.want)
+			gotResult := L.GetGlobal("result")
+			gotErr := L.GetGlobal("err")
 
-				return
+			if tt.wantErr {
+				if gotErr == lua.LNil {
+					t.Errorf("register_redis_pool() expected error, but got nil")
+				}
+			} else {
+				if gotResult.Type() != tt.want[0].Type() || gotResult.String() != tt.want[0].String() {
+					t.Errorf("register_redis_pool() result = %v, want %v", gotResult, tt.want[0])
+				}
+				if len(tt.want) > 1 {
+					if gotErr.Type() != tt.want[1].Type() || gotErr.String() != tt.want[1].String() {
+						t.Errorf("register_redis_pool() error = %v, want %v", gotErr, tt.want[1])
+					}
+				} else {
+					if gotErr != lua.LNil {
+						t.Errorf("register_redis_pool() error = %v, want nil", gotErr)
+					}
+				}
 			}
 
-			if err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); return nauthilus_redis.get_redis_connection(pool_name)`); (err != nil) != tt.wantErr {
+			if err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.get_redis_connection(pool_name)`); (err != nil) != tt.wantErr {
 				t.Errorf("get_redis_connection() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

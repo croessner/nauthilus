@@ -1,6 +1,4 @@
-//go:build !redislib_oop
-
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,41 +17,41 @@ package redislib
 
 import (
 	"context"
+	"errors"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
-
+	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // RedisMGet retrieves the values of multiple keys from Redis.
-func RedisMGet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-		keys := make([]string, L.GetTop()-1)
+func (rm *RedisManager) RedisMGet(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		top := stack.GetTop()
+		var keys []string
 
-		for i := 2; i <= L.GetTop(); i++ {
-			keys[i-2] = L.CheckString(i)
+		if top == 2 && stack.L.Get(2).Type() == lua.LTTable {
+			tbl := stack.CheckTable(2)
+			tbl.ForEach(func(_, value lua.LValue) {
+				keys = append(keys, value.String())
+			})
+		} else {
+			for i := 2; i <= top; i++ {
+				keys = append(keys, stack.CheckString(i))
+			}
 		}
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+		if len(keys) == 0 {
+			return stack.PushResults(L.NewTable(), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.MGet(dCtx, keys...)
+		cmd := conn.MGet(ctx, keys...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
 		result := L.NewTable()
-
 		for i, val := range cmd.Val() {
 			if val == nil {
 				result.RawSetString(keys[i], lua.LNil)
@@ -62,122 +60,101 @@ func RedisMGet(ctx context.Context, cfg config.File, client rediscli.Client) lua
 			}
 		}
 
-		L.Push(result)
-
-		return 1
-	}
+		return stack.PushResults(result, lua.LNil)
+	})
 }
 
 // RedisMSet sets multiple key-value pairs in Redis.
-func RedisMSet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		if L.GetTop() < 3 || (L.GetTop()-1)%2 != 0 {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("Invalid number of arguments"))
+func (rm *RedisManager) RedisMSet(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		top := stack.GetTop()
+		var kvpairs []any
 
-			return 2
-		}
+		if top == 2 && stack.L.Get(2).Type() == lua.LTTable {
+			tbl := stack.CheckTable(2)
+			tbl.ForEach(func(key, value lua.LValue) {
+				k, err := convert.LuaValue(key)
+				if err != nil {
+					kvpairs = append(kvpairs, key.String())
+				} else {
+					kvpairs = append(kvpairs, k)
+				}
 
-		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
-		kvpairs := make([]any, L.GetTop()-1)
-
-		for i := 2; i <= L.GetTop(); i++ {
-			value, err := convert.LuaValue(L.Get(i))
-			if err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
-
-				return 2
+				v, err := convert.LuaValue(value)
+				if err != nil {
+					kvpairs = append(kvpairs, value.String())
+				} else {
+					kvpairs = append(kvpairs, v)
+				}
+			})
+		} else {
+			if top < 3 || (top-1)%2 != 0 {
+				return stack.PushError(errors.New("invalid number of arguments"))
 			}
 
-			kvpairs[i-2] = value
+			for i := 2; i <= top; i++ {
+				value, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					kvpairs = append(kvpairs, stack.CheckAny(i).String())
+				} else {
+					kvpairs = append(kvpairs, value)
+				}
+			}
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if len(kvpairs) == 0 {
+			return stack.PushResults(lua.LString("OK"), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.MSet(dCtx, kvpairs...)
+		cmd := conn.MSet(ctx, kvpairs...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LString(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
+	})
 }
 
 // RedisKeys returns all keys matching a pattern.
-func RedisKeys(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-		pattern := L.CheckString(2)
+func (rm *RedisManager) RedisKeys(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		pattern := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		cmd := conn.Keys(dCtx, pattern)
+		cmd := conn.Keys(ctx, pattern)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
 		result := L.NewTable()
-
 		for _, key := range cmd.Val() {
 			result.Append(lua.LString(key))
 		}
 
-		L.Push(result)
-
-		return 1
-	}
+		return stack.PushResults(result, lua.LNil)
+	})
 }
 
 // RedisScan incrementally iterates over keys in Redis.
-func RedisScan(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
-	return func(L *lua.LState) int {
-		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
-		cursor := uint64(L.CheckNumber(2))
-		match := L.OptString(3, "*")
-		count := int64(L.OptNumber(4, 10))
+func (rm *RedisManager) RedisScan(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		cursor := uint64(stack.CheckNumber(2))
+		match := stack.OptString(3, "*")
+		count := int64(stack.OptNumber(4, 10))
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-		defer cancel()
-
-		// Use the Scan command to get a batch of keys
-		keys, cursor, err := conn.Scan(dCtx, cursor, match, count).Result()
+		keys, cursor, err := conn.Scan(ctx, cursor, match, count).Result()
 		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-
-			return 2
+			return stack.PushError(err)
 		}
 
-		// Create a table to hold the result
 		result := L.NewTable()
 		result.RawSetString("cursor", lua.LNumber(cursor))
 
-		// Create a table to hold the keys
 		keysTable := L.NewTable()
 		for i, key := range keys {
 			keysTable.RawSetInt(i+1, lua.LString(key))
 		}
 		result.RawSetString("keys", keysTable)
 
-		L.Push(result)
-
-		return 1
-	}
+		return stack.PushResults(result, lua.LNil)
+	})
 }
