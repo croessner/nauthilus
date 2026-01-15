@@ -405,15 +405,22 @@ func DebugModuleWithCfg(ctx context.Context, cfg config.File, logger *slog.Logge
 
 	tracer := monittrace.New("nauthilus/util")
 
-	dbgCtx, sp := tracer.Start(ctx, "util.debugmodule",
-		attribute.String("debug_module", moduleName),
-	)
-	defer sp.End()
+	var dbgCtx context.Context
+	var sp trace.Span
 
-	// ensure downstream uses the same context if it's a gin.Context
 	if gCtx, ok := ctx.(*gin.Context); ok {
+		dbgCtx, sp = tracer.Start(gCtx.Request.Context(), "util.debugmodule",
+			attribute.String("debug_module", moduleName),
+		)
+
 		gCtx.Request = gCtx.Request.WithContext(dbgCtx)
+	} else {
+		dbgCtx, sp = tracer.Start(ctx, "util.debugmodule",
+			attribute.String("debug_module", moduleName),
+		)
 	}
+
+	defer sp.End()
 
 	enabled := false
 	for _, dbgModule := range logCfg.GetDebugModules() {
