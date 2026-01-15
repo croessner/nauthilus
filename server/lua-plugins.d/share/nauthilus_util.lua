@@ -76,8 +76,8 @@ end
 ---@return void
 function nauthilus_util.if_error_raise(err)
     if err then
-        -- Do nothing on "redis: nil" messages
-        if err ~= "redis: nil" then
+        -- Do nothing on "redis: nil" or "OK" messages
+        if err ~= "redis: nil" and err ~= "OK" then
             error(err)
         end
     end
