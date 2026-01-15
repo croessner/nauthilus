@@ -154,7 +154,12 @@ func noteAuthFailureForIP(ip string) {
 }
 
 // MaybeThrottleAuthByIP checks if the client IP is temporarily blocked and, if so, responds with 429 and a Retry-After header.
-func MaybeThrottleAuthByIP(ctx *gin.Context) bool {
+// It only enforces throttling if the brute-force feature is enabled in the configuration.
+func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
+	if cfg != nil && !cfg.HasFeature(definitions.FeatureBruteForce) {
+		return false
+	}
+
 	ip := ctx.ClientIP()
 	if ip == "" {
 		return false
@@ -163,7 +168,10 @@ func MaybeThrottleAuthByIP(ctx *gin.Context) bool {
 	exceeded, remaining := authRateLimitExceededForIP(ip)
 	if exceeded {
 		ctx.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())))
-		ctx.AbortWithStatus(http.StatusTooManyRequests)
+		ctx.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+			definitions.LogKeyMsg: "Too many authentication failures",
+			"scope":               "brute-force",
+		})
 
 		return true
 	}
@@ -198,7 +206,7 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	}
 
 	// Simple per-IP throttling for repeated failures
-	if MaybeThrottleAuthByIP(ctx) {
+	if MaybeThrottleAuthByIP(ctx, cfg) {
 		return false
 	}
 

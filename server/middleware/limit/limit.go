@@ -73,6 +73,7 @@ func (lc *LimitCounter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFun
 			// For API requests, return 429 status code
 			ctx.JSON(http.StatusTooManyRequests, gin.H{
 				definitions.LogKeyMsg: "Too many requests",
+				"scope":               "concurrency",
 				"current":             currentConnections,
 				"max":                 lc.MaxConnections,
 			})

@@ -377,24 +377,26 @@ func JWTAuthMiddlewareWithDeps(deps JWTDeps) gin.HandlerFunc {
 		// Extract token
 		tokenString, err := ExtractJWTTokenWithCfg(ctx, deps.Cfg)
 		if err != nil {
-			if mdauth.MaybeThrottleAuthByIP(ctx) {
+			if mdauth.MaybeThrottleAuthByIP(ctx, deps.Cfg) {
 				return
 			}
 
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+
 			return
 		}
 
 		// Validate token
 		claims, err := ValidateJWTToken(ctx, tokenString, deps)
 		if err != nil {
-			if mdauth.MaybeThrottleAuthByIP(ctx) {
+			if mdauth.MaybeThrottleAuthByIP(ctx, deps.Cfg) {
 				return
 			}
 
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+
 			return
 		}
 
@@ -420,6 +422,7 @@ func JWTAuthMiddlewareWithDeps(deps JWTDeps) gin.HandlerFunc {
 					definitions.LogKeyMsg, "JWT user does not have the 'authenticate' role required for authentication",
 				)
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing required role: authenticate"})
+
 				return
 			}
 		}
@@ -453,23 +456,25 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 
 		if !jwtConfig.IsEnabled() {
 			ctx.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "JWT authentication is not enabled"})
+
 			return
 		}
 
 		var request jwtapi.Request
 		if err := ctx.ShouldBindJSON(&request); err != nil {
 			// Treat malformed input similar to an auth failure to avoid side channels
-			if mdauth.MaybeThrottleAuthByIP(ctx) {
+			if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
 				return
 			}
 
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+
 			return
 		}
 
 		// Blocked IPs get fast-fail 429
-		if mdauth.MaybeThrottleAuthByIP(ctx) {
+		if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
 			return
 		}
 
@@ -486,6 +491,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 				if user.GetUsername() == request.Username && user.GetPassword() == request.Password {
 					authenticated = true
 					userRoles = user.GetRoles()
+
 					break
 				}
 			}
@@ -500,6 +506,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 				)
 				mdauth.ApplyAuthBackoffOnFailure(ctx)
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication failed"})
+
 				return
 			}
 
@@ -514,6 +521,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 					definitions.LogKeyError, err,
 				)
 				ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+
 				return
 			}
 
@@ -571,6 +579,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 			)
 
 			ctx.JSON(http.StatusOK, response)
+
 			return
 		}
 
@@ -578,6 +587,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 		auth := NewAuthStateWithSetup(ctx)
 		if auth == nil {
 			ctx.AbortWithStatus(http.StatusBadRequest)
+
 			return
 		}
 
@@ -596,6 +606,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 				definitions.LogKeyError, "username or password is incorrect",
 			)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication failed"})
+
 			return
 		}
 
@@ -624,6 +635,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 				definitions.LogKeyError, err,
 			)
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+
 			return
 		}
 
@@ -698,11 +710,12 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 
 		if !jwtConfig.IsEnabled() || !jwtConfig.IsRefreshTokenEnabled() {
 			ctx.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "JWT refresh tokens are not enabled"})
+
 			return
 		}
 
 		// Blocked IPs get fast-fail 429
-		if mdauth.MaybeThrottleAuthByIP(ctx) {
+		if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
 			return
 		}
 
@@ -711,6 +724,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 		if refreshToken == "" {
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "refresh token is required"})
+
 			return
 		}
 
@@ -726,6 +740,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 		if err != nil || !token.Valid {
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
+
 			return
 		}
 
@@ -734,6 +749,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 		if !ok {
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token claims"})
+
 			return
 		}
 
@@ -755,6 +771,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 				)
 				mdauth.ApplyAuthBackoffOnFailure(ctx)
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "refresh token not found in Redis"})
+
 				return
 			}
 
@@ -770,6 +787,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 				)
 				mdauth.ApplyAuthBackoffOnFailure(ctx)
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "refresh token does not match the one in Redis"})
+
 				return
 			}
 		}
@@ -786,6 +804,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 				if user.GetUsername() == claims.Subject {
 					roles = user.GetRoles()
 					userFound = true
+
 					break
 				}
 			}
@@ -800,6 +819,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 				)
 				mdauth.ApplyAuthBackoffOnFailure(ctx)
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+
 				return
 			}
 		}
@@ -815,6 +835,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 				definitions.LogKeyError, err,
 			)
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate new token"})
+
 			return
 		}
 
@@ -829,6 +850,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 				definitions.LogKeyError, err,
 			)
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate new refresh token"})
+
 			return
 		}
 

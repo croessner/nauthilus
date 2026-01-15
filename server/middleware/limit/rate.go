@@ -73,6 +73,7 @@ func (i *IPRateLimiter) Middleware() gin.HandlerFunc {
 		if !limiter.Allow() {
 			ctx.JSON(http.StatusTooManyRequests, gin.H{
 				definitions.LogKeyMsg: "Rate limit exceeded",
+				"scope":               "rate",
 				"ip":                  ip,
 			})
 

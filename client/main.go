@@ -328,12 +328,12 @@ func applyRPS(p *Pacer, r float64) float64 {
 
 // Stats is a read-only snapshot of key counters and latency percentiles.
 type Stats struct {
-	Total, Matched, Mismatched, HttpErrs, Aborted, Skipped, ToleratedBF int64
-	Avg, P50, P90, P99                                                  time.Duration
-	Min, Max                                                            time.Duration
-	Elapsed                                                             time.Duration
-	TargetRPS                                                           float64
-	Concurrency                                                         int64
+	Total, Matched, Mismatched, HttpErrs, Aborted, Skipped, ToleratedBF, TooManyRequests int64
+	Avg, P50, P90, P99                                                                   time.Duration
+	Min, Max                                                                             time.Duration
+	Elapsed                                                                              time.Duration
+	TargetRPS                                                                            float64
+	Concurrency                                                                          int64
 }
 
 // statsSnapshot is defined inside main() to atomically sample counters there.
@@ -1965,6 +1965,7 @@ func main() {
 	var total, matched, mismatched, httpErrs int64
 	var skipped int64
 	var toleratedBF int64
+	var tooManyRequests int64
 	var aborted int64
 	var totalLatencyNs int64
 
@@ -1986,6 +1987,7 @@ func main() {
 		ab := atomic.LoadInt64(&aborted)
 		sk := atomic.LoadInt64(&skipped)
 		bf := atomic.LoadInt64(&toleratedBF)
+		tmr := atomic.LoadInt64(&tooManyRequests)
 		tls := atomic.LoadInt64(&totalLatencyNs)
 
 		var avg time.Duration
@@ -1999,22 +2001,23 @@ func main() {
 		}
 
 		return Stats{
-			Total:       t,
-			Matched:     m,
-			Mismatched:  mm,
-			HttpErrs:    he,
-			Aborted:     ab,
-			Skipped:     sk,
-			ToleratedBF: bf,
-			Avg:         avg,
-			P50:         percentileFromBuckets(0.50),
-			P90:         percentileFromBuckets(0.90),
-			P99:         percentileFromBuckets(0.99),
-			Min:         time.Duration(atomic.LoadInt64(&minLatencyNs)),
-			Max:         time.Duration(atomic.LoadInt64(&maxLatencyNs)),
-			Elapsed:     time.Since(start),
-			TargetRPS:   getTargetRPS(),
-			Concurrency: concVal,
+			Total:           t,
+			Matched:         m,
+			Mismatched:      mm,
+			HttpErrs:        he,
+			Aborted:         ab,
+			Skipped:         sk,
+			ToleratedBF:     bf,
+			TooManyRequests: tmr,
+			Avg:             avg,
+			P50:             percentileFromBuckets(0.50),
+			P90:             percentileFromBuckets(0.90),
+			P99:             percentileFromBuckets(0.99),
+			Min:             time.Duration(atomic.LoadInt64(&minLatencyNs)),
+			Max:             time.Duration(atomic.LoadInt64(&maxLatencyNs)),
+			Elapsed:         time.Since(start),
+			TargetRPS:       getTargetRPS(),
+			Concurrency:     concVal,
 		}
 	}
 
@@ -2150,7 +2153,7 @@ func main() {
 					}
 
 					right := fmt.Sprintf(
-						"[eta: %s] [rps: %7.1f] [trps: %7d]%s [conc: %4d] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+						"[eta: %s] [rps: %7.1f] [trps: %7d]%s [conc: %4d] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [429: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
 						etaStr,
 						rps,
 						uint64(trps),
@@ -2160,6 +2163,7 @@ func main() {
 						humanCount(s.HttpErrs),
 						humanCount(s.Aborted),
 						humanCount(s.Skipped),
+						humanCount(s.TooManyRequests),
 						humanMs(avgMs),
 						humanMs(p50Ms),
 						humanMs(p90Ms),
@@ -2390,9 +2394,9 @@ func main() {
 						}
 					}
 
-					fmt.Printf("\n[%s %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%.f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
+					fmt.Printf("\n[%s %s] total=%d matched=%d mismatched=%d http_errors=%d 429_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%.f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
 						label,
-						elapsed.Truncate(time.Second), t, s.Matched, s.Mismatched, s.HttpErrs, s.Aborted, s.Skipped, s.ToleratedBF, rps, s.TargetRPS, trackRatio, s.Concurrency, s.Avg, s.Min, s.Max, s.P50, s.P90, s.P99,
+						elapsed.Truncate(time.Second), t, s.Matched, s.Mismatched, s.HttpErrs, s.TooManyRequests, s.Aborted, s.Skipped, s.ToleratedBF, rps, s.TargetRPS, trackRatio, s.Concurrency, s.Avg, s.Min, s.Max, s.P50, s.P90, s.P99,
 					)
 
 					// Always print the metrics one-liner as well so metrics are visible in non-TTY mode too.
@@ -2768,6 +2772,10 @@ func main() {
 				// Count HTTP status code
 				if code >= 0 && code < len(statusCounts) {
 					atomic.AddInt64(&statusCounts[code], 1)
+				}
+
+				if code == 429 {
+					atomic.AddInt64(&tooManyRequests, 1)
 				}
 
 				if gotOK == expectedOKs[idx] {
@@ -3497,7 +3505,7 @@ func main() {
 	}
 
 	fmt.Printf("Done in %s\n", dur)
-	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, aborted, skipped, toleratedBF)
+	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d 429_errors=%d aborted=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, tooManyRequests, aborted, skipped, toleratedBF)
 
 	if dur > 0 {
 		fmt.Printf("throughput=%.2f req/s\n", float64(total)/dur.Seconds())
