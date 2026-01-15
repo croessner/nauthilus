@@ -31,11 +31,9 @@ import (
 	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
-	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
-	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luamod"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/svcctx"
@@ -508,100 +506,10 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	// Prepare per-request environment so that request-local globals and module bindings are visible
 	luapool.PrepareRequestEnv(L)
 
-	// Bind required per-request modules so that require() resolves to the bound versions.
-	// 1) nauthilus_context (fresh per-request context)
-	if loader := lualib.LoaderModContext(ctx, cfg, logger, lualib.NewContext()); loader != nil {
-		_ = loader(L)
+	modManager := luamod.NewModuleManager(ctx, cfg, logger, redis)
 
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 2) nauthilus_redis (use luaCtx deadline)
-	if loader := redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 3) nauthilus_ldap (if enabled)
-	if cfg.HaveLDAPBackend() {
-		loader := backend.LoaderModLDAP(luaCtx, cfg)
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 4) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 5) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 5.1) nauthilus_opentelemetry (OTel helpers for Lua)
-	{
-		var loader lua.LGFunction
-
-		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
-		} else {
-			loader = lualib.LoaderOTELStateless()
-		}
-
-		if loader != nil {
-			_ = loader(L)
-			if mod, ok := L.Get(-1).(*lua.LTable); ok {
-				L.Pop(1)
-				luapool.BindModuleIntoReq(L, definitions.LuaModOpenTelemetry, mod)
-			} else {
-				L.Pop(1)
-			}
-		}
-	}
-
-	// 6) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
+	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
+	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
 
 	logTable := setupLogging(cfg, L)
 
@@ -696,123 +604,12 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	// Prepare per-request environment so that request-local globals and module bindings are visible
 	luapool.PrepareRequestEnv(L)
 
-	// Bind required per-request modules so that require() resolves to the bound versions.
-	// 1) nauthilus_context (fresh per-request context)
-	if loader := lualib.LoaderModContext(ctx, cfg, logger, lualib.NewContext()); loader != nil {
-		_ = loader(L)
+	modManager := luamod.NewModuleManager(ctx, cfg, logger, redis)
 
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 2) nauthilus_http_request (from gin request)
-	loader := lualib.LoaderModHTTP(ctx, cfg, logger, lualib.NewHTTPMetaFromRequest(ctx.Request))
-	_ = loader(L)
-
-	if mod, ok := L.Get(-1).(*lua.LTable); ok {
-		L.Pop(1)
-		luapool.BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
-	} else {
-		L.Pop(1)
-	}
-
-	// 3) nauthilus_http_response
-	loader = lualib.LoaderModHTTPResponse(ctx, cfg, logger, ctx)
-	_ = loader(L)
-
-	if mod, ok := L.Get(-1).(*lua.LTable); ok {
-		L.Pop(1)
-		luapool.BindModuleIntoReq(L, definitions.LuaModHTTPResponse, mod)
-	} else {
-		L.Pop(1)
-	}
-
-	// 4) nauthilus_redis (use luaCtx deadline)
-	if loader = redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 5) nauthilus_ldap (if enabled)
-	if cfg.HaveLDAPBackend() {
-		loader := backend.LoaderModLDAP(luaCtx, cfg)
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 6) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 7) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
-
-	// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
-	{
-		var loader lua.LGFunction
-
-		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
-		} else {
-			loader = lualib.LoaderOTELStateless()
-		}
-
-		if loader != nil {
-			_ = loader(L)
-
-			if mod, ok := L.Get(-1).(*lua.LTable); ok {
-				L.Pop(1)
-				luapool.BindModuleIntoReq(L, definitions.LuaModOpenTelemetry, mod)
-			} else {
-				L.Pop(1)
-			}
-		}
-	}
-
-	// 8) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
-		_ = loader(L)
-
-		if mod, ok := L.Get(-1).(*lua.LTable); ok {
-			L.Pop(1)
-			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
-		} else {
-			L.Pop(1)
-		}
-	}
+	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
+	modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(ctx.Request))
+	modManager.BindHTTPResponse(L, ctx)
+	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
 
 	logTable := setupLogging(cfg, L)
 
