@@ -104,8 +104,8 @@ local function get_metrics(redis_handle)
     local first_seen_val = res[7] and res[7].value or nil
     local first_seen_ts = tonumber(first_seen_val or "0") or 0
     if first_seen_ts == 0 then
-        -- Initialize on first call to provide immediate feedback to UI; best-effort with TTL 30d
-        nauthilus_redis.redis_set(redis_handle, first_seen_key, tostring(now), 30 * 24 * 3600)
+        -- Initialize on first call to provide immediate feedback to UI; permanent
+        nauthilus_redis.redis_set(redis_handle, first_seen_key, tostring(now))
         first_seen_ts = now
     end
 
@@ -155,7 +155,7 @@ local function reset_protection_measures(redis_handle)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Expire after 1 hour
+            0, -- Permanent
             "captcha_enabled", "false",
             "rate_limit_enabled", "false",
             "monitoring_mode", "false",

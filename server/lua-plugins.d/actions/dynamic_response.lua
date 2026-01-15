@@ -288,7 +288,7 @@ local function apply_severe_measures(custom_pool, metrics)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Enable for 1 hour
+            0, -- Permanent
             "captcha_enabled", "true",
             "rate_limit_enabled", "true",
             "rate_limit_max", "10" -- 10 requests per minute
@@ -367,7 +367,7 @@ local function apply_moderate_measures(custom_pool, metrics)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Enable for 1 hour
+            0, -- Permanent
             "monitoring_mode", "true"
         }
     )
@@ -600,8 +600,8 @@ function nauthilus_call_action(request)
     local first_seen_val = nauthilus_redis.redis_get(custom_pool, first_seen_key)
     local first_seen_ts = tonumber(first_seen_val or "0") or 0
     if first_seen_ts == 0 then
-        -- set first seen with TTL 30d (best-effort; not strictly atomic)
-        local _, err_set = nauthilus_redis.redis_set(custom_pool, first_seen_key, tostring(now_ts), 30 * 24 * 3600)
+        -- set first seen (permanent)
+        local _, err_set = nauthilus_redis.redis_set(custom_pool, first_seen_key, tostring(now_ts))
         nauthilus_util.if_error_raise(err_set)
         first_seen_ts = now_ts
     end
@@ -716,7 +716,7 @@ function nauthilus_call_action(request)
             "HSetMultiExpire",
             {"ntc:multilayer:global:settings"},
             {
-                3600, -- keep visibility for 1h, but set to false
+                0, -- Permanent
                 "monitoring_mode", "false"
             }
         )
@@ -765,7 +765,7 @@ function nauthilus_call_action(request)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Expire after 1 hour
+            0, -- Permanent (no EXPIRE called by HSetMultiExpire)
             "threat_level", threat_level
         }
     )
