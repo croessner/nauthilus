@@ -102,9 +102,12 @@ func (c *AutoController) Run(ctx context.Context) {
 				errRate = float64(de) / float64(dt) * 100.0
 			}
 
+			// Plateau detection
+			actualRPS := float64(dt) / ctrlEvery.Seconds()
+
 			trackRatio := 1.0
-			if tNow > 0 {
-				trackRatio = float64(stats.Matched) / float64(tNow)
+			if stats.TargetRPS > 0 {
+				trackRatio = actualRPS / stats.TargetRPS
 			}
 
 			badP95 := p95 > time.Duration(c.config.AutoTargetP95)*time.Millisecond
@@ -139,8 +142,6 @@ func (c *AutoController) Run(ctx context.Context) {
 				continue
 			}
 
-			// Plateau detection
-			actualRPS := float64(dt) / ctrlEvery.Seconds()
 			if c.config.AutoPlateau && prevRPS > 0 {
 				gain := (actualRPS - prevRPS) / prevRPS * 100.0
 				if gain < c.config.AutoPlateauGain {
@@ -152,6 +153,7 @@ func (c *AutoController) Run(ctx context.Context) {
 			prevRPS = actualRPS
 
 			if c.config.AutoPlateau && plateauStreak >= c.config.AutoPlateauWindows {
+				c.collector.SetPlateauActive(true)
 				if c.config.AutoPlateauAction == "freeze" {
 					if freezeWins < c.config.AutoPlateauCooldown {
 						freezeWins++
@@ -160,6 +162,8 @@ func (c *AutoController) Run(ctx context.Context) {
 					freezeWins = 0
 					plateauStreak = 0
 				}
+			} else {
+				c.collector.SetPlateauActive(false)
 			}
 
 			// Ramp up

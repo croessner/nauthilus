@@ -10,21 +10,25 @@ import (
 const maxLatencyMs = 60000
 
 type DefaultStatsCollector struct {
-	total           atomic.Int64
-	matched         atomic.Int64
-	mismatched      atomic.Int64
-	httpErrs        atomic.Int64
-	aborted         atomic.Int64
-	skipped         atomic.Int64
-	toleratedBF     atomic.Int64
-	tooManyRequests atomic.Int64
-	latBuckets      [maxLatencyMs + 1]atomic.Int64
-	latOverflow     atomic.Int64
-	startTime       time.Time
-	mu              sync.RWMutex
-	targetRPS       float64
-	concurrency     int64
-	minLat, maxLat  atomic.Int64 // in nanoseconds
+	total              atomic.Int64
+	matched            atomic.Int64
+	mismatched         atomic.Int64
+	httpErrs           atomic.Int64
+	aborted            atomic.Int64
+	skipped            atomic.Int64
+	toleratedBF        atomic.Int64
+	tooManyRequests    atomic.Int64
+	parallelMatched    atomic.Int64
+	parallelMismatched atomic.Int64
+	latBuckets         [maxLatencyMs + 1]atomic.Int64
+	latOverflow        atomic.Int64
+	startTime          time.Time
+	mu                 sync.RWMutex
+	targetRPS          float64
+	concurrency        int64
+	minLat, maxLat     atomic.Int64 // in nanoseconds
+	plateauActive      atomic.Bool
+	statusCounts       [600]atomic.Int64
 }
 
 func NewDefaultStatsCollector() *DefaultStatsCollector {
@@ -35,7 +39,7 @@ func NewDefaultStatsCollector() *DefaultStatsCollector {
 	return s
 }
 
-func (s *DefaultStatsCollector) AddSample(latency time.Duration, ok bool, isMatch bool, isHttpErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool) {
+func (s *DefaultStatsCollector) AddSample(latency time.Duration, ok bool, isMatch bool, isHttpErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool, statusCode int) {
 	s.total.Add(1)
 	if isAborted {
 		s.aborted.Add(1)
@@ -44,6 +48,9 @@ func (s *DefaultStatsCollector) AddSample(latency time.Duration, ok bool, isMatc
 	if isSkipped {
 		s.skipped.Add(1)
 		return
+	}
+	if statusCode >= 0 && statusCode < 600 {
+		s.statusCounts[statusCode].Add(1)
 	}
 	if isHttpErr {
 		s.httpErrs.Add(1)
@@ -91,6 +98,18 @@ func (s *DefaultStatsCollector) SetConcurrency(c int64) {
 	atomic.StoreInt64(&s.concurrency, c)
 }
 
+func (s *DefaultStatsCollector) SetPlateauActive(active bool) {
+	s.plateauActive.Store(active)
+}
+
+func (s *DefaultStatsCollector) IncParallelMatched() {
+	s.parallelMatched.Add(1)
+}
+
+func (s *DefaultStatsCollector) IncParallelMismatched() {
+	s.parallelMismatched.Add(1)
+}
+
 func (s *DefaultStatsCollector) Snapshot() Stats {
 	s.mu.RLock()
 	trps := s.targetRPS
@@ -100,17 +119,27 @@ func (s *DefaultStatsCollector) Snapshot() Stats {
 	elapsed := time.Since(s.startTime)
 
 	stats := Stats{
-		Total:           s.total.Load(),
-		Matched:         s.matched.Load(),
-		Mismatched:      s.mismatched.Load(),
-		HttpErrs:        s.httpErrs.Load(),
-		Aborted:         s.aborted.Load(),
-		Skipped:         s.skipped.Load(),
-		ToleratedBF:     s.toleratedBF.Load(),
-		TooManyRequests: s.tooManyRequests.Load(),
-		Elapsed:         elapsed,
-		TargetRPS:       trps,
-		Concurrency:     conc,
+		Total:              s.total.Load(),
+		Matched:            s.matched.Load(),
+		Mismatched:         s.mismatched.Load(),
+		HttpErrs:           s.httpErrs.Load(),
+		Aborted:            s.aborted.Load(),
+		Skipped:            s.skipped.Load(),
+		ToleratedBF:        s.toleratedBF.Load(),
+		TooManyRequests:    s.tooManyRequests.Load(),
+		ParallelMatched:    s.parallelMatched.Load(),
+		ParallelMismatched: s.parallelMismatched.Load(),
+		Elapsed:            elapsed,
+		TargetRPS:          trps,
+		Concurrency:        conc,
+		PlateauActive:      s.plateauActive.Load(),
+		StatusCounts:       make(map[int]int64),
+	}
+
+	for i := 0; i < 600; i++ {
+		if v := s.statusCounts[i].Load(); v > 0 {
+			stats.StatusCounts[i] = v
+		}
 	}
 
 	// Latency percentiles calculation logic from main.go
@@ -185,8 +214,13 @@ func (s *DefaultStatsCollector) Reset() {
 	s.skipped.Store(0)
 	s.toleratedBF.Store(0)
 	s.tooManyRequests.Store(0)
+	s.parallelMatched.Store(0)
+	s.parallelMismatched.Store(0)
 	for i := 0; i <= maxLatencyMs; i++ {
 		s.latBuckets[i].Store(0)
+	}
+	for i := 0; i < 600; i++ {
+		s.statusCounts[i].Store(0)
 	}
 	s.latOverflow.Store(0)
 	s.minLat.Store(math.MaxInt64)

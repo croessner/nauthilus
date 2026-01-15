@@ -74,6 +74,8 @@ type Config struct {
 	RandomNoAuthProb  float64
 	RandomBadPass     bool
 	RandomBadPassProb float64
+
+	Debug bool
 }
 
 // DefaultConfig returns a Config with default values.
@@ -117,5 +119,7 @@ func DefaultConfig() *Config {
 		AutoPlateauAction:         "freeze",
 		AutoPlateauCooldown:       2,
 		AutoPlateauTrackThreshold: 0.9,
+		AutoPlateauTrackWindows:   0,
+		AutoPlateauTrackAction:    "freeze",
 	}
 }

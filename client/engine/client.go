@@ -29,6 +29,36 @@ func NewAuthClient(cfg *Config) *AuthClient {
 	}
 }
 
+func (c *AuthClient) BaseHeader() http.Header {
+	h := make(http.Header)
+
+	if c.config.HeadersList != "" {
+		pairs := strings.Split(c.config.HeadersList, "||")
+		for _, p := range pairs {
+			kv := strings.SplitN(p, ":", 2)
+			if len(kv) == 2 {
+				h.Set(strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))
+			}
+		}
+	}
+
+	if c.config.BasicAuth != "" {
+		kv := strings.SplitN(c.config.BasicAuth, ":", 2)
+		if len(kv) == 2 {
+			// Use standard SetBasicAuth if possible, but we need to return Header
+			req, _ := http.NewRequest("GET", "http://empty", nil)
+			req.SetBasicAuth(kv[0], kv[1])
+			h.Set("Authorization", req.Header.Get("Authorization"))
+		}
+	}
+
+	return h
+}
+
+func (c *AuthClient) HTTPClient() *http.Client {
+	return c.httpClient
+}
+
 func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch bool, isHttpErr bool, isTooManyRequests bool, latency time.Duration, respBody []byte, statusCode int, err error) {
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()

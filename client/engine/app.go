@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"math/rand/v2"
-	"os"
-	"os/signal"
+	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -19,6 +18,7 @@ type App struct {
 	Client         *AuthClient
 	Pacer          *Pacer
 	AutoController *AutoController
+	MetricsPoller  *MetricsPoller
 
 	startTime time.Time
 	wg        sync.WaitGroup
@@ -26,48 +26,24 @@ type App struct {
 	quitCh    chan struct{}
 }
 
-func NewApp(cfg *Config) (*App, error) {
-	var src RowSource
-	var err error
-
-	if cfg.GenCSV {
-		// This should be handled before NewApp in main, or we implement a GeneratorSource
-	}
-
-	src, err = NewCSVSource(cfg.CSVPath, 0, cfg.CSVDebug, cfg.MaxRows, cfg.Shuffle)
-	if err != nil {
-		return nil, err
-	}
-
-	collector := NewDefaultStatsCollector()
-	client := NewAuthClient(cfg)
-
-	var pacer *Pacer
-	if cfg.RPS > 0 || (cfg.AutoMode && cfg.AutoStartRPS > 0) {
-		initialRPS := cfg.RPS
-		if cfg.AutoMode && cfg.AutoStartRPS > 0 {
-			initialRPS = cfg.AutoStartRPS
-		}
-		pacer = NewPacer(initialRPS)
-		collector.SetTargetRPS(initialRPS)
-	}
-
+func NewApp(cfg *Config, src RowSource, collector StatsCollector, client *AuthClient, pacer *Pacer) *App {
 	app := &App{
-		Config:    cfg,
-		Source:    src,
-		Collector: collector,
-		Client:    client,
-		Pacer:     pacer,
-		startTime: time.Now(),
-		rowChan:   make(chan Row, cfg.Concurrency*2),
-		quitCh:    make(chan struct{}, 1024),
+		Config:        cfg,
+		Source:        src,
+		Collector:     collector,
+		Client:        client,
+		Pacer:         pacer,
+		startTime:     time.Now(),
+		rowChan:       make(chan Row, cfg.Concurrency*2),
+		quitCh:        make(chan struct{}, 1024),
+		MetricsPoller: NewMetricsPoller(client.HTTPClient(), cfg.Endpoint, client.BaseHeader(), 5*time.Second),
 	}
 
 	if cfg.AutoMode {
 		app.AutoController = NewAutoController(cfg, collector, pacer, app)
 	}
 
-	return app, nil
+	return app
 }
 
 func (a *App) SpawnWorkers(ctx context.Context, n int) {
@@ -87,18 +63,7 @@ func (a *App) ReduceWorkers(n int) {
 }
 
 func (a *App) Run(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	a.startTime = time.Now()
-
-	// Handle signals
-	sigC := make(chan os.Signal, 1)
-	signal.Notify(sigC, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigC
-		cancel()
-	}()
 
 	// Start progress reporter
 	if a.Config.ProgressEvery > 0 {
@@ -126,12 +91,21 @@ func (a *App) Run(ctx context.Context) error {
 		go a.AutoController.Run(ctx)
 	}
 
+	// Start metrics poller
+	if a.MetricsPoller != nil {
+		go a.MetricsPoller.Run(ctx)
+	}
+
 	// Feeding loop
 	go func() {
 		defer close(a.rowChan)
 		for l := 0; l < a.Config.Loops || a.Config.RunFor > 0; l++ {
 			a.Source.Reset()
 			for {
+				if a.Config.RunFor > 0 && time.Since(a.startTime) > a.Config.RunFor {
+					return
+				}
+
 				row, ok := a.Source.Next()
 				if !ok {
 					break
@@ -148,10 +122,6 @@ func (a *App) Run(ctx context.Context) error {
 				select {
 				case a.rowChan <- row:
 				case <-ctx.Done():
-					return
-				}
-
-				if a.Config.RunFor > 0 && time.Since(a.startTime) > a.Config.RunFor {
 					return
 				}
 			}
@@ -187,8 +157,8 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 			}
 
 			if numReqs == 1 {
-				okResp, isMatch, isHttpErr, isTooManyRequests, latency, _, _, _ := a.Client.DoRequest(ctx, row)
-				a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, false, isTooManyRequests)
+				okResp, isMatch, isHttpErr, isTooManyRequests, latency, _, statusCode, _ := a.Client.DoRequest(ctx, row)
+				a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, false, isTooManyRequests, statusCode)
 			} else {
 				var wg sync.WaitGroup
 				var bodies [][]byte
@@ -198,8 +168,8 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						okResp, isMatch, isHttpErr, isTooManyRequests, latency, rb, _, _ := a.Client.DoRequest(ctx, row)
-						a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, false, isTooManyRequests)
+						okResp, isMatch, isHttpErr, isTooManyRequests, latency, rb, statusCode, _ := a.Client.DoRequest(ctx, row)
+						a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, false, isTooManyRequests, statusCode)
 						if a.Config.CompareParallel {
 							mu.Lock()
 							bodies = append(bodies, rb)
@@ -219,13 +189,12 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 						}
 					}
 					if !matched {
-						// We don't have a specific counter for parallel mismatch in Stats yet,
-						// but main.go.bak had parallelMatched/Mismatched.
-						// For now, we can log it or just keep it as is.
-						// In main.go.bak it was just printed if verbose.
+						a.Collector.IncParallelMismatched()
 						if a.Config.Verbose {
 							fmt.Printf("Parallel mismatch for row\n")
 						}
+					} else {
+						a.Collector.IncParallelMatched()
 					}
 				}
 			}
@@ -238,17 +207,255 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 }
 
 func (a *App) progressLoop(ctx context.Context) {
+	if a.Config.ProgressBar && IsTTY() {
+		a.renderInteractiveLoop(ctx)
+		return
+	}
+
+	if a.Config.ProgressEvery <= 0 {
+		return
+	}
+
 	ticker := time.NewTicker(a.Config.ProgressEvery)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
 			s := a.Collector.Snapshot()
 			fmt.Printf("[%v] Total: %d, Matched: %d, Errors: %d, P95: %v, RPS: %.2f\n",
-				s.Elapsed.Round(time.Second), s.Total, s.Matched, s.HttpErrs, s.P90, // Should be P95 if we had it
+				s.Elapsed.Round(time.Second), s.Total, s.Matched, s.HttpErrs, s.P95,
 				float64(s.Total)/s.Elapsed.Seconds())
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func (a *App) renderInteractiveLoop(ctx context.Context) {
+	// Clear screen at start
+	fmt.Print("\x1b[2J\x1b[3J\x1b[H")
+	fmt.Println("Running test...")
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			a.renderTTY()
+		case <-ctx.Done():
+			// Final clear of the status lines? No, leave them.
+			return
+		}
+	}
+}
+
+func (a *App) renderTTY() {
+	s := a.Collector.Snapshot()
+	termW, termH := TermSize()
+	if termW < 40 {
+		termW = 80
+	}
+
+	// Calculate RPS
+	rps := 0.0
+	if s.Elapsed.Seconds() > 0 {
+		rps = float64(s.Total) / s.Elapsed.Seconds()
+	}
+
+	// Calculate ETA and planned total
+	plannedTotal := int64(a.Config.MaxRows)
+	if a.Config.RunFor > 0 {
+		plannedTotal = -2
+	} else if plannedTotal == 0 {
+		plannedTotal = int64(a.Source.Total() * a.Config.Loops)
+	}
+
+	etaStr := "--:--:--"
+	if plannedTotal == -2 {
+		if a.Config.RunFor > 0 {
+			remain := a.Config.RunFor - s.Elapsed
+			if remain < 0 {
+				remain = 0
+			}
+			etaStr = humanETA(remain)
+		}
+	} else if plannedTotal > 0 {
+		remain := plannedTotal - s.Total
+		if remain < 0 {
+			remain = 0
+		}
+		if rps > 0 {
+			etaDur := time.Duration(float64(remain) / rps * float64(time.Second))
+			etaStr = humanETA(etaDur)
+		}
+	}
+
+	trkStr := ""
+	if s.TargetRPS > 0 {
+		trk := Clamp01(rps / s.TargetRPS)
+		trkStr = fmt.Sprintf(" [trk: %3.0f%%]", trk*100)
+	}
+
+	mstr := ""
+	if a.MetricsPoller != nil {
+		mstr = a.MetricsPoller.GetLine()
+	}
+
+	// Determine severity for coloring
+	errRate := CalcErrorRatePct(s)
+	trkRatio := 1.0
+	if s.TargetRPS > 0 {
+		trkRatio = Clamp01(rps / s.TargetRPS)
+	}
+
+	severity := "ok"
+	if s.P90 >= time.Duration(a.Config.CritP95)*time.Millisecond || errRate >= a.Config.CritErr || (s.TargetRPS > 0 && trkRatio <= a.Config.CritTrack) {
+		severity = "crit"
+	} else if s.P90 >= time.Duration(a.Config.WarnP95)*time.Millisecond || errRate >= a.Config.WarnErr || (s.TargetRPS > 0 && trkRatio <= a.Config.WarnTrack) {
+		severity = "warn"
+	}
+
+	// Determine current stats for the header
+	avgMs := int(s.Avg.Milliseconds())
+	p50Ms := int(s.P50.Milliseconds())
+	p90Ms := int(s.P90.Milliseconds())
+
+	right := fmt.Sprintf(
+		"[eta: %s] [rps: %7.1f] [trps: %7d]%s [conc: %4d] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [429: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+		etaStr, rps, uint64(s.TargetRPS), trkStr, s.Concurrency,
+		humanCount(s.Matched), humanCount(s.HttpErrs), humanCount(s.Aborted), humanCount(s.Skipped),
+		humanCount(s.TooManyRequests), humanMs(avgMs), humanMs(p50Ms), humanMs(p90Ms),
+	)
+
+	// Header area under "Running test...":
+	// Row 2: textual status (right string)
+	// Row 3: metrics line
+	hdr1 := " " + right
+	hdr2 := " " + mstr
+
+	if IsTTY() {
+		hdr1 = " " + StyleCyan.S(right)
+		hdr2 = " " + StyleFaint.S(mstr)
+	}
+
+	hdr1 = padToCellsRight(truncateToCells(hdr1, termW), termW)
+	hdr2 = padToCellsRight(truncateToCells(hdr2, termW), termW)
+
+	fmt.Printf("\x1b[s\x1b[2;1H\x1b[2K%s\x1b[3;1H\x1b[2K%s\x1b[u", hdr1, hdr2)
+
+	// Bottom progress bar
+	status := "RUN"
+	if plannedTotal == -2 {
+		status = "TIME"
+	}
+	left := fmt.Sprintf("[%s] %d", status, s.Total)
+	if plannedTotal > 0 {
+		left = fmt.Sprintf("[%s] %d / %d", status, s.Total, plannedTotal)
+	}
+
+	ratio := 0.0
+	if plannedTotal == -2 {
+		if a.Config.RunFor > 0 {
+			ratio = Clamp01(s.Elapsed.Seconds() / a.Config.RunFor.Seconds())
+		}
+	} else if plannedTotal > 0 {
+		ratio = Clamp01(float64(s.Total) / float64(plannedTotal))
+	}
+
+	const minBar = 10
+	leftW := displayWidth(left)
+	fixedSpaces := 2 // leading space + space before the bar
+	available := termW - fixedSpaces - leftW
+
+	if available < minBar {
+		need := minBar - available
+		newLeftW := leftW - need
+		if newLeftW < 0 {
+			newLeftW = 0
+		}
+		left = truncateToCells(left, newLeftW)
+		leftW = displayWidth(left)
+		available = termW - fixedSpaces - leftW
+	}
+
+	barWidth := available
+	fill := int(math.Round(ratio * float64(barWidth)))
+	if fill < 0 {
+		fill = 0
+	}
+	if fill > barWidth {
+		fill = barWidth
+	}
+
+	fillChar := "#"
+	emptyChar := "-"
+	if SupportsUnicode() {
+		fillChar = "█"
+		emptyChar = "·"
+	}
+	if s.PlateauActive {
+		if SupportsUnicode() {
+			fillChar = "▒"
+		} else {
+			fillChar = "="
+		}
+	}
+
+	var bar string
+	filled := ""
+	rest := ""
+	if fill > 0 {
+		filled = strings.Repeat(fillChar, fill)
+	}
+	if barWidth-fill > 0 {
+		rest = strings.Repeat(emptyChar, barWidth-fill)
+	}
+
+	if IsTTY() {
+		var c colorStyle
+		switch {
+		case s.PlateauActive:
+			c = StyleMagenta
+		case severity == "crit":
+			c = StyleRed
+		case severity == "warn":
+			c = StyleYellow
+		default:
+			c = StyleGreen
+		}
+
+		if fill > 0 {
+			bar = c.S(filled) + StyleFaint.S(rest)
+		} else {
+			bar = StyleFaint.S(rest)
+		}
+	} else {
+		bar = filled + rest
+	}
+
+	leftColored := left
+	if IsTTY() {
+		switch {
+		case s.PlateauActive:
+			leftColored = StyleMagenta.S(left)
+		case severity == "crit":
+			leftColored = StyleRed.S(left)
+		case severity == "warn":
+			leftColored = StyleYellow.S(left)
+		default:
+			leftColored = StyleGreen.S(left)
+		}
+	}
+
+	pctStr := fmt.Sprintf(" %5.1f%%", ratio*100)
+	if IsTTY() {
+		pctStr = StyleCyan.S(pctStr)
+	}
+
+	bottom := " " + leftColored + " " + bar + " " + pctStr
+	bottom = padToCellsRight(truncateToCells(bottom, termW), termW)
+
+	fmt.Printf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", termH, bottom)
 }
