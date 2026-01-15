@@ -1808,6 +1808,9 @@ func main() {
 		// We add flags here instead of in the large block above to keep related options close.
 		randomNoAuth     = flag.Bool("random-no-auth", false, "Randomly set mode=no-auth on requests that have expected_ok=true")
 		randomNoAuthProb = flag.Float64("random-no-auth-prob", 0.0, "Probability (0..1) to enable no-auth for an expected_ok request")
+
+		randomBadPass     = flag.Bool("random-bad-pass", false, "Randomly use a wrong password for requests that have expected_ok=true")
+		randomBadPassProb = flag.Float64("random-bad-pass-prob", 0.0, "Probability (0..1) to use a wrong password for an expected_ok request")
 	)
 
 	flag.Parse()
@@ -1881,26 +1884,37 @@ func main() {
 	// Optional: per-row Idempotency-Key
 	idemKeys := make([]string, len(rows))
 
+	// Expected results array for zero allocation in workers
+	expectedOKs := make([]bool, len(rows))
+
 	for i := range rows {
 		usernames[i] = strings.TrimSpace(resolveUsername(rows[i].Fields))
 		clientIPs[i] = strings.TrimSpace(rows[i].Fields["client_ip"])
-		payload := makePayload(rows[i].Fields)
+
+		// Cache expected OK from CSV
+		expectedOKs[i] = rows[i].ExpectedOK
+
+		// Copy fields to avoid mutating original rows
+		f := make(map[string]string, len(rows[i].Fields))
+		for k, v := range rows[i].Fields {
+			f[k] = v
+		}
+
+		// Optional: inject wrong password for expected_ok requests
+		if *randomBadPass && expectedOKs[i] && rand.Float64() < *randomBadPassProb {
+			f["password"] = "WRONG_PASS_" + secureCSVPassword()
+			expectedOKs[i] = false
+		}
+
+		payload := makePayload(f)
 		bb, _ := json.Marshal(payload)
 		bodies[i] = bb
 
 		// Precompute Idempotency-Key if requested
-		// We'll still guard usage at request time so this computation can be deferred if preferred.
-		// But doing it here once per row is cheap and keeps worker hot path lean.
 		if *useIdemKey {
 			sum := sha256.Sum256(bb)
 			idemKeys[i] = hex.EncodeToString(sum[:])
 		}
-	}
-
-	// Expected results array for zero allocation in workers
-	expectedOKs := make([]bool, len(rows))
-	for i := range rows {
-		expectedOKs[i] = rows[i].ExpectedOK
 	}
 
 	// High-performance HTTP transport tuned for load generation
