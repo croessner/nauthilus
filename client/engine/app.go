@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -24,6 +25,8 @@ type App struct {
 	wg        sync.WaitGroup
 	rowChan   chan Row
 	quitCh    chan struct{}
+	stopChan  chan struct{}
+	stopOnce  sync.Once
 }
 
 func NewApp(cfg *Config, src RowSource, collector StatsCollector, client *AuthClient, pacer *Pacer) *App {
@@ -36,6 +39,7 @@ func NewApp(cfg *Config, src RowSource, collector StatsCollector, client *AuthCl
 		startTime:     time.Now(),
 		rowChan:       make(chan Row, cfg.Concurrency*2),
 		quitCh:        make(chan struct{}, 1024),
+		stopChan:      make(chan struct{}),
 		MetricsPoller: NewMetricsPoller(client.HTTPClient(), cfg.Endpoint, client.BaseHeader(), 5*time.Second),
 	}
 
@@ -60,6 +64,16 @@ func (a *App) ReduceWorkers(n int) {
 		default:
 		}
 	}
+}
+
+func (a *App) Stop() {
+	a.stopOnce.Do(func() {
+		close(a.stopChan)
+
+		if a.Client != nil {
+			a.Client.Stop()
+		}
+	})
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -116,12 +130,16 @@ func (a *App) Run(ctx context.Context) error {
 					case <-a.Pacer.Tick():
 					case <-ctx.Done():
 						return
+					case <-a.stopChan:
+						return
 					}
 				}
 
 				select {
 				case a.rowChan <- row:
 				case <-ctx.Done():
+					return
+				case <-a.stopChan:
 					return
 				}
 			}
@@ -147,6 +165,15 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 			if !ok {
 				return
 			}
+
+			// Random effects determined once per logical request
+			if a.Config.RandomBadPass && rand.Float64() < a.Config.RandomBadPassProb {
+				row.BadPass = true
+			}
+			if a.Config.RandomNoAuth && row.ExpectOK && rand.Float64() < a.Config.RandomNoAuthProb {
+				row.NoAuth = true
+			}
+
 			if a.Config.JitterMs > 0 {
 				time.Sleep(time.Duration(rand.IntN(a.Config.JitterMs)) * time.Millisecond)
 			}
@@ -157,8 +184,8 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 			}
 
 			if numReqs == 1 {
-				okResp, isMatch, isHttpErr, isTooManyRequests, latency, _, statusCode, _ := a.Client.DoRequest(ctx, row)
-				a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, false, isTooManyRequests, statusCode)
+				okResp, isMatch, isHttpErr, isTooManyRequests, isToleratedBF, latency, _, statusCode, _ := a.Client.DoRequest(ctx, row)
+				a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, isToleratedBF, isTooManyRequests, statusCode)
 			} else {
 				var wg sync.WaitGroup
 				var bodies [][]byte
@@ -168,8 +195,8 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						okResp, isMatch, isHttpErr, isTooManyRequests, latency, rb, statusCode, _ := a.Client.DoRequest(ctx, row)
-						a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, false, isTooManyRequests, statusCode)
+						okResp, isMatch, isHttpErr, isTooManyRequests, isToleratedBF, latency, rb, statusCode, _ := a.Client.DoRequest(ctx, row)
+						a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, isToleratedBF, isTooManyRequests, statusCode)
 						if a.Config.CompareParallel {
 							mu.Lock()
 							bodies = append(bodies, rb)
@@ -190,8 +217,18 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 					}
 					if !matched {
 						a.Collector.IncParallelMismatched()
-						if a.Config.Verbose {
+						if a.Config.Verbose || a.Config.Debug {
 							fmt.Printf("Parallel mismatch for row\n")
+						}
+						if a.Config.Debug {
+							fmt.Printf("--- PARALLEL MISMATCH DEBUG ---\n")
+							for i, b := range bodies {
+								var pj any
+								_ = json.Unmarshal(b, &pj)
+								out, _ := json.MarshalIndent(pj, "", "  ")
+								fmt.Printf("Response %d:\n%s\n", i, string(out))
+							}
+							fmt.Printf("-------------------------------\n")
 						}
 					} else {
 						a.Collector.IncParallelMatched()
@@ -223,8 +260,9 @@ func (a *App) progressLoop(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			s := a.Collector.Snapshot()
-			fmt.Printf("[%v] Total: %d, Matched: %d, Errors: %d, P95: %v, RPS: %.2f\n",
-				s.Elapsed.Round(time.Second), s.Total, s.Matched, s.HttpErrs, s.P95,
+			fmt.Printf("[%v] Total: %d, Matched: %d, Errors: %d, PMatched: %d, PMismatched: %d, P95: %v, RPS: %.2f\n",
+				s.Elapsed.Round(time.Second), s.Total, s.Matched, s.HttpErrs,
+				s.ParallelMatched, s.ParallelMismatched, s.P95,
 				float64(s.Total)/s.Elapsed.Seconds())
 		case <-ctx.Done():
 			return
@@ -323,10 +361,10 @@ func (a *App) renderTTY() {
 	p90Ms := int(s.P90.Milliseconds())
 
 	right := fmt.Sprintf(
-		"[eta: %s] [rps: %7.1f] [trps: %7d]%s [conc: %4d] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [429: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+		"[eta: %s] [rps: %7.1f] [trps: %7d]%s [conc: %4d] [ok: %4s] [err: %s] [pm: %s] [pmm: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
 		etaStr, rps, uint64(s.TargetRPS), trkStr, s.Concurrency,
-		humanCount(s.Matched), humanCount(s.HttpErrs), humanCount(s.Aborted), humanCount(s.Skipped),
-		humanCount(s.TooManyRequests), humanMs(avgMs), humanMs(p50Ms), humanMs(p90Ms),
+		humanCount(s.Matched), humanCount(s.HttpErrs), humanCount(s.ParallelMatched), humanCount(s.ParallelMismatched),
+		humanMs(avgMs), humanMs(p50Ms), humanMs(p90Ms),
 	)
 
 	// Header area under "Running test...":

@@ -17,6 +17,7 @@ package core
 
 import (
 	"log/slog"
+	"net/http"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -26,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 
 	"github.com/gin-gonic/gin"
+	jsoniter "github.com/json-iterator/go"
 )
 
 // StateView is a read-only snapshot wrapper around AuthState used by response and header layers.
@@ -276,5 +278,14 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 		Attributes:   auth.Attributes,
 	}
 
-	ctx.JSON(auth.StatusCodeOK, resp)
+	// Use stable JSON encoding to avoid parallel_mismatched in client tests
+	// caused by non-deterministic map key ordering.
+	b, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(resp)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	ctx.Data(auth.StatusCodeOK, "application/json; charset=utf-8", b)
 }

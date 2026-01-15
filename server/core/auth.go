@@ -652,6 +652,36 @@ func (p *PassDBResult) IsPassDBResult() bool {
 	return true
 }
 
+// Clone creates a deep copy of the PassDBResult.
+// It retrieves a new object from the pool and populates it.
+func (p *PassDBResult) Clone() *PassDBResult {
+	if p == nil {
+		return nil
+	}
+
+	res := GetPassDBResultFromPool()
+	res.Authenticated = p.Authenticated
+	res.UserFound = p.UserFound
+	res.BackendName = p.BackendName
+	res.AccountField = p.AccountField
+	res.Account = p.Account
+	res.TOTPSecretField = p.TOTPSecretField
+	res.TOTPRecoveryField = p.TOTPRecoveryField
+	res.UniqueUserIDField = p.UniqueUserIDField
+	res.DisplayNameField = p.DisplayNameField
+	res.Backend = p.Backend
+	res.Attributes = p.Attributes.Clone()
+
+	if p.AdditionalFeatures != nil {
+		res.AdditionalFeatures = make(map[string]any, len(p.AdditionalFeatures))
+		for k, v := range p.AdditionalFeatures {
+			res.AdditionalFeatures[k] = v
+		}
+	}
+
+	return res
+}
+
 type (
 	// PassDBOption
 	// This type specifies the signature of a password database.
@@ -1395,7 +1425,11 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 
 		auth.SourcePassDBBackend = passDBResult.Backend
 		auth.BackendName = passDBResult.BackendName
-		auth.UsedPassDBBackend = passDB.backend
+		if passDB != nil {
+			auth.UsedPassDBBackend = passDB.backend
+		} else {
+			auth.UsedPassDBBackend = passDBResult.Backend
+		}
 	}
 
 	if passDBResult.AccountField != "" {
@@ -1537,7 +1571,7 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 		return
 	}
 
-	a.AccountField = accountName
+	a.AccountName = accountName
 
 	return accountName
 }
@@ -1632,7 +1666,7 @@ func (a *AuthState) WithPassword(password string) bruteforce.BucketManager {
 
 // WithAccountName sets the account name in the AuthState.
 func (a *AuthState) WithAccountName(accountName string) bruteforce.BucketManager {
-	a.AccountField = accountName
+	a.AccountName = accountName
 
 	return a
 }
@@ -1692,7 +1726,7 @@ func (a *AuthState) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule
 func (a *AuthState) ProcessPWHist() (accountName string) {
 	bm := a.createBucketManager(a.Ctx())
 	accountName = bm.ProcessPWHist()
-	a.AccountField = accountName
+	a.AccountName = accountName
 
 	return
 }
@@ -1969,11 +2003,31 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 		defer stop()
 	}
 
-	passDBResult, err := a.verifyPassword(ctx, passDBs)
+	sfKey := a.GUID
+	if idem := ctx.GetHeader(idempotencyHeaderName); idem != "" {
+		sfKey = "idem:" + idem
+	}
+
+	val, err, shared := backchanSF.Do(sfKey, func() (any, error) {
+		return a.verifyPassword(ctx, passDBs)
+	})
+
+	var passDBResult *PassDBResult
+	if val != nil {
+		res := val.(*PassDBResult)
+		if shared {
+			passDBResult = res.Clone()
+			updateAuthentication(ctx, a, passDBResult, nil)
+		} else {
+			passDBResult = res
+		}
+	}
+
 	if passDBResult != nil {
 		vspan.SetAttributes(
 			attribute.Bool("authenticated", passDBResult.Authenticated),
 			attribute.Bool("user_found", passDBResult.UserFound),
+			attribute.Bool("shared", shared),
 		)
 
 		if passDBResult.BackendName != "" {

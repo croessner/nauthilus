@@ -338,15 +338,15 @@ type File interface {
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
 // Lua scripting, OAuth2, LDAP, and other miscellaneous configurations. It includes synchronization via a mutex.
 type FileSettings struct {
-	Server                  *ServerSection           `mapstructure:"server" valdiate:"required"`
-	RBLs                    *RBLSection              `mapstructure:"realtime_blackhole_lists" valdiate:"omitempty"`
-	ClearTextList           []string                 `mapstructure:"cleartext_networks" valdiate:"omitempty,dive"`
-	RelayDomains            *RelayDomainsSection     `mapstructure:"relay_domains" valdiate:"omitempty"`
-	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring" valdiate:"omitempty"`
-	BruteForce              *BruteForceSection       `mapstructure:"brute_force" valdiate:"omitempty"`
-	Lua                     *LuaSection              `mapstructure:"lua" valdiate:"omitempty"`
-	LDAP                    *LDAPSection             `mapstructure:"ldap" valdiate:"omitempty"`
-	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" valdiate:"omitempty"`
+	Server                  *ServerSection           `mapstructure:"server" validate:"required"`
+	RBLs                    *RBLSection              `mapstructure:"realtime_blackhole_lists" validate:"omitempty"`
+	ClearTextList           []string                 `mapstructure:"cleartext_networks" validate:"omitempty,dive"`
+	RelayDomains            *RelayDomainsSection     `mapstructure:"relay_domains" validate:"omitempty"`
+	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring" validate:"omitempty"`
+	BruteForce              *BruteForceSection       `mapstructure:"brute_force" validate:"omitempty"`
+	Lua                     *LuaSection              `mapstructure:"lua" validate:"omitempty"`
+	LDAP                    *LDAPSection             `mapstructure:"ldap" validate:"omitempty"`
+	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" validate:"omitempty"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex
 }
@@ -2051,7 +2051,74 @@ func (f *FileSettings) validate() (err error) {
 		}
 	}
 
+	f.checkResourceLimits()
+
 	return nil
+}
+
+func (f *FileSettings) checkResourceLimits() {
+	maxConcurrent := int(f.GetServer().GetMaxConcurrentRequests())
+	if maxConcurrent <= 0 {
+		return
+	}
+
+	// Helper to check a pool and warn
+	checkPool := func(name string, poolSize int) {
+		if poolSize > 0 && poolSize < maxConcurrent/20 && poolSize < 50 {
+			safeWarn(
+				"msg", "backend pool size is very small compared to max_concurrent_requests",
+				"pool", name,
+				"size", poolSize,
+				"max_concurrent", maxConcurrent,
+				"recommendation", "increase pool size to avoid exhaustion under load",
+			)
+		}
+	}
+
+	// Check LDAP
+	if f.LDAP != nil {
+		if cfg, ok := f.LDAP.GetConfig().(*LDAPConf); ok && cfg != nil {
+			checkPool("ldap.default.lookup", cfg.GetLookupPoolSize())
+			checkPool("ldap.default.auth", cfg.GetAuthPoolSize())
+		}
+
+		for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
+			if cfg != nil {
+				checkPool("ldap."+name+".lookup", cfg.GetLookupPoolSize())
+				checkPool("ldap."+name+".auth", cfg.GetAuthPoolSize())
+			}
+		}
+	}
+
+	// Check Redis
+	checkPool("redis", f.GetServer().GetRedis().GetPoolSize())
+
+	// Check Redis timeouts
+	redisCfg := f.GetServer().GetRedis()
+
+	if redisCfg.GetReadTimeout() < 200*time.Millisecond {
+		safeWarn(
+			"msg", "Redis read timeout is very short",
+			"timeout", redisCfg.GetReadTimeout(),
+			"recommendation", "increase read_timeout to avoid i/o timeouts under load",
+		)
+	}
+
+	if redisCfg.GetWriteTimeout() < 200*time.Millisecond {
+		safeWarn(
+			"msg", "Redis write timeout is very short",
+			"timeout", redisCfg.GetWriteTimeout(),
+			"recommendation", "increase write_timeout to avoid i/o timeouts under load",
+		)
+	}
+
+	if redisCfg.GetPoolTimeout() < 200*time.Millisecond {
+		safeWarn(
+			"msg", "Redis pool timeout is very short",
+			"timeout", redisCfg.GetPoolTimeout(),
+			"recommendation", "increase pool_timeout to avoid connection exhaustion errors under load",
+		)
+	}
 }
 
 // warnDeprecatedConfig logs deprecation warnings for all known deprecated config fields.

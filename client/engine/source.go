@@ -7,6 +7,9 @@ type Row struct {
 	IP        string
 	ExpectOK  bool
 	RawFields map[string]string
+
+	BadPass bool
+	NoAuth  bool
 }
 
 // RowSource is an interface for providing rows of data.

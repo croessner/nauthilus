@@ -76,7 +76,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			ppc = &bktype.PositivePasswordCache{}
 
 			isRedisErr := false
-			if isRedisErr, err = backend.LoadCacheFromRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.deps.Redis, redisPosUserKey, ppc); err != nil {
+			if isRedisErr, err = backend.LoadCacheFromRedisWithSF(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.deps.Redis, redisPosUserKey, ppc); err != nil {
 				csp.RecordError(err)
 
 				csp.End()

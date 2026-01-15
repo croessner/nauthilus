@@ -61,12 +61,11 @@ func (s *DefaultStatsCollector) AddSample(latency time.Duration, ok bool, isMatc
 	if isTooManyRequests {
 		s.tooManyRequests.Add(1)
 	}
-	if ok {
-		if isMatch {
-			s.matched.Add(1)
-		} else {
-			s.mismatched.Add(1)
-		}
+
+	if isToleratedBF || isMatch {
+		s.matched.Add(1)
+	} else {
+		s.mismatched.Add(1)
 	}
 
 	latNs := latency.Nanoseconds()

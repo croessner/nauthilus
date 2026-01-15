@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -16,15 +19,41 @@ import (
 )
 
 type AuthClient struct {
-	config     *Config
-	httpClient *http.Client
+	config       *Config
+	httpClient   *http.Client
+	bfHeaderName string
 }
 
 func NewAuthClient(cfg *Config) *AuthClient {
+	bfHeaderName := strings.TrimSpace(os.Getenv("BRUTEFORCE_HEADER_NAME"))
+	if bfHeaderName == "" {
+		bfHeaderName = "X-Nauthilus-Bruteforce"
+	}
+
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          8192,
+		MaxIdleConnsPerHost:   8192,
+		MaxConnsPerHost:       0,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableCompression:    true,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+	}
+
 	return &AuthClient{
-		config: cfg,
+		config:       cfg,
+		bfHeaderName: bfHeaderName,
 		httpClient: &http.Client{
-			Timeout: time.Duration(cfg.TimeoutMs) * time.Millisecond,
+			Timeout:   time.Duration(cfg.TimeoutMs) * time.Millisecond,
+			Transport: transport,
 		},
 	}
 }
@@ -59,7 +88,14 @@ func (c *AuthClient) HTTPClient() *http.Client {
 	return c.httpClient
 }
 
-func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch bool, isHttpErr bool, isTooManyRequests bool, latency time.Duration, respBody []byte, statusCode int, err error) {
+func (c *AuthClient) Stop() {
+	if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+		transport.DisableKeepAlives = true
+		transport.CloseIdleConnections()
+	}
+}
+
+func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch bool, isHttpErr bool, isTooManyRequests bool, isToleratedBF bool, latency time.Duration, respBody []byte, statusCode int, err error) {
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
 
@@ -76,8 +112,8 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	payload := c.makePayload(row.RawFields)
 
-	// Random effects
-	if c.config.RandomBadPass && rand.Float64() < c.config.RandomBadPassProb {
+	// Random effects (pre-determined by row flags)
+	if row.BadPass {
 		if _, ok := payload["password"]; ok {
 			payload["password"] = "wrong-password-" + hex.EncodeToString(sha256.New().Sum(nil)[:4])
 		}
@@ -86,7 +122,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	body, _ := jsoniter.Marshal(payload)
 
 	reqURL := c.config.Endpoint
-	if c.config.RandomNoAuth && row.ExpectOK && rand.Float64() < c.config.RandomNoAuthProb {
+	if row.NoAuth {
 		if u, err := url.Parse(reqURL); err == nil {
 			q := u.Query()
 			if q.Get("mode") == "" {
@@ -99,7 +135,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	req, err := http.NewRequestWithContext(reqCtx, c.config.Method, reqURL, bytes.NewReader(body))
 	if err != nil {
-		return false, false, false, false, 0, nil, 0, err
+		return false, false, false, false, false, 0, nil, 0, err
 	}
 
 	// Add headers
@@ -128,7 +164,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	resp, err := c.httpClient.Do(req)
 	latency = time.Since(start)
 	if err != nil {
-		return false, false, true, false, latency, nil, 0, err
+		return false, false, true, false, false, latency, nil, 0, err
 	}
 	defer resp.Body.Close()
 
@@ -136,7 +172,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	respBody, _ = io.ReadAll(resp.Body)
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return false, false, false, true, latency, respBody, statusCode, nil
+		return false, false, false, true, false, latency, respBody, statusCode, nil
 	}
 
 	if c.config.UseJSONFlag {
@@ -149,10 +185,16 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 		ok = resp.StatusCode == c.config.OKStatus
 	}
 
-	isMatch = ok == row.ExpectOK
-	isHttpErr = resp.StatusCode >= 400 && resp.StatusCode != http.StatusTooManyRequests
+	effectiveExpectOK := row.ExpectOK
+	if row.BadPass && !row.NoAuth {
+		effectiveExpectOK = false
+	}
 
-	return ok, isMatch, isHttpErr, false, latency, respBody, statusCode, nil
+	isMatch = ok == effectiveExpectOK
+	isHttpErr = !isMatch || (resp.StatusCode >= 500)
+	isToleratedBF = resp.Header.Get(c.bfHeaderName) != ""
+
+	return ok, isMatch, isHttpErr, false, isToleratedBF, latency, respBody, statusCode, nil
 }
 
 func (c *AuthClient) makePayload(fields map[string]string) map[string]any {

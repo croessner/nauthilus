@@ -19,5 +19,28 @@ package bktype
 // while the values are the results.
 type AttributeMapping map[string][]any
 
+// Clone creates a deep copy of the AttributeMapping.
+func (a AttributeMapping) Clone() AttributeMapping {
+	if a == nil {
+		return nil
+	}
+
+	res := make(AttributeMapping, len(a))
+
+	for k, v := range a {
+		if v == nil {
+			res[k] = nil
+
+			continue
+		}
+
+		cv := make([]any, len(v))
+		copy(cv, v)
+		res[k] = cv
+	}
+
+	return res
+}
+
 // Done is the value for channels to finish workers
 type Done struct{}

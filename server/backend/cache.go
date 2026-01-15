@@ -37,6 +37,12 @@ import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/sync/singleflight"
+)
+
+var (
+	accountSF singleflight.Group
+	cacheSF   singleflight.Group
 )
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
@@ -72,6 +78,36 @@ func LookupUserAccountFromRedis(ctx context.Context, cfg config.File, redisClien
 	sp.SetAttributes(attribute.Bool("found", accountName != ""))
 
 	return
+}
+
+// LoadCacheFromRedisWithSF is a wrapper around LoadCacheFromRedis that uses singleflight to avoid redundant Redis lookups.
+func LoadCacheFromRedisWithSF(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, key string, ucp *bktype.PositivePasswordCache) (isRedisErr bool, err error) {
+	type result struct {
+		isRedisErr bool
+		ucp        *bktype.PositivePasswordCache
+	}
+
+	val, err, _ := cacheSF.Do(key, func() (any, error) {
+		resUCP := &bktype.PositivePasswordCache{}
+		isRErr, loadErr := LoadCacheFromRedis(ctx, cfg, logger, redisClient, key, resUCP)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+
+		return &result{isRedisErr: isRErr, ucp: resUCP}, nil
+	})
+
+	if err != nil {
+		return false, err
+	}
+
+	res := val.(*result)
+	*ucp = *res.ucp // Copy scalar values
+
+	// Deep copy attributes map to avoid shared mutation between concurrent requests
+	ucp.Attributes = res.ucp.Attributes.Clone()
+
+	return res.isRedisErr, nil
 }
 
 // LoadCacheFromRedis retrieves cache data from Redis Hash based on a provided key and populates the given structure.
@@ -445,25 +481,32 @@ func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.
 		return acc
 	}
 
-	var err error
+	// Use singleflight to avoid redundant Redis lookups for the same user under high concurrency
+	val, err, _ := accountSF.Do(username, func() (any, error) {
+		res, lookupErr := LookupUserAccountFromRedis(ctx, cfg, redisClient, username)
+		if lookupErr != nil {
+			return "", lookupErr
+		}
 
-	accountName, err = LookupUserAccountFromRedis(ctx, cfg, redisClient, username)
+		if res != "" {
+			// Store positive result in in-process cache
+			accountCache.Set(cfg, username, res)
+		}
+
+		return res, nil
+	})
+
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "Failed to get user account from cache",
 			definitions.LogKeyError, err,
 		)
-	}
 
-	if accountName == "" {
 		return ""
 	}
 
-	// Store positive result in in-process cache
-	accountCache.Set(cfg, username, accountName)
-
-	return accountName
+	return val.(string)
 }
 
 // ResolveAccountIdentifier resolves an identifier that may be either a username or an account name.

@@ -46,7 +46,7 @@ type ServerSection struct {
 	HydraAdminUrl             string                   `mapstructure:"ory_hydra_admin_url" validate:"omitempty,http_url"`
 	DNS                       DNS                      `mapstructure:"dns" validate:"omitempty"`
 	Insights                  Insights                 `mapstructure:"insights" validate:"omitempty"`
-	Redis                     Redis                    `mapstructure:"redis" vslidate:"required"`
+	Redis                     Redis                    `mapstructure:"redis" validate:"required"`
 	MasterUser                MasterUser               `mapstructure:"master_user" validate:"omitempty"`
 	Frontend                  Frontend                 `mapstructure:"frontend" validate:"omitempty"`
 	Dedup                     Dedup                    `mapstructure:"dedup" validate:"omitempty"`
@@ -1385,37 +1385,37 @@ func (r *Redis) GetProtocol() int {
 	return r.Protocol
 }
 
-// GetPoolTimeout returns the configured pool timeout or the default of 80ms.
+// GetPoolTimeout returns the configured pool timeout or the default of 1s.
 func (r *Redis) GetPoolTimeout() time.Duration {
 	if r == nil || r.PoolTimeout == nil {
-		return 80 * time.Millisecond
+		return 1 * time.Second
 	}
 
 	return *r.PoolTimeout
 }
 
-// GetDialTimeout returns the configured dial timeout or the default of 200ms.
+// GetDialTimeout returns the configured dial timeout or the default of 5s.
 func (r *Redis) GetDialTimeout() time.Duration {
 	if r == nil || r.DialTimeout == nil {
-		return 200 * time.Millisecond
+		return 5 * time.Second
 	}
 
 	return *r.DialTimeout
 }
 
-// GetReadTimeout returns the configured read timeout or the default of 100ms.
+// GetReadTimeout returns the configured read timeout or the default of 1s.
 func (r *Redis) GetReadTimeout() time.Duration {
 	if r == nil || r.ReadTimeout == nil {
-		return 100 * time.Millisecond
+		return 1 * time.Second
 	}
 
 	return *r.ReadTimeout
 }
 
-// GetWriteTimeout returns the configured write timeout or the default of 100ms.
+// GetWriteTimeout returns the configured write timeout or the default of 1s.
 func (r *Redis) GetWriteTimeout() time.Duration {
 	if r == nil || r.WriteTimeout == nil {
-		return 100 * time.Millisecond
+		return 1 * time.Second
 	}
 
 	return *r.WriteTimeout

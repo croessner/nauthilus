@@ -130,10 +130,13 @@ func setupFlags(cfg *engine.Config) {
 
 func runApp(lifecycle fx.Lifecycle, app *engine.App, shutdown fx.Shutdowner) {
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 
 	lifecycle.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
 			go func() {
+				defer close(done)
+
 				if err := app.Run(ctx); err != nil {
 					fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				}
@@ -143,8 +146,15 @@ func runApp(lifecycle fx.Lifecycle, app *engine.App, shutdown fx.Shutdowner) {
 
 			return nil
 		},
-		OnStop: func(_ context.Context) error {
-			cancel()
+		OnStop: func(stopCtx context.Context) error {
+			app.Stop()
+
+			select {
+			case <-done:
+			case <-stopCtx.Done():
+				cancel()
+			}
+
 			printStats(app)
 
 			return nil
