@@ -88,9 +88,15 @@ func (m *BackendResultManager) New(L *lua.LState) int {
 // checkBackendResult retrieves and validates a LuaBackendResult instance from the Lua state at the given stack index.
 func (m *BackendResultManager) checkBackendResult(L *lua.LState) *LuaBackendResult {
 	stack := luastack.NewManager(L)
-	userData := L.CheckUserData(1)
 
-	if value, ok := userData.Value.(*LuaBackendResult); ok {
+	userData := stack.CheckUserData(1)
+	if userData == nil {
+		stack.L.ArgError(1, "backend_result expected")
+
+		return nil
+	}
+
+	if value, ok := userData.Value.(*LuaBackendResult); ok && value != nil {
 		return value
 	}
 
@@ -102,7 +108,11 @@ func (m *BackendResultManager) checkBackendResult(L *lua.LState) *LuaBackendResu
 // GetSetAuthenticated sets or retrieves the Authenticated field.
 func (m *BackendResultManager) GetSetAuthenticated(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		backendResult.Authenticated = stack.L.CheckBool(2)
@@ -116,7 +126,11 @@ func (m *BackendResultManager) GetSetAuthenticated(L *lua.LState) int {
 // GetSetUserFound sets or returns the value of the UserFound field.
 func (m *BackendResultManager) GetSetUserFound(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		backendResult.UserFound = stack.L.CheckBool(2)
@@ -130,7 +144,11 @@ func (m *BackendResultManager) GetSetUserFound(L *lua.LState) int {
 // GetSetAccountField sets or returns the value of the AccountField field.
 func (m *BackendResultManager) GetSetAccountField(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		backendResult.AccountField = stack.CheckString(2)
@@ -144,7 +162,11 @@ func (m *BackendResultManager) GetSetAccountField(L *lua.LState) int {
 // GetSetTOTPSecretField sets or returns the value of the TOTPSecretField field.
 func (m *BackendResultManager) GetSetTOTPSecretField(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		backendResult.TOTPSecretField = stack.CheckString(2)
@@ -158,7 +180,11 @@ func (m *BackendResultManager) GetSetTOTPSecretField(L *lua.LState) int {
 // GetSetTOTPRecoveryField sets or returns the value of the TOTPRecoveryField field.
 func (m *BackendResultManager) GetSetTOTPRecoveryField(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		backendResult.TOTPRecoveryField = stack.CheckString(2)
@@ -172,7 +198,11 @@ func (m *BackendResultManager) GetSetTOTPRecoveryField(L *lua.LState) int {
 // GetSetUniqueUserIDField sets or returns the value of the UniqueUserIDField field.
 func (m *BackendResultManager) GetSetUniqueUserIDField(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		backendResult.UniqueUserIDField = stack.CheckString(2)
@@ -186,7 +216,11 @@ func (m *BackendResultManager) GetSetUniqueUserIDField(L *lua.LState) int {
 // GetSetDisplayNameField sets or returns the value of the DisplayNameField field.
 func (m *BackendResultManager) GetSetDisplayNameField(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		backendResult.DisplayNameField = stack.CheckString(2)
@@ -200,7 +234,11 @@ func (m *BackendResultManager) GetSetDisplayNameField(L *lua.LState) int {
 // GetSetAttributes sets or retrieves the Attributes field.
 func (m *BackendResultManager) GetSetAttributes(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+
 	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
 	if stack.GetTop() == 2 {
 		attributes := convert.LuaValueToGo(stack.CheckTable(2)).(map[any]any)

@@ -290,11 +290,20 @@ func newLuaBackendServer(userData *lua.LUserData) *config.BackendServer {
 // The metamethod for the __index field of the metatable
 func indexMethod(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	userData := stack.L.CheckUserData(1)
+
+	userData := stack.CheckUserData(1)
+	if userData == nil {
+		stack.L.ArgError(1, "backend_server expected")
+
+		return 0
+	}
+
 	field := stack.CheckString(2)
 
 	server := newLuaBackendServer(userData)
 	if server == nil {
+		stack.L.ArgError(1, "backend_server expected")
+
 		return 0
 	}
 
@@ -374,11 +383,17 @@ func (m *FilterBackendManager) selectBackendServer(L *lua.LState) int {
 // applyBackendResult merges attributes from the provided Lua userdata into the existing backendResult.
 func (m *FilterBackendManager) applyBackendResult(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	userData := stack.L.CheckUserData(1)
+
+	userData := stack.CheckUserData(1)
+	if userData == nil {
+		stack.L.ArgError(1, "lua backend_result expected")
+
+		return 0
+	}
 
 	luaBackendResult, ok := userData.Value.(*lualib.LuaBackendResult)
-	if !ok {
-		stack.L.ArgError(1, "expected lua backend_result")
+	if !ok || luaBackendResult == nil {
+		stack.L.ArgError(1, "lua backend_result expected")
 
 		return 0
 	}
@@ -393,10 +408,8 @@ func (m *FilterBackendManager) applyBackendResult(L *lua.LState) int {
 	}
 
 	// Merge attributes (overwrite on conflict)
-	if luaBackendResult != nil {
-		for k, v := range luaBackendResult.Attributes {
-			(*m.backendResult).Attributes[k] = v
-		}
+	for k, v := range luaBackendResult.Attributes {
+		(*m.backendResult).Attributes[k] = v
 	}
 
 	return 0

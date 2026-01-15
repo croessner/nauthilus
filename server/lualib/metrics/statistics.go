@@ -242,11 +242,22 @@ func (m *PrometheusManager) startHistogramTimer(L *lua.LState) int {
 // stopTimer stops a running Prometheus timer, recording its duration in the underlying metric.
 func (m *PrometheusManager) stopTimer(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	ud := stack.L.CheckUserData(1)
 
-	if timer, ok := ud.Value.(*prometheus.Timer); ok {
-		timer.ObserveDuration()
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "timer expected")
+
+		return 0
 	}
+
+	timer, ok := ud.Value.(*prometheus.Timer)
+	if !ok || timer == nil {
+		L.ArgError(1, "timer expected")
+
+		return 0
+	}
+
+	timer.ObserveDuration()
 
 	return 0
 }

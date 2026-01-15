@@ -211,7 +211,7 @@ func (s *OTELManager) luaBaggageAll(L *lua.LState) int {
 	return stack.PushResults(tbl, lua.LNil)
 }
 
-func (s *OTELManager) luaBaggageClear(L *lua.LState) int {
+func (s *OTELManager) luaBaggageClear(_ *lua.LState) int {
 	if !s.enabled {
 		return 0
 	}
@@ -295,10 +295,18 @@ func tracerStartSpan(L *lua.LState) int {
 	ensureSpanMT(L)
 
 	stack := luastack.NewManager(L)
-	ud := L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "tracer expected")
+
+		return 0
+	}
 
 	tr, ok := ud.Value.(*luaTracerUD)
-	if !ok {
+	if !ok || tr == nil {
+		L.ArgError(1, "tracer expected")
+
 		return 0
 	}
 
@@ -348,10 +356,18 @@ func tracerWithSpan(L *lua.LState) int {
 	ensureSpanMT(L)
 
 	stack := luastack.NewManager(L)
-	ud := L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "tracer expected")
+
+		return 0
+	}
 
 	tr, ok := ud.Value.(*luaTracerUD)
-	if !ok {
+	if !ok || tr == nil {
+		L.ArgError(1, "tracer expected")
+
 		return 0
 	}
 
@@ -422,10 +438,18 @@ type luaSpanUD struct {
 
 func spanSetAttribute(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	ud := L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "span expected")
+
+		return 0
+	}
 
 	lsp, ok := ud.Value.(*luaSpanUD)
-	if !ok || lsp.span == nil {
+	if !ok || lsp == nil || lsp.span == nil {
+		L.ArgError(1, "span expected")
+
 		return 0
 	}
 
@@ -441,10 +465,18 @@ func spanSetAttribute(L *lua.LState) int {
 
 func spanSetAttributes(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	ud := L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "span expected")
+
+		return 0
+	}
 
 	lsp, ok := ud.Value.(*luaSpanUD)
-	if !ok || lsp.span == nil {
+	if !ok || lsp == nil || lsp.span == nil {
+		L.ArgError(1, "span expected")
+
 		return 0
 	}
 
@@ -460,10 +492,18 @@ func spanSetAttributes(L *lua.LState) int {
 
 func spanAddEvent(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	ud := L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "span expected")
+
+		return 0
+	}
 
 	lsp, ok := ud.Value.(*luaSpanUD)
-	if !ok || lsp.span == nil {
+	if !ok || lsp == nil || lsp.span == nil {
+		L.ArgError(1, "span expected")
+
 		return 0
 	}
 
@@ -482,10 +522,18 @@ func spanAddEvent(L *lua.LState) int {
 
 func spanSetStatus(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	ud := L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "span expected")
+
+		return 0
+	}
 
 	lsp, ok := ud.Value.(*luaSpanUD)
-	if !ok || lsp.span == nil {
+	if !ok || lsp == nil || lsp.span == nil {
+		L.ArgError(1, "span expected")
+
 		return 0
 	}
 
@@ -507,6 +555,7 @@ func spanSetStatus(L *lua.LState) int {
 	default:
 		c = codes.Unset
 	}
+
 	lsp.span.SetStatus(c, desc)
 
 	return 0
@@ -514,10 +563,18 @@ func spanSetStatus(L *lua.LState) int {
 
 func spanRecordError(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	ud := L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "span expected")
+
+		return 0
+	}
 
 	lsp, ok := ud.Value.(*luaSpanUD)
-	if !ok || lsp.span == nil {
+	if !ok || lsp == nil || lsp.span == nil {
+		L.ArgError(1, "span expected")
+
 		return 0
 	}
 
@@ -539,10 +596,18 @@ func spanRecordError(L *lua.LState) int {
 
 func spanEnd(L *lua.LState) int {
 	stack := luastack.NewManager(L)
-	ud := stack.L.CheckUserData(1)
+
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "span expected")
+
+		return 0
+	}
 
 	lsp, ok := ud.Value.(*luaSpanUD)
-	if !ok || lsp.span == nil {
+	if !ok || lsp == nil || lsp.span == nil {
+		L.ArgError(1, "span expected")
+
 		return 0
 	}
 
@@ -591,7 +656,7 @@ func kvFromLValue(k string, v lua.LValue) (attribute.KeyValue, bool) {
 	}
 }
 
-func attrsFromTable(L *lua.LState, tbl *lua.LTable) []attribute.KeyValue {
+func attrsFromTable(_ *lua.LState, tbl *lua.LTable) []attribute.KeyValue {
 	if tbl == nil {
 		return nil
 	}

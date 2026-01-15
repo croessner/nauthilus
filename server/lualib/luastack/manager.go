@@ -49,6 +49,11 @@ func (m *Manager) CheckTable(n int) *lua.LTable {
 	return m.L.CheckTable(n)
 }
 
+// CheckUserData returns the userdata at the given stack index or throws a Lua error if the value is not a userdata.
+func (m *Manager) CheckUserData(n int) *lua.LUserData {
+	return m.L.CheckUserData(n)
+}
+
 // CheckAny returns the value at the given stack index.
 func (m *Manager) CheckAny(n int) lua.LValue {
 	return m.L.CheckAny(n)
