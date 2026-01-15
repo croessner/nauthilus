@@ -17,14 +17,30 @@ package lualib
 
 import (
 	"container/list"
+	"context"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+// CacheManager manages process-wide cache operations for Lua.
+type CacheManager struct {
+	*BaseManager
+}
+
+// NewCacheManager creates a new CacheManager.
+func NewCacheManager(ctx context.Context, cfg config.File, logger *slog.Logger) *CacheManager {
+	return &CacheManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+	}
+}
 
 // luaCache defines the behavior required by the internal cache that backs the Lua module nauthilus_cache.
 // Implementations MUST be thread-safe.
@@ -406,73 +422,66 @@ func (c *fifoCache) PopAll(key string) []any {
 // globalLuaCache is a process-wide singleton backing the Lua cache module.
 var globalLuaCache luaCache = newFIFOCache(0, 30*time.Second)
 
-// LoaderModCache exposes the nauthilus_cache module to Lua.
-// Note: no request context is needed; the cache is process-wide and independent from per-request state.
-// Explicit Lua-facing functions (no inline lambdas in LoaderModCache)
-// luaCacheSet implements nauthilus_cache.cache_set(key, value[, ttl_seconds]).
+// Set implements nauthilus_cache.cache_set(key, value[, ttl_seconds]).
 // Parameters: key (string), value (any convertible), ttl_seconds (number|nil|0=no expiry). Returns: "OK", nil.
-func luaCacheSet(L *lua.LState) int {
-	key := L.CheckString(1)
-	val := convert.LuaValueToGo(L.CheckAny(2))
+func (m *CacheManager) Set(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
+	val := convert.LuaValueToGo(stack.CheckAny(2))
 
 	var ttl int64
-	if L.GetTop() >= 3 {
+
+	if stack.GetTop() >= 3 {
 		if v := L.Get(3); v != lua.LNil {
-			ttl = int64(L.CheckNumber(3))
+			ttl = int64(stack.CheckNumber(3))
 		}
 	}
 
 	globalLuaCache.Set(key, val, ttl)
-	L.Push(lua.LString("OK"))
-	L.Push(lua.LNil)
 
-	return 2
+	return stack.PushResults(lua.LString("OK"), lua.LNil)
 }
 
-// luaCacheGet implements nauthilus_cache.cache_get(key).
+// Get implements nauthilus_cache.cache_get(key).
 // Returns the stored value or nil if not present or expired.
-func luaCacheGet(L *lua.LState) int {
-	key := L.CheckString(1)
+func (m *CacheManager) Get(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
 	val, ok := globalLuaCache.Get(key)
 
 	if !ok {
-		L.Push(lua.LNil)
-
-		return 1
+		return stack.PushResults(lua.LNil, lua.LNil)
 	}
 
-	L.Push(convert.GoToLuaValue(L, val))
-
-	return 1
+	return stack.PushResults(convert.GoToLuaValue(L, val), lua.LNil)
 }
 
-// luaCacheDelete implements nauthilus_cache.cache_delete(key).
+// Delete implements nauthilus_cache.cache_delete(key).
 // Returns true if the key existed and was removed; otherwise false.
-func luaCacheDelete(L *lua.LState) int {
-	key := L.CheckString(1)
+func (m *CacheManager) Delete(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
 	ok := globalLuaCache.Delete(key)
 
-	L.Push(lua.LBool(ok))
-
-	return 1
+	return stack.PushResults(lua.LBool(ok), lua.LNil)
 }
 
-// luaCacheExists implements nauthilus_cache.cache_exists(key).
+// Exists implements nauthilus_cache.cache_exists(key).
 // Returns true only if the key exists and has not expired.
-func luaCacheExists(L *lua.LState) int {
-	key := L.CheckString(1)
+func (m *CacheManager) Exists(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
 
-	L.Push(lua.LBool(globalLuaCache.Exists(key)))
-
-	return 1
+	return stack.PushResults(lua.LBool(globalLuaCache.Exists(key)), lua.LNil)
 }
 
-// luaCacheUpdate implements nauthilus_cache.cache_update(key, updater_fn).
+// Update implements nauthilus_cache.cache_update(key, updater_fn).
 // Calls updater_fn(old_value) in Lua and stores its return value atomically.
 // updater_fn must be synchronous (no yields). Returns the new value.
-func luaCacheUpdate(L *lua.LState) int {
-	key := L.CheckString(1)
-	fn := L.CheckFunction(2)
+func (m *CacheManager) Update(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
+	fn := stack.L.CheckFunction(2)
 
 	newVal := globalLuaCache.Update(key, func(old any) any {
 		// Call Lua updater(old)
@@ -492,14 +501,13 @@ func luaCacheUpdate(L *lua.LState) int {
 		return v
 	})
 
-	L.Push(convert.GoToLuaValue(L, newVal))
-
-	return 1
+	return stack.PushResults(convert.GoToLuaValue(L, newVal), lua.LNil)
 }
 
-// luaCacheKeys implements nauthilus_cache.cache_keys().
+// Keys implements nauthilus_cache.cache_keys().
 // Returns an array (Lua table) with all current non-expired keys.
-func luaCacheKeys(L *lua.LState) int {
+func (m *CacheManager) Keys(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 	keys := globalLuaCache.Keys()
 	tbl := L.NewTable()
 
@@ -507,71 +515,69 @@ func luaCacheKeys(L *lua.LState) int {
 		tbl.Append(lua.LString(k))
 	}
 
-	L.Push(tbl)
-
-	return 1
+	return stack.PushResults(tbl, lua.LNil)
 }
 
-// luaCacheSize implements nauthilus_cache.cache_size().
+// Size implements nauthilus_cache.cache_size().
 // Returns the number of non-expired entries in the cache.
-func luaCacheSize(L *lua.LState) int {
-	L.Push(lua.LNumber(globalLuaCache.Size()))
+func (m *CacheManager) Size(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	return 1
+	return stack.PushResults(lua.LNumber(globalLuaCache.Size()), lua.LNil)
 }
 
-// luaCacheFlush implements nauthilus_cache.cache_flush().
+// Flush implements nauthilus_cache.cache_flush().
 // Empties the entire cache.
-func luaCacheFlush(_ *lua.LState) int {
+func (m *CacheManager) Flush(_ *lua.LState) int {
 	globalLuaCache.Flush()
 
 	return 0
 }
 
-// luaCachePush implements nauthilus_cache.cache_push(key, value).
+// Push implements nauthilus_cache.cache_push(key, value).
 // Appends value to the list at key (creating it if needed). Returns the new length.
-func luaCachePush(L *lua.LState) int {
-	key := L.CheckString(1)
-	val := convert.LuaValueToGo(L.CheckAny(2))
+func (m *CacheManager) Push(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
+	val := convert.LuaValueToGo(stack.CheckAny(2))
 	n := globalLuaCache.Push(key, val)
 
-	L.Push(lua.LNumber(n))
-
-	return 1
+	return stack.PushResults(lua.LNumber(n), lua.LNil)
 }
 
-// luaCachePopAll implements nauthilus_cache.cache_pop_all(key).
+// PopAll implements nauthilus_cache.cache_pop_all(key).
 // Returns the list at key and clears it; if absent, returns an empty list.
-func luaCachePopAll(L *lua.LState) int {
-	key := L.CheckString(1)
+func (m *CacheManager) PopAll(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
 	arr := globalLuaCache.PopAll(key)
 
-	L.Push(convert.GoToLuaValue(L, arr))
-
-	return 1
+	return stack.PushResults(convert.GoToLuaValue(L, arr), lua.LNil)
 }
 
 // LoaderModCache registers the nauthilus_cache module into a Lua state.
 // The module exposes cache_set/get/delete/exists/update/keys/size/flush/push/pop_all.
 // The cache is process-wide (no per-request state needed).
-// Usage: L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache)
-func LoaderModCache(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-		definitions.LuaFnCacheSet:    luaCacheSet,
-		definitions.LuaFnCacheGet:    luaCacheGet,
-		definitions.LuaFnCacheDelete: luaCacheDelete,
-		definitions.LuaFnCacheExists: luaCacheExists,
-		definitions.LuaFnCacheUpdate: luaCacheUpdate,
-		definitions.LuaFnCacheKeys:   luaCacheKeys,
-		definitions.LuaFnCacheSize:   luaCacheSize,
-		definitions.LuaFnCacheFlush:  luaCacheFlush,
-		definitions.LuaFnCachePush:   luaCachePush,
-		definitions.LuaFnCachePopAll: luaCachePopAll,
-	})
+func LoaderModCache(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewCacheManager(ctx, cfg, logger)
 
-	L.Push(mod)
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnCacheSet:    manager.Set,
+			definitions.LuaFnCacheGet:    manager.Get,
+			definitions.LuaFnCacheDelete: manager.Delete,
+			definitions.LuaFnCacheExists: manager.Exists,
+			definitions.LuaFnCacheUpdate: manager.Update,
+			definitions.LuaFnCacheKeys:   manager.Keys,
+			definitions.LuaFnCacheSize:   manager.Size,
+			definitions.LuaFnCacheFlush:  manager.Flush,
+			definitions.LuaFnCachePush:   manager.Push,
+			definitions.LuaFnCachePopAll: manager.PopAll,
+		})
 
-	return 1
+		return stack.PushResult(mod)
+	}
 }
 
 // StopGlobalCache is an optional helper to stop the janitor; can be used by shutdown hooks.

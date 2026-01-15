@@ -16,188 +16,199 @@
 package lualib
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// SetHTTPResponseHeader returns a Lua function that sets (overwrites) an HTTP response header
+// HTTPResponseManager manages HTTP response operations for Lua.
+type HTTPResponseManager struct {
+	*BaseManager
+	ctx *gin.Context
+}
+
+// NewHTTPResponseManager creates a new HTTPResponseManager.
+func NewHTTPResponseManager(ctx context.Context, cfg config.File, logger *slog.Logger, ginCtx *gin.Context) *HTTPResponseManager {
+	return &HTTPResponseManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+		ctx:         ginCtx,
+	}
+}
+
+// SetHTTPResponseHeader sets (overwrites) an HTTP response header.
 // Usage from Lua: nauthilus_http_response.set_http_response_header(name, value)
-func SetHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		name := L.CheckString(1)
-		value := L.CheckString(2)
+func (m *HTTPResponseManager) SetHTTPResponseHeader(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	value := stack.CheckString(2)
 
-		ctx.Header(name, value)
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	m.ctx.Header(name, value)
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
-		return 0
-	}
+	return 0
 }
 
-// AddHTTPResponseHeader returns a Lua function that adds a value to an HTTP response header
+// AddHTTPResponseHeader adds a value to an HTTP response header.
 // Usage from Lua: nauthilus_http_response.add_http_response_header(name, value)
-func AddHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		name := L.CheckString(1)
-		value := L.CheckString(2)
+func (m *HTTPResponseManager) AddHTTPResponseHeader(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	value := stack.CheckString(2)
 
-		ctx.Writer.Header().Add(name, value)
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	m.ctx.Writer.Header().Add(name, value)
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
-		return 0
-	}
+	return 0
 }
 
-// RemoveHTTPResponseHeader returns a Lua function that removes an HTTP response header
+// RemoveHTTPResponseHeader removes an HTTP response header.
 // Usage from Lua: nauthilus_http_response.remove_http_response_header(name)
-func RemoveHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		name := L.CheckString(1)
+func (m *HTTPResponseManager) RemoveHTTPResponseHeader(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
 
-		ctx.Writer.Header().Del(name)
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	m.ctx.Writer.Header().Del(name)
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
-		return 0
-	}
+	return 0
 }
 
-// SetHTTPStatus returns a Lua function that sets the HTTP status code for the response
+// SetHTTPStatus sets the HTTP status code for the response.
 // Usage from Lua: nauthilus_http_response.set_http_status(code)
-func SetHTTPStatus(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		code := L.CheckInt(1)
+func (m *HTTPResponseManager) SetHTTPStatus(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	code := stack.CheckInt(1)
 
-		ctx.Status(code)
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	m.ctx.Status(code)
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
-		return 0
-	}
+	return 0
 }
 
-// WriteHTTPResponseBody returns a Lua function that writes raw data to the HTTP response body
+// WriteHTTPResponseBody writes raw data to the HTTP response body.
 // Usage from Lua: nauthilus_http_response.write_http_response_body(data)
 // Note: Set appropriate Content-Type header before writing if needed.
-func WriteHTTPResponseBody(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		data := L.CheckString(1)
+func (m *HTTPResponseManager) WriteHTTPResponseBody(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	data := stack.CheckString(1)
 
-		// Do not write body for HEAD requests
-		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
-			return 0
-		}
-
-		// Use Gin's writer to ensure correct size/accounting
-		_, _ = ctx.Writer.Write([]byte(data))
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
-
+	// Do not write body for HEAD requests
+	if strings.EqualFold(m.ctx.Request.Method, http.MethodHead) {
 		return 0
 	}
+
+	// Use Gin's writer to ensure correct size/accounting
+	_, _ = m.ctx.Writer.Write([]byte(data))
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+	return 0
 }
 
-// SetHTTPContentType returns a Lua function that sets the Content-Type header explicitly
+// SetHTTPContentType sets the Content-Type header explicitly.
 // Usage from Lua: nauthilus_http_response.set_http_content_type(value)
-func SetHTTPContentType(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		value := L.CheckString(1)
+func (m *HTTPResponseManager) SetHTTPContentType(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	value := stack.CheckString(1)
 
-		ctx.Header("Content-Type", value)
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	m.ctx.Header("Content-Type", value)
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
-		return 0
-	}
+	return 0
 }
 
-// HTTPString returns a Lua function that maps to Gin's ctx.String(status, body)
+// HTTPString maps to Gin's ctx.String(status, body).
 // Usage from Lua: nauthilus_http_response.string(status_code, body)
-func HTTPString(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		status := L.CheckInt(1)
-		body := L.CheckString(2)
+func (m *HTTPResponseManager) HTTPString(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	status := stack.CheckInt(1)
+	body := stack.CheckString(2)
 
-		ctx.String(status, body)
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	m.ctx.String(status, body)
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
-		return 0
-	}
+	return 0
 }
 
-// HTTPData returns a Lua function that maps to Gin's ctx.Data(status, contentType, data)
+// HTTPData maps to Gin's ctx.Data(status, contentType, data).
 // Usage from Lua: nauthilus_http_response.data(status_code, content_type, data)
-func HTTPData(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		status := L.CheckInt(1)
-		contentType := L.CheckString(2)
-		data := L.CheckString(3)
+func (m *HTTPResponseManager) HTTPData(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	status := stack.CheckInt(1)
+	contentType := stack.CheckString(2)
+	data := stack.CheckString(3)
 
-		// Do not write body for HEAD requests
-		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
-			ctx.Status(status)
-			ctx.Set(definitions.CtxResponseWrittenKey, true)
-
-			return 0
-		}
-
-		ctx.Data(status, contentType, []byte(data))
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	// Do not write body for HEAD requests
+	if strings.EqualFold(m.ctx.Request.Method, http.MethodHead) {
+		m.ctx.Status(status)
+		m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
+
+	m.ctx.Data(status, contentType, []byte(data))
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+	return 0
 }
 
-// HTTPHTML returns a Lua function to send HTML content (uses Gin's Data with text/html)
+// HTTPHTML sends HTML content (uses Gin's Data with text/html).
 // Usage from Lua: nauthilus_http_response.html(status_code, html_string)
-func HTTPHTML(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		status := L.CheckInt(1)
-		html := L.CheckString(2)
+func (m *HTTPResponseManager) HTTPHTML(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	status := stack.CheckInt(1)
+	html := stack.CheckString(2)
 
-		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
-			ctx.Status(status)
-			ctx.Set(definitions.CtxResponseWrittenKey, true)
-
-			return 0
-		}
-
-		ctx.Data(status, "text/html; charset=utf-8", []byte(html))
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	if strings.EqualFold(m.ctx.Request.Method, http.MethodHead) {
+		m.ctx.Status(status)
+		m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
+
+	m.ctx.Data(status, "text/html; charset=utf-8", []byte(html))
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+	return 0
 }
 
-// HTTPRedirect returns a Lua function that maps to Gin's ctx.Redirect(status, location)
+// HTTPRedirect maps to Gin's ctx.Redirect(status, location).
 // Usage from Lua: nauthilus_http_response.redirect(status_code, location)
-func HTTPRedirect(ctx *gin.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		status := L.CheckInt(1)
-		location := L.CheckString(2)
+func (m *HTTPResponseManager) HTTPRedirect(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	status := stack.CheckInt(1)
+	location := stack.CheckString(2)
 
-		ctx.Redirect(status, location)
-		ctx.Set(definitions.CtxResponseWrittenKey, true)
+	m.ctx.Redirect(status, location)
+	m.ctx.Set(definitions.CtxResponseWrittenKey, true)
 
-		return 0
-	}
+	return 0
 }
 
 // LoaderModHTTPResponse loads Lua functions to interact with the HTTP response using gin.Context.
-func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
+func LoaderModHTTPResponse(ctx context.Context, cfg config.File, logger *slog.Logger, ginCtx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewHTTPResponseManager(ctx, cfg, logger, ginCtx)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnSetHTTPResponseHeader:    SetHTTPResponseHeaderWithCtx(ctx),
-			definitions.LuaFnAddHTTPResponseHeader:    AddHTTPResponseHeaderWithCtx(ctx),
-			definitions.LuaFnRemoveHTTPResponseHeader: RemoveHTTPResponseHeaderWithCtx(ctx),
-			definitions.LuaFnSetHTTPStatus:            SetHTTPStatusWithCtx(ctx),
-			definitions.LuaFnWriteHTTPResponseBody:    WriteHTTPResponseBodyWithCtx(ctx),
-			definitions.LuaFnSetHTTPContentType:       SetHTTPContentTypeWithCtx(ctx),
-			definitions.LuaFnHTTPString:               HTTPStringWithCtx(ctx),
-			definitions.LuaFnHTTPData:                 HTTPDataWithCtx(ctx),
-			definitions.LuaFnHTTPHTML:                 HTTPHTMLWithCtx(ctx),
-			definitions.LuaFnHTTPRedirect:             HTTPRedirectWithCtx(ctx),
+			definitions.LuaFnSetHTTPResponseHeader:    manager.SetHTTPResponseHeader,
+			definitions.LuaFnAddHTTPResponseHeader:    manager.AddHTTPResponseHeader,
+			definitions.LuaFnRemoveHTTPResponseHeader: manager.RemoveHTTPResponseHeader,
+			definitions.LuaFnSetHTTPStatus:            manager.SetHTTPStatus,
+			definitions.LuaFnWriteHTTPResponseBody:    manager.WriteHTTPResponseBody,
+			definitions.LuaFnSetHTTPContentType:       manager.SetHTTPContentType,
+			definitions.LuaFnHTTPString:               manager.HTTPString,
+			definitions.LuaFnHTTPData:                 manager.HTTPData,
+			definitions.LuaFnHTTPHTML:                 manager.HTTPHTML,
+			definitions.LuaFnHTTPRedirect:             manager.HTTPRedirect,
 		})
 
 		// Expose essential HTTP status codes as UPPER_CASE module variables
@@ -228,9 +239,7 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 			mod.RawSetString(k, lua.LNumber(v))
 		}
 
-		L.Push(mod)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }
 
@@ -239,40 +248,8 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 // clone this table and inject bound functions via WithCtx factories.
 func LoaderHTTPResponseStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }
-
-// SetHTTPResponseHeaderWithCtx is a factory alias that returns the same function as SetHTTPResponseHeader(ctx).
-func SetHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPResponseHeader(ctx) }
-
-// AddHTTPResponseHeaderWithCtx is a factory alias that returns the same function as AddHTTPResponseHeader(ctx).
-func AddHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction { return AddHTTPResponseHeader(ctx) }
-
-// RemoveHTTPResponseHeaderWithCtx is a factory alias that returns the same function as RemoveHTTPResponseHeader(ctx).
-func RemoveHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction {
-	return RemoveHTTPResponseHeader(ctx)
-}
-
-// SetHTTPStatusWithCtx is a factory alias that returns the same function as SetHTTPStatus(ctx).
-func SetHTTPStatusWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPStatus(ctx) }
-
-// WriteHTTPResponseBodyWithCtx is a factory alias that returns the same function as WriteHTTPResponseBody(ctx).
-func WriteHTTPResponseBodyWithCtx(ctx *gin.Context) lua.LGFunction { return WriteHTTPResponseBody(ctx) }
-
-// SetHTTPContentTypeWithCtx is a factory alias that returns the same function as SetHTTPContentType(ctx).
-func SetHTTPContentTypeWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPContentType(ctx) }
-
-// HTTPStringWithCtx is a factory alias that returns the same function as HTTPString(ctx).
-func HTTPStringWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPString(ctx) }
-
-// HTTPDataWithCtx is a factory alias that returns the same function as HTTPData(ctx).
-func HTTPDataWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPData(ctx) }
-
-// HTTPHTMLWithCtx is a factory alias that returns the same function as HTTPHTML(ctx).
-func HTTPHTMLWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPHTML(ctx) }
-
-// HTTPRedirectWithCtx is a factory alias that returns the same function as HTTPRedirect(ctx).
-func HTTPRedirectWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPRedirect(ctx) }

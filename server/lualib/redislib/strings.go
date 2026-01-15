@@ -53,6 +53,7 @@ func RedisMGet(ctx context.Context, cfg config.File, client rediscli.Client) lua
 		}
 
 		result := L.NewTable()
+
 		for i, val := range cmd.Val() {
 			if val == nil {
 				result.RawSetString(keys[i], lua.LNil)
@@ -131,6 +132,7 @@ func RedisKeys(ctx context.Context, cfg config.File, client rediscli.Client) lua
 		}
 
 		result := L.NewTable()
+
 		for _, key := range cmd.Val() {
 			result.Append(lua.LString(key))
 		}

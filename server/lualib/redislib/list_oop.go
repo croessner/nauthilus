@@ -31,14 +31,32 @@ func (rm *RedisManager) RedisLPush(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
 		top := stack.GetTop()
-		values := make([]any, top-2)
 
-		for i := 3; i <= top; i++ {
-			val, err := convert.LuaValue(stack.CheckAny(i))
-			if err != nil {
-				return stack.PushError(err)
+		var values []any
+
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					values = append(values, stack.CheckAny(i).String())
+				} else {
+					values = append(values, val)
+				}
 			}
-			values[i-3] = val
+		}
+
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
 		}
 
 		cmd := conn.LPush(ctx, key, values...)
@@ -46,7 +64,7 @@ func (rm *RedisManager) RedisLPush(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -55,14 +73,31 @@ func (rm *RedisManager) RedisRPush(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
 		top := stack.GetTop()
-		values := make([]any, top-2)
+		var values []any
 
-		for i := 3; i <= top; i++ {
-			val, err := convert.LuaValue(stack.CheckAny(i))
-			if err != nil {
-				return stack.PushError(err)
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					values = append(values, stack.CheckAny(i).String())
+				} else {
+					values = append(values, val)
+				}
 			}
-			values[i-3] = val
+		}
+
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
 		}
 
 		cmd := conn.RPush(ctx, key, values...)
@@ -70,7 +105,7 @@ func (rm *RedisManager) RedisRPush(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -84,7 +119,7 @@ func (rm *RedisManager) RedisLPop(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LString(cmd.Val()))
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -98,7 +133,7 @@ func (rm *RedisManager) RedisRPop(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LString(cmd.Val()))
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -119,7 +154,7 @@ func (rm *RedisManager) RedisLRange(L *lua.LState) int {
 			result.Append(lua.LString(val))
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -133,6 +168,6 @@ func (rm *RedisManager) RedisLLen(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }

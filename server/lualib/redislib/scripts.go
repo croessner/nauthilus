@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -33,6 +34,46 @@ import (
 )
 
 // Uploads is a concurrency-safe type for managing script uploads, utilizing a map to store key-value pairs securely.
+type Uploads struct {
+	// scripts stores key-value pairs where the key is the name of the upload script, and the value is its associated SHA-1 hash.
+	scripts map[string]string
+
+	// mu provides mutual exclusion to ensure that concurrent access to the scripts map is synchronized.
+	mu sync.Mutex
+}
+
+// Set stores the provided SHA-1 hash associated with the given upload script name in a concurrency-safe manner.
+func (u *Uploads) Set(uploadScriptName string, sha1 string) {
+	u.mu.Lock()
+
+	defer u.mu.Unlock()
+
+	u.scripts[uploadScriptName] = sha1
+}
+
+// Get retrieves the SHA-1 hash associated with the given upload script name in a concurrency-safe manner.
+func (u *Uploads) Get(uploadScriptName string) string {
+	u.mu.Lock()
+
+	defer u.mu.Unlock()
+
+	if sha1, okay := u.scripts[uploadScriptName]; okay {
+		return sha1
+	}
+
+	return ""
+}
+
+// uploads is an instance of the Uploads struct that manages script uploads with their associated SHA-1 hashes.
+var uploads = &Uploads{
+	scripts: make(map[string]string),
+}
+
+// defaultHashTag is the default hash tag used for Redis Cluster keys in Lua scripts
+// Using a different hash tag than the one in rediscli to distribute load across nodes
+var defaultHashTag = "{lua-nauthilus}"
+
+// evaluateRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
 func evaluateRedisScript(ctx context.Context, cfg config.File, client redis.UniversalClient, script string, uploadScriptName string, keys []string, args ...any) (any, error) {
 	var (
 		err    error
@@ -56,7 +97,7 @@ func evaluateRedisScript(ctx context.Context, cfg config.File, client redis.Univ
 	defer cancel()
 
 	if uploadScriptName != "" {
-		script = scriptsRepository.Get(uploadScriptName)
+		script = uploads.Get(uploadScriptName)
 		if script == "" {
 			return nil, fmt.Errorf("could not find script with name %s", uploadScriptName)
 		}
@@ -164,7 +205,7 @@ func RedisUploadScript(ctx context.Context, cfg config.File, client rediscli.Cli
 		}
 
 		if scriptSha1, okay := sha1.(string); okay {
-			scriptsRepository.Set(uploadScriptName, scriptSha1)
+			uploads.Set(uploadScriptName, scriptSha1)
 
 			L.Push(lua.LString(scriptSha1))
 			L.Push(lua.LNil)

@@ -74,8 +74,11 @@ func TestGetBackendServers(t *testing.T) {
 			lState := lua.NewState()
 			defer lState.Close()
 
-			getServersFunc := getBackendServers(tt.serversInput)
-			getServersFunc(lState)
+			request := &Request{
+				BackendServers: tt.serversInput,
+			}
+			manager := NewFilterBackendManager(nil, nil, nil, request, nil, nil)
+			manager.getBackendServers(lState)
 
 			serverTable := lState.Get(-1).(*lua.LTable)
 
@@ -122,13 +125,17 @@ func TestSelectBackendServer(t *testing.T) {
 			var server *string
 			var port *int
 
-			fn := selectBackendServer(&server, &port)
+			request := &Request{
+				UsedBackendAddr: server,
+				UsedBackendPort: port,
+			}
+			manager := NewFilterBackendManager(nil, nil, nil, request, nil, nil)
 
 			L.Push(lua.LString(tt.server))
 			L.Push(lua.LNumber(tt.port))
 
 			err := L.CallByParam(lua.P{
-				Fn:      L.NewFunction(fn),
+				Fn:      L.NewFunction(manager.selectBackendServer),
 				NRet:    0,
 				Protect: true,
 			}, L.Get(-2), L.Get(-1))
@@ -138,8 +145,8 @@ func TestSelectBackendServer(t *testing.T) {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			} else {
-				if server == nil || port == nil || *server != tt.expServ || *port != tt.expPort {
-					t.Errorf("Expected server %s and port %d but got server %v and port %v", tt.expServ, tt.expPort, server, port)
+				if request.UsedBackendAddr == nil || request.UsedBackendPort == nil || *request.UsedBackendAddr != tt.expServ || *request.UsedBackendPort != tt.expPort {
+					t.Errorf("Expected server %s and port %d but got server %v and port %v", tt.expServ, tt.expPort, request.UsedBackendAddr, request.UsedBackendPort)
 				}
 			}
 		})

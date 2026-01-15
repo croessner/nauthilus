@@ -34,7 +34,7 @@ func TestCreateAndUseSummaryVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus)
+	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")
@@ -71,7 +71,7 @@ func TestCreateAndUseCounterVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus)
+	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")
@@ -102,7 +102,7 @@ func TestCreateAndUseHistogramVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus)
+	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")
@@ -139,7 +139,7 @@ func TestCreateAndUseGaugeVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus)
+	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")

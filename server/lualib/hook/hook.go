@@ -510,8 +510,9 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	// Bind required per-request modules so that require() resolves to the bound versions.
 	// 1) nauthilus_context (fresh per-request context)
-	if loader := lualib.LoaderModContext(lualib.NewContext()); loader != nil {
+	if loader := lualib.LoaderModContext(ctx, cfg, logger, lualib.NewContext()); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
@@ -523,6 +524,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	// 2) nauthilus_redis (use luaCtx deadline)
 	if loader := redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
@@ -535,6 +537,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	if cfg.HaveLDAPBackend() {
 		loader := backend.LoaderModLDAP(luaCtx, cfg)
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
@@ -546,6 +549,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	// 4) nauthilus_psnet (connection monitoring)
 	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
@@ -557,6 +561,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	// 5) nauthilus_dns (DNS lookups)
 	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
@@ -568,6 +573,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	// 5.1) nauthilus_opentelemetry (OTel helpers for Lua)
 	{
 		var loader lua.LGFunction
+
 		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
 			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
@@ -588,6 +594,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	// 6) nauthilus_brute_force (toleration and blocking helpers)
 	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
@@ -691,8 +698,9 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 
 	// Bind required per-request modules so that require() resolves to the bound versions.
 	// 1) nauthilus_context (fresh per-request context)
-	if loader := lualib.LoaderModContext(lualib.NewContext()); loader != nil {
+	if loader := lualib.LoaderModContext(ctx, cfg, logger, lualib.NewContext()); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
@@ -702,8 +710,9 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	}
 
 	// 2) nauthilus_http_request (from gin request)
-	loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
+	loader := lualib.LoaderModHTTP(ctx, cfg, logger, lualib.NewHTTPMetaFromRequest(ctx.Request))
 	_ = loader(L)
+
 	if mod, ok := L.Get(-1).(*lua.LTable); ok {
 		L.Pop(1)
 		luapool.BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
@@ -712,8 +721,9 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	}
 
 	// 3) nauthilus_http_response
-	loader = lualib.LoaderModHTTPResponse(ctx)
+	loader = lualib.LoaderModHTTPResponse(ctx, cfg, logger, ctx)
 	_ = loader(L)
+
 	if mod, ok := L.Get(-1).(*lua.LTable); ok {
 		L.Pop(1)
 		luapool.BindModuleIntoReq(L, definitions.LuaModHTTPResponse, mod)
@@ -724,6 +734,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	// 4) nauthilus_redis (use luaCtx deadline)
 	if loader = redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
@@ -736,6 +747,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	if cfg.HaveLDAPBackend() {
 		loader := backend.LoaderModLDAP(luaCtx, cfg)
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
@@ -747,6 +759,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	// 6) nauthilus_psnet (connection monitoring)
 	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
@@ -758,6 +771,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	// 7) nauthilus_dns (DNS lookups)
 	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
@@ -769,6 +783,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
 	{
 		var loader lua.LGFunction
+
 		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
 			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
@@ -777,6 +792,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 
 		if loader != nil {
 			_ = loader(L)
+
 			if mod, ok := L.Get(-1).(*lua.LTable); ok {
 				L.Pop(1)
 				luapool.BindModuleIntoReq(L, definitions.LuaModOpenTelemetry, mod)
@@ -789,6 +805,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	// 8) nauthilus_brute_force (toleration and blocking helpers)
 	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)

@@ -62,10 +62,15 @@ func TestGetAllHTTPRequestHeaders(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			lFunc := GetAllHTTPRequestHeaders(NewHTTPMetaFromRequest(httpRequest))
-			lFunc(L)
+			manager := NewHTTPRequestManager(nil, nil, nil, NewHTTPMetaFromRequest(httpRequest))
+			manager.GetAllHTTPRequestHeaders(L)
 
-			lTable := L.CheckTable(-1)
+			lTable := L.CheckTable(-2)
+			lError := L.Get(-1)
+
+			if lError != lua.LNil {
+				t.Errorf("Expected nil error but got %v", lError)
+			}
 
 			lengthTable := 0
 			lTable.ForEach(func(_ lua.LValue, _ lua.LValue) {
@@ -146,10 +151,15 @@ func TestGetHTTPRequestHeader(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			lFunc := GetHTTPRequestHeader(NewHTTPMetaFromRequest(httpRequest))
-			lFunc(L)
+			manager := NewHTTPRequestManager(nil, nil, nil, NewHTTPMetaFromRequest(httpRequest))
+			manager.GetHTTPRequestHeader(L)
 
-			lTable := L.CheckTable(-1)
+			lTable := L.CheckTable(-2)
+			lError := L.Get(-1)
+
+			if lError != lua.LNil {
+				t.Errorf("Expected nil error but got %v", lError)
+			}
 
 			if len(tc.expectedValues) != lTable.Len() {
 				t.Errorf("expected number of header values to be %d, got %d", len(tc.expectedValues), lTable.Len())

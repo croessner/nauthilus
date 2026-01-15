@@ -28,6 +28,8 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -158,7 +160,7 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context, cfg config.Fi
 		}
 
 		ctxTimeout, cancel := createDeadlineContext(ctx, cfg)
-		resolver := util.NewDNSResolver()
+		resolver := util.NewDNSResolverWithCfg(cfg)
 
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
@@ -221,7 +223,7 @@ func (m *ConnectionManager) Register(ctx context.Context, cfg config.File, targe
 
 	defer cancel()
 
-	resolver := util.NewDNSResolver()
+	resolver := util.NewDNSResolverWithCfg(cfg)
 
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
@@ -356,51 +358,56 @@ func (m *ConnectionManager) StartTickerWithContext(ctx context.Context, interval
 	}
 }
 
+// PsnetManager manages network statistics operations for Lua.
+type PsnetManager struct {
+	*lualib.BaseManager
+}
+
+// NewPsnetManager creates a new PsnetManager.
+func NewPsnetManager(ctx context.Context, cfg config.File, logger *slog.Logger) *PsnetManager {
+	return &PsnetManager{
+		BaseManager: lualib.NewBaseManager(ctx, cfg, logger),
+	}
+}
+
 // luaCountOpenConnections returns the number of open connections for a given target. If the target is not registered,
 // it returns nil and an error message.
-func (m *ConnectionManager) luaCountOpenConnections(L *lua.LState) int {
-	target := L.ToString(1)
+func (m *PsnetManager) luaCountOpenConnections(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	target := stack.CheckString(1)
 
-	count, ok := m.GetCount(target)
+	count, ok := manager.GetCount(target)
 	if !ok {
-		L.Push(lua.LNil)
-		L.Push(lua.LString("Target not registered"))
-
-		return 2
+		return stack.PushResults(lua.LNil, lua.LString("Target not registered"))
 	}
 
-	L.Push(lua.LNumber(count))
-
-	return 1
+	return stack.PushResult(lua.LNumber(count))
 }
 
 // luaRegisterTarget registers a new target and its direction from Lua state into the ConnectionManager.
-func (m *ConnectionManager) luaRegisterTarget(ctx context.Context, cfg config.File) lua.LGFunction {
-	return func(L *lua.LState) int {
-		target := L.ToString(1)
-		direction := L.ToString(2)
-		description := L.ToString(3)
+func (m *PsnetManager) luaRegisterTarget(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	target := stack.CheckString(1)
+	direction := stack.CheckString(2)
+	description := stack.CheckString(3)
 
-		m.Register(ctx, cfg, target, direction, description)
+	manager.Register(m.Ctx, m.Cfg, target, direction, description)
 
-		return 0
-	}
+	return 0
 }
 
 // LoaderModPsnet is a function that registers the "psnet" module in the given Lua state.
-// It creates a new Lua table, assigns functions from exportsModPsnet to it,
-// and pushes it onto the Lua stack. It returns 1 to indicate that one value
-// has been pushed onto the stack.
-func LoaderModPsnet(ctx context.Context, cfg config.File, _ *slog.Logger) lua.LGFunction {
+func LoaderModPsnet(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		m := NewPsnetManager(ctx, cfg, logger)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget(ctx, cfg),
-			definitions.LuaFnGetConnectionTarget:      manager.luaCountOpenConnections,
+			definitions.LuaFnRegisterConnectionTarget: m.luaRegisterTarget,
+			definitions.LuaFnGetConnectionTarget:      m.luaCountOpenConnections,
 		})
 
-		L.Push(mod)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }
 
@@ -409,8 +416,8 @@ func LoaderModPsnet(ctx context.Context, cfg config.File, _ *slog.Logger) lua.LG
 // with a context-aware version via BindModuleIntoReq.
 func LoaderPsnetStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }

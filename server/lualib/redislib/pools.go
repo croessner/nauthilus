@@ -1,4 +1,4 @@
-//go:build redislib_oop
+//go:build !redislib_oop
 
 // Copyright (C) 2024 Christian Rößner
 //
@@ -242,24 +242,20 @@ func RegisterRedisPool(L *lua.LState) int {
 	mode := L.CheckString(2)
 	conf := getConfigValues(L.CheckTable(3))
 
-	errMsg := fmt.Sprintf("A redis connection with name '%s' already exists", name)
+	errMsg := lua.LString(fmt.Sprintf("A redis connection with name '%s' already exists", name))
 
 	switch mode {
 	case "standalone":
 		if _, okay := redisPools[name]; okay {
+			L.Push(errMsg)
 			L.Push(lua.LNil)
-			L.Push(lua.LString(errMsg))
-
-			return 2
 		}
 
 		redisPools[name] = newRedisClient(conf)
 	case "sentinel", "sentinel_replica":
 		if _, okay := redisFailoverPools[failoverPool{name: name}]; okay {
+			L.Push(errMsg)
 			L.Push(lua.LNil)
-			L.Push(lua.LString(errMsg))
-
-			return 2
 		}
 
 		readOnly := false
@@ -270,24 +266,21 @@ func RegisterRedisPool(L *lua.LState) int {
 		redisFailoverPools[failoverPool{name: name, readOnly: readOnly}] = newRedisFailoverClient(conf, readOnly)
 	case "cluster":
 		if _, okay := redisClusterPools[name]; okay {
+			L.Push(errMsg)
 			L.Push(lua.LNil)
-			L.Push(lua.LString(errMsg))
-
-			return 2
 		}
 
 		redisClusterPools[name] = newRedisClusterClient(conf)
 	default:
-		L.Push(lua.LNil)
 		L.Push(lua.LString(fmt.Sprintf("Unknown mode: %s", mode)))
+		L.Push(lua.LNil)
 
 		return 2
 	}
 
 	L.Push(lua.LString("OK"))
-	L.Push(lua.LNil)
 
-	return 2
+	return 1
 }
 
 // GetRedisConnection retrieves a Redis connection by name. Searches through standalone, failover, and cluster pools.
@@ -320,9 +313,8 @@ func GetRedisConnection(L *lua.LState) int {
 
 	L.SetMetatable(ud, L.GetTypeMetatable("redis_client"))
 	L.Push(ud)
-	L.Push(lua.LNil)
 
-	return 2
+	return 1
 }
 
 // getRedisConnectionWithFallback returns a Redis client from Lua state or a fallback client if the Lua state contains "default".

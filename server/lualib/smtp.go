@@ -16,115 +16,87 @@
 package lualib
 
 import (
+	"context"
+	"log/slog"
+
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 
 	lua "github.com/yuin/gopher-lua"
 )
 
-// MailModule provides functionalities for sending emails using an SMTP client.
-type MailModule struct {
-	// smtpClient is an implementation of the smtp.Client interface used for sending emails.
+// MailManager provides functionalities for sending emails using an SMTP client.
+type MailManager struct {
+	*BaseManager
 	smtpClient smtp.Client
 }
 
-// NewMailModule creates a new MailModule instance with the provided smtp.Client.
-func NewMailModule(smtpClient smtp.Client) *MailModule {
-	return &MailModule{smtpClient: smtpClient}
+// NewMailManager creates a new MailManager instance with the provided smtp.Client.
+func NewMailManager(ctx context.Context, cfg config.File, logger *slog.Logger, smtpClient smtp.Client) *MailManager {
+	return &MailManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+		smtpClient:  smtpClient,
+	}
 }
 
-// Loader initializes the MailModule's Lua library by registering its functions and returning the module table.
-// This method pushes the initialized module onto the Lua stack and returns 1 to indicate one value is returned.
-func (m *MailModule) Loader(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-		definitions.LuaFnSendMail: SendMail(m.smtpClient),
+// SendMail sends an email using the provided smtp.Client and Lua table parameters for configuration and recipient data.
+// It extracts settings like server, port, credentials, and email content from the Lua table and invokes the SMTP client.
+func (m *MailManager) SendMail(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	tbl := stack.CheckTable(1)
+
+	username := getStringFromTable(tbl, "username")
+	password := getStringFromTable(tbl, "password")
+	from := getStringFromTable(tbl, "from")
+	server := getStringFromTable(tbl, "server")
+	heloName := getStringFromTable(tbl, "helo_name")
+	subject := getStringFromTable(tbl, "subject")
+	body := getStringFromTable(tbl, "body")
+	tls := getBoolFromTable(tbl, "tls")
+	startTLS := getBoolFromTable(tbl, "starttls")
+	lmtp := getBoolFromTable(tbl, "lmtp")
+
+	portVal := tbl.RawGetString("port")
+	port, ok := portVal.(lua.LNumber)
+	if !ok {
+		return stack.PushResult(lua.LString("'port' must be a number"))
+	}
+
+	tableVal := tbl.RawGet(lua.LString("to"))
+	recipientTable, ok := tableVal.(*lua.LTable)
+	if !ok {
+		return stack.PushResult(lua.LString("'to' must be a table"))
+	}
+
+	to := make([]string, 0)
+	recipientTable.ForEach(func(_ lua.LValue, v lua.LValue) {
+		to = append(to, v.String())
 	})
 
-	L.Push(mod)
+	err := m.smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, tls, startTLS, lmtp))
 
-	return 1
+	if err != nil {
+		return stack.PushResult(lua.LString(err.Error()))
+	}
+
+	return stack.PushResult(lua.LNil)
 }
 
 // LoaderModMail is a stateless module loader for nauthilus_mail.
 // It pre-binds a real SMTP client implementation and exposes send_mail()
 // to Lua. This module does not require request context and can be preloaded
 // once per VM.
-func LoaderModMail(L *lua.LState) int {
-	mail := NewMailModule(&smtp.EmailClient{})
-
-	return mail.Loader(L)
-}
-
-// getStringFromTable retrieves a string value from a Lua table by its key. Returns an empty string if the key is not found.
-func getStringFromTable(table *lua.LTable, key string) string {
-	value := table.RawGetString(key)
-	if value == lua.LNil {
-		return ""
-	}
-
-	return value.String()
-}
-
-// getBoolFromTable retrieves a boolean value from a Lua table by its key. Returns false if the key does not exist or is invalid.
-func getBoolFromTable(table *lua.LTable, key string) bool {
-	value := table.RawGetString(key)
-	if value == lua.LNil {
-		return false
-	}
-
-	if boolVal, ok := value.(lua.LBool); ok {
-		return bool(boolVal)
-	}
-
-	return false
-}
-
-// SendMail sends an email using the provided smtp.Client and Lua table parameters for configuration and recipient data.
-// It extracts settings like server, port, credentials, and email content from the Lua table and invokes the SMTP client.
-func SendMail(smtpClient smtp.Client) lua.LGFunction {
+func LoaderModMail(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
-		tbl := L.CheckTable(1)
+		stack := luastack.NewManager(L)
+		manager := NewMailManager(ctx, cfg, logger, &smtp.EmailClient{})
 
-		username := getStringFromTable(tbl, "username")
-		password := getStringFromTable(tbl, "password")
-		from := getStringFromTable(tbl, "from")
-		server := getStringFromTable(tbl, "server")
-		heloName := getStringFromTable(tbl, "helo_name")
-		subject := getStringFromTable(tbl, "subject")
-		body := getStringFromTable(tbl, "body")
-		tls := getBoolFromTable(tbl, "tls")
-		startTLS := getBoolFromTable(tbl, "starttls")
-		lmtp := getBoolFromTable(tbl, "lmtp")
-
-		portVal := tbl.RawGetString("port")
-		port, ok := portVal.(lua.LNumber)
-		if !ok {
-			L.Push(lua.LString("'port' must be a number"))
-
-			return 1
-		}
-
-		tableVal := tbl.RawGet(lua.LString("to"))
-		recipientTable, ok := tableVal.(*lua.LTable)
-		if !ok {
-			L.Push(lua.LString("'to' must be a table"))
-
-			return 1
-		}
-
-		to := make([]string, 0)
-		recipientTable.ForEach(func(k lua.LValue, v lua.LValue) {
-			to = append(to, v.String())
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnSendMail: manager.SendMail,
 		})
 
-		err := smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, tls, startTLS, lmtp))
-
-		if err != nil {
-			L.Push(lua.LString(err.Error()))
-		} else {
-			L.Push(lua.LNil)
-		}
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }

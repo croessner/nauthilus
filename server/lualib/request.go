@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -302,7 +303,8 @@ func (c *CommonRequest) SetupRequest(cfg config.File, request *lua.LTable) *lua.
 // SetStatusMessage sets a new status message by updating the provided string pointer based on the input from the Lua state.
 func SetStatusMessage(status **string) lua.LGFunction {
 	return func(L *lua.LState) int {
-		newStatus := L.CheckString(1)
+		stack := luastack.NewManager(L)
+		newStatus := stack.CheckString(1)
 
 		*status = &newStatus
 

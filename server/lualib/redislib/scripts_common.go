@@ -1,3 +1,5 @@
+//go:build redislib_oop
+
 // Copyright (C) 2024 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify

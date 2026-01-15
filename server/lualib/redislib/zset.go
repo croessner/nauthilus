@@ -124,6 +124,7 @@ func RedisZRange(ctx context.Context, cfg config.File, client rediscli.Client) l
 		}
 
 		result := L.NewTable()
+
 		for _, val := range cmd.Val() {
 			result.Append(lua.LString(val))
 		}
@@ -157,6 +158,7 @@ func RedisZRevRange(ctx context.Context, cfg config.File, client rediscli.Client
 		}
 
 		result := L.NewTable()
+
 		for _, val := range cmd.Val() {
 			result.Append(lua.LString(val))
 		}
@@ -210,6 +212,7 @@ func RedisZRangeByScore(ctx context.Context, cfg config.File, client rediscli.Cl
 		}
 
 		result := L.NewTable()
+
 		for _, val := range cmd.Val() {
 			result.Append(lua.LString(val))
 		}

@@ -41,6 +41,7 @@ func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client
 			definitions.LuaFnRedisSet:    rm.RedisSet,
 			definitions.LuaFnRedisIncr:   rm.RedisIncr,
 			definitions.LuaFnRedisDel:    rm.RedisDel,
+			definitions.LuaFnRedisRename: rm.RedisRename,
 			definitions.LuaFnRedisExpire: rm.RedisExpire,
 			definitions.LuaFnRedisExists: rm.RedisExists,
 

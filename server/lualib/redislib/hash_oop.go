@@ -19,6 +19,7 @@ package redislib
 
 import (
 	"context"
+	"errors"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -43,7 +44,7 @@ func (rm *RedisManager) RedisHGet(L *lua.LState) int {
 			return stack.PushError(err)
 		}
 
-		return 1
+		return 2
 	})
 }
 
@@ -51,18 +52,53 @@ func (rm *RedisManager) RedisHGet(L *lua.LState) int {
 func (rm *RedisManager) RedisHSet(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		hash := stack.CheckString(2)
-		field := stack.CheckString(3)
-		value, err := convert.LuaValue(stack.CheckAny(4))
-		if err != nil {
-			return stack.PushError(err)
+		top := stack.GetTop()
+		var values []any
+
+		if top < 3 {
+			return stack.PushError(errors.New("Invalid number of arguments"))
 		}
 
-		cmd := conn.HSet(ctx, hash, field, value)
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+
+			tbl.ForEach(func(key, value lua.LValue) {
+				values = append(values, key.String())
+
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			if top < 4 || (top-2)%2 != 0 {
+				return stack.PushError(errors.New("Invalid number of arguments"))
+			}
+
+			for i := 3; i <= top; i += 2 {
+				field := stack.CheckString(i)
+
+				value, err := convert.LuaValue(stack.CheckAny(i + 1))
+				if err != nil {
+					values = append(values, field, stack.CheckAny(i+1).String())
+				} else {
+					values = append(values, field, value)
+				}
+			}
+		}
+
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
+
+		cmd := conn.HSet(ctx, hash, values...)
 		if cmd.Err() != nil {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -71,10 +107,23 @@ func (rm *RedisManager) RedisHDel(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		hash := stack.CheckString(2)
 		top := stack.GetTop()
-		fields := make([]string, top-2)
 
-		for i := 3; i <= top; i++ {
-			fields[i-3] = stack.CheckString(i)
+		var fields []string
+
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+
+			tbl.ForEach(func(_, value lua.LValue) {
+				fields = append(fields, value.String())
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				fields = append(fields, stack.CheckString(i))
+			}
+		}
+
+		if len(fields) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
 		}
 
 		cmd := conn.HDel(ctx, hash, fields...)
@@ -82,7 +131,7 @@ func (rm *RedisManager) RedisHDel(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -96,7 +145,7 @@ func (rm *RedisManager) RedisHLen(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -111,11 +160,12 @@ func (rm *RedisManager) RedisHGetAll(L *lua.LState) int {
 		}
 
 		result := L.NewTable()
+
 		for k, v := range cmd.Val() {
 			result.RawSetString(k, lua.LString(v))
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -124,10 +174,22 @@ func (rm *RedisManager) RedisHMGet(L *lua.LState) int {
 	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		hash := stack.CheckString(2)
 		top := stack.GetTop()
-		fields := make([]string, top-2)
+		var fields []string
 
-		for i := 3; i <= top; i++ {
-			fields[i-3] = stack.CheckString(i)
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+
+			tbl.ForEach(func(_, value lua.LValue) {
+				fields = append(fields, value.String())
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				fields = append(fields, stack.CheckString(i))
+			}
+		}
+
+		if len(fields) == 0 {
+			return stack.PushResults(L.NewTable(), lua.LNil)
 		}
 
 		cmd := conn.HMGet(ctx, hash, fields...)
@@ -136,6 +198,7 @@ func (rm *RedisManager) RedisHMGet(L *lua.LState) int {
 		}
 
 		result := L.NewTable()
+
 		for i, val := range cmd.Val() {
 			if val == nil {
 				result.RawSetString(fields[i], lua.LNil)
@@ -144,7 +207,7 @@ func (rm *RedisManager) RedisHMGet(L *lua.LState) int {
 			}
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -160,7 +223,7 @@ func (rm *RedisManager) RedisHIncrBy(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -176,7 +239,7 @@ func (rm *RedisManager) RedisHIncrByFloat(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -191,6 +254,6 @@ func (rm *RedisManager) RedisHExists(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LBool(cmd.Val()))
+		return stack.PushResults(lua.LBool(cmd.Val()), lua.LNil)
 	})
 }

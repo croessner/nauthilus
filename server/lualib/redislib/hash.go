@@ -39,13 +39,16 @@ func RedisHGet(ctx context.Context, cfg config.File, client rediscli.Client) lua
 		if client != nil {
 			handle = client.GetReadHandle()
 		}
+
 		conn := getRedisConnectionWithFallback(L, handle)
+
 		if conn == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("redis client not configured"))
 
 			return 2
 		}
+
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		valueType := definitions.TypeString
@@ -69,7 +72,7 @@ func RedisHGet(ctx context.Context, cfg config.File, client rediscli.Client) lua
 			return 2
 		}
 
-		return 1
+		return 2
 	}
 }
 
@@ -204,6 +207,7 @@ func RedisHGetAll(ctx context.Context, cfg config.File, client rediscli.Client) 
 		}
 
 		table := L.NewTable()
+
 		for k, v := range cmd.Val() {
 			// We cannot make a difference for the types of the values. So, all values are returned as strings
 			table.RawSetString(k, lua.LString(v))
@@ -257,6 +261,7 @@ func RedisHMGet(ctx context.Context, cfg config.File, client rediscli.Client) lu
 		}
 
 		result := L.NewTable()
+
 		for i, v := range vals {
 			if v == nil {
 				result.RawSetString(fields[i], lua.LNil)

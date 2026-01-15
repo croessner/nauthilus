@@ -24,6 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -32,30 +33,36 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
+// DNSManager manages DNS operations for Lua.
+type DNSManager struct {
+	*BaseManager
+}
+
+// NewDNSManager creates a new DNSManager.
+func NewDNSManager(ctx context.Context, cfg config.File, logger *slog.Logger) *DNSManager {
+	return &DNSManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+	}
+}
+
 // Resolve performs a DNS record lookup for the specified domain and record type using Lua and the provided context.
 // It supports record types such as A, AAAA, MX, NS, TXT, CNAME, and PTR and returns the result or an error to Lua.
-func Resolve(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
-	return func(L *lua.LState) int {
-		domain := L.CheckString(1)
-		recordType := strings.ToUpper(L.OptString(2, "A"))
+func (m *DNSManager) Resolve(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	domain := stack.CheckString(1)
+	recordType := strings.ToUpper(stack.OptString(2, "A"))
 
-		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLua,
-			"domain", domain,
-			"kind", recordType,
-		)
+	util.DebugModuleWithCfg(m.Ctx, m.Cfg, m.Logger, definitions.DbgLua,
+		"domain", domain,
+		"kind", recordType,
+	)
 
-		result, err := lookupRecord(ctx, cfg, L, domain, recordType)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-
-			return 2
-		}
-
-		L.Push(result)
-
-		return 1
+	result, err := lookupRecord(m.Ctx, m.Cfg, L, domain, recordType)
+	if err != nil {
+		return stack.PushError(err)
 	}
+
+	return stack.PushResults(result, lua.LNil)
 }
 
 // lookupRecord performs a DNS lookup for the specified domain and record type, returning the results as an LValue.
@@ -251,13 +258,14 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 // LoaderModDNS initializes and loads the DNS module for Lua, providing functions for DNS lookups and managing records.
 func LoaderModDNS(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewDNSManager(ctx, cfg, logger)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			"resolve": Resolve(ctx, cfg, logger),
+			"resolve": manager.Resolve,
 		})
 
-		L.Push(mod)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }
 
@@ -266,8 +274,8 @@ func LoaderModDNS(ctx context.Context, cfg config.File, logger *slog.Logger) lua
 // with a context-aware version via BindModuleIntoReq.
 func LoaderDNSStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }

@@ -16,25 +16,75 @@
 package lualib
 
 import (
+	"context"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	lua "github.com/yuin/gopher-lua"
 )
 
-func LoaderModContext(ctx *Context) lua.LGFunction {
+// ContextManager manages Lua context operations.
+type ContextManager struct {
+	*BaseManager
+	context *Context
+}
+
+// NewContextManager creates a new ContextManager.
+func NewContextManager(ctx context.Context, cfg config.File, logger *slog.Logger, luaCtx *Context) *ContextManager {
+	return &ContextManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+		context:     luaCtx,
+	}
+}
+
+// ContextSet is a wrapper function to Context.Set(...).
+func (m *ContextManager) ContextSet(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
+	value := stack.CheckAny(2)
+
+	m.context.Set(key, convert.LuaValueToGo(value))
+
+	return 0
+}
+
+// ContextGet is a wrapper function to Context.Get(...).
+func (m *ContextManager) ContextGet(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
+	value := m.context.Get(key)
+
+	return stack.PushResult(convert.GoToLuaValue(L, value))
+}
+
+// ContextDelete is a wrapper function to Context.Delete(...).
+func (m *ContextManager) ContextDelete(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
+
+	m.context.Delete(key)
+
+	return 0
+}
+
+// LoaderModContext initializes and loads the context module for Lua.
+func LoaderModContext(ctx context.Context, cfg config.File, logger *slog.Logger, luaCtx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewContextManager(ctx, cfg, logger, luaCtx)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCtxSet:    ContextSetWithCtx(ctx),
-			definitions.LuaFnCtxGet:    ContextGetWithCtx(ctx),
-			definitions.LuaFnCtxDelete: ContextDeleteWithCtx(ctx),
+			definitions.LuaFnCtxSet:    manager.ContextSet,
+			definitions.LuaFnCtxGet:    manager.ContextGet,
+			definitions.LuaFnCtxDelete: manager.ContextDelete,
 		})
 
-		L.Push(mod)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }
 
@@ -43,9 +93,9 @@ func LoaderModContext(ctx *Context) lua.LGFunction {
 // clone this table and inject bound functions via WithCtx factories.
 func LoaderContextStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }
 
@@ -141,50 +191,3 @@ func (c *Context) Err() error {
 func (c *Context) Value(_ any) lua.LValue {
 	return lua.LNil
 }
-
-// ContextSet is a wrapper function to Context.Set(...). The argument ctx provides the Lua context for the underlying
-// Lua function.
-func ContextSet(ctx *Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		key := L.CheckString(1)
-		value := L.CheckAny(2)
-
-		ctx.Set(key, convert.LuaValueToGo(value))
-
-		return 0
-	}
-}
-
-// ContextGet is a wrapper function to Context.Get(...). The argument ctx provides the Lua context for the underlying
-// Lua function.
-func ContextGet(ctx *Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		key := L.CheckString(1)
-		value := ctx.Get(key)
-
-		L.Push(convert.GoToLuaValue(L, value))
-
-		return 1
-	}
-}
-
-// ContextDelete is a wrapper function to Context.Delete(...). The argument ctx provides the Lua context for the underlying
-// Lua function.
-func ContextDelete(ctx *Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		key := L.CheckString(1)
-
-		ctx.Delete(key)
-
-		return 0
-	}
-}
-
-// ContextSetWithCtx is a factory alias that returns the same function as ContextSet(ctx).
-func ContextSetWithCtx(ctx *Context) lua.LGFunction { return ContextSet(ctx) }
-
-// ContextGetWithCtx is a factory alias that returns the same function as ContextGet(ctx).
-func ContextGetWithCtx(ctx *Context) lua.LGFunction { return ContextGet(ctx) }
-
-// ContextDeleteWithCtx is a factory alias that returns the same function as ContextDelete(ctx).
-func ContextDeleteWithCtx(ctx *Context) lua.LGFunction { return ContextDelete(ctx) }

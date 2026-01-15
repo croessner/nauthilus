@@ -239,9 +239,10 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	// Bind per-request modules into reqEnv so that require() resolves to the bound versions.
 	// 1) nauthilus_context
 	{
-		loader := lualib.LoaderModContext(luaRequest.Context)
+		loader := lualib.LoaderModContext(ctx, cfg, logger, luaRequest.Context)
 		if loader != nil {
 			_ = loader(L)
+
 			if mod, ok := L.Get(-1).(*lua.LTable); ok {
 				L.Pop(1)
 				luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
@@ -253,8 +254,9 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	// 2) nauthilus_http_request
 	if luaRequest.HTTPClientRequest != nil {
-		loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest))
+		loader := lualib.LoaderModHTTP(ctx, cfg, logger, lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest))
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
@@ -267,6 +269,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	{
 		loader := redislib.LoaderModRedis(luaRequest.HTTPClientContext, cfg, redisClient)
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
@@ -279,6 +282,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	if cfg.HaveLDAPBackend() {
 		loader := LoaderModLDAP(luaCtx, cfg)
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
@@ -290,6 +294,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	// 5) nauthilus_psnet (connection monitoring)
 	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
@@ -301,6 +306,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	// 6) nauthilus_dns (DNS lookups)
 	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
@@ -312,6 +318,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	// 6.1) nauthilus_opentelemetry (OTel helpers for Lua)
 	{
 		var loader lua.LGFunction
+
 		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
 			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
@@ -320,6 +327,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 		if loader != nil {
 			_ = loader(L)
+
 			if mod, ok := L.Get(-1).(*lua.LTable); ok {
 				L.Pop(1)
 				luapool.BindModuleIntoReq(L, definitions.LuaModOpenTelemetry, mod)
@@ -332,6 +340,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	// 7) nauthilus_brute_force (toleration and blocking helpers)
 	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
+
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
@@ -340,19 +349,18 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 		}
 	}
 
-	lualib.RegisterBackendResultType(
-		L,
-		definitions.LuaBackendResultAuthenticated,
-		definitions.LuaBackendResultUserFound,
-		definitions.LuaBackendResultAccountField,
-		definitions.LuaBackendResultTOTPSecretField,
-		definitions.LuaBackendResultTOTPRecoveryField,
-		definitions.LuaBAckendResultUniqueUserIDField,
-		definitions.LuaBackendResultDisplayNameField,
-		definitions.LuaBackendResultAttributes,
-	)
+	// 8) nauthilus_backend_result
+	lualib.LoaderModBackendResult(ctx, cfg, logger)(L)
 
-	setupGlobals(luaRequest, L, logs)
+	if mod, ok := L.Get(-1).(*lua.LTable); ok {
+		L.Pop(1)
+		L.SetGlobal(definitions.LuaBackendResultTypeName, mod)
+		luapool.BindModuleIntoReq(L, definitions.LuaBackendResultTypeName, mod)
+	} else {
+		L.Pop(1)
+	}
+
+	setupGlobals(ctx, cfg, logger, luaRequest, L, logs)
 
 	request := L.NewTable()
 
@@ -372,13 +380,13 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 }
 
 // setupGlobals initializes and registers a set of global Lua variables and functions in the provided Lua state.
-func setupGlobals(luaRequest *bktype.LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
+func setupGlobals(ctx context.Context, cfg config.File, logger *slog.Logger, luaRequest *bktype.LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
 	globals.RawSet(lua.LString(definitions.LuaBackendResultOk), lua.LNumber(0))
 	globals.RawSet(lua.LString(definitions.LuaBackendResultFail), lua.LNumber(1))
 
-	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.LoaderModLogging(ctx, cfg, logger, logs)))
 	globals.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 
 	L.SetGlobal(definitions.LuaDefaultTable, globals)

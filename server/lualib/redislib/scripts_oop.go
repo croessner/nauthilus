@@ -36,14 +36,33 @@ func (rm *RedisManager) RedisRunScript(L *lua.LState) int {
 		uploadScriptName := stack.OptString(3, "")
 		keys := rm.getLuaTableAsStringSlice(stack.CheckTable(4))
 		top := stack.GetTop()
-		args := make([]any, 0, max(0, top-4))
 
-		for i := 5; i <= top; i++ {
-			val, err := convert.LuaValue(stack.CheckAny(i))
-			if err != nil {
-				return stack.PushError(err)
+		var args []any
+
+		// Check if the 5th argument is a table. If so, use it as the arguments list.
+		// Otherwise, collect all arguments from the 5th onwards.
+		if top == 5 && stack.L.Get(5).Type() == lua.LTTable {
+			tbl := stack.CheckTable(5)
+
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					// In case of error during conversion, we might still want to try to convert it to string
+					// to keep it backward compatible with the stateless version which uses v.String().
+					args = append(args, value.String())
+				} else {
+					args = append(args, val)
+				}
+			})
+		} else {
+			for i := 5; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					args = append(args, stack.CheckAny(i).String())
+				} else {
+					args = append(args, val)
+				}
 			}
-			args = append(args, val)
 		}
 
 		result, err := rm.evaluateRedisScript(ctx, conn, script, uploadScriptName, keys, args...)
@@ -51,7 +70,7 @@ func (rm *RedisManager) RedisRunScript(L *lua.LState) int {
 			return stack.PushError(err)
 		}
 
-		return stack.PushResult(convert.GoToLuaValue(L, result))
+		return stack.PushResults(convert.GoToLuaValue(L, result), lua.LNil)
 	})
 }
 
@@ -114,7 +133,7 @@ func (rm *RedisManager) RedisUploadScript(L *lua.LState) int {
 			scriptsRepository.Set(uploadScriptName, sha1)
 		}
 
-		return stack.PushResult(lua.LString(sha1))
+		return stack.PushResults(lua.LString(sha1), lua.LNil)
 	})
 }
 
@@ -126,8 +145,10 @@ func (rm *RedisManager) uploadRedisScript(ctx context.Context, conn redis.Cmdabl
 // getLuaTableAsStringSlice extracts string values from a Lua table and returns them as a slice of strings.
 func (rm *RedisManager) getLuaTableAsStringSlice(tbl *lua.LTable) []string {
 	var result []string
+
 	tbl.ForEach(func(_, value lua.LValue) {
 		result = append(result, value.String())
 	})
+
 	return result
 }

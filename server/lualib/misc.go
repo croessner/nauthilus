@@ -17,52 +17,80 @@ package lualib
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 	"time"
 	"unicode"
 
 	"github.com/biter777/countries"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 	"github.com/yuin/gopher-lua/parse"
 )
 
-// exportsModMisc is a map that registers miscellaneous Lua functions with their respective names and implementations.
-var exportsModMisc = map[string]lua.LGFunction{
-	definitions.LuaFnGetCountryName: getCountryName,
-	definitions.LuaFnWaitRandom:     waitRandom,
-	definitions.LuaFnScopedIP:       scopedIP,
+// MiscManager manages miscellaneous operations for Lua.
+type MiscManager struct {
+	*BaseManager
 }
 
-// exportsModPassword is a map of Lua function names to their respective implementations for password-related operations.
-var exportsModPassword = map[string]lua.LGFunction{
-	definitions.LuaFnComparePasswords:     comparePasswords,
-	definitions.LuaFnCheckPasswordPolicy:  validatePassword,
-	definitions.LuaFnGeneratePasswordHash: generatePasswordHash,
+// NewMiscManager creates a new MiscManager.
+func NewMiscManager(ctx context.Context, cfg config.File, logger *slog.Logger) *MiscManager {
+	return &MiscManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+	}
+}
+
+// PasswordManager manages password-related operations for Lua.
+type PasswordManager struct {
+	*BaseManager
+}
+
+// NewPasswordManager creates a new PasswordManager.
+func NewPasswordManager(ctx context.Context, cfg config.File, logger *slog.Logger) *PasswordManager {
+	return &PasswordManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+	}
 }
 
 // LoaderModMisc registers the miscellaneous module in the Lua state and returns the module table.
-func LoaderModMisc(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportsModMisc)
+func LoaderModMisc(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewMiscManager(ctx, cfg, logger)
 
-	L.Push(mod)
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnGetCountryName: manager.getCountryName,
+			definitions.LuaFnWaitRandom:     manager.waitRandom,
+			definitions.LuaFnScopedIP:       manager.scopedIP,
+		})
 
-	return 1
+		return stack.PushResult(mod)
+	}
 }
 
 // LoaderModPassword registers the password-related functions in the Lua runtime and returns the module.
-func LoaderModPassword(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportsModPassword)
+func LoaderModPassword(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewPasswordManager(ctx, cfg, logger)
 
-	L.Push(mod)
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnComparePasswords:     manager.comparePasswords,
+			definitions.LuaFnCheckPasswordPolicy:  manager.validatePassword,
+			definitions.LuaFnGeneratePasswordHash: manager.generatePasswordHash,
+		})
 
-	return 1
+		return stack.PushResult(mod)
+	}
 }
 
 // toInt converts a Lua LValue to an integer if it is of type LNumber. If conversion is not possible, it returns 0.
@@ -77,7 +105,7 @@ func toInt(lv lua.LValue) int {
 // validatePassword checks if a given password complies with policy constraints provided in a Lua table.
 // It validates length, uppercase, lowercase, numeric, and special character requirements.
 // Returns true if all conditions are met, false otherwise.
-func validatePassword(L *lua.LState) int {
+func (m *PasswordManager) validatePassword(L *lua.LState) int {
 	var (
 		upperCount   int
 		lowerCount   int
@@ -85,8 +113,9 @@ func validatePassword(L *lua.LState) int {
 		specialCount int
 	)
 
-	policyTbl := L.ToTable(1)
-	password := L.CheckString(2)
+	stack := luastack.NewManager(L)
+	policyTbl := stack.CheckTable(1)
+	password := stack.CheckString(2)
 
 	minLength := toInt(policyTbl.RawGetString("min_length"))
 	minUpper := toInt(policyTbl.RawGetString("min_upper"))
@@ -95,9 +124,7 @@ func validatePassword(L *lua.LState) int {
 	minSpecial := toInt(policyTbl.RawGetString("min_special"))
 
 	if len(password) < minLength {
-		L.Push(lua.LBool(false))
-
-		return 1
+		return stack.PushResults(lua.LBool(false), lua.LNil)
 	}
 
 	for _, char := range password {
@@ -114,41 +141,36 @@ func validatePassword(L *lua.LState) int {
 	}
 
 	if upperCount < minUpper || lowerCount < minLower || numberCount < minNumber || specialCount < minSpecial {
-		L.Push(lua.LBool(false))
-
-		return 1
+		return stack.PushResults(lua.LBool(false), lua.LNil)
 	}
 
-	L.Push(lua.LBool(true))
-
-	return 1
+	return stack.PushResults(lua.LBool(true), lua.LNil)
 }
 
 // getCountryName retrieves the country name based on an ISO code string provided as the first argument in the Lua state.
 // If the ISO code is invalid or unknown, it pushes "Unknown" onto the Lua stack. Returns 1 as the result count.
-func getCountryName(L *lua.LState) int {
-	isoCode := L.CheckString(1)
+func (m *MiscManager) getCountryName(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	isoCode := stack.CheckString(1)
 	country := countries.ByName(isoCode)
 
 	if country == countries.Unknown {
-		L.Push(lua.LString("Unknown"))
-	} else {
-		countryName := country.String()
-		L.Push(lua.LString(countryName))
+		return stack.PushResults(lua.LString("Unknown"), lua.LNil)
 	}
 
-	return 1
+	countryName := country.String()
+
+	return stack.PushResults(lua.LString(countryName), lua.LNil)
 }
 
 // waitRandom waits for a random amount of time between `minWait` and `maxWait`.
-func waitRandom(L *lua.LState) int {
-	minWait := L.CheckNumber(1)
-	maxWait := L.CheckNumber(2)
+func (m *MiscManager) waitRandom(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	minWait := stack.CheckNumber(1)
+	maxWait := stack.CheckNumber(2)
 
 	if minWait < 0 || maxWait < 0 || minWait >= maxWait {
-		L.Push(lua.LNil)
-
-		return 1
+		return stack.PushResults(lua.LNil, lua.LString("invalid wait range"))
 	}
 
 	minMillis := int64(minWait)
@@ -156,15 +178,12 @@ func waitRandom(L *lua.LState) int {
 
 	randomMillis, err := getCryptoRandomInt(minMillis, maxMillis)
 	if err != nil {
-		L.Push(lua.LNil)
-		return 1
+		return stack.PushError(err)
 	}
 
 	time.Sleep(time.Duration(randomMillis) * time.Millisecond)
 
-	L.Push(lua.LNumber(randomMillis))
-
-	return 1
+	return stack.PushResults(lua.LNumber(randomMillis), lua.LNil)
 }
 
 // getCryptoRandomInt returns a cryptographically secure random integer between min and max.
@@ -231,54 +250,51 @@ func DoCompiledFile(L *lua.LState, proto *lua.FunctionProto) error {
 // comparePasswords verifies whether a plain-text password matches a hashed password using the underlying utility logic.
 // Accepts two arguments: hashed password and plain-text password.
 // Returns a boolean indicating match success and an error message if applicable.
-func comparePasswords(L *lua.LState) int {
-	if L.GetTop() != 2 {
-		L.Push(lua.LBool(false))
-		L.Push(lua.LString("wrong number of arguments"))
+func (m *PasswordManager) comparePasswords(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-		return 2
+	if stack.GetTop() != 2 {
+		return stack.PushResults(lua.LBool(false), lua.LString("wrong number of arguments"))
 	}
 
-	hashPassword := L.CheckString(1)
-	plainPassword := L.CheckString(2)
+	hashPassword := stack.CheckString(1)
+	plainPassword := stack.CheckString(2)
 
 	passwordsMatched, err := util.ComparePasswords(hashPassword, plainPassword)
 
-	L.Push(lua.LBool(passwordsMatched))
-
 	if err != nil {
-		L.Push(lua.LString(err.Error()))
-	} else {
-		L.Push(lua.LNil)
+		return stack.PushResults(lua.LBool(passwordsMatched), lua.LString(err.Error()))
 	}
 
-	return 2
+	return stack.PushResults(lua.LBool(passwordsMatched), lua.LNil)
 }
 
 // generatePasswordHash creates the Redis-compatible password hash matching the Go backend behavior.
 // It takes one argument (password string) and returns a lowercase 8-hex-character string.
-func generatePasswordHash(L *lua.LState) int {
-	password := L.CheckString(1)
+func (m *PasswordManager) generatePasswordHash(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	password := stack.CheckString(1)
 
 	hash := util.GetHash(util.PreparePassword(password))
-	L.Push(lua.LString(hash))
 
-	return 1
+	return stack.PushResults(lua.LString(hash), lua.LNil)
 }
 
 // scopedIP exposes the Go IP scoper to Lua scripts via nauthilus_misc.scoped_ip(ctx, ip).
 // Usage from Lua: local scope = nauthilus_misc.scoped_ip("lua_generic", request.client_ip)
-func scopedIP(L *lua.LState) int {
+func (m *MiscManager) scopedIP(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+
 	// Accept either (ctx, ip) or (ip) with default context
 	var ctxStr string
 	var ip string
 
-	if L.GetTop() >= 2 {
-		ctxStr = L.OptString(1, "lua_generic")
-		ip = L.CheckString(2)
+	if stack.GetTop() >= 2 {
+		ctxStr = stack.OptString(1, "lua_generic")
+		ip = stack.CheckString(2)
 	} else {
 		ctxStr = "lua_generic"
-		ip = L.CheckString(1)
+		ip = stack.CheckString(1)
 	}
 
 	var ctx ipscoper.ScopeContext
@@ -297,7 +313,5 @@ func scopedIP(L *lua.LState) int {
 	sc := ipscoper.NewIPScoper()
 	scoped := sc.Scope(ctx, ip)
 
-	L.Push(lua.LString(scoped))
-
-	return 1
+	return stack.PushResults(lua.LString(scoped), lua.LNil)
 }

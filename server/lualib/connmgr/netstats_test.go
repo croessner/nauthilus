@@ -73,8 +73,10 @@ func TestConnectionManager(t *testing.T) {
 
 		defer L.Close()
 
-		L.SetGlobal("register", L.NewFunction(manager.luaRegisterTarget(ctx, config.GetFile())))
-		L.SetGlobal("count", L.NewFunction(manager.luaCountOpenConnections))
+		m := NewPsnetManager(ctx, config.GetFile(), nil)
+
+		L.SetGlobal("register", L.NewFunction(m.luaRegisterTarget))
+		L.SetGlobal("count", L.NewFunction(m.luaCountOpenConnections))
 
 		if err := L.DoString(`register("127.0.0.1:9000", "remote", "test")`); err != nil {
 			t.Errorf("Lua register failed: %v", err)

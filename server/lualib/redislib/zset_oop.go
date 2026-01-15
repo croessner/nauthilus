@@ -19,6 +19,8 @@ package redislib
 
 import (
 	"context"
+	"errors"
+	"sort"
 
 	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/redis/go-redis/v9"
@@ -29,11 +31,31 @@ import (
 func (rm *RedisManager) RedisZAdd(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
-		values := stack.CheckTable(3)
+		top := stack.GetTop()
+		var zValues []redis.Z
 
-		zValues := rm.parseLuaTableToRedisZSet(L, values, "zadd expects a table of scores and values")
-		if zValues == nil {
-			return 2
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			values := stack.CheckTable(3)
+
+			zValues = rm.parseLuaTableToRedisZSet(L, values, "zadd expects a table of scores and values")
+		} else {
+			if top < 4 || (top-2)%2 != 0 {
+				return stack.PushError(errors.New("Invalid number of arguments"))
+			}
+
+			for i := 3; i <= top; i += 2 {
+				member := stack.CheckString(i)
+				score := float64(stack.CheckNumber(i + 1))
+
+				zValues = append(zValues, redis.Z{
+					Member: member,
+					Score:  score,
+				})
+			}
+
+			sort.Slice(zValues, func(i, j int) bool {
+				return zValues[i].Member.(string) < zValues[j].Member.(string)
+			})
 		}
 
 		cmd := conn.ZAdd(ctx, key, zValues...)
@@ -41,42 +63,24 @@ func (rm *RedisManager) RedisZAdd(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
 // parseLuaTableToRedisZSet is a helper function to parse a Lua table into a slice of redis.Z values.
-func (rm *RedisManager) parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, errorMsg string) []redis.Z {
+func (rm *RedisManager) parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, _ string) []redis.Z {
 	var zValues []redis.Z
 
-	var parseErr bool
-
 	values.ForEach(func(key lua.LValue, value lua.LValue) {
-		if parseErr {
-			return
-		}
-
-		score, okScore := key.(lua.LNumber)
-		valStr, okVal := value.(lua.LString)
-
-		if !okScore || !okVal {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(errorMsg))
-
-			parseErr = true
-
-			return
-		}
-
 		zValues = append(zValues, redis.Z{
-			Score:  float64(score),
-			Member: valStr.String(),
+			Score:  float64(lua.LVAsNumber(value)),
+			Member: key.String(),
 		})
 	})
 
-	if parseErr {
-		return nil
-	}
+	sort.Slice(zValues, func(i, j int) bool {
+		return zValues[i].Member.(string) < zValues[j].Member.(string)
+	})
 
 	return zValues
 }
@@ -94,11 +98,12 @@ func (rm *RedisManager) RedisZRange(L *lua.LState) int {
 		}
 
 		result := L.NewTable()
+
 		for _, val := range cmd.Val() {
 			result.Append(lua.LString(val))
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -115,11 +120,12 @@ func (rm *RedisManager) RedisZRevRange(L *lua.LState) int {
 		}
 
 		result := L.NewTable()
+
 		for _, val := range cmd.Val() {
 			result.Append(lua.LString(val))
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -135,9 +141,22 @@ func (rm *RedisManager) RedisZRangeByScore(L *lua.LState) int {
 			count  int64
 		)
 
-		if stack.GetTop() == 6 {
-			offset = int64(stack.CheckInt(5))
-			count = int64(stack.CheckInt(6))
+		top := stack.GetTop()
+		if top >= 5 && L.Get(5) != lua.LNil {
+			if tbl, ok := L.Get(5).(*lua.LTable); ok {
+				if v := tbl.RawGetString("offset"); v.Type() == lua.LTNumber {
+					offset = int64(lua.LVAsNumber(v))
+				}
+
+				if v := tbl.RawGetString("count"); v.Type() == lua.LTNumber {
+					count = int64(lua.LVAsNumber(v))
+				}
+			} else {
+				offset = int64(stack.CheckInt(5))
+				if top >= 6 {
+					count = int64(stack.CheckInt(6))
+				}
+			}
 		}
 
 		cmd := conn.ZRangeByScore(ctx, key, &redis.ZRangeBy{
@@ -146,17 +165,17 @@ func (rm *RedisManager) RedisZRangeByScore(L *lua.LState) int {
 			Offset: offset,
 			Count:  count,
 		})
-
 		if cmd.Err() != nil {
 			return stack.PushError(cmd.Err())
 		}
 
 		result := L.NewTable()
+
 		for _, val := range cmd.Val() {
 			result.Append(lua.LString(val))
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -165,10 +184,24 @@ func (rm *RedisManager) RedisZRem(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
 		top := stack.GetTop()
-		members := make([]any, top-2)
+		var members []any
 
-		for i := 3; i <= top; i++ {
-			members[i-3] = stack.CheckString(i)
+		// Check if the 3rd argument is a table. If so, use it as the members list.
+		// Otherwise, collect all arguments from the 3rd onwards.
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+
+			tbl.ForEach(func(_, value lua.LValue) {
+				members = append(members, value.String())
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				members = append(members, stack.CheckString(i))
+			}
+		}
+
+		if len(members) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
 		}
 
 		cmd := conn.ZRem(ctx, key, members...)
@@ -176,7 +209,7 @@ func (rm *RedisManager) RedisZRem(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -192,7 +225,7 @@ func (rm *RedisManager) RedisZRemRangeByScore(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -208,7 +241,7 @@ func (rm *RedisManager) RedisZRemRangeByRank(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -223,7 +256,7 @@ func (rm *RedisManager) RedisZRank(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -239,7 +272,7 @@ func (rm *RedisManager) RedisZCount(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -254,7 +287,7 @@ func (rm *RedisManager) RedisZScore(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -269,7 +302,7 @@ func (rm *RedisManager) RedisZRevRank(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -285,6 +318,6 @@ func (rm *RedisManager) RedisZIncrBy(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }

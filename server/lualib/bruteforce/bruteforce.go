@@ -17,6 +17,7 @@ package bruteforce
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -24,22 +25,43 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
 
+// BruteForceManager manages brute force protection operations for Lua.
+type BruteForceManager struct {
+	*lualib.BaseManager
+	redis    rediscli.Client
+	tolerate tolerate.Tolerate
+}
+
+// NewBruteForceManager creates a new BruteForceManager.
+func NewBruteForceManager(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) *BruteForceManager {
+	return &BruteForceManager{
+		BaseManager: lualib.NewBaseManager(ctx, cfg, logger),
+		redis:       redis,
+		tolerate:    t,
+	}
+}
+
 // SetCustomTolerations sets custom toleration configurations for IP-based limits from a Lua table parameter.
-func SetCustomTolerations(L *lua.LState) int {
-	tolerations := L.CheckTable(1)
+func (m *BruteForceManager) SetCustomTolerations(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	tolerations := stack.CheckTable(1)
 
 	parsedTolerations := make([]config.Tolerate, 0)
+
+	var err error
 
 	tolerations.ForEach(func(_ lua.LValue, value lua.LValue) {
 		tolerationTable, ok := value.(*lua.LTable)
 		if !ok {
-			L.ArgError(1, "each toleration must be a table")
+			err = errors.New("each toleration must be a table")
 
 			return
 		}
@@ -51,9 +73,10 @@ func SetCustomTolerations(L *lua.LState) int {
 		ip := lua.LVAsString(ipAddress)
 		percent := uint8(lua.LVAsNumber(toleratePercent))
 
-		ttl, err := time.ParseDuration(lua.LVAsString(tolerateTTL))
-		if err != nil {
-			L.ArgError(1, "invalid tolerate_ttl format")
+		ttl, e := time.ParseDuration(lua.LVAsString(tolerateTTL))
+		if e != nil {
+			err = errors.New("invalid tolerate_ttl format")
+
 			return
 		}
 
@@ -66,14 +89,19 @@ func SetCustomTolerations(L *lua.LState) int {
 		parsedTolerations = append(parsedTolerations, toleration)
 	})
 
+	if err != nil {
+		return stack.PushResults(lua.LNil, lua.LString(err.Error()))
+	}
+
 	tolerate.GetTolerate().SetCustomTolerations(parsedTolerations)
 
-	return 0
+	return stack.PushResults(lua.LString("OK"), lua.LNil)
 }
 
 // SetCustomToleration sets a custom toleration for an IP address with a specific percentage and TTL using Lua inputs.
-func SetCustomToleration(L *lua.LState) int {
-	tolerationTable := L.CheckTable(1)
+func (m *BruteForceManager) SetCustomToleration(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	tolerationTable := stack.CheckTable(1)
 
 	ipAddress := tolerationTable.RawGetString("ip_address")
 	toleratePercent := tolerationTable.RawGetString("tolerate_percent")
@@ -84,27 +112,27 @@ func SetCustomToleration(L *lua.LState) int {
 
 	ttl, err := time.ParseDuration(lua.LVAsString(tolerateTTL))
 	if err != nil {
-		L.ArgError(1, "invalid tolerate_ttl format")
-
-		return 0
+		return stack.PushResults(lua.LNil, lua.LString("invalid tolerate_ttl format"))
 	}
 
 	tolerate.GetTolerate().SetCustomToleration(ip, percent, ttl)
 
-	return 0
+	return stack.PushResults(lua.LString("OK"), lua.LNil)
 }
 
 // DeleteCustomToleration removes the custom toleration configuration for a given IP address from the system.
-func DeleteCustomToleration(L *lua.LState) int {
-	ip := L.CheckString(1)
+func (m *BruteForceManager) DeleteCustomToleration(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	ip := stack.CheckString(1)
 
 	tolerate.GetTolerate().DeleteCustomToleration(ip)
 
-	return 0
+	return stack.PushResults(lua.LString("OK"), lua.LNil)
 }
 
 // GetCustomTolerations retrieves custom toleration settings and returns them as a Lua table accessible to the Lua state.
-func GetCustomTolerations(L *lua.LState) int {
+func (m *BruteForceManager) GetCustomTolerations(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 	tolerations := tolerate.GetTolerate().GetCustomTolerations()
 	resultTable := L.NewTable()
 
@@ -118,84 +146,75 @@ func GetCustomTolerations(L *lua.LState) int {
 		resultTable.Append(tolerationTable)
 	}
 
-	L.Push(resultTable)
-
-	return 1
+	return stack.PushResults(resultTable, lua.LNil)
 }
 
 // GetTolerateMap retrieves a Lua table containing authentication data for the provided IP address from the toleration system.
-func GetTolerateMap(ctx context.Context, t tolerate.Tolerate) lua.LGFunction {
-	return func(L *lua.LState) int {
-		ipAddress := L.CheckString(1)
+func (m *BruteForceManager) GetTolerateMap(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	ipAddress := stack.CheckString(1)
 
-		mapping := t.GetTolerateMap(ctx, ipAddress)
-		resultTable := L.NewTable()
+	mapping := m.tolerate.GetTolerateMap(m.Ctx, ipAddress)
+	resultTable := L.NewTable()
 
-		for label, value := range mapping {
-			resultTable.RawSetString(label, lua.LNumber(value))
-		}
-
-		L.Push(resultTable)
-
-		return 1
+	for label, value := range mapping {
+		resultTable.RawSetString(label, lua.LNumber(value))
 	}
+
+	return stack.PushResults(resultTable, lua.LNil)
 }
 
 // IsIPAddressBlocked checks if an IP address is blocked and returns a list of buckets causing the block or nil if not blocked.
-func IsIPAddressBlocked(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) lua.LGFunction {
-	return func(L *lua.LState) int {
-		var guid string
+func (m *BruteForceManager) IsIPAddressBlocked(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	var guid string
 
-		ipAddress := L.CheckString(1)
+	ipAddress := stack.CheckString(1)
 
-		if ginCtx, ok := ctx.(*gin.Context); ok {
-			guid = ginCtx.GetString(definitions.CtxGUIDKey)
-		}
-
-		if guid == "" {
-			guid = definitions.NotAvailable
-		}
-
-		bm := bruteforce.NewBucketManagerWithDeps(ctx, guid, ipAddress, bruteforce.BucketManagerDeps{
-			Cfg:      cfg,
-			Logger:   logger,
-			Redis:    redis,
-			Tolerate: t,
-		})
-
-		bucketsNames, found := bm.IsIPAddressBlocked()
-		if !found {
-			L.Push(lua.LNil)
-
-			return 1
-		}
-
-		result := L.NewTable()
-		for _, bucketName := range bucketsNames {
-			result.Append(lua.LString(bucketName))
-		}
-
-		L.Push(result)
-
-		return 1
+	if ginCtx, ok := m.Ctx.(*gin.Context); ok {
+		guid = ginCtx.GetString(definitions.CtxGUIDKey)
 	}
+
+	if guid == "" {
+		guid = definitions.NotAvailable
+	}
+
+	bm := bruteforce.NewBucketManagerWithDeps(m.Ctx, guid, ipAddress, bruteforce.BucketManagerDeps{
+		Cfg:      m.Cfg,
+		Logger:   m.Logger,
+		Redis:    m.redis,
+		Tolerate: m.tolerate,
+	})
+
+	bucketsNames, found := bm.IsIPAddressBlocked()
+	if !found {
+		return stack.PushResults(lua.LNil, lua.LNil)
+	}
+
+	result := L.NewTable()
+	for _, bucketName := range bucketsNames {
+		result.Append(lua.LString(bucketName))
+	}
+
+	return stack.PushResults(result, lua.LNil)
 }
 
 // LoaderModBruteForce initializes the Lua module with functions for managing custom toleration settings and pushes it to the state.
 func LoaderModBruteForce(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) lua.LGFunction {
 	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewBruteForceManager(ctx, cfg, logger, redis, t)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnBfSetCustomTolerations:   SetCustomTolerations,
-			definitions.LuaFnBfSetCustomToleration:    SetCustomToleration,
-			definitions.LuaFnBfDeleteCustomToleration: DeleteCustomToleration,
-			definitions.LuaFnBfGetCusotmTolerations:   GetCustomTolerations,
-			definitions.LuaFnBfGetTolerateMap:         GetTolerateMap(ctx, t),
-			definitions.LuaFnBfIsIPAddressBlocked:     IsIPAddressBlocked(ctx, cfg, logger, redis, t),
+			definitions.LuaFnBfSetCustomTolerations:   manager.SetCustomTolerations,
+			definitions.LuaFnBfSetCustomToleration:    manager.SetCustomToleration,
+			definitions.LuaFnBfDeleteCustomToleration: manager.DeleteCustomToleration,
+			definitions.LuaFnBfGetCusotmTolerations:   manager.GetCustomTolerations,
+			definitions.LuaFnBfGetTolerateMap:         manager.GetTolerateMap,
+			definitions.LuaFnBfIsIPAddressBlocked:     manager.IsIPAddressBlocked,
 		})
 
-		L.Push(mod)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }
 
@@ -204,8 +223,8 @@ func LoaderModBruteForce(ctx context.Context, cfg config.File, logger *slog.Logg
 // with a context-aware version via BindModuleIntoReq.
 func LoaderBruteForceStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }

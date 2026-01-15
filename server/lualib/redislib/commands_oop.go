@@ -37,7 +37,10 @@ func (rm *RedisManager) RedisPing(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LString(cmd.Val()))
+		L.Push(lua.LString(cmd.Val()))
+		L.Push(lua.LNil)
+
+		return 2
 	})
 }
 
@@ -56,7 +59,7 @@ func (rm *RedisManager) RedisGet(L *lua.LState) int {
 			return stack.PushError(err)
 		}
 
-		return 1
+		return 2
 	})
 }
 
@@ -136,18 +139,26 @@ func (rm *RedisManager) RedisSet(L *lua.LState) int {
 		if useArgs {
 			cmd := conn.SetArgs(ctx, key, value, args)
 			if cmd.Err() != nil {
+				if errors.Is(cmd.Err(), redis.Nil) {
+					return stack.PushResults(lua.LNil, lua.LNil)
+				}
+
 				return stack.PushError(cmd.Err())
 			}
 
-			return stack.PushResult(lua.LString(cmd.Val()))
+			return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
 		}
 
 		cmd := conn.Set(ctx, key, value, args.TTL)
 		if cmd.Err() != nil {
+			if errors.Is(cmd.Err(), redis.Nil) {
+				return stack.PushResults(lua.LNil, lua.LNil)
+			}
+
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LString(cmd.Val()))
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -161,7 +172,7 @@ func (rm *RedisManager) RedisIncr(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -175,7 +186,22 @@ func (rm *RedisManager) RedisDel(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
+}
+
+// RedisRename renames a key in Redis.
+func (rm *RedisManager) RedisRename(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		oldKey := stack.CheckString(2)
+		newKey := stack.CheckString(3)
+
+		cmd := conn.Rename(ctx, oldKey, newKey)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
+
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -190,7 +216,7 @@ func (rm *RedisManager) RedisExpire(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LBool(cmd.Val()))
+		return stack.PushResults(lua.LBool(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -204,6 +230,6 @@ func (rm *RedisManager) RedisExists(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LNumber(cmd.Val()))
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
 	})
 }

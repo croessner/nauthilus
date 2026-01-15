@@ -19,6 +19,7 @@ package redislib
 
 import (
 	"context"
+	"errors"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
@@ -30,10 +31,21 @@ import (
 func (rm *RedisManager) RedisMGet(L *lua.LState) int {
 	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		top := stack.GetTop()
-		keys := make([]string, top-1)
+		var keys []string
 
-		for i := 2; i <= top; i++ {
-			keys[i-2] = stack.CheckString(i)
+		if top == 2 && stack.L.Get(2).Type() == lua.LTTable {
+			tbl := stack.CheckTable(2)
+			tbl.ForEach(func(_, value lua.LValue) {
+				keys = append(keys, value.String())
+			})
+		} else {
+			for i := 2; i <= top; i++ {
+				keys = append(keys, stack.CheckString(i))
+			}
+		}
+
+		if len(keys) == 0 {
+			return stack.PushResults(L.NewTable(), lua.LNil)
 		}
 
 		cmd := conn.MGet(ctx, keys...)
@@ -50,7 +62,7 @@ func (rm *RedisManager) RedisMGet(L *lua.LState) int {
 			}
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -58,18 +70,42 @@ func (rm *RedisManager) RedisMGet(L *lua.LState) int {
 func (rm *RedisManager) RedisMSet(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		top := stack.GetTop()
-		if top < 3 || (top-1)%2 != 0 {
-			return stack.PushError(redis.ErrClosed) // Using a placeholder for "Invalid number of arguments" error for now
-		}
+		var kvpairs []any
 
-		kvpairs := make([]any, top-1)
-		for i := 2; i <= top; i++ {
-			value, err := convert.LuaValue(stack.CheckAny(i))
-			if err != nil {
-				return stack.PushError(err)
+		if top == 2 && stack.L.Get(2).Type() == lua.LTTable {
+			tbl := stack.CheckTable(2)
+			tbl.ForEach(func(key, value lua.LValue) {
+				k, err := convert.LuaValue(key)
+				if err != nil {
+					kvpairs = append(kvpairs, key.String())
+				} else {
+					kvpairs = append(kvpairs, k)
+				}
+
+				v, err := convert.LuaValue(value)
+				if err != nil {
+					kvpairs = append(kvpairs, value.String())
+				} else {
+					kvpairs = append(kvpairs, v)
+				}
+			})
+		} else {
+			if top < 3 || (top-1)%2 != 0 {
+				return stack.PushError(errors.New("invalid number of arguments"))
 			}
 
-			kvpairs[i-2] = value
+			for i := 2; i <= top; i++ {
+				value, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					kvpairs = append(kvpairs, stack.CheckAny(i).String())
+				} else {
+					kvpairs = append(kvpairs, value)
+				}
+			}
+		}
+
+		if len(kvpairs) == 0 {
+			return stack.PushResults(lua.LString("OK"), lua.LNil)
 		}
 
 		cmd := conn.MSet(ctx, kvpairs...)
@@ -77,7 +113,7 @@ func (rm *RedisManager) RedisMSet(L *lua.LState) int {
 			return stack.PushError(cmd.Err())
 		}
 
-		return stack.PushResult(lua.LString(cmd.Val()))
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
 	})
 }
 
@@ -96,7 +132,7 @@ func (rm *RedisManager) RedisKeys(L *lua.LState) int {
 			result.Append(lua.LString(key))
 		}
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }
 
@@ -121,6 +157,6 @@ func (rm *RedisManager) RedisScan(L *lua.LState) int {
 		}
 		result.RawSetString("keys", keysTable)
 
-		return stack.PushResult(result)
+		return stack.PushResults(result, lua.LNil)
 	})
 }

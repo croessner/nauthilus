@@ -73,6 +73,7 @@ func formatLuaValue(val any) string {
 // function returns a pointer to the created table.
 func createLuaTable(values []string) *lua.LTable {
 	tbl := &lua.LTable{}
+
 	for _, val := range values {
 		tbl.Append(lua.LString(val))
 	}
@@ -99,6 +100,7 @@ func luaTablesAreEqual(tbl1, tbl2 *lua.LTable) bool {
 	})
 
 	equal := true
+
 	tbl1.ForEach(func(_, v lua.LValue) {
 		if _, exists := tbl2Map[v.String()]; !exists {
 			equal = false

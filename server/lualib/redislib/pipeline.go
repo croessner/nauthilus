@@ -671,7 +671,7 @@ func RedisPipeline(ctx context.Context, cfg config.File, client rediscli.Client)
 					argsTbl.ForEach(func(_ lua.LValue, v lua.LValue) { args = append(args, v.String()) })
 				}
 
-				sha1 := scriptsRepository.Get(uploadName)
+				sha1 := uploads.Get(uploadName)
 				if sha1 == "" {
 					innerErr = fmt.Errorf("unknown uploaded script name: %s", uploadName)
 

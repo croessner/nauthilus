@@ -57,7 +57,7 @@ func RedisGet(ctx context.Context, cfg config.File, client rediscli.Client) lua.
 			return 2
 		}
 
-		return 1
+		return 2
 	}
 }
 
@@ -215,6 +215,7 @@ func RedisIncr(ctx context.Context, cfg config.File, client rediscli.Client) lua
 		defer cancel()
 
 		cmd := conn.Incr(dCtx, key)
+
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -240,6 +241,7 @@ func RedisDel(ctx context.Context, cfg config.File, client rediscli.Client) lua.
 		defer cancel()
 
 		cmd := conn.Del(dCtx, key)
+
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -266,6 +268,7 @@ func RedisExpire(ctx context.Context, cfg config.File, client rediscli.Client) l
 		defer cancel()
 
 		cmd := conn.Expire(dCtx, key, time.Duration(expiration)*time.Second)
+
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -292,6 +295,7 @@ func RedisRename(ctx context.Context, cfg config.File, client rediscli.Client) l
 		defer cancel()
 
 		cmd := conn.Rename(dCtx, oldKey, newKey)
+
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -316,6 +320,7 @@ func RedisPing(ctx context.Context, cfg config.File, client rediscli.Client) lua
 		defer cancel()
 
 		cmd := conn.Ping(dCtx)
+
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -341,6 +346,7 @@ func RedisExists(ctx context.Context, cfg config.File, client rediscli.Client) l
 		defer cancel()
 
 		cmd := conn.Exists(dCtx, key)
+
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -24,8 +25,8 @@ import (
 // per-request binding replaces it with a request-aware version via BindModuleIntoReq.
 func LoaderBackendStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }

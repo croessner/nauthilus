@@ -335,7 +335,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	// Bind request-scoped modules into reqEnv so that require() resolves correctly.
 	// 1) nauthilus_context
-	if loader := lualib.LoaderModContext(aw.luaActionRequest.Context); loader != nil {
+	if loader := lualib.LoaderModContext(reqCtx, aw.cfg, aw.logger, aw.luaActionRequest.Context); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -347,7 +347,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	// 2) nauthilus_http_request
 	if httpRequest != nil {
-		loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(httpRequest))
+		loader := lualib.LoaderModHTTP(reqCtx, aw.cfg, aw.logger, lualib.NewHTTPMetaFromRequest(httpRequest))
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -359,7 +359,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	// 3) nauthilus_http_response
 	if aw.luaActionRequest.HTTPContext != nil {
-		loader := lualib.LoaderModHTTPResponse(aw.luaActionRequest.HTTPContext)
+		loader := lualib.LoaderModHTTPResponse(reqCtx, aw.cfg, aw.logger, aw.luaActionRequest.HTTPContext)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -482,7 +482,7 @@ func (aw *Worker) setupGlobals(ctx context.Context, L *lua.LState, logs *lualib.
 	globals.RawSet(lua.LString(definitions.LuaActionResultOk), lua.LNumber(0))
 	globals.RawSet(lua.LString(definitions.LuaActionResultFail), lua.LNumber(1))
 
-	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.LoaderModLogging(ctx, aw.cfg, aw.logger, logs)))
 
 	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
