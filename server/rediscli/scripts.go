@@ -362,13 +362,14 @@ func UploadAllScripts(ctx context.Context, logger *slog.Logger, client Client) e
 		definitions.LogKeyMsg, "Uploading all Redis Lua scripts",
 	)
 
-	// Create a context with timeout to prevent hanging indefinitely
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
 	for scriptName, scriptContent := range LuaScripts {
-		// Use the context with timeout for each script upload
-		_, err := UploadScript(ctxWithTimeout, client, scriptName, scriptContent)
+		// Use a dedicated context with timeout for each script upload to prevent one slow
+		// upload from failing the entire batch or hanging indefinitely.
+		uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+
+		_, err := UploadScript(uploadCtx, client, scriptName, scriptContent)
+		cancel()
+
 		if err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s'. This may cause issues with Redis operations. If the problem persists, check Redis connectivity and permissions.", scriptName),
@@ -376,16 +377,6 @@ func UploadAllScripts(ctx context.Context, logger *slog.Logger, client Client) e
 			)
 
 			return err
-		}
-
-		// Check if the context has been canceled or timed out
-		if ctxWithTimeout.Err() != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyMsg, "Timeout or cancellation while uploading Redis Lua scripts",
-				definitions.LogKeyError, ctxWithTimeout.Err(),
-			)
-
-			return ctxWithTimeout.Err()
 		}
 	}
 

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -129,8 +130,12 @@ func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
 	// This is required for the LATENCY LATEST command to return meaningful data
 	if writeHandle := newClient.GetWriteHandle(); writeHandle != nil {
 		// Set a reasonable threshold (100ms) to capture slow commands
-		// Context is not available here, so we use a background context
-		err := writeHandle.Do(context.Background(), "CONFIG", "SET", "latency-monitor-threshold", "100").Err()
+		// Use a bounded context to prevent hanging and ensure we don't hit batching issues
+		// although 'config' is now skipped by batching hook.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := writeHandle.Do(ctx, "CONFIG", "SET", "latency-monitor-threshold", "100").Err()
+		cancel()
+
 		if err != nil {
 			// Log the error but continue - the command might not be supported in all Redis versions
 			// or the user might not have permission to run CONFIG commands

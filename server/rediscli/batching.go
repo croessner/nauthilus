@@ -80,7 +80,7 @@ func NewBatchingHook(logger *slog.Logger, client redis.UniversalClient, cfg *con
 		"subscribe", "psubscribe", "ssubscribe",
 		// Transactions and scripting are generally safe to batch, but leave them to the caller
 		// when already in pipeline/tx mode.
-		"hello", "client",
+		"hello", "client", "config", "script",
 	}
 
 	skip := make(map[string]struct{}, len(defaults)+len(cfg.GetSkipCommands()))
