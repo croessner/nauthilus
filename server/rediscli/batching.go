@@ -45,8 +45,9 @@ type BatchingHook struct {
 	client redis.UniversalClient
 
 	// config
-	maxBatch int
-	maxWait  time.Duration
+	maxBatch        int
+	maxWait         time.Duration
+	pipelineTimeout time.Duration
 
 	logger *slog.Logger
 
@@ -98,13 +99,14 @@ func NewBatchingHook(logger *slog.Logger, client redis.UniversalClient, cfg *con
 	}
 
 	return &BatchingHook{
-		client:   client,
-		maxBatch: cfg.GetMaxBatchSize(),
-		maxWait:  cfg.GetMaxWait(),
-		logger:   logger,
-		queue:    make(chan *batchItem, qcap),
-		closed:   make(chan struct{}),
-		skip:     skip,
+		client:          client,
+		maxBatch:        cfg.GetMaxBatchSize(),
+		maxWait:         cfg.GetMaxWait(),
+		pipelineTimeout: cfg.GetPipelineTimeout(),
+		logger:          logger,
+		queue:           make(chan *batchItem, qcap),
+		closed:          make(chan struct{}),
+		skip:            skip,
 	}
 }
 
@@ -180,12 +182,13 @@ func (h *BatchingHook) run() {
 		)
 
 		// Derive a timeout context from the span context
-		dCtx, cancel := context.WithTimeout(fctx, h.maxWait) // use maxWait as default for pipeline timeout if not explicitly separate
+		dCtx, cancel := context.WithTimeout(fctx, h.pipelineTimeout)
 
 		_, execErr := h.client.Pipelined(dCtx, func(pipe redis.Pipeliner) error {
 			for _, it := range batch {
-				// Use each item’s context for Process; this only affects client-level timeouts.
-				if perr := pipe.Process(it.ctx, it.cmd); perr != nil {
+				// We use a background context here to ensure the command is at least queued.
+				// go-redis handles its own context internally.
+				if perr := pipe.Process(context.Background(), it.cmd); perr != nil {
 					// defensiv: Command markieren und loggen
 					it.cmd.SetErr(perr)
 					level.Warn(h.logger).Log(
