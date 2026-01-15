@@ -18,6 +18,7 @@ package logging
 import (
 	"crypto/tls"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -58,8 +59,11 @@ func LoggerMiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 		err := ctx.Errors.Last()
 
 		// Decide which logger to use
+		status := ctx.Writer.Status()
 		if err != nil {
 			logWrapper = level.Error
+		} else if status == http.StatusTooManyRequests {
+			logWrapper = level.Warn
 		} else {
 			logWrapper = level.Info
 		}
@@ -95,7 +99,7 @@ func LoggerMiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 			logger = slog.Default()
 		}
 
-		logWrapper(logger).Log(
+		keyvals := []any{
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMethod, ctx.Request.Method,
@@ -120,6 +124,12 @@ func LoggerMiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 
 				return "HTTP request"
 			}(),
-		)
+		}
+
+		if reason, exists := ctx.Get(definitions.CtxRateLimitReasonKey); exists {
+			keyvals = append(keyvals, definitions.LogKeyRateLimitReason, reason)
+		}
+
+		logWrapper(logger).Log(keyvals...)
 	}
 }

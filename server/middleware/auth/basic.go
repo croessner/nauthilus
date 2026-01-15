@@ -167,6 +167,8 @@ func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
 
 	exceeded, remaining := authRateLimitExceededForIP(ip)
 	if exceeded {
+		ctx.Set(definitions.CtxRateLimitReasonKey, "brute-force")
+
 		ctx.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())))
 		ctx.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 			definitions.LogKeyMsg: "Too many authentication failures",

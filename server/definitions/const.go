@@ -228,6 +228,9 @@ const (
 	// LogKeyBackendName is the log entry key for specifying the name of the backend in use.
 	LogKeyBackendName = "backend_name"
 
+	// LogKeyRateLimitReason represents the reason for a 429 Too Many Requests response.
+	LogKeyRateLimitReason = "ratelimit_reason"
+
 	// LogKeySkip indicates whether an operation was skipped.
 	LogKeySkip = "skip"
 
@@ -735,6 +738,9 @@ const (
 	// CtxAccountKey stores the resolved account name for the current request in gin.Context.
 	// Keep this limited to the plain account string as agreed; additional fields are intentionally omitted.
 	CtxAccountKey = "account"
+
+	// CtxRateLimitReasonKey is used as a key to store the reason for a 429 Too Many Requests response in the context.
+	CtxRateLimitReasonKey = "ratelimit_reason"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

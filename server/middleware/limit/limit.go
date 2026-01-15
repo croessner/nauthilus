@@ -70,6 +70,8 @@ func (lc *LimitCounter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFun
 		// Check if we're at the connection limit
 		currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
 		if currentConnections >= lc.MaxConnections {
+			ctx.Set(definitions.CtxRateLimitReasonKey, "concurrency")
+
 			// For API requests, return 429 status code
 			ctx.JSON(http.StatusTooManyRequests, gin.H{
 				definitions.LogKeyMsg: "Too many requests",
