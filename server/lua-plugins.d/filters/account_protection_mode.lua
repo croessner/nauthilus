@@ -213,7 +213,6 @@ function nauthilus_call_filter(request)
         -- Logging
         local logs = {
             caller = N .. ".lua",
-            level = "warning",
             message = "Protection mode active",
             username = username,
             client_ip = ip,
@@ -225,9 +224,8 @@ function nauthilus_call_filter(request)
             hits = m.hits,
             backoff_level = backoff_level,
             applied_delay_ms = applied_ms,
-            ts = now,
         }
-        nauthilus_util.print_result({ log_format = "json" }, logs)
+        nauthilus_util.log_warn(request, logs)
 
         -- Enrich rt so downstream actions (e.g., telegram) can include protection info
         local rt = nauthilus_context.context_get("rt") or {}

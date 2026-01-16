@@ -304,9 +304,9 @@ function nauthilus_run_hook(logging, session)
         result.message = "Invalid action: " .. action
     end
 
-    if logging.log_level == "debug" or logging.log_level == "info" then
-        nauthilus_util.print_result(logging, result)
-    end
+    result.caller = N .. ".lua"
+    local level = result.level or "info"
+    nauthilus_util.log(logging, level, result)
 
     return result
 end

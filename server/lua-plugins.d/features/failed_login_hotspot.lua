@@ -102,8 +102,8 @@ function nauthilus_call_feature(request)
     -- Optional global snapshot (rate-limited), best-effort
     local ok, err = pcall(maybe_snapshot_topN, client, now)
     if not ok then
-        local logs = { caller = N .. ".lua", level = "error", message = "snapshot failed", error = tostring(err) }
-        nauthilus_util.print_result({ log_format = "json" }, logs)
+        local logs = { caller = N .. ".lua", message = "snapshot failed" }
+        nauthilus_util.log_error(request, logs, tostring(err))
     end
 
     -- Decide hotspot

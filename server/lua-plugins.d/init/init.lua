@@ -48,14 +48,11 @@ local function wait_for_redis(client, logging)
         attempts = attempts + 1
         local ok, pong = pcall(nauthilus_redis.redis_ping, client)
         if ok and (pong == true or pong == "PONG" or pong == 1) then
-            if logging and (logging.log_level == "debug" or logging.log_level == "info") then
-                nauthilus_util.print_result(logging, {
-                    caller = N .. ".lua",
-                    level = "info",
-                    message = "Redis ping successful",
-                    attempts = attempts,
-                })
-            end
+            nauthilus_util.log_info(logging, {
+                caller = N .. ".lua",
+                message = "Redis ping successful",
+                attempts = attempts,
+            })
             return
         end
 
@@ -83,7 +80,6 @@ end
 function nauthilus_run_hook(logging)
     local result = {}
 
-    result.level = "info"
     result.caller = N .. ".lua"
 
     local custom_pool = "default"
@@ -565,7 +561,5 @@ function nauthilus_run_hook(logging)
 
     result.status = "finished"
 
-    if logging.log_level == "debug" or logging.log_level == "info" then
-        nauthilus_util.print_result(logging, result)
-    end
+    nauthilus_util.log_info(logging, result)
 end

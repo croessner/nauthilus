@@ -56,11 +56,11 @@ function nauthilus_call_action(request)
     end
 
     local function log_line(level, message, extra, err_string)
-        local logs = { caller = N .. ".lua", level = level or "info", message = message }
+        local logs = { caller = N .. ".lua", message = message }
         if extra and type(extra) == "table" then
             for k, v in pairs(extra) do logs[k] = v end
         end
-        nauthilus_util.print_result({ log_format = "json" }, logs, err_string)
+        nauthilus_util.log(request, level, logs, err_string)
     end
 
     -- Utility: sanitize unsigned integers for ClickHouse (returns nil if negative or not a number)

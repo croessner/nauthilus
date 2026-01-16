@@ -243,7 +243,6 @@ function nauthilus_run_hook(logging, session)
         result.level = "error"
         result.status = "error"
         result.message = "Missing required parameter: action"
-        nauthilus_util.print_result(logging, result)
         return result
     end
 
@@ -403,9 +402,7 @@ function nauthilus_run_hook(logging, session)
         result.message = "Invalid action: " .. action
     end
 
-    if logging.log_level == "debug" or logging.log_level == "info" then
-        nauthilus_util.print_result(logging, result)
-    end
+    nauthilus_util.log(logging, result.level or "info", result)
 
     return result
 end

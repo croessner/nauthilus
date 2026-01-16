@@ -165,7 +165,6 @@ function nauthilus_call_filter(request)
         if ACM_INFO_LOG then
             local logs = {}
             logs.caller = N .. ".lua"
-            logs.level = "info"
             logs.message = "Account metrics tracked"
             logs.username = username
             logs.uniq_ips_1h = uniq_1h
@@ -178,7 +177,7 @@ function nauthilus_call_filter(request)
             logs.ratio_24h = ratio_24h
             logs.is_suspicious = suspicious
 
-            nauthilus_util.print_result({ log_format = "json" }, logs)
+            nauthilus_util.log_info(request, logs)
         end
 
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK

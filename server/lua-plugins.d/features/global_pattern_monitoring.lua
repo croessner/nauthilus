@@ -94,7 +94,6 @@ function nauthilus_call_feature(request)
     -- Add log
     local logs = {}
     logs.caller = N .. ".lua"
-    logs.level = "info"
     logs.message = "Global metrics tracked"
     logs.attempts = attempts
     logs.unique_ips = unique_ips
@@ -103,7 +102,7 @@ function nauthilus_call_feature(request)
     logs.attempts_per_user = attempts_per_user
     logs.ips_per_user = ips_per_user
 
-    nauthilus_util.print_result({ log_format = "json" }, logs)
+    nauthilus_util.log_info(request, logs)
 
     -- Enrich rt for downstream actions (e.g., telegram)
     do

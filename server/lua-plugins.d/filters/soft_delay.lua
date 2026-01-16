@@ -138,7 +138,6 @@ function nauthilus_call_filter(request)
     -- Log decision
     local logs = {
         caller = N .. ".lua",
-        level = risky and "warning" or "info",
         message = risky and "Applied soft delay" or "No soft delay",
         username = username,
         client_ip = client_ip,
@@ -148,9 +147,13 @@ function nauthilus_call_filter(request)
         fails_7d = fail7d,
         attacked = (attack_score ~= nil),
         applied_delay_ms = applied_delay_ms,
-        ts = now,
     }
-    nauthilus_util.print_result({ log_format = "json" }, logs)
+
+    if risky then
+        nauthilus_util.log_warn(request, logs)
+    else
+        nauthilus_util.log_info(request, logs)
+    end
 
     -- Add to custom logs for correlation
     nauthilus_builtin.custom_log_add(N .. "_delay_ms", applied_delay_ms)

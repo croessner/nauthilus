@@ -75,7 +75,6 @@ function nauthilus_call_action(request)
         -- Add log
         local logs = {}
         logs.caller = N .. ".lua"
-        logs.level = "info"
 
         if not request.account or request.account == "" then
             logs.message = "Failed login tracked for username: " .. username
@@ -84,7 +83,7 @@ function nauthilus_call_action(request)
             logs.reason = "Account is recognized"
         end
 
-        nauthilus_util.print_result({ log_format = "json" }, logs)
+        nauthilus_util.log_info(request, logs)
     end
 
     return nauthilus_builtin.ACTION_RESULT_OK

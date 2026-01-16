@@ -108,15 +108,13 @@ function nauthilus_call_feature(request)
     -- Logging: keep it lightweight
     local logs = {
         caller = N .. ".lua",
-        level = "info",
-        message = "Mmetrics updated",
+        message = "Metrics updated",
         username = username,
         client_ip = client_ip,
         authenticated = authenticated,
         has_pw_token = (pw_token ~= nil),
-        ts = now,
     }
-    nauthilus_util.print_result({ log_format = "json" }, logs)
+    nauthilus_util.log_info(request, logs)
 
     return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
 end

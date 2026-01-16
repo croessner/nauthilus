@@ -72,7 +72,7 @@ Nauthilus Security System
 ]]
 
 -- Notify administrators about the threat
-local function notify_administrators(subject, metrics)
+local function notify_administrators(request, subject, metrics)
     local alerts_enabled = ALERTS_ENABLED
 
     -- Resolve Redis client for rate limiting
@@ -115,10 +115,8 @@ local function notify_administrators(subject, metrics)
     -- Log the decision
     local notify_logs = {}
     notify_logs.caller = N .. ".lua"
-    notify_logs.level = should_notify and "warning" or "info"
     notify_logs.message = subject
     notify_logs.metrics = metrics
-    notify_logs.timestamp = now
     notify_logs.alert_decision = {
         alerts_enabled = alerts_enabled,
         require_evidence = require_evidence,
@@ -130,7 +128,11 @@ local function notify_administrators(subject, metrics)
         in_cooldown = in_cooldown
     }
 
-    nauthilus_util.print_result({ log_format = "json" }, notify_logs)
+    if should_notify then
+        nauthilus_util.log_warn(request, notify_logs)
+    else
+        nauthilus_util.log_info(request, notify_logs)
+    end
 
     if not should_notify then
         return
@@ -157,9 +159,8 @@ local function notify_administrators(subject, metrics)
         -- No admin emails configured, just log and return
         local error_logs = {}
         error_logs.caller = N .. ".lua"
-        error_logs.level = "error"
         error_logs.message = "No admin email addresses configured for notifications"
-        nauthilus_util.print_result({ log_format = "json" }, error_logs)
+        nauthilus_util.log_error(request, error_logs)
         return
     end
 
@@ -217,10 +218,8 @@ local function notify_administrators(subject, metrics)
     if err_tmpl then
         local error_logs = {}
         error_logs.caller = N .. ".lua"
-        error_logs.level = "error"
         error_logs.message = "Failed to initialize template engine"
-        error_logs.error = err_tmpl
-        nauthilus_util.print_result({ log_format = "json" }, error_logs)
+        nauthilus_util.log_error(request, error_logs, err_tmpl)
         return
     end
 
@@ -283,22 +282,19 @@ local function notify_administrators(subject, metrics)
     if err_smtp then
         local error_logs = {}
         error_logs.caller = N .. ".lua"
-        error_logs.level = "error"
         error_logs.message = "Failed to send admin notification email"
-        error_logs.error = err_smtp
-        nauthilus_util.print_result({ log_format = "json" }, error_logs)
+        nauthilus_util.log_error(request, error_logs, err_smtp)
     else
         local success_logs = {}
         success_logs.caller = N .. ".lua"
-        success_logs.level = "info"
         success_logs.message = "Admin notification email sent successfully"
         success_logs.recipients = #admin_emails
-        nauthilus_util.print_result({ log_format = "json" }, success_logs)
+        nauthilus_util.log_info(request, success_logs)
     end
 end
 
 -- Apply severe measures for high threat levels
-local function apply_severe_measures(custom_pool, metrics)
+local function apply_severe_measures(request, custom_pool, metrics)
     -- Enable global captcha using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
         custom_pool, 
@@ -333,11 +329,11 @@ local function apply_severe_measures(custom_pool, metrics)
 
 
     -- Notify administrators
-    notify_administrators("SEVERE THREAT ALERT", metrics)
+    notify_administrators(request, "SEVERE THREAT ALERT", metrics)
 end
 
 -- Apply high measures for high threat levels
-local function apply_high_measures(custom_pool, metrics)
+local function apply_high_measures(request, custom_pool, metrics)
     -- Enable targeted captcha for affected accounts using atomic Redis Lua script
     if metrics.targeted_accounts and #metrics.targeted_accounts > 0 then
         local args = {3600} -- Expire after 1 hour
@@ -373,11 +369,11 @@ local function apply_high_measures(custom_pool, metrics)
     end
 
     -- Notify administrators
-    notify_administrators("HIGH THREAT ALERT", metrics)
+    notify_administrators(request, "HIGH THREAT ALERT", metrics)
 end
 
 -- Apply moderate measures for moderate threat levels
-local function apply_moderate_measures(custom_pool, metrics)
+local function apply_moderate_measures(request, custom_pool, metrics)
     -- Enable monitoring mode using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
         custom_pool, 
@@ -392,7 +388,7 @@ local function apply_moderate_measures(custom_pool, metrics)
     nauthilus_util.if_error_raise(err_script)
 
     -- Notify administrators
-    notify_administrators("MODERATE THREAT ALERT", metrics)
+    notify_administrators(request, "MODERATE THREAT ALERT", metrics)
 end
 
 function nauthilus_call_action(request)
@@ -628,17 +624,16 @@ function nauthilus_call_action(request)
     -- Apply dynamic response based on threat level (with warm-up gating)
     if threat_level >= 0.9 and warmed_up then
         -- Severe threat: Implement strict measures
-        apply_severe_measures(custom_pool, metrics)
+        apply_severe_measures(request, custom_pool, metrics)
 
         -- Log the response
         local severe_logs = {}
         severe_logs.caller = N .. ".lua"
-        severe_logs.level = "warning"
         severe_logs.message = "Severe threat detected, implementing strict measures"
         severe_logs.threat_level = threat_level
         severe_logs.metrics = metrics
 
-        nauthilus_util.print_result({ log_format = "json" }, severe_logs)
+        nauthilus_util.log_warn(request, severe_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
@@ -646,29 +641,27 @@ function nauthilus_call_action(request)
     elseif threat_level >= 0.7 then
         if warmed_up then
             -- High threat: Implement moderate measures
-            apply_high_measures(custom_pool, metrics)
+            apply_high_measures(request, custom_pool, metrics)
 
             -- Log the response
             local high_logs = {}
             high_logs.caller = N .. ".lua"
-            high_logs.level = "warning"
             high_logs.message = "High threat detected, implementing moderate measures"
             high_logs.threat_level = threat_level
             high_logs.metrics = metrics
             high_logs.warmup_gating = false
 
-            nauthilus_util.print_result({ log_format = "json" }, high_logs)
+            nauthilus_util.log_warn(request, high_logs)
 
             -- Add to custom log for monitoring
             nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
             nauthilus_builtin.custom_log_add(N .. "_response", "high")
         else
             -- Cold-start gating: only light measures in warm-up window
-            apply_moderate_measures(custom_pool, metrics)
+            apply_moderate_measures(request, custom_pool, metrics)
 
             local gated_logs = {}
             gated_logs.caller = N .. ".lua"
-            gated_logs.level = "warning"
             gated_logs.message = "High threat detected but warm-up gating active; applying light measures"
             gated_logs.threat_level = threat_level
             gated_logs.metrics = metrics
@@ -682,24 +675,23 @@ function nauthilus_call_action(request)
                 unique_users = unique_users,
                 attempts = attempts
             }
-            nauthilus_util.print_result({ log_format = "json" }, gated_logs)
+            nauthilus_util.log_warn(request, gated_logs)
 
             nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
             nauthilus_builtin.custom_log_add(N .. "_response", "moderate")
         end
     elseif threat_level >= 0.5 then
         -- Moderate threat: Implement light measures
-        apply_moderate_measures(custom_pool, metrics)
+        apply_moderate_measures(request, custom_pool, metrics)
 
         -- Log the response
         local moderate_logs = {}
         moderate_logs.caller = N .. ".lua"
-        moderate_logs.level = "warning"
         moderate_logs.message = "Moderate threat detected, implementing light measures"
         moderate_logs.threat_level = threat_level
         moderate_logs.metrics = metrics
 
-        nauthilus_util.print_result({ log_format = "json" }, moderate_logs)
+        nauthilus_util.log_warn(request, moderate_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
@@ -709,12 +701,11 @@ function nauthilus_call_action(request)
         -- Log the normal state
         local normal_logs = {}
         normal_logs.caller = N .. ".lua"
-        normal_logs.level = "info"
         normal_logs.message = "Normal operation, no special measures needed"
         normal_logs.threat_level = threat_level
         normal_logs.metrics = metrics
 
-        nauthilus_util.print_result({ log_format = "json" }, normal_logs)
+        nauthilus_util.log_info(request, normal_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
