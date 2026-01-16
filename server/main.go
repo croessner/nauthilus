@@ -18,9 +18,11 @@ package main
 import (
 	"context"
 	stdlog "log"
+	"log/slog"
 
 	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/envfx"
+	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/opsfx"
 	"github.com/croessner/nauthilus/server/app/reloadfx"
@@ -31,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/svcctx"
 
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
 )
 
 var (
@@ -73,7 +76,13 @@ func main() {
 	stopTimeout := definitions.FxStopTimeout
 
 	fApp := fx.New(
-		fx.NopLogger,
+		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
+			if logger.Enabled(context.Background(), slog.LevelDebug) {
+				return logfx.NewFxEventLogger(logger)
+			}
+
+			return fxevent.NopLogger
+		}),
 		rootContextOption(ctx, cancel),
 		fx.Provide(newBootstrapped),
 		fx.Provide(newConfigDeps),
