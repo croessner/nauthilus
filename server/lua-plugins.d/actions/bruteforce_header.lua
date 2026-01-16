@@ -28,7 +28,7 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_http_response = require("nauthilus_http_response")
 
-local HEADER_NAME = os.getenv("BRUTEFORCE_HEADER_NAME") or "X-Nauthilus-Bruteforce"
+local HEADER_NAME = nauthilus_util.getenv("BRUTEFORCE_HEADER_NAME", "X-Nauthilus-Bruteforce")
 local HEADER_BUCKET = "X-Nauthilus-Bruteforce-Bucket"
 
 function nauthilus_call_action(request)

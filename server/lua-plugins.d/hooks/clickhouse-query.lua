@@ -38,6 +38,11 @@ local json = require("json")
 
 local N = "clickhouse-query"
 
+local CLICKHOUSE_SELECT_BASE = nauthilus_util.getenv("CLICKHOUSE_SELECT_BASE", "")
+local CLICKHOUSE_TABLE = nauthilus_util.getenv("CLICKHOUSE_TABLE", "nauthilus.logins")
+local CLICKHOUSE_USER = nauthilus_util.getenv("CLICKHOUSE_USER", "")
+local CLICKHOUSE_PASSWORD = nauthilus_util.getenv("CLICKHOUSE_PASSWORD", "")
+
 -- Sanitize strings to be safely embeddable into JSON by removing control characters
 -- Replace common whitespace controls (CR, LF, TAB) with a single space to keep readability,
 -- and strip remaining control characters (U+0000–U+001F) which may break JSON serializers.
@@ -498,8 +503,8 @@ function nauthilus_run_hook(logging, session)
     local limit = clamp(nauthilus_http_request.get_http_query_param("limit") or 100, 1, 10000)
     local offset = clamp(nauthilus_http_request.get_http_query_param("offset") or 0, 0, 100000000)
 
-    local base = os.getenv("CLICKHOUSE_SELECT_BASE") or ""
-    local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.logins"
+    local base = CLICKHOUSE_SELECT_BASE
+    local table_name = CLICKHOUSE_TABLE
 
     local safe_table = escape_sql_ident(table_name)
     if base == "" or not safe_table then
@@ -624,8 +629,8 @@ function nauthilus_run_hook(logging, session)
     local endpoint = build_select_endpoint(base)
 
     local headers = { ["Content-Type"] = "text/plain; charset=utf-8" }
-    local user = os.getenv("CLICKHOUSE_USER")
-    local pass = os.getenv("CLICKHOUSE_PASSWORD")
+    local user = CLICKHOUSE_USER
+    local pass = CLICKHOUSE_PASSWORD
     if user and user ~= "" then headers["X-ClickHouse-User"] = user end
     if pass and pass ~= "" then headers["X-ClickHouse-Key"] = pass end
 

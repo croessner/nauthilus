@@ -22,6 +22,8 @@ local json = require("json")
 
 local N = "callback"
 
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+
 local CATEGORIES = {
     ["service:imap-login"] = true,
     ["service:pop3-login"] = true,
@@ -37,11 +39,10 @@ function nauthilus_run_hook(logging, session)
     result.session = session
 
     local custom_pool = "default"
-    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err_redis_client
 
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err_redis_client)
     end
 

@@ -31,10 +31,12 @@
 
 local N = "clickhouse"
 
+local nauthilus_util = require("nauthilus_util")
 local nauthilus_password = require("nauthilus_password")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_cache = require("nauthilus_cache")
 local nauthilus_redis = require("nauthilus_redis")
+local time = require("time")
 
 local json = require("json")
 local http = require("glua_http")
@@ -42,12 +44,16 @@ local base64 = require("base64")
 
 local HCCR = "http_client_concurrent_requests_total"
 
+local CLICKHOUSE_INSERT_URL = nauthilus_util.getenv("CLICKHOUSE_INSERT_URL", "")
+local CLICKHOUSE_USER = nauthilus_util.getenv("CLICKHOUSE_USER", "")
+local CLICKHOUSE_PASSWORD = nauthilus_util.getenv("CLICKHOUSE_PASSWORD", "")
+local CLICKHOUSE_BATCH_SIZE = tonumber(nauthilus_util.getenv("CLICKHOUSE_BATCH_SIZE", "100")) or 100
+local CLICKHOUSE_CACHE_KEY = nauthilus_util.getenv("CLICKHOUSE_CACHE_KEY", "clickhouse:batch:logins")
+
 function nauthilus_call_action(request)
     if request.no_auth then
         return nauthilus_builtin.ACTION_RESULT_OK
     end
-
-    local nauthilus_util = require("nauthilus_util")
 
     local function log_line(level, message, extra, err_string)
         local logs = { caller = N .. ".lua", level = level or "info", message = message }
@@ -90,7 +96,7 @@ function nauthilus_call_action(request)
     -- We avoid relying on nauthilus_util.get_current_timestamp() because it may honor TZ.
     local function utc_now_ts_ms()
         -- Use UTC with os.date('!'), seconds resolution
-        local base = os.date("!%Y-%m-%d %H:%M:%S")
+        local base = time.format(time.unix(), "2006-01-02 15:04:05", "UTC")
         -- Best-effort milliseconds: Lua standard libs don't provide wall-clock ms reliably.
         -- We use .000 to keep a stable DateTime64(3) compatible format.
         local ms = "000"
@@ -287,8 +293,8 @@ function nauthilus_call_action(request)
         }
 
         -- Batch into cache
-        local cache_key = os.getenv("CLICKHOUSE_CACHE_KEY") or "clickhouse:batch:logins"
-        local batch_size = tonumber(os.getenv("CLICKHOUSE_BATCH_SIZE") or "100") or 100
+        local cache_key = CLICKHOUSE_CACHE_KEY
+        local batch_size = CLICKHOUSE_BATCH_SIZE
 
         -- Store JSON-encoded row to ensure stability of types
         local ok, row_json = pcall(json.encode, row)
@@ -312,7 +318,7 @@ function nauthilus_call_action(request)
             log_line("info", "clickhouse: flushing batch", { count = #to_send })
             local nauthilus_prometheus = require("nauthilus_prometheus")
 
-            local insert_url = os.getenv("CLICKHOUSE_INSERT_URL")
+            local insert_url = CLICKHOUSE_INSERT_URL
             if insert_url and insert_url ~= "" then
                 nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
@@ -326,8 +332,8 @@ function nauthilus_call_action(request)
                     ["User-Agent"] = "Nauthilus",
                     ["Content-Type"] = "application/json",
                 }
-                local user = os.getenv("CLICKHOUSE_USER")
-                local pass = os.getenv("CLICKHOUSE_PASSWORD")
+                local user = CLICKHOUSE_USER
+                local pass = CLICKHOUSE_PASSWORD
                 local auth_method = "none"
 
                 -- Prefer Basic auth if both user and pass are provided; do NOT send X- headers simultaneously.

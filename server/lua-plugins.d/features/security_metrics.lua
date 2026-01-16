@@ -36,6 +36,11 @@ local nauthilus_keys = require("nauthilus_keys")
 
 local prom = require("nauthilus_prometheus")
 local nauthilus_redis = require("nauthilus_redis")
+local time = require("time")
+
+local PER_USER_ENABLED = nauthilus_util.toboolean(nauthilus_util.getenv("SECURITY_METRICS_PER_USER_ENABLED", "false"))
+local SAMPLE_RATE = tonumber(nauthilus_util.getenv("SECURITY_METRICS_SAMPLE_RATE", "1")) or 0
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
 -- Deterministic string hash (djb2) to support stable sampling by username
 -- Pure Lua implementation using modulo to keep values in unsigned 32-bit range
@@ -63,8 +68,7 @@ local function should_emit_per_user(client, username)
         return false
     end
 
-    local enabled = os.getenv("SECURITY_METRICS_PER_USER_ENABLED")
-    if not enabled or enabled == "" or string.lower(enabled) == "false" or enabled == "0" then
+    if not PER_USER_ENABLED then
         return false
     end
 
@@ -77,26 +81,17 @@ local function should_emit_per_user(client, username)
     end
 
     -- Deterministic sampling
-    local rate_env = os.getenv("SECURITY_METRICS_SAMPLE_RATE")
-    local rate
-    if rate_env == nil or rate_env == "" then
-        -- If per-user metrics are enabled and sample rate is unset, default to 100% sampling
-        rate = 1
-    else
-        rate = tonumber(rate_env) or 0
-    end
-
-    if rate <= 0 then
+    if SAMPLE_RATE <= 0 then
         return false
     end
-    if rate >= 1 then
+    if SAMPLE_RATE >= 1 then
         return true
     end
 
     local h = djb2_hash(username)
     -- map to [0, 1)
     local frac = (h % 100000) / 100000.0
-    return frac < rate
+    return frac < SAMPLE_RATE
 end
 
 function nauthilus_call_feature(request)
@@ -105,14 +100,13 @@ function nauthilus_call_feature(request)
     end
 
     local username = request.username or request.account or ""
-    local now = os.time()
+    local now = time.unix()
 
     -- Get Redis connection
     local client = "default"
-    local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if pool_name ~= nil and pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err
-        client, err = nauthilus_redis.get_redis_connection(pool_name)
+        client, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err)
     end
 

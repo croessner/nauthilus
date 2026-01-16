@@ -15,8 +15,30 @@
 
 local time = require("time")
 local json = require("json")
+local nauthilus_cache = require("nauthilus_cache")
 
 local nauthilus_util = {}
+
+--- nauthilus_util.getenv returns the value of an environment variable, cached via nauthilus_cache.
+---@param name string
+---@param default string
+---@return string
+function nauthilus_util.getenv(name, default)
+    local key = "env:" .. name
+    local val = nauthilus_cache.cache_get(key)
+    if val ~= nil then
+        return val
+    end
+
+    val = os.getenv(name)
+    if val == nil then
+        val = default
+    end
+
+    nauthilus_cache.cache_set(key, val, 0)
+
+    return val
+end
 
 --- nauthilus_util.exists_in_table iterates over a flat Lua table (list) and checks, if a string was found in the values.
 ---@param tbl table
@@ -37,10 +59,7 @@ end
 ---@return string
 function nauthilus_util.get_current_timestamp()
     ---@type string tz
-    local tz = os.getenv("TZ")
-    if tz == nil or tz == "" then
-        tz = "UTC"
-    end
+    local tz = nauthilus_util.getenv("TZ", "UTC")
 
     ---@type string currentTime
     ---@type string err

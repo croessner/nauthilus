@@ -28,6 +28,8 @@ local KEY_LOADED = KEY_PREFIX .. "loaded"
 local KEY_INDEX = KEY_PREFIX .. "index"         -- array of usernames
 local KEY_USER_PREFIX = KEY_PREFIX .. "user:"   -- per-user record
 
+local TESTING_CSV = nauthilus_util.getenv("TESTING_CSV", "client/logins.csv")
+
 local function trim(s)
   if s == nil then return "" end
   return (tostring(s):gsub("^%s+", ""):gsub("%s+$", ""))
@@ -172,7 +174,7 @@ function M.init(opts)
     path = opts.csv
   end
   if not path or trim(path) == "" then
-    path = os.getenv("TESTING_CSV") or "client/logins.csv"
+      path = TESTING_CSV
   end
   return load_csv_into_cache(path)
 end
@@ -211,13 +213,13 @@ end
 
 -- On load at startup, populate cache once unless already loaded
 if not nauthilus_cache.cache_exists(KEY_LOADED) then
-  local _ = M.init({ csv = os.getenv("TESTING_CSV") or "client/logins.csv" })
+    local _ = M.init({ csv = TESTING_CSV })
 end
 
 -- Hook entrypoint called by Go after loading init scripts
 -- See server/lualib/definitions.go: definitions.LuaFnRunHook ("nauthilus_run_hook")
 function nauthilus_run_hook(logging, session)
-  local csv_path = os.getenv("TESTING_CSV") or "client/logins.csv"
+    local csv_path = TESTING_CSV
   local ok, err = M.init({ csv = csv_path })
   if not ok then
     return { ok = false, error = tostring(err), csv = csv_path }

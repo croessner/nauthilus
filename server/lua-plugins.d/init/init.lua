@@ -23,16 +23,24 @@ local time = require("time")
 
 local N = "init"
 
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+local INIT_REDIS_WAIT_TIMEOUT_SEC = tonumber(nauthilus_util.getenv("INIT_REDIS_WAIT_TIMEOUT_SEC", "30")) or 30
+local INIT_REDIS_PING_INTERVAL_MS = tonumber(nauthilus_util.getenv("INIT_REDIS_PING_INTERVAL_MS", "200")) or 200
+local INIT_REDIS_BACKOFF_ENABLED = (nauthilus_util.getenv("INIT_REDIS_BACKOFF_ENABLED", "true")):lower()
+local INIT_REDIS_BACKOFF_MAX_MS = tonumber(nauthilus_util.getenv("INIT_REDIS_BACKOFF_MAX_MS", "2000")) or 2000
+
+local BLOCKLIST_SERVICE_ENDPOINT = nauthilus_util.getenv("BLOCKLIST_SERVICE_ENDPOINT", "")
+local GEOIP_POLICY_SERVICE_ENDPOINT = nauthilus_util.getenv("GEOIP_POLICY_SERVICE_ENDPOINT", "")
+
 -- Wait until Redis is reachable before any Redis-dependent init work starts.
 -- Uses ping loop with optional exponential backoff. Crashes the pod on timeout.
 local function wait_for_redis(client, logging)
-    local timeout_sec = tonumber(os.getenv("INIT_REDIS_WAIT_TIMEOUT_SEC") or "30") or 30
-    local interval_ms = tonumber(os.getenv("INIT_REDIS_PING_INTERVAL_MS") or "200") or 200
-    local backoff_enabled = (os.getenv("INIT_REDIS_BACKOFF_ENABLED") or "true"):lower()
-    backoff_enabled = (backoff_enabled == "1" or backoff_enabled == "true" or backoff_enabled == "yes")
-    local backoff_max_ms = tonumber(os.getenv("INIT_REDIS_BACKOFF_MAX_MS") or "2000") or 2000
+    local timeout_sec = INIT_REDIS_WAIT_TIMEOUT_SEC
+    local interval_ms = INIT_REDIS_PING_INTERVAL_MS
+    local backoff_enabled = (INIT_REDIS_BACKOFF_ENABLED == "1" or INIT_REDIS_BACKOFF_ENABLED == "true" or INIT_REDIS_BACKOFF_ENABLED == "yes")
+    local backoff_max_ms = INIT_REDIS_BACKOFF_MAX_MS
 
-    local deadline = os.time() + timeout_sec
+    local deadline = time.unix() + timeout_sec
     local attempts = 0
     local next_sleep = interval_ms
 
@@ -51,7 +59,7 @@ local function wait_for_redis(client, logging)
             return
         end
 
-        if os.time() >= deadline then
+        if time.unix() >= deadline then
             nauthilus_util.if_error_raise("init.lua: Redis not reachable within timeout (" .. tostring(timeout_sec) .. "s)")
             return -- unreachable
         end
@@ -79,9 +87,8 @@ function nauthilus_run_hook(logging)
     result.caller = N .. ".lua"
 
     local custom_pool = "default"
-    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
-        local _, err_redis_reg = nauthilus_redis.register_redis_pool(custom_pool_name, "standalone", {
+    if CUSTOM_REDIS_POOL ~= "default" then
+        local _, err_redis_reg = nauthilus_redis.register_redis_pool(CUSTOM_REDIS_POOL, "standalone", {
             address = "localhost:6379",
             password = "",
             db = 3,
@@ -93,7 +100,7 @@ function nauthilus_run_hook(logging)
 
         local err_redis_client
 
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err_redis_client)
     end
 
@@ -514,18 +521,16 @@ function nauthilus_run_hook(logging)
     nauthilus_psnet.register_connection_target("127.0.0.1:3306", "remote", "backend")
 
     -- blocklist.lua
-    local blocklist_addr = os.getenv("BLOCKLIST_SERVICE_ENDPOINT")
-    if blocklist_addr then
+    if BLOCKLIST_SERVICE_ENDPOINT ~= "" then
         nauthilus_prometheus.create_histogram_vec("blocklist_duration_seconds", "HTTP request to the blocklist service", { "http" })
-        nauthilus_psnet.register_connection_target(blocklist_addr, "remote", "blocklist")
+        nauthilus_psnet.register_connection_target(BLOCKLIST_SERVICE_ENDPOINT, "remote", "blocklist")
     end
 
     -- geoip.lua
-    local geoip_policyd_addr = os.getenv("GEOIP_POLICY_SERVICE_ENDPOINT")
-    if geoip_policyd_addr then
+    if GEOIP_POLICY_SERVICE_ENDPOINT ~= "" then
         nauthilus_prometheus.create_histogram_vec("geoippolicyd_duration_seconds", "HTTP request to the geoip-policyd service", { "http" })
         nauthilus_prometheus.create_counter_vec("geoippolicyd_count", "Count GeoIP countries", { "country", "status" })
-        nauthilus_psnet.register_connection_target(geoip_policyd_addr, "remote", "geoippolicyd")
+        nauthilus_psnet.register_connection_target(GEOIP_POLICY_SERVICE_ENDPOINT, "remote", "geoippolicyd")
     end
 
     -- failed_login_hotspot.lua

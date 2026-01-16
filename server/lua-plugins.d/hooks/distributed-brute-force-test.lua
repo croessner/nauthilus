@@ -22,6 +22,8 @@ local time = require("time")
 
 local N = "distributed-brute-force-test"
 
+local NAUTHILUS_WARMUP_WINDOW_SECONDS = nauthilus_util.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS", "86400")
+
 -- Ensure system start and warm-up settings exist; return settings table
 local function ensure_startup_settings(redis_handle)
     local settings_key = "ntc:multilayer:global:settings"
@@ -29,14 +31,14 @@ local function ensure_startup_settings(redis_handle)
 
     -- system_started_at: unix timestamp
     if not settings["system_started_at"] or settings["system_started_at"] == "" then
-        local now = os.time()
+        local now = time.unix()
         -- Persist only if missing
         nauthilus_redis.redis_hset(redis_handle, settings_key, "system_started_at", tostring(now))
         settings["system_started_at"] = tostring(now)
     end
 
     -- warmup_window_seconds: from env or default 86400 (24h)
-    local env_warmup = os.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS")
+    local env_warmup = NAUTHILUS_WARMUP_WINDOW_SECONDS
     local default_warmup = tostring(86400)
     local warmup_value = env_warmup and tostring(tonumber(env_warmup) or 0) or nil
     if not warmup_value or tonumber(warmup_value) == nil or tonumber(warmup_value) <= 0 then
@@ -54,7 +56,7 @@ end
 -- Compute warm-up diagnostics table
 local function get_warmup(redis_handle)
     local settings = ensure_startup_settings(redis_handle)
-    local now = os.time()
+    local now = time.unix()
     local started_at = tonumber(settings["system_started_at"]) or now
     local warmup_window = tonumber(settings["warmup_window_seconds"]) or 86400
     local uptime = math.max(0, now - started_at)
@@ -83,7 +85,7 @@ end
 
 -- Helper function to simulate a distributed brute force attack
 local function simulate_distributed_attack(redis_handle, username, num_ips, country_code)
-    local timestamp = os.time()
+    local timestamp = time.unix()
     local window_sizes = {60, 300, 900, 3600} -- 1min, 5min, 15min, 1hour
 
     -- Simulate multiple IPs attempting to access the same account

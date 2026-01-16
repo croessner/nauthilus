@@ -38,13 +38,13 @@ local nauthilus_otel = require("nauthilus_opentelemetry")
 local time = require("time")
 
 -- Read env with default fallback
-local default_delay_min_ms = tonumber(os.getenv("SOFT_DELAY_MIN_MS") or "50")
-local default_delay_max_ms = tonumber(os.getenv("SOFT_DELAY_MAX_MS") or "200")
+local default_delay_min_ms = tonumber(nauthilus_util.getenv("SOFT_DELAY_MIN_MS", "50"))
+local default_delay_max_ms = tonumber(nauthilus_util.getenv("SOFT_DELAY_MAX_MS", "200"))
 -- Thresholds for enabling delay
-local threshold_uniq24 = tonumber(os.getenv("SOFT_DELAY_THRESH_UNIQ24") or "8")
-local threshold_uniq7d = tonumber(os.getenv("SOFT_DELAY_THRESH_UNIQ7D") or "20")
-local threshold_fail24 = tonumber(os.getenv("SOFT_DELAY_THRESH_FAIL24") or "5")
-local threshold_fail7d = tonumber(os.getenv("SOFT_DELAY_THRESH_FAIL7D") or "10")
+local threshold_uniq24 = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_UNIQ24", "8"))
+local threshold_uniq7d = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_UNIQ7D", "20"))
+local threshold_fail24 = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_FAIL24", "5"))
+local threshold_fail7d = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_FAIL7D", "10"))
 
 local function clamp(v, lo, hi)
     if v < lo then return lo end
@@ -65,14 +65,14 @@ function nauthilus_call_filter(request)
 
     -- Redis client
     local client = "default"
-    local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if pool_name and pool_name ~= "" then
+    local pool_name = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+    if pool_name ~= "default" then
         local err
         client, err = nauthilus_redis.get_redis_connection(pool_name)
         nauthilus_util.if_error_raise(err)
     end
 
-    local now = os.time()
+    local now = time.unix()
     local applied_delay_ms = 0
 
     -- Fast read snapshot produced by Phase 1 feature
