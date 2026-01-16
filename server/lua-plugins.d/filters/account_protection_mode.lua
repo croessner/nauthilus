@@ -44,6 +44,7 @@ local nauthilus_keys = require("nauthilus_keys")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_prometheus = require("nauthilus_prometheus")
 local nauthilus_http_response = require("nauthilus_http_response")
+local nauthilus_otel = require("nauthilus_opentelemetry")
 local nauthilus_cache = require("nauthilus_cache")
 local nauthilus_context = require("nauthilus_context")
 
@@ -165,7 +166,19 @@ function nauthilus_call_filter(request)
         local applied_ms = clamp(math.floor(base + jitter), BACKOFF_MIN_MS, BACKOFF_MAX_MS)
 
         -- Sleep to add backoff
-        time.sleep(applied_ms / 1000.0)
+        if nauthilus_otel and nauthilus_otel.is_enabled() then
+            local tr = nauthilus_otel.tracer("nauthilus/lua/account_protection_mode")
+            tr:with_span("account_protection_mode.backoff", function(span)
+                span:set_attributes({
+                    username = username or "",
+                    backoff_level = backoff_level,
+                    applied_delay_ms = applied_ms,
+                })
+                time.sleep(applied_ms / 1000.0)
+            end)
+        else
+            time.sleep(applied_ms / 1000.0)
+        end
 
         local tag = nauthilus_keys.account_tag(username)
         local hits_str = table.concat(m.hits, ",")
