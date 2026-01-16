@@ -37,19 +37,78 @@ local nauthilus_otel = require("nauthilus_opentelemetry")
 
 local time = require("time")
 
+local nauthilus_cache = require("nauthilus_cache")
+
 -- Read env with default fallback
 local default_delay_min_ms = tonumber(nauthilus_util.getenv("SOFT_DELAY_MIN_MS", "50"))
 local default_delay_max_ms = tonumber(nauthilus_util.getenv("SOFT_DELAY_MAX_MS", "200"))
 -- Thresholds for enabling delay
 local threshold_uniq24 = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_UNIQ24", "8"))
-local threshold_uniq7d = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_UNIQ7D", "20"))
+local threshold_uniq7d = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_UNIQ24", "20"))
 local threshold_fail24 = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_FAIL24", "5"))
 local threshold_fail7d = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_FAIL7D", "10"))
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
 local function clamp(v, lo, hi)
     if v < lo then return lo end
     if v > hi then return hi end
     return v
+end
+
+local function get_metrics(pool, username)
+    local ckey = "sdm:" .. (username or "")
+    local cached = nauthilus_cache.cache_get(ckey)
+    if cached and type(cached) == "table" then
+        return cached, true
+    end
+
+    local tag = nauthilus_keys.account_tag(username)
+    local snap_key = "ntc:acct:" .. tag .. username .. ":longwindow"
+
+    -- Pipeline the related user-specific reads
+    local cmds = {
+        { "hget", snap_key, "uniq_ips_24h" },
+        { "hget", snap_key, "uniq_ips_7d" },
+        { "hget", snap_key, "fails_24h" },
+        { "hget", snap_key, "fails_7d" },
+    }
+    local res, err = nauthilus_redis.redis_pipeline(pool, "read", cmds)
+    nauthilus_util.if_error_raise(err)
+
+    if type(res) ~= "table" then
+        res = {}
+    end
+    local function val(i)
+        local e = res[i]
+        if type(e) ~= "table" then
+            return nil
+        end
+        if e.ok == false then
+            return nil
+        end
+        return e.value
+    end
+
+    local uniq24 = tonumber(val(1) or "0") or 0
+    local uniq7d = tonumber(val(2) or "0") or 0
+    local fail24 = tonumber(val(3) or "0") or 0
+    local fail7d = tonumber(val(4) or "0") or 0
+
+    -- Separate call for the global attack set
+    local attack_score, err_a = nauthilus_redis.redis_zscore(pool, "ntc:multilayer:distributed_attack:accounts", username)
+    nauthilus_util.if_error_raise(err_a)
+
+    local metrics = {
+        uniq24 = uniq24,
+        uniq7d = uniq7d,
+        fail24 = fail24,
+        fail7d = fail7d,
+        attacked = (attack_score ~= nil)
+    }
+
+    nauthilus_cache.cache_set(ckey, metrics, 5)
+
+    return metrics, false
 end
 
 function nauthilus_call_filter(request)
@@ -63,45 +122,32 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    -- Redis client
-    local client = "default"
-    local pool_name = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
-    if pool_name ~= "default" then
-        local err
-        client, err = nauthilus_redis.get_redis_connection(pool_name)
-        nauthilus_util.if_error_raise(err)
-    end
-
-    local now = time.unix()
+    local m, _ = get_metrics(CUSTOM_REDIS_POOL, username)
     local applied_delay_ms = 0
 
-    -- Fast read snapshot produced by Phase 1 feature
-    local snap_key = "ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":longwindow"
-    local uniq24 = tonumber(nauthilus_redis.redis_hget(client, snap_key, "uniq_ips_24h") or "0") or 0
-    local uniq7d = tonumber(nauthilus_redis.redis_hget(client, snap_key, "uniq_ips_7d") or "0") or 0
-    local fail24 = tonumber(nauthilus_redis.redis_hget(client, snap_key, "fails_24h") or "0") or 0
-    local fail7d = tonumber(nauthilus_redis.redis_hget(client, snap_key, "fails_7d") or "0") or 0
-
-    -- Additional indicator: account flagged as under attack
-    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    local attack_score = nauthilus_redis.redis_zscore(client, attacked_accounts_key, username)
-
     local risky = false
-    if uniq24 >= threshold_uniq24 or uniq7d >= threshold_uniq7d or fail24 >= threshold_fail24 or fail7d >= threshold_fail7d then
-        risky = true
-    end
-    if attack_score ~= nil then
+    if m.uniq24 >= threshold_uniq24 or m.uniq7d >= threshold_uniq7d or m.fail24 >= threshold_fail24 or m.fail7d >= threshold_fail7d or m.attacked then
         risky = true
     end
 
     if risky then
         -- Scale delay by how much we exceed thresholds, but clamp to sane bounds
         local factor = 1.0
-        if uniq24 > threshold_uniq24 then factor = factor + (uniq24 - threshold_uniq24) * 0.05 end
-        if uniq7d > threshold_uniq7d then factor = factor + (uniq7d - threshold_uniq7d) * 0.02 end
-        if fail24 > threshold_fail24 then factor = factor + (fail24 - threshold_fail24) * 0.03 end
-        if fail7d > threshold_fail7d then factor = factor + (fail7d - threshold_fail7d) * 0.01 end
-        if attack_score ~= nil then factor = factor + 0.5 end
+        if m.uniq24 > threshold_uniq24 then
+            factor = factor + (m.uniq24 - threshold_uniq24) * 0.05
+        end
+        if m.uniq7d > threshold_uniq7d then
+            factor = factor + (m.uniq7d - threshold_uniq7d) * 0.02
+        end
+        if m.fail24 > threshold_fail24 then
+            factor = factor + (m.fail24 - threshold_fail24) * 0.03
+        end
+        if m.fail7d > threshold_fail7d then
+            factor = factor + (m.fail7d - threshold_fail7d) * 0.01
+        end
+        if m.attacked then
+            factor = factor + 0.5
+        end
 
         local base_ms = default_delay_min_ms + math.random(0, math.max(0, default_delay_max_ms - default_delay_min_ms))
         applied_delay_ms = math.floor(clamp(base_ms * factor, default_delay_min_ms, default_delay_max_ms))
@@ -158,5 +204,5 @@ function nauthilus_call_filter(request)
     -- Add to custom logs for correlation
     nauthilus_builtin.custom_log_add(N .. "_delay_ms", applied_delay_ms)
 
-    return nauthilus_builtin.ACTION_RESULT_OK
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end

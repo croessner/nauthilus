@@ -15,8 +15,8 @@ local function toboolean(v)
     return nauthilus_util.toboolean(v)
 end
 
-local USE_HASHTAGS = toboolean(os.getenv("USE_KEY_HASHTAGS"))
-local HASHTAG_PREFIX = os.getenv("KEY_HASHTAG_PREFIX") or "acm-"
+local USE_HASHTAGS = toboolean(nauthilus_util.getenv("USE_KEY_HASHTAGS", "true"))
+local HASHTAG_PREFIX = nauthilus_util.getenv("KEY_HASHTAG_PREFIX", "acm-")
 
 --- account_tag returns a hash-tag for the given username or an empty string when disabled.
 --- Example: "{acm-<md5>}" when enabled; "" when disabled.

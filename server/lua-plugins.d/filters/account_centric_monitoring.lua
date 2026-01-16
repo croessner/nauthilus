@@ -25,7 +25,7 @@ local nauthilus_otel = require("nauthilus_opentelemetry")
 local windows = {3600, 86400, 604800} -- 1h, 24h, 7d
 
 local function getenv_num(name, def)
-    local v = tonumber(os.getenv(name) or "")
+    local v = tonumber(nauthilus_util.getenv(name, "") or "")
     if v == nil then return def end
     return v
 end
@@ -38,7 +38,7 @@ local TH_RATIO = getenv_num("GPM_THRESH_IP_TO_FAIL_RATIO", 1.2)
 local ATTACK_TTL_SEC = getenv_num("GPM_ATTACK_TTL_SEC", 12 * 3600)
 
 -- Gate the informational log to reduce overhead by default
-local ACM_INFO_LOG = nauthilus_util.toboolean(os.getenv("ACM_INFO_LOG") or "")
+local ACM_INFO_LOG = nauthilus_util.toboolean(nauthilus_util.getenv("ACM_INFO_LOG", "false"))
 
 -- Env thresholds (defaults conservative):
 --  - GPM_THRESH_UNIQ_1H default 12
@@ -49,23 +49,17 @@ local ACM_INFO_LOG = nauthilus_util.toboolean(os.getenv("ACM_INFO_LOG") or "")
 --  - GPM_ATTACK_TTL_SEC default 43200 (12h)
 --  - CUSTOM_REDIS_POOL_NAME optional pool
 
+local time = require("time")
+
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+
 function nauthilus_call_filter(request)
     if request.no_auth then
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    -- Get Redis connection
-    local custom_pool = "default"
-    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
-        local err_redis_client
-
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
-        nauthilus_util.if_error_raise(err_redis_client)
-    end
-
     -- Track account-specific authentication attempts
-    local timestamp = os.time()
+    local timestamp = time.unix()
     local username = request.username
 
     if not username or username == "" then
@@ -110,7 +104,7 @@ function nauthilus_call_filter(request)
         username,
     }
 
-    local res, err_script = nauthilus_redis.redis_run_script(custom_pool, "", "ACM_TrackAndAggregate", keys, args)
+    local res, err_script = nauthilus_redis.redis_run_script(CUSTOM_REDIS_POOL, "", "ACM_TrackAndAggregate", keys, args)
     nauthilus_util.if_error_raise(err_script)
 
     if nauthilus_util.is_table(res) then

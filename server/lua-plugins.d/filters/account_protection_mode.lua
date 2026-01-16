@@ -73,28 +73,27 @@ local function clamp(v, lo, hi)
     return v
 end
 
-local function compute_under_protection(client, username)
+local function compute_under_protection(pool, username)
     -- Check short-lived in-process cache first
     local ckey = "prot:" .. (username or "")
     local cached = nauthilus_cache.cache_get(ckey)
     if cached and type(cached) == "table" then
-        return cached.under, cached.metrics, cached.backoff_level
+        return cached.under, cached.metrics, cached.backoff_level, true
     end
 
     local tag = nauthilus_keys.account_tag(username)
     local lw_key = "ntc:acct:" .. tag .. username .. ":longwindow"
     local prot_key = "ntc:acct:" .. tag .. username .. ":protection"
 
-    -- Pipeline the related reads to minimize latency
+    -- Pipeline the related user-specific reads (same slot)
     local cmds = {
         { "hget", lw_key, "uniq_ips_24h" },
         { "hget", lw_key, "uniq_ips_7d" },
         { "hget", lw_key, "fails_24h" },
         { "hget", lw_key, "fails_7d" },
-        {"zscore", "ntc:multilayer:distributed_attack:accounts", username},
         { "hget", prot_key, "backoff_level" },
     }
-    local res, err = nauthilus_redis.redis_pipeline(client, "read", cmds)
+    local res, err = nauthilus_redis.redis_pipeline(pool, "read", cmds)
     nauthilus_util.if_error_raise(err)
 
     -- Normalize structured pipeline results
@@ -110,9 +109,12 @@ local function compute_under_protection(client, username)
     local uniq7d = tonumber(val(2) or "0") or 0
     local fail24 = tonumber(val(3) or "0") or 0
     local fail7d = tonumber(val(4) or "0") or 0
-    local attacked_val = val(5)
+    local backoff_level = tonumber(val(5) or "0") or 0
+
+    -- Separate call for the global attack set to avoid cross-slot pipeline issues
+    local attacked_val, err_a = nauthilus_redis.redis_zscore(pool, "ntc:multilayer:distributed_attack:accounts", username)
+    nauthilus_util.if_error_raise(err_a)
     local attacked = (attacked_val ~= nil and attacked_val ~= false and attacked_val ~= "")
-    local backoff_level = tonumber(val(6) or "0") or 0
 
     local hits = {}
     if uniq24 >= THRESH_UNIQ24 then table.insert(hits, "uniq24") end
@@ -135,7 +137,7 @@ local function compute_under_protection(client, username)
     -- Cache result briefly (5s) to smooth spikes while keeping decisions fresh
     nauthilus_cache.cache_set(ckey, { under = under, metrics = metrics, backoff_level = backoff_level }, 5)
 
-    return under, metrics, backoff_level
+    return under, metrics, backoff_level, false
 end
 
 function nauthilus_call_filter(request)
@@ -152,7 +154,7 @@ function nauthilus_call_filter(request)
     local now = time.unix()
 
     -- Evaluate protection state
-    local under, m, current_backoff = compute_under_protection(CUSTOM_REDIS_POOL, username)
+    local under, m, current_backoff, from_cache = compute_under_protection(CUSTOM_REDIS_POOL, username)
 
     if under then
         local backoff_level = clamp(current_backoff + 1, 1, BACKOFF_MAX_LEVEL)
@@ -165,40 +167,42 @@ function nauthilus_call_filter(request)
         -- Sleep to add backoff
         time.sleep(applied_ms / 1000.0)
 
-        -- Record state and hints in a single pipeline
         local tag = nauthilus_keys.account_tag(username)
         local hits_str = table.concat(m.hits, ",")
-        local until_ts = now + MODE_TTL
 
-        local pipe_cmds = {
-            {
-                "run_script", "", "HSetMultiExpire", { "ntc:acct:" .. tag .. username .. ":protection" },
+        -- Record state and hints in Redis only if not from cache, to save write-RTTs
+        if not from_cache then
+            local until_ts = now + MODE_TTL
+            local pipe_cmds = {
                 {
-                    MODE_TTL,
-                    "active", "true",
-                    "reason", hits_str,
-                    "backoff_level", backoff_level,
-                    "until_ts", until_ts,
-                    "updated", now
-                }
-            },
-            {
-                "run_script", "", "SAddMultiExpire", { "ntc:acct:protection_active" },
-                { MODE_TTL, username }
-            },
-            {
-                "run_script", "", "HSetMultiExpire", { "ntc:acct:" .. tag .. username .. ":stepup" },
+                    "run_script", "", "HSetMultiExpire", { "ntc:acct:" .. tag .. username .. ":protection" },
+                    {
+                        MODE_TTL,
+                        "active", "true",
+                        "reason", hits_str,
+                        "backoff_level", backoff_level,
+                        "until_ts", until_ts,
+                        "updated", now
+                    }
+                },
                 {
-                    MODE_TTL,
-                    "required", "true",
-                    "reason", "protection:" .. hits_str,
-                    "until_ts", until_ts,
-                    "updated", now
+                    "run_script", "", "SAddMultiExpire", { "ntc:acct:protection_active" },
+                    { MODE_TTL, username }
+                },
+                {
+                    "run_script", "", "HSetMultiExpire", { "ntc:acct:" .. tag .. username .. ":stepup" },
+                    {
+                        MODE_TTL,
+                        "required", "true",
+                        "reason", "protection:" .. hits_str,
+                        "until_ts", until_ts,
+                        "updated", now
+                    }
                 }
             }
-        }
-        local _, err = nauthilus_redis.redis_pipeline(CUSTOM_REDIS_POOL, "write", pipe_cmds)
-        nauthilus_util.if_error_raise(err)
+            local _, err = nauthilus_redis.redis_pipeline(CUSTOM_REDIS_POOL, "write", pipe_cmds)
+            nauthilus_util.if_error_raise(err)
+        end
 
         -- Count a slow-attack suspicion
         nauthilus_prometheus.increment_counter("security_slow_attack_suspicions_total", {})
