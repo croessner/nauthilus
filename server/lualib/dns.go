@@ -69,7 +69,7 @@ func (m *DNSManager) Resolve(L *lua.LState) int {
 // It supports record types like A, AAAA, MX, NS, TXT, CNAME, and PTR.
 // The context controls the timeout for the DNS request, while Lua state handles the returned data format.
 func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, kind string) (lua.LValue, error) {
-	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()*time.Second))
+	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()))
 
 	defer cancel()
 
@@ -78,7 +78,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 	switch kind {
 	case "A", "AAAA":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			attribute.String("peer.service", "dns"),
 			attribute.String("dns.question.name", domain),
@@ -114,7 +114,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 		return tbl, nil
 	case "MX":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -144,7 +144,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 		return tbl, nil
 	case "NS":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -171,7 +171,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 		return tbl, nil
 	case "TXT":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -198,7 +198,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 		return tbl, nil
 	case "CNAME":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -225,7 +225,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 		return lua.LString(cname), nil
 	case "PTR":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),

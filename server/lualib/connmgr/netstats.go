@@ -131,7 +131,7 @@ func equalIPs(ipListA, ipListB []string) bool {
 
 // createDeadlineContext sets a deadline for the provided context based on the server DNS timeout configuration.
 func createDeadlineContext(ctx context.Context, cfg config.File) (context.Context, context.CancelFunc) {
-	return context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()*time.Second))
+	return context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()))
 }
 
 // NewConnectionManager returns a new instance of ConnectionManager with an initialized targets map.

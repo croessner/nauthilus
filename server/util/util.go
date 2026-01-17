@@ -247,7 +247,7 @@ func GetHash(value string) string {
 
 // ResolveIPAddress returns the hostname for a given IP address.
 func ResolveIPAddress(ctx context.Context, cfg config.File, address string) (hostname string) {
-	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()*time.Second))
+	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()))
 
 	defer cancel()
 
@@ -711,7 +711,7 @@ func NewDNSResolverWithCfg(cfg config.File) (resolver *net.Resolver) {
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				dialer := net.Dialer{
-					Timeout: cfg.GetServer().GetDNS().GetTimeout() * time.Second,
+					Timeout: cfg.GetServer().GetDNS().GetTimeout(),
 				}
 
 				return dialer.DialContext(ctx, network, cfg.GetServer().GetDNS().GetResolver())

@@ -105,7 +105,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	query := fmt.Sprintf("%s.%s", reverseIPAddr, rbl.GetRBL())
 
-	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(a.Cfg().GetServer().GetDNS().GetTimeout()*time.Second))
+	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(a.Cfg().GetServer().GetDNS().GetTimeout()))
 
 	defer cancel()
 
@@ -113,7 +113,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	// Trace DNS lookup for RBL
 	tr := monittrace.New("nauthilus/dns")
-	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+	tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 		attribute.String("rpc.system", "dns"),
 		semconv.PeerService("dns"),
 		attribute.String("dns.question.name", query),

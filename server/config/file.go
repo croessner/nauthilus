@@ -1873,12 +1873,12 @@ func (f *FileSettings) setDefaultInstanceName() error {
 
 // setDefaultDnsTimeout sets the default DNS timeout value for the file's server if not already specified.
 func (f *FileSettings) setDefaultDnsTimeout() error {
-	if f == nil || f.Server == nil || f.Server.DNS == (DNS{}) {
+	if f == nil || f.Server == nil {
 		return nil
 	}
 
 	if f.GetServer().GetDNS().GetTimeout() == 0 {
-		f.Server.DNS.Timeout = definitions.DNSResolveTimeout
+		f.Server.DNS.Timeout = definitions.DNSResolveTimeout * time.Second
 	}
 
 	return nil
