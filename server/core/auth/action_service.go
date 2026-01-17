@@ -40,9 +40,7 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 	auth.FillCommonRequest(commonRequest)
 
 	commonRequest.UserFound = auth.GetAccount() != ""
-	commonRequest.NoAuth = auth.NoAuth
 	commonRequest.FeatureName = featureName
-	commonRequest.StatusMessage = &auth.StatusMessage
 
 	action.RequestChan <- &action.Action{
 		LuaAction:     luaAction,

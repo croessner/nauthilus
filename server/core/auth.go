@@ -1588,18 +1588,33 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.ClientIP = a.ClientIP
 	cr.Account = a.GetAccount()
 	cr.AccountField = a.AccountField
+	cr.UniqueUserID = a.GetUniqueUserID()
+	cr.DisplayName = a.GetDisplayName()
 	cr.Service = a.Service
 	cr.OIDCCID = a.OIDCCID
 	cr.Protocol = a.Protocol.Get()
 	cr.Method = a.Method
 	cr.ClientPort = a.XClientPort
+	cr.ClientNet = a.BFClientNet
+	cr.ClientHost = a.ClientHost
+	cr.ClientID = a.XClientID
 	cr.LocalIP = a.XLocalIP
 	cr.LocalPort = a.XPort
 	cr.UserAgent = a.UserAgent
 	cr.XSSL = a.XSSL
+	cr.XSSLSessionID = a.XSSLSessionID
+	cr.XSSLClientVerify = a.XSSLClientVerify
+	cr.XSSLClientDN = a.XSSLClientDN
+	cr.XSSLClientCN = a.XSSLClientCN
+	cr.XSSLIssuer = a.XSSLIssuer
+	cr.XSSLClientNotBefore = a.XSSLClientNotBefore
+	cr.XSSLClientNotAfter = a.XSSLClientNotAfter
+	cr.XSSLSubjectDN = a.XSSLSubjectDN
+	cr.XSSLIssuerDN = a.XSSLIssuerDN
+	cr.XSSLClientSubjectDN = a.XSSLClientSubjectDN
+	cr.XSSLClientIssuerDN = a.XSSLClientIssuerDN
 	cr.XSSLProtocol = a.XSSLProtocol
 	cr.XSSLCipher = a.XSSLCipher
-	cr.XSSLClientIssuerDN = a.XSSLClientIssuerDN
 	cr.SSLSerial = a.SSLSerial
 	cr.SSLFingerprint = a.SSLFingerprint
 	cr.BackendServers = ListBackendServers()
@@ -1607,6 +1622,14 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.UsedBackendPort = &a.UsedBackendPort
 	cr.Latency = float64(time.Since(a.StartTime).Milliseconds())
 	cr.Debug = false
+	cr.Repeating = a.BFRepeating
+	cr.NoAuth = a.NoAuth
+	cr.UserFound = a.UserFound
+	cr.Authenticated = a.Authenticated
+	cr.BruteForceName = a.BruteForceName
+	cr.FeatureName = a.FeatureName
+	cr.StatusMessage = &a.StatusMessage
+
 	if a.deps.Cfg != nil {
 		cr.Debug = a.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	}

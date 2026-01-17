@@ -294,6 +294,7 @@ function nauthilus_call_action(request)
             ssl_fingerprint = request.ssl_fingerprint or "",
             latency = to_uint(request.latency) or 0,
             http_status = to_uint(request.http_status) or 0,
+            status_msg = request.status_message or "",
         }
 
         -- Batch into cache

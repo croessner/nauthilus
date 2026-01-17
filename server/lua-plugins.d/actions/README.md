@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   ssl_fingerprint      LowCardinality(String),
   latency              UInt64,
   http_status          UInt16,
+  status_msg           LowCardinality(String),
   INDEX idx_username   username   TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
   INDEX idx_account    account    TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
   INDEX idx_client_ip  client_ip  TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64

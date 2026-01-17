@@ -76,49 +76,6 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	commonRequest.UserFound = passDBResult.UserFound
 	commonRequest.Authenticated = passDBResult.Authenticated
 
-	// Set the fields (intentionally identical to previous inline code)
-	commonRequest.Debug = auth.Cfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Repeating = auth.BFRepeating
-	commonRequest.NoAuth = auth.NoAuth
-	commonRequest.BruteForceCounter = 0 // unavailable
-	commonRequest.Service = auth.Service
-	commonRequest.Session = auth.GUID
-	commonRequest.ClientIP = auth.ClientIP
-	commonRequest.ClientPort = auth.XClientPort
-	commonRequest.ClientNet = auth.BFClientNet
-	commonRequest.ClientHost = auth.ClientHost
-	commonRequest.ClientID = auth.XClientID
-	commonRequest.UserAgent = auth.UserAgent
-	commonRequest.LocalIP = auth.XLocalIP
-	commonRequest.LocalPort = auth.XPort
-	commonRequest.Username = auth.Username
-	commonRequest.Account = auth.GetAccount()
-	commonRequest.AccountField = auth.GetAccountField()
-	commonRequest.UniqueUserID = auth.GetUniqueUserID()
-	commonRequest.DisplayName = auth.GetDisplayName()
-	commonRequest.Password = auth.Password
-	commonRequest.Protocol = auth.Protocol.String()
-	commonRequest.OIDCCID = auth.OIDCCID
-	commonRequest.BruteForceName = auth.BruteForceName
-	commonRequest.FeatureName = auth.FeatureName
-	commonRequest.StatusMessage = &auth.StatusMessage
-	commonRequest.XSSL = auth.XSSL
-	commonRequest.XSSLSessionID = auth.XSSLSessionID
-	commonRequest.XSSLClientVerify = auth.XSSLClientVerify
-	commonRequest.XSSLClientDN = auth.XSSLClientDN
-	commonRequest.XSSLClientCN = auth.XSSLClientCN
-	commonRequest.XSSLIssuer = auth.XSSLIssuer
-	commonRequest.XSSLClientNotBefore = auth.XSSLClientNotBefore
-	commonRequest.XSSLClientNotAfter = auth.XSSLClientNotAfter
-	commonRequest.XSSLSubjectDN = auth.XSSLSubjectDN
-	commonRequest.XSSLIssuerDN = auth.XSSLIssuerDN
-	commonRequest.XSSLClientSubjectDN = auth.XSSLClientSubjectDN
-	commonRequest.XSSLClientIssuerDN = auth.XSSLClientIssuerDN
-	commonRequest.XSSLProtocol = auth.XSSLProtocol
-	commonRequest.XSSLCipher = auth.XSSLCipher
-	commonRequest.SSLSerial = auth.SSLSerial
-	commonRequest.SSLFingerprint = auth.SSLFingerprint
-
 	filterRequest := &filter.Request{
 		Session:            auth.GUID,
 		Username:           auth.Username,
@@ -231,63 +188,24 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		return
 	}
 
-	// Get account name and check if user was found
-	accountName := auth.GetAccount()
-	userFound := passDBResult.UserFound || accountName != ""
+	// Get a CommonRequest from the pool
+	cr := lualib.GetCommonRequest()
+	auth.FillCommonRequest(cr)
 
-	// Make a copy of the status message
-	statusMessageCopy := auth.StatusMessage
+	// UserFound and Authenticated are special because they might have been
+	// updated by the passDB result after FillCommonRequest was called.
+	cr.UserFound = passDBResult.UserFound || auth.GetAccount() != ""
+	cr.Authenticated = passDBResult.Authenticated
 
 	args := core.PostActionArgs{
 		Context:       auth.Context,
 		HTTPRequest:   auth.HTTPClientRequest,
 		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
-		StatusMessage: statusMessageCopy,
-		Request: lualib.CommonRequest{
-			Debug:               auth.Cfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-			Repeating:           auth.BFRepeating,
-			UserFound:           userFound,
-			Authenticated:       passDBResult.Authenticated,
-			NoAuth:              auth.NoAuth,
-			BruteForceCounter:   0,
-			Service:             auth.Service,
-			Session:             auth.GUID,
-			ClientIP:            auth.ClientIP,
-			ClientPort:          auth.XClientPort,
-			ClientNet:           auth.BFClientNet,
-			ClientHost:          auth.ClientHost,
-			ClientID:            auth.XClientID,
-			LocalIP:             auth.XLocalIP,
-			LocalPort:           auth.XPort,
-			UserAgent:           auth.UserAgent,
-			Username:            auth.Username,
-			Account:             accountName,
-			AccountField:        auth.GetAccountField(),
-			UniqueUserID:        auth.GetUniqueUserID(),
-			DisplayName:         auth.GetDisplayName(),
-			Password:            auth.Password,
-			Protocol:            auth.Protocol.Get(),
-			OIDCCID:             auth.OIDCCID,
-			BruteForceName:      auth.BruteForceName,
-			FeatureName:         auth.FeatureName,
-			XSSL:                auth.XSSL,
-			XSSLSessionID:       auth.XSSLSessionID,
-			XSSLClientVerify:    auth.XSSLClientVerify,
-			XSSLClientDN:        auth.XSSLClientDN,
-			XSSLClientCN:        auth.XSSLClientCN,
-			XSSLIssuer:          auth.XSSLIssuer,
-			XSSLClientNotBefore: auth.XSSLClientNotBefore,
-			XSSLClientNotAfter:  auth.XSSLClientNotAfter,
-			XSSLSubjectDN:       auth.XSSLSubjectDN,
-			XSSLIssuerDN:        auth.XSSLIssuerDN,
-			XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
-			XSSLProtocol:        auth.XSSLProtocol,
-			XSSLCipher:          auth.XSSLCipher,
-			SSLSerial:           auth.SSLSerial,
-			SSLFingerprint:      auth.SSLFingerprint,
-		},
+		StatusMessage: auth.StatusMessage,
+		Request:       *cr,
 	}
+
+	lualib.PutCommonRequest(cr)
 
 	go auth.RunLuaPostAction(args)
 }

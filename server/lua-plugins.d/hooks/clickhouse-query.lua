@@ -171,7 +171,7 @@ local TEXT_COLS = {
     "display_name","account","username","password_hash",
     "pwnd_info","brute_force_bucket","oidc_cid",
     "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",
-    "dyn_threat","dyn_response","xssl_protocol","xssl_cipher","ssl_fingerprint","prot_reason"
+    "dyn_threat", "dyn_response", "xssl_protocol", "xssl_cipher", "ssl_fingerprint", "prot_reason", "status_msg"
 }
 
 local BOOL_COL = {
@@ -618,7 +618,7 @@ function nauthilus_run_hook(logging, session)
             -- flags and TLS
             "repeating","user_found","authenticated",
             "xssl_protocol", "xssl_cipher", "ssl_fingerprint",
-            "latency", "http_status"
+            "latency", "http_status", "status_msg"
         }, ",")
 
         local limit_clause = " LIMIT " .. tostring(limit)
