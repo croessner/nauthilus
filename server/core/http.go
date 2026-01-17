@@ -125,10 +125,6 @@ func (c DefaultRouterComposer) ComposeEngine() *gin.Engine {
 		return ProtectEndpointMiddleware(cfg, logger)
 	})
 
-	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager) gin.HandlerFunc {
-		return AccountMiddleware(cfg, logger, redisClient, accountCache)
-	})
-
 	return gin.New(func(e *gin.Engine) {
 		e.ContextWithFallback = true
 	})
@@ -192,10 +188,6 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	if mw.IsLoggingEnabled() {
 		r.Use(mdlog.LoggerMiddlewareWithLogger(c.logger))
 	}
-
-	// Make the resolved account available as early as possible in the chain.
-	// This keeps account lookups consistent for all following middlewares/handlers.
-	r.Use(mdauth.AccountMiddleware(c.cfg, c.logger, c.redis, c.accountCache))
 }
 
 // ApplyCoreMiddlewares configures the router builder to add recovery, trusted
@@ -630,11 +622,6 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	// Keep auth protect middleware as before
 	mdauth.SetProtectMiddleware(func(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 		return ProtectEndpointMiddleware(cfg, logger)
-	})
-
-	// Register account resolution middleware factory
-	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager) gin.HandlerFunc {
-		return AccountMiddleware(cfg, logger, redisClient, accountCache)
 	})
 
 	if err := a.Bootstrap.InitWebAuthn(); err != nil {

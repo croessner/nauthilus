@@ -50,7 +50,6 @@ func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, redisClient red
 		adapter.Wrap(nosurf.NewPure),
 		mdlua.LuaContextMiddleware(),
 		core.WithLanguageMiddleware(deps),
-		core.AccountMiddleware(cfg, logger, redisClient, accountCache),
 		mdauth.ProtectEndpointMiddleware(cfg, logger),
 	}
 }
