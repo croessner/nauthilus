@@ -197,7 +197,7 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 		switch a.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
 			result := GetPassDBResultFromPool()
-			a.PostLuaAction(result)
+			a.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			a.AuthTempFail(ctx, definitions.TempFailNoTLS)
 			ctx.Abort()
@@ -205,7 +205,7 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 			return true
 		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
 			result := GetPassDBResultFromPool()
-			a.PostLuaAction(result)
+			a.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			a.AuthFail(ctx)
 			ctx.Abort()

@@ -162,6 +162,7 @@ function nauthilus_call_action(request)
         local ts = utc_now_ts_ms()
 
         local proto = (request.protocol ~= "" and request.protocol) or ""
+        local method = (request.method ~= "" and request.method) or ""
         local username = (request.username ~= "" and request.username) or ""
         local account = (request.account ~= nil and request.account ~= "" and request.account) or ""
 
@@ -256,6 +257,7 @@ function nauthilus_call_action(request)
             client_id = request.client_id or "",
             hostname = hostname,
             proto = proto,
+            method = method,
             user_agent = request.user_agent or "",
             local_ip = request.local_ip or "",
             local_port = request.local_port or "",
@@ -290,6 +292,8 @@ function nauthilus_call_action(request)
             xssl_protocol = request.xssl_protocol or "",
             xssl_cipher = request.xssl_cipher or "",
             ssl_fingerprint = request.ssl_fingerprint or "",
+            latency = to_uint(request.latency) or 0,
+            http_status = to_uint(request.http_status) or 0,
         }
 
         -- Batch into cache

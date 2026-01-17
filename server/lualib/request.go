@@ -113,6 +113,9 @@ type CommonRequest struct {
 	// Protocol stores the protocol that the user used to authenticate.
 	Protocol string
 
+	// Method stores the authentication method used.
+	Method string
+
 	// OIDCCID represents the OpenID Connect Client ID used for authentication.
 	OIDCCID string
 
@@ -181,6 +184,12 @@ type CommonRequest struct {
 
 	// UsedBackendPort holds the port of the backend server used for authentication.
 	UsedBackendPort *int
+
+	// Latency represents the request latency in milliseconds.
+	Latency float64
+
+	// HTTPStatus represents the HTTP status code.
+	HTTPStatus int
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.
@@ -208,6 +217,7 @@ func (c *CommonRequest) Reset() {
 	c.DisplayName = ""
 	c.Password = ""
 	c.Protocol = ""
+	c.Method = ""
 	c.OIDCCID = ""
 	c.BruteForceName = ""
 	c.FeatureName = ""
@@ -231,6 +241,8 @@ func (c *CommonRequest) Reset() {
 	c.BackendServers = nil
 	c.UsedBackendAddr = nil
 	c.UsedBackendPort = nil
+	c.Latency = 0
+	c.HTTPStatus = 0
 }
 
 // SetupRequest sets up the request object with the common request properties
@@ -271,6 +283,7 @@ func (c *CommonRequest) SetupRequest(cfg config.File, request *lua.LTable) *lua.
 	request.RawSetString(definitions.LuaRequestDisplayName, lua.LString(c.DisplayName))
 	request.RawSetString(definitions.LuaRequestPassword, lua.LString(c.Password))
 	request.RawSetString(definitions.LuaRequestProtocol, lua.LString(c.Protocol))
+	request.RawSetString(definitions.LuaRequestMethod, lua.LString(c.Method))
 	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
@@ -296,6 +309,9 @@ func (c *CommonRequest) SetupRequest(cfg config.File, request *lua.LTable) *lua.
 
 	request.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
 	request.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
+
+	request.RawSetString(definitions.LuaRequestLatency, lua.LNumber(c.Latency))
+	request.RawSetString(definitions.LuaRequestHTTPStatus, lua.LNumber(c.HTTPStatus))
 
 	return request
 }

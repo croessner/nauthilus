@@ -286,7 +286,7 @@ type State interface {
 	FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult
 
 	// PostLuaAction performs actions or post-processing after executing Lua scripts during authentication workflow.
-	PostLuaAction(passDBResult *PassDBResult)
+	PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult)
 
 	// WithDefaults configures the State with default values derived from the provided gin.Context.
 	WithDefaults(ctx *gin.Context) State
@@ -1590,6 +1590,8 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.AccountField = a.AccountField
 	cr.Service = a.Service
 	cr.OIDCCID = a.OIDCCID
+	cr.Protocol = a.Protocol.Get()
+	cr.Method = a.Method
 	cr.ClientPort = a.XClientPort
 	cr.LocalIP = a.XLocalIP
 	cr.LocalPort = a.XPort
@@ -1603,6 +1605,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.BackendServers = ListBackendServers()
 	cr.UsedBackendAddr = &a.UsedBackendIP
 	cr.UsedBackendPort = &a.UsedBackendPort
+	cr.Latency = float64(time.Since(a.StartTime).Milliseconds())
 	cr.Debug = false
 	if a.deps.Cfg != nil {
 		cr.Debug = a.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
@@ -1778,10 +1781,9 @@ func (a *AuthState) GetAccountField() string {
 	return a.AccountField
 }
 
-func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
+func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
 	tr := monittrace.New("nauthilus/auth")
-	ctx := a.Ctx()
-	lctx, lspan := tr.Start(ctx, "auth.lua.post_action",
+	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.post_action",
 		attribute.String("service", a.Service),
 		attribute.String("username", a.Username),
 	)
@@ -1808,6 +1810,10 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	if passDBResult != nil {
 		cr.UserFound = passDBResult.UserFound
 		cr.Authenticated = passDBResult.Authenticated
+	}
+
+	if ctx != nil {
+		cr.HTTPStatus = ctx.Writer.Status()
 	}
 
 	a.RunLuaPostAction(PostActionArgs{
@@ -1906,7 +1912,7 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 			authResult = lf.Filter(ctx, a.View(), passDBResult)
 		}
 
-		a.PostLuaAction(passDBResult)
+		a.PostLuaAction(ctx, passDBResult)
 	}
 
 	return authResult
@@ -2298,7 +2304,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		authResult = a.FilterLua(passDBResult, ctx)
 		aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
-		a.PostLuaAction(passDBResult)
+		a.PostLuaAction(ctx, passDBResult)
 	}
 
 	return authResult
@@ -3264,7 +3270,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
-			a.PostLuaAction(result)
+			a.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			a.AuthFail(ctx)
 

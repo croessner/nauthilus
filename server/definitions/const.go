@@ -1654,6 +1654,15 @@ const (
 
 	// LuaRequestOIDCCID represents the OpenID Connect Client ID used for authentication.
 	LuaRequestOIDCCID = "oidc_cid"
+
+	// LuaRequestLatency represents the request latency in milliseconds.
+	LuaRequestLatency = "latency"
+
+	// LuaRequestHTTPStatus represents the HTTP status code.
+	LuaRequestHTTPStatus = "http_status"
+
+	// LuaRequestMethod represents the authentication method used.
+	LuaRequestMethod = "method"
 )
 
 const (

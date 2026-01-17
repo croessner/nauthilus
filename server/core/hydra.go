@@ -1211,7 +1211,7 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 
 	authResult = auth.FilterLua(passDBResult, ctx)
 
-	auth.PostLuaAction(passDBResult)
+	auth.PostLuaAction(ctx, passDBResult)
 	PutPassDBResultToPool(passDBResult)
 
 	return authResult

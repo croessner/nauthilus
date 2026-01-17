@@ -77,7 +77,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 		if auth.CheckBruteForce(ctx) {
 			auth.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			auth.AuthFail(ctx)
 			ctx.Abort()
@@ -89,7 +89,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 		switch auth.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
 			ctx.Abort()
@@ -97,7 +97,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 			return
 		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			auth.AuthFail(ctx)
 			ctx.Abort()
@@ -108,7 +108,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 		case definitions.AuthResultFail:
 		case definitions.AuthResultTempFail:
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			auth.AuthTempFail(ctx, definitions.TempFailDefault)
 			ctx.Abort()

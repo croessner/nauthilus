@@ -167,7 +167,7 @@ end
 -- Whitelisted columns by type
 local TEXT_COLS = {
     "session","service","features","client_ip","client_net","client_id",
-    "hostname","proto","user_agent","local_ip",
+    "hostname", "proto", "method", "user_agent", "local_ip",
     "display_name","account","username","password_hash",
     "pwnd_info","brute_force_bucket","oidc_cid",
     "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",
@@ -182,7 +182,8 @@ local NUM_COL = {
     client_port=true, local_port=true, brute_force_counter=true,
     failed_login_count=true, failed_login_rank=true,
     gp_attempts=true, gp_unique_ips=true, gp_unique_users=true, gp_ips_per_user=true,
-    prot_backoff=true, prot_delay_ms=true
+    prot_backoff = true, prot_delay_ms = true,
+    latency = true, http_status = true
 }
 
 local function is_allowed_key(key)
@@ -602,7 +603,7 @@ function nauthilus_run_hook(logging, session)
         local fields = table.concat({
             -- core identifiers and network
             "ts","session","service","features","client_ip","client_port","client_net","client_id",
-            "hostname","proto","user_agent","local_ip","local_port",
+            "hostname", "proto", "method", "user_agent", "local_ip", "local_port",
             -- user/account info
             "display_name","account","username","password_hash",
             -- security and feature info
@@ -616,7 +617,8 @@ function nauthilus_run_hook(logging, session)
             "dyn_threat","dyn_response",
             -- flags and TLS
             "repeating","user_found","authenticated",
-            "xssl_protocol","xssl_cipher","ssl_fingerprint"
+            "xssl_protocol", "xssl_cipher", "ssl_fingerprint",
+            "latency", "http_status"
         }, ",")
 
         local limit_clause = " LIMIT " .. tostring(limit)

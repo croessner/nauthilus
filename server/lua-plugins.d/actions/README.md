@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   client_id            LowCardinality(String),
   hostname             LowCardinality(String) CODEC(ZSTD(3)),
   proto                LowCardinality(String),
+  method               LowCardinality(String),
   user_agent           LowCardinality(String) CODEC(ZSTD(5)),
   local_ip             LowCardinality(String),
   local_port           String,
@@ -161,6 +162,8 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   xssl_protocol        LowCardinality(String),
   xssl_cipher          LowCardinality(String),
   ssl_fingerprint      LowCardinality(String),
+  latency              UInt64,
+  http_status          UInt16,
   INDEX idx_username   username   TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
   INDEX idx_account    account    TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
   INDEX idx_client_ip  client_ip  TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64
