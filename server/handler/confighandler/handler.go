@@ -60,5 +60,5 @@ func (h *Handler) load(c *gin.Context) {
 		return
 	}
 
-	core.NewConfigLoadHandler(h.cfg, h.deps.Logger)(c)
+	core.NewConfigLoadHandler(h.cfg, h.deps.Logger, h.deps.Redis)(c)
 }

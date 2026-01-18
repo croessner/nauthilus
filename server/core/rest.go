@@ -105,8 +105,8 @@ func NewBruteForceFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisC
 
 // NewConfigLoadHandler constructs a Gin handler for the config load endpoint
 // using injected dependencies.
-func NewConfigLoadHandler(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
-	deps := restAdminDeps{Cfg: cfg, Logger: logger}
+func NewConfigLoadHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
+	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
 
 	return func(ctx *gin.Context) {
 		deps.HandleConfigLoad(ctx)
