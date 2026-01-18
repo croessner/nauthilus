@@ -173,7 +173,11 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 
 	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
 
-	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
+	keyvals := getLogSlice()
+
+	defer putLogSlice(keyvals)
+
+	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
 
 	level.Warn(getDefaultLogger()).WithContext(ctx).Log(keyvals...)
@@ -251,7 +255,11 @@ func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason st
 
 	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
 
-	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
+	keyvals := getLogSlice()
+
+	defer putLogSlice(keyvals)
+
+	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
 
 	level.Warn(w.deps.Logger).WithContext(ctx).Log(keyvals...)

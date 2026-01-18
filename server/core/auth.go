@@ -1273,7 +1273,11 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 //	ctx := &gin.Context{}
 //	a.loginAttemptProcessing(ctx)
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
-	keyvals := a.LogLineTemplate("fail", ctx.Request.URL.Path)
+	keyvals := getLogSlice()
+
+	defer putLogSlice(keyvals)
+
+	keyvals = a.fillLogLineTemplate(keyvals, "fail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request has failed")
 
 	level.Notice(a.logger()).Log(keyvals...)

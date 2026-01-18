@@ -16,6 +16,7 @@
 package core
 
 import (
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -25,18 +26,49 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var logSlicePool = sync.Pool{
+	New: func() any {
+		// Pre-allocate a slice with a reasonable capacity for the template fields plus extras.
+		// LogLineTemplate uses ~30 pairs (60 elements).
+		s := make([]any, 0, 128)
+
+		return &s
+	},
+}
+
+func getLogSlice() []any {
+	p := logSlicePool.Get().(*[]any)
+
+	return (*p)[:0]
+}
+
+func putLogSlice(s []any) {
+	// Clear the slice to avoid keeping references to objects and allow GC.
+	for i := range s {
+		s[i] = nil
+	}
+
+	logSlicePool.Put(&s)
+}
+
 // handleLogging logs information about the authentication request if the verbosity level is greater than LogLevelWarn.
 // It uses the log.Logger to log the information.
 // The logged information includes the result of the a.LogLineTemplate() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
 // and the path of the request URL obtained from ctx.Request.URL.Path.
 func handleLogging(ctx *gin.Context, auth *AuthState) {
-	keyvals := auth.LogLineTemplate(func() string {
+	keyvals := getLogSlice()
+
+	defer putLogSlice(keyvals)
+
+	status := func() string {
 		if !auth.NoAuth {
 			return "ok"
 		}
 
 		return ""
-	}(), ctx.Request.URL.Path)
+	}()
+
+	keyvals = auth.fillLogLineTemplate(keyvals, status, ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request was successful")
 
 	level.Notice(auth.Logger()).WithContext(ctx).Log(keyvals...)
@@ -49,7 +81,11 @@ func logProcessingRequest(ctx *gin.Context, auth *AuthState) {
 		return
 	}
 
-	keyvals := auth.LogLineProcessingTemplate(ctx.Request.URL.Path)
+	keyvals := getLogSlice()
+
+	defer putLogSlice(keyvals)
+
+	keyvals = auth.fillLogLineProcessingTemplate(keyvals, ctx.Request.URL.Path)
 
 	// Add a human-readable message field as requested
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Processing incoming request")
@@ -59,8 +95,10 @@ func logProcessingRequest(ctx *gin.Context, auth *AuthState) {
 
 // LogLineTemplate constructs a key-value slice for logging authentication state and related metadata.
 func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
-	var keyvals []any
+	return a.fillLogLineTemplate(make([]any, 0, 64), status, endpoint)
+}
 
+func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint string) []any {
 	if a.StatusMessage == "" {
 		a.StatusMessage = "OK"
 	}
@@ -75,7 +113,7 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		backendName = a.BackendName
 	}
 
-	keyvals = []any{
+	keyvals = append(keyvals,
 		definitions.LogKeyGUID, util.WithNotAvailable(a.GUID),
 		definitions.LogKeyMode, mode,
 		definitions.LogKeyBackendName, backendName,
@@ -105,18 +143,10 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyAuthorized, a.Authorized,
 		definitions.LogKeyAuthenticatedBool, a.Authenticated,
 		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(a.StartTime)),
-	}
+	)
 
 	if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
-		// Pre-allocate the keyvals slice to avoid continuous reallocation
-		keyvalsLen := len(keyvals)
-		newKeyvals := make([]any, keyvalsLen+len(a.AdditionalLogs))
-		copy(newKeyvals, keyvals)
-		keyvals = newKeyvals[:keyvalsLen]
-
-		for index := range a.AdditionalLogs {
-			keyvals = append(keyvals, a.AdditionalLogs[index])
-		}
+		keyvals = append(keyvals, a.AdditionalLogs...)
 	}
 
 	return keyvals
@@ -124,14 +154,16 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 
 // LogLineProcessingTemplate generates and returns a list of key-value pairs for logging session-related details.
 func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
-	var keyvals []any
+	return a.fillLogLineProcessingTemplate(make([]any, 0, 32), endpoint)
+}
 
+func (a *AuthState) fillLogLineProcessingTemplate(keyvals []any, endpoint string) []any {
 	mode := "auth"
 	if a.NoAuth {
 		mode = "no-auth"
 	}
 
-	keyvals = []any{
+	keyvals = append(keyvals,
 		definitions.LogKeyGUID, util.WithNotAvailable(a.GUID),
 		definitions.LogKeyMode, mode,
 		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
@@ -148,7 +180,7 @@ func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
 		definitions.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
 		definitions.LogKeyClientID, util.WithNotAvailable(a.XClientID),
 		definitions.LogKeyUriPath, endpoint,
-	}
+	)
 
 	return keyvals
 }
