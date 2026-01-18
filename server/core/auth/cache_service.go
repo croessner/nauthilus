@@ -16,6 +16,8 @@
 package auth
 
 import (
+	"strings"
+
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -50,7 +52,15 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 	}
 
 	ppc := auth.CreatePositivePasswordCache()
-	key := auth.Cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+	var sb strings.Builder
+
+	sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())
+	sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+	sb.WriteString(cacheName)
+	sb.WriteByte(':')
+	sb.WriteString(accountName)
+
+	key := sb.String()
 
 	// Write hash with TTL
 	backend.SaveUserDataToRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.Redis(), auth.GUID, key, auth.Cfg().GetServer().GetRedis().GetPosCacheTTL(), ppc)

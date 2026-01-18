@@ -816,7 +816,14 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 	userKeys := config.NewStringSet()
 	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
-	userKeys.Set(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + accountName)
+	var sb strings.Builder
+
+	sb.WriteString(prefix)
+	sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+	sb.WriteString("__default__:")
+	sb.WriteString(accountName)
+
+	userKeys.Set(sb.String())
 
 	if ips != nil {
 		// Shared scoper used to compute CIDR-scoped identifiers when configured (IPv6)
@@ -828,37 +835,139 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 			scopedTol := scoper.Scope(ipscoper.ScopeTolerations, ip)
 
 			// Password-history hashes (account+IP and IP-only) — delete for raw and scoped identifiers
-			userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + accountName + ":" + ip + "}:" + accountName + ":" + ip)
-			userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + ip + "}:" + ip)
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisPwHashKey)
+			sb.WriteString(":{")
+			sb.WriteString(accountName)
+			sb.WriteByte(':')
+			sb.WriteString(ip)
+			sb.WriteString("}:")
+			sb.WriteString(accountName)
+			sb.WriteByte(':')
+			sb.WriteString(ip)
+			userKeys.Set(sb.String())
+
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisPwHashKey)
+			sb.WriteString(":{")
+			sb.WriteString(ip)
+			sb.WriteString("}:")
+			sb.WriteString(ip)
+			userKeys.Set(sb.String())
 
 			// PW_HIST totals (account+IP and IP-only) — delete for raw and scoped identifiers
-			userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + accountName + ":" + ip + "}:" + accountName + ":" + ip)
-			userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + ip + "}:" + ip)
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisPwHistTotalKey)
+			sb.WriteString(":{")
+			sb.WriteString(accountName)
+			sb.WriteByte(':')
+			sb.WriteString(ip)
+			sb.WriteString("}:")
+			sb.WriteString(accountName)
+			sb.WriteByte(':')
+			sb.WriteString(ip)
+			userKeys.Set(sb.String())
+
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisPwHistTotalKey)
+			sb.WriteString(":{")
+			sb.WriteString(ip)
+			sb.WriteString("}:")
+			sb.WriteString(ip)
+			userKeys.Set(sb.String())
 
 			if scopedRWP != ip {
-				userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + accountName + ":" + scopedRWP + "}:" + accountName + ":" + scopedRWP)
-				userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + scopedRWP + "}:" + scopedRWP)
-				userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + accountName + ":" + scopedRWP + "}:" + accountName + ":" + scopedRWP)
-				userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + scopedRWP + "}:" + scopedRWP)
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisPwHashKey)
+				sb.WriteString(":{")
+				sb.WriteString(accountName)
+				sb.WriteByte(':')
+				sb.WriteString(scopedRWP)
+				sb.WriteString("}:")
+				sb.WriteString(accountName)
+				sb.WriteByte(':')
+				sb.WriteString(scopedRWP)
+				userKeys.Set(sb.String())
+
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisPwHashKey)
+				sb.WriteString(":{")
+				sb.WriteString(scopedRWP)
+				sb.WriteString("}:")
+				sb.WriteString(scopedRWP)
+				userKeys.Set(sb.String())
+
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisPwHistTotalKey)
+				sb.WriteString(":{")
+				sb.WriteString(accountName)
+				sb.WriteByte(':')
+				sb.WriteString(scopedRWP)
+				sb.WriteString("}:")
+				sb.WriteString(accountName)
+				sb.WriteByte(':')
+				sb.WriteString(scopedRWP)
+				userKeys.Set(sb.String())
+
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisPwHistTotalKey)
+				sb.WriteString(":{")
+				sb.WriteString(scopedRWP)
+				sb.WriteString("}:")
+				sb.WriteString(scopedRWP)
+				userKeys.Set(sb.String())
 			}
 
 			// Tolerations keys — delete base hash and both positive/negative ZSETs for raw and scoped identifiers
-			baseTolRaw := prefix + "bf:TR:" + ip
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString("bf:TR:")
+			sb.WriteString(ip)
+			baseTolRaw := sb.String()
 
-			userKeys.Set(baseTolRaw)        // hash with aggregated counters
-			userKeys.Set(baseTolRaw + ":P") // positives ZSET
-			userKeys.Set(baseTolRaw + ":N") // negatives ZSET
+			userKeys.Set(baseTolRaw) // hash with aggregated counters
+
+			sb.WriteString(":P")
+			userKeys.Set(sb.String()) // positives ZSET
+
+			sb.Reset()
+			sb.WriteString(baseTolRaw)
+			sb.WriteString(":N")
+			userKeys.Set(sb.String()) // negatives ZSET
 
 			if scopedTol != ip {
-				baseTolScoped := prefix + "bf:TR:" + scopedTol
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString("bf:TR:")
+				sb.WriteString(scopedTol)
+				baseTolScoped := sb.String()
 
 				userKeys.Set(baseTolScoped)
-				userKeys.Set(baseTolScoped + ":P")
-				userKeys.Set(baseTolScoped + ":N")
+
+				sb.WriteString(":P")
+				userKeys.Set(sb.String())
+
+				sb.Reset()
+				sb.WriteString(baseTolScoped)
+				sb.WriteString(":N")
+				userKeys.Set(sb.String())
 			}
 
 			// Also remove the PW_HIST meta key for this IP (protocol/oidc persistence)
-			userKeys.Set(prefix + definitions.RedisPWHistMetaKey + ":" + ip)
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisPWHistMetaKey)
+			sb.WriteByte(':')
+			sb.WriteString(ip)
+			userKeys.Set(sb.String())
 
 			// Remove network-scoped PW_HIST meta keys for this IP for all matching brute-force rules
 			parsed := net.ParseIP(ip)
@@ -870,7 +979,13 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 					}
 					_, network, nerr := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, rule.CIDR))
 					if nerr == nil && network != nil {
-						userKeys.Set(prefix + definitions.RedisPWHistMetaKey + ":" + network.String())
+						sb.Reset()
+						sb.WriteString(prefix)
+						sb.WriteString(definitions.RedisPWHistMetaKey)
+						sb.WriteByte(':')
+						sb.WriteString(network.String())
+
+						userKeys.Set(sb.String())
 					}
 				}
 			}
@@ -882,7 +997,14 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 	for index := range protocols {
 		cacheNames := backend.GetCacheNames(cfg, channel, protocols[index], definitions.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+			sb.WriteString(cacheName)
+			sb.WriteByte(':')
+			sb.WriteString(accountName)
+
+			userKeys.Set(sb.String())
 		}
 	}
 
@@ -912,7 +1034,12 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 	logger := deps.effectiveLogger()
 	redisClient := deps.effectiveRedis()
 
-	redisKey := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
+	var sb strings.Builder
+
+	sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
+	sb.WriteString(definitions.RedisUserHashKey)
+
+	redisKey := sb.String()
 
 	// Increment write counter once for the whole pipeline execution
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -1086,7 +1213,13 @@ func (d asyncJobDeps) validate() error {
 }
 
 func asyncJobKey(cfg config.File, jobID string) string {
-	return cfg.GetServer().GetRedis().GetPrefix() + "async:job:" + jobID
+	var sb strings.Builder
+
+	sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
+	sb.WriteString("async:job:")
+	sb.WriteString(jobID)
+
+	return sb.String()
 }
 
 // generateJobID creates a random URL-safe identifier.

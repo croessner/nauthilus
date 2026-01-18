@@ -285,10 +285,15 @@ func (h *HydraHandlers) WithLanguageMiddleware() gin.HandlerFunc {
 		ctx.Set(definitions.CtxLocalizedKey, localizer)
 
 		if needRedirect {
-			ctx.Redirect(
-				http.StatusFound,
-				ctx.Request.URL.Path+"/"+baseName.String()+"?"+ctx.Request.URL.RawQuery,
-			)
+			var sb strings.Builder
+
+			sb.WriteString(ctx.Request.URL.Path)
+			sb.WriteByte('/')
+			sb.WriteString(baseName.String())
+			sb.WriteByte('?')
+			sb.WriteString(ctx.Request.URL.RawQuery)
+
+			ctx.Redirect(http.StatusFound, sb.String())
 
 			return
 		}
@@ -863,10 +868,13 @@ func (a *ApiConfig) handleNonPost2FA(auth State, session sessions.Session, authR
 			return false, err
 		}
 
-		a.ctx.Redirect(
-			http.StatusFound,
-			a.deps.Cfg.GetServer().Frontend.GetLoginPage()+"?login_challenge="+a.challenge,
-		)
+		var sb strings.Builder
+
+		sb.WriteString(a.deps.Cfg.GetServer().Frontend.GetLoginPage())
+		sb.WriteString("?login_challenge=")
+		sb.WriteString(a.challenge)
+
+		a.ctx.Redirect(http.StatusFound, sb.String())
 
 		return true, nil
 	}
@@ -1137,10 +1145,20 @@ func (a *ApiConfig) logFailedLoginAndRedirect(ctx *gin.Context, auth State) {
 
 	auth.UpdateBruteForceBucketsCounter(ctx)
 
-	a.ctx.Redirect(
-		http.StatusFound,
-		a.deps.Cfg.GetServer().Frontend.GetLoginPage()+"?login_challenge="+loginChallenge+"&_error="+definitions.PasswordFail,
-	)
+	var sb strings.Builder
+
+	sb.WriteString(a.deps.Cfg.GetServer().Frontend.GetLoginPage())
+	sb.WriteString("?login_challenge=")
+	sb.WriteString(loginChallenge)
+	sb.WriteString("&_error=")
+	sb.WriteString(definitions.PasswordFail)
+
+	a.ctx.Redirect(http.StatusFound, sb.String())
+
+	var sbLog strings.Builder
+
+	sbLog.WriteString(a.deps.Cfg.GetServer().Frontend.GetLoginPage())
+	sbLog.WriteString("/post")
 
 	logs := []any{
 		definitions.LogKeyGUID, a.guid,
@@ -1148,7 +1166,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(ctx *gin.Context, auth State) {
 		definitions.LogKeyClientName, a.clientName,
 		definitions.LogKeyUsername, a.ctx.PostForm("username"),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
-		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLoginPage() + "/post",
+		definitions.LogKeyUriPath, sbLog.String(),
 		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	}
 

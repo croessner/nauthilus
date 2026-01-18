@@ -723,7 +723,7 @@ var BackendServers = NewBackendServer()
 
 // String returns an AuthState object as string excluding the user password.
 func (a *AuthState) String() string {
-	var result string
+	var result strings.Builder
 
 	value := reflect.ValueOf(*a)
 	typeOfValue := value.Type()
@@ -734,16 +734,20 @@ func (a *AuthState) String() string {
 			continue
 		case "Password":
 			if getDefaultEnvironment().GetDevMode() {
-				result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+				fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 			} else {
-				result += fmt.Sprintf(" %s='<hidden>'", typeOfValue.Field(index).Name)
+				fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
 			}
 		default:
-			result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+			fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 		}
 	}
 
-	return result[1:]
+	if result.Len() == 0 {
+		return ""
+	}
+
+	return result.String()[1:]
 }
 
 // SetUsername sets the username for the AuthState instance to the given value.
@@ -3202,15 +3206,34 @@ func (a *AuthState) generateSingleflightKey() string {
 	// Short password hash (same function as for positive password cache)
 	pwShort := util.GetHash(util.PreparePassword(a.Password))
 
-	sep := "\x00"
-	base := a.Service + sep + a.Protocol.Get() + sep + a.Username + sep + clientIP + sep + a.XLocalIP + sep + a.XPort + sep + sslFlag
+	const sep = "\x00"
+
+	var sb strings.Builder
+
+	sb.WriteString(a.Service)
+	sb.WriteString(sep)
+	sb.WriteString(a.Protocol.Get())
+	sb.WriteString(sep)
+	sb.WriteString(a.Username)
+	sb.WriteString(sep)
+	sb.WriteString(clientIP)
+	sb.WriteString(sep)
+	sb.WriteString(a.XLocalIP)
+	sb.WriteString(sep)
+	sb.WriteString(a.XPort)
+	sb.WriteString(sep)
+	sb.WriteString(sslFlag)
 
 	if a.OIDCCID != "" {
-		base = base + sep + a.OIDCCID
+		sb.WriteString(sep)
+		sb.WriteString(a.OIDCCID)
 	}
 
 	// Include password short hash last to avoid cross-password dedup
-	return base + sep + pwShort
+	sb.WriteString(sep)
+	sb.WriteString(pwShort)
+
+	return sb.String()
 }
 
 // GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalCacheKey() as the key.

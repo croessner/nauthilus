@@ -17,6 +17,7 @@ package frontend
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -114,10 +115,19 @@ func CreateLanguagePassive(ctx *gin.Context, cfg config.File, destPage string, l
 		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
 		if languageName != currentName {
 			baseName, _ := languageTag.Base()
+
+			var sb strings.Builder
+
+			sb.WriteString(destPage)
+			sb.WriteByte('/')
+			sb.WriteString(baseName.String())
+			sb.WriteByte('?')
+			sb.WriteString(ctx.Request.URL.RawQuery)
+
 			languagePassive = append(
 				languagePassive,
 				Language{
-					LanguageLink: destPage + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
+					LanguageLink: sb.String(),
 					LanguageName: languageName,
 				},
 			)

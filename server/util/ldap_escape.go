@@ -15,6 +15,8 @@
 
 package util
 
+import "strings"
+
 // EscapeLDAPFilter escapes a string for safe embedding into an LDAP filter per RFC 4515.
 // It replaces the following characters:
 //
@@ -29,23 +31,24 @@ func EscapeLDAPFilter(s string) string {
 	}
 
 	// Order matters: backslash first to avoid double-escaping
-	replaced := ""
+	var replaced strings.Builder
+
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '\\':
-			replaced += "\\5c"
+			replaced.WriteString("\\5c")
 		case '*':
-			replaced += "\\2a"
+			replaced.WriteString("\\2a")
 		case '(':
-			replaced += "\\28"
+			replaced.WriteString("\\28")
 		case ')':
-			replaced += "\\29"
+			replaced.WriteString("\\29")
 		case '\x00':
-			replaced += "\\00"
+			replaced.WriteString("\\00")
 		default:
-			replaced += string(s[i])
+			replaced.WriteByte(s[i])
 		}
 	}
 
-	return replaced
+	return replaced.String()
 }

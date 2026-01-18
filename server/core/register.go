@@ -21,6 +21,7 @@ package core
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
@@ -703,16 +704,26 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	}
 
 	if !totp.Validate(ctx.PostForm("code"), totpKey.Secret()) {
-		ctx.Redirect(
-			http.StatusFound,
-			definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage+"?_error="+definitions.InvalidCode,
-		)
+		var sb strings.Builder
+
+		sb.WriteString(definitions.TwoFAv1Root)
+		sb.WriteString(deps.Cfg.GetServer().Frontend.TwoFactorPage)
+		sb.WriteString("?_error=")
+		sb.WriteString(definitions.InvalidCode)
+
+		ctx.Redirect(http.StatusFound, sb.String())
+
+		var sbLog strings.Builder
+
+		sbLog.WriteString(definitions.TwoFAv1Root)
+		sbLog.WriteString(deps.Cfg.GetServer().Frontend.TwoFactorPage)
+		sbLog.WriteString("/post")
 
 		level.Info(deps.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyUsername, ctx.PostForm("username"),
 			definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
-			definitions.LogKeyUriPath, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage+"/post",
+			definitions.LogKeyUriPath, sbLog.String(),
 		)
 
 		return
@@ -779,7 +790,15 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 			cacheNames := backend.GetCacheNames(deps.Cfg, deps.Channel, protocols[index], definitions.CacheAll)
 
 			for _, cacheName := range cacheNames.GetStringSlice() {
-				userKeys.Set(deps.Cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+				var sb strings.Builder
+
+				sb.WriteString(deps.Cfg.GetServer().GetRedis().GetPrefix())
+				sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+				sb.WriteString(cacheName)
+				sb.WriteByte(':')
+				sb.WriteString(accountName)
+
+				userKeys.Set(sb.String())
 			}
 		}
 
@@ -808,12 +827,23 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	session.Delete(definitions.CookieHome)
 	session.Save()
 
-	ctx.Redirect(http.StatusFound, deps.Cfg.GetServer().Frontend.GetNotifyPage()+"?message=OTP code is valid. Registration completed successfully")
+	var sbRedirect strings.Builder
+
+	sbRedirect.WriteString(deps.Cfg.GetServer().Frontend.GetNotifyPage())
+	sbRedirect.WriteString("?message=OTP code is valid. Registration completed successfully")
+
+	ctx.Redirect(http.StatusFound, sbRedirect.String())
+
+	var sbLog strings.Builder
+
+	sbLog.WriteString(definitions.TwoFAv1Root)
+	sbLog.WriteString(deps.Cfg.GetServer().Frontend.TwoFactorPage)
+	sbLog.WriteString("/post")
 
 	level.Info(deps.Logger).Log(
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyUsername, username,
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
-		definitions.LogKeyUriPath, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage+"/post",
+		definitions.LogKeyUriPath, sbLog.String(),
 	)
 }

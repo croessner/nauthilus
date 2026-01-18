@@ -16,6 +16,8 @@
 package core
 
 import (
+	"strings"
+
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -71,7 +73,15 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 			_ = cctx
 
-			redisPosUserKey := auth.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+			var sb strings.Builder
+
+			sb.WriteString(auth.cfg().GetServer().GetRedis().GetPrefix())
+			sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+			sb.WriteString(cacheName)
+			sb.WriteByte(':')
+			sb.WriteString(accountName)
+
+			redisPosUserKey := sb.String()
 
 			ppc = &bktype.PositivePasswordCache{}
 

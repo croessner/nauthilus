@@ -54,7 +54,15 @@ func (s SoftWhitelist) String() string {
 	}
 
 	for k, v := range s {
-		return "SoftWhitelist: {SoftWhitelist[" + k + "]: " + strings.Join(v, ", ") + "}"
+		var sb strings.Builder
+
+		sb.WriteString("SoftWhitelist: {SoftWhitelist[")
+		sb.WriteString(k)
+		sb.WriteString("]: ")
+		sb.WriteString(strings.Join(v, ", "))
+		sb.WriteByte('}')
+
+		return sb.String()
 	}
 
 	return "SoftWhitelist: {SoftWhitelist: <empty>}"

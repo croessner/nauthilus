@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -348,13 +349,18 @@ func (bm *bucketManagerImpl) getBruteForceBucketRedisKeyWithNetwork(rule *config
 	//
 	// NOTE: We intentionally do NOT try to force all bucket-counter keys into one slot. Reads are
 	// performed via pipelined GETs to avoid CROSSSLOT issues.
-	hashTag := netStr
+	var hashTag strings.Builder
+
+	hashTag.WriteString(netStr)
+
 	if protocolPart != "" {
-		hashTag += "|p=" + protocolPart
+		hashTag.WriteString("|p=")
+		hashTag.WriteString(protocolPart)
 	}
 
 	if oidcCIDPart != "" {
-		hashTag += "|oidc=" + oidcCIDPart
+		hashTag.WriteString("|oidc=")
+		hashTag.WriteString(oidcCIDPart)
 	}
 
 	periodSeconds := int64(math.Round(rule.Period.Seconds()))
@@ -363,17 +369,36 @@ func (bm *bucketManagerImpl) getBruteForceBucketRedisKeyWithNetwork(rule *config
 	failedPart := strconv.FormatUint(uint64(rule.FailedRequests), 10)
 
 	cfg := bm.cfg()
-	key = cfg.GetServer().GetRedis().GetPrefix() + "bf:{" + hashTag + "}:" + periodPart + ":" + cidrPart + ":" + failedPart + ":" + ipProto + ":" + netStr
+
+	var sb strings.Builder
+
+	sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
+	sb.WriteString("bf:{")
+	sb.WriteString(hashTag.String())
+	sb.WriteString("}:")
+	sb.WriteString(periodPart)
+	sb.WriteByte(':')
+	sb.WriteString(cidrPart)
+	sb.WriteByte(':')
+	sb.WriteString(failedPart)
+	sb.WriteByte(':')
+	sb.WriteString(ipProto)
+	sb.WriteByte(':')
+	sb.WriteString(netStr)
 
 	// Append protocol part with a separator if it exists
 	if protocolPart != "" {
-		key += ":" + protocolPart
+		sb.WriteByte(':')
+		sb.WriteString(protocolPart)
 	}
 
 	// Append OIDC Client ID part with a separator if it exists
 	if oidcCIDPart != "" {
-		key += ":oidc:" + oidcCIDPart
+		sb.WriteString(":oidc:")
+		sb.WriteString(oidcCIDPart)
 	}
+
+	key = sb.String()
 
 	logBruteForceRuleRedisKeyDebug(bm, rule, network, key)
 
@@ -868,7 +893,17 @@ func (bm *bucketManagerImpl) bfBurstKey() string {
 		proto = "-"
 	}
 
-	base := proto + "\x00" + user + "\x00" + scoped + "\x00" + bm.oidcCID
+	var sb strings.Builder
+
+	sb.WriteString(proto)
+	sb.WriteByte('\x00')
+	sb.WriteString(user)
+	sb.WriteByte('\x00')
+	sb.WriteString(scoped)
+	sb.WriteByte('\x00')
+	sb.WriteString(bm.oidcCID)
+
+	base := sb.String()
 	sum := sha1.Sum([]byte(base))
 	h := hex.EncodeToString(sum[:])
 
@@ -1593,7 +1628,15 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	}
 
 	prefix := cfg.GetServer().GetRedis().GetPrefix()
-	allowKey := prefix + "bf:rwp:allow:" + scoped + ":" + acct
+	var sb strings.Builder
+
+	sb.WriteString(prefix)
+	sb.WriteString("bf:rwp:allow:")
+	sb.WriteString(scoped)
+	sb.WriteByte(':')
+	sb.WriteString(acct)
+
+	allowKey := sb.String()
 
 	// Atomically check/add using Lua script
 	argThreshold := strconv.FormatUint(uint64(threshold), 10)
@@ -1749,7 +1792,17 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		}
 
 		pwHash := util.GetHash(util.PreparePassword(bm.password))
-		seedKey := prefix + "bf:seed:" + scoped + ":" + acct + ":" + pwHash
+		var sb strings.Builder
+
+		sb.WriteString(prefix)
+		sb.WriteString("bf:seed:")
+		sb.WriteString(scoped)
+		sb.WriteByte(':')
+		sb.WriteString(acct)
+		sb.WriteByte(':')
+		sb.WriteString(pwHash)
+
+		seedKey := sb.String()
 		ttl := cfg.GetBruteForce().GetColdStartGraceTTL()
 		argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
 
@@ -1963,11 +2016,38 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 			accountName = bm.username
 		}
 
-		hashTag := accountName + ":" + scoped
-		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
+		var sbHashTag strings.Builder
+
+		sbHashTag.WriteString(accountName)
+		sbHashTag.WriteByte(':')
+		sbHashTag.WriteString(scoped)
+
+		hashTag := sbHashTag.String()
+
+		var sb strings.Builder
+
+		sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
+		sb.WriteString(definitions.RedisPwHashKey)
+		sb.WriteString(":{")
+		sb.WriteString(hashTag)
+		sb.WriteString("}:")
+		sb.WriteString(accountName)
+		sb.WriteByte(':')
+		sb.WriteString(scoped)
+
+		key = sb.String()
 	} else {
 		hashTag := scoped
-		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + scoped
+		var sb strings.Builder
+
+		sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
+		sb.WriteString(definitions.RedisPwHashKey)
+		sb.WriteString(":{")
+		sb.WriteString(hashTag)
+		sb.WriteString("}:")
+		sb.WriteString(scoped)
+
+		key = sb.String()
 	}
 
 	util.DebugModuleWithCfg(
@@ -2020,11 +2100,38 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 			accountName = bm.username
 		}
 
-		hashTag := accountName + ":" + scoped
-		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
+		var sbHashTag strings.Builder
+
+		sbHashTag.WriteString(accountName)
+		sbHashTag.WriteByte(':')
+		sbHashTag.WriteString(scoped)
+
+		hashTag := sbHashTag.String()
+
+		var sb strings.Builder
+
+		sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
+		sb.WriteString(definitions.RedisPwHistTotalKey)
+		sb.WriteString(":{")
+		sb.WriteString(hashTag)
+		sb.WriteString("}:")
+		sb.WriteString(accountName)
+		sb.WriteByte(':')
+		sb.WriteString(scoped)
+
+		key = sb.String()
 	} else {
 		hashTag := scoped
-		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + scoped
+		var sb strings.Builder
+
+		sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
+		sb.WriteString(definitions.RedisPwHistTotalKey)
+		sb.WriteString(":{")
+		sb.WriteString(hashTag)
+		sb.WriteString("}:")
+		sb.WriteString(scoped)
+
+		key = sb.String()
 	}
 
 	util.DebugModuleWithCfg(
