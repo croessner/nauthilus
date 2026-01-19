@@ -1,17 +1,41 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package core_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	corepkg "github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
-	_ = action.NewWorker()
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	_ = action.NewWorker(config.GetFile(), log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
+
+	// Use definitions to avoid unused import
+	_ = definitions.LuaActionPost
 
 	parent := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
@@ -68,6 +92,9 @@ func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 		},
 	}
 
-	corepkg.RunLuaPostAction(args)
+	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{
+		Cfg: config.GetFile(),
+	}).(*corepkg.AuthState)
+	auth.RunLuaPostAction(args)
 	<-done
 }

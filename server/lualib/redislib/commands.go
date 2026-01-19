@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -22,70 +22,64 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
-
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
+// RedisPing checks the connectivity to the Redis server.
+func (rm *RedisManager) RedisPing(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		cmd := conn.Ping(ctx)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
+
+		L.Push(lua.LString(cmd.Val()))
+		L.Push(lua.LNil)
+
+		return 2
+	})
+}
+
 // RedisGet retrieves a value from Redis using the given key and pushes it to the Lua state based on a specified type.
-func RedisGet(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
+func (rm *RedisManager) RedisGet(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 		valueType := definitions.TypeString
 
-		if L.GetTop() == 3 {
-			valueType = L.CheckString(3)
+		if stack.GetTop() == 3 {
+			valueType = stack.CheckString(3)
 		}
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		err := convert.StringCmd(client.Get(dCtx, key), valueType, L)
+		err := convert.StringCmd(conn.Get(ctx, key), valueType, L)
 		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-
-			return 2
+			return stack.PushError(err)
 		}
 
-		return 1
-	}
+		return 2
+	})
 }
 
 // RedisSet provides a Lua function for setting a Redis key to a given value with optional expiration time in seconds.
-func RedisSet(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
+func (rm *RedisManager) RedisSet(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		value, err := convert.LuaValue(L.Get(3))
+		value, err := convert.LuaValue(stack.CheckAny(3))
 		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-
-			return 2
+			return stack.PushError(err)
 		}
 
-		// Backward compatible: 4th arg can be numeric seconds expiration.
-		// New behavior: 4th arg can be a table of options supporting Redis SET options.
 		var (
 			useArgs bool
 			args    redis.SetArgs
 		)
 
-		if L.GetTop() >= 4 {
+		if stack.GetTop() >= 4 {
 			if tbl, ok := L.Get(4).(*lua.LTable); ok {
 				useArgs = true
 
-				// Options table:
-				// nx, xx, get, keepttl as booleans
-				// ex (seconds), px (milliseconds), exat (unix seconds), pxat (unix milliseconds)
 				if v := tbl.RawGetString("nx"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
 					args.Mode = "NX"
 				}
@@ -102,7 +96,6 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 					args.KeepTTL = true
 				}
 
-				// Expiration by absolute time has precedence if provided
 				if v := tbl.RawGetString("exat"); v.Type() == lua.LTNumber {
 					sec := int64(lua.LVAsNumber(v))
 					if sec > 0 {
@@ -117,7 +110,6 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 					}
 				}
 
-				// Relative expiration
 				if v := tbl.RawGetString("ex"); v.Type() == lua.LTNumber {
 					sec := int64(lua.LVAsNumber(v))
 					if sec > 0 {
@@ -132,218 +124,110 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 					}
 				}
 			} else if L.Get(4).Type() == lua.LTNumber {
-				// Legacy seconds TTL
-				ttlSeconds := int64(L.CheckInt(4))
+				ttlSeconds := int64(stack.CheckInt(4))
 				if ttlSeconds < 0 {
-					L.Push(lua.LNil)
-					L.Push(lua.LString("expiration seconds must be >= 0"))
-
-					return 2
+					return stack.PushError(errors.New("expiration seconds must be >= 0"))
 				}
 
 				useArgs = false
-
-				// We'll call plain Set with seconds TTL
-				// below in the execution path.
-				// Keep ttlSeconds in local for use
-				// by closing over variable.
-				// To keep scope simple, we re-read from stack later.
+				args.TTL = time.Duration(ttlSeconds) * time.Second
 			}
 		}
-
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
 
 		if useArgs {
-			cmd := client.SetArgs(dCtx, key, value, args)
+			cmd := conn.SetArgs(ctx, key, value, args)
 			if cmd.Err() != nil {
-				// Redis-conformant semantics for options-table path: redis.Nil means a legitimate nil reply
-				// e.g., NX/XX condition not met or GET with no previous value.
 				if errors.Is(cmd.Err(), redis.Nil) {
-					L.Push(lua.LNil)
-
-					return 1
+					return stack.PushResults(lua.LNil, lua.LNil)
 				}
 
-				L.Push(lua.LNil)
-				L.Push(lua.LString(cmd.Err().Error()))
-
-				return 2
+				return stack.PushError(cmd.Err())
 			}
 
-			// Return whatever server returned as string (typically "OK"; with GET, may be previous value)
-			L.Push(lua.LString(cmd.Val()))
-
-			return 1
+			return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
 		}
 
-		// Legacy simple Set path
-		expiration := time.Duration(0)
-		if L.GetTop() == 4 && L.Get(4).Type() == lua.LTNumber {
-			expiration = time.Duration(L.CheckInt(4)) * time.Second
-		}
-
-		cmd := client.Set(dCtx, key, value, expiration)
+		cmd := conn.Set(ctx, key, value, args.TTL)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
+			if errors.Is(cmd.Err(), redis.Nil) {
+				return stack.PushResults(lua.LNil, lua.LNil)
+			}
 
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LString(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisIncr increments the integer value of a Redis key by 1 and returns the new value or an error if it fails.
-func RedisIncr(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
+// RedisIncr increments the value of a key in Redis.
+func (rm *RedisManager) RedisIncr(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.Incr(dCtx, key)
+		cmd := conn.Incr(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisDel deletes a given Redis key and reports the number of keys removed or an error if the operation fails.
-func RedisDel(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
+// RedisDel deletes a key from Redis.
+func (rm *RedisManager) RedisDel(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.Del(dCtx, key)
+		cmd := conn.Del(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisExpire sets an expiration time on a Redis key and returns true if successful, or nil and an error if it fails.
-func RedisExpire(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-		expiration := L.CheckNumber(3)
+// RedisRename renames a key in Redis.
+func (rm *RedisManager) RedisRename(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		oldKey := stack.CheckString(2)
+		newKey := stack.CheckString(3)
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.Expire(dCtx, key, time.Duration(expiration)*time.Second)
+		cmd := conn.Rename(ctx, oldKey, newKey)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LBool(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisRename renames a Redis key to a new key; returns an error if the operation fails.
-func RedisRename(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		oldKey := L.CheckString(2)
-		newKey := L.CheckString(3)
+// RedisExpire sets an expiration time on a key.
+func (rm *RedisManager) RedisExpire(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		seconds := stack.CheckInt(3)
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.Rename(dCtx, oldKey, newKey)
+		cmd := conn.Expire(ctx, key, time.Duration(seconds)*time.Second)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LString(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LBool(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisPing executes a Redis PING command and returns the result or an error message if it fails. Increases Redis read counter on success.
-func RedisPing(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+// RedisExists checks if a key exists in Redis.
+func (rm *RedisManager) RedisExists(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.Ping(dCtx)
+		cmd := conn.Exists(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LString(cmd.Val()))
-
-		return 1
-	}
-}
-
-// RedisExists checks if a given key exists in Redis, returning the count of matching keys as a Lua number.
-func RedisExists(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
-
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.Exists(dCtx, key)
-		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-		}
-
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }

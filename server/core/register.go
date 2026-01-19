@@ -21,15 +21,15 @@ package core
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -38,54 +38,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
-	"github.com/spf13/viper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
 )
-
-type TOTPPageData struct {
-	WantWelcome         bool
-	WantPolicy          bool
-	WantTos             bool
-	HaveError           bool
-	Title               string
-	Welcome             string
-	LogoImage           string
-	LogoImageAlt        string
-	TOTPMessage         string
-	TOTPCopied          string
-	Code                string
-	Submit              string
-	ErrorMessage        string
-	CSRFToken           string
-	QRCode              string
-	PostTOTPEndpoint    string
-	LanguageTag         string
-	LanguageCurrentName string
-	LanguagePassive     []Language
-}
-
-type HomePageData struct {
-	InDevelopment       bool
-	WantWelcome         bool
-	WantPolicy          bool
-	WantTos             bool
-	HaveTOTP            bool
-	Title               string
-	Welcome             string
-	LogoImage           string
-	LogoImageAlt        string
-	HomeMessage         string
-	RegisterTOTP        string
-	EndpointTOTP        string
-	Or                  string
-	RegisterWebAuthn    string
-	EndpointWebAuthn    string
-	LanguageTag         string
-	LanguageCurrentName string
-	LanguagePassive     []Language
-}
 
 // sessionCleaner removes all user information from the current session.
 func sessionCleaner(ctx *gin.Context) {
@@ -106,34 +62,41 @@ func sessionCleaner(ctx *gin.Context) {
 }
 
 // LoginGET2FAHandler Page '/2fa/v1/register'
-func LoginGET2FAHandler(ctx *gin.Context) {
+func LoginGET2FAHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		LoginGET2FAHandlerWithDeps(ctx, deps)
+	}
+}
+
+// LoginGET2FAHandlerWithDeps is the DI variant of LoginGET2FAHandler.
+func LoginGET2FAHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	session := sessions.Default(ctx)
 
 	cookieValue := session.Get(definitions.CookieLang)
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, definitions.TwoFAv1Root+viper.GetString("login_2fa_page"), config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := frontend.CreateLanguagePassive(ctx, deps.Cfg, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage, config.DefaultLanguageTags, languageCurrentName)
 
 	totpSecret, _, _ := getSessionTOTPSecret(ctx)
 	if totpSecret == "" {
 		sessionCleaner(ctx)
-		displayLoginpage(ctx, languageCurrentName, languagePassive)
+		displayLoginpage(ctx, languageCurrentName, languagePassive, deps)
 	} else {
 		cookieValue = session.Get(definitions.CookieHome)
 		if cookieValue != nil {
 			if loggedIn, assertOk := cookieValue.(bool); assertOk && loggedIn {
-				processTwoFARedirect(ctx, true)
+				processTwoFARedirect(ctx, true, deps)
 
 				return
 			}
 		}
 
-		displayTOTPpage(ctx, languageCurrentName, languagePassive)
+		displayTOTPpage(ctx, languageCurrentName, languagePassive, deps)
 	}
 }
 
 // displayLoginpage is a function that displays the login page.
-func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePassive []Language) {
+func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePassive []frontend.Language, deps AuthDeps) {
 	var (
 		haveError    bool
 		errorMessage string
@@ -145,36 +108,36 @@ func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePass
 
 	if errorMessage = ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == definitions.PasswordFail {
-			errorMessage = getLocalized(ctx, definitions.PasswordFail)
+			errorMessage = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, definitions.PasswordFail)
 		}
 
 		haveError = true
 	}
 
-	// Using data structure from hydra.go
-	loginData := &LoginPageData{
-		Title: getLocalized(ctx, "Login"),
+	// Using data structure from frontend package
+	loginData := &frontend.LoginPageData{
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
 		WantWelcome: func() bool {
-			if viper.GetString("login_page_welcome") != "" {
+			if deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
 			}
 
 			return false
 		}(),
-		Welcome:             viper.GetString("login_page_welcome"),
-		LogoImage:           viper.GetString("default_logo_image"),
-		LogoImageAlt:        viper.GetString("login_page_logo_image_alt"),
+		Welcome:             deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
+		LogoImage:           deps.Cfg.GetServer().Frontend.GetDefaultLogoImage(),
+		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		Login:               getLocalized(ctx, "Login"),
-		Privacy:             getLocalized(ctx, "We'll never share your data with anyone else."),
-		LoginPlaceholder:    getLocalized(ctx, "Please enter your username or email address"),
-		Password:            getLocalized(ctx, "Password"),
-		PasswordPlaceholder: getLocalized(ctx, "Please enter your password"),
-		Submit:              getLocalized(ctx, "Submit"),
-		Or:                  getLocalized(ctx, "or"),
-		Device:              getLocalized(ctx, "Login with WebAuthn"),
-		PostLoginEndpoint:   definitions.TwoFAv1Root + viper.GetString("login_2fa_page"),
+		Login:               frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
+		Privacy:             frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "We'll never share your data with anyone else."),
+		LoginPlaceholder:    frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please enter your username or email address"),
+		Password:            frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Password"),
+		PasswordPlaceholder: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please enter your password"),
+		Submit:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Submit"),
+		Or:                  frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "or"),
+		Device:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login with WebAuthn"),
+		PostLoginEndpoint:   definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage,
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -184,37 +147,33 @@ func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePass
 
 	ctx.HTML(http.StatusOK, "login.html", loginData)
 
-	level.Info(log.Logger).Log(
+	level.Info(deps.Logger).Log(
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyUriPath, definitions.TwoFAv1Root+viper.GetString("login_2fa_page"),
+		definitions.LogKeyUriPath, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage,
 	)
 }
 
 // displayTOTPpage displays the TOTP authentication page.
-// It takes a Gin context, the current language name, and a slice of passive languages as input.
-// It retrieves the CSRF token, session, and localized messages from the context.
-// It constructs a TwoFactorData struct with the necessary parameters for the TOTP page.
-// Finally, it renders the TOTP page template with the TwoFactorData struct.
-func displayTOTPpage(ctx *gin.Context, languageCurrentName string, languagePassive []Language) {
+func displayTOTPpage(ctx *gin.Context, languageCurrentName string, languagePassive []frontend.Language, deps AuthDeps) {
 	csrfToken := ctx.GetString(definitions.CtxCSRFTokenKey)
 	session := sessions.Default(ctx)
 
-	twoFactorData := &TwoFactorData{
-		Title: getLocalized(ctx, "Login"),
+	twoFactorData := &frontend.TwoFactorData{
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
 		WantWelcome: func() bool {
-			if viper.GetString("login_page_welcome") != "" {
+			if deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
 			}
 
 			return false
 		}(),
-		Welcome:             viper.GetString("login_page_welcome"),
-		LogoImage:           viper.GetString("default_logo_image"),
-		LogoImageAlt:        viper.GetString("totp_page_logo_image_alt"),
-		Code:                getLocalized(ctx, "OTP-Code"),
-		Tos:                 getLocalized(ctx, "Terms of service"),
-		Submit:              getLocalized(ctx, "Submit"),
-		PostLoginEndpoint:   definitions.TwoFAv1Root + viper.GetString("login_2fa_page"),
+		Welcome:             deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
+		LogoImage:           deps.Cfg.GetServer().Frontend.GetDefaultLogoImage(),
+		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetNotifyPageLogoImageAlt(), // Corrected from totp_page_logo_image_alt
+		Code:                frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "OTP-Code"),
+		Tos:                 frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Terms of service"),
+		Submit:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Submit"),
+		PostLoginEndpoint:   definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage,
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -254,14 +213,21 @@ func getSessionTOTPSecret(ctx *gin.Context) (string, string, string) {
 }
 
 // LoginPOST2FAHandler Page '/2fa/v1/register/post'
-func LoginPOST2FAHandler(ctx *gin.Context) {
+func LoginPOST2FAHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		LoginPOST2FAHandlerWithDeps(ctx, deps)
+	}
+}
+
+// LoginPOST2FAHandlerWithDeps is the DI variant of LoginPOST2FAHandler.
+func LoginPOST2FAHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	var (
 		authCompleteWithOK   bool
 		authCompleteWithFail bool
 		guid                 = ctx.GetString(definitions.CtxGUIDKey)
 	)
 
-	authResult := processTOTPSecret(ctx)
+	authResult := processTOTPSecret(ctx, deps)
 
 	if authResult == definitions.AuthResultOK {
 		authCompleteWithOK = true
@@ -272,17 +238,22 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 	}
 
 	auth := &AuthState{
-		HTTPClientContext: ctx,
-		HTTPClientRequest: ctx.Request,
-		GUID:              guid,
-		Username:          ctx.PostForm("username"),
-		Password:          ctx.PostForm("password"),
-		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		deps: deps,
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
+			Username:          ctx.PostForm("username"),
+			Password:          ctx.PostForm("password"),
+			Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		},
+		Runtime: AuthRuntime{
+			GUID: guid,
+		},
 	}
 
 	// It might be the second call after 2FA! In this case, there does not exist any username or password.
-	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
-		HandleErr(ctx, errors.ErrInvalidUsername)
+	if auth.Request.Username != "" && !util.ValidateUsername(auth.Request.Username) {
+		HandleErrWithDeps(ctx, errors.ErrInvalidUsername, deps)
 
 		return
 	}
@@ -291,7 +262,7 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx)
 
 	if reject := auth.PreproccessAuthRequest(ctx); reject {
-		HandleErr(ctx, errors.ErrBruteForceAttack)
+		HandleErrWithDeps(ctx, errors.ErrBruteForceAttack, deps)
 
 		return
 	}
@@ -302,18 +273,18 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 		// User does not have a TOTP secret
 		if _, found := auth.GetTOTPSecretOk(); !found {
 			if authResult == definitions.AuthResultOK {
-				tolerate.GetTolerate().SetIPAddress(auth.Ctx(), auth.ClientIP, auth.Username, true)
+				tolerate.GetTolerate().SetIPAddress(auth.Ctx(), auth.GetClientIP(), auth.GetUsername(), true)
 				authCompleteWithOK = true
 			}
 
 			if authResult == definitions.AuthResultFail {
-				tolerate.GetTolerate().SetIPAddress(auth.Ctx(), auth.ClientIP, auth.Username, false)
+				tolerate.GetTolerate().SetIPAddress(auth.Ctx(), auth.GetClientIP(), auth.GetUsername(), false)
 				authCompleteWithFail = true
 			}
 		}
 	}
 
-	processAuthResult(ctx, authResult, auth, authCompleteWithOK, authCompleteWithFail)
+	processAuthResult(ctx, authResult, auth, authCompleteWithOK, authCompleteWithFail, deps)
 }
 
 // processTOTPSecret retrieves the TOTP secret and code from the session and the POST form, respectively.
@@ -334,14 +305,14 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 //	and saves the session.
 //
 // Finally, it returns the authentication result.
-func processTOTPSecret(ctx *gin.Context) definitions.AuthResult {
+func processTOTPSecret(ctx *gin.Context, deps AuthDeps) definitions.AuthResult {
 	authResult := definitions.AuthResultUnset
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	session := sessions.Default(ctx)
 
 	totpSecret, totpCode, account := getSessionTOTPSecret(ctx)
 	if totpSecret != "" && totpCode != "" && account != "" {
-		if errFail := totpValidation(guid, totpCode, account, totpSecret); errFail != nil {
+		if errFail := totpValidation(guid, totpCode, account, totpSecret, deps); errFail != nil {
 			authResult = definitions.AuthResultFail
 		} else {
 			cookieValue := session.Get(definitions.CookieAuthResult)
@@ -358,33 +329,33 @@ func processTOTPSecret(ctx *gin.Context) definitions.AuthResult {
 // ctx: The Gin context.
 // authResult: The result of the authentication.
 // auth: The AuthState object.
-func processAuthResult(ctx *gin.Context, authResult definitions.AuthResult, auth *AuthState, authCompleteWithOK bool, authCompleteWithFail bool) {
+func processAuthResult(ctx *gin.Context, authResult definitions.AuthResult, auth *AuthState, authCompleteWithOK bool, authCompleteWithFail bool, deps AuthDeps) {
 	if authResult == definitions.AuthResultOK {
 		if !authCompleteWithOK {
 			if err := saveSessionData(ctx, authResult, auth); err != nil {
-				HandleErr(ctx, err)
+				HandleErrWithDeps(ctx, err, deps)
 
 				return
 			}
 		}
 
-		processTwoFARedirect(ctx, authCompleteWithOK)
+		processTwoFARedirect(ctx, authCompleteWithOK, deps)
 	} else if authResult == definitions.AuthResultFail {
 		if !authCompleteWithFail {
 			if err := saveSessionData(ctx, authResult, auth); err != nil {
-				HandleErr(ctx, err)
+				HandleErrWithDeps(ctx, err, deps)
 
 				return
 			}
 
-			processTwoFARedirect(ctx, authCompleteWithFail)
+			processTwoFARedirect(ctx, authCompleteWithFail, deps)
 
 			return
 		}
 
-		handleAuthFailureAndRedirect(ctx, auth)
+		handleAuthFailureAndRedirect(ctx, auth, deps)
 	} else {
-		handleAuthFailureAndRedirect(ctx, auth)
+		handleAuthFailureAndRedirect(ctx, auth, deps)
 	}
 }
 
@@ -394,17 +365,17 @@ func processAuthResult(ctx *gin.Context, authResult definitions.AuthResult, auth
 // It sets the `targetURI` to the appropriate URL based on the authentication complete status.
 // It redirects the context to the `targetURI` with the HTTP status of `http.StatusFound`.
 // It logs the redirect information with the `guid`, username, authentication status, and URI path.
-func processTwoFARedirect(ctx *gin.Context, authComplete bool) {
+func processTwoFARedirect(ctx *gin.Context, authComplete bool, deps AuthDeps) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	targetURI := definitions.TwoFAv1Root + viper.GetString("login_2fa_post_page")
+	targetURI := definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage + "/home"
 	if !authComplete {
-		targetURI = definitions.TwoFAv1Root + viper.GetString("login_2fa_page")
+		targetURI = definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage
 	}
 
 	ctx.Redirect(http.StatusFound, targetURI)
 
-	level.Info(log.Logger).Log(
+	level.Info(deps.Logger).Log(
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyUsername, ctx.PostForm("username"),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
@@ -445,6 +416,8 @@ func saveSessionData(ctx *gin.Context, authResult definitions.AuthResult, auth *
 	if totpSecret, found = auth.GetTOTPSecretOk(); found {
 		session.Set(definitions.CookieHaveTOTP, true)
 		session.Set(definitions.CookieTOTPSecret, totpSecret)
+	} else {
+		session.Set(definitions.CookieHaveTOTP, false)
 	}
 
 	if uniqueUserID, found = auth.GetUniqueUserIDOk(); found {
@@ -458,7 +431,7 @@ func saveSessionData(ctx *gin.Context, authResult definitions.AuthResult, auth *
 	session.Set(definitions.CookieAuthResult, uint8(authResult))
 	session.Set(definitions.CookieUsername, ctx.PostForm("username"))
 	session.Set(definitions.CookieAccount, account)
-	session.Set(definitions.CookieUserBackend, uint8(auth.SourcePassDBBackend))
+	session.Set(definitions.CookieUserBackend, uint8(auth.Runtime.SourcePassDBBackend))
 
 	if err := session.Save(); err != nil {
 		return err
@@ -473,10 +446,10 @@ func saveSessionData(ctx *gin.Context, authResult definitions.AuthResult, auth *
 //
 // ctx: The Gin context.
 // auth: The AuthState object.
-func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState) {
+func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState, deps AuthDeps) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	auth.ClientIP = ctx.GetString(definitions.CtxClientIPKey)
+	auth.Request.ClientIP = ctx.GetString(definitions.CtxClientIPKey)
 
 	auth.UpdateBruteForceBucketsCounter(ctx)
 
@@ -484,14 +457,14 @@ func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState) {
 
 	ctx.Redirect(
 		http.StatusFound,
-		definitions.TwoFAv1Root+viper.GetString("login_2fa_page")+"?_error="+definitions.PasswordFail,
+		definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage+"?_error="+definitions.PasswordFail,
 	)
 
-	level.Info(log.Logger).Log(
+	level.Info(deps.Logger).Log(
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyUsername, ctx.PostForm("username"),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
-		definitions.LogKeyUriPath, definitions.TwoFAv1Root+viper.GetString("login_2fa_page")+"/post",
+		definitions.LogKeyUriPath, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage+"/post",
 	)
 }
 
@@ -504,14 +477,21 @@ func sessionCleanupTOTP(ctx *gin.Context) {
 }
 
 // totpValidation calls the totpValidation method of the ApiConfig struct to validate a TOTP code for a given account.
-func totpValidation(guid string, code string, account string, totpSecret string) error {
-	a := ApiConfig{guid: guid}
+func totpValidation(guid string, code string, account string, totpSecret string, deps AuthDeps) error {
+	a := ApiConfig{guid: guid, deps: deps}
 
 	return a.totpValidation(code, account, totpSecret)
 }
 
 // Register2FAHomeHandler Page '/2fa/v1/register/home'
-func Register2FAHomeHandler(ctx *gin.Context) {
+func Register2FAHomeHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		Register2FAHomeHandlerWithDeps(ctx, deps)
+	}
+}
+
+// Register2FAHomeHandlerWithDeps is the DI variant of Register2FAHomeHandler.
+func Register2FAHomeHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	var haveTOTP bool
 
 	session := sessions.Default(ctx)
@@ -523,14 +503,14 @@ func Register2FAHomeHandler(ctx *gin.Context) {
 
 	cookieValue = session.Get(definitions.CookieAuthResult)
 	if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
-		HandleErr(ctx, errors.ErrNotLoggedIn)
+		HandleErrWithDeps(ctx, errors.ErrNotLoggedIn, deps)
 
 		return
 	}
 
 	cookieValue = session.Get(definitions.CookieAccount)
 	if cookieValue == nil {
-		HandleErr(ctx, errors.ErrNoAccount)
+		HandleErrWithDeps(ctx, errors.ErrNoAccount, deps)
 
 		return
 	}
@@ -542,27 +522,27 @@ func Register2FAHomeHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, definitions.TwoFAv1Root+viper.GetString("login_2fa_post_page"), config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := frontend.CreateLanguagePassive(ctx, deps.Cfg, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage+"/post", config.DefaultLanguageTags, languageCurrentName)
 
-	homeData := &HomePageData{
-		Title: getLocalized(ctx, "Home"),
+	homeData := &frontend.HomePageData{
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Home"),
 		WantWelcome: func() bool {
-			if viper.GetString("home_page_welcome") != "" {
+			if deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
 			}
 
 			return false
 		}(),
 		HaveTOTP:            haveTOTP,
-		Welcome:             viper.GetString("home_page_welcome"),
-		LogoImage:           viper.GetString("default_logo_image"),
-		LogoImageAlt:        viper.GetString("home_page_logo_image_alt"),
-		HomeMessage:         getLocalized(ctx, "Please make a selection"),
-		RegisterTOTP:        getLocalized(ctx, "Register TOTP"),
-		EndpointTOTP:        definitions.TwoFAv1Root + viper.GetString("totp_page"),
-		Or:                  getLocalized(ctx, "or"),
-		RegisterWebAuthn:    getLocalized(ctx, "Register WebAuthn"),
-		EndpointWebAuthn:    definitions.TwoFAv1Root + viper.GetString("webauthn_page"),
+		Welcome:             deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
+		LogoImage:           deps.Cfg.GetServer().Frontend.GetDefaultLogoImage(),
+		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetNotifyPageLogoImageAlt(), // Corrected
+		HomeMessage:         frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please make a selection"),
+		RegisterTOTP:        frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Register TOTP"),
+		EndpointTOTP:        definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage, // Corrected
+		Or:                  frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "or"),
+		RegisterWebAuthn:    frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Register WebAuthn"),
+		EndpointWebAuthn:    definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage + "/webauthn", // Placeholder
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -573,7 +553,14 @@ func Register2FAHomeHandler(ctx *gin.Context) {
 }
 
 // RegisterTotpGETHandler Page '/2fa/v1/totp'
-func RegisterTotpGETHandler(ctx *gin.Context) {
+func RegisterTotpGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		RegisterTotpGETHandlerWithDeps(ctx, deps)
+	}
+}
+
+// RegisterTotpGETHandlerWithDeps is the DI variant of RegisterTotpGETHandler.
+func RegisterTotpGETHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	var (
 		haveError    bool
 		errorMessage string
@@ -591,7 +578,7 @@ func RegisterTotpGETHandler(ctx *gin.Context) {
 
 			session.Save()
 
-			ctx.Redirect(http.StatusFound, viper.GetString("notify_page")+"?message=You have already registered TOTP")
+			ctx.Redirect(http.StatusFound, deps.Cfg.GetServer().Frontend.GetNotifyPage()+"?message=You have already registered TOTP")
 
 			return
 		}
@@ -599,14 +586,14 @@ func RegisterTotpGETHandler(ctx *gin.Context) {
 
 	cookieValue = session.Get(definitions.CookieAuthResult)
 	if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
-		HandleErr(ctx, errors.ErrNotLoggedIn)
+		HandleErrWithDeps(ctx, errors.ErrNotLoggedIn, deps)
 
 		return
 	}
 
 	cookieValue = session.Get(definitions.CookieAccount)
 	if cookieValue == nil {
-		HandleErr(ctx, errors.ErrNoAccount)
+		HandleErrWithDeps(ctx, errors.ErrNoAccount, deps)
 
 		return
 	}
@@ -616,12 +603,12 @@ func RegisterTotpGETHandler(ctx *gin.Context) {
 	totpURL := session.Get(definitions.CookieTOTPURL)
 	if totpURL == nil {
 		key, err := totp.Generate(totp.GenerateOpts{
-			Issuer:      viper.GetString("totp_issuer"),
+			Issuer:      deps.Cfg.GetServer().Frontend.GetTotpIssuer(),
 			AccountName: account,
 		})
 
 		if err != nil {
-			HandleErr(ctx, err)
+			HandleErrWithDeps(ctx, err, deps)
 
 			return
 		}
@@ -636,34 +623,34 @@ func RegisterTotpGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, definitions.TwoFAv1Root+viper.GetString("totp_page"), config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := frontend.CreateLanguagePassive(ctx, deps.Cfg, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage, config.DefaultLanguageTags, languageCurrentName)
 
 	if errorMessage = ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == definitions.PasswordFail {
-			errorMessage = getLocalized(ctx, definitions.PasswordFail)
+			errorMessage = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, definitions.PasswordFail)
 		}
 
 		haveError = true
 	}
 
-	totpData := TOTPPageData{
-		Title: getLocalized(ctx, "Login"),
+	totpData := frontend.TOTPPageData{
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
 		WantWelcome: func() bool {
-			if viper.GetString("totp_page_welcome") != "" {
+			if deps.Cfg.GetServer().Frontend.GetNotifyPageWelcome() != "" { // Reusing notify welcome
 				return true
 			}
 
 			return false
 		}(),
-		Welcome:             viper.GetString("totp_page_welcome"),
-		LogoImage:           viper.GetString("default_logo_image"),
-		LogoImageAlt:        viper.GetString("totp_page_logo_image_alt"),
+		Welcome:             deps.Cfg.GetServer().Frontend.GetNotifyPageWelcome(),
+		LogoImage:           deps.Cfg.GetServer().Frontend.GetDefaultLogoImage(),
+		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetNotifyPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		TOTPMessage:         getLocalized(ctx, "Please scan and verify the following QR code"),
-		TOTPCopied:          getLocalized(ctx, "Copied to clipboard!"),
-		Code:                getLocalized(ctx, "OTP-Code"),
-		Submit:              getLocalized(ctx, "Submit"),
+		TOTPMessage:         frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please scan and verify the following QR code"),
+		TOTPCopied:          frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Copied to clipboard!"),
+		Code:                frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "OTP-Code"),
+		Submit:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Submit"),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -671,14 +658,21 @@ func RegisterTotpGETHandler(ctx *gin.Context) {
 		WantPolicy:          false,
 		CSRFToken:           csrfToken,
 		QRCode:              totpURL.(string),
-		PostTOTPEndpoint:    definitions.TwoFAv1Root + viper.GetString("totp_page"),
+		PostTOTPEndpoint:    definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage,
 	}
 
 	ctx.HTML(http.StatusOK, "regtotp.html", totpData)
 }
 
 // RegisterTotpPOSTHandler Page '/2fa/v1/totp/post'
-func RegisterTotpPOSTHandler(ctx *gin.Context) {
+func RegisterTotpPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		RegisterTotpPOSTHandlerWithDeps(ctx, deps)
+	}
+}
+
+// RegisterTotpPOSTHandlerWithDeps is the DI variant of RegisterTotpPOSTHandler.
+func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	var (
 		accountName   string
 		err           error
@@ -691,19 +685,22 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 	cookieValue := session.Get(definitions.CookieTOTPURL)
 	if cookieValue == nil {
-		HandleErr(ctx, errors.ErrNoTOTPURL)
+		HandleErrWithDeps(ctx, errors.ErrNoTOTPURL, deps)
 
 		return
 	}
 
 	if totpKey, err = otp.NewKeyFromURL(cookieValue.(string)); err != nil {
-		HandleErr(ctx, err)
+		HandleErrWithDeps(ctx, err, deps)
 
 		return
 	}
 
-	if config.GetFile().GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
-		util.DebugModule(
+	if deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && deps.Env.GetDevMode() {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			deps.Cfg,
+			deps.Logger,
 			definitions.DbgWebAuthn,
 			definitions.LogKeyGUID, guid,
 			"totp_key", fmt.Sprintf("%+v", totpKey),
@@ -711,16 +708,26 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	}
 
 	if !totp.Validate(ctx.PostForm("code"), totpKey.Secret()) {
-		ctx.Redirect(
-			http.StatusFound,
-			definitions.TwoFAv1Root+viper.GetString("totp_page")+"?_error="+definitions.InvalidCode,
-		)
+		var sb strings.Builder
 
-		level.Info(log.Logger).Log(
+		sb.WriteString(definitions.TwoFAv1Root)
+		sb.WriteString(deps.Cfg.GetServer().Frontend.TwoFactorPage)
+		sb.WriteString("?_error=")
+		sb.WriteString(definitions.InvalidCode)
+
+		ctx.Redirect(http.StatusFound, sb.String())
+
+		var sbLog strings.Builder
+
+		sbLog.WriteString(definitions.TwoFAv1Root)
+		sbLog.WriteString(deps.Cfg.GetServer().Frontend.TwoFactorPage)
+		sbLog.WriteString("/post")
+
+		level.Info(deps.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyUsername, ctx.PostForm("username"),
 			definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
-			definitions.LogKeyUriPath, definitions.TwoFAv1Root+viper.GetString("totp_page")+"/post",
+			definitions.LogKeyUriPath, sbLog.String(),
 		)
 
 		return
@@ -729,11 +736,16 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	username := session.Get(definitions.CookieUsername).(string)
 
 	auth := &AuthState{
-		HTTPClientContext: ctx,
-		HTTPClientRequest: ctx.Request,
-		GUID:              guid,
-		Username:          username,
-		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		deps: deps,
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
+			Username:          username,
+			Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		},
+		Runtime: AuthRuntime{
+			GUID: guid,
+		},
 	}
 
 	sourceBackend := session.Get(definitions.CookieUserBackend)
@@ -741,19 +753,19 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	switch sourceBackend.(uint8) {
 	case uint8(definitions.BackendLDAP):
 		// We have no mapping to an optional LDAP pool!
-		addTOTPSecret = NewLDAPManager(definitions.DefaultBackendName).AddTOTPSecret
+		addTOTPSecret = NewLDAPManager(definitions.DefaultBackendName, deps).AddTOTPSecret
 	case uint8(definitions.BackendLua):
 		// We have no mapping to an optional Lua backend!
-		addTOTPSecret = NewLuaManager(definitions.DefaultBackendName).AddTOTPSecret
+		addTOTPSecret = NewLuaManager(definitions.DefaultBackendName, deps).AddTOTPSecret
 	default:
-		HandleErr(ctx, errors.NewDetailedError("unsupported_backend").WithDetail(
-			"Database backend not supported"))
+		HandleErrWithDeps(ctx, errors.NewDetailedError("unsupported_backend").WithDetail(
+			"Database backend not supported"), deps)
 
 		return
 	}
 
 	if err = addTOTPSecret(auth, NewTOTPSecret(totpKey.Secret())); err != nil {
-		HandleErr(ctx, err)
+		HandleErrWithDeps(ctx, err, deps)
 
 		return
 	}
@@ -763,7 +775,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	*/
 
 	useCache := false
-	for _, backendType := range config.GetFile().GetServer().GetBackends() {
+	for _, backendType := range deps.Cfg.GetServer().GetBackends() {
 		if backendType.Get() == definitions.BackendCache {
 			useCache = true
 
@@ -773,29 +785,37 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 	if useCache {
 		userKeys := config.NewStringSet()
-		protocols := config.GetFile().GetAllProtocols()
+		protocols := deps.Cfg.GetAllProtocols()
 
-		accountName, err = backend.LookupUserAccountFromRedis(auth.Ctx(), username)
+		accountName, err = backend.LookupUserAccountFromRedis(auth.Ctx(), deps.Cfg, deps.Redis, username)
 		if err != nil {
-			HandleErr(ctx, err)
+			HandleErrWithDeps(ctx, err, deps)
 
 			return
 		}
 
 		for index := range protocols {
-			cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
+			cacheNames := backend.GetCacheNames(deps.Cfg, deps.Channel, protocols[index], definitions.CacheAll)
 
 			for _, cacheName := range cacheNames.GetStringSlice() {
-				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+				var sb strings.Builder
+
+				sb.WriteString(deps.Cfg.GetServer().GetRedis().GetPrefix())
+				sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+				sb.WriteString(cacheName)
+				sb.WriteByte(':')
+				sb.WriteString(accountName)
+
+				userKeys.Set(sb.String())
 			}
 		}
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
-			if _, err = rediscli.GetClient().GetWriteHandle().Del(auth.Ctx(), userKey).Result(); err != nil {
+			if _, err = deps.Redis.GetWriteHandle().Del(auth.Ctx(), userKey).Result(); err != nil {
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-				level.Error(log.Logger).Log(
+				level.Error(deps.Logger).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyMsg, "Failed to purge user from cache",
 					definitions.LogKeyError, err,
@@ -815,12 +835,23 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	session.Delete(definitions.CookieHome)
 	session.Save()
 
-	ctx.Redirect(http.StatusFound, viper.GetString("notify_page")+"?message=OTP code is valid. Registration completed successfully")
+	var sbRedirect strings.Builder
 
-	level.Info(log.Logger).Log(
+	sbRedirect.WriteString(deps.Cfg.GetServer().Frontend.GetNotifyPage())
+	sbRedirect.WriteString("?message=OTP code is valid. Registration completed successfully")
+
+	ctx.Redirect(http.StatusFound, sbRedirect.String())
+
+	var sbLog strings.Builder
+
+	sbLog.WriteString(definitions.TwoFAv1Root)
+	sbLog.WriteString(deps.Cfg.GetServer().Frontend.TwoFactorPage)
+	sbLog.WriteString("/post")
+
+	level.Info(deps.Logger).Log(
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyUsername, ctx.PostForm("username"),
+		definitions.LogKeyUsername, username,
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
-		definitions.LogKeyUriPath, definitions.TwoFAv1Root+viper.GetString("totp_page")+"/post",
+		definitions.LogKeyUriPath, sbLog.String(),
 	)
 }

@@ -1,9 +1,26 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package core
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -38,6 +55,7 @@ func setupMinimalTestConfig(t *testing.T) {
 	_ = be.Set("cache")
 	cfg.Server.Backends = []*config.Backend{&be}
 	config.SetTestFile(cfg)
+	SetDefaultConfigFile(config.GetFile())
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 }
@@ -48,27 +66,38 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 
 	// redismock
 	db, mock := redismock.NewClientMock()
-	rediscli.NewTestClient(db)
+	redisClient := rediscli.NewTestClient(db)
+
+	cfg := config.GetFile()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	deps := HTTPDeps{
+		Cfg:          cfg,
+		Logger:       logger,
+		Redis:        redisClient,
+		AccountCache: nil,
+	}
+	adminDeps := NewRestAdminDeps(cfg, logger, redisClient, nil)
 
 	// router
-	composer := DefaultRouterComposer{}
+	composer := NewDefaultRouterComposer(deps)
 	r := composer.ComposeEngine()
-	DefaultBootstrap{}.InitGinLogging()
+	NewDefaultBootstrap(deps).InitGinLogging()
 
 	// Minimal route setup to avoid import cycle with handler/backchannel
 	group := r.Group("/api/v1")
 
 	// Brute-force endpoints
-	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush, HandleBruteForceRuleFlush)
-	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush+"/async", HandleBruteForceRuleFlushAsync)
+	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush, HandleBruteForceRuleFlush(adminDeps))
+	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush+"/async", HandleBruteForceRuleFlushAsync(adminDeps))
 
 	// Cache endpoints
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, HandleUserFlush)
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", HandleUserFlushAsync)
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, HandleUserFlush(adminDeps))
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", HandleUserFlushAsync(adminDeps))
 
 	// Async job status
 	ag := group.Group("/async")
-	ag.GET("/jobs/:jobId", HandleAsyncJobStatus)
+	ag.GET("/jobs/:jobId", NewAsyncJobStatusHandler(cfg, logger, redisClient))
 
 	return r, mock
 }
@@ -113,7 +142,7 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 	// ResolveAccountIdentifier may treat identifier as account directly; do not require HGET here for stability
 
 	// getIPsFromPWHistSet may not be called in minimal path; do not assert SMEMBERS strictly
-	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user)
+	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
 
 	// processUserCmd: UNLINK PW_HIST_IPS set, SREM affected accounts
 	mock.ExpectUnlink(pwHistSet).SetVal(1)
@@ -185,13 +214,14 @@ func TestCacheFlushAsync_Enqueue_OK(t *testing.T) {
 	// Stub job id and time and async runner
 	prevGen := genJobID
 	prevNow := nowFunc
-	prevStarter := asyncStarter
+	prevStarter := asyncStarterWithDeps
 	genJobID = func() string { return "job-fixed" }
 	nowFunc = func() time.Time { return time.Unix(0, 0).UTC() }
-	asyncStarter = func(jobID string, guid string, fn func(ctx context.Context) (int, []string, error)) { /* no-op in test */
+	asyncStarterWithDeps = func(_ asyncJobDeps, _ string, _ string, _ func(ctx context.Context) (int, []string, error)) {
+		/* no-op in test */
 	}
 
-	defer func() { genJobID = prevGen; nowFunc = prevNow; asyncStarter = prevStarter }()
+	defer func() { genJobID = prevGen; nowFunc = prevNow; asyncStarterWithDeps = prevStarter }()
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "async:job:" + "job-fixed"
 

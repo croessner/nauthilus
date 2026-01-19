@@ -22,8 +22,32 @@ local nauthilus_mail = require("nauthilus_mail")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_otel = require("nauthilus_opentelemetry")
+local time = require("time")
 
 local template = require("template")
+
+local ALERTS_ENABLED = nauthilus_util.toboolean(nauthilus_util.getenv("ADMIN_ALERTS_ENABLED", "true"))
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+local ADMIN_ALERT_MIN_UNIQUE_IPS = tonumber(nauthilus_util.getenv("ADMIN_ALERT_MIN_UNIQUE_IPS", "100")) or 100
+local ADMIN_ALERT_MIN_IPS_PER_USER = tonumber(nauthilus_util.getenv("ADMIN_ALERT_MIN_IPS_PER_USER", "2.5")) or 2.5
+local ADMIN_ALERT_REQUIRE_EVIDENCE = nauthilus_util.toboolean(nauthilus_util.getenv("ADMIN_ALERT_REQUIRE_EVIDENCE", "false"))
+local ADMIN_ALERT_COOLDOWN_SECONDS = tonumber(nauthilus_util.getenv("ADMIN_ALERT_COOLDOWN_SECONDS", "900")) or 900
+
+local SMTP_USE_LMTP = nauthilus_util.getenv("SMTP_USE_LMTP", "false")
+local SMTP_SERVER = nauthilus_util.getenv("SMTP_SERVER", "localhost")
+local SMTP_PORT = nauthilus_util.getenv("SMTP_PORT", "25")
+local SMTP_HELO_NAME = nauthilus_util.getenv("SMTP_HELO_NAME", "localhost")
+local SMTP_TLS = nauthilus_util.getenv("SMTP_TLS", "false")
+local SMTP_STARTTLS = nauthilus_util.getenv("SMTP_STARTTLS", "false")
+local SMTP_USERNAME = nauthilus_util.getenv("SMTP_USERNAME", "")
+local SMTP_PASSWORD = nauthilus_util.getenv("SMTP_PASSWORD", "")
+local SMTP_MAIL_FROM = nauthilus_util.getenv("SMTP_MAIL_FROM", "postmaster@localhost")
+local ADMIN_EMAIL_ADDRESSES = nauthilus_util.getenv("ADMIN_EMAIL_ADDRESSES", "")
+
+local DYN_WARMUP_SECONDS = tonumber(nauthilus_util.getenv("DYNAMIC_RESPONSE_WARMUP_SECONDS", "3600")) or 3600
+local DYN_WARMUP_MIN_USERS = tonumber(nauthilus_util.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_USERS", "1000")) or 1000
+local DYN_WARMUP_MIN_ATTEMPTS = tonumber(nauthilus_util.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS", "10000")) or 10000
+local MONITORING_OK_STREAK_MIN = tonumber(nauthilus_util.getenv("MONITORING_OK_STREAK_MIN", "10")) or 10
 
 -- Email template for administrator notifications
 local admin_email_template = [[
@@ -48,29 +72,23 @@ Nauthilus Security System
 ]]
 
 -- Notify administrators about the threat
-local function notify_administrators(subject, metrics)
-    -- Basic toggle to disable alert emails entirely (defaults to enabled)
-    local alerts_enabled_env = os.getenv("ADMIN_ALERTS_ENABLED")
-    local alerts_enabled = true
-    if alerts_enabled_env ~= nil and alerts_enabled_env ~= "" then
-        alerts_enabled = nauthilus_util.toboolean(alerts_enabled_env)
-    end
+local function notify_administrators(request, subject, metrics)
+    local alerts_enabled = ALERTS_ENABLED
 
     -- Resolve Redis client for rate limiting
     local client = "default"
-    local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if pool_name ~= nil and pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err
-        client, err = nauthilus_redis.get_redis_connection(pool_name)
+        client, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err)
     end
 
-    local now = os.time()
+    local now = time.unix()
 
     -- Evidence-based gating and thresholds to reduce false positives
-    local min_unique_ips = tonumber(os.getenv("ADMIN_ALERT_MIN_UNIQUE_IPS") or "100")
-    local min_ips_per_user = tonumber(os.getenv("ADMIN_ALERT_MIN_IPS_PER_USER") or "2.5")
-    local require_evidence = nauthilus_util.toboolean(os.getenv("ADMIN_ALERT_REQUIRE_EVIDENCE") or "false")
+    local min_unique_ips = ADMIN_ALERT_MIN_UNIQUE_IPS
+    local min_ips_per_user = ADMIN_ALERT_MIN_IPS_PER_USER
+    local require_evidence = ADMIN_ALERT_REQUIRE_EVIDENCE
 
     local uniq_ips = tonumber(metrics.unique_ips or 0) or 0
     local ips_per_user = tonumber(metrics.ips_per_user or 0) or 0
@@ -82,7 +100,7 @@ local function notify_administrators(subject, metrics)
     local passes_baseline = (ips_per_user >= min_ips_per_user) and (uniq_ips >= min_unique_ips)
 
     -- Cooldown window per subject to prevent alert storms
-    local cooldown_sec = tonumber(os.getenv("ADMIN_ALERT_COOLDOWN_SECONDS") or "900")
+    local cooldown_sec = ADMIN_ALERT_COOLDOWN_SECONDS
     local gate_key = "ntc:alerts:last_sent:" .. subject
     local last_sent = tonumber(nauthilus_redis.redis_get(client, gate_key) or "0")
     local in_cooldown = (last_sent ~= nil and (now - last_sent) < cooldown_sec)
@@ -97,10 +115,8 @@ local function notify_administrators(subject, metrics)
     -- Log the decision
     local notify_logs = {}
     notify_logs.caller = N .. ".lua"
-    notify_logs.level = should_notify and "warning" or "info"
     notify_logs.message = subject
     notify_logs.metrics = metrics
-    notify_logs.timestamp = now
     notify_logs.alert_decision = {
         alerts_enabled = alerts_enabled,
         require_evidence = require_evidence,
@@ -112,7 +128,11 @@ local function notify_administrators(subject, metrics)
         in_cooldown = in_cooldown
     }
 
-    nauthilus_util.print_result({ log_format = "json" }, notify_logs)
+    if should_notify then
+        nauthilus_util.log_warn(request, notify_logs)
+    else
+        nauthilus_util.log_info(request, notify_logs)
+    end
 
     if not should_notify then
         return
@@ -122,26 +142,25 @@ local function notify_administrators(subject, metrics)
     nauthilus_redis.redis_set(client, gate_key, tostring(now), cooldown_sec)
 
     -- Send email notification
-    -- Get SMTP configuration from environment variables
-    local smtp_use_lmtp = os.getenv("SMTP_USE_LMTP")
-    local smtp_server = os.getenv("SMTP_SERVER")
-    local smtp_port = os.getenv("SMTP_PORT")
-    local smtp_helo_name = os.getenv("SMTP_HELO_NAME")
-    local smtp_tls = os.getenv("SMTP_TLS")
-    local smtp_starttls = os.getenv("SMTP_STARTTLS")
-    local smtp_username = os.getenv("SMTP_USERNAME")
-    local smtp_password = os.getenv("SMTP_PASSWORD")
-    local smtp_mail_from = os.getenv("SMTP_MAIL_FROM")
+    -- Get SMTP configuration
+    local smtp_use_lmtp = SMTP_USE_LMTP
+    local smtp_server = SMTP_SERVER
+    local smtp_port = SMTP_PORT
+    local smtp_helo_name = SMTP_HELO_NAME
+    local smtp_tls = SMTP_TLS
+    local smtp_starttls = SMTP_STARTTLS
+    local smtp_username = SMTP_USERNAME
+    local smtp_password = SMTP_PASSWORD
+    local smtp_mail_from = SMTP_MAIL_FROM
 
-    -- Get admin email addresses from environment variable (comma-separated list)
-    local admin_emails_str = os.getenv("ADMIN_EMAIL_ADDRESSES")
+    -- Get admin email addresses (comma-separated list)
+    local admin_emails_str = ADMIN_EMAIL_ADDRESSES
     if not admin_emails_str or admin_emails_str == "" then
         -- No admin emails configured, just log and return
         local error_logs = {}
         error_logs.caller = N .. ".lua"
-        error_logs.level = "error"
         error_logs.message = "No admin email addresses configured for notifications"
-        nauthilus_util.print_result({ log_format = "json" }, error_logs)
+        nauthilus_util.log_error(request, error_logs)
         return
     end
 
@@ -156,7 +175,7 @@ local function notify_administrators(subject, metrics)
     end
 
     -- Prepare template data
-    local timestamp_str = os.date("%Y-%m-%d %H:%M:%S", now)
+    local timestamp_str = time.format(now, "2006-01-02 15:04:05", "UTC")
 
     -- Convert metrics table to array of key-value pairs for template (skip empties, format numbers)
     local function format_number(x)
@@ -199,10 +218,8 @@ local function notify_administrators(subject, metrics)
     if err_tmpl then
         local error_logs = {}
         error_logs.caller = N .. ".lua"
-        error_logs.level = "error"
         error_logs.message = "Failed to initialize template engine"
-        error_logs.error = err_tmpl
-        nauthilus_util.print_result({ log_format = "json" }, error_logs)
+        nauthilus_util.log_error(request, error_logs, err_tmpl)
         return
     end
 
@@ -265,22 +282,19 @@ local function notify_administrators(subject, metrics)
     if err_smtp then
         local error_logs = {}
         error_logs.caller = N .. ".lua"
-        error_logs.level = "error"
         error_logs.message = "Failed to send admin notification email"
-        error_logs.error = err_smtp
-        nauthilus_util.print_result({ log_format = "json" }, error_logs)
+        nauthilus_util.log_error(request, error_logs, err_smtp)
     else
         local success_logs = {}
         success_logs.caller = N .. ".lua"
-        success_logs.level = "info"
         success_logs.message = "Admin notification email sent successfully"
         success_logs.recipients = #admin_emails
-        nauthilus_util.print_result({ log_format = "json" }, success_logs)
+        nauthilus_util.log_info(request, success_logs)
     end
 end
 
 -- Apply severe measures for high threat levels
-local function apply_severe_measures(custom_pool, metrics)
+local function apply_severe_measures(request, custom_pool, metrics)
     -- Enable global captcha using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
         custom_pool, 
@@ -288,7 +302,7 @@ local function apply_severe_measures(custom_pool, metrics)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Enable for 1 hour
+            0, -- Permanent
             "captcha_enabled", "true",
             "rate_limit_enabled", "true",
             "rate_limit_max", "10" -- 10 requests per minute
@@ -315,11 +329,11 @@ local function apply_severe_measures(custom_pool, metrics)
 
 
     -- Notify administrators
-    notify_administrators("SEVERE THREAT ALERT", metrics)
+    notify_administrators(request, "SEVERE THREAT ALERT", metrics)
 end
 
 -- Apply high measures for high threat levels
-local function apply_high_measures(custom_pool, metrics)
+local function apply_high_measures(request, custom_pool, metrics)
     -- Enable targeted captcha for affected accounts using atomic Redis Lua script
     if metrics.targeted_accounts and #metrics.targeted_accounts > 0 then
         local args = {3600} -- Expire after 1 hour
@@ -355,11 +369,11 @@ local function apply_high_measures(custom_pool, metrics)
     end
 
     -- Notify administrators
-    notify_administrators("HIGH THREAT ALERT", metrics)
+    notify_administrators(request, "HIGH THREAT ALERT", metrics)
 end
 
 -- Apply moderate measures for moderate threat levels
-local function apply_moderate_measures(custom_pool, metrics)
+local function apply_moderate_measures(request, custom_pool, metrics)
     -- Enable monitoring mode using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
         custom_pool, 
@@ -367,14 +381,14 @@ local function apply_moderate_measures(custom_pool, metrics)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Enable for 1 hour
+            0, -- Permanent
             "monitoring_mode", "true"
         }
     )
     nauthilus_util.if_error_raise(err_script)
 
     -- Notify administrators
-    notify_administrators("MODERATE THREAT ALERT", metrics)
+    notify_administrators(request, "MODERATE THREAT ALERT", metrics)
 end
 
 function nauthilus_call_action(request)
@@ -384,16 +398,15 @@ function nauthilus_call_action(request)
 
     -- Get Redis connection
     local custom_pool = "default"
-    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err_redis_client
 
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err_redis_client)
     end
 
     -- Get current timestamp
-    local timestamp = os.time()
+    local timestamp = time.unix()
     local username = request.username
     local client_ip = request.client_ip
 
@@ -456,7 +469,7 @@ function nauthilus_call_action(request)
     end
 
     -- Check historical patterns to detect sudden spikes (HMGET in same style)
-    local hour_key = os.date("%Y-%m-%d-%H", timestamp - 3600) -- Previous hour
+    local hour_key = time.format(timestamp - 3600, "2006-01-02-15", "UTC") -- Previous hour
     local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
 
     local hist_res, hist_err = nauthilus_redis.redis_pipeline(custom_pool, "read", {
@@ -592,16 +605,16 @@ function nauthilus_call_action(request)
 
     -- Determine bootstrap/warm-up state to prevent global blast radius on first deployment
     local now_ts = timestamp
-    local warmup_seconds = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_SECONDS") or "3600")
-    local warmup_min_users = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_USERS") or "1000")
-    local warmup_min_attempts = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS") or "10000")
+    local warmup_seconds = DYN_WARMUP_SECONDS
+    local warmup_min_users = DYN_WARMUP_MIN_USERS
+    local warmup_min_attempts = DYN_WARMUP_MIN_ATTEMPTS
 
     local first_seen_key = "ntc:multilayer:bootstrap:first_seen_ts"
     local first_seen_val = nauthilus_redis.redis_get(custom_pool, first_seen_key)
     local first_seen_ts = tonumber(first_seen_val or "0") or 0
     if first_seen_ts == 0 then
-        -- set first seen with TTL 30d (best-effort; not strictly atomic)
-        local _, err_set = nauthilus_redis.redis_set(custom_pool, first_seen_key, tostring(now_ts), 30 * 24 * 3600)
+        -- set first seen (permanent)
+        local _, err_set = nauthilus_redis.redis_set(custom_pool, first_seen_key, tostring(now_ts))
         nauthilus_util.if_error_raise(err_set)
         first_seen_ts = now_ts
     end
@@ -611,17 +624,16 @@ function nauthilus_call_action(request)
     -- Apply dynamic response based on threat level (with warm-up gating)
     if threat_level >= 0.9 and warmed_up then
         -- Severe threat: Implement strict measures
-        apply_severe_measures(custom_pool, metrics)
+        apply_severe_measures(request, custom_pool, metrics)
 
         -- Log the response
         local severe_logs = {}
         severe_logs.caller = N .. ".lua"
-        severe_logs.level = "warning"
         severe_logs.message = "Severe threat detected, implementing strict measures"
         severe_logs.threat_level = threat_level
         severe_logs.metrics = metrics
 
-        nauthilus_util.print_result({ log_format = "json" }, severe_logs)
+        nauthilus_util.log_warn(request, severe_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
@@ -629,29 +641,27 @@ function nauthilus_call_action(request)
     elseif threat_level >= 0.7 then
         if warmed_up then
             -- High threat: Implement moderate measures
-            apply_high_measures(custom_pool, metrics)
+            apply_high_measures(request, custom_pool, metrics)
 
             -- Log the response
             local high_logs = {}
             high_logs.caller = N .. ".lua"
-            high_logs.level = "warning"
             high_logs.message = "High threat detected, implementing moderate measures"
             high_logs.threat_level = threat_level
             high_logs.metrics = metrics
             high_logs.warmup_gating = false
 
-            nauthilus_util.print_result({ log_format = "json" }, high_logs)
+            nauthilus_util.log_warn(request, high_logs)
 
             -- Add to custom log for monitoring
             nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
             nauthilus_builtin.custom_log_add(N .. "_response", "high")
         else
             -- Cold-start gating: only light measures in warm-up window
-            apply_moderate_measures(custom_pool, metrics)
+            apply_moderate_measures(request, custom_pool, metrics)
 
             local gated_logs = {}
             gated_logs.caller = N .. ".lua"
-            gated_logs.level = "warning"
             gated_logs.message = "High threat detected but warm-up gating active; applying light measures"
             gated_logs.threat_level = threat_level
             gated_logs.metrics = metrics
@@ -665,24 +675,23 @@ function nauthilus_call_action(request)
                 unique_users = unique_users,
                 attempts = attempts
             }
-            nauthilus_util.print_result({ log_format = "json" }, gated_logs)
+            nauthilus_util.log_warn(request, gated_logs)
 
             nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
             nauthilus_builtin.custom_log_add(N .. "_response", "moderate")
         end
     elseif threat_level >= 0.5 then
         -- Moderate threat: Implement light measures
-        apply_moderate_measures(custom_pool, metrics)
+        apply_moderate_measures(request, custom_pool, metrics)
 
         -- Log the response
         local moderate_logs = {}
         moderate_logs.caller = N .. ".lua"
-        moderate_logs.level = "warning"
         moderate_logs.message = "Moderate threat detected, implementing light measures"
         moderate_logs.threat_level = threat_level
         moderate_logs.metrics = metrics
 
-        nauthilus_util.print_result({ log_format = "json" }, moderate_logs)
+        nauthilus_util.log_warn(request, moderate_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
@@ -692,12 +701,11 @@ function nauthilus_call_action(request)
         -- Log the normal state
         local normal_logs = {}
         normal_logs.caller = N .. ".lua"
-        normal_logs.level = "info"
         normal_logs.message = "Normal operation, no special measures needed"
         normal_logs.threat_level = threat_level
         normal_logs.metrics = metrics
 
-        nauthilus_util.print_result({ log_format = "json" }, normal_logs)
+        nauthilus_util.log_info(request, normal_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
@@ -705,7 +713,7 @@ function nauthilus_call_action(request)
     end
 
     -- Adaptive reset/hysteresis for monitoring_mode to avoid getting stuck in permanent monitoring
-    local ok_threshold = tonumber(os.getenv("MONITORING_OK_STREAK_MIN") or "10")
+    local ok_threshold = MONITORING_OK_STREAK_MIN
     local ok_streak_key = "ntc:multilayer:global:ok_streak"
     local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
 
@@ -716,7 +724,7 @@ function nauthilus_call_action(request)
             "HSetMultiExpire",
             {"ntc:multilayer:global:settings"},
             {
-                3600, -- keep visibility for 1h, but set to false
+                0, -- Permanent
                 "monitoring_mode", "false"
             }
         )
@@ -765,7 +773,7 @@ function nauthilus_call_action(request)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Expire after 1 hour
+            0, -- Permanent (no EXPIRE called by HSetMultiExpire)
             "threat_level", threat_level
         }
     )

@@ -19,6 +19,9 @@ local nauthilus_util = require("nauthilus_util")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
+local time = require("time")
+
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
 function nauthilus_call_feature(request)
     if request.no_auth then
@@ -27,16 +30,15 @@ function nauthilus_call_feature(request)
 
     -- Get Redis connection
     local custom_pool = "default"
-    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err_redis_client
 
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err_redis_client)
     end
 
     -- Track metrics via single server-side script
-    local timestamp = os.time()
+    local timestamp = time.unix()
     local window_sizes = {60, 300, 900, 3600, 86400, 604800} -- 1min, 5min, 15min, 1hour, 24h, 7d
     -- Use request.session directly for a stable identifier
     local request_id = tostring(request.session or "")
@@ -49,7 +51,7 @@ function nauthilus_call_feature(request)
         table.insert(keys, "ntc:multilayer:global:unique_users:" .. w)
     end
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
-    local hour_key = os.date("%Y-%m-%d-%H", timestamp)
+    local hour_key = time.format(timestamp, "2006-01-02-15", "UTC")
     local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
     table.insert(keys, current_metrics_key)
     table.insert(keys, historical_metrics_key)
@@ -92,7 +94,6 @@ function nauthilus_call_feature(request)
     -- Add log
     local logs = {}
     logs.caller = N .. ".lua"
-    logs.level = "info"
     logs.message = "Global metrics tracked"
     logs.attempts = attempts
     logs.unique_ips = unique_ips
@@ -101,7 +102,7 @@ function nauthilus_call_feature(request)
     logs.attempts_per_user = attempts_per_user
     logs.ips_per_user = ips_per_user
 
-    nauthilus_util.print_result({ log_format = "json" }, logs)
+    nauthilus_util.log_info(request, logs)
 
     -- Enrich rt for downstream actions (e.g., telegram)
     do

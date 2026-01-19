@@ -49,14 +49,14 @@ func (h *Handler) Register(router gin.IRouter) {
 	g.Static("/static/fonts", viper.GetString("html_static_content_path")+"/fonts")
 
 	// Login page
-	common.RouterGroup(viper.GetString("login_page"), router, h.Store, h.Deps.Svc.LoginGETHandler(), h.Deps.Svc.LoginPOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("login_page"), router, h.Store, h.Deps.Svc.LoginGETHandler(), h.Deps.Svc.LoginPOSTHandler())
 
 	// Device/U2F/FIDO2 login page
-	common.RouterGroup(viper.GetString("device_page"), router, h.Store, h.Deps.Svc.DeviceGETHandler(), h.Deps.Svc.DevicePOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("device_page"), router, h.Store, h.Deps.Svc.DeviceGETHandler(), h.Deps.Svc.DevicePOSTHandler())
 
 	// Consent page
-	common.RouterGroup(viper.GetString("consent_page"), router, h.Store, h.Deps.Svc.ConsentGETHandler(), h.Deps.Svc.ConsentPOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("consent_page"), router, h.Store, h.Deps.Svc.ConsentGETHandler(), h.Deps.Svc.ConsentPOSTHandler())
 
 	// Logout page
-	common.RouterGroup(viper.GetString("logout_page"), router, h.Store, h.Deps.Svc.LogoutGETHandler(), h.Deps.Svc.LogoutPOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("logout_page"), router, h.Store, h.Deps.Svc.LogoutGETHandler(), h.Deps.Svc.LogoutPOSTHandler())
 }

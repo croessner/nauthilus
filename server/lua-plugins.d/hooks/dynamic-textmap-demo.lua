@@ -33,6 +33,7 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_http_request = require("nauthilus_http_request")
 local nauthilus_http_response = require("nauthilus_http_response")
 local nauthilus_redis = require("nauthilus_redis")
+local time = require("time")
 
 local N = "dynamic-textmap-demo"
 
@@ -40,19 +41,21 @@ local KEY_CONTENT = "ntc:demo:textmap:content"
 local KEY_VERSION = "ntc:demo:textmap:version"
 local KEY_LASTMOD = "ntc:demo:textmap:last_modified"
 
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+local TEXTMAP_DEMO_TTL_SECONDS = tonumber(nauthilus_util.getenv("TEXTMAP_DEMO_TTL_SECONDS", "60")) or 60
+
 local function rfc1123(ts)
     if ts == nil then
-        return os.date("!%a, %d %b %Y %H:%M:%S GMT")
+        return time.format(time.unix(), "Mon, 02 Jan 2006 15:04:05 MST", "UTC")
     end
-    return os.date("!%a, %d %b %Y %H:%M:%S GMT", ts)
+    return time.format(ts, "Mon, 02 Jan 2006 15:04:05 MST", "UTC")
 end
 
 local function get_redis_pool()
     local pool = "default"
-    local custom_pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= nil and custom_pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err
-        pool, err = nauthilus_redis.get_redis_connection(custom_pool_name)
+        pool, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err)
     end
     return pool
@@ -87,7 +90,7 @@ local function ensure_content(pool, ttl)
         local version = nauthilus_redis.redis_get(pool, KEY_VERSION)
         local lastmod = nauthilus_redis.redis_get(pool, KEY_LASTMOD)
         if content and version and lastmod then
-            return content, tonumber(version) or 0, tonumber(lastmod) or os.time()
+            return content, tonumber(version) or 0, tonumber(lastmod) or time.unix()
         end
         results = nil
     end
@@ -98,7 +101,7 @@ local function ensure_content(pool, ttl)
         version = results[2].value
         lastmod = results[3].value
         if content and version and lastmod then
-            return content, tonumber(version) or 0, tonumber(lastmod) or os.time()
+            return content, tonumber(version) or 0, tonumber(lastmod) or time.unix()
         end
     end
 
@@ -117,7 +120,7 @@ local function ensure_content(pool, ttl)
         new_version = tonumber(incrRes[1].value) or 1
     end
 
-    local now = os.time()
+    local now = time.unix()
     local new_content = build_content(new_version, now)
 
     -- Set keys with TTL so content rotates (single pipeline write)

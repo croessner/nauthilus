@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package priorityqueue
 
 import (
@@ -120,5 +135,38 @@ func TestLuaQueueRouting(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for custom lua pop")
+	}
+}
+
+func TestLDAPQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
+	q := NewLDAPRequestQueue()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := q.PopWithContext(ctx, "default"); got != nil {
+		t.Fatalf("expected nil request, got %#v", got)
+	}
+}
+
+func TestLDAPAuthQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
+	q := NewLDAPAuthRequestQueue()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := q.PopWithContext(ctx, "default"); got != nil {
+		t.Fatalf("expected nil request, got %#v", got)
+	}
+}
+
+func TestLuaQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
+	q := NewLuaRequestQueue()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := q.PopWithContext(ctx, "default"); got != nil {
+		t.Fatalf("expected nil request, got %#v", got)
 	}
 }

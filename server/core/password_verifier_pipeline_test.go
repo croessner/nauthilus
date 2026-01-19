@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package core
 
 import (
@@ -28,7 +43,7 @@ func TestVerifyPasswordPipeline_AllConfigErrors(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 
-	a := &AuthState{GUID: "cfg-err"}
+	a := &AuthState{Runtime: AuthRuntime{GUID: "cfg-err"}}
 
 	b0 := &PassDBMap{backend: definitions.BackendLDAP, fn: func(a *AuthState) (*PassDBResult, error) { return nil, serr.ErrLDAPConfig }}
 	b1 := &PassDBMap{backend: definitions.BackendLua, fn: func(a *AuthState) (*PassDBResult, error) { return nil, serr.ErrLuaConfig }}
@@ -44,7 +59,7 @@ func TestVerifyPasswordPipeline_NoBackends(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 
-	a := &AuthState{GUID: "no-backends"}
+	a := &AuthState{Runtime: AuthRuntime{GUID: "no-backends"}}
 	_, err := VerifyPasswordPipeline(ctx, a, []*PassDBMap{})
 	if !stderrors.Is(err, serr.ErrAllBackendConfigError) {
 		t.Fatalf("expected ErrAllBackendConfigError for no backends, got %v", err)

@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package connmgr
 
 import (
@@ -6,22 +21,26 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
 
 func TestConnectionManager(t *testing.T) {
 	ctx := context.Background()
 
-	config.SetTestFile(&config.FileSettings{
+	testFile := &config.FileSettings{
 		Server: &config.ServerSection{
 			DNS: config.DNS{
 				Timeout: 100 * time.Millisecond,
-			}}})
+			}}}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	manager = GetConnectionManager()
 
 	t.Run("Register and GetCount", func(t *testing.T) {
-		manager.Register(ctx, "127.0.0.1:8000", "local", "test")
+		manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
 
 		_, ok := manager.GetCount("127.0.0.1:8000")
 		if !ok {
@@ -30,11 +49,11 @@ func TestConnectionManager(t *testing.T) {
 	})
 
 	t.Run("Register existing", func(t *testing.T) {
-		manager.Register(ctx, "127.0.0.1:8000", "local", "test")
+		manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
 
 		target := "127.0.0.1:8000"
 
-		manager.Register(ctx, target, "remote", "test")
+		manager.Register(ctx, config.GetFile(), target, "remote", "test")
 
 		count, ok := manager.GetCount(target)
 		if !ok || count != 0 {
@@ -54,8 +73,10 @@ func TestConnectionManager(t *testing.T) {
 
 		defer L.Close()
 
-		L.SetGlobal("register", L.NewFunction(manager.luaRegisterTarget(ctx)))
-		L.SetGlobal("count", L.NewFunction(manager.luaCountOpenConnections))
+		m := NewPsnetManager(ctx, config.GetFile(), nil)
+
+		L.SetGlobal("register", L.NewFunction(m.luaRegisterTarget))
+		L.SetGlobal("count", L.NewFunction(m.luaCountOpenConnections))
 
 		if err := L.DoString(`register("127.0.0.1:9000", "remote", "test")`); err != nil {
 			t.Errorf("Lua register failed: %v", err)

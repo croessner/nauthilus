@@ -69,14 +69,14 @@ var defaultAuthenticator = Authenticator{
 	BF:       getBruteForceService(),
 	Lua:      getLuaFilter(),
 	Post:     getPostAction(),
-	Resp:     defaultResponseWriter,
+	Resp:     getDefaultResponseWriter(),
 }
 
 // Authenticate runs the full password authentication flow.
 // Behavior mirrors the legacy HandlePassword implementation exactly.
 func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authResult definitions.AuthResult) {
 	// Overall auth orchestration timer
-	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_overall_total"); stop != nil {
+	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_overall_total"); stop != nil {
 		defer stop()
 	}
 
@@ -105,7 +105,7 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 	}
 
 	// Measure backend type resolution
-	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_handle_backend_types_total"); stop != nil {
+	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_handle_backend_types_total"); stop != nil {
 		defer stop()
 	}
 

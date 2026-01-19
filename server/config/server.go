@@ -32,6 +32,8 @@ type ServerSection struct {
 	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries" validate:"omitempty,gte=1"`
 	HTTP3                     bool                     `mapstructure:"http3"`
 	HAproxyV2                 bool                     `mapstructure:"haproxy_v2"`
+	RateLimitPerSecond        float64                  `mapstructure:"rate_limit_per_second" validate:"omitempty,min=0"`
+	RateLimitBurst            int                      `mapstructure:"rate_limit_burst" validate:"omitempty,min=0"`
 	DisabledEndpoints         Endpoint                 `mapstructure:"disabled_endpoints" validate:"omitempty"`
 	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
 	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
@@ -44,7 +46,7 @@ type ServerSection struct {
 	HydraAdminUrl             string                   `mapstructure:"ory_hydra_admin_url" validate:"omitempty,http_url"`
 	DNS                       DNS                      `mapstructure:"dns" validate:"omitempty"`
 	Insights                  Insights                 `mapstructure:"insights" validate:"omitempty"`
-	Redis                     Redis                    `mapstructure:"redis" vslidate:"required"`
+	Redis                     Redis                    `mapstructure:"redis" validate:"required"`
 	MasterUser                MasterUser               `mapstructure:"master_user" validate:"omitempty"`
 	Frontend                  Frontend                 `mapstructure:"frontend" validate:"omitempty"`
 	Dedup                     Dedup                    `mapstructure:"dedup" validate:"omitempty"`
@@ -57,6 +59,8 @@ type ServerSection struct {
 	// By default, all middlewares are considered enabled if not explicitly disabled in the config file.
 	Middlewares Middlewares `mapstructure:"middlewares" validate:"omitempty"`
 	Timeouts    Timeouts    `mapstructure:"timeouts" validate:"omitempty"`
+
+	TrustedProxies []string `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
 }
 
 // Middlewares defines switches for enabling/disabling individual HTTP middlewares.
@@ -69,6 +73,7 @@ type Middlewares struct {
 	RequestDecompression *bool `mapstructure:"request_decompression" validate:"omitempty"`
 	ResponseCompression  *bool `mapstructure:"response_compression" validate:"omitempty"`
 	Metrics              *bool `mapstructure:"metrics" validate:"omitempty"`
+	Rate                 *bool `mapstructure:"rate" validate:"omitempty"`
 }
 
 // GetMiddlewares returns the middlewares section or a zero-value if nil.
@@ -101,6 +106,7 @@ func (m *Middlewares) IsResponseCompressionEnabled() bool {
 }
 
 func (m *Middlewares) IsMetricsEnabled() bool { return boolOrDefaultTrue(m.Metrics) }
+func (m *Middlewares) IsRateEnabled() bool    { return boolOrDefaultTrue(m.Rate) }
 
 // GetListenAddress retrieves the server's listen address from the ServerSection configuration.
 // Returns an empty string if the ServerSection is nil.
@@ -113,14 +119,14 @@ func (s *ServerSection) GetListenAddress() string {
 }
 
 // GetMaxConcurrentRequests retrieves the maximum number of concurrent requests allowed as configured in ServerSection.
-// Returns 10 as a default value if the ServerSection is nil.
+// Returns 1000 as a default value if the ServerSection is nil.
 func (s *ServerSection) GetMaxConcurrentRequests() int32 {
 	if s == nil {
-		return 100
+		return 1000
 	}
 
 	if s.MaxConcurrentRequests < 1 {
-		return 100
+		return 1000
 	}
 
 	return s.MaxConcurrentRequests
@@ -138,6 +144,34 @@ func (s *ServerSection) GetMaxPasswordHistoryEntries() int32 {
 	}
 
 	return s.MaxPasswordHistoryEntries
+}
+
+// GetRateLimitPerSecond returns tokens per second for the IP rate limiter.
+// Defaults to 100.0 if not configured.
+func (s *ServerSection) GetRateLimitPerSecond() float64 {
+	if s == nil {
+		return 100.0
+	}
+
+	if s.RateLimitPerSecond <= 0 {
+		return 100.0
+	}
+
+	return s.RateLimitPerSecond
+}
+
+// GetRateLimitBurst returns burst size for the IP rate limiter.
+// Defaults to 200 if not configured.
+func (s *ServerSection) GetRateLimitBurst() int {
+	if s == nil {
+		return 200
+	}
+
+	if s.RateLimitBurst <= 0 {
+		return 200
+	}
+
+	return s.RateLimitBurst
 }
 
 // IsHTTP3Enabled checks if HTTP/3 protocol support is enabled in the server configuration and returns the corresponding boolean value.
@@ -1069,6 +1103,11 @@ type Redis struct {
 	// MaintNotificationsEnabled toggles CLIENT MAINT_NOTIFICATIONS support (RESP3 push based).
 	// Only applicable to standalone and cluster clients. Defaults to false for compatibility.
 	MaintNotificationsEnabled bool `mapstructure:"maint_notifications_enabled"`
+
+	// Protocol sets the Redis protocol version (2 or 3). If not set (0), it defaults to 2
+	// unless features requiring RESP3 (like client-side tracking or maintenance notifications)
+	// are enabled. Forcing 2 can resolve parsing issues with asynchronous push messages in pipelines.
+	Protocol int `mapstructure:"protocol" validate:"omitempty,oneof=0 2 3"`
 }
 
 // RedisBatching controls optional client-side command batching.
@@ -1337,37 +1376,46 @@ func (r *Redis) GetNegCacheTTL() time.Duration {
 	return r.NegCacheTTL
 }
 
-// GetPoolTimeout returns the configured pool timeout or the default of 80ms.
+// GetProtocol returns the configured Redis protocol or 2 if not set.
+func (r *Redis) GetProtocol() int {
+	if r == nil {
+		return 2
+	}
+
+	return r.Protocol
+}
+
+// GetPoolTimeout returns the configured pool timeout or the default of 1s.
 func (r *Redis) GetPoolTimeout() time.Duration {
 	if r == nil || r.PoolTimeout == nil {
-		return 80 * time.Millisecond
+		return 1 * time.Second
 	}
 
 	return *r.PoolTimeout
 }
 
-// GetDialTimeout returns the configured dial timeout or the default of 200ms.
+// GetDialTimeout returns the configured dial timeout or the default of 5s.
 func (r *Redis) GetDialTimeout() time.Duration {
 	if r == nil || r.DialTimeout == nil {
-		return 200 * time.Millisecond
+		return 5 * time.Second
 	}
 
 	return *r.DialTimeout
 }
 
-// GetReadTimeout returns the configured read timeout or the default of 100ms.
+// GetReadTimeout returns the configured read timeout or the default of 1s.
 func (r *Redis) GetReadTimeout() time.Duration {
 	if r == nil || r.ReadTimeout == nil {
-		return 100 * time.Millisecond
+		return 1 * time.Second
 	}
 
 	return *r.ReadTimeout
 }
 
-// GetWriteTimeout returns the configured write timeout or the default of 100ms.
+// GetWriteTimeout returns the configured write timeout or the default of 1s.
 func (r *Redis) GetWriteTimeout() time.Duration {
 	if r == nil || r.WriteTimeout == nil {
-		return 100 * time.Millisecond
+		return 1 * time.Second
 	}
 
 	return *r.WriteTimeout
@@ -1785,10 +1833,33 @@ func (m *MasterUser) GetDelimiter() string {
 
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
-	Enabled            bool   `mapstructure:"enabled"`
-	CSRFSecret         string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
-	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
-	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
+	Enabled                 bool   `mapstructure:"enabled"`
+	CSRFSecret              string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreAuthKey      string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreEncKey       string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
+	HTMLStaticContentPath   string `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
+	DefaultLogoImage        string `mapstructure:"default_logo_image" validate:"omitempty"`
+	LoginPage               string `mapstructure:"login_page" validate:"omitempty"`
+	LoginPageWelcome        string `mapstructure:"login_page_welcome" validate:"omitempty"`
+	LoginPageLogoImageAlt   string `mapstructure:"login_page_logo_image_alt" validate:"omitempty"`
+	TwoFactorPage           string `mapstructure:"two_factor_page" validate:"omitempty"`
+	ConsentPage             string `mapstructure:"consent_page" validate:"omitempty"`
+	LogoutPage              string `mapstructure:"logout_page" validate:"omitempty"`
+	ErrorPage               string `mapstructure:"error_page" validate:"omitempty"`
+	NotifyPage              string `mapstructure:"notify_page" validate:"omitempty"`
+	DevicePage              string `mapstructure:"device_page" validate:"omitempty"`
+	Homepage                string `mapstructure:"homepage" validate:"omitempty,url"`
+	LogoutPageWelcome       string `mapstructure:"logout_page_welcome" validate:"omitempty"`
+	ConsentPageWelcome      string `mapstructure:"consent_page_welcome" validate:"omitempty"`
+	ConsentPageLogoImageAlt string `mapstructure:"consent_page_logo_image_alt" validate:"omitempty"`
+	NotifyPageWelcome       string `mapstructure:"notify_page_welcome" validate:"omitempty"`
+	NotifyPageLogoImageAlt  string `mapstructure:"notify_page_logo_image_alt" validate:"omitempty"`
+	LanguageResources       string `mapstructure:"language_resources" validate:"omitempty,dir"`
+	DefaultLanguage         string `mapstructure:"default_language" validate:"omitempty"`
+	HydraAdminUri           string `mapstructure:"hydra_admin_uri" validate:"omitempty,url"`
+	TotpIssuer              string `mapstructure:"totp_issuer" validate:"omitempty"`
+	TotpSkew                uint   `mapstructure:"totp_skew" validate:"omitempty"`
+	LoginRememberFor        int    `mapstructure:"login_remember_for" validate:"omitempty"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -1829,6 +1900,232 @@ func (f *Frontend) GetCookieStoreEncKey() string {
 	}
 
 	return f.CookieStoreEncKey
+}
+
+// GetHTMLStaticContentPath retrieves the HTML static content path from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetHTMLStaticContentPath() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.HTMLStaticContentPath
+}
+
+// GetDefaultLogoImage retrieves the default logo image from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetDefaultLogoImage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.DefaultLogoImage
+}
+
+// GetLoginPage retrieves the login page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLoginPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LoginPage
+}
+
+// GetLoginPageWelcome retrieves the login page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLoginPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LoginPageWelcome
+}
+
+// GetLoginPageLogoImageAlt retrieves the login page logo image alt text from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLoginPageLogoImageAlt() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LoginPageLogoImageAlt
+}
+
+// GetTwoFactorPage retrieves the two factor page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetTwoFactorPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.TwoFactorPage
+}
+
+// GetConsentPage retrieves the consent page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetConsentPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ConsentPage
+}
+
+// GetLogoutPage retrieves the logout page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLogoutPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LogoutPage
+}
+
+// GetErrorPage retrieves the error page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetErrorPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ErrorPage
+}
+
+// GetNotifyPage retrieves the notify page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetNotifyPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.NotifyPage
+}
+
+// GetDevicePage retrieves the device page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetDevicePage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.DevicePage
+}
+
+// GetHomepage retrieves the homepage from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetHomepage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.Homepage
+}
+
+// GetLogoutPageWelcome retrieves the logout page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLogoutPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LogoutPageWelcome
+}
+
+// GetConsentPageWelcome retrieves the consent page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetConsentPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ConsentPageWelcome
+}
+
+// GetConsentPageLogoImageAlt retrieves the consent page logo image alt text from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetConsentPageLogoImageAlt() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ConsentPageLogoImageAlt
+}
+
+// GetNotifyPageWelcome retrieves the notify page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetNotifyPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.NotifyPageWelcome
+}
+
+// GetNotifyPageLogoImageAlt retrieves the notify page logo image alt text from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetNotifyPageLogoImageAlt() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.NotifyPageLogoImageAlt
+}
+
+// GetLanguageResources retrieves the language resources path from the Frontend configuration.
+func (f *Frontend) GetLanguageResources() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LanguageResources
+}
+
+// GetDefaultLanguage retrieves the default language from the Frontend configuration.
+func (f *Frontend) GetDefaultLanguage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.DefaultLanguage
+}
+
+// GetHydraAdminUri retrieves the Hydra admin URI from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetHydraAdminUri() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.HydraAdminUri
+}
+
+// GetTotpIssuer retrieves the TOTP issuer from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetTotpIssuer() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.TotpIssuer
+}
+
+// GetTotpSkew retrieves the TOTP skew from the Frontend configuration.
+func (f *Frontend) GetTotpSkew() uint {
+	if f == nil {
+		return 0
+	}
+
+	return f.TotpSkew
+}
+
+// GetLoginRememberFor retrieves the login remember duration from the Frontend configuration.
+func (f *Frontend) GetLoginRememberFor() int {
+	if f == nil {
+		return 0
+	}
+
+	return f.LoginRememberFor
 }
 
 func validateCookieStoreEncKey(fl validator.FieldLevel) bool {
@@ -2420,6 +2717,7 @@ type Timeouts struct {
 	LDAPModify       time.Duration `mapstructure:"ldap_modify"`
 	SingleflightWork time.Duration `mapstructure:"singleflight_work"`
 	LuaBackend       time.Duration `mapstructure:"lua_backend"`
+	LuaScript        time.Duration `mapstructure:"lua_script"`
 }
 
 // GetRedisRead returns the timeout for Redis read operations. Defaults to 1s if unset/invalid.
@@ -2483,6 +2781,26 @@ func (t *Timeouts) GetLuaBackend() time.Duration {
 }
 
 // GetTimeouts retrieves the Timeouts configuration section from ServerSection.
+func (t *Timeouts) GetLuaScript() time.Duration {
+	if t.LuaScript == 0 {
+		return 30 * time.Second
+	}
+
+	return t.LuaScript
+}
+
+func (s *ServerSection) GetTrustedProxies() []string {
+	if s == nil {
+		return []string{}
+	}
+
+	return s.TrustedProxies
+}
+
+func (s *ServerSection) GetEnvironment() Environment {
+	return GetEnvironment()
+}
+
 func (s *ServerSection) GetTimeouts() *Timeouts {
 	if s == nil {
 		return &Timeouts{}

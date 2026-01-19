@@ -16,11 +16,11 @@
 package auth
 
 import (
+	"strings"
+
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 )
 
@@ -33,11 +33,11 @@ type DefaultCacheService struct{}
 
 // OnSuccess updates the positive cache after a successful authentication attempt for the specified account name.
 func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) error {
-	if auth == nil || auth.Protocol == nil || accountName == "" {
+	if auth == nil || auth.Request.Protocol == nil || accountName == "" {
 		return nil
 	}
 
-	if auth.NoAuth || auth.Password == "" {
+	if auth.Request.NoAuth || auth.Request.Password == "" {
 		return nil
 	}
 
@@ -52,16 +52,23 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 	}
 
 	ppc := auth.CreatePositivePasswordCache()
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+	var sb strings.Builder
+
+	sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())
+	sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+	sb.WriteString(cacheName)
+	sb.WriteByte(':')
+	sb.WriteString(accountName)
+
+	key := sb.String()
 
 	// Write hash with TTL
-	backend.SaveUserDataToRedis(auth.Ctx(), auth.GUID, key, config.GetFile().GetServer().GetRedis().GetPosCacheTTL(), ppc)
+	backend.SaveUserDataToRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.Redis(), auth.Runtime.GUID, key, auth.Cfg().GetServer().GetRedis().GetPosCacheTTL(), ppc)
 
 	// Metric is incremented inside SaveUserDataToRedis; keep a debug log here for parity
-	level.Debug(log.Logger).Log(
-		definitions.LogKeyGUID, auth.GUID,
+	level.Debug(auth.Logger()).Log(
+		definitions.LogKeyGUID, auth.Runtime.GUID,
 		definitions.LogKeyMsg, "Stored positive cache to redis",
-		"key", key,
 	)
 
 	return nil

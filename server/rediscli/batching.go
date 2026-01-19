@@ -17,6 +17,7 @@ package rediscli
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -24,7 +25,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/svcctx"
 
@@ -45,8 +45,11 @@ type BatchingHook struct {
 	client redis.UniversalClient
 
 	// config
-	maxBatch int
-	maxWait  time.Duration
+	maxBatch        int
+	maxWait         time.Duration
+	pipelineTimeout time.Duration
+
+	logger *slog.Logger
 
 	queue chan *batchItem
 
@@ -64,8 +67,7 @@ type batchItem struct {
 	done chan error
 }
 
-// NewBatchingHook creates a new batching hook instance using the provided client and config.
-func NewBatchingHook(client redis.UniversalClient, cfg *config.RedisBatching) *BatchingHook {
+func NewBatchingHook(logger *slog.Logger, client redis.UniversalClient, cfg *config.RedisBatching) *BatchingHook {
 	if client == nil || cfg == nil || !cfg.IsBatchingEnabled() {
 		return nil
 	}
@@ -79,7 +81,7 @@ func NewBatchingHook(client redis.UniversalClient, cfg *config.RedisBatching) *B
 		"subscribe", "psubscribe", "ssubscribe",
 		// Transactions and scripting are generally safe to batch, but leave them to the caller
 		// when already in pipeline/tx mode.
-		"hello", "client",
+		"hello", "client", "config", "script",
 	}
 
 	skip := make(map[string]struct{}, len(defaults)+len(cfg.GetSkipCommands()))
@@ -97,12 +99,14 @@ func NewBatchingHook(client redis.UniversalClient, cfg *config.RedisBatching) *B
 	}
 
 	return &BatchingHook{
-		client:   client,
-		maxBatch: cfg.GetMaxBatchSize(),
-		maxWait:  cfg.GetMaxWait(),
-		queue:    make(chan *batchItem, qcap),
-		closed:   make(chan struct{}),
-		skip:     skip,
+		client:          client,
+		maxBatch:        cfg.GetMaxBatchSize(),
+		maxWait:         cfg.GetMaxWait(),
+		pipelineTimeout: cfg.GetPipelineTimeout(),
+		logger:          logger,
+		queue:           make(chan *batchItem, qcap),
+		closed:          make(chan struct{}),
+		skip:            skip,
 	}
 }
 
@@ -174,19 +178,20 @@ func (h *BatchingHook) run() {
 		fctx, fsp := tr.Start(base, "redis.uc.flush",
 			attribute.Int("batch_size", len(batch)),
 			attribute.Int("max_batch", h.maxBatch),
-			attribute.Int("max_wait_ms", int(config.GetFile().GetServer().GetRedis().GetBatching().GetMaxWait().Milliseconds())),
+			attribute.Int("max_wait_ms", int(h.maxWait.Milliseconds())),
 		)
 
 		// Derive a timeout context from the span context
-		dCtx, cancel := context.WithTimeout(fctx, config.GetFile().GetServer().GetRedis().GetBatching().GetPipelineTimeout())
+		dCtx, cancel := context.WithTimeout(fctx, h.pipelineTimeout)
 
 		_, execErr := h.client.Pipelined(dCtx, func(pipe redis.Pipeliner) error {
 			for _, it := range batch {
-				// Use each item’s context for Process; this only affects client-level timeouts.
-				if perr := pipe.Process(it.ctx, it.cmd); perr != nil {
+				// We use a background context here to ensure the command is at least queued.
+				// go-redis handles its own context internally.
+				if perr := pipe.Process(context.Background(), it.cmd); perr != nil {
 					// defensiv: Command markieren und loggen
 					it.cmd.SetErr(perr)
-					level.Warn(log.Logger).Log(
+					level.Warn(h.logger).Log(
 						definitions.LogKeyMsg, "Failed to queue command into pipeline",
 						definitions.LogKeyError, perr,
 						"cmd", it.cmd.FullName(),
@@ -202,7 +207,7 @@ func (h *BatchingHook) run() {
 
 		if execErr != nil {
 			// This is the first failing command’s error. Individual commands already have their error set by go-redis.
-			level.Debug(log.Logger).Log(
+			level.Debug(h.logger).Log(
 				definitions.LogKeyMsg, "Redis batching pipeline returned error",
 				definitions.LogKeyError, execErr,
 			)
@@ -297,24 +302,24 @@ func (h *BatchingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis
 }
 
 // attachBatchingHookIfEnabled attaches a batching hook to the given UniversalClient when enabled.
-func attachBatchingHookIfEnabled(u redis.UniversalClient) {
-	if u == nil {
+func attachBatchingHookIfEnabled(cfg config.File, logger *slog.Logger, u redis.UniversalClient) {
+	if u == nil || cfg == nil {
 		return
 	}
 
-	cfg := config.GetFile().GetServer().GetRedis().GetBatching()
-	if cfg == nil || !cfg.IsBatchingEnabled() {
+	batchingCfg := cfg.GetServer().GetRedis().GetBatching()
+	if batchingCfg == nil || !batchingCfg.IsBatchingEnabled() {
 		return
 	}
 
-	hook := NewBatchingHook(u, cfg)
+	hook := NewBatchingHook(logger, u, batchingCfg)
 	if hook == nil {
 		return
 	}
 
 	// AddHook appends to the FIFO chain
 	u.AddHook(hook)
-	level.Info(log.Logger).Log(
+	level.Info(logger).Log(
 		definitions.LogKeyMsg, "Redis client-side batching enabled",
 		"max_batch", hook.maxBatch,
 		"max_wait", hook.maxWait.String(),

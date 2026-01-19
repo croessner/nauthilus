@@ -38,6 +38,11 @@ local json = require("json")
 
 local N = "clickhouse-query"
 
+local CLICKHOUSE_SELECT_BASE = nauthilus_util.getenv("CLICKHOUSE_SELECT_BASE", "")
+local CLICKHOUSE_TABLE = nauthilus_util.getenv("CLICKHOUSE_TABLE", "nauthilus.logins")
+local CLICKHOUSE_USER = nauthilus_util.getenv("CLICKHOUSE_USER", "")
+local CLICKHOUSE_PASSWORD = nauthilus_util.getenv("CLICKHOUSE_PASSWORD", "")
+
 -- Sanitize strings to be safely embeddable into JSON by removing control characters
 -- Replace common whitespace controls (CR, LF, TAB) with a single space to keep readability,
 -- and strip remaining control characters (U+0000–U+001F) which may break JSON serializers.
@@ -162,11 +167,11 @@ end
 -- Whitelisted columns by type
 local TEXT_COLS = {
     "session","service","features","client_ip","client_net","client_id",
-    "hostname","proto","user_agent","local_ip",
+    "hostname", "proto", "method", "user_agent", "local_ip",
     "display_name","account","username","password_hash",
     "pwnd_info","brute_force_bucket","oidc_cid",
     "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",
-    "dyn_threat","dyn_response","xssl_protocol","xssl_cipher","ssl_fingerprint","prot_reason"
+    "dyn_threat", "dyn_response", "xssl_protocol", "xssl_cipher", "ssl_fingerprint", "prot_reason", "status_msg"
 }
 
 local BOOL_COL = {
@@ -177,7 +182,8 @@ local NUM_COL = {
     client_port=true, local_port=true, brute_force_counter=true,
     failed_login_count=true, failed_login_rank=true,
     gp_attempts=true, gp_unique_ips=true, gp_unique_users=true, gp_ips_per_user=true,
-    prot_backoff=true, prot_delay_ms=true
+    prot_backoff = true, prot_delay_ms = true,
+    latency = true, http_status = true
 }
 
 local function is_allowed_key(key)
@@ -498,8 +504,8 @@ function nauthilus_run_hook(logging, session)
     local limit = clamp(nauthilus_http_request.get_http_query_param("limit") or 100, 1, 10000)
     local offset = clamp(nauthilus_http_request.get_http_query_param("offset") or 0, 0, 100000000)
 
-    local base = os.getenv("CLICKHOUSE_SELECT_BASE") or ""
-    local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.logins"
+    local base = CLICKHOUSE_SELECT_BASE
+    local table_name = CLICKHOUSE_TABLE
 
     local safe_table = escape_sql_ident(table_name)
     if base == "" or not safe_table then
@@ -597,7 +603,7 @@ function nauthilus_run_hook(logging, session)
         local fields = table.concat({
             -- core identifiers and network
             "ts","session","service","features","client_ip","client_port","client_net","client_id",
-            "hostname","proto","user_agent","local_ip","local_port",
+            "hostname", "proto", "method", "user_agent", "local_ip", "local_port",
             -- user/account info
             "display_name","account","username","password_hash",
             -- security and feature info
@@ -611,7 +617,8 @@ function nauthilus_run_hook(logging, session)
             "dyn_threat","dyn_response",
             -- flags and TLS
             "repeating","user_found","authenticated",
-            "xssl_protocol","xssl_cipher","ssl_fingerprint"
+            "xssl_protocol", "xssl_cipher", "ssl_fingerprint",
+            "latency", "http_status", "status_msg"
         }, ",")
 
         local limit_clause = " LIMIT " .. tostring(limit)
@@ -624,8 +631,8 @@ function nauthilus_run_hook(logging, session)
     local endpoint = build_select_endpoint(base)
 
     local headers = { ["Content-Type"] = "text/plain; charset=utf-8" }
-    local user = os.getenv("CLICKHOUSE_USER")
-    local pass = os.getenv("CLICKHOUSE_PASSWORD")
+    local user = CLICKHOUSE_USER
+    local pass = CLICKHOUSE_PASSWORD
     if user and user ~= "" then headers["X-ClickHouse-User"] = user end
     if pass and pass ~= "" then headers["X-ClickHouse-Key"] = pass end
 

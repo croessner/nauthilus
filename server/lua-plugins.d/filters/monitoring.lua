@@ -163,11 +163,8 @@ function nauthilus_call_filter(request)
     local num_of_bs = nauthilus_util.table_length(valid_servers)
 
     result.caller = N .. ".lua"
-    result.level = "info"
-    result.ts = nauthilus_util.get_current_timestamp()
 
     if request.debug then
-        result.level = "debug"
         result.session = request.session
         result.dovecot_target = session
         result.protocol = request.protocol
@@ -229,7 +226,11 @@ function nauthilus_call_filter(request)
         nauthilus_backend.apply_backend_result(backend_result)
     end
 
-    nauthilus_util.print_result({ log_format = request.log_format }, result, nil)
+    if request.debug then
+        nauthilus_util.log_debug(request, result)
+    else
+        nauthilus_util.log_info(request, result)
+    end
 
     if server_host == nil then
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL

@@ -24,21 +24,22 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_prometheus = require("nauthilus_prometheus")
+local time = require("time")
 
 -- Env knobs (conservative defaults)
-local HOT_THRESHOLD = tonumber(os.getenv("FAILED_LOGIN_HOT_THRESHOLD") or "10")   -- min. ZSET score
-local TOP_K        = tonumber(os.getenv("FAILED_LOGIN_TOP_K") or "20")            -- only signal when within top-K
-local SNAPSHOT_EVERY_SEC = tonumber(os.getenv("FAILED_LOGIN_SNAPSHOT_SEC") or "30") -- min interval for global top-N snapshot
-local SNAPSHOT_TOPN = tonumber(os.getenv("FAILED_LOGIN_SNAPSHOT_TOPN") or "10")
+local HOT_THRESHOLD = tonumber(nauthilus_util.getenv("FAILED_LOGIN_HOT_THRESHOLD", "10"))   -- min. ZSET score
+local TOP_K = tonumber(nauthilus_util.getenv("FAILED_LOGIN_TOP_K", "20"))            -- only signal when within top-K
+local SNAPSHOT_EVERY_SEC = tonumber(nauthilus_util.getenv("FAILED_LOGIN_SNAPSHOT_SEC", "30")) -- min interval for global top-N snapshot
+local SNAPSHOT_TOPN = tonumber(nauthilus_util.getenv("FAILED_LOGIN_SNAPSHOT_TOPN", "10"))
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
 local ZKEY = "ntc:top_failed_logins"
 
 local function get_redis_client()
     local client = "default"
-    local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if pool_name ~= nil and pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err
-        client, err = nauthilus_redis.get_redis_connection(pool_name)
+        client, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err)
     end
     return client
@@ -83,7 +84,7 @@ function nauthilus_call_feature(request)
     end
 
     local client = get_redis_client()
-    local now = os.time()
+    local now = time.unix()
 
     -- Get score and rank for this username
     local score = nauthilus_redis.redis_zscore(client, ZKEY, username)
@@ -101,8 +102,8 @@ function nauthilus_call_feature(request)
     -- Optional global snapshot (rate-limited), best-effort
     local ok, err = pcall(maybe_snapshot_topN, client, now)
     if not ok then
-        local logs = { caller = N .. ".lua", level = "error", message = "snapshot failed", error = tostring(err) }
-        nauthilus_util.print_result({ log_format = "json" }, logs)
+        local logs = { caller = N .. ".lua", message = "snapshot failed" }
+        nauthilus_util.log_error(request, logs, tostring(err))
     end
 
     -- Decide hotspot

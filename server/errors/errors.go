@@ -84,6 +84,8 @@ var (
 	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_server_monitoring not enabled")
 	ErrMonitoringBackendServersEmpty           = errors.New("no monitoring backend servers configured")
 	ErrInvalidUsername                         = errors.New("invalid username")
+	ErrEmptyUsername                           = errors.New("empty_username")
+	ErrEmptyPassword                           = errors.New("empty_password")
 	ErrPasswordEncoding                        = errors.New("password encoding error")
 	ErrIncorrectCache                          = errors.New("incorrect cache")
 	ErrUnregisteredComponent                   = errors.New("unregistered component")
@@ -113,15 +115,14 @@ var (
 	ErrLDAPConfig         = NewDetailedError("ldap_config_error")
 	ErrNoLDAPSearchResult = NewDetailedError("ldap_no_search_result")
 	ErrLDAPConnectTimeout = NewDetailedError("ldap_connect_timeout")
+	ErrLDAPSearchTimeout  = NewDetailedError("ldap_search_timeout")
+	ErrLDAPBindTimeout    = NewDetailedError("ldap_bind_timeout")
 	ErrLDAPModify         = NewDetailedError("ldap_modify_error")
 	// ErrLDAPPoolExhausted indicates that the LDAP pool could not serve the request
 	// within the allotted time (capacity token acquisition or waiting for a free
 	// connection timed out). Callers should treat this as a temporary failure and
 	// avoid mapping it to "user not found".
 	ErrLDAPPoolExhausted = NewDetailedError("ldap_pool_exhausted")
-	ErrLDAPSearchTimeout = NewDetailedError("ldap_search_timeout")
-	ErrLDAPBindTimeout   = NewDetailedError("ldap_bind_timeout")
-	ErrLDAPModifyTimeout = NewDetailedError("ldap_modify_timeout")
 )
 
 // lua.

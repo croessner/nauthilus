@@ -20,18 +20,13 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // commonRequestPool is a sync.Pool for CommonRequest objects to reduce memory allocations.
 var commonRequestPool = sync.Pool{
 	New: func() any {
-		util.DebugModule(
-			definitions.DbgLua,
-			definitions.LogKeyMsg, "Creating new CommonRequest object",
-		)
-
 		return &CommonRequest{}
 	},
 }
@@ -49,24 +44,6 @@ func PutCommonRequest(cr *CommonRequest) {
 
 // CommonRequest represents a common request object with various properties used in different functionalities.
 type CommonRequest struct {
-	// Debug is a flag indicating if the action is executed in debug mode.
-	Debug bool
-
-	// Repeating is a flag indicating if the action would be repeated.
-	Repeating bool
-
-	// UserFound is a flag indicating if the user executing the action was found in the system.
-	UserFound bool
-
-	// Authenticated is a flag indicating if the user is authenticated.
-	Authenticated bool
-
-	// NoAuth is a flag indicating if the action requires no authentication.
-	NoAuth bool
-
-	// BruteForceCounter keeps track of unsuccessful login attempts for the user.
-	BruteForceCounter uint
-
 	// Service is the http routers endpoint name.
 	Service string
 
@@ -117,6 +94,9 @@ type CommonRequest struct {
 
 	// Protocol stores the protocol that the user used to authenticate.
 	Protocol string
+
+	// Method stores the authentication method used.
+	Method string
 
 	// OIDCCID represents the OpenID Connect Client ID used for authentication.
 	OIDCCID string
@@ -177,6 +157,39 @@ type CommonRequest struct {
 
 	// SSLFingerprint represents the SSL certificate's fingerprint for the client in the request.
 	SSLFingerprint string
+
+	// BackendServers holds the list of backend servers.
+	BackendServers []*config.BackendServer
+
+	// UsedBackendAddr holds the address of the backend server used for authentication.
+	UsedBackendAddr *string
+
+	// UsedBackendPort holds the port of the backend server used for authentication.
+	UsedBackendPort *int
+
+	// Latency represents the request latency in milliseconds.
+	Latency float64
+
+	// BruteForceCounter keeps track of unsuccessful login attempts for the user.
+	BruteForceCounter uint
+
+	// HTTPStatus represents the HTTP status code.
+	HTTPStatus int
+
+	// Debug is a flag indicating if the action is executed in debug mode.
+	Debug bool
+
+	// Repeating is a flag indicating if the action would be repeated.
+	Repeating bool
+
+	// UserFound is a flag indicating if the user executing the action was found in the system.
+	UserFound bool
+
+	// Authenticated is a flag indicating if the user is authenticated.
+	Authenticated bool
+
+	// NoAuth is a flag indicating if the action requires no authentication.
+	NoAuth bool
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.
@@ -204,6 +217,7 @@ func (c *CommonRequest) Reset() {
 	c.DisplayName = ""
 	c.Password = ""
 	c.Protocol = ""
+	c.Method = ""
 	c.OIDCCID = ""
 	c.BruteForceName = ""
 	c.FeatureName = ""
@@ -224,15 +238,24 @@ func (c *CommonRequest) Reset() {
 	c.XSSLCipher = ""
 	c.SSLSerial = ""
 	c.SSLFingerprint = ""
+	c.BackendServers = nil
+	c.UsedBackendAddr = nil
+	c.UsedBackendPort = nil
+	c.Latency = 0
+	c.HTTPStatus = 0
 }
 
 // SetupRequest sets up the request object with the common request properties
-func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
+func (c *CommonRequest) SetupRequest(cfg config.File, request *lua.LTable) *lua.LTable {
 	logFormat := definitions.LogFormatDefault
-	logLevel := config.GetFile().GetServer().GetLog().GetLogLevelName()
+	logLevel := ""
 
-	if config.GetFile().GetServer().GetLog().IsLogFormatJSON() {
-		logFormat = definitions.LogFormatJSON
+	if cfg != nil {
+		logLevel = cfg.GetServer().GetLog().GetLogLevelName()
+
+		if cfg.GetServer().GetLog().IsLogFormatJSON() {
+			logFormat = definitions.LogFormatJSON
+		}
 	}
 
 	request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(c.Debug))
@@ -260,6 +283,7 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(definitions.LuaRequestDisplayName, lua.LString(c.DisplayName))
 	request.RawSetString(definitions.LuaRequestPassword, lua.LString(c.Password))
 	request.RawSetString(definitions.LuaRequestProtocol, lua.LString(c.Protocol))
+	request.RawSetString(definitions.LuaRequestMethod, lua.LString(c.Method))
 	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
@@ -286,13 +310,17 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
 	request.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
 
+	request.RawSetString(definitions.LuaRequestLatency, lua.LNumber(c.Latency))
+	request.RawSetString(definitions.LuaRequestHTTPStatus, lua.LNumber(c.HTTPStatus))
+
 	return request
 }
 
 // SetStatusMessage sets a new status message by updating the provided string pointer based on the input from the Lua state.
 func SetStatusMessage(status **string) lua.LGFunction {
 	return func(L *lua.LState) int {
-		newStatus := L.CheckString(1)
+		stack := luastack.NewManager(L)
+		newStatus := stack.CheckString(1)
 
 		*status = &newStatus
 

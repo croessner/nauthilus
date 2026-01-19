@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,158 +19,132 @@ import (
 	"context"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
-
+	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// RedisLPush adds one or more values to the beginning of a Redis list and returns the length of the list after the push operation.
-func RedisLPush(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-		values := make([]any, L.GetTop()-2)
+// RedisLPush prepends one or more values to a list.
+func (rm *RedisManager) RedisLPush(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		top := stack.GetTop()
 
-		for i := 3; i <= L.GetTop(); i++ {
-			value, err := convert.LuaValue(L.Get(i))
-			if err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
+		var values []any
 
-				return 2
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					values = append(values, stack.CheckAny(i).String())
+				} else {
+					values = append(values, val)
+				}
 			}
-
-			values[i-3] = value
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.LPush(dCtx, key, values...)
+		cmd := conn.LPush(ctx, key, values...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisRPush adds one or more values to the end of a Redis list and returns the length of the list after the push operation.
-func RedisRPush(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-		values := make([]any, L.GetTop()-2)
+// RedisRPush appends one or more values to a list.
+func (rm *RedisManager) RedisRPush(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		top := stack.GetTop()
+		var values []any
 
-		for i := 3; i <= L.GetTop(); i++ {
-			value, err := convert.LuaValue(L.Get(i))
-			if err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
-
-				return 2
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					values = append(values, stack.CheckAny(i).String())
+				} else {
+					values = append(values, val)
+				}
 			}
-
-			values[i-3] = value
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.RPush(dCtx, key, values...)
+		cmd := conn.RPush(ctx, key, values...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisLPop removes and returns the first element of a Redis list.
-func RedisLPop(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
+// RedisLPop removes and gets the first element in a list.
+func (rm *RedisManager) RedisLPop(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.LPop(dCtx, key)
+		cmd := conn.LPop(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LString(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisRPop removes and returns the last element of a Redis list.
-func RedisRPop(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
+// RedisRPop removes and gets the last element in a list.
+func (rm *RedisManager) RedisRPop(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.RPop(dCtx, key)
+		cmd := conn.RPop(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LString(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LString(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisLRange returns a range of elements from a Redis list.
-func RedisLRange(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
-		start := L.CheckInt64(3)
-		stop := L.CheckInt64(4)
+// RedisLRange gets a range of elements from a list.
+func (rm *RedisManager) RedisLRange(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		start := int64(stack.CheckInt(3))
+		stop := int64(stack.CheckInt(4))
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.LRange(dCtx, key, start, stop)
+		cmd := conn.LRange(ctx, key, start, stop)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
 		result := L.NewTable()
@@ -178,33 +152,20 @@ func RedisLRange(ctx context.Context) lua.LGFunction {
 			result.Append(lua.LString(val))
 		}
 
-		L.Push(result)
-
-		return 1
-	}
+		return stack.PushResults(result, lua.LNil)
+	})
 }
 
-// RedisLLen returns the length of a Redis list.
-func RedisLLen(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
+// RedisLLen gets the length of a list.
+func (rm *RedisManager) RedisLLen(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.LLen(dCtx, key)
+		cmd := conn.LLen(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }

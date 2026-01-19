@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package lualib
 
 import (
@@ -6,6 +21,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel"
@@ -74,7 +90,7 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
 	defer L.Close()
 
 	// Preload module with a background context
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background()))
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -130,6 +146,62 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
 	}
 }
 
+func TestOTEL_Span_Finish(t *testing.T) {
+	coll := &spanCollector{}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(coll)),
+	)
+	cleanup := setupTracingEnabled(tp)
+
+	defer cleanup()
+
+	L := lua.NewState()
+	defer L.Close()
+
+	// Preload module with a background context
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
+
+	script := `
+      local otel = require("nauthilus_opentelemetry")
+      local tr = otel.tracer("test/scope")
+      local span = tr:start_span("manual.op", { kind = "internal" })
+      span:set_attribute("manual", true)
+      span:finish()
+    `
+
+	if err := L.DoString(script); err != nil {
+		t.Fatalf("lua error: %v", err)
+	}
+
+	// One span expected with name manual.op
+	if len(coll.spans) == 0 {
+		t.Fatalf("expected spans to be recorded, got 0")
+	}
+
+	var found bool
+	for _, sp := range coll.spans {
+		if sp.Name() == "manual.op" {
+			found = true
+			attrs := sp.Attributes()
+			hasManual := false
+			for _, a := range attrs {
+				if string(a.Key) == "manual" && a.Value.AsBool() {
+					hasManual = true
+				}
+			}
+
+			if !hasManual {
+				t.Fatalf("missing expected attribute 'manual'")
+			}
+		}
+	}
+
+	if !found {
+		t.Fatalf("expected to find span 'manual.op'")
+	}
+}
+
 func TestOTEL_BaggageAndPropagation(t *testing.T) {
 	coll := &spanCollector{}
 	tp := sdktrace.NewTracerProvider(
@@ -143,7 +215,7 @@ func TestOTEL_BaggageAndPropagation(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background()))
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -206,7 +278,7 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background()))
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	script := `
       local otel = require("nauthilus_opentelemetry")
@@ -264,7 +336,7 @@ func TestOTEL_SemconvHelpers_And_NoOp(t *testing.T) {
 	L2 := lua.NewState()
 	defer L2.Close()
 
-	L2.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background()))
+	L2.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background(), config.GetFile(), log.GetLogger()))
 
 	noOpScript := `
       local otel = require("nauthilus_opentelemetry")

@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -27,9 +28,9 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -40,8 +41,8 @@ import (
 
 // ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
 type ldapManagerImpl struct {
-	// poolName specifies the identifier for the LDAP connection pool to be utilized by the manager implementation.
 	poolName string
+	deps     AuthDeps
 }
 
 // handleMasterUserMode handles the master user mode functionality for authentication.
@@ -54,22 +55,22 @@ type ldapManagerImpl struct {
 //
 // Returns:
 // - string: the username based on the master user mode flag.
-func handleMasterUserMode(auth *AuthState) string {
-	if config.GetFile().GetServer().GetMasterUser().IsEnabled() {
-		if strings.Count(auth.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter()) == 1 {
-			parts := strings.Split(auth.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter())
+func handleMasterUserMode(cfg config.File, auth *AuthState) string {
+	if cfg.GetServer().GetMasterUser().IsEnabled() {
+		if strings.Count(auth.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(auth.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
 
 			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
-				return auth.Username
+				return auth.Request.Username
 			}
 
-			if !auth.MasterUserMode {
-				auth.MasterUserMode = true
+			if !auth.Runtime.MasterUserMode {
+				auth.Runtime.MasterUserMode = true
 
 				// Return master user
 				return parts[1]
 			} else {
-				auth.MasterUserMode = false
+				auth.Runtime.MasterUserMode = false
 
 				// Return real user
 				return parts[0]
@@ -77,7 +78,7 @@ func handleMasterUserMode(auth *AuthState) string {
 		}
 	}
 
-	return auth.Username
+	return auth.Request.Username
 }
 
 // saveMasterUserTOTPSecret checks if the master user has a TOTP secret and returns it if present.
@@ -123,16 +124,30 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 }
 
 // PassDB implements the LDAP password database backend.
+func (lm *ldapManagerImpl) effectiveCfg() config.File {
+	return lm.deps.Cfg
+}
+
+func (lm *ldapManagerImpl) effectiveLogger() *slog.Logger {
+	return lm.deps.Logger
+}
+
+func (lm *ldapManagerImpl) effectiveEnv() config.Environment {
+	return lm.deps.Env
+}
+
+func (lm *ldapManagerImpl) effectiveRedis() rediscli.Client {
+	return lm.deps.Redis
+}
+
 func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.passdb",
 		attribute.String("pool_name", lm.poolName),
-		attribute.String("service", auth.Service),
-		attribute.String("username", auth.Username),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
-
-	_ = lctx
 
 	defer lspan.End()
 
@@ -152,31 +167,46 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	pCtx, pSpan := tr.Start(lctx, "ldap.passdb.search.prepare")
+	_ = pCtx
+
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if accountField, err = protocol.GetAccountField(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if attributes, err = protocol.GetAttributes(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if filter, err = protocol.GetUserFilter(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
-	username := handleMasterUserMode(auth)
+	username := handleMasterUserMode(lm.effectiveCfg(), auth)
 
 	lspan.SetAttributes(
 		attribute.String("base_dn", baseDN),
@@ -184,22 +214,22 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	)
 
 	// Derive a timeout context for LDAP search
-	dSearch := config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
+	dSearch := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch()
 	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
 	defer cancelSearch()
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:     auth.GUID,
+		GUID:     auth.Runtime.GUID,
 		Command:  definitions.LDAPSearch,
 		PoolName: lm.poolName,
 		MacroSource: &util.MacroSource{
 			Username:    username,
-			XLocalIP:    auth.XLocalIP,
-			XPort:       auth.XPort,
-			ClientIP:    auth.ClientIP,
-			XClientPort: auth.XClientPort,
-			TOTPSecret:  auth.TOTPSecret,
-			Protocol:    *auth.Protocol,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			TOTPSecret:  auth.Runtime.TOTPSecret,
+			Protocol:    *auth.Request.Protocol,
 		},
 		Filter:            filter,
 		BaseDN:            baseDN,
@@ -212,18 +242,22 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	// Find user with account status enabled
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
 
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
+
+	pSpan.End()
 
 	// Use priority queue instead of channel
 	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
+	_, wSpan := tr.Start(lctx, "ldap.passdb.search.wait")
 	ldapReply = <-ldapReplyChan
+	wSpan.End()
 
 	if ldapReply.Err != nil {
 		lspan.RecordError(ldapReply.Err)
@@ -272,46 +306,56 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		passDBResult.Attributes = ldapReply.Result
 	}
 
-	totpSecretPre := saveMasterUserTOTPSecret(auth.MasterUserMode, ldapReply, protocol.TOTPSecretField)
+	totpSecretPre := saveMasterUserTOTPSecret(auth.Runtime.MasterUserMode, ldapReply, protocol.TOTPSecretField)
 
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
 
+		apCtx, apSpan := tr.Start(lctx, "ldap.passdb.auth.prepare")
+		_ = apCtx
+
 		// Derive a timeout context for LDAP bind/auth
-		dBind := config.GetFile().GetServer().GetTimeouts().GetLDAPBind()
+		dBind := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPBind()
 		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
 		defer cancelBind()
 
 		ldapUserBindRequest := &bktype.LDAPAuthRequest{
-			GUID:              auth.GUID,
+			GUID:              auth.Runtime.GUID,
 			PoolName:          lm.poolName,
 			BindDN:            dn,
-			BindPW:            auth.Password,
+			BindPW:            auth.Request.Password,
 			LDAPReplyChan:     ldapReplyChan,
 			HTTPClientContext: ctxBind,
 		}
 
 		// Determine priority based on NoAuth flag and whether the user is already authenticated
 		priority := priorityqueue.PriorityLow
-		if !auth.NoAuth {
+		if !auth.Request.NoAuth {
 			priority = priorityqueue.PriorityMedium
 		}
 
-		if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 			priority = priorityqueue.PriorityHigh
 		}
+
+		apSpan.End()
 
 		// Use priority queue instead of channel
 		priorityqueue.LDAPAuthQueue.Push(ldapUserBindRequest, priority)
 
+		_, awSpan := tr.Start(lctx, "ldap.passdb.auth.wait")
 		ldapReply = <-ldapReplyChan
+		awSpan.End()
 
 		if ldapReply.Err != nil {
 			var ldapError *ldap.Error
 
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				auth.Ctx(),
+				lm.effectiveCfg(),
+				lm.effectiveLogger(),
 				definitions.DbgLDAP,
-				definitions.LogKeyGUID, auth.GUID,
+				definitions.LogKeyGUID, auth.Runtime.GUID,
 				definitions.LogKeyMsg, err,
 			)
 
@@ -335,11 +379,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	lspan.SetAttributes(attribute.Bool("authenticated", true))
 
 	// Update the authentication cache
-	localcache.AuthCache.Set(auth.Username, true)
+	localcache.AuthCache.Set(auth.Request.Username, true)
 
 	// We need to do a second user lookup, to retrieve correct data from LDAP.
-	if auth.MasterUserMode {
-		auth.NoAuth = true
+	if auth.Runtime.MasterUserMode {
+		auth.Request.NoAuth = true
 
 		passDBResult, err = lm.PassDB(auth)
 
@@ -354,8 +398,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	tr := monittrace.New("nauthilus/ldap")
 	actx, asp := tr.Start(auth.Ctx(), "ldap.accountdb",
 		attribute.String("pool_name", lm.poolName),
-		attribute.String("service", auth.Service),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = actx
@@ -372,7 +416,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromAccount, "ldap_account_request_total")
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "ldap_account_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -380,27 +424,42 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	pCtx, pSpan := tr.Start(actx, "ldap.accountdb.prepare")
+	_ = pCtx
+
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if accountField, err = protocol.GetAccountField(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if attributes, err = protocol.GetAttributes(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if filter, err = protocol.GetListAccountsFilter(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
@@ -410,21 +469,21 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	)
 
 	// Derive a timeout context for LDAP search (account list) using service-scoped context
-	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch()
+	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch(lm.effectiveCfg())
 	defer cancelSearch()
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:     auth.GUID,
+		GUID:     auth.Runtime.GUID,
 		Command:  definitions.LDAPSearch,
 		PoolName: lm.poolName,
 		MacroSource: &util.MacroSource{
-			Username:    auth.Username,
-			XLocalIP:    auth.XLocalIP,
-			XPort:       auth.XPort,
-			ClientIP:    auth.ClientIP,
-			XClientPort: auth.XClientPort,
-			TOTPSecret:  auth.TOTPSecret,
-			Protocol:    *auth.Protocol,
+			Username:    auth.Request.Username,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			TOTPSecret:  auth.Runtime.TOTPSecret,
+			Protocol:    *auth.Request.Protocol,
 		},
 		Filter:            filter,
 		BaseDN:            baseDN,
@@ -434,9 +493,13 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		HTTPClientContext: ctxSearch,
 	}
 
+	pSpan.End()
+
 	priorityqueue.LDAPQueue.Push(ldapRequest, priorityqueue.PriorityMedium)
 
+	_, wSpan := tr.Start(actx, "ldap.accountdb.wait")
 	ldapReply = <-ldapReplyChan
+	wSpan.End()
 
 	if ldapReply.Err != nil {
 		var ldapError *ldap.Error
@@ -463,8 +526,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	}
 
 	if len(accounts) == 0 {
-		level.Warn(log.Logger).Log(
-			definitions.LogKeyGUID, auth.GUID,
+		level.Warn(lm.effectiveLogger()).Log(
+			definitions.LogKeyGUID, auth.Runtime.GUID,
 			definitions.LogKeyMsg, "No accounts found in LDAP backend",
 		)
 	}
@@ -477,8 +540,8 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	tr := monittrace.New("nauthilus/ldap")
 	mctx, msp := tr.Start(auth.Ctx(), "ldap.add_totp",
 		attribute.String("pool_name", lm.poolName),
-		attribute.String("service", auth.Service),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = mctx
@@ -495,7 +558,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		ldapError   *ldap.Error
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromStoreTOTP, "ldap_store_totp_request_total")
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "ldap_store_totp_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -503,19 +566,30 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	pCtx, pSpan := tr.Start(mctx, "ldap.add_totp.prepare")
+	_ = pCtx
+
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if filter, err = protocol.GetUserFilter(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
@@ -526,29 +600,31 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	configField = totp.GetLDAPTOTPSecret(protocol)
 	if configField == "" {
+		pSpan.End()
+
 		err = errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Protocol.Get()))
+			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Request.Protocol.Get()))
 
 		return
 	}
 
 	// Derive a timeout context for LDAP modify using service-scoped context
-	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify()
+	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
 	defer cancelModify()
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:       auth.GUID,
+		GUID:       auth.Runtime.GUID,
 		Command:    definitions.LDAPModify,
 		PoolName:   lm.poolName,
 		SubCommand: definitions.LDAPModifyAdd,
 		MacroSource: &util.MacroSource{
-			Username:    auth.Username,
-			XLocalIP:    auth.XLocalIP,
-			XPort:       auth.XPort,
-			ClientIP:    auth.ClientIP,
-			XClientPort: auth.XClientPort,
-			TOTPSecret:  auth.TOTPSecret,
-			Protocol:    *auth.Protocol,
+			Username:    auth.Request.Username,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			TOTPSecret:  auth.Runtime.TOTPSecret,
+			Protocol:    *auth.Request.Protocol,
 		},
 		Filter:            filter,
 		BaseDN:            baseDN,
@@ -562,17 +638,21 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
+
+	pSpan.End()
 
 	// Use priority queue instead of channel
 	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
+	_, wSpan := tr.Start(mctx, "ldap.add_totp.wait")
 	ldapReply = <-ldapReplyChan
+	wSpan.End()
 
 	if stderrors.As(ldapReply.Err, &ldapError) {
 		msp.RecordError(ldapError)
@@ -590,8 +670,9 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 var _ BackendManager = (*ldapManagerImpl)(nil)
 
 // NewLDAPManager creates and returns a BackendManager for managing LDAP authentication backends using the specified pool name.
-func NewLDAPManager(poolName string) BackendManager {
+func NewLDAPManager(poolName string, deps AuthDeps) BackendManager {
 	return &ldapManagerImpl{
 		poolName: poolName,
+		deps:     deps,
 	}
 }

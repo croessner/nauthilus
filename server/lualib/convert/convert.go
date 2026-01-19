@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
@@ -47,6 +48,8 @@ func LuaValue(lValue lua.LValue) (any, error) {
 // StringCmd processes a Redis StringCmd response, converts it to the specified Lua value type, and pushes it to Lua state.
 // Supported types are "string", "number", "bool", and "nil". Returns an error if conversion or processing fails.
 func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
+	stack := luastack.NewManager(L)
+
 	if err := value.Err(); err != nil {
 		return err
 	}
@@ -54,37 +57,48 @@ func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 	switch valType {
 	case definitions.TypeString:
 		if value.Val() == "" {
+			stack.PushResult(lua.LNil)
 			L.Push(lua.LNil)
 
 			return nil
 		}
 
-		L.Push(lua.LString(value.Val()))
+		stack.PushResult(lua.LString(value.Val()))
+		L.Push(lua.LNil)
+
+		return nil
 	case definitions.TypeNumber:
 		if value.Val() == "" {
+			stack.PushResult(lua.LNil)
 			L.Push(lua.LNil)
 
 			return nil
 		}
 
 		if result, err := value.Float64(); err == nil {
-			L.Push(lua.LNumber(result))
+			stack.PushResult(lua.LNumber(result))
+			L.Push(lua.LNil)
 		} else {
 			return err
 		}
+
 	case definitions.TypeBoolean:
 		if value.Val() == "" {
+			stack.PushResult(lua.LNil)
 			L.Push(lua.LNil)
 
 			return nil
 		}
 
 		if result, err := value.Bool(); err == nil {
-			L.Push(lua.LBool(result))
+			stack.PushResult(lua.LBool(result))
+			L.Push(lua.LNil)
 		} else {
 			return err
 		}
+
 	case definitions.TypeNil:
+		stack.PushResult(lua.LNil)
 		L.Push(lua.LNil)
 	default:
 		return fmt.Errorf("unable to convert string command of type %s", valType)
@@ -106,8 +120,8 @@ func GoToLuaValue(L *lua.LState, value any) lua.LValue {
 		return lua.LBool(v)
 	case config.StringSet:
 		tbl := L.NewTable()
-
 		strSlice := v.GetStringSlice()
+
 		for _, str := range strSlice {
 			tbl.Append(lua.LString(str))
 		}

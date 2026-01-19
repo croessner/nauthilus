@@ -309,11 +309,11 @@ func setDefaultEnvVars() {
 
 // String returns the name of the Config object excluding the HTTPOptions.
 func (env *EnvironmentSettings) String() string {
-	var result string
-
 	if env == nil {
 		return "<nil>"
 	}
+
+	var result strings.Builder
 
 	value := reflect.ValueOf(*env)
 	typeOfValue := value.Type()
@@ -323,11 +323,15 @@ func (env *EnvironmentSettings) String() string {
 		case "HTTPOptions":
 			continue
 		default:
-			result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+			fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 		}
 	}
 
-	return result[1:]
+	if result.Len() == 0 {
+		return ""
+	}
+
+	return result.String()[1:]
 }
 
 // setConfigFromEnvVars initializes configuration fields from environment variables using the viper package.

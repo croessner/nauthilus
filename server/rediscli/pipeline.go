@@ -30,7 +30,7 @@ type PipelineFunc func(pipe redis.Pipeliner) error
 // It takes a context and a function that defines the commands to execute.
 // The function should add commands to the pipeline but not execute them.
 // Returns the command results and any error that occurred.
-func ExecuteWritePipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, error) {
+func ExecuteWritePipeline(ctx context.Context, redisClient Client, fn PipelineFunc) ([]redis.Cmder, error) {
 	// Tracing: cover the lifecycle of a write pipeline execution
 	tr := monittrace.New("nauthilus/redis_batch")
 	pctx, sp := tr.Start(ctx, "redis.pipeline.exec",
@@ -40,23 +40,31 @@ func ExecuteWritePipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, 
 	// Use pctx for Exec so any downstream hooks attach to this span
 	_ = pctx
 
-	defer sp.End()
+	if sp != nil {
+		defer sp.End()
+	}
 
-	pipe := GetClient().GetWritePipeline()
+	pipe := redisClient.GetWritePipeline()
 	if err := fn(pipe); err != nil {
-		sp.RecordError(err)
+		if sp != nil {
+			sp.RecordError(err)
+		}
 
 		return nil, err
 	}
 
 	// best effort op count before exec
 	if l, ok := any(pipe).(interface{ Len() int }); ok {
-		sp.SetAttributes(attribute.Int("op_count", l.Len()))
+		if sp != nil {
+			sp.SetAttributes(attribute.Int("op_count", l.Len()))
+		}
 	}
 
 	cmds, err := pipe.Exec(pctx)
 	if err != nil {
-		sp.RecordError(err)
+		if sp != nil {
+			sp.RecordError(err)
+		}
 	}
 
 	return cmds, err
@@ -66,7 +74,7 @@ func ExecuteWritePipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, 
 // It takes a context and a function that defines the commands to execute.
 // The function should add commands to the pipeline but not execute them.
 // Returns the command results and any error that occurred.
-func ExecuteReadPipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, error) {
+func ExecuteReadPipeline(ctx context.Context, redisClient Client, fn PipelineFunc) ([]redis.Cmder, error) {
 	// Tracing: cover the lifecycle of a read pipeline execution
 	tr := monittrace.New("nauthilus/redis_batch")
 	pctx, sp := tr.Start(ctx, "redis.pipeline.exec",
@@ -76,23 +84,31 @@ func ExecuteReadPipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, e
 	// Use pctx for Exec so any downstream hooks attach to this span
 	_ = pctx
 
-	defer sp.End()
+	if sp != nil {
+		defer sp.End()
+	}
 
-	pipe := GetClient().GetReadPipeline()
+	pipe := redisClient.GetReadPipeline()
 	if err := fn(pipe); err != nil {
-		sp.RecordError(err)
+		if sp != nil {
+			sp.RecordError(err)
+		}
 
 		return nil, err
 	}
 
 	// best effort op count before exec
 	if l, ok := any(pipe).(interface{ Len() int }); ok {
-		sp.SetAttributes(attribute.Int("op_count", l.Len()))
+		if sp != nil {
+			sp.SetAttributes(attribute.Int("op_count", l.Len()))
+		}
 	}
 
 	cmds, err := pipe.Exec(pctx)
 	if err != nil {
-		sp.RecordError(err)
+		if sp != nil {
+			sp.RecordError(err)
+		}
 	}
 
 	return cmds, err

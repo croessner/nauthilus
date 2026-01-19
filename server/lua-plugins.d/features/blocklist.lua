@@ -26,6 +26,8 @@ local json = require("json")
 
 local HCCR = "http_client_concurrent_requests_total"
 
+local BLOCKLIST_URL = nauthilus_util.getenv("BLOCKLIST_URL", "")
+
 function nauthilus_call_feature(request)
     if request.no_auth then
         return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
@@ -50,7 +52,7 @@ function nauthilus_call_feature(request)
     local result, request_err
 
     if nauthilus_otel and nauthilus_otel.is_enabled() then
-        local url = os.getenv("BLOCKLIST_URL")
+        local url = BLOCKLIST_URL
         local tr = nauthilus_otel.tracer("nauthilus/lua/blocklist")
         tr:with_span("blocklist.http", function(span)
             span:set_attributes(nauthilus_otel.semconv.peer_service("http"))
@@ -88,7 +90,7 @@ function nauthilus_call_feature(request)
             end
         end, { kind = "client" })
     else
-        result, request_err = http.post(os.getenv("BLOCKLIST_URL"), {
+        result, request_err = http.post(BLOCKLIST_URL, {
             timeout = "10s",
             headers = {
                 Accept = "*/*",

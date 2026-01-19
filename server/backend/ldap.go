@@ -19,6 +19,8 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
+	"sync"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/ldappool"
@@ -26,18 +28,25 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
+)
+
+var (
+	trOps = monittrace.New("nauthilus/ldap_ops")
+	trLua = monittrace.New("nauthilus/ldap_lua")
 )
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPMainWorker(ctx context.Context, poolName string) {
+func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string) {
 	// Ensure the LDAP-scoped shared TTL cache is initialized and its janitor is
 	// bound to this worker's lifecycle. This avoids running the TTL janitor when
 	// no LDAP backend is active.
 	ldappool.StartSharedTTLCache(ctx)
 
-	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup, poolName)
+	ldapPool := ldappool.NewPool(ctx, cfg, logger, definitions.LDAPPoolLookup, poolName)
 
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
@@ -50,13 +59,13 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 	// Configure queue length limit from config (0 = unlimited)
 	lookupLimit := 0
 	if poolName == definitions.DefaultBackendName {
-		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
-			if c, ok := cfg.(*config.LDAPConf); ok {
+		if ldapCfg := cfg.GetLDAP().GetConfig(); ldapCfg != nil {
+			if c, ok := ldapCfg.(*config.LDAPConf); ok {
 				lookupLimit = c.GetLookupQueueLength()
 			}
 		}
 	} else {
-		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		pools := cfg.GetLDAP().GetOptionalLDAPPools()
 		if pools != nil {
 			if pc := pools[poolName]; pc != nil {
 				lookupLimit = pc.GetLookupQueueLength()
@@ -66,8 +75,12 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 
 	priorityqueue.LDAPQueue.SetMaxQueueLength(poolName, lookupLimit)
 
+	var wg sync.WaitGroup
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -75,31 +88,50 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 
 					return
 				default:
-					// Get the next request from the priority queue
-					ldapRequest := priorityqueue.LDAPQueue.Pop(poolName)
+				}
+
+				// Get the next request from the priority queue.
+				ldapRequest := priorityqueue.LDAPQueue.PopWithContext(ctx, poolName)
+				if ldapRequest == nil {
+					ldapPool.Close()
+
+					return
+				}
+
+				func() {
+					_, span := trOps.Start(ldapRequest.HTTPClientContext, "ldap.worker.process",
+						attribute.String("pool", poolName),
+						attribute.String("guid", ldapRequest.GUID),
+					)
+					defer span.End()
 
 					// Check that we have enough idle connections.
 					if err := ldapPool.SetIdleConnections(true); err != nil {
 						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 
-						continue
+						return
 					}
 
 					if err := ldapPool.HandleLookupRequest(ldapRequest); err != nil {
 						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 					}
-				}
+				}()
 			}
 		}()
 	}
+
+	go func() {
+		wg.Wait()
+		TrySignalDone(channel.GetLdapChannel().GetLookupEndChan(poolName))
+	}()
 }
 
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
 // It initializes the authentication connection pool, starts a resource management process, and handles requests or exits gracefully.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPAuthWorker(ctx context.Context, poolName string) {
+func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string) {
 
-	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolAuth, poolName)
+	ldapPool := ldappool.NewPool(ctx, cfg, logger, definitions.LDAPPoolAuth, poolName)
 
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
@@ -112,13 +144,13 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 	// Configure auth queue length limit from config (0 = unlimited)
 	authLimit := 0
 	if poolName == definitions.DefaultBackendName {
-		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
-			if c, ok := cfg.(*config.LDAPConf); ok {
+		if ldapCfg := cfg.GetLDAP().GetConfig(); ldapCfg != nil {
+			if c, ok := ldapCfg.(*config.LDAPConf); ok {
 				authLimit = c.GetAuthQueueLength()
 			}
 		}
 	} else {
-		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		pools := cfg.GetLDAP().GetOptionalLDAPPools()
 		if pools != nil {
 			if pc := pools[poolName]; pc != nil {
 				authLimit = pc.GetAuthQueueLength()
@@ -128,8 +160,12 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 
 	priorityqueue.LDAPAuthQueue.SetMaxQueueLength(poolName, authLimit)
 
+	var wg sync.WaitGroup
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -137,23 +173,42 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 
 					return
 				default:
-					// Get the next request from the priority queue
-					ldapAuthRequest := priorityqueue.LDAPAuthQueue.Pop(poolName)
+				}
+
+				// Get the next request from the priority queue.
+				ldapAuthRequest := priorityqueue.LDAPAuthQueue.PopWithContext(ctx, poolName)
+				if ldapAuthRequest == nil {
+					ldapPool.Close()
+
+					return
+				}
+
+				func() {
+					_, span := trOps.Start(ldapAuthRequest.HTTPClientContext, "ldap.worker.process_auth",
+						attribute.String("pool", poolName),
+						attribute.String("guid", ldapAuthRequest.GUID),
+					)
+					defer span.End()
 
 					// Check that we have enough idle connections.
 					if err := ldapPool.SetIdleConnections(false); err != nil {
 						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 
-						continue
+						return
 					}
 
 					if err := ldapPool.HandleAuthRequest(ldapAuthRequest); err != nil {
 						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 					}
-				}
+				}()
 			}
 		}()
 	}
+
+	go func() {
+		wg.Wait()
+		TrySignalDone(channel.GetLdapChannel().GetAuthEndChan(poolName))
+	}()
 }
 
 // convertScopeStringToLDAP converts an LDAP scope string into an LDAPScope object.
@@ -176,26 +231,44 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 // LuaLDAPSearch initializes and registers an LDAP search function for Lua, handling inputs, validation, and processing.
 func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
+		callCtx := ctx
+		cancel := func() {}
+
+		if callCtx != nil {
+			if _, has := callCtx.Deadline(); !has {
+				callCtx, cancel = context.WithTimeout(callCtx, definitions.LuaLDAPReplyTimeout)
+			}
+		}
+
+		defer cancel()
 		table := L.CheckTable(1)
 
+		trCtx, span := trLua.Start(callCtx, "ldap.lua.search")
+		defer span.End()
+
+		_, pSpan := trLua.Start(trCtx, "ldap.lua.search.prepare")
 		fieldValues := prepareAndValidateSearchFields(L, table)
 		if fieldValues == nil {
+			pSpan.End()
 			L.RaiseError("invalid search fields")
 
 			return 0
 		}
 
 		setDefaultPoolName(fieldValues)
+		pSpan.End()
 
-		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPSearch)
+		ldapRequest := createLDAPRequest(L, fieldValues, trCtx, definitions.LDAPSearch)
 
 		// Determine priority (using low priority for Lua-initiated requests)
 		priority := priorityqueue.PriorityLow
 
 		// Use priority queue instead of channel
+		_, qSpan := trLua.Start(trCtx, "ldap.lua.search.enqueue")
 		priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+		qSpan.End()
 
-		return processReply(L, ldapRequest.GetLDAPReplyChan())
+		return processReply(trCtx, L, ldapRequest.GetLDAPReplyChan())
 	}
 }
 
@@ -204,26 +277,55 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 // The function returns results via Lua stack, "OK" on success, or an error message if the operation fails.
 func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
+		callCtx := ctx
+		cancel := func() {}
+
+		if callCtx != nil {
+			if _, has := callCtx.Deadline(); !has {
+				callCtx, cancel = context.WithTimeout(callCtx, definitions.LuaLDAPReplyTimeout)
+			}
+		}
+
+		defer cancel()
 		table := L.CheckTable(1)
 
+		trCtx, span := trLua.Start(callCtx, "ldap.lua.modify")
+		defer span.End()
+
+		_, pSpan := trLua.Start(trCtx, "ldap.lua.modify.prepare")
 		fieldValues := prepareAndValidateModifyFields(L, table)
 		if fieldValues == nil {
+			pSpan.End()
 			L.RaiseError("invalid modify fields")
 
 			return 0
 		}
 
 		setDefaultPoolName(fieldValues)
+		pSpan.End()
 
-		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPModify)
+		ldapRequest := createLDAPRequest(L, fieldValues, trCtx, definitions.LDAPModify)
 
 		// Determine priority (using low priority for Lua-initiated requests)
 		priority := priorityqueue.PriorityLow
 
 		// Use priority queue instead of channel
+		_, qSpan := trLua.Start(trCtx, "ldap.lua.modify.enqueue")
 		priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+		qSpan.End()
 
-		ldapReply := <-ldapRequest.GetLDAPReplyChan()
+		var ldapReply *bktype.LDAPReply
+		_, wSpan := trLua.Start(trCtx, "ldap.lua.modify.wait")
+		defer wSpan.End()
+
+		select {
+		case <-callCtx.Done():
+			L.Push(lua.LNil)
+			L.Push(lua.LString(callCtx.Err().Error()))
+
+			return 2
+		case ldapReply = <-ldapRequest.GetLDAPReplyChan():
+		}
 
 		if ldapReply.Err != nil {
 			L.Push(lua.LNil)
@@ -422,8 +524,22 @@ func extractAttributes(attrTable *lua.LTable) []string {
 
 // processReply processes an LDAP reply received from a channel and converts it into a Lua-compatible value or error.
 // If raw_result is true, it returns the raw LDAP entries instead of the processed result.
-func processReply(L *lua.LState, ldapReplyChan chan *bktype.LDAPReply) int {
-	ldapReply := <-ldapReplyChan
+//
+// It is context-aware to avoid hanging the caller indefinitely.
+func processReply(ctx context.Context, L *lua.LState, ldapReplyChan chan *bktype.LDAPReply) int {
+	var ldapReply *bktype.LDAPReply
+
+	_, span := trLua.Start(ctx, "ldap.lua.search.wait")
+	defer span.End()
+
+	select {
+	case <-ctx.Done():
+		L.Push(lua.LNil)
+		L.Push(lua.LString(ctx.Err().Error()))
+
+		return 2
+	case ldapReply = <-ldapReplyChan:
+	}
 
 	// Check if there is an error. If so, return it.
 	if ldapReply.Err != nil {

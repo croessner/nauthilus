@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,174 +19,142 @@ import (
 	"context"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
-
-	"github.com/yuin/gopher-lua"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/redis/go-redis/v9"
+	lua "github.com/yuin/gopher-lua"
 )
 
-// RedisSAdd adds one or more members to a Redis set associated with the given key and returns the count of added members.
-func RedisSAdd(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-		values := make([]any, L.GetTop()-2)
+// RedisSAdd adds one or more members to a set.
+func (rm *RedisManager) RedisSAdd(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		top := stack.GetTop()
 
-		for i := 3; i <= L.GetTop(); i++ {
-			value, err := convert.LuaValue(L.Get(i))
-			if err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
+		var values []any
 
-				return 2
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					values = append(values, stack.CheckAny(i).String())
+				} else {
+					values = append(values, val)
+				}
 			}
-
-			values[i-3] = value
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.SAdd(dCtx, key, values...)
+		cmd := conn.SAdd(ctx, key, values...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisSIsMember determines if a specified value is a member of a Redis set, returning a boolean or an error.
-func RedisSIsMember(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
-
-		value, err := convert.LuaValue(L.Get(3))
+// RedisSIsMember checks if a member exists in a set.
+func (rm *RedisManager) RedisSIsMember(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		val, err := convert.LuaValue(stack.CheckAny(3))
 		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-
-			return 2
+			return stack.PushError(err)
 		}
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.SIsMember(dCtx, key, value)
+		cmd := conn.SIsMember(ctx, key, val)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LBool(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LBool(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisSMembers retrieves all members of a Redis set corresponding to the given key and returns them as a Lua table.
-func RedisSMembers(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
+// RedisSMembers gets all members in a set.
+func (rm *RedisManager) RedisSMembers(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.SMembers(dCtx, key)
+		cmd := conn.SMembers(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		members := cmd.Val()
-		table := L.NewTable()
-		for _, member := range members {
-			table.Append(convert.GoToLuaValue(L, member))
+		result := L.NewTable()
+		for _, member := range cmd.Val() {
+			result.Append(lua.LString(member))
 		}
 
-		L.Push(table)
-
-		return 1
-	}
+		return stack.PushResults(result, lua.LNil)
+	})
 }
 
-// RedisSRem removes one or more members from a Redis set identified by the given key. Returns the count of removed members.
-func RedisSRem(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-		values := make([]any, L.GetTop()-2)
+// RedisSRem removes one or more members from a set.
+func (rm *RedisManager) RedisSRem(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
+		top := stack.GetTop()
 
-		for i := 3; i <= L.GetTop(); i++ {
-			value, err := convert.LuaValue(L.Get(i))
-			if err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
+		var values []any
 
-				return 2
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+			tbl.ForEach(func(_, value lua.LValue) {
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				val, err := convert.LuaValue(stack.CheckAny(i))
+				if err != nil {
+					values = append(values, stack.CheckAny(i).String())
+				} else {
+					values = append(values, val)
+				}
 			}
-
-			values[i-3] = value
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.SRem(dCtx, key, values...)
+		cmd := conn.SRem(ctx, key, values...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisSCard returns a Lua function to retrieve the cardinality (number of elements) of a Redis set for a given key.
-func RedisSCard(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
+// RedisSCard returns the number of members in a set.
+func (rm *RedisManager) RedisSCard(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		key := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.SCard(dCtx, key)
+		cmd := conn.SCard(ctx, key)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }

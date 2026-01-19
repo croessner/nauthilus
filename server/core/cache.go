@@ -16,9 +16,10 @@
 package core
 
 import (
+	"strings"
+
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
@@ -32,9 +33,9 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	// Root span for cache backend lookup
 	tr := monittrace.New("nauthilus/cache_backend")
 	ctx, sp := tr.Start(auth.Ctx(), "cache.passdb",
-		attribute.String("service", auth.Service),
-		attribute.String("username", auth.Username),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = ctx
@@ -46,7 +47,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		ppc         *bktype.PositivePasswordCache
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "cache_backend_request_total")
+	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromBackend, "cache_backend_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -62,7 +63,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	if accountName != "" {
-		cacheNames := backend.GetCacheNames(auth.Protocol.Get(), definitions.CacheAll)
+		cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Channel(), auth.Request.Protocol.Get(), definitions.CacheAll)
 
 		for _, cacheName := range cacheNames.GetStringSlice() {
 			// Child span per cache name read attempt
@@ -72,12 +73,20 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 			_ = cctx
 
-			redisPosUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+			var sb strings.Builder
+
+			sb.WriteString(auth.cfg().GetServer().GetRedis().GetPrefix())
+			sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+			sb.WriteString(cacheName)
+			sb.WriteByte(':')
+			sb.WriteString(accountName)
+
+			redisPosUserKey := sb.String()
 
 			ppc = &bktype.PositivePasswordCache{}
 
 			isRedisErr := false
-			if isRedisErr, err = backend.LoadCacheFromRedis(auth.Ctx(), redisPosUserKey, ppc); err != nil {
+			if isRedisErr, err = backend.LoadCacheFromRedisWithSF(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.deps.Redis, redisPosUserKey, ppc); err != nil {
 				csp.RecordError(err)
 
 				csp.End()
@@ -101,7 +110,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			passDBResult.Backend = ppc.Backend
 			passDBResult.Attributes = ppc.Attributes
 
-			if auth.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(auth.Password)) {
+			if auth.Request.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(auth.Request.Password)) {
 				passDBResult.Authenticated = true
 			}
 

@@ -26,9 +26,9 @@ import (
 
 // DecompressRequestMiddleware returns a middleware that decompresses HTTP requests with gzip Content-Encoding.
 // If Content-Encoding is "gzip", it replaces the request body with a gzip reader and removes encoding/length headers.
-func DecompressRequestMiddleware() gin.HandlerFunc {
+func DecompressRequestMiddleware(cfg config.File) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		compressionConfig := config.GetFile().GetServer().GetCompression()
+		compressionConfig := cfg.GetServer().GetCompression()
 
 		// Skip if compression is disabled
 		if !compressionConfig.IsEnabled() {

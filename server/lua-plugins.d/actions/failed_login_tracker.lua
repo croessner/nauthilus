@@ -20,6 +20,8 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
 
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+
 function nauthilus_call_action(request)
     -- Skip if no authentication was attempted or if authentication was successful
     if request.no_auth or request.authenticated then
@@ -28,11 +30,10 @@ function nauthilus_call_action(request)
 
     -- Get Redis connection
     local custom_pool = "default"
-    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err_redis_client
 
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err_redis_client)
     end
 
@@ -74,7 +75,6 @@ function nauthilus_call_action(request)
         -- Add log
         local logs = {}
         logs.caller = N .. ".lua"
-        logs.level = "info"
 
         if not request.account or request.account == "" then
             logs.message = "Failed login tracked for username: " .. username
@@ -83,7 +83,7 @@ function nauthilus_call_action(request)
             logs.reason = "Account is recognized"
         end
 
-        nauthilus_util.print_result({ log_format = "json" }, logs)
+        nauthilus_util.log_info(request, logs)
     end
 
     return nauthilus_builtin.ACTION_RESULT_OK

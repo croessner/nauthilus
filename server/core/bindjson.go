@@ -56,5 +56,18 @@ func HandleJSONError(ctx *gin.Context, err error) {
 		}
 
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"errors": errorMsgList})
+
+		return
 	}
+
+	ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+}
+
+// HandleJSONValidationError handles manual validation errors by returning a JSON response in the same format as Gin's validation errors.
+func HandleJSONValidationError(ctx *gin.Context, field, message string) {
+	ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+		"errors": []JSONErrorMsg{
+			{Field: field, Message: message},
+		},
+	})
 }

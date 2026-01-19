@@ -18,67 +18,79 @@ package redislib
 import (
 	"context"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/rediscli"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// LoaderModRedis initializes and returns a Lua table with Redis-related functions registered within the provided context.
-func LoaderModRedis(ctx context.Context) lua.LGFunction {
+// LoaderModRedis returns a function that can be used to load the Redis module into a Lua state.
+// It creates a new Lua table, sets the exported Redis functions, and pushes the table onto the stack.
+func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
+		rm := NewRedisManager(ctx, cfg, client)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
 			definitions.LuaFnRedisGetRedisConnection: GetRedisConnection,
 
-			definitions.LuaFnRedisPing:                 RedisPingWithCtx(ctx),
-			definitions.LuaFnRedisGet:                  RedisGetWithCtx(ctx),
-			definitions.LuaFnRedisSet:                  RedisSetWithCtx(ctx),
-			definitions.LuaFnRedisIncr:                 RedisIncrWithCtx(ctx),
-			definitions.LuaFnRedisDel:                  RedisDelWithCtx(ctx),
-			definitions.LuaFnRedisExpire:               RedisExpireWithCtx(ctx),
-			definitions.LuaFnRedisExists:               RedisExistsWithCtx(ctx),
-			definitions.LuaFnRedisHGet:                 RedisHGetWithCtx(ctx),
-			definitions.LuaFnRedisHSet:                 RedisHSetWithCtx(ctx),
-			definitions.LuaFnRedisHDel:                 RedisHDelWithCtx(ctx),
-			definitions.LuaFnRedisHLen:                 RedisHLenWithCtx(ctx),
-			definitions.LuaFnRedisHGetAll:              RedisHGetAllWithCtx(ctx),
-			definitions.LuaFnRedisHMGet:                RedisHMGetWithCtx(ctx),
-			definitions.LuaFnRedisHIncrBy:              RedisHIncrByWithCtx(ctx),
-			definitions.LuaFnRedisHIncrByFloat:         RedisHIncrByFloatWithCtx(ctx),
-			definitions.LuaFnRedisHExists:              RedisHExistsWithCtx(ctx),
-			definitions.LuaFnRedisRename:               RedisRenameWithCtx(ctx),
-			definitions.LuaFnRedisSAdd:                 RedisSAddWithCtx(ctx),
-			definitions.LuaFnRedisSIsMember:            RedisSIsMemberWithCtx(ctx),
-			definitions.LuaFnRedisSMembers:             RedisSMembersWithCtx(ctx),
-			definitions.LuaFnRedisSRem:                 RedisSRemWithCtx(ctx),
-			definitions.LuaFnRedisSCard:                RedisSCardWithCtx(ctx),
-			definitions.LuaFnRedisRunScript:            RedisRunScriptWithCtx(ctx),
-			definitions.LuaFnRedisUploadScript:         RedisUploadScriptWithCtx(ctx),
-			definitions.LuaFnRedisPipeline:             RedisPipelineWithCtx(ctx),
-			definitions.LuaFnRedisZAdd:                 RedisZAddWithCtx(ctx),
-			definitions.LuaFnRedisZRem:                 RedisZRemWithCtx(ctx),
-			definitions.LuaFnRedisZRank:                RedisZRankWithCtx(ctx),
-			definitions.LuaFNRedisZRange:               RedisZRangeWithCtx(ctx),
-			definitions.LuaFnRedisZRevRange:            RedisZRevRangeWithCtx(ctx),
-			definitions.LuaFnRedisZRangeByScore:        RedisZRangeByScoreWithCtx(ctx),
-			definitions.LuaFnRedisZRemRangeByScore:     RedisZRemRangeByScoreWithCtx(ctx),
-			definitions.LuaFnRedisRedisZRemRangeByRank: RedisZRemRangeByRankWithCtx(ctx),
-			definitions.LuaFnRedisZCount:               RedisZCountWithCtx(ctx),
-			definitions.LuaFnRedisZScore:               RedisZScoreWithCtx(ctx),
-			definitions.LuaFnRedisRedisZRevRank:        RedisZRevRankWithCtx(ctx),
-			definitions.LuaFnRedisZIncrBy:              RedisZIncrByWithCtx(ctx),
-			definitions.LuaFnRedisLPush:                RedisLPushWithCtx(ctx),
-			definitions.LuaFnRedisRPush:                RedisRPushWithCtx(ctx),
-			definitions.LuaFnRedisLPop:                 RedisLPopWithCtx(ctx),
-			definitions.LuaFnRedisRPop:                 RedisRPopWithCtx(ctx),
-			definitions.LuaFnRedisLRange:               RedisLRangeWithCtx(ctx),
-			definitions.LuaFnRedisLLen:                 RedisLLenWithCtx(ctx),
-			definitions.LuaFnRedisMGet:                 RedisMGetWithCtx(ctx),
-			definitions.LuaFnRedisMSet:                 RedisMSetWithCtx(ctx),
-			definitions.LuaFnRedisKeys:                 RedisKeysWithCtx(ctx),
-			definitions.LuaFnRedisScan:                 RedisScanWithCtx(ctx),
-			definitions.LuaFnRedisPFAdd:                RedisPFAddWithCtx(ctx),
-			definitions.LuaFnRedisPFCount:              RedisPFCountWithCtx(ctx),
-			definitions.LuaFnRedisPFMerge:              RedisPFMergeWithCtx(ctx),
+			definitions.LuaFnRedisPing:   rm.RedisPing,
+			definitions.LuaFnRedisGet:    rm.RedisGet,
+			definitions.LuaFnRedisSet:    rm.RedisSet,
+			definitions.LuaFnRedisIncr:   rm.RedisIncr,
+			definitions.LuaFnRedisDel:    rm.RedisDel,
+			definitions.LuaFnRedisRename: rm.RedisRename,
+			definitions.LuaFnRedisExpire: rm.RedisExpire,
+			definitions.LuaFnRedisExists: rm.RedisExists,
+
+			definitions.LuaFnRedisRunScript:    rm.RedisRunScript,
+			definitions.LuaFnRedisUploadScript: rm.RedisUploadScript,
+			definitions.LuaFnRedisPipeline:     rm.RedisPipeline,
+
+			definitions.LuaFnRedisMGet: rm.RedisMGet,
+			definitions.LuaFnRedisMSet: rm.RedisMSet,
+			definitions.LuaFnRedisKeys: rm.RedisKeys,
+			definitions.LuaFnRedisScan: rm.RedisScan,
+
+			definitions.LuaFnRedisHGet:         rm.RedisHGet,
+			definitions.LuaFnRedisHSet:         rm.RedisHSet,
+			definitions.LuaFnRedisHDel:         rm.RedisHDel,
+			definitions.LuaFnRedisHLen:         rm.RedisHLen,
+			definitions.LuaFnRedisHGetAll:      rm.RedisHGetAll,
+			definitions.LuaFnRedisHMGet:        rm.RedisHMGet,
+			definitions.LuaFnRedisHIncrBy:      rm.RedisHIncrBy,
+			definitions.LuaFnRedisHIncrByFloat: rm.RedisHIncrByFloat,
+			definitions.LuaFnRedisHExists:      rm.RedisHExists,
+
+			definitions.LuaFnRedisZAdd:                 rm.RedisZAdd,
+			definitions.LuaFnRedisZRem:                 rm.RedisZRem,
+			definitions.LuaFnRedisZRank:                rm.RedisZRank,
+			definitions.LuaFNRedisZRange:               rm.RedisZRange,
+			definitions.LuaFnRedisZRevRange:            rm.RedisZRevRange,
+			definitions.LuaFnRedisZRangeByScore:        rm.RedisZRangeByScore,
+			definitions.LuaFnRedisZRemRangeByScore:     rm.RedisZRemRangeByScore,
+			definitions.LuaFnRedisRedisZRemRangeByRank: rm.RedisZRemRangeByRank,
+			definitions.LuaFnRedisZCount:               rm.RedisZCount,
+			definitions.LuaFnRedisZScore:               rm.RedisZScore,
+			definitions.LuaFnRedisRedisZRevRank:        rm.RedisZRevRank,
+			definitions.LuaFnRedisZIncrBy:              rm.RedisZIncrBy,
+
+			definitions.LuaFnRedisLPush:  rm.RedisLPush,
+			definitions.LuaFnRedisRPush:  rm.RedisRPush,
+			definitions.LuaFnRedisLPop:   rm.RedisLPop,
+			definitions.LuaFnRedisRPop:   rm.RedisRPop,
+			definitions.LuaFnRedisLRange: rm.RedisLRange,
+			definitions.LuaFnRedisLLen:   rm.RedisLLen,
+
+			definitions.LuaFnRedisPFAdd:   rm.RedisPFAdd,
+			definitions.LuaFnRedisPFCount: rm.RedisPFCount,
+			definitions.LuaFnRedisPFMerge: rm.RedisPFMerge,
+
+			definitions.LuaFnRedisSAdd:      rm.RedisSAdd,
+			definitions.LuaFnRedisSIsMember: rm.RedisSIsMember,
+			definitions.LuaFnRedisSMembers:  rm.RedisSMembers,
+			definitions.LuaFnRedisSRem:      rm.RedisSRem,
+			definitions.LuaFnRedisSCard:     rm.RedisSCard,
 		})
 
 		L.Push(mod)

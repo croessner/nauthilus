@@ -17,11 +17,11 @@ package core
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 
 	"github.com/gin-gonic/gin"
@@ -33,9 +33,9 @@ import (
 // it retrieves the account from the AuthState and sets the "Auth-User" header
 func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 	ctx.Header("Auth-Status", "OK")
-	ctx.Header("X-Nauthilus-Session", auth.GUID)
+	ctx.Header("X-Nauthilus-Session", auth.Runtime.GUID)
 
-	if auth.Service != definitions.ServBasic {
+	if auth.Request.Service != definitions.ServBasic {
 		if account, found := auth.GetAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
@@ -58,32 +58,36 @@ func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 // If the Protocol is definitions.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is definitions.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
-	if config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
+	setNginxHeadersWithDeps(getDefaultConfigFile(), getDefaultEnvironment(), getDefaultLogger(), ctx, auth)
+}
+
+func setNginxHeadersWithDeps(cfg config.File, env config.Environment, logger *slog.Logger, ctx *gin.Context, auth *AuthState) {
+	if cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
-			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, auth.GUID,
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, auth.Runtime.GUID,
 				definitions.LogKeyMsg, "No backend servers found for backend_server_monitoring feature",
 				definitions.LogKeyError, "No backend servers found for backend_server_monitoring feature",
-				definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(),
+				definitions.LogKeyInstance, cfg.GetServer().GetInstanceName(),
 			)
 		} else {
-			if auth.UsedBackendIP != "" && auth.UsedBackendPort > 0 {
-				ctx.Header("Auth-Server", auth.UsedBackendIP)
-				ctx.Header("Auth-Port", fmt.Sprintf("%d", auth.UsedBackendPort))
+			if auth.Runtime.UsedBackendIP != "" && auth.Runtime.UsedBackendPort > 0 {
+				ctx.Header("Auth-Server", auth.Runtime.UsedBackendIP)
+				ctx.Header("Auth-Port", fmt.Sprintf("%d", auth.Runtime.UsedBackendPort))
 			}
 		}
 	} else {
-		switch auth.Protocol.Get() {
+		switch auth.Request.Protocol.Get() {
 		case definitions.ProtoSMTP:
-			ctx.Header("Auth-Server", config.GetEnvironment().GetSMTPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetSMTPBackendPort()))
+			ctx.Header("Auth-Server", env.GetSMTPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetSMTPBackendPort()))
 		case definitions.ProtoIMAP:
-			ctx.Header("Auth-Server", config.GetEnvironment().GetIMAPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetIMAPBackendPort()))
+			ctx.Header("Auth-Server", env.GetIMAPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetIMAPBackendPort()))
 		case definitions.ProtoPOP3:
-			ctx.Header("Auth-Server", config.GetEnvironment().GetPOP3BackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetPOP3BackendPort()))
+			ctx.Header("Auth-Server", env.GetPOP3BackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetPOP3BackendPort()))
 		}
 	}
 }
@@ -109,8 +113,8 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 // - X-Nauthilus-Attribute1: "Value1"
 // - X-Nauthilus-Attribute2: "Value2_1,Value2_2"
 func setHeaderHeaders(ctx *gin.Context, auth *AuthState) {
-	if auth.Attributes != nil && len(auth.Attributes) > 0 {
-		for name, value := range auth.Attributes {
+	if auth.Attributes.Attributes != nil && len(auth.Attributes.Attributes) > 0 {
+		for name, value := range auth.Attributes.Attributes {
 			handleAttributeValue(ctx, name, value)
 		}
 	}

@@ -23,13 +23,18 @@ import (
 )
 
 // PackagePath ensures Lua package.path contains our required paths exactly once, without unbounded growth.
-func PackagePath(L *lua.LState) error {
+func PackagePath(L *lua.LState, cfg config.File) error {
 	const defaultPath = "/usr/local/share/nauthilus/lua/?.lua;/usr/share/nauthilus/lua/?.lua;/usr/app/lua-plugins.d/share/?.lua"
 
-	cfgPath := config.GetFile().GetLuaPackagePath()
-	add := defaultPath
+	cfgPath := cfg.GetLuaPackagePath()
+
+	var add strings.Builder
+
+	add.WriteString(defaultPath)
+
 	if cfgPath != "" {
-		add += ";" + cfgPath
+		add.WriteByte(';')
+		add.WriteString(cfgPath)
 	}
 
 	pkg := L.GetGlobal("package")
@@ -52,14 +57,17 @@ func PackagePath(L *lua.LState) error {
 		return nil
 	}
 
-	newPath := cur
-	if newPath != "" && !strings.HasSuffix(newPath, ";") {
-		newPath += ";"
+	var newPath strings.Builder
+
+	newPath.WriteString(cur)
+
+	if newPath.Len() > 0 && !strings.HasSuffix(cur, ";") {
+		newPath.WriteByte(';')
 	}
 
-	newPath += add
+	newPath.WriteString(add.String())
 
-	tbl.RawSetString("path", lua.LString(newPath))
+	tbl.RawSetString("path", lua.LString(newPath.String()))
 
 	return nil
 }

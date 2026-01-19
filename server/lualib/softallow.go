@@ -1,81 +1,103 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package lualib
 
 import (
+	"context"
+	"log/slog"
+
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// softWhitelistSet manages soft whitelist entries by adding a network for a username based on a specified feature category.
-// It initializes the soft whitelist if it does not exist for the given feature and returns nil upon success.
-func softWhitelistSet(L *lua.LState) int {
+// SoftAllowManager manages soft whitelist operations for Lua.
+type SoftAllowManager struct {
+	*BaseManager
+}
+
+// NewSoftAllowManager creates a new SoftAllowManager.
+func NewSoftAllowManager(ctx context.Context, cfg config.File, logger *slog.Logger) *SoftAllowManager {
+	return &SoftAllowManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+	}
+}
+
+// SoftWhitelistSet sets a soft whitelist entry.
+func (m *SoftAllowManager) SoftWhitelistSet(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+
 	var provider config.SoftWhitelistProvider
 
-	username := L.CheckString(1)
-	network := L.CheckString(2)
-	feature := L.CheckString(3)
+	username := stack.CheckString(1)
+	network := stack.CheckString(2)
+	feature := stack.CheckString(3)
 
 	switch feature {
 	case definitions.FeatureBruteForce:
-		if !config.GetFile().GetBruteForce().HasSoftWhitelist() {
-			config.GetFile().GetBruteForce().SoftWhitelist = config.NewSoftWhitelist()
+		if !m.Cfg.GetBruteForce().HasSoftWhitelist() {
+			m.Cfg.GetBruteForce().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
-		provider = config.GetFile().GetBruteForce()
+		provider = m.Cfg.GetBruteForce()
 	case definitions.FeatureRelayDomains:
-		if !config.GetFile().GetRelayDomains().HasSoftWhitelist() {
-			config.GetFile().GetRelayDomains().SoftWhitelist = config.NewSoftWhitelist()
+		if !m.Cfg.GetRelayDomains().HasSoftWhitelist() {
+			m.Cfg.GetRelayDomains().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
-		provider = config.GetFile().GetRelayDomains()
+		provider = m.Cfg.GetRelayDomains()
 	case definitions.FeatureRBL:
-		if !config.GetFile().GetRBLs().HasSoftWhitelist() {
-			config.GetFile().GetRBLs().SoftWhitelist = config.NewSoftWhitelist()
+		if !m.Cfg.GetRBLs().HasSoftWhitelist() {
+			m.Cfg.GetRBLs().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
-		provider = config.GetFile().GetRBLs()
+		provider = m.Cfg.GetRBLs()
 	default:
-		L.Push(lua.LString("invalid feature category"))
-
-		return 1
+		return stack.PushResult(lua.LString("invalid feature category"))
 	}
 
 	provider.Set(username, network)
 
-	L.Push(lua.LNil)
-
-	return 1
+	return stack.PushResults(lua.LString("OK"), lua.LNil)
 }
 
-// getNetworks retrieves a list of networks associated with a username for a specific feature using a soft whitelist provider.
-// It supports features like brute force protection, relay domains, and RBL.
-// The function returns nil if no networks are found or if the feature is undefined.
-func getNetworks(username, feature string) []string {
+// SoftWhitelistGet retrieves soft whitelist entries.
+func (m *SoftAllowManager) SoftWhitelistGet(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	username := stack.CheckString(1)
+	feature := stack.CheckString(2)
+
 	var provider config.SoftWhitelistProvider
 
 	switch feature {
 	case definitions.FeatureBruteForce:
-		provider = config.GetFile().GetBruteForce()
+		provider = m.Cfg.GetBruteForce()
 	case definitions.FeatureRelayDomains:
-		provider = config.GetFile().GetRelayDomains()
+		provider = m.Cfg.GetRelayDomains()
 	case definitions.FeatureRBL:
-		provider = config.GetFile().GetRBLs()
+		provider = m.Cfg.GetRBLs()
 	default:
-		return nil
+		return stack.PushResults(L.NewTable(), lua.LNil)
 	}
 
+	var networks []string
 	if provider.HasSoftWhitelist() {
-		return provider.Get(username)
+		networks = provider.Get(username)
 	}
-
-	return nil
-}
-
-// softWhitelistGet retrieves networks associated with a user's soft whitelist for a given feature and returns their count.
-func softWhitelistGet(L *lua.LState) int {
-	username := L.CheckString(1)
-	feature := L.CheckString(2)
-	networks := getNetworks(username, feature)
 
 	resultTable := L.NewTable()
 
@@ -83,27 +105,26 @@ func softWhitelistGet(L *lua.LState) int {
 		L.RawSetInt(resultTable, i+1, lua.LString(network))
 	}
 
-	L.Push(resultTable)
-
-	return 1
+	return stack.PushResults(resultTable, lua.LNil)
 }
 
-// softWhitelistDelete removes a network from a user's soft whitelist for a specified feature, given username and network.
-// It applies to features such as brute force protection, relay domains, or RBLs by accessing appropriate configurations.
-func softWhitelistDelete(L *lua.LState) int {
+// SoftWhitelistDelete removes a soft whitelist entry.
+func (m *SoftAllowManager) SoftWhitelistDelete(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+
 	var provider config.SoftWhitelistProvider
 
-	username := L.CheckString(1)
-	network := L.CheckString(2)
-	feature := L.CheckString(3)
+	username := stack.CheckString(1)
+	network := stack.CheckString(2)
+	feature := stack.CheckString(3)
 
 	switch feature {
 	case definitions.FeatureBruteForce:
-		provider = config.GetFile().GetBruteForce()
+		provider = m.Cfg.GetBruteForce()
 	case definitions.FeatureRelayDomains:
-		provider = config.GetFile().GetRelayDomains()
+		provider = m.Cfg.GetRelayDomains()
 	case definitions.FeatureRBL:
-		provider = config.GetFile().GetRBLs()
+		provider = m.Cfg.GetRBLs()
 	default:
 		return 0
 	}
@@ -112,21 +133,22 @@ func softWhitelistDelete(L *lua.LState) int {
 		provider.Delete(username, network)
 	}
 
-	return 0
+	return stack.PushResults(lua.LString("OK"), lua.LNil)
 }
 
-// exportModSoftWhitelist is a mapping of Lua function names related to soft whitelisting to their corresponding Go implementations.
-var exportModSoftWhitelist = map[string]lua.LGFunction{
-	definitions.LuaFnSoftWhitelistSet:    softWhitelistSet,
-	definitions.LuaFnSoftWhitelistGet:    softWhitelistGet,
-	definitions.LuaFnSoftWhitelistDelete: softWhitelistDelete,
-}
+// LoaderModSoftAllow initializes and loads the soft allow module for Lua.
+func LoaderModSoftAllow(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewSoftAllowManager(ctx, cfg, logger)
 
-// LoaderModSoftWhitelist registers and exposes the soft whitelist module functions to the provided Lua state.
-func LoaderModSoftWhitelist(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportModSoftWhitelist)
+		// Register the module functions
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnSoftWhitelistSet:    manager.SoftWhitelistSet,
+			definitions.LuaFnSoftWhitelistGet:    manager.SoftWhitelistGet,
+			definitions.LuaFnSoftWhitelistDelete: manager.SoftWhitelistDelete,
+		})
 
-	L.Push(mod)
-
-	return 1
+		return stack.PushResult(mod)
+	}
 }

@@ -21,7 +21,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -35,31 +35,23 @@ func isLocalOrEmptyIP(ip string) bool {
 	return ip == definitions.Localhost4 || ip == definitions.Localhost6 || ip == ""
 }
 
-// logAddMessage appends a feature and message to the AdditionalLogs slice of the provided AuthState if it is not nil.
-func logAddMessage(auth *AuthState, message, feature string) {
-	if auth == nil {
-		return
-	}
-
-	auth.AdditionalLogs = append(auth.AdditionalLogs, feature)
-	auth.AdditionalLogs = append(auth.AdditionalLogs, message)
+// logAddMessage appends a feature and message to the AdditionalLogs slice.
+func (a *AuthState) logAddMessage(message, feature string) {
+	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, feature)
+	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, message)
 }
 
-// logAddLocalhost appends feature-specific logs and the "localhost" indicator to the auth state if the auth pointer is valid.
-func logAddLocalhost(auth *AuthState, feature string) {
-	if auth == nil {
-		return
-	}
-
-	auth.AdditionalLogs = append(auth.AdditionalLogs, fmt.Sprintf("%s_%s", definitions.LogKeyFeatureName, feature))
-	auth.AdditionalLogs = append(auth.AdditionalLogs, definitions.Localhost)
+// logAddLocalhost appends feature-specific logs and the "localhost" indicator to the auth state.
+func (a *AuthState) logAddLocalhost(feature string) {
+	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, fmt.Sprintf("%s_%s", definitions.LogKeyFeatureName, feature))
+	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Localhost)
 }
 
 // updateLuaContext updates the Lua context with a new feature in the Gin context, ensuring unique entries.
-func updateLuaContext(ctx *lualib.Context, feature string) {
+func (a *AuthState) updateLuaContext(feature string) {
 	var featureList config.StringSet
 
-	curFeatures, exists := ctx.GetExists(definitions.LuaCtxBuiltin)
+	curFeatures, exists := a.Runtime.Context.GetExists(definitions.LuaCtxBuiltin)
 	if !exists {
 		featureList = config.NewStringSet()
 	} else {
@@ -68,71 +60,80 @@ func updateLuaContext(ctx *lualib.Context, feature string) {
 
 	featureList.Set(feature)
 
-	ctx.Set(definitions.LuaCtxBuiltin, featureList)
+	a.Runtime.Context.Set(definitions.LuaCtxBuiltin, featureList)
 }
 
 // FeatureLua runs Lua scripts and returns a trigger result.
 func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
-	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, definitions.FeatureLua)
+	if isLocalOrEmptyIP(a.Request.ClientIP) {
+		a.logAddLocalhost(definitions.FeatureLua)
 
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(definitions.PromFeature, definitions.FeatureLua)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureLua)
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	if engine := GetFeatureEngine(); engine != nil {
-		trig, abort, logs, newStatus, evalErr := engine.Evaluate(ctx, a.View())
-		if evalErr != nil {
-			return false, false, evalErr
-		}
-
-		if len(logs) > 0 {
-			a.AdditionalLogs = append(a.AdditionalLogs, logs...)
-		}
-
-		if newStatus != nil && *newStatus != a.StatusMessage {
-			a.StatusMessage = *newStatus
-		}
-
-		return trig, abort, nil
+	fr := &feature.Request{
+		Session:            a.Runtime.GUID,
+		Username:           a.Request.Username,
+		Password:           a.Request.Password,
+		ClientIP:           a.Request.ClientIP,
+		AccountName:        a.GetAccount(),
+		UsedBackendPort:    &a.Runtime.UsedBackendPort,
+		Logs:               nil,
+		Context:            a.Runtime.Context,
+		HTTPClientContext:  a.Request.HTTPClientContext,
+		HTTPClientRequest:  a.Request.HTTPClientRequest,
+		NoAuth:             a.Request.NoAuth,
+		BruteForceCounter:  0,
+		MasterUserMode:     a.Runtime.MasterUserMode,
+		PasswordHistory:    a.Security.PasswordHistory,
+		AdditionalFeatures: a.Runtime.AdditionalFeatures,
 	}
 
-	return false, false, nil
+	triggered, abortFeatures, err = fr.CallFeatureLua(ctx, a.Cfg(), a.Logger(), a.Redis())
+
+	if err != nil {
+		return
+	}
+
+	a.Security.Logs = fr.Logs
+
+	return
 }
 
 // FeatureTLSEncryption checks, if the remote client connection was secured.
-func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
-	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, definitions.FeatureTLSEncryption)
+func (a *AuthState) FeatureTLSEncryption(ctx *gin.Context) (triggered bool) {
+	if isLocalOrEmptyIP(a.Request.ClientIP) {
+		a.logAddLocalhost(definitions.FeatureTLSEncryption)
 
 		return
 	}
 
-	if a.XSSL != "" {
+	if a.Request.XSSL != "" {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(definitions.PromFeature, definitions.FeatureTLSEncryption)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureTLSEncryption)
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	if !a.IsInNetwork(config.GetFile().GetClearTextList()) {
-		logAddMessage(a, definitions.NoTLS, definitions.FeatureTLSEncryption)
-		updateLuaContext(a.Context, definitions.FeatureTLSEncryption)
+	if !util.IsInNetworkWithCfg(ctx.Request.Context(), a.Cfg(), a.Logger(), a.cfg().GetClearTextList(), a.Runtime.GUID, a.Request.ClientIP) {
+		a.logAddMessage(definitions.NoTLS, definitions.FeatureTLSEncryption)
+		a.updateLuaContext(definitions.FeatureTLSEncryption)
 
 		triggered = true
 
 		return
 	}
 
-	logAddMessage(a, definitions.Whitelisted, definitions.FeatureTLSEncryption)
+	a.logAddMessage(definitions.Whitelisted, definitions.FeatureTLSEncryption)
 
 	return
 }
@@ -140,7 +141,7 @@ func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 // FeatureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
 func (a *AuthState) FeatureRelayDomains() (triggered bool) {
-	relayDomains := config.GetFile().GetRelayDomains()
+	relayDomains := a.cfg().GetRelayDomains()
 	if relayDomains == nil {
 		return
 	}
@@ -149,19 +150,19 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 		return
 	}
 
-	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, definitions.FeatureRelayDomains)
+	if isLocalOrEmptyIP(a.Request.ClientIP) {
+		a.logAddLocalhost(definitions.FeatureRelayDomains)
 
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(definitions.PromFeature, definitions.FeatureRelayDomains)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureRelayDomains)
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	username := handleMasterUserMode(a)
+	username := handleMasterUserMode(a.cfg(), a)
 
 	if strings.Contains(username, "@") {
 		split := strings.Split(username, "@")
@@ -175,8 +176,8 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 			}
 		}
 
-		logAddMessage(a, fmt.Sprintf("%s not our domain", split[1]), definitions.FeatureRelayDomains)
-		updateLuaContext(a.Context, definitions.FeatureRelayDomains)
+		a.logAddMessage(fmt.Sprintf("%s not our domain", split[1]), definitions.FeatureRelayDomains)
+		a.updateLuaContext(definitions.FeatureRelayDomains)
 
 		triggered = true
 	}
@@ -188,19 +189,19 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 // on the client's IP address. If the RBL score exceeds the configured threshold, the 'triggered' flag is set to true.
 // It returns the 'triggered' flag and any error that occurred during the check.
 func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
-	rbls := config.GetFile().GetRBLs()
+	rbls := a.cfg().GetRBLs()
 	if rbls == nil {
 		return
 	}
 
-	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, definitions.FeatureRBL)
+	if isLocalOrEmptyIP(a.Request.ClientIP) {
+		a.logAddLocalhost(definitions.FeatureRBL)
 
 		return
 	}
 
-	if a.IsInNetwork(rbls.GetIPWhiteList()) {
-		logAddMessage(a, definitions.Whitelisted, definitions.FeatureRBL)
+	if util.IsInNetworkWithCfg(ctx.Request.Context(), a.Cfg(), a.Logger(), rbls.GetIPWhiteList(), a.Runtime.GUID, a.Request.ClientIP) {
+		a.logAddMessage(definitions.Whitelisted, definitions.FeatureRBL)
 
 		return
 	}
@@ -208,10 +209,10 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	// Tracing: RBL lookup evaluation
 	tr := monittrace.New("nauthilus/rbl")
 	rctx, rsp := tr.Start(ctx.Request.Context(), "rbl.lookup",
-		attribute.String("service", a.Service),
-		attribute.String("username", a.Username),
-		attribute.String("client_ip", a.ClientIP),
-		attribute.String("protocol", a.Protocol.Get()),
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+		attribute.String("client_ip", a.Request.ClientIP),
+		attribute.String("protocol", a.Request.Protocol.Get()),
 		attribute.Int("providers", func() int {
 			if rbls != nil {
 				return len(rbls.GetLists())
@@ -224,8 +225,11 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 
 	// propagate context
 	ctx.Request = ctx.Request.WithContext(rctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(rctx)
+	}
 
-	stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.FeatureRBL)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.FeatureRBL)
 	if stopTimer != nil {
 		defer stopTimer()
 	}
@@ -245,7 +249,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		)
 
 		if score >= svc.Threshold() {
-			updateLuaContext(a.Context, definitions.FeatureRBL)
+			a.updateLuaContext(definitions.FeatureRBL)
 			rsp.End()
 
 			return true, nil
@@ -259,7 +263,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 
 // logFeatureWhitelisting appends the given feature name and a soft whitelisted message to the additional logs of AuthState.
 func (a *AuthState) logFeatureWhitelisting(featureName string) {
-	a.AdditionalLogs = append(a.AdditionalLogs, featureName, definitions.SoftWhitelisted)
+	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, featureName, definitions.SoftWhitelisted)
 }
 
 // checkFeatureWithWhitelist checks if a feature is enabled and if a whitelist applies, executes the feature check function.
@@ -267,7 +271,7 @@ func (a *AuthState) logFeatureWhitelisting(featureName string) {
 // Executes the checkFunc when the feature is enabled and not whitelisted, returning its outcome.
 // Returns false if the feature is not enabled in the configuration.
 func (a *AuthState) checkFeatureWithWhitelist(featureName string, isWhitelisted func() bool, checkFunc func()) {
-	if config.GetFile().HasFeature(featureName) {
+	if a.cfg().HasFeature(featureName) {
 		if isWhitelisted() {
 			a.logFeatureWhitelisting(featureName)
 		} else {
@@ -281,10 +285,23 @@ func (a *AuthState) checkFeatureWithWhitelist(featureName string, isWhitelisted 
 // It uses a whitelist check and processes feature actions if the Lua feature is activated.
 // Returns 'triggered' if a Lua feature is triggered, 'abortFeatures' if further features should be halted.
 func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.lua",
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	checkFunc := func() {
 		triggered, abortFeatures, err = a.FeatureLua(ctx)
 		if err != nil {
-			a.FeatureName = ""
+			a.Runtime.FeatureName = ""
 
 			return
 		}
@@ -294,7 +311,7 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 		}
 
 		if abortFeatures {
-			a.FeatureName = ""
+			a.Runtime.FeatureName = ""
 			abortFeatures = true
 		}
 	}
@@ -307,8 +324,21 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 // checkTLSEncryptionFeature determines if the TLS encryption feature should be processed for the current authentication state.
 // It uses a whitelist check to decide if the feature action needs to be executed based on the current auth state.
 func (a *AuthState) checkTLSEncryptionFeature(ctx *gin.Context) (triggered bool) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.tls",
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	checkFunc := func() {
-		if triggered = a.FeatureTLSEncryption(); triggered {
+		if triggered = a.FeatureTLSEncryption(ctx); triggered {
 			a.processFeatureAction(ctx, definitions.FeatureTLSEncryption, definitions.LuaActionTLS, definitions.LuaActionTLSName)
 		}
 	}
@@ -321,14 +351,27 @@ func (a *AuthState) checkTLSEncryptionFeature(ctx *gin.Context) (triggered bool)
 // checkRelayDomainsFeature evaluates if the relay domains feature should be activated for the given AuthState instance.
 // It checks if the client is whitelisted and processes the feature action accordingly.
 func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.relay_domains",
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	isWhitelisted := func() bool {
-		relayDomains := config.GetFile().GetRelayDomains()
+		relayDomains := a.cfg().GetRelayDomains()
 		if relayDomains == nil {
 			return false
 		}
 
 		return relayDomains.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, relayDomains.SoftWhitelist)
+			util.IsSoftWhitelisted(fctx, a.Cfg(), a.Logger(), a.Request.Username, a.Request.ClientIP, a.Runtime.GUID, relayDomains.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -345,20 +388,33 @@ func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) 
 // checkRBLFeature checks if a Real-time Blackhole List (RBL) feature is triggered for the current request.
 // Returns true if the feature is triggered and processed, otherwise false.
 func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.rbl",
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	isWhitelisted := func() bool {
-		rbls := config.GetFile().GetRBLs()
+		rbls := a.cfg().GetRBLs()
 		if rbls == nil {
 			return false
 		}
 
 		return rbls.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, rbls.SoftWhitelist)
+			util.IsSoftWhitelisted(fctx, a.Cfg(), a.Logger(), a.Request.Username, a.Request.ClientIP, a.Runtime.GUID, rbls.SoftWhitelist)
 	}
 
 	checkFunc := func() {
 		triggered, err = a.FeatureRBLs(ctx)
 		if err != nil || !triggered {
-			a.FeatureName = ""
+			a.Runtime.FeatureName = ""
 
 			return
 		}
@@ -374,9 +430,9 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 // processFeatureAction updates the feature and increments the brute force counter if learning is enabled for the feature.
 // It executes a specified Lua action using the provided action name.
 func (a *AuthState) processFeatureAction(ctx *gin.Context, featureName string, luaAction definitions.LuaAction, luaActionName string) {
-	a.FeatureName = featureName
+	a.Runtime.FeatureName = featureName
 
-	bruteForce := config.GetFile().GetBruteForce()
+	bruteForce := a.cfg().GetBruteForce()
 	if bruteForce != nil && bruteForce.LearnFromFeature(featureName) {
 		a.UpdateBruteForceBucketsCounter(ctx)
 	}
@@ -388,11 +444,11 @@ func (a *AuthState) processFeatureAction(ctx *gin.Context, featureName string, l
 // It initializes an account name if absent, sends the action request to the RequestChan channel,
 // and waits for the action to complete.
 func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName string) {
-	if !config.GetFile().HaveLuaActions() {
+	if !a.cfg().HaveLuaActions() {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(definitions.PromAction, luaActionName)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromAction, luaActionName)
 	if stopTimer != nil {
 		defer stopTimer()
 	}
@@ -402,7 +458,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 	}
 
 	if disp := GetActionDispatcher(); disp != nil {
-		disp.Dispatch(a.View(), a.FeatureName, luaAction)
+		disp.Dispatch(a.View(), a.Runtime.FeatureName, luaAction)
 	}
 }
 
@@ -413,15 +469,18 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 	// Root span for features evaluation
 	tr := monittrace.New("nauthilus/features")
 	fctx, fsp := tr.Start(ctx.Request.Context(), "features.evaluate",
-		attribute.String("service", a.Service),
-		attribute.String("username", a.Username),
-		attribute.String("protocol", a.Protocol.Get()),
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+		attribute.String("protocol", a.Request.Protocol.Get()),
 	)
 
 	// propagate context so any inner call attaches to this span
 	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(fctx)
+	}
 
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	if !a.cfg().HasFeature(definitions.FeatureBruteForce) {
 		a.refreshUserAccount()
 	}
 

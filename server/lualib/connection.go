@@ -16,48 +16,64 @@
 package lualib
 
 import (
+	"context"
+	"log/slog"
+
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/monitoring"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// getNumberFromTable retrieves an integer value from a Lua table by its key. Defaults to 0 if the key is non-existent or invalid.
-func getNumberFromTable(table *lua.LTable, key string) int {
-	value := table.RawGet(lua.LString(key))
-
-	if value == nil {
-		return 0
-	}
-
-	return int(value.(lua.LNumber))
+// BackendConnectionManager manages backend connection checks for Lua.
+type BackendConnectionManager struct {
+	*BaseManager
+	monitor monitoring.Monitor
 }
 
-// CheckBackendConnection verifies the connection to a backend server using the provided configurations in the Lua table.
-func CheckBackendConnection(monitor monitoring.Monitor) lua.LGFunction {
+// NewBackendConnectionManager creates a new BackendConnectionManager.
+func NewBackendConnectionManager(ctx context.Context, cfg config.File, logger *slog.Logger, monitor monitoring.Monitor) *BackendConnectionManager {
+	return &BackendConnectionManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+		monitor:     monitor,
+	}
+}
+
+// CheckBackendConnection verifies the connection to a backend server.
+func (m *BackendConnectionManager) CheckBackendConnection(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	table := stack.CheckTable(1)
+
+	server := &config.BackendServer{}
+
+	server.Protocol = getStringFromTable(table, "protocol")
+	server.Host = getStringFromTable(table, "host")
+	server.Port = getNumberFromTable(table, "port")
+	server.HAProxyV2 = getBoolFromTable(table, "haproxy_v2")
+	server.TLS = getBoolFromTable(table, "tls")
+	server.TLSSkipVerify = getBoolFromTable(table, "tls_skip_verify")
+	server.TestUsername = getStringFromTable(table, "test_username")
+	server.TestPassword = getStringFromTable(table, "test_password")
+	server.RequestURI = getStringFromTable(table, "request_uri")
+	server.DeepCheck = getBoolFromTable(table, "deep_check")
+
+	if err := m.monitor.CheckBackendConnection(server); err != nil {
+		return stack.PushResults(lua.LNil, lua.LString(err.Error()))
+	}
+
+	return stack.PushResults(lua.LBool(true), lua.LNil)
+}
+
+// LoaderModConnection initializes and loads the connection module for Lua.
+func LoaderModConnection(ctx context.Context, cfg config.File, logger *slog.Logger, monitor monitoring.Monitor) lua.LGFunction {
 	return func(L *lua.LState) int {
-		table := L.CheckTable(1)
+		stack := luastack.NewManager(L)
+		manager := NewBackendConnectionManager(ctx, cfg, logger, monitor)
 
-		server := &config.BackendServer{}
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			"check": manager.CheckBackendConnection,
+		})
 
-		server.Protocol = getStringFromTable(table, "protocol")
-		server.Host = getStringFromTable(table, "ip_address")
-		server.Port = getNumberFromTable(table, "port")
-		server.HAProxyV2 = getBoolFromTable(table, "haproxy_v2")
-		server.TLS = getBoolFromTable(table, "tls")
-		server.TLSSkipVerify = getBoolFromTable(table, "tls_skip_verify")
-		server.TestUsername = getStringFromTable(table, "test_username")
-		server.TestPassword = getStringFromTable(table, "test_password")
-		server.RequestURI = getStringFromTable(table, "request_uri")
-		server.DeepCheck = getBoolFromTable(table, "deep_check")
-
-		if err := monitor.CheckBackendConnection(server); err != nil {
-			L.Push(lua.LString(err.Error()))
-
-			return 1
-		}
-
-		L.Push(lua.LNil)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }

@@ -15,8 +15,38 @@
 
 local time = require("time")
 local json = require("json")
+local nauthilus_cache = require("nauthilus_cache")
 
 local nauthilus_util = {}
+
+local log_levels = {
+    debug = 0,
+    info = 1,
+    notice = 2,
+    warn = 3,
+    error = 4
+}
+
+--- nauthilus_util.getenv returns the value of an environment variable, cached via nauthilus_cache.
+---@param name string
+---@param default string
+---@return string
+function nauthilus_util.getenv(name, default)
+    local key = "env:" .. name
+    local val = nauthilus_cache.cache_get(key)
+    if val ~= nil then
+        return val
+    end
+
+    val = os.getenv(name)
+    if val == nil then
+        val = default
+    end
+
+    nauthilus_cache.cache_set(key, val, 0)
+
+    return val
+end
 
 --- nauthilus_util.exists_in_table iterates over a flat Lua table (list) and checks, if a string was found in the values.
 ---@param tbl table
@@ -37,10 +67,7 @@ end
 ---@return string
 function nauthilus_util.get_current_timestamp()
     ---@type string tz
-    local tz = os.getenv("TZ")
-    if tz == nil or tz == "" then
-        tz = "UTC"
-    end
+    local tz = nauthilus_util.getenv("TZ", "UTC")
 
     ---@type string currentTime
     ---@type string err
@@ -76,8 +103,8 @@ end
 ---@return void
 function nauthilus_util.if_error_raise(err)
     if err then
-        -- Do nothing on "redis: nil" messages
-        if err ~= "redis: nil" then
+        -- Do nothing on "redis: nil" or "OK" messages
+        if err ~= "redis: nil" and err ~= "OK" then
             error(err)
         end
     end
@@ -241,6 +268,10 @@ function nauthilus_util.print_result(logging, result, err_string)
         result.error = err_string
     end
 
+    if result.level == nil then
+        result.level = "info"
+    end
+
     if logging.log_format == "json" then
         local result_json, err_jenc = json.encode(result)
         nauthilus_util.if_error_raise(err_jenc)
@@ -250,15 +281,90 @@ function nauthilus_util.print_result(logging, result, err_string)
         local output_str = {}
 
         for k, v in pairs(result) do
-            if string.match(tostring(v), "%s") then
-                v = '"' .. tostring(v) .. '"'
+            local val_str
+
+            if nauthilus_util.is_table(v) then
+                local v_json, err_vjenc = json.encode(v)
+                if err_vjenc then
+                    val_str = tostring(v)
+                else
+                    val_str = v_json
+                end
+            else
+                val_str = tostring(v)
             end
 
-            table.insert(output_str, k .. '=' .. tostring(v))
+            if string.match(val_str, "%s") then
+                val_str = '"' .. val_str .. '"'
+            end
+
+            table.insert(output_str, k .. '=' .. val_str)
         end
 
         print(table.concat(output_str, " "))
     end
+end
+
+--- nauthilus_util.log is a helper function that logs a message with a given level.
+--- It respects the configured log level and format.
+---@param logging table
+---@param level string
+---@param result table
+---@param err_string string
+---@return void
+function nauthilus_util.log(logging, level, result, err_string)
+    local config_level_name = (logging and logging.log_level) or "info"
+    local config_level = log_levels[config_level_name:lower()] or 1
+    local current_level = log_levels[level:lower()] or 1
+
+    if current_level < config_level then
+        return
+    end
+
+    result.level = level:lower()
+
+    nauthilus_util.print_result(logging, result, err_string)
+end
+
+--- nauthilus_util.log_debug logs a debug message.
+---@param logging table
+---@param result table
+---@return void
+function nauthilus_util.log_debug(logging, result)
+    nauthilus_util.log(logging, "debug", result)
+end
+
+--- nauthilus_util.log_info logs an info message.
+---@param logging table
+---@param result table
+---@return void
+function nauthilus_util.log_info(logging, result)
+    nauthilus_util.log(logging, "info", result)
+end
+
+--- nauthilus_util.log_notice logs a notice message.
+---@param logging table
+---@param result table
+---@return void
+function nauthilus_util.log_notice(logging, result)
+    nauthilus_util.log(logging, "notice", result)
+end
+
+--- nauthilus_util.log_warn logs a warn message.
+---@param logging table
+---@param result table
+---@return void
+function nauthilus_util.log_warn(logging, result)
+    nauthilus_util.log(logging, "warn", result)
+end
+
+--- nauthilus_util.log_error logs an error message.
+---@param logging table
+---@param result table
+---@param err_string string
+---@return void
+function nauthilus_util.log_error(logging, result, err_string)
+    nauthilus_util.log(logging, "error", result, err_string)
 end
 
 return nauthilus_util

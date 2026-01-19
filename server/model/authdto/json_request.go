@@ -50,9 +50,6 @@ type Request struct {
 	// Method is the HTTP/SASL method used in the request (e.g., PLAIN, LOGIN, etc.)
 	Method string `json:"method,omitempty"`
 
-	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
-	AuthLoginAttempt uint `json:"auth_login_attempt,omitempty"`
-
 	XSSL                string `json:"ssl,omitempty"`
 	XSSLSessionID       string `json:"ssl_session_id,omitempty"`
 	XSSLClientVerify    string `json:"ssl_client_verify,omitempty"`
@@ -76,4 +73,7 @@ type Request struct {
 
 	// OIDCCID represents the OIDC Client ID used for authentication.
 	OIDCCID string `json:"oidc_cid,omitempty"`
+
+	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
+	AuthLoginAttempt uint `json:"auth_login_attempt,omitempty"`
 }

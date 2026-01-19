@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,321 +17,241 @@ package redislib
 
 import (
 	"context"
+	"errors"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/util"
-
+	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// RedisHGet executes the HGET command in Redis, retrieves a field from a hash, and converts it to a Lua value type.
-func RedisHGet(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
-		field := L.CheckString(3)
+// RedisHGet retrieves the value of a hash field.
+func (rm *RedisManager) RedisHGet(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
+		field := stack.CheckString(3)
 		valueType := definitions.TypeString
 
-		// Optional 4th argument selects the return type ("string", "number", "bool", "nil").
-		// Signature: redis_hget(pool, key, field[, type])
-		if L.GetTop() >= 4 {
-			valueType = L.CheckString(4)
+		if stack.GetTop() == 4 {
+			valueType = stack.CheckString(4)
 		}
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		err := convert.StringCmd(client.HGet(dCtx, key, field), valueType, L)
+		err := convert.StringCmd(conn.HGet(ctx, hash, field), valueType, L)
 		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-
-			return 2
+			return stack.PushError(err)
 		}
 
-		return 1
-	}
+		return 2
+	})
 }
 
-// RedisHSet sets multiple field-value pairs in a Redis hash stored at the given key and returns the number of new fields added.
-func RedisHSet(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		var kvpairs []any
+// RedisHSet sets the value of a hash field.
+func (rm *RedisManager) RedisHSet(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
+		top := stack.GetTop()
+		var values []any
 
-		if L.GetTop() < 4 || (L.GetTop()-2)%2 != 0 {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("Invalid number of arguments"))
-
-			return 2
+		if top < 3 {
+			return stack.PushError(errors.New("Invalid number of arguments"))
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
 
-		for i := 3; i <= L.GetTop(); i += 2 {
-			field := L.CheckString(i)
+			tbl.ForEach(func(key, value lua.LValue) {
+				values = append(values, key.String())
 
-			value, err := convert.LuaValue(L.Get(i + 1))
-			if err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
-
-				return 2
+				val, err := convert.LuaValue(value)
+				if err != nil {
+					values = append(values, value.String())
+				} else {
+					values = append(values, val)
+				}
+			})
+		} else {
+			if top < 4 || (top-2)%2 != 0 {
+				return stack.PushError(errors.New("Invalid number of arguments"))
 			}
 
-			kvpairs = append(kvpairs, field, value)
+			for i := 3; i <= top; i += 2 {
+				field := stack.CheckString(i)
+
+				value, err := convert.LuaValue(stack.CheckAny(i + 1))
+				if err != nil {
+					values = append(values, field, stack.CheckAny(i+1).String())
+				} else {
+					values = append(values, field, value)
+				}
+			}
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if len(values) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
+		}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.HSet(dCtx, key, kvpairs...)
+		cmd := conn.HSet(ctx, hash, values...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisHDel is a Lua function that deletes one or more fields from a Redis hash and returns the count of removed fields.
-func RedisHDel(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
+// RedisHDel deletes one or more hash fields.
+func (rm *RedisManager) RedisHDel(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
+		top := stack.GetTop()
+
 		var fields []string
 
-		if L.GetTop() < 3 {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("Invalid number of arguments"))
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
 
-			return 2
+			tbl.ForEach(func(_, value lua.LValue) {
+				fields = append(fields, value.String())
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				fields = append(fields, stack.CheckString(i))
+			}
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-
-		for i := 3; i <= L.GetTop(); i += 1 {
-			fields = append(fields, L.CheckString(i))
+		if len(fields) == 0 {
+			return stack.PushResults(lua.LNumber(0), lua.LNil)
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.HDel(dCtx, key, fields...)
+		cmd := conn.HDel(ctx, hash, fields...)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisHLen returns a Lua function that retrieves the length of a Redis hash stored at the specified key.
-func RedisHLen(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
+// RedisHLen returns the number of fields in a hash.
+func (rm *RedisManager) RedisHLen(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.HLen(dCtx, key)
+		cmd := conn.HLen(ctx, hash)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisHGetAll retrieves all fields and values of a hash stored at the specified Redis key and returns them as a Lua table.
-func RedisHGetAll(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
+// RedisHGetAll returns all fields and values of a hash.
+func (rm *RedisManager) RedisHGetAll(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.HGetAll(dCtx, key)
+		cmd := conn.HGetAll(ctx, hash)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
-		}
-
-		table := L.NewTable()
-		for field, value := range cmd.Val() {
-			// We cannot make a difference for the types of the values. So, all values are returned as strings
-			table.RawSetString(field, lua.LString(value))
-		}
-
-		L.Push(table)
-
-		return 1
-	}
-}
-
-// RedisHMGet retrieves values for multiple fields within a Redis hash and returns them as a Lua table.
-// The function expects parameters: pool, key, field1, field2, ...
-// It returns a Lua table mapping field -> value (string), with missing fields set to nil. On error it returns (nil, err).
-func RedisHMGet(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		if L.GetTop() < 4 { // pool, key, at least one field
-			L.Push(lua.LNil)
-			L.Push(lua.LString("Invalid number of arguments"))
-
-			return 2
-		}
-
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
-
-		fields := make([]string, 0, L.GetTop()-2)
-		for i := 3; i <= L.GetTop(); i++ {
-			fields = append(fields, L.CheckString(i))
-		}
-
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		vals, err := client.HMGet(dCtx, key, fields...).Result()
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
 		result := L.NewTable()
-		for i, v := range vals {
-			if v == nil {
+
+		for k, v := range cmd.Val() {
+			result.RawSetString(k, lua.LString(v))
+		}
+
+		return stack.PushResults(result, lua.LNil)
+	})
+}
+
+// RedisHMGet retrieves the values of multiple hash fields.
+func (rm *RedisManager) RedisHMGet(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
+		top := stack.GetTop()
+		var fields []string
+
+		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
+			tbl := stack.CheckTable(3)
+
+			tbl.ForEach(func(_, value lua.LValue) {
+				fields = append(fields, value.String())
+			})
+		} else {
+			for i := 3; i <= top; i++ {
+				fields = append(fields, stack.CheckString(i))
+			}
+		}
+
+		if len(fields) == 0 {
+			return stack.PushResults(L.NewTable(), lua.LNil)
+		}
+
+		cmd := conn.HMGet(ctx, hash, fields...)
+		if cmd.Err() != nil {
+			return stack.PushError(cmd.Err())
+		}
+
+		result := L.NewTable()
+
+		for i, val := range cmd.Val() {
+			if val == nil {
 				result.RawSetString(fields[i], lua.LNil)
-
-				continue
-			}
-
-			// Redis returns bulk strings for HMGET items
-			if s, ok := v.(string); ok {
-				result.RawSetString(fields[i], lua.LString(s))
 			} else {
-				// Fallback: convert non-string via Lua string representation
-				result.RawSetString(fields[i], lua.LString(lua.LVAsString(convert.GoToLuaValue(L, v))))
+				result.RawSetString(fields[i], lua.LString(val.(string)))
 			}
 		}
 
-		L.Push(result)
-
-		return 1
-	}
+		return stack.PushResults(result, lua.LNil)
+	})
 }
 
-// RedisHIncrBy increments the numerical value of a hash field in Redis by the specified amount and returns the new value.
-func RedisHIncrBy(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-		field := L.CheckString(3)
-		increment := L.CheckInt64(4)
+// RedisHIncrBy increments the integer value of a hash field.
+func (rm *RedisManager) RedisHIncrBy(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
+		field := stack.CheckString(3)
+		incr := int64(stack.CheckInt(4))
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.HIncrBy(dCtx, key, field, increment)
+		cmd := conn.HIncrBy(ctx, hash, field, incr)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisHIncrByFloat increments the float value of a field in a hash by a specified amount and returns the new value.
-func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
-		key := L.CheckString(2)
-		field := L.CheckString(3)
-		increment := float64(L.CheckNumber(4))
+// RedisHIncrByFloat increments the float value of a hash field.
+func (rm *RedisManager) RedisHIncrByFloat(L *lua.LState) int {
+	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
+		field := stack.CheckString(3)
+		incr := float64(stack.CheckNumber(4))
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-		defer cancel()
-
-		cmd := client.HIncrByFloat(dCtx, key, field, increment)
+		cmd := conn.HIncrByFloat(ctx, hash, field, incr)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	})
 }
 
-// RedisHExists checks if a specific field exists in a hash stored at a given key in Redis. It returns true or false.
-func RedisHExists(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
-		key := L.CheckString(2)
-		field := L.CheckString(3)
+// RedisHExists checks if a hash field exists.
+func (rm *RedisManager) RedisHExists(L *lua.LState) int {
+	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
+		hash := stack.CheckString(2)
+		field := stack.CheckString(3)
 
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		defer cancel()
-
-		cmd := client.HExists(dCtx, key, field)
+		cmd := conn.HExists(ctx, hash, field)
 		if cmd.Err() != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(cmd.Err().Error()))
-
-			return 2
+			return stack.PushError(cmd.Err())
 		}
 
-		L.Push(lua.LBool(cmd.Val()))
-
-		return 1
-	}
+		return stack.PushResults(lua.LBool(cmd.Val()), lua.LNil)
+	})
 }

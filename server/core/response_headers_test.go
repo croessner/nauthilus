@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package core_test
 
 import (
@@ -19,6 +34,11 @@ func setupMinimalConfig(t *testing.T) {
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+
+	// Ensure core default seams are initialized for legacy response/header paths.
+	corepkg.SetDefaultConfigFile(config.GetFile())
+	corepkg.SetDefaultEnvironment(config.GetEnvironment())
+	corepkg.SetDefaultLogger(log.Logger)
 }
 
 func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
@@ -39,13 +59,17 @@ func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
 	a := &corepkg.AuthState{
-		GUID:            "guid-nginx",
-		Service:         definitions.ServNginx,
-		Protocol:        config.NewProtocol("imap"),
-		UsedBackendIP:   "10.0.0.5",
-		UsedBackendPort: 993,
+		Request: corepkg.AuthRequest{
+			Service:  definitions.ServNginx,
+			Protocol: config.NewProtocol("imap"),
+		},
+		Runtime: corepkg.AuthRuntime{
+			GUID:            "guid-nginx",
+			UsedBackendIP:   "10.0.0.5",
+			UsedBackendPort: 993,
+		},
 	}
-	a.SetStatusCodes(a.Service)
+	a.SetStatusCodes(a.Request.Service)
 
 	// No local cache hit in ctx by default; expect Miss header
 	a.AuthOK(ctx)
@@ -53,14 +77,14 @@ func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	if got := w.Header().Get("Auth-Status"); got != "OK" {
 		t.Fatalf("Auth-Status header = %q, want %q", got, "OK")
 	}
-	if got := w.Header().Get("X-Nauthilus-Session"); got != a.GUID {
-		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.GUID)
+	if got := w.Header().Get("X-Nauthilus-Session"); got != a.Runtime.GUID {
+		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.Runtime.GUID)
 	}
 	if got := w.Header().Get("X-Nauthilus-Memory-Cache"); got != "Miss" {
 		t.Fatalf("X-Nauthilus-Memory-Cache = %q, want %q", got, "Miss")
 	}
-	if got := w.Header().Get("Auth-Server"); got != a.UsedBackendIP {
-		t.Fatalf("Auth-Server = %q, want %q", got, a.UsedBackendIP)
+	if got := w.Header().Get("Auth-Server"); got != a.Runtime.UsedBackendIP {
+		t.Fatalf("Auth-Server = %q, want %q", got, a.Runtime.UsedBackendIP)
 	}
 	if got := w.Header().Get("Auth-Port"); got != "993" {
 		t.Fatalf("Auth-Port = %q, want %q", got, "993")
@@ -76,19 +100,23 @@ func TestResponseWriter_OK_JSONBodyIncludesOK(t *testing.T) {
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
 	a := &corepkg.AuthState{
-		GUID:                "guid-json",
-		Service:             definitions.ServJSON,
-		Protocol:            config.NewProtocol("imap"),
-		SourcePassDBBackend: definitions.BackendLDAP,
-		AccountField:        "uid",
-		Attributes:          map[string][]any{"uid": {"alice"}},
+		Request: corepkg.AuthRequest{
+			Service:  definitions.ServJSON,
+			Protocol: config.NewProtocol("imap"),
+		},
+		Runtime: corepkg.AuthRuntime{
+			GUID:                "guid-json",
+			SourcePassDBBackend: definitions.BackendLDAP,
+			AccountField:        "uid",
+		},
 	}
-	a.SetStatusCodes(a.Service)
+	a.ReplaceAllAttributes(map[string][]any{"uid": {"alice"}})
+	a.SetStatusCodes(a.Request.Service)
 
 	a.AuthOK(ctx)
 
-	if w.Code != a.StatusCodeOK {
-		t.Fatalf("status code = %d, want %d", w.Code, a.StatusCodeOK)
+	if w.Code != a.Runtime.StatusCodeOK {
+		t.Fatalf("status code = %d, want %d", w.Code, a.Runtime.StatusCodeOK)
 	}
 
 	var body map[string]any

@@ -21,7 +21,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -52,13 +51,10 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 	for i, passDB := range passDBs {
 		res, err := passDB.fn(auth)
 		if err != nil {
-			// Prefer treating pool exhaustion and operation timeouts as tempfail over
-			// negative results from other backends (e.g., cache). We remember it and may
-			// return it at the end if no definitive success/user-found result exists.
-			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) ||
-				stderrors.Is(err, errors.ErrLDAPSearchTimeout) ||
-				stderrors.Is(err, errors.ErrLDAPBindTimeout) ||
-				stderrors.Is(err, errors.ErrLDAPModifyTimeout) {
+			// Prefer treating pool exhaustion as a tempfail over negative results
+			// from other backends (e.g., cache). We remember it and may return it
+			// at the end if no definitive success/user-found result exists.
+			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) {
 				tempfailErr = err
 			}
 
@@ -76,8 +72,8 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		}
 
 		if e := ProcessPassDBResult(ctx, res, auth, passDB); e != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, auth.GUID,
+			level.Error(auth.Logger()).Log(
+				definitions.LogKeyGUID, auth.Runtime.GUID,
 				definitions.LogKeyMsg, "Error processing passdb result",
 				definitions.LogKeyError, e,
 			)
@@ -85,9 +81,12 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 			continue
 		}
 
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			auth.deps.Cfg,
+			auth.deps.Logger,
 			definitions.DbgAuth,
-			definitions.LogKeyGUID, auth.GUID,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
 			"passdb", passDB.backend.String(),
 			"result", fmt.Sprintf("%v", res),
 		)
@@ -97,7 +96,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		// Restore legacy no-auth semantics: if a backend finds the user in no-auth
 		// mode, treat it as authenticated. This keeps followers/SingleFlight safe
 		// because we only mutate the local PassDBResult, not AuthState.
-		if auth.NoAuth && res.UserFound && !res.Authenticated {
+		if auth.Request.NoAuth && res.UserFound && !res.Authenticated {
 			res.Authenticated = true
 		}
 

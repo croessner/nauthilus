@@ -17,28 +17,28 @@ package feature
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
-	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
-	"github.com/croessner/nauthilus/server/lualib/connmgr"
+	"github.com/croessner/nauthilus/server/lualib/luamod"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 	"golang.org/x/sync/errgroup"
 )
@@ -48,18 +48,18 @@ var LuaFeatures *PreCompiledLuaFeatures
 
 // PreCompileLuaFeatures pre-compiles Lua features listed in the configuration and initializes the global `LuaFeatures` variable.
 // Returns an error if the pre-compilation process or Lua feature initialization fails, otherwise returns nil.
-func PreCompileLuaFeatures() (err error) {
-	if config.GetFile().HaveLuaFeatures() {
+func PreCompileLuaFeatures(cfg config.File, _ *slog.Logger) (err error) {
+	if cfg.HaveLuaFeatures() {
 		if LuaFeatures == nil {
 			LuaFeatures = &PreCompiledLuaFeatures{}
 		} else {
 			LuaFeatures.Reset()
 		}
 
-		for index := range config.GetFile().GetLua().Features {
+		for index := range cfg.GetLua().Features {
 			var luaFeature *LuaFeature
 
-			luaFeature, err = NewLuaFeature(config.GetFile().GetLua().Features[index].Name, config.GetFile().GetLua().Features[index].ScriptPath)
+			luaFeature, err = NewLuaFeature(cfg.GetLua().Features[index].Name, cfg.GetLua().Features[index].ScriptPath)
 			if err != nil {
 				return err
 			}
@@ -128,6 +128,14 @@ func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
 
 // Request represents a request data structure with all the necessary information about a connection and SSL usage.
 type Request struct {
+	Session            string
+	Username           string
+	Password           string
+	ClientIP           string
+	AccountName        string
+	UsedBackendPort    *int
+	AdditionalFeatures map[string]any
+
 	// Logs holds the custom log key-value pairs.
 	Logs *lualib.CustomLogKeyValue
 
@@ -135,12 +143,19 @@ type Request struct {
 	*lualib.Context
 
 	*lualib.CommonRequest
+
+	HTTPClientContext *gin.Context
+	HTTPClientRequest *http.Request
+	NoAuth            bool
+	BruteForceCounter uint
+	MasterUserMode    bool
+	PasswordHistory   *bruteforce.PasswordHistory
 }
 
 // CallFeatureLua executes Lua scripts associated with features within the context of a request.
 // It triggers actions or aborts features based on script results.
 // Returns whether a feature was triggered, if features should be aborted, and any execution error.
-func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+func (r *Request) CallFeatureLua(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) (triggered bool, abortFeatures bool, err error) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
@@ -159,26 +174,29 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	pool := vmpool.GetManager().GetOrCreate("feature:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaFeatureVMPoolSize()})
+	pool := vmpool.GetManager().GetOrCreate("feature:default", vmpool.PoolOptions{
+		MaxVMs: cfg.GetLuaFeatureVMPoolSize(),
+		Config: cfg,
+	})
 
-	triggered, abortFeatures, err = r.executeScripts(ctx, pool)
+	triggered, abortFeatures, err = r.executeScripts(ctx, cfg, logger, redisClient, pool)
 
 	return
 }
 
 // setRequest creates a new Lua table and sets the request properties as key-value pairs in the table. The table is then returned.
 // The request table is then returned.
-func (r *Request) setRequest(L *lua.LState) *lua.LTable {
+func (r *Request) setRequest(cfg config.File, L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	r.CommonRequest.SetupRequest(request)
+	r.CommonRequest.SetupRequest(cfg, request)
 
 	return request
 }
 
 // executeScripts executes all Lua feature scripts in parallel. It waits for all to finish,
 // then aggregates their results considering error, abort, and triggered semantics.
-func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered bool, abortFeatures bool, err error) {
+func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, pool *vmpool.Pool) (triggered bool, abortFeatures bool, err error) {
 	// Prepare synchronization primitives and results storage
 	type featResult struct {
 		name       string
@@ -199,7 +217,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 	g, egCtx := errgroup.WithContext(ctx)
 
 	// Fast cancel if request context already canceled
-	if stderrors.Is(ctx.Err(), context.Canceled) {
+	if ctx.Err() != nil {
 		return false, false, ctx.Err()
 	}
 
@@ -208,7 +226,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 		feature := LuaFeatures.LuaScripts[idx]
 
 		g.Go(func() error {
-			util.DebugModule(definitions.DbgFeature,
+			util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature,
 				definitions.LogKeyGUID, r.Session,
 				definitions.LogKeyMsg, "Executing feature script",
 				"name", feature.Name,
@@ -247,7 +265,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 			globals.RawSet(lua.LString(definitions.LuaFeatureResultOk), lua.LNumber(0))
 			globals.RawSet(lua.LString(definitions.LuaFeatureResultFail), lua.LNumber(1))
 
-			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.AddCustomLog(localLogs)))
+			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.LoaderModLogging(ctx, cfg, logger, localLogs)))
 			globals.RawSetString(definitions.LuaFnSetStatusMessage, Llocal.NewFunction(lualib.SetStatusMessage(&localStatus)))
 
 			Llocal.SetGlobal(definitions.LuaDefaultTable, globals)
@@ -255,11 +273,32 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 			// Build per-feature request table from the common request
 			request := Llocal.NewTable()
 
-			r.CommonRequest.SetupRequest(request)
+			r.CommonRequest.SetupRequest(cfg, request)
 
-			stopTimer := stats.PrometheusTimer(definitions.PromFeature, feature.Name)
+			// Set local override fields from Request struct
+			if r.Session != "" {
+				request.RawSetString(definitions.LuaRequestSession, lua.LString(r.Session))
+			}
 
-			luaCtx, luaCancel := context.WithTimeout(egCtx, viper.GetDuration("lua_script_timeout")*time.Second)
+			if r.Username != "" {
+				request.RawSetString(definitions.LuaRequestUsername, lua.LString(r.Username))
+			}
+
+			if r.Password != "" {
+				request.RawSetString(definitions.LuaRequestPassword, lua.LString(r.Password))
+			}
+
+			if r.ClientIP != "" {
+				request.RawSetString(definitions.LuaRequestClientIP, lua.LString(r.ClientIP))
+			}
+
+			if r.AccountName != "" {
+				request.RawSetString(definitions.LuaRequestAccount, lua.LString(r.AccountName))
+			}
+
+			stopTimer := stats.PrometheusTimer(cfg, definitions.PromFeature, feature.Name)
+
+			luaCtx, luaCancel := context.WithTimeout(egCtx, cfg.GetServer().GetTimeouts().GetLuaScript())
 			defer luaCancel()
 
 			Llocal.SetContext(luaCtx)
@@ -267,131 +306,30 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 			// Prepare per-request environment so that request-local globals and module bindings are visible
 			luapool.PrepareRequestEnv(Llocal)
 
-			// Bind required per-request modules so that require() resolves to the bound versions.
-			// 1) nauthilus_context
-			if loader := lualib.LoaderModContext(r.Context); loader != nil {
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModContext, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
+			modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-			// 2) nauthilus_http_request (from gin context)
+			modManager.BindAllDefault(Llocal, r.Context, luaCtx, tolerate.GetTolerate())
+
 			if ctx != nil && ctx.Request != nil {
-				loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPRequest, mod)
-				} else {
-					Llocal.Pop(1)
-				}
+				modManager.BindHTTP(Llocal, lualib.NewHTTPMetaFromRequest(ctx.Request))
 			}
 
-			// 3) nauthilus_http_response
-			if ctx != nil {
-				loader := lualib.LoaderModHTTPResponse(ctx)
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPResponse, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 4) nauthilus_redis (use luaCtx deadline)
-			if loader := redislib.LoaderModRedis(luaCtx); loader != nil {
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModRedis, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 5) nauthilus_ldap (if enabled)
-			if config.GetFile().HaveLDAPBackend() {
-				loader := backend.LoaderModLDAP(luaCtx)
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModLDAP, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 6) nauthilus_psnet (connection monitoring)
-			if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 7) nauthilus_dns (DNS lookups)
-			if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
-			{
-				var loader lua.LGFunction
-				if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
-					loader = lualib.LoaderModOTEL(luaCtx)
-				} else {
-					loader = lualib.LoaderOTELStateless()
-				}
-
-				if loader != nil {
-					_ = loader(Llocal)
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModOpenTelemetry, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-			}
-
-			// 8) nauthilus_brute_force (toleration and blocking helpers)
-			if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
-				_ = loader(Llocal)
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
+			modManager.BindHTTPResponse(Llocal, ctx)
+			modManager.BindLDAP(Llocal, backend.LoaderModLDAP(luaCtx, cfg))
 
 			fr := &featResult{name: feature.Name, statusText: &localStatus}
 
 			// Load package path and execute compiled script
-			if e := lualib.PackagePath(Llocal); e != nil {
+			if e := lualib.PackagePath(Llocal, cfg); e != nil {
 				// log with stacktrace and ensure timer/cancel are handled
-				r.handleError(luaCancel, e, feature.Name, stopTimer)
+				r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
 
 				return e
 			}
 
 			if e := lualib.DoCompiledFile(Llocal, feature.CompiledScript); e != nil {
 				// log with stacktrace and ensure timer/cancel are handled
-				r.handleError(luaCancel, e, feature.Name, stopTimer)
+				r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
 
 				return e
 			}
@@ -411,7 +349,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 			if callFeaturesFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: callFeaturesFunc, NRet: 3, Protect: true}, request); e != nil {
 					// log with stacktrace and ensure timer/cancel are handled
-					r.handleError(luaCancel, e, feature.Name, stopTimer)
+					r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
 
 					return e
 				} else {
@@ -444,7 +382,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 				}
 			}
 
-			util.DebugModule(definitions.DbgFeature, logs...)
+			util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature, logs...)
 
 			if stopTimer != nil {
 				stopTimer()
@@ -486,10 +424,10 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 }
 
 // handleError logs the error message and cancels the Lua context.
-func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
+func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	// Include Lua stacktrace when available for better diagnostics
 	if ae, ok := err.(*lua.ApiError); ok && ae != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, r.Session,
 			"name", scriptName,
 			definitions.LogKeyMsg, "Lua feature failed",
@@ -497,7 +435,7 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 			"stacktrace", ae.StackTrace,
 		)
 	} else {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, r.Session,
 			"name", scriptName,
 			definitions.LogKeyMsg, "Lua feature failed",
@@ -513,7 +451,7 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 }
 
 // generateLog creates a log entry with details about a Lua feature execution, including triggered state, abort flag, and result.
-func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName string) {
+func (r *Request) generateLog(ctx context.Context, cfg config.File, logger *slog.Logger, triggered, abortFeatures bool, ret int, scriptName string) {
 	logs := []any{
 		definitions.LogKeyGUID, r.Session,
 		"name", scriptName,
@@ -531,7 +469,7 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 		}
 	}
 
-	util.DebugModule(definitions.DbgFeature, logs...)
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgFeature, logs...)
 }
 
 // formatResult returns a string representation of the given integer result.

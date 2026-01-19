@@ -21,22 +21,33 @@ package core
 import (
 	"net/http"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/gin-gonic/gin"
 )
 
 // WithLanguageMiddleware provides a no-op language middleware in non-hydra builds.
 // It preserves the handler chain shape without introducing i18n or CSRF concerns here.
-func WithLanguageMiddleware() gin.HandlerFunc {
+func WithLanguageMiddleware(_ AuthDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) { ctx.Next() }
 }
 
 // InitHTTPClient is a no-op placeholder when building without the hydra tag.
 // It maintains API parity with the hydra-enabled build where an HTTP client is initialized.
-func InitHTTPClient() {}
+func InitHTTPClient(_ config.File) {}
 
 // HandleErr renders a minimal error response when Hydra is disabled.
 // It ensures core packages can signal errors uniformly across build variants.
 func HandleErr(ctx *gin.Context, err error) {
+	HandleErrWithDeps(ctx, err, AuthDeps{
+		Cfg:    getDefaultConfigFile(),
+		Env:    getDefaultEnvironment(),
+		Logger: getDefaultLogger(),
+		Redis:  getDefaultRedisClient(),
+	})
+}
+
+// HandleErrWithDeps is a DI-capable variant of HandleErr for non-hydra builds.
+func HandleErrWithDeps(ctx *gin.Context, err error, _ AuthDeps) {
 	if err == nil {
 		ctx.Status(http.StatusBadRequest)
 
@@ -70,8 +81,15 @@ func LogoutGETHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra
 // LogoutPOSTHandler handles POST requests to the '/logout/post' endpoint, returning a 404 status when Hydra is disabled.
 func LogoutPOSTHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra disabled") }
 
-// NotifyGETHandler handles GET requests for the notification page, returning a 404 status indicating Hydra is disabled.
-func NotifyGETHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra disabled") }
+// NotifyGETHandler handles GET requests for the notification page.
+func NotifyGETHandler(ctx *gin.Context) {
+	NotifyGETHandlerWithDeps(ctx, AuthDeps{
+		Cfg:    getDefaultConfigFile(),
+		Env:    getDefaultEnvironment(),
+		Logger: getDefaultLogger(),
+		Redis:  getDefaultRedisClient(),
+	})
+}
 
 // LoginGET2FAHandler handles GET requests for the 2FA page, responding with a "hydra disabled" message when not enabled.
 func LoginGET2FAHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra disabled") }

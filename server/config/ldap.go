@@ -18,6 +18,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -181,11 +182,11 @@ func validateAuthPoolRequired(fl validator.FieldLevel) bool {
 }
 
 func (l *LDAPConf) String() string {
-	var result string
-
 	if l == nil {
 		return "<nil>"
 	}
+
+	var result strings.Builder
 
 	value := reflect.ValueOf(*l)
 	typeOfValue := value.Type()
@@ -194,18 +195,22 @@ func (l *LDAPConf) String() string {
 		switch typeOfValue.Field(index).Name {
 		case "BindPW":
 			if environment.GetDevMode() {
-				result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+				fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 			} else {
-				result += fmt.Sprintf(" %s='<hidden>'", typeOfValue.Field(index).Name)
+				fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
 			}
 		case "LookupPoolSize", "LookupIdlePoolSize", "AuthPoolSize", "AuthIdlePoolSize":
 			continue
 		default:
-			result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+			fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 		}
 	}
 
-	return result[1:]
+	if result.Len() == 0 {
+		return ""
+	}
+
+	return result.String()[1:]
 }
 
 // GetNumberOfWorkers returns the number of workers configured in the LDAPConf. Returns 0 if the LDAPConf is nil.

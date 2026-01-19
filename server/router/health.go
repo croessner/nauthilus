@@ -16,10 +16,10 @@
 package router
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +27,7 @@ import (
 
 // HealthCheck handles the health check functionality by logging a message and returning "pong" as the response.
 func HealthCheck(ctx *gin.Context) {
-	level.Info(log.Logger).Log(definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey), definitions.LogKeyMsg, "Health check")
+	level.Info(slog.Default()).Log(definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey), definitions.LogKeyMsg, "Health check")
 
 	ctx.String(http.StatusOK, "pong")
 }

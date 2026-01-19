@@ -16,21 +16,151 @@
 package log
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	logcolor "github.com/croessner/nauthilus/server/log/color"
 )
 
 var (
-	mu sync.Mutex
+	mu         sync.Mutex
+	rootLogger *dynamicHandlerRoot
 
 	// Logger is used for all messages that are printed to stdout
 	Logger *slog.Logger
 )
+
+// GetLogger returns the global logger instance.
+func GetLogger() *slog.Logger {
+	return Logger
+}
+
+type dynamicHandlerRoot struct {
+	inner    atomic.Value // stores *handlerHolder
+	instance atomic.Value // stores *stringHolder
+	levelVar slog.LevelVar
+}
+
+type handlerHolder struct {
+	h slog.Handler
+}
+
+type stringHolder struct {
+	s string
+}
+
+type dynamicHandler struct {
+	root   *dynamicHandlerRoot
+	attrs  []slog.Attr
+	groups []string
+
+	cachedHandler slog.Handler
+	cachedRootVal any
+}
+
+func (h *dynamicHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	cur := h.current()
+	if cur == nil {
+		return false
+	}
+
+	return cur.Enabled(ctx, level)
+}
+
+func (h *dynamicHandler) Handle(ctx context.Context, r slog.Record) error {
+	cur := h.current()
+	if cur == nil {
+		return nil
+	}
+
+	if h.root != nil {
+		if v := h.root.instance.Load(); v != nil {
+			if inst, ok := v.(*stringHolder); ok && inst != nil && inst.s != "" {
+				r.AddAttrs(slog.String(definitions.LogKeyInstance, inst.s))
+			}
+		}
+	}
+
+	return cur.Handle(ctx, r)
+}
+
+func (h *dynamicHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if len(attrs) == 0 {
+		return h
+	}
+
+	next := &dynamicHandler{
+		root:   h.root,
+		groups: h.groups,
+		attrs:  make([]slog.Attr, 0, len(h.attrs)+len(attrs)),
+	}
+
+	next.attrs = append(next.attrs, h.attrs...)
+	next.attrs = append(next.attrs, attrs...)
+
+	return next
+}
+
+func (h *dynamicHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
+
+	next := &dynamicHandler{
+		root:  h.root,
+		attrs: h.attrs,
+	}
+
+	if len(h.groups) > 0 {
+		next.groups = make([]string, 0, len(h.groups)+1)
+		next.groups = append(next.groups, h.groups...)
+		next.groups = append(next.groups, name)
+	} else {
+		next.groups = []string{name}
+	}
+
+	return next
+}
+
+func (h *dynamicHandler) current() slog.Handler {
+	if h == nil || h.root == nil {
+		return nil
+	}
+
+	v := h.root.inner.Load()
+	if v == nil {
+		return nil
+	}
+
+	if v == h.cachedRootVal && h.cachedHandler != nil {
+		return h.cachedHandler
+	}
+
+	holder, ok := v.(*handlerHolder)
+	if !ok || holder == nil || holder.h == nil {
+		return nil
+	}
+
+	cur := holder.h
+
+	for _, g := range h.groups {
+		cur = cur.WithGroup(g)
+	}
+
+	if len(h.attrs) > 0 {
+		cur = cur.WithAttrs(h.attrs)
+	}
+
+	h.cachedHandler = cur
+	h.cachedRootVal = v
+
+	return cur
+}
 
 // SetupLogging initializes the global "Logger" object.
 // It is safe to call multiple times; subsequent calls reconfigure the logger.
@@ -73,7 +203,14 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 		return a
 	}
 
-	handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource, ReplaceAttr: replaceAttr}
+	if rootLogger == nil {
+		rootLogger = &dynamicHandlerRoot{}
+	}
+
+	rootLogger.levelVar.Set(minLevel)
+	rootLogger.instance.Store(&stringHolder{s: instance})
+
+	handlerOpts := &slog.HandlerOptions{Level: &rootLogger.levelVar, AddSource: addSource, ReplaceAttr: replaceAttr}
 
 	// Choose output target: for LogLevelNone, discard everything using io.Discard
 	var out io.Writer = os.Stdout
@@ -96,5 +233,8 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 		handler = slog.NewTextHandler(out, handlerOpts)
 	}
 
-	Logger = slog.New(handler).With(slog.String(definitions.LogKeyInstance, instance))
+	rootLogger.inner.Store(&handlerHolder{h: handler})
+	if Logger == nil {
+		Logger = slog.New(&dynamicHandler{root: rootLogger})
+	}
 }

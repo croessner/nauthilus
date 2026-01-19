@@ -27,6 +27,9 @@ local template = require("template")
 
 local HCCR = "http_client_concurrent_requests_total"
 
+local TELEGRAM_PASSWORD = nauthilus_util.getenv("TELEGRAM_PASSWORD", "")
+local TELEGRAM_CHAT_ID = tonumber(nauthilus_util.getenv("TELEGRAM_CHAT_ID", "0")) or 0
+
 function nauthilus_call_action(request)
     if request.no_auth then
         return nauthilus_builtin.ACTION_RESULT_OK
@@ -127,7 +130,7 @@ function nauthilus_call_action(request)
     -- Only send if authentication failed AND account is set
     if send_message and (not request.authenticated) and request.account and request.account ~= "" then
         local client = http.client()
-        local bot = telegram.bot(os.getenv("TELEGRAM_PASSWORD"), client)
+        local bot = telegram.bot(TELEGRAM_PASSWORD, client)
 
         ts = nauthilus_util.get_current_timestamp()
         if ts == nil then
@@ -284,7 +287,7 @@ function nauthilus_call_action(request)
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { bot = "send" })
         local _, err_bat = bot:sendMessage({
-            chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
+            chat_id = TELEGRAM_CHAT_ID,
             text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPASSWORD HASH {{password_hash}}\nPWND INFO {{pwnd_info}}\nBRUTE FORCE BUCKET {{brute_force_bucket}}\nFAILED LOGIN COUNT {{failed_login_count}}\nFAILED LOGIN RANK {{failed_login_rank}}\nFAILED LOGIN RECOGNIZED {{failed_login_recognized}}\nGEOIP GUID {{geoip_guid}}\nGEOIP COUNTRY {{geoip_country}}\nGEOIP ISO CODES {{geoip_iso_codes}}\nGEOIP STATUS {{geoip_status}}\nGLOBAL ATTEMPTS {{gp_attempts}}\nGLOBAL UNIQUE IPs {{gp_unique_ips}}\nGLOBAL UNIQUE USERS {{gp_unique_users}}\nGLOBAL IPs/USER {{gp_ips_per_user}}\nACCT PROTECTION ACTIVE {{prot_active}}\nACCT PROTECTION REASON {{prot_reason}}\nACCT BACKOFF LEVEL {{prot_backoff}}\nACCT DELAY MS {{prot_delay_ms}}\nDYN THREAT {{dyn_threat}}\nDYN RESPONSE {{dyn_response}}", values)
         })
         nauthilus_prometheus.stop_timer(timer)

@@ -16,11 +16,13 @@
 package metrics
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/rediscli"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 
@@ -30,27 +32,33 @@ import (
 )
 
 // Handler registers the metrics endpoint with identical auth semantics as before.
-type Handler struct{}
+type Handler struct {
+	cfg    config.File
+	logger *slog.Logger
+	redis  rediscli.Client
+}
 
-func New() *Handler {
-	return &Handler{}
+func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
+	return &Handler{cfg: cfg, logger: logger, redis: redis}
 }
 
 func (h *Handler) Register(router gin.IRouter) {
 	router.GET("/metrics", func(ctx *gin.Context) {
+		cfg := h.cfg
+		logger := h.logger
+		redisClient := h.redis
+
 		// If JWT is enabled, allow only users with RoleSecurity
-		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
-			tokenString, err := core.ExtractJWTToken(ctx)
+		if cfg.GetServer().GetJWTAuth().IsEnabled() {
+			tokenString, err := core.ExtractJWTTokenWithCfg(ctx, cfg)
 			if err == nil {
-				if claims, err := core.ValidateJWTToken(ctx, tokenString); err == nil {
+				if claims, err := core.ValidateJWTToken(ctx, tokenString, core.JWTDeps{Cfg: cfg, Logger: logger, Redis: redisClient}); err == nil {
 					for _, role := range claims.Roles {
 						if role == definitions.RoleSecurity {
-							h := promhttp.HandlerFor(
+							promhttp.HandlerFor(
 								prometheus.DefaultGatherer,
 								promhttp.HandlerOpts{DisableCompression: true},
-							)
-
-							h.ServeHTTP(ctx.Writer, ctx.Request)
+							).ServeHTTP(ctx.Writer, ctx.Request)
 
 							return
 						}
@@ -60,13 +68,11 @@ func (h *Handler) Register(router gin.IRouter) {
 		}
 
 		// Fallback to Basic Auth if enabled
-		if mdauth.CheckAndRequireBasicAuth(ctx) {
-			h := promhttp.HandlerFor(
+		if mdauth.CheckAndRequireBasicAuth(ctx, cfg) {
+			promhttp.HandlerFor(
 				prometheus.DefaultGatherer,
 				promhttp.HandlerOpts{DisableCompression: true},
-			)
-
-			h.ServeHTTP(ctx.Writer, ctx.Request)
+			).ServeHTTP(ctx.Writer, ctx.Request)
 
 			return
 		}

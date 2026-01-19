@@ -19,7 +19,6 @@ import (
 	mdcmp "github.com/croessner/nauthilus/server/middleware/compression"
 	mdmet "github.com/croessner/nauthilus/server/middleware/metrics"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 )
 
 // WithRecovery adds gin.Recovery middleware to recover from panics.
@@ -31,16 +30,16 @@ func (r *Router) WithRecovery() *Router {
 
 // WithTrustedProxies configures the trusted proxies for the underlying engine.
 func (r *Router) WithTrustedProxies() *Router {
-	r.Engine.SetTrustedProxies(viper.GetStringSlice("trusted_proxies"))
+	r.Engine.SetTrustedProxies(r.Cfg.GetServer().GetTrustedProxies())
 
 	return r
 }
 
 // WithRequestDecompression installs request decompression middlewares (gzip, zstd, br).
 func (r *Router) WithRequestDecompression() *Router {
-	r.Engine.Use(mdcmp.DecompressRequestMiddleware())
-	r.Engine.Use(mdcmp.DecompressZstdRequestMiddleware())
-	r.Engine.Use(mdcmp.DecompressBrRequestMiddleware())
+	r.Engine.Use(mdcmp.DecompressRequestMiddleware(r.Cfg))
+	r.Engine.Use(mdcmp.DecompressZstdRequestMiddleware(r.Cfg))
+	r.Engine.Use(mdcmp.DecompressBrRequestMiddleware(r.Cfg))
 
 	return r
 }
@@ -54,7 +53,7 @@ func (r *Router) WithResponseCompression() *Router {
 
 // WithMetricsMiddleware enables Prometheus request metrics middleware.
 func (r *Router) WithMetricsMiddleware() *Router {
-	r.Engine.Use(mdmet.PrometheusMiddleware())
+	r.Engine.Use(mdmet.PrometheusMiddlewareWithCfg(r.Cfg))
 
 	return r
 }

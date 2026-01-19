@@ -19,16 +19,20 @@ local nauthilus_context = require("nauthilus_context")
 
 local tcp = require("tcp")
 
+local HAPROXY_STATS = nauthilus_util.getenv("HAPROXY_STATS", "/var/run/haproxy/admin.sock")
+local HAPROXY_SMTP_MAP = nauthilus_util.getenv("HAPROXY_SMTP_MAP", "smtp_sink.map")
+local HAPROXY_GENERIC_MAP = nauthilus_util.getenv("HAPROXY_GENERIC_MAP", "generic_sink.map")
+
 function nauthilus_call_action(request)
     -- Send IP/Mask
-    local conn, err = tcp.open(os.getenv('HAPROXY_STATS'))
+    local conn, err = tcp.open(HAPROXY_STATS)
 
     if request.protocol == "smtps" or request.protocol == "submission" then
         -- Use smtp-sink
-        err = conn:write("add map " .. os.getenv('HAPROXY_SMTP_MAP') .. " " .. request.client_net .. " block_smtp\n")
+        err = conn:write("add map " .. HAPROXY_SMTP_MAP .. " " .. request.client_net .. " block_smtp\n")
     else
         -- Block connection
-        err = conn:write("add map " .. os.getenv('HAPROXY_GENERIC_MAP') .. " " .. request.client_net .. " block_" .. request.protocol .. "\n")
+        err = conn:write("add map " .. HAPROXY_GENERIC_MAP .. " " .. request.client_net .. " block_" .. request.protocol .. "\n")
     end
 
     nauthilus_util.if_error_raise(err)

@@ -19,19 +19,12 @@ package luapool
 import (
 	"sync"
 
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // LuaStatePool is a pool of Lua states that can be reused.
 var luaStatePool = sync.Pool{
 	New: func() any {
-		util.DebugModule(
-			definitions.DbgLua,
-			definitions.LogKeyMsg, "Creating new Lua state",
-		)
-
 		return lua.NewState()
 	},
 }

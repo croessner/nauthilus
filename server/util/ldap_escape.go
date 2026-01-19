@@ -1,4 +1,21 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package util
+
+import "strings"
 
 // EscapeLDAPFilter escapes a string for safe embedding into an LDAP filter per RFC 4515.
 // It replaces the following characters:
@@ -14,23 +31,24 @@ func EscapeLDAPFilter(s string) string {
 	}
 
 	// Order matters: backslash first to avoid double-escaping
-	replaced := ""
+	var replaced strings.Builder
+
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '\\':
-			replaced += "\\5c"
+			replaced.WriteString("\\5c")
 		case '*':
-			replaced += "\\2a"
+			replaced.WriteString("\\2a")
 		case '(':
-			replaced += "\\28"
+			replaced.WriteString("\\28")
 		case ')':
-			replaced += "\\29"
+			replaced.WriteString("\\29")
 		case '\x00':
-			replaced += "\\00"
+			replaced.WriteString("\\00")
 		default:
-			replaced += string(s[i])
+			replaced.WriteByte(s[i])
 		}
 	}
 
-	return replaced
+	return replaced.String()
 }

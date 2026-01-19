@@ -29,6 +29,9 @@ local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_misc = require("nauthilus_misc")
 local nauthilus_prometheus = require("nauthilus_prometheus")
 local nauthilus_password = require("nauthilus_password")
+local time = require("time")
+
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
 function nauthilus_call_feature(request)
     -- This feature should run regardless of success/failure, but respect no_auth
@@ -40,16 +43,15 @@ function nauthilus_call_feature(request)
     local username = request.username or request.account -- some protocols fill account
     local client_ip = request.client_ip
     local authenticated = (request.authenticated == true)
-    local now = os.time()
+    local now = time.unix()
     -- Use request.session directly for per-request identifier
     local req_id = tostring(request.session or "")
 
     -- Get Redis connection
     local client = "default"
-    local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if pool_name ~= nil and pool_name ~= "" then
+    if CUSTOM_REDIS_POOL ~= "default" then
         local err
-        client, err = nauthilus_redis.get_redis_connection(pool_name)
+        client, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
         nauthilus_util.if_error_raise(err)
     end
 
@@ -106,15 +108,13 @@ function nauthilus_call_feature(request)
     -- Logging: keep it lightweight
     local logs = {
         caller = N .. ".lua",
-        level = "info",
-        message = "Phase1 metrics updated",
+        message = "Metrics updated",
         username = username,
         client_ip = client_ip,
         authenticated = authenticated,
         has_pw_token = (pw_token ~= nil),
-        ts = now,
     }
-    nauthilus_util.print_result({ log_format = "json" }, logs)
+    nauthilus_util.log_info(request, logs)
 
     return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
 end

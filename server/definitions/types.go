@@ -85,3 +85,74 @@ type CacheNameBackend uint8
 
 // Monitoring is a numeric identifier for various monitoring flags in the Authentication struct.
 type Monitoring uint8
+
+// DbgModuleMapping provides mappings between string identifiers and DbgModule constants for debug module resolution.
+type DbgModuleMapping struct {
+	// StrToMod maps string identifiers to DbgModule constants for resolving debug module references.
+	StrToMod map[string]DbgModule
+
+	// ModToStr maps DbgModule constants to their corresponding string identifiers.
+	ModToStr map[DbgModule]string
+}
+
+// dbgModuleMapping is a global pointer to DbgModuleMapping used for resolving debug module identifiers and constants.
+var dbgModuleMapping *DbgModuleMapping
+
+// GetDbgModuleMapping returns the global DbgModuleMapping instance.
+func GetDbgModuleMapping() *DbgModuleMapping {
+	return dbgModuleMapping
+}
+
+// SetDbgModuleMapping sets the global debug module mapping used for resolving debug module identifiers and constants.
+func SetDbgModuleMapping(mapping *DbgModuleMapping) {
+	dbgModuleMapping = mapping
+}
+
+// NewDbgModuleMapping initializes and returns a DbgModuleMapping with default mappings between string identifiers and modules.
+func NewDbgModuleMapping() *DbgModuleMapping {
+	return &DbgModuleMapping{
+		StrToMod: map[string]DbgModule{
+			"":               DbgNone,
+			DbgNoneName:      DbgNone,
+			DbgAllName:       DbgAll,
+			DbgAuthName:      DbgAuth,
+			DbgWebAuthnName:  DbgWebAuthn,
+			DbgStatsName:     DbgStats,
+			DbgWhitelistName: DbgWhitelist,
+			DbgLDAPName:      DbgLDAP,
+			DbgLDAPPoolName:  DbgLDAPPool,
+			DbgCacheName:     DbgCache,
+			DbgBfName:        DbgBf,
+			DbgRBLName:       DbgRBL,
+			DbgActionName:    DbgAction,
+			DbgFeatureName:   DbgFeature,
+			DbgLuaName:       DbgLua,
+			DbgFilterName:    DbgFilter,
+			DbgTolerateName:  DbgTolerate,
+			DbgJWTName:       DbgJWT,
+			DbgHTTPName:      DbgHTTP,
+			DbgAccountName:   DbgAccount,
+		},
+		ModToStr: map[DbgModule]string{
+			DbgAll:       DbgAllName,
+			DbgAuth:      DbgAuthName,
+			DbgAccount:   DbgAccountName,
+			DbgHydra:     DbgHydraName,
+			DbgWebAuthn:  DbgWebAuthnName,
+			DbgStats:     DbgStatsName,
+			DbgWhitelist: DbgWhitelistName,
+			DbgLDAP:      DbgLDAPName,
+			DbgLDAPPool:  DbgLDAPPoolName,
+			DbgCache:     DbgCacheName,
+			DbgBf:        DbgBfName,
+			DbgRBL:       DbgRBLName,
+			DbgAction:    DbgActionName,
+			DbgFeature:   DbgFeatureName,
+			DbgLua:       DbgLuaName,
+			DbgFilter:    DbgFilterName,
+			DbgTolerate:  DbgTolerateName,
+			DbgJWT:       DbgJWTName,
+			DbgHTTP:      DbgHTTPName,
+		},
+	}
+}

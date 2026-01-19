@@ -16,10 +16,27 @@
 package lualib
 
 import (
+	"context"
+	"log/slog"
+
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	lua "github.com/yuin/gopher-lua"
 )
+
+// BackendResultManager manages backend result operations for Lua.
+type BackendResultManager struct {
+	*BaseManager
+}
+
+// NewBackendResultManager creates a new BackendResultManager.
+func NewBackendResultManager(ctx context.Context, cfg config.File, logger *slog.Logger) *BackendResultManager {
+	return &BackendResultManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+	}
+}
 
 // LuaBackendResult holds the response returned by the Lua backend. Information about user authentication, user account,
 // and error details are encapsulated in this data structure.
@@ -55,197 +72,208 @@ type LuaBackendResult struct {
 	Logs *CustomLogKeyValue
 }
 
-// RegisterBackendResultType registers a new Lua type `nauthilus_backend_result` and attaches provided methods to its metatable.
-func RegisterBackendResultType(L *lua.LState, methods ...string) {
-	mt := L.NewTypeMetatable(definitions.LuaBackendResultTypeName)
-
-	L.SetGlobal(definitions.LuaBackendResultTypeName, mt)
-
-	// Static attributes
-	L.SetField(mt, "new", L.NewFunction(newBackendResult))
-
-	usedBackendResultMethods := make(map[string]lua.LGFunction)
-
-	for _, method := range methods {
-		usedBackendResultMethods[method] = backendResultMethods[method]
-	}
-
-	// Methods
-	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), usedBackendResultMethods))
-}
-
-// newBackendResult creates a new instance of LuaBackendResult, wraps it in a user data object, and sets its metatable.
-func newBackendResult(L *lua.LState) int {
+// New creates a new instance of LuaBackendResult, wraps it in a user data object, and sets its metatable.
+func (m *BackendResultManager) New(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 	backendResult := &LuaBackendResult{}
 	userData := L.NewUserData()
 
 	userData.Value = backendResult
 
 	L.SetMetatable(userData, L.GetTypeMetatable(definitions.LuaBackendResultTypeName))
-	L.Push(userData)
 
-	return 1
+	return stack.PushResult(userData)
 }
 
 // checkBackendResult retrieves and validates a LuaBackendResult instance from the Lua state at the given stack index.
-// Returns the LuaBackendResult instance or raises a Lua argument error if the type is invalid.
-func checkBackendResult(L *lua.LState) *LuaBackendResult {
-	userData := L.CheckUserData(1)
+func (m *BackendResultManager) checkBackendResult(L *lua.LState) *LuaBackendResult {
+	stack := luastack.NewManager(L)
 
-	if value, ok := userData.Value.(*LuaBackendResult); ok {
+	userData := stack.CheckUserData(1)
+	if userData == nil {
+		stack.L.ArgError(1, "backend_result expected")
+
+		return nil
+	}
+
+	if value, ok := userData.Value.(*LuaBackendResult); ok && value != nil {
 		return value
 	}
 
-	L.ArgError(1, "backend_result expected")
+	stack.L.ArgError(1, "backend_result expected")
 
 	return nil
 }
 
-// backendResultMethods is a map that holds the names of backend result methods and their corresponding functions.
-var backendResultMethods = map[string]lua.LGFunction{
-	definitions.LuaBackendResultAuthenticated:     backendResultGetSetAuthenticated,
-	definitions.LuaBackendResultUserFound:         backendResultGetSetUserFound,
-	definitions.LuaBackendResultAccountField:      backendResultGetSetAccountField,
-	definitions.LuaBackendResultTOTPSecretField:   backendResultGetSetTOTPSecretField,
-	definitions.LuaBackendResultTOTPRecoveryField: backendResultGetSetTOTPRecoveryField,
-	definitions.LuaBAckendResultUniqueUserIDField: backendResultGetSetUniqueUserIDField,
-	definitions.LuaBackendResultDisplayNameField:  backendResultGetSetDisplayNameField,
-	definitions.LuaBackendResultAttributes:        backendResultGetSetAttributes,
-}
+// GetSetAuthenticated sets or retrieves the Authenticated field.
+func (m *BackendResultManager) GetSetAuthenticated(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-// backendResultGetSetAuthenticated sets or retrieves the Authenticated field in the LuaBackendResult struct.
-// When called with a boolean argument, it sets the Authenticated field to the provided value.
-// When called without an argument, it returns the current value of the Authenticated field.
-func backendResultGetSetAuthenticated(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
 
-	if L.GetTop() == 2 {
-		backendResult.Authenticated = L.CheckBool(2)
+	if stack.GetTop() == 2 {
+		backendResult.Authenticated = stack.L.CheckBool(2)
 
 		return 0
 	}
 
-	L.Push(lua.LBool(backendResult.Authenticated))
-
-	return 1
+	return stack.PushResult(lua.LBool(backendResult.Authenticated))
 }
 
-// backendResultGetSetUserFound sets or returns the value of the UserFound field in the backendResult
-// struct. If called with a boolean argument, it sets the UserFound field to the provided value.
-// If called without any argument, it returns the current value of the UserFound field.
-func backendResultGetSetUserFound(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+// GetSetUserFound sets or returns the value of the UserFound field.
+func (m *BackendResultManager) GetSetUserFound(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if L.GetTop() == 2 {
-		backendResult.UserFound = L.CheckBool(2)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		backendResult.UserFound = stack.L.CheckBool(2)
 
 		return 0
 	}
 
-	L.Push(lua.LBool(backendResult.UserFound))
-
-	return 1
+	return stack.PushResult(lua.LBool(backendResult.UserFound))
 }
 
-// backendResultGetSetAccountField sets or returns the value of the AccountField field in the backendResult
-// struct. If called with a string argument, it sets the AccountField field to the provided value.
-// If called without any argument, it returns the current value of the AccountField field.
-func backendResultGetSetAccountField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+// GetSetAccountField sets or returns the value of the AccountField field.
+func (m *BackendResultManager) GetSetAccountField(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if L.GetTop() == 2 {
-		backendResult.AccountField = L.CheckString(2)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		backendResult.AccountField = stack.CheckString(2)
 
 		return 0
 	}
 
-	L.Push(lua.LString(backendResult.AccountField))
-
-	return 1
+	return stack.PushResult(lua.LString(backendResult.AccountField))
 }
 
-// backendResultGetSetTOTPSecretField sets or returns the value of the TOTPSecretField field in the backendResult struct.
-// If called with a string argument, it sets the TOTPSecretField field to the provided value.
-// If called without any argument, it returns the current value of the TOTPSecretField field.
-func backendResultGetSetTOTPSecretField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+// GetSetTOTPSecretField sets or returns the value of the TOTPSecretField field.
+func (m *BackendResultManager) GetSetTOTPSecretField(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if L.GetTop() == 2 {
-		backendResult.TOTPSecretField = L.CheckString(2)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		backendResult.TOTPSecretField = stack.CheckString(2)
 
 		return 0
 	}
 
-	L.Push(lua.LString(backendResult.TOTPSecretField))
-
-	return 1
+	return stack.PushResult(lua.LString(backendResult.TOTPSecretField))
 }
 
-// backendResultGetSetTOTPRecoveryField sets or returns the value of the TOTPRecoveryField field in the backendResult struct.
-// If called with a string argument, it sets the TOTPRecoveryField field to the provided value.
-// If called without any argument, it returns the current value of the TOTPRecoveryField field.
-func backendResultGetSetTOTPRecoveryField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+// GetSetTOTPRecoveryField sets or returns the value of the TOTPRecoveryField field.
+func (m *BackendResultManager) GetSetTOTPRecoveryField(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if L.GetTop() == 2 {
-		backendResult.TOTPRecoveryField = L.CheckString(2)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		backendResult.TOTPRecoveryField = stack.CheckString(2)
 
 		return 0
 	}
 
-	L.Push(lua.LString(backendResult.TOTPRecoveryField))
-
-	return 1
+	return stack.PushResult(lua.LString(backendResult.TOTPRecoveryField))
 }
 
-// backendResultGetSetUniqueUserIDField sets or returns the value of the UniqueUserIDField field in the backendResult struct.
-// If called with a string argument, it sets the UniqueUserIDField field to the provided value.
-// If called without any argument, it returns the current value of the UniqueUserIDField field.
-func backendResultGetSetUniqueUserIDField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+// GetSetUniqueUserIDField sets or returns the value of the UniqueUserIDField field.
+func (m *BackendResultManager) GetSetUniqueUserIDField(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if L.GetTop() == 2 {
-		backendResult.UniqueUserIDField = L.CheckString(2)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		backendResult.UniqueUserIDField = stack.CheckString(2)
 
 		return 0
 	}
 
-	L.Push(lua.LString(backendResult.UniqueUserIDField))
-
-	return 1
+	return stack.PushResult(lua.LString(backendResult.UniqueUserIDField))
 }
 
-// backendResultGetSetDisplayNameField sets or returns the value of the DisplayNameField field in the backendResult
-// struct. If called with a string argument, it sets the DisplayNameField field to the provided value.
-// If called without any argument, it returns the current value of the DisplayNameField field.
-func backendResultGetSetDisplayNameField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+// GetSetDisplayNameField sets or returns the value of the DisplayNameField field.
+func (m *BackendResultManager) GetSetDisplayNameField(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if L.GetTop() == 2 {
-		backendResult.DisplayNameField = L.CheckString(2)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		backendResult.DisplayNameField = stack.CheckString(2)
 
 		return 0
 	}
 
-	L.Push(lua.LString(backendResult.DisplayNameField))
-
-	return 1
+	return stack.PushResult(lua.LString(backendResult.DisplayNameField))
 }
 
-// backendResultGetSetAttributes sets or retrieves the SearchAttributes field of the LuaBackendResult struct as a Lua table.
-// If called with a table argument, it updates the SearchAttributes field with the provided key-value pairs.
-// If called without arguments, it returns the current SearchAttributes field as a Lua table.
-func backendResultGetSetAttributes(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
+// GetSetAttributes sets or retrieves the Attributes field.
+func (m *BackendResultManager) GetSetAttributes(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if L.GetTop() == 2 {
-		attributes := convert.LuaValueToGo(L.CheckTable(2)).(map[any]any)
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		attributes := convert.LuaValueToGo(stack.CheckTable(2)).(map[any]any)
 		backendResult.Attributes = attributes
 
 		return 0
 	}
 
-	L.Push(convert.GoToLuaValue(L, backendResult.Attributes))
+	return stack.PushResult(convert.GoToLuaValue(L, backendResult.Attributes))
+}
 
-	return 1
+// LoaderModBackendResult initializes and loads the backend result module for Lua.
+func LoaderModBackendResult(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewBackendResultManager(ctx, cfg, logger)
+
+		// Register methods
+		mt := L.NewTypeMetatable(definitions.LuaBackendResultTypeName)
+
+		L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaBackendResultAuthenticated:     manager.GetSetAuthenticated,
+			definitions.LuaBackendResultUserFound:         manager.GetSetUserFound,
+			definitions.LuaBackendResultAccountField:      manager.GetSetAccountField,
+			definitions.LuaBackendResultTOTPSecretField:   manager.GetSetTOTPSecretField,
+			definitions.LuaBackendResultTOTPRecoveryField: manager.GetSetTOTPRecoveryField,
+			definitions.LuaBAckendResultUniqueUserIDField: manager.GetSetUniqueUserIDField,
+			definitions.LuaBackendResultDisplayNameField:  manager.GetSetDisplayNameField,
+			definitions.LuaBackendResultAttributes:        manager.GetSetAttributes,
+		}))
+
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			"new": manager.New,
+		})
+
+		return stack.PushResult(mod)
+	}
 }

@@ -16,6 +16,7 @@
 package core
 
 import (
+	"log/slog"
 	"net"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -27,7 +28,7 @@ import (
 
 // ProtectEndpointMiddleware is a Gin middleware that performs authentication and security checks for HTTP requests.
 // It handles client IP extraction, brute force detection, protocol handling, and various authentication features.
-func ProtectEndpointMiddleware() gin.HandlerFunc {
+func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
 
@@ -38,12 +39,20 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
 
 		auth := &AuthState{
-			HTTPClientContext: ctx,
-			HTTPClientRequest: ctx.Request,
-			NoAuth:            true,
-			GUID:              guid,
-			Protocol:          protocol,
-			Method:            "plain",
+			deps: AuthDeps{
+				Cfg:    cfg,
+				Logger: logger,
+			},
+			Request: AuthRequest{
+				HTTPClientContext: ctx,
+				HTTPClientRequest: ctx.Request,
+				NoAuth:            true,
+				Protocol:          protocol,
+				Method:            "plain",
+			},
+			Runtime: AuthRuntime{
+				GUID: guid,
+			},
 		}
 
 		auth.WithUserAgent(ctx)
@@ -53,7 +62,7 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
 		}
 
-		util.ProcessXForwardedFor(ctx, &clientIP, &clientPort, &auth.XSSL)
+		util.ProcessXForwardedFor(ctx, cfg, logger, &clientIP, &clientPort, &auth.Request.XSSL)
 
 		if clientIP == "" {
 			clientIP = definitions.NotAvailable
@@ -63,8 +72,8 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 			clientPort = definitions.NotAvailable
 		}
 
-		auth.ClientIP = clientIP
-		auth.XClientPort = clientPort
+		auth.Request.ClientIP = clientIP
+		auth.Request.XClientPort = clientPort
 
 		// Store remote client IP into connection context. It can be used for brute force updates.
 		ctx.Set(definitions.CtxClientIPKey, clientIP)
@@ -72,7 +81,7 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		if auth.CheckBruteForce(ctx) {
 			auth.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			auth.AuthFail(ctx)
 			ctx.Abort()
@@ -84,15 +93,15 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		switch auth.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
-			HandleErr(ctx, errors.ErrNoTLS)
+			HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
 			ctx.Abort()
 
 			return
 		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			auth.AuthFail(ctx)
 			ctx.Abort()
@@ -103,7 +112,7 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		case definitions.AuthResultFail:
 		case definitions.AuthResultTempFail:
 			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
+			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
 			auth.AuthTempFail(ctx, definitions.TempFailDefault)
 			ctx.Abort()

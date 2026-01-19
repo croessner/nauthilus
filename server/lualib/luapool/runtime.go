@@ -24,17 +24,19 @@
 package luapool
 
 import (
+	"context"
 	stdhttp "net/http"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/lualib/metrics"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
 	gluacrypto "github.com/tengattack/gluacrypto/crypto"
 
 	"github.com/cjoudrey/gluahttp"
@@ -49,9 +51,8 @@ const (
 
 // NewLuaState creates a new Lua VM with standard libraries opened and stateless modules preloaded.
 // Context-bound modules are NOT bound here (see PrepareRequestEnv).
-func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
+func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	L := lua.NewState()
-	L.OpenLibs()
 
 	// Remember the base environment (_G) to enable inheritance.
 	setBaseEnv(L, L.Get(lua.GlobalsIndex))
@@ -69,19 +70,19 @@ func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
 	}
 
 	// Internal stateless modules. No context bindings!
-	L.PreloadModule(definitions.LuaModPassword, lualib.LoaderModPassword)
-	L.PreloadModule(definitions.LuaModMisc, lualib.LoaderModMisc)
-	L.PreloadModule(definitions.LuaModPrometheus, metrics.LoaderModPrometheus)
-	L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache)
-	L.PreloadModule(definitions.LuaModSoftWhitelist, lualib.LoaderModSoftWhitelist)
-	L.PreloadModule(definitions.LuaModMail, lualib.LoaderModMail)
+	L.PreloadModule(definitions.LuaModPassword, lualib.LoaderModPassword(context.Background(), cfg, log.Logger))
+	L.PreloadModule(definitions.LuaModMisc, lualib.LoaderModMisc(context.Background(), cfg, log.Logger))
+	L.PreloadModule(definitions.LuaModPrometheus, metrics.LoaderModPrometheus(context.Background(), cfg, log.Logger))
+	L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache(context.Background(), cfg, log.Logger))
+	L.PreloadModule(definitions.LuaModSoftWhitelist, lualib.LoaderModSoftAllow(context.Background(), cfg, log.Logger))
+	L.PreloadModule(definitions.LuaModMail, lualib.LoaderModMail(context.Background(), cfg, log.Logger))
 	L.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
 
 	// Preload stateless placeholders for context-bound modules. These will be
 	// replaced per request via BindModuleIntoReq when a bound version is
 	// available. Keeping them warm avoids dynamic_loader usage for ctx-bound
 	// modules and satisfies static analyzers.
-	L.PreloadModule(definitions.LuaModRedis, redislib.Loader())
+	L.PreloadModule(definitions.LuaModRedis, LoaderRedisStateless())
 	L.PreloadModule(definitions.LuaModHTTPRequest, lualib.LoaderHTTPRequestStateless())
 	L.PreloadModule(definitions.LuaModHTTPResponse, lualib.LoaderHTTPResponseStateless())
 	L.PreloadModule(definitions.LuaModContext, lualib.LoaderContextStateless())
@@ -93,10 +94,20 @@ func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
 	return L
 }
 
+// LoaderRedisStateless returns an empty, stateless module table for nauthilus_redis.
+func LoaderRedisStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+
+		return stack.PushResult(L.NewTable())
+	}
+}
+
 // PrepareRequestEnv creates a per-request environment that inherits from the base environment via metatable.
 // It calls binding skeletons to register request-bound functions/modules (currently stubs).
 func PrepareRequestEnv(L *lua.LState) *lua.LTable {
 	base := getBaseEnv(L)
+
 	if base == nil {
 		// Fallback: If markers are missing, use _G as the base env.
 		base = L.Get(lua.GlobalsIndex).(*lua.LTable)
@@ -147,8 +158,10 @@ func bindModuleIntoReq(L *lua.LState, req *lua.LTable, name string, mod *lua.LTa
 
 	// 2) Visible to require()
 	pkg := L.GetGlobal("package")
+
 	if t, ok := pkg.(*lua.LTable); ok {
 		loaded := L.GetField(t, "loaded")
+
 		if lt, ok := loaded.(*lua.LTable); ok {
 			L.SetField(lt, name, mod)
 		}
@@ -181,7 +194,6 @@ func resetRequestEnv(L *lua.LState) {
 	L.SetGlobal(definitions.LuaFnCallFeature, lua.LNil)
 	L.SetGlobal(definitions.LuaFnCallAction, lua.LNil)
 	L.SetGlobal(definitions.LuaDefaultTable, lua.LNil)
-	L.SetGlobal(definitions.LuaBackendResultTypeName, lua.LNil)
 
 	// Recreate dynamic_loader stub per request
 	ensureDynamicLoaderStub(L)

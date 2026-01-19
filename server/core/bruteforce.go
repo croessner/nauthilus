@@ -16,17 +16,16 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -43,17 +42,22 @@ import (
 func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
 	tr := monittrace.New("nauthilus/auth")
 	bctx, bspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.lua_action",
-		attribute.String("service", a.Service),
-		attribute.String("username", a.Username),
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
 		attribute.String("rule", rule.Name),
 		attribute.Bool("already_triggered", alreadyTriggered),
 	)
 
 	ctx.Request = ctx.Request.WithContext(bctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(bctx)
+	}
 
 	defer bspan.End()
 
-	if config.GetFile().HaveLuaActions() {
+	cfg := a.cfg()
+
+	if cfg.HaveLuaActions() {
 		finished := make(chan action.Done)
 		accountName := a.GetAccount()
 
@@ -61,18 +65,18 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		commonRequest := lualib.GetCommonRequest()
 
 		// Set the fields
-		commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+		commonRequest.Debug = cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 		// repeating is true if either pre-detection flagged (alreadyTriggered) or the
 		// brute-force bucket counter has reached or exceeded the rule limit.
-		bfCount := a.BruteForceCounter[rule.Name]
+		bfCount := a.Security.BruteForceCounter[rule.Name]
 
 		// Derive client_net robustly: prefer provided network; fallback to CIDR from ClientIP and rule.
 		clientNet := ""
 
 		if network != nil && network.IP != nil && network.Mask != nil {
 			clientNet = network.String()
-		} else if a.ClientIP != "" && rule.CIDR > 0 {
-			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.ClientIP, rule.CIDR)); err == nil && n != nil {
+		} else if a.Request.ClientIP != "" && rule.CIDR > 0 {
+			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.Request.ClientIP, rule.CIDR)); err == nil && n != nil {
 				clientNet = n.String()
 			}
 		}
@@ -81,22 +85,22 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 
 		// If still unknown, combine account lookup + repeating flag via Redis Lua preflight
 		if (!isRepeating || accountName == "") && clientNet != "" {
-			if acc, rep, err := rediscli.AuthPreflight(ctx.Request.Context(), a.Username, clientNet); err == nil {
+			if acc, rep, err := rediscli.AuthPreflight(ctx.Request.Context(), a.Redis(), a.Request.Username, clientNet); err == nil {
 				if accountName == "" && acc != "" {
 					accountName = acc
 					// Mirror into AuthState
-					if a.AccountField == "" {
-						a.AccountField = definitions.MetaUserAccount
+					if a.Runtime.AccountField == "" {
+						a.Runtime.AccountField = definitions.MetaUserAccount
 					}
 
-					if a.Attributes == nil || len(a.Attributes) == 0 {
+					if a.Attributes.Attributes == nil || len(a.Attributes.Attributes) == 0 {
 						attrs := make(bktype.AttributeMapping)
 						attrs[definitions.MetaUserAccount] = []any{acc}
 						a.ReplaceAllAttributes(attrs)
 					}
 
 					// Store into in-process account cache
-					accountcache.GetManager().Set(a.Username, acc)
+					a.AccountCache().Set(a.Cfg(), a.Request.Username, acc)
 				}
 
 				if !isRepeating && rep {
@@ -107,54 +111,54 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 
 		bspan.SetAttributes(
 			attribute.Bool("repeating", isRepeating),
-			attribute.Int("bf.count", int(a.BruteForceCounter[rule.Name])),
+			attribute.Int("bf.count", int(a.Security.BruteForceCounter[rule.Name])),
 		)
 
 		commonRequest.Repeating = isRepeating
 		commonRequest.UserFound = func() bool { return accountName != "" }()
 		commonRequest.Authenticated = false // unavailable
-		commonRequest.NoAuth = a.NoAuth
-		commonRequest.BruteForceCounter = a.BruteForceCounter[rule.Name]
-		commonRequest.Service = a.Service
-		commonRequest.Session = a.GUID
-		commonRequest.ClientIP = a.ClientIP
-		commonRequest.ClientPort = a.XClientPort
+		commonRequest.NoAuth = a.Request.NoAuth
+		commonRequest.BruteForceCounter = a.Security.BruteForceCounter[rule.Name]
+		commonRequest.Service = a.Request.Service
+		commonRequest.Session = a.Runtime.GUID
+		commonRequest.ClientIP = a.Request.ClientIP
+		commonRequest.ClientPort = a.Request.XClientPort
 		commonRequest.ClientNet = clientNet
-		commonRequest.ClientHost = a.ClientHost
-		commonRequest.ClientID = a.XClientID
-		commonRequest.LocalIP = a.XLocalIP
-		commonRequest.LocalPort = a.XPort
-		commonRequest.UserAgent = a.UserAgent
-		commonRequest.Username = a.Username
+		commonRequest.ClientHost = a.Request.ClientHost
+		commonRequest.ClientID = a.Request.XClientID
+		commonRequest.LocalIP = a.Request.XLocalIP
+		commonRequest.LocalPort = a.Request.XPort
+		commonRequest.UserAgent = a.Request.UserAgent
+		commonRequest.Username = a.Request.Username
 		commonRequest.Account = accountName
 		commonRequest.AccountField = a.GetAccountField()
 		commonRequest.UniqueUserID = "" // unavailable
 		commonRequest.DisplayName = ""  // unavailable
-		commonRequest.Password = a.Password
-		commonRequest.Protocol = a.Protocol.Get()
+		commonRequest.Password = a.Request.Password
+		commonRequest.Protocol = a.Request.Protocol.Get()
 		commonRequest.BruteForceName = rule.Name
-		commonRequest.FeatureName = a.FeatureName
-		commonRequest.StatusMessage = &a.StatusMessage
-		commonRequest.XSSL = a.XSSL
-		commonRequest.XSSLSessionID = a.XSSLSessionID
-		commonRequest.XSSLClientVerify = a.XSSLClientVerify
-		commonRequest.XSSLClientDN = a.XSSLClientDN
-		commonRequest.XSSLClientCN = a.XSSLClientCN
-		commonRequest.XSSLIssuer = a.XSSLIssuer
-		commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
-		commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
-		commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
-		commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
-		commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
-		commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
-		commonRequest.XSSLProtocol = a.XSSLProtocol
-		commonRequest.XSSLCipher = a.XSSLCipher
-		commonRequest.SSLSerial = a.SSLSerial
-		commonRequest.SSLFingerprint = a.SSLFingerprint
+		commonRequest.FeatureName = a.Runtime.FeatureName
+		commonRequest.StatusMessage = &a.Runtime.StatusMessage
+		commonRequest.XSSL = a.Request.XSSL
+		commonRequest.XSSLSessionID = a.Request.XSSLSessionID
+		commonRequest.XSSLClientVerify = a.Request.XSSLClientVerify
+		commonRequest.XSSLClientDN = a.Request.XSSLClientDN
+		commonRequest.XSSLClientCN = a.Request.XSSLClientCN
+		commonRequest.XSSLIssuer = a.Request.XSSLIssuer
+		commonRequest.XSSLClientNotBefore = a.Request.XSSLClientNotBefore
+		commonRequest.XSSLClientNotAfter = a.Request.XSSLClientNotAfter
+		commonRequest.XSSLSubjectDN = a.Request.XSSLSubjectDN
+		commonRequest.XSSLIssuerDN = a.Request.XSSLIssuerDN
+		commonRequest.XSSLClientSubjectDN = a.Request.XSSLClientSubjectDN
+		commonRequest.XSSLClientIssuerDN = a.Request.XSSLClientIssuerDN
+		commonRequest.XSSLProtocol = a.Request.XSSLProtocol
+		commonRequest.XSSLCipher = a.Request.XSSLCipher
+		commonRequest.SSLSerial = a.Request.SSLSerial
+		commonRequest.SSLFingerprint = a.Request.SSLFingerprint
 
 		action.RequestChan <- &action.Action{
 			LuaAction:     definitions.LuaActionBruteForce,
-			Context:       a.Context,
+			Context:       a.Runtime.Context,
 			FinishedChan:  finished,
 			HTTPRequest:   ctx.Request,
 			HTTPContext:   ctx,
@@ -168,23 +172,74 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 	}
 }
 
-// logBruteForceDebug logs debug information related to brute force authentication attempts using the provided AuthState.
-func logBruteForceDebug(auth *AuthState) {
-	util.DebugModule(
+// logBruteForceDebug logs debug information related to brute force authentication attempts.
+func (a *AuthState) logBruteForceDebug(ctx context.Context) {
+	util.DebugModuleWithCfg(
+		ctx,
+		a.Cfg(),
+		a.Logger(),
 		definitions.DbgBf,
-		definitions.LogKeyGUID, auth.GUID,
-		definitions.LogKeyClientIP, auth.ClientIP,
-		definitions.LogKeyClientPort, auth.XClientPort,
-		definitions.LogKeyClientHost, auth.ClientHost,
-		definitions.LogKeyClientID, auth.XClientID,
-		definitions.LogKeyLocalIP, auth.XLocalIP,
-		definitions.LogKeyPort, auth.XPort,
-		definitions.LogKeyUsername, auth.Username,
-		definitions.LogKeyProtocol, auth.Protocol.Get(),
-		"service", util.WithNotAvailable(auth.Service),
-		"no-auth", auth.NoAuth,
-		"list-accounts", auth.ListAccounts,
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyClientIP, a.Request.ClientIP,
+		definitions.LogKeyClientPort, a.Request.XClientPort,
+		definitions.LogKeyClientHost, a.Request.ClientHost,
+		definitions.LogKeyClientID, a.Request.XClientID,
+		definitions.LogKeyLocalIP, a.Request.XLocalIP,
+		definitions.LogKeyPort, a.Request.XPort,
+		definitions.LogKeyUsername, a.Request.Username,
+		definitions.LogKeyProtocol, a.Request.Protocol.Get(),
+		"service", util.WithNotAvailable(a.Request.Service),
+		"no-auth", a.Request.NoAuth,
+		"list-accounts", a.Request.ListAccounts,
 	)
+}
+
+// filterActiveBruteForceRules filters and returns the active brute force rules based on protocol and IP family criteria.
+func (a *AuthState) filterActiveBruteForceRules(ctx *gin.Context, tr monittrace.Tracer, rules []config.BruteForceRule, ip net.IP) []config.BruteForceRule {
+	activeRules := make([]config.BruteForceRule, 0, len(rules))
+
+	var ipFamily string
+	switch {
+	case ip != nil && ip.To4() != nil:
+		ipFamily = "ipv4"
+	case ip != nil && ip.To16() != nil:
+		ipFamily = "ipv6"
+	default:
+		ipFamily = "unknown"
+	}
+
+	proto := ""
+	if a.Request.Protocol != nil {
+		proto = a.Request.Protocol.Get()
+	}
+
+	_, filterSpan := tr.Start(ctx.Request.Context(), "auth.bruteforce.rule_filter",
+		attribute.String("protocol", proto),
+		attribute.String("client_ip", a.Request.ClientIP),
+		attribute.String("oidc_cid", a.Request.OIDCCID),
+		attribute.String("ip_family", ipFamily),
+		attribute.Int("rules.total", len(rules)),
+	)
+	defer filterSpan.End()
+
+	skipped := 0
+
+	for _, r := range rules {
+		if !r.MatchesContext(proto, a.Request.OIDCCID, ip) {
+			skipped++
+
+			continue
+		}
+
+		activeRules = append(activeRules, r)
+	}
+
+	filterSpan.SetAttributes(
+		attribute.Int("rules.active", len(activeRules)),
+		attribute.Int("rules.skipped", skipped),
+	)
+
+	return activeRules
 }
 
 // CheckBruteForce checks if a client is triggering brute force detection based on predefined rules and configurations.
@@ -193,29 +248,25 @@ func logBruteForceDebug(auth *AuthState) {
 func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	tr := monittrace.New("nauthilus/auth")
 	cctx, cspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.check",
-		attribute.String("service", a.Service),
-		attribute.String("username", a.Username),
-		attribute.String("client_ip", a.ClientIP),
-		attribute.String("protocol", a.Protocol.Get()),
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+		attribute.String("client_ip", a.Request.ClientIP),
+		attribute.String("protocol", a.Request.Protocol.Get()),
 	)
 
 	ctx.Request = ctx.Request.WithContext(cctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(cctx)
+	}
 
 	defer cspan.End()
 
 	// Overall BF check timer
 	var stopOverall func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_overall_total"); s != nil {
+	if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total"); s != nil {
 		stopOverall = s
 
 		defer stopOverall()
-	}
-
-	// Prechecks timer (covers early exits)
-	var stopPre func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_prechecks_total"); s != nil {
-		stopPre = s
-		// We'll stop this once we transition to rule filtering
 	}
 
 	var (
@@ -224,76 +275,54 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		bm            bruteforce.BucketManager
 	)
 
-	if a.NoAuth || a.ListAccounts {
+	if a.Request.NoAuth || a.Request.ListAccounts {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "noauth_or_list"))
 
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
-
 		return false
 	}
 
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	cfg := a.cfg()
+
+	if !cfg.HasFeature(definitions.FeatureBruteForce) {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "feature_disabled"))
 
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
-
 		return false
 	}
 
-	if isLocalOrEmptyIP(a.ClientIP) {
+	if isLocalOrEmptyIP(a.Request.ClientIP) {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "local_or_empty_ip"))
 
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
-
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
+		a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+		a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Localhost)
 
 		return false
 	}
 
-	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
+	bfCfg := cfg.GetBruteForce()
+	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
+		if util.IsSoftWhitelisted(cctx, a.Cfg(), a.Logger(), a.Request.Username, a.Request.ClientIP, a.Runtime.GUID, bfCfg.SoftWhitelist) {
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
-
-			if stopPre != nil {
-				stopPre()
-				stopPre = nil
-			}
 
 			return false
 		}
 	}
 
-	if len(config.GetFile().GetBruteForce().GetIPWhitelist()) > 0 {
-		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
+	if bfCfg != nil && len(bfCfg.GetIPWhitelist()) > 0 {
+		if a.IsInNetwork(bfCfg.IPWhitelist) {
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
-
-			if stopPre != nil {
-				stopPre()
-				stopPre = nil
-			}
 
 			return false
 		}
 	}
 
 	// Existing generic timer
-	stopTimer := stats.PrometheusTimer(definitions.PromBruteForce, "brute_force_check_request_total")
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total")
 
 	// E2E histogram for BF path
 	bfStart := time.Now()
@@ -306,7 +335,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	defer func() {
 		cspan.SetAttributes(
 			attribute.Bool("triggered", ruleTriggered),
-			attribute.String("bf.rule", a.BruteForceName),
+			attribute.String("bf.rule", a.Security.BruteForceName),
 		)
 	}()
 
@@ -315,17 +344,17 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}()
 
 	// All rules
-	rules := config.GetFile().GetBruteForceRules()
+	rules := cfg.GetBruteForceRules()
 
 	if len(rules) == 0 {
 		return false
 	}
 
-	logBruteForceDebug(a)
+	a.logBruteForceDebug(ctx.Request.Context())
 
 	bruteForceProtocolEnabled := false
-	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
-		if bruteForceService.Get() != a.Protocol.Get() {
+	for _, bruteForceService := range cfg.GetServer().GetBruteForceProtocols() {
+		if bruteForceService.Get() != a.Request.Protocol.Get() {
 			continue
 		}
 
@@ -335,132 +364,54 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	if !bruteForceProtocolEnabled {
-		level.Warn(log.Logger).Log(
-			definitions.LogKeyGUID, a.GUID,
-			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
-
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
+		level.Warn(a.logger()).Log(
+			definitions.LogKeyGUID, a.Runtime.GUID,
+			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Request.Protocol.Get()))
 
 		return false
 	}
 
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
+		Cfg:    a.Cfg(),
+		Logger: a.Logger(),
+		Redis:  a.Redis(),
+	})
 
 	// Set the protocol on the bucket manager
-	if a.Protocol != nil && a.Protocol.Get() != "" {
-		bm = bm.WithProtocol(a.Protocol.Get())
+	if a.Request.Protocol != nil && a.Request.Protocol.Get() != "" {
+		bm = bm.WithProtocol(a.Request.Protocol.Get())
 	}
 
 	// Set the OIDC Client ID on the bucket manager
-	if a.OIDCCID != "" {
-		bm = bm.WithOIDCCID(a.OIDCCID)
+	if a.Request.OIDCCID != "" {
+		bm = bm.WithOIDCCID(a.Request.OIDCCID)
 	}
 
 	// IMPORTANT: set request attributes before running checks
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
-	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Runtime.GUID)
+	bm = bm.WithPassword(a.Request.Password).WithAccountName(accountName).WithUsername(a.Request.Username)
 
-	// End of prechecks; start rule filter phase
-	if stopPre != nil {
-		stopPre()
-		stopPre = nil
-	}
+	// Determine IP once
+	ip := net.ParseIP(a.Request.ClientIP)
 
-	// Pre-filter rules by protocol and IP family
-	var stopFilter func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_rule_filter_total"); s != nil {
-		stopFilter = s
-	}
-
-	filterStart := time.Now()
-	activeRules := make([]config.BruteForceRule, 0, len(rules))
-
-	// Determine IP family once
-	ip := net.ParseIP(a.ClientIP)
-	isV4 := ip != nil && ip.To4() != nil
-	isV6 := ip != nil && !isV4 && ip.To16() != nil
-
-	for _, r := range rules {
-		// Protocol filter: if rule specifies protocols, require match
-		if len(r.GetFilterByProtocol()) > 0 {
-			matched := false
-			for _, p := range r.GetFilterByProtocol() {
-				if p == a.Protocol.Get() {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
-		}
-
-		// IP family filter
-		if isV4 && !r.IPv4 {
-			continue
-		}
-
-		if isV6 && !r.IPv6 {
-			continue
-		}
-
-		activeRules = append(activeRules, r)
-	}
-
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("filter").Observe(time.Since(filterStart).Seconds())
-	if stopFilter != nil {
-		stopFilter()
-	}
+	activeRules := a.filterActiveBruteForceRules(ctx, tr, rules, ip)
 
 	// Use filtered rules from here on and precompute networks
 	rules = activeRules
-	netcalcStart := time.Now()
-	if stop := stats.PrometheusTimer(definitions.PromBruteForce, "bf_netcalc_total"); stop != nil {
-		defer stop()
-	}
 
 	// Precompute network strings per CIDR for active rules (no behavior change)
 	bm.PrepareNetcalc(rules)
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("netcalc").Observe(time.Since(netcalcStart).Seconds())
 
 	network := &net.IPNet{}
 
-	// Phase: pre_result (fast check using precomputed hashes/counters)
-	preResultStart := time.Now()
-	var stopPreRes func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_pre_result_total"); s != nil {
-		stopPreRes = s
-	}
-
 	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("pre_result").Observe(time.Since(preResultStart).Seconds())
-	if stopPreRes != nil {
-		stopPreRes()
-	}
 
 	if abort {
 		return false
 	}
 
 	if !alreadyTriggered {
-		// Phase: bucket_eval (read current counters from Redis and evaluate limits)
-		bucketEvalStart := time.Now()
-		var stopBucket func()
-		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_bucket_eval_total"); s != nil {
-			stopBucket = s
-		}
-
 		abort, ruleTriggered, ruleNumber = bm.CheckBucketOverLimit(rules, &message)
-		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("bucket_eval").Observe(time.Since(bucketEvalStart).Seconds())
-		if stopBucket != nil {
-			stopBucket()
-		}
-
 		if abort {
 			return false
 		}
@@ -474,69 +425,54 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	// A rule matched either in pre-result or bucket evaluation
 	stats.GetMetrics().GetBruteForceRulesMatchedTotal().Inc()
 
-	// Phase: process (persist/update counters, set action context)
-	processStart := time.Now()
-	var stopProcess func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_process_total"); s != nil {
-		stopProcess = s
-	}
-
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
-		a.FeatureName = bm.GetFeatureName()
-		a.BruteForceName = bm.GetBruteForceName()
-		a.BruteForceCounter = bm.GetBruteForceCounter()
+		a.Runtime.FeatureName = bm.GetFeatureName()
+		a.Security.BruteForceName = bm.GetBruteForceName()
+		a.Security.BruteForceCounter = bm.GetBruteForceCounter()
 		// Synchronize login attempts from bucket manager into centralized LAM (bucket has authority)
 		if lam := a.ensureLAM(); lam != nil {
 			lam.InitFromBucket(bm.GetLoginAttempts())
-			a.LoginAttempts = lam.FailCount()
+			a.Security.LoginAttempts = lam.FailCount()
 		} else {
-			a.LoginAttempts = bm.GetLoginAttempts()
+			a.Security.LoginAttempts = bm.GetLoginAttempts()
 		}
-		a.PasswordHistory = bm.GetPasswordHistory()
+		a.Security.PasswordHistory = bm.GetPasswordHistory()
 	})
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("process").Observe(time.Since(processStart).Seconds())
-
-	if stopProcess != nil {
-		stopProcess()
-	}
 
 	// Compute and store brute-force hints for the Post-Action.
 	// 1) Derive client_net from the matched network; fallback to ClientIP/CIDR.
 	bfClientNet := ""
 	if network != nil && network.IP != nil && network.Mask != nil {
 		bfClientNet = network.String()
-	} else if a.ClientIP != "" && rules[ruleNumber].CIDR > 0 {
-		if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.ClientIP, rules[ruleNumber].CIDR)); err == nil && n != nil {
+	} else if a.Request.ClientIP != "" && rules[ruleNumber].CIDR > 0 {
+		if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.Request.ClientIP, rules[ruleNumber].CIDR)); err == nil && n != nil {
 			bfClientNet = n.String()
 		}
 	}
 
 	// 2) Determine repeating based on alreadyTriggered or counter >= limit; fallback to pre-result hash if buckets expired.
-	bfRepeating := alreadyTriggered || (a.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
+	bfRepeating := alreadyTriggered || (a.Security.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
-		key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+		key := a.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		// Phase: redis_hint_exists (single read to check if client_net has a history)
-		redisHintStart := time.Now()
-		exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
-		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("redis_hint_exists").Observe(time.Since(redisHintStart).Seconds())
-
+		exists, err := a.deps.Redis.GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
 		if err == nil && exists {
 			bfRepeating = true
 		}
 	}
 
 	// Store hints on AuthState for consumption by Post-Action
-	a.BFClientNet = bfClientNet
-	a.BFRepeating = bfRepeating
+	a.Runtime.BFClientNet = bfClientNet
+	a.Runtime.BFRepeating = bfRepeating
 
 	if triggered || alreadyTriggered {
-		updateLuaContext(a.Context, definitions.FeatureBruteForce)
+		a.updateLuaContext(definitions.FeatureBruteForce)
+
 		// Time the Lua action execution
 		var stopLua func()
-		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_lua_action_total"); s != nil {
+		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_lua_action_total"); s != nil {
 			stopLua = s
 		}
 
@@ -553,63 +489,72 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	tr := monittrace.New("nauthilus/auth")
 	uctx, uspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.update",
-		attribute.String("service", a.Service),
-		attribute.String("username", a.Username),
-		attribute.String("client_ip", a.ClientIP),
-		attribute.String("protocol", a.Protocol.Get()),
-		attribute.String("bf.rule", a.BruteForceName),
+		attribute.String("service", a.Request.Service),
+		attribute.String("username", a.Request.Username),
+		attribute.String("client_ip", a.Request.ClientIP),
+		attribute.String("protocol", a.Request.Protocol.Get()),
+		attribute.String("bf.rule", a.Security.BruteForceName),
 	)
 
 	ctx.Request = ctx.Request.WithContext(uctx)
+	if a.Request.HTTPClientRequest != nil {
+		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(uctx)
+	}
 
 	defer uspan.End()
 
 	// Overall timer for updating BF buckets after an auth failure
-	if stop := stats.PrometheusTimer(definitions.PromBruteForce, "bf_update_overall_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_overall_total"); stop != nil {
 		defer stop()
 	}
 
 	var bm bruteforce.BucketManager
 
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	cfg := a.cfg()
+
+	if !cfg.HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
-	if isLocalOrEmptyIP(a.ClientIP) {
+	if isLocalOrEmptyIP(a.Request.ClientIP) {
 		return
 	}
 
-	if config.GetFile().GetBruteForce() == nil {
+	bfCfg := cfg.GetBruteForce()
+	if bfCfg == nil {
 		return
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		a.Cfg(),
+		a.Logger(),
 		definitions.DbgBf,
-		definitions.LogKeyGUID, a.GUID,
-		definitions.LogKeyClientIP, a.ClientIP,
-		definitions.LogKeyClientPort, a.XClientPort,
-		definitions.LogKeyClientHost, a.ClientHost,
-		definitions.LogKeyClientID, a.XClientID,
-		definitions.LogKeyLocalIP, a.XLocalIP,
-		definitions.LogKeyPort, a.XPort,
-		definitions.LogKeyUsername, a.Username,
-		definitions.LogKeyProtocol, a.Protocol.Get(),
-		"service", util.WithNotAvailable(a.Service),
-		"no-auth", a.NoAuth,
-		"list-accounts", a.ListAccounts,
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyClientIP, a.Request.ClientIP,
+		definitions.LogKeyClientPort, a.Request.XClientPort,
+		definitions.LogKeyClientHost, a.Request.ClientHost,
+		definitions.LogKeyClientID, a.Request.XClientID,
+		definitions.LogKeyLocalIP, a.Request.XLocalIP,
+		definitions.LogKeyPort, a.Request.XPort,
+		definitions.LogKeyUsername, a.Request.Username,
+		definitions.LogKeyProtocol, a.Request.Protocol.Get(),
+		"service", util.WithNotAvailable(a.Request.Service),
+		"no-auth", a.Request.NoAuth,
+		"list-accounts", a.Request.ListAccounts,
 	)
 
-	if a.NoAuth || a.ListAccounts {
+	if a.Request.NoAuth || a.Request.ListAccounts {
 		return
 	}
 
-	if a.ClientIP == definitions.Localhost4 || a.ClientIP == definitions.Localhost6 || a.ClientIP == definitions.NotAvailable {
+	if a.Request.ClientIP == definitions.Localhost4 || a.Request.ClientIP == definitions.Localhost6 || a.Request.ClientIP == definitions.NotAvailable {
 		return
 	}
 
 	bruteForceEnabled := false
-	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
-		if bruteForceService.Get() != a.Protocol.Get() {
+	for _, bruteForceService := range a.cfg().GetServer().GetBruteForceProtocols() {
+		if bruteForceService.Get() != a.Request.Protocol.Get() {
 			continue
 		}
 
@@ -622,16 +567,16 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		return
 	}
 
-	if len(config.GetFile().GetBruteForce().IPWhitelist) > 0 {
-		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
+	if len(a.cfg().GetBruteForce().IPWhitelist) > 0 {
+		if a.IsInNetwork(a.cfg().GetBruteForce().IPWhitelist) {
 			return
 		}
 	}
 
 	matchedPeriod := time.Duration(0)
 
-	for _, rule := range config.GetFile().GetBruteForceRules() {
-		if a.BruteForceName != rule.Name {
+	for _, rule := range a.cfg().GetBruteForceRules() {
+		if a.Security.BruteForceName != rule.Name {
 			continue
 		}
 
@@ -645,70 +590,54 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		break
 	}
 
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
+		Cfg:      a.Cfg(),
+		Logger:   a.Logger(),
+		Redis:    a.Redis(),
+		Tolerate: a.deps.Tolerate,
+	})
 
 	// Set the protocol if available
-	if a.Protocol != nil && a.Protocol.Get() != "" {
-		bm = bm.WithProtocol(a.Protocol.Get())
+	if a.Request.Protocol != nil && a.Request.Protocol.Get() != "" {
+		bm = bm.WithProtocol(a.Request.Protocol.Get())
 	}
 
 	// Set the OIDC Client ID if available
-	if a.OIDCCID != "" {
-		bm = bm.WithOIDCCID(a.OIDCCID)
+	if a.Request.OIDCCID != "" {
+		bm = bm.WithOIDCCID(a.Request.OIDCCID)
 	}
 
 	// IMPORTANT: set request attributes before saving counters
 	// Try to avoid Redis if possible: use state or in-process cache first
 	accountName := a.GetAccount()
 	if accountName == "" {
-		if acc, ok := accountcache.GetManager().Get(a.Username); ok {
+		if acc, ok := a.AccountCache().Get(a.Request.Username); ok {
 			accountName = acc
 		}
 	}
 
 	if accountName == "" {
-		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
+		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Runtime.GUID)
 	}
 
-	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
+	bm = bm.WithUsername(a.Request.Username).WithPassword(a.Request.Password).WithAccountName(accountName)
 
-	for _, rule := range config.GetFile().GetBruteForceRules() {
+	proto := ""
+	if a.Request.Protocol != nil {
+		proto = a.Request.Protocol.Get()
+	}
+
+	ip := net.ParseIP(a.Request.ClientIP)
+
+	for _, rule := range a.cfg().GetBruteForceRules() {
 		// Per-rule iteration timer
 		var stopIter func()
-		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_update_loop_total"); s != nil {
+		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total"); s != nil {
 			stopIter = s
 		}
 
-		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
-		if len(rule.FilterByProtocol) > 0 && a.Protocol != nil && a.Protocol.Get() != "" {
-			protocolMatched := false
-			for _, p := range rule.FilterByProtocol {
-				if p == a.Protocol.Get() {
-					protocolMatched = true
-
-					break
-				}
-			}
-
-			if !protocolMatched {
-				continue
-			}
-		}
-
-		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
-		if len(rule.FilterByOIDCCID) > 0 && a.OIDCCID != "" {
-			oidcCIDMatched := false
-			for _, cid := range rule.FilterByOIDCCID {
-				if cid == a.OIDCCID {
-					oidcCIDMatched = true
-
-					break
-				}
-			}
-
-			if !oidcCIDMatched {
-				continue
-			}
+		if !rule.MatchesContext(proto, a.Request.OIDCCID, ip) {
+			continue
 		}
 
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {

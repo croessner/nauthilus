@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -43,6 +44,7 @@ type PoolKey string
 // PoolOptions controls the size of a VM pool.
 type PoolOptions struct {
 	MaxVMs int // maximum number of VMs in the pool
+	Config config.File
 }
 
 // Pool implements a bounded pool of *lua.LState.
@@ -67,13 +69,13 @@ func newPool(key PoolKey, opts PoolOptions) *Pool {
 		opts:   opts,
 		states: make(chan *lua.LState, opts.MaxVMs),
 		// Create a dedicated HTTP client for this pool's VMs.
-		httpClient: util.NewHTTPClient(),
+		httpClient: util.NewHTTPClientWithCfg(opts.Config),
 	}
 
 	for i := 0; i < opts.MaxVMs; i++ {
 		// Create Lua states using the new runtime helper with base/request env markers
 		// and stateless preloads. The httpClient enables glua_http preloading.
-		p.states <- luapool.NewLuaState(p.httpClient)
+		p.states <- luapool.NewLuaState(p.httpClient, opts.Config)
 	}
 
 	// Initialize gauge to 0 in-use
@@ -177,7 +179,7 @@ func (p *Pool) Replace(L *lua.LState) {
 
 	stats.GetMetrics().GetLuaVMReplacedTotal().WithLabelValues(string(p.key)).Inc()
 	select {
-	case p.states <- luapool.NewLuaState(p.httpClient):
+	case p.states <- luapool.NewLuaState(p.httpClient, p.opts.Config):
 	default:
 		// Should not happen; drop
 	}

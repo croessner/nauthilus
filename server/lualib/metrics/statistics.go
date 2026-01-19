@@ -1,12 +1,45 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package metrics
 
 import (
+	"context"
+	"log/slog"
+
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/prometheus/client_golang/prometheus"
 	lua "github.com/yuin/gopher-lua"
 )
+
+// PrometheusManager manages Prometheus metrics for Lua.
+type PrometheusManager struct {
+	*lualib.BaseManager
+}
+
+// NewPrometheusManager creates a new PrometheusManager.
+func NewPrometheusManager(ctx context.Context, cfg config.File, logger *slog.Logger) *PrometheusManager {
+	return &PrometheusManager{
+		BaseManager: lualib.NewBaseManager(ctx, cfg, logger),
+	}
+}
 
 var (
 	summaries  = make(map[string]*prometheus.SummaryVec)
@@ -28,14 +61,15 @@ func warnIfMissing(kind, name string) {
 }
 
 // createSummaryVec registers a new Prometheus SummaryVec metric with the provided name, help description, and label names.
-func createSummaryVec(L *lua.LState) int {
-	name := L.CheckString(1)
-	help := L.CheckString(2)
+func (m *PrometheusManager) createSummaryVec(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	help := stack.CheckString(2)
 
 	labelNames := make([]string, 0)
 
-	if L.GetTop() > 2 {
-		labelTable := L.CheckTable(3)
+	if stack.GetTop() > 2 {
+		labelTable := stack.CheckTable(3)
 		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
 			labelNames = append(labelNames, value.String())
 		})
@@ -59,14 +93,15 @@ func createSummaryVec(L *lua.LState) int {
 }
 
 // createCounterVec registers a new Prometheus CounterVec metric with the provided name, help description, and label names.
-func createCounterVec(L *lua.LState) int {
-	name := L.CheckString(1)
-	help := L.CheckString(2)
+func (m *PrometheusManager) createCounterVec(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	help := stack.CheckString(2)
 
 	labelNames := make([]string, 0)
 
-	if L.GetTop() > 2 {
-		labelTable := L.CheckTable(3)
+	if stack.GetTop() > 2 {
+		labelTable := stack.CheckTable(3)
 		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
 			labelNames = append(labelNames, value.String())
 		})
@@ -90,14 +125,15 @@ func createCounterVec(L *lua.LState) int {
 }
 
 // createHistogramVec registers a new Prometheus HistogramVec with the specified name, help message, and optional label names.
-func createHistogramVec(L *lua.LState) int {
-	name := L.CheckString(1)
-	help := L.CheckString(2)
+func (m *PrometheusManager) createHistogramVec(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	help := stack.CheckString(2)
 
 	labelNames := make([]string, 0)
 
-	if L.GetTop() > 2 {
-		labelTable := L.CheckTable(3)
+	if stack.GetTop() > 2 {
+		labelTable := stack.CheckTable(3)
 		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
 			labelNames = append(labelNames, value.String())
 		})
@@ -122,14 +158,15 @@ func createHistogramVec(L *lua.LState) int {
 }
 
 // createGaugeVec registers a new Prometheus GaugeVec metric with the provided name, help description, and label names.
-func createGaugeVec(L *lua.LState) int {
-	name := L.CheckString(1)
-	help := L.CheckString(2)
+func (m *PrometheusManager) createGaugeVec(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	help := stack.CheckString(2)
 
 	labelNames := make([]string, 0)
 
-	if L.GetTop() > 2 {
-		labelTable := L.CheckTable(3)
+	if stack.GetTop() > 2 {
+		labelTable := stack.CheckTable(3)
 		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
 			labelNames = append(labelNames, value.String())
 		})
@@ -153,9 +190,10 @@ func createGaugeVec(L *lua.LState) int {
 }
 
 // startSumaryTimer starts a Prometheus timer for a specified SummaryVec metric with the provided label values.
-func startSumaryTimer(L *lua.LState) int {
-	name := L.CheckString(1)
-	labels := L.CheckTable(2)
+func (m *PrometheusManager) startSumaryTimer(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
 
 	summary, exists := summaries[name]
 	if !exists {
@@ -173,15 +211,14 @@ func startSumaryTimer(L *lua.LState) int {
 	ud := L.NewUserData()
 	ud.Value = timer
 
-	L.Push(ud)
-
-	return 1
+	return stack.PushResults(ud, lua.LNil)
 }
 
 // startHistogramTimer starts a timer for a Prometheus histogram with given name and labels.
-func startHistogramTimer(L *lua.LState) int {
-	name := L.CheckString(1)
-	labels := L.CheckTable(2)
+func (m *PrometheusManager) startHistogramTimer(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
 
 	histogram, exists := histograms[name]
 	if !exists {
@@ -199,26 +236,37 @@ func startHistogramTimer(L *lua.LState) int {
 	ud := L.NewUserData()
 	ud.Value = timer
 
-	L.Push(ud)
-
-	return 1
+	return stack.PushResults(ud, lua.LNil)
 }
 
 // stopTimer stops a running Prometheus timer, recording its duration in the underlying metric.
-func stopTimer(L *lua.LState) int {
-	ud := L.CheckUserData(1)
+func (m *PrometheusManager) stopTimer(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-	if timer, ok := ud.Value.(*prometheus.Timer); ok {
-		timer.ObserveDuration()
+	ud := stack.CheckUserData(1)
+	if ud == nil {
+		L.ArgError(1, "timer expected")
+
+		return 0
 	}
+
+	timer, ok := ud.Value.(*prometheus.Timer)
+	if !ok || timer == nil {
+		L.ArgError(1, "timer expected")
+
+		return 0
+	}
+
+	timer.ObserveDuration()
 
 	return 0
 }
 
 // incrementCounter increments a Prometheus counter based on the name and label values provided in the Lua state.
-func incrementCounter(L *lua.LState) int {
-	name := L.CheckString(1)
-	labels := L.CheckTable(2)
+func (m *PrometheusManager) incrementCounter(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
 
 	counter, exists := counters[name]
 	if !exists {
@@ -238,10 +286,11 @@ func incrementCounter(L *lua.LState) int {
 }
 
 // addGauge adds a value to a Prometheus gauge identified by name and labels, creating label mappings from Lua table.
-func addGauge(L *lua.LState) int {
-	name := L.CheckString(1)
-	value := L.CheckNumber(2)
-	labels := L.CheckTable(3)
+func (m *PrometheusManager) addGauge(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	value := stack.CheckNumber(2)
+	labels := stack.CheckTable(3)
 
 	gauge, exists := gauges[name]
 	if !exists {
@@ -261,10 +310,11 @@ func addGauge(L *lua.LState) int {
 }
 
 // subGauge subtracts a specified value from a GaugeVec identified by name and labeled with the provided labels.
-func subGauge(L *lua.LState) int {
-	name := L.CheckString(1)
-	value := L.CheckNumber(2)
-	labels := L.CheckTable(3)
+func (m *PrometheusManager) subGauge(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	value := stack.CheckNumber(2)
+	labels := stack.CheckTable(3)
 
 	gauge, exists := gauges[name]
 	if !exists {
@@ -284,10 +334,11 @@ func subGauge(L *lua.LState) int {
 }
 
 // setGauge sets the value of a GaugeVec identified by the given name and labels in Lua.
-func setGauge(L *lua.LState) int {
-	name := L.CheckString(1)
-	value := L.CheckNumber(2)
-	labels := L.CheckTable(3)
+func (m *PrometheusManager) setGauge(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	value := stack.CheckNumber(2)
+	labels := stack.CheckTable(3)
 
 	gauge, exists := gauges[name]
 	if !exists {
@@ -307,9 +358,10 @@ func setGauge(L *lua.LState) int {
 }
 
 // incrementGauge increments the value of a Prometheus GaugeVec metric based on the label values provided.
-func incrementGauge(L *lua.LState) int {
-	name := L.CheckString(1)
-	labels := L.CheckTable(2)
+func (m *PrometheusManager) incrementGauge(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
 
 	gauge, exists := gauges[name]
 	if !exists {
@@ -329,9 +381,10 @@ func incrementGauge(L *lua.LState) int {
 }
 
 // decrementGauge decreases the value of a specified Gauge within a collection of GaugeVec, based on the provided labels.
-func decrementGauge(L *lua.LState) int {
-	name := L.CheckString(1)
-	labels := L.CheckTable(2)
+func (m *PrometheusManager) decrementGauge(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
 
 	gauge, exists := gauges[name]
 	if !exists {
@@ -352,9 +405,10 @@ func decrementGauge(L *lua.LState) int {
 
 // touchCounter creates a labeled child for a CounterVec without incrementing it.
 // This ensures a zero-valued time series is exposed to Prometheus on scrape.
-func touchCounter(L *lua.LState) int {
-	name := L.CheckString(1)
-	labels := L.CheckTable(2)
+func (m *PrometheusManager) touchCounter(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	name := stack.CheckString(1)
+	labels := stack.CheckTable(2)
 
 	counter, exists := counters[name]
 	if !exists {
@@ -374,28 +428,29 @@ func touchCounter(L *lua.LState) int {
 	return 0
 }
 
-var exportsModPrometheus = map[string]lua.LGFunction{
-	definitions.LuaFnCreateSummaryVec:    createSummaryVec,
-	definitions.LuaFnCreateCounterVec:    createCounterVec,
-	definitions.LuaFnCreateHistogramVec:  createHistogramVec,
-	definitions.LuaFnStartSummaryTimer:   startSumaryTimer,
-	definitions.LuaFnStartHistogramTimer: startHistogramTimer,
-	definitions.LuaFnStopTimer:           stopTimer,
-	definitions.LuaFnIncrementCounter:    incrementCounter,
-	definitions.LuaFnCreateGaugeVec:      createGaugeVec,
-	definitions.LuaFNAddGauge:            addGauge,
-	definitions.LuaFnSubGauge:            subGauge,
-	definitions.LuaFnSetGauge:            setGauge,
-	definitions.LuaFnIncrementGauge:      incrementGauge,
-	definitions.LuaFnDecrementGauge:      decrementGauge,
-	definitions.LuaFnTouchCounter:        touchCounter,
-}
-
 // LoaderModPrometheus loads and initializes the Prometheus module with metric-related functions for use in Lua scripts.
-func LoaderModPrometheus(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportsModPrometheus)
+func LoaderModPrometheus(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
+	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewPrometheusManager(ctx, cfg, logger)
 
-	L.Push(mod)
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnCreateSummaryVec:    manager.createSummaryVec,
+			definitions.LuaFnCreateCounterVec:    manager.createCounterVec,
+			definitions.LuaFnCreateHistogramVec:  manager.createHistogramVec,
+			definitions.LuaFnStartSummaryTimer:   manager.startSumaryTimer,
+			definitions.LuaFnStartHistogramTimer: manager.startHistogramTimer,
+			definitions.LuaFnStopTimer:           manager.stopTimer,
+			definitions.LuaFnIncrementCounter:    manager.incrementCounter,
+			definitions.LuaFnCreateGaugeVec:      manager.createGaugeVec,
+			definitions.LuaFNAddGauge:            manager.addGauge,
+			definitions.LuaFnSubGauge:            manager.subGauge,
+			definitions.LuaFnSetGauge:            manager.setGauge,
+			definitions.LuaFnIncrementGauge:      manager.incrementGauge,
+			definitions.LuaFnDecrementGauge:      manager.decrementGauge,
+			definitions.LuaFnTouchCounter:        manager.touchCounter,
+		})
 
-	return 1
+		return stack.PushResult(mod)
+	}
 }

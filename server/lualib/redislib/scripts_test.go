@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package redislib
 
 import (
@@ -5,7 +20,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"
@@ -49,53 +67,48 @@ func TestRedisRunScript(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tc.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			testFile := &config.FileSettings{Server: &config.ServerSection{}}
+			config.SetTestFile(testFile)
+			util.SetDefaultConfigFile(testFile)
+			util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 			L := lua.NewState()
-
 			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
-			// Use default redis settings
-			L.Push(lua.LString("default"))
+			L.SetGlobal("script", lua.LString(tc.script))
+			L.SetGlobal("upload_name", lua.LString(""))
 
-			// Set up script
-			L.Push(lua.LString(tc.script))
-
-			// No script uploads
-			L.Push(lua.LString(""))
-
-			// Set up keys
-			keys := L.CreateTable(len(tc.keys), 0)
+			keysTbl := L.NewTable()
 			for _, k := range tc.keys {
-				keys.Append(lua.LString(k))
+				keysTbl.Append(lua.LString(k))
 			}
+			L.SetGlobal("keys", keysTbl)
 
-			L.Push(keys)
-
-			// Set up args
-			args := L.CreateTable(len(tc.args), 0)
+			argsTbl := L.NewTable()
 			for _, a := range tc.args {
-				args.Append(lua.LString(a.(string))) // Annahme, dass args vom Typ string sind
+				argsTbl.Append(lua.LString(a.(string)))
 			}
+			L.SetGlobal("args", argsTbl)
 
-			L.Push(args)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_run_script("default", script, upload_name, keys, args)`)
+			assert.NoError(t, err)
 
-			// Call function and check error
-			numReturned := RedisRunScript(context.Background())(L)
-			errReturned := L.Get(-1).String() != "nil"
+			resReturned := L.GetGlobal("result")
+			errReturned := L.GetGlobal("err")
 
-			assert.Equal(t, tc.expectErr, errReturned, "")
-			assert.Equal(t, 2, numReturned, "")
-
-			// Check result if no error
-			if !tc.expectErr && numReturned > 0 {
-				resReturned := L.Get(-2).String()
-
-				assert.Equal(t, tc.expectRes, resReturned, "")
+			if tc.expectErr {
+				assert.NotEqual(t, lua.LNil, errReturned)
+			} else {
+				assert.Equal(t, lua.LNil, errReturned)
+				assert.Equal(t, tc.expectRes, resReturned.String())
 			}
 
 			// Check if everything expected was done
@@ -139,34 +152,36 @@ func TestRedisUploadScript(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
+				t.Fatalf("Failed to create Redis mock conn.")
 			}
 
 			tc.prepareRedisUpload(mock)
-			rediscli.NewTestClient(db)
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+
+			testFile := &config.FileSettings{Server: &config.ServerSection{}}
+			config.SetTestFile(testFile)
+			util.SetDefaultConfigFile(testFile)
+			util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 			L := lua.NewState()
-
 			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
-			// Use redis default settings
-			L.Push(lua.LString("default"))
+			L.SetGlobal("script", lua.LString(tc.script))
+			L.SetGlobal("upload_name", lua.LString(tc.uploadScriptName))
 
-			// Set up script
-			L.Push(lua.LString(tc.script))
-			L.Push(lua.LString(tc.uploadScriptName))
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_upload_script("default", script, upload_name)`)
+			assert.NoError(t, err)
 
-			numReturned := RedisUploadScript(context.Background())(L)
-			errReturned := L.Get(-1).String() != "nil"
+			resReturned := L.GetGlobal("result")
+			errReturned := L.GetGlobal("err")
 
-			assert.Equal(t, tc.expectErr, errReturned, "")
-			assert.Equal(t, 2, numReturned, "")
-
-			// Check result if no error
-			if !tc.expectErr && numReturned > 0 {
-				shaReturned := L.Get(-2).String()
-
-				assert.Equal(t, tc.expectedSHA, shaReturned, "")
+			if tc.expectErr {
+				assert.NotEqual(t, lua.LNil, errReturned)
+			} else {
+				assert.Equal(t, lua.LNil, errReturned)
+				assert.Equal(t, tc.expectedSHA, resReturned.String())
 			}
 
 			// Check if everything expected was done

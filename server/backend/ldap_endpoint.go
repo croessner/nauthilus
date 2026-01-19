@@ -25,10 +25,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// LuaLDAPEndpoint exposes nauthilus_ldap.ldap_endpoint(pool_name?) → (server, port, err)
-// It resolves the first configured server URI of the given pool and returns host and port.
-// The function validates configuration only (no runtime "active" checks).
-func LuaLDAPEndpoint(_ any) lua.LGFunction { // ctx currently not used, keep signature consistent with other loaders
+func LuaLDAPEndpoint(cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		poolName := definitions.DefaultBackendName
 		if L.GetTop() >= 1 {
@@ -41,9 +38,9 @@ func LuaLDAPEndpoint(_ any) lua.LGFunction { // ctx currently not used, keep sig
 		// Load configuration for the pool
 		var uris []string
 		if poolName == definitions.DefaultBackendName {
-			uris = config.GetFile().GetLDAPConfigServerURIs()
+			uris = cfg.GetLDAPConfigServerURIs()
 		} else {
-			pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+			pools := cfg.GetLDAP().GetOptionalLDAPPools()
 			if pools == nil || pools[poolName] == nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LNil)

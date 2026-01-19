@@ -18,11 +18,13 @@ package lualib
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -31,46 +33,65 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
+// DNSManager manages DNS operations for Lua.
+type DNSManager struct {
+	*BaseManager
+}
+
+// NewDNSManager creates a new DNSManager.
+func NewDNSManager(ctx context.Context, cfg config.File, logger *slog.Logger) *DNSManager {
+	return &DNSManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+	}
+}
+
 // Resolve performs a DNS record lookup for the specified domain and record type using Lua and the provided context.
 // It supports record types such as A, AAAA, MX, NS, TXT, CNAME, and PTR and returns the result or an error to Lua.
-func Resolve(ctx context.Context) lua.LGFunction {
-	return func(L *lua.LState) int {
-		domain := L.CheckString(1)
-		recordType := strings.ToUpper(L.OptString(2, "A"))
+func (m *DNSManager) Resolve(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	domain := stack.CheckString(1)
+	recordType := strings.ToUpper(stack.OptString(2, "A"))
 
-		result, err := lookupRecord(ctx, L, domain, recordType)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
+	util.DebugModuleWithCfg(m.Ctx, m.Cfg, m.Logger, definitions.DbgLua,
+		"domain", domain,
+		"kind", recordType,
+	)
 
-			return 2
-		}
-
-		L.Push(result)
-
-		return 1
+	result, err := lookupRecord(m.Ctx, m.Cfg, L, domain, recordType)
+	if err != nil {
+		return stack.PushError(err)
 	}
+
+	return stack.PushResults(result, lua.LNil)
 }
 
 // lookupRecord performs a DNS lookup for the specified domain and record type, returning the results as an LValue.
 // It supports record types like A, AAAA, MX, NS, TXT, CNAME, and PTR.
 // The context controls the timeout for the DNS request, while Lua state handles the returned data format.
-func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.LValue, error) {
-	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().GetDNS().GetTimeout()*time.Second))
+func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, kind string) (lua.LValue, error) {
+	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()))
 
 	defer cancel()
 
-	resolver := util.NewDNSResolver()
+	resolver := util.NewDNSResolverWithCfg(cfg)
 
 	switch kind {
 	case "A", "AAAA":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
+			attribute.String("peer.service", "dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", kind),
 		)
+
+		host, port, ok := util.DNSResolverPeer(cfg)
+		if ok {
+			tsp.SetAttributes(
+				attribute.String("peer.hostname", host),
+				attribute.Int("peer.port", port),
+			)
+		}
 
 		ips, err := resolver.LookupIP(tctx, "ip", domain)
 		if err != nil {
@@ -93,7 +114,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 		return tbl, nil
 	case "MX":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -123,7 +144,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 		return tbl, nil
 	case "NS":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -150,7 +171,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 		return tbl, nil
 	case "TXT":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -177,7 +198,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 		return tbl, nil
 	case "CNAME":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -204,7 +225,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 		return lua.LString(cname), nil
 	case "PTR":
 		tr := monittrace.New("nauthilus/dns")
-		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
@@ -235,15 +256,16 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 }
 
 // LoaderModDNS initializes and loads the DNS module for Lua, providing functions for DNS lookups and managing records.
-func LoaderModDNS(ctx context.Context) lua.LGFunction {
+func LoaderModDNS(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewDNSManager(ctx, cfg, logger)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnDNSResolve: Resolve(ctx),
+			"resolve": manager.Resolve,
 		})
 
-		L.Push(mod)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }
 
@@ -252,8 +274,8 @@ func LoaderModDNS(ctx context.Context) lua.LGFunction {
 // with a context-aware version via BindModuleIntoReq.
 func LoaderDNSStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }

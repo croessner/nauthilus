@@ -1,13 +1,32 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package lualib
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -72,123 +91,121 @@ func (m *httpRequestMeta) SetBody(r io.ReadCloser) {
 
 var _ HTTPRequestMeta = (*httpRequestMeta)(nil)
 
-// GetAllHTTPRequestHeaders returns a Lua function that retrieves all headers from an HTTP request.
-// The returned function accepts no arguments and pushes a Lua table where header names are keys and values are lists.
-func GetAllHTTPRequestHeaders(meta HTTPRequestMeta) lua.LGFunction {
-	return func(L *lua.LState) int {
-		headerTable := L.NewTable()
+// HTTPRequestManager manages HTTP request data needed by Lua.
+type HTTPRequestManager struct {
+	*BaseManager
+	meta HTTPRequestMeta
+}
 
-		for headerName, headerValues := range meta.Header() {
-			headerName = strings.ToLower(headerName)
-
-			headerList := L.NewTable()
-
-			for _, headerValue := range headerValues {
-				headerList.Append(lua.LString(headerValue))
-			}
-
-			headerTable.RawSetString(headerName, headerList)
-		}
-
-		L.Push(headerTable)
-
-		return 1
+// NewHTTPRequestManager creates a new HTTPRequestManager.
+func NewHTTPRequestManager(ctx context.Context, cfg config.File, logger *slog.Logger, meta HTTPRequestMeta) *HTTPRequestManager {
+	return &HTTPRequestManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+		meta:        meta,
 	}
 }
 
-// GetHTTPRequestHeader returns a Lua function that retrieves specific HTTP request header values as a Lua table.
+// GetAllHTTPRequestHeaders retrieves all headers from an HTTP request.
+// The returned function accepts no arguments and pushes a Lua table where header names are keys and values are lists.
+func (m *HTTPRequestManager) GetAllHTTPRequestHeaders(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	headerTable := L.NewTable()
+
+	for headerName, headerValues := range m.meta.Header() {
+		headerName = strings.ToLower(headerName)
+
+		headerList := L.NewTable()
+
+		for _, headerValue := range headerValues {
+			headerList.Append(lua.LString(headerValue))
+		}
+
+		headerTable.RawSetString(headerName, headerList)
+	}
+
+	return stack.PushResults(headerTable, lua.LNil)
+}
+
+// GetHTTPRequestHeader retrieves specific HTTP request header values as a Lua table.
 // The function expects one argument: the name of the header to retrieve (case-insensitive).
 // It returns a Lua table containing the header values or an empty table if the header is not present.
-func GetHTTPRequestHeader(meta HTTPRequestMeta) lua.LGFunction {
-	return func(L *lua.LState) int {
-		reqzestedHeader := strings.ToLower(L.CheckString(1))
-		headerValueTable := L.NewTable()
+func (m *HTTPRequestManager) GetHTTPRequestHeader(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	reqzestedHeader := strings.ToLower(stack.CheckString(1))
+	headerValueTable := L.NewTable()
 
-		for headerName, headerValues := range meta.Header() {
-			headerName = strings.ToLower(headerName)
+	for headerName, headerValues := range m.meta.Header() {
+		headerName = strings.ToLower(headerName)
 
-			if headerName != reqzestedHeader {
-				continue
-			}
-
-			for _, headerValue := range headerValues {
-				headerValueTable.Append(lua.LString(headerValue))
-			}
-
-			break
+		if headerName != reqzestedHeader {
+			continue
 		}
 
-		L.Push(headerValueTable)
+		for _, headerValue := range headerValues {
+			headerValueTable.Append(lua.LString(headerValue))
+		}
 
-		return 1
+		break
 	}
+
+	return stack.PushResults(headerValueTable, lua.LNil)
 }
 
-// GetHTTPRequestBody returns a Lua function that retrieves the body of an HTTP request as a Lua string.
+// GetHTTPRequestBody retrieves the body of an HTTP request as a Lua string.
 // The returned function reads the HTTP request body, resets it for potential later use, and pushes it as a string to Lua.
-func GetHTTPRequestBody(meta HTTPRequestMeta) lua.LGFunction {
-	return func(L *lua.LState) int {
-		// Read the HTTP body
-		bodyBytes, err := io.ReadAll(meta.Body())
-		if err != nil {
-			L.RaiseError("failed to read request body: %v", err)
+func (m *HTTPRequestManager) GetHTTPRequestBody(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-			return 0
-		}
-
-		// Make sure the body is readable for the next handler...
-		meta.SetBody(io.NopCloser(bytes.NewBuffer(bodyBytes)))
-
-		L.Push(lua.LString(bodyBytes))
-
-		return 1
+	// Read the HTTP body
+	bodyBytes, err := io.ReadAll(m.meta.Body())
+	if err != nil {
+		return stack.PushResults(lua.LNil, lua.LString(err.Error()))
 	}
+
+	// Make sure the body is readable for the next handler...
+	m.meta.SetBody(io.NopCloser(bytes.NewBuffer(bodyBytes)))
+
+	return stack.PushResults(lua.LString(bodyBytes), lua.LNil)
 }
 
-// GetHTTPMethod returns a Lua function that pushes the HTTP request method as a string onto the Lua stack.
-func GetHTTPMethod(meta HTTPRequestMeta) lua.LGFunction {
-	return func(L *lua.LState) int {
-		L.Push(lua.LString(meta.Method()))
+// GetHTTPMethod pushes the HTTP request method as a string onto the Lua stack.
+func (m *HTTPRequestManager) GetHTTPMethod(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-		return 1
-	}
+	return stack.PushResults(lua.LString(m.meta.Method()), lua.LNil)
 }
 
-// GetHTTPPath returns a Lua function that pushes the HTTP request URL path onto the Lua stack when invoked.
-func GetHTTPPath(meta HTTPRequestMeta) lua.LGFunction {
-	return func(L *lua.LState) int {
-		L.Push(lua.LString(meta.URL().Path))
+// GetHTTPPath pushes the HTTP request URL path onto the Lua stack when invoked.
+func (m *HTTPRequestManager) GetHTTPPath(L *lua.LState) int {
+	stack := luastack.NewManager(L)
 
-		return 1
-	}
+	return stack.PushResults(lua.LString(m.meta.URL().Path), lua.LNil)
 }
 
-// GetHTTPQueryParam returns a Lua function to fetch a query parameter from the provided HTTP request.
-func GetHTTPQueryParam(meta HTTPRequestMeta) lua.LGFunction {
-	return func(L *lua.LState) int {
-		paramName := L.CheckString(1)
+// GetHTTPQueryParam fetches a query parameter from the provided HTTP request.
+func (m *HTTPRequestManager) GetHTTPQueryParam(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	paramName := stack.CheckString(1)
 
-		L.Push(lua.LString(meta.URL().Query().Get(paramName)))
-
-		return 1
-	}
+	return stack.PushResults(lua.LString(m.meta.URL().Query().Get(paramName)), lua.LNil)
 }
 
 // LoaderModHTTP loads Lua functions based on an HTTPRequestMeta provider.
-func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction { // ctx reserved for future use (timeouts, etc.)
+func LoaderModHTTP(ctx context.Context, cfg config.File, logger *slog.Logger, meta HTTPRequestMeta) lua.LGFunction {
 	return func(L *lua.LState) int {
+		stack := luastack.NewManager(L)
+		manager := NewHTTPRequestManager(ctx, cfg, logger, meta)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetAllHTTPRequestHeaders: GetAllHTTPRequestHeadersWithMeta(meta),
-			definitions.LuaFnGetHTTPRequestHeader:     GetHTTPRequestHeaderWithMeta(meta),
-			definitions.LuaFnGetHTTPRequestBody:       GetHTTPRequestBodyWithMeta(meta),
-			definitions.LuaFnGetHTTPMethod:            GetHTTPMethodWithMeta(meta),
-			definitions.LuaFnGetHTTPQueryParam:        GetHTTPQueryParamWithMeta(meta),
-			definitions.LuaFnGetHTTPPath:              GetHTTPPathWithMeta(meta),
+			definitions.LuaFnGetAllHTTPRequestHeaders: manager.GetAllHTTPRequestHeaders,
+			definitions.LuaFnGetHTTPRequestHeader:     manager.GetHTTPRequestHeader,
+			definitions.LuaFnGetHTTPRequestBody:       manager.GetHTTPRequestBody,
+			definitions.LuaFnGetHTTPMethod:            manager.GetHTTPMethod,
+			definitions.LuaFnGetHTTPQueryParam:        manager.GetHTTPQueryParam,
+			definitions.LuaFnGetHTTPPath:              manager.GetHTTPPath,
 		})
 
-		L.Push(mod)
-
-		return 1
+		return stack.PushResult(mod)
 	}
 }
 
@@ -197,30 +214,8 @@ func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction { // ctx reserved for fu
 // clone this table and inject bound functions via WithMeta factories.
 func LoaderHTTPRequestStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
-		L.Push(L.NewTable())
+		stack := luastack.NewManager(L)
 
-		return 1
+		return stack.PushResult(L.NewTable())
 	}
 }
-
-// GetAllHTTPRequestHeadersWithMeta is a factory alias that returns the same function as GetAllHTTPRequestHeaders(meta).
-func GetAllHTTPRequestHeadersWithMeta(meta HTTPRequestMeta) lua.LGFunction {
-	return GetAllHTTPRequestHeaders(meta)
-}
-
-// GetHTTPRequestHeaderWithMeta is a factory alias that returns the same function as GetHTTPRequestHeader(meta).
-func GetHTTPRequestHeaderWithMeta(meta HTTPRequestMeta) lua.LGFunction {
-	return GetHTTPRequestHeader(meta)
-}
-
-// GetHTTPRequestBodyWithMeta is a factory alias that returns the same function as GetHTTPRequestBody(meta).
-func GetHTTPRequestBodyWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPRequestBody(meta) }
-
-// GetHTTPMethodWithMeta is a factory alias that returns the same function as GetHTTPMethod(meta).
-func GetHTTPMethodWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPMethod(meta) }
-
-// GetHTTPPathWithMeta is a factory alias that returns the same function as GetHTTPPath(meta).
-func GetHTTPPathWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPPath(meta) }
-
-// GetHTTPQueryParamWithMeta is a factory alias that returns the same function as GetHTTPQueryParam(meta).
-func GetHTTPQueryParamWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPQueryParam(meta) }

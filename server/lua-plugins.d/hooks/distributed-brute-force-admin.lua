@@ -17,8 +17,14 @@ local nauthilus_util = require("nauthilus_util")
 
 local nauthilus_http_request = require("nauthilus_http_request")
 local nauthilus_redis = require("nauthilus_redis")
+local time = require("time")
 
 local N = "distributed-brute-force-admin"
+
+local DYN_WARMUP_SECONDS = tonumber(nauthilus_util.getenv("DYNAMIC_RESPONSE_WARMUP_SECONDS", "3600")) or 3600
+local DYN_WARMUP_MIN_USERS = tonumber(nauthilus_util.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_USERS", "1000")) or 1000
+local DYN_WARMUP_MIN_ATTEMPTS = tonumber(nauthilus_util.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS", "10000")) or 10000
+local NAUTHILUS_WARMUP_WINDOW_SECONDS = nauthilus_util.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS", "86400")
 
 -- Ensure system start and warm-up settings exist; return settings table
 local function ensure_startup_settings(redis_handle)
@@ -27,14 +33,14 @@ local function ensure_startup_settings(redis_handle)
 
     -- system_started_at: unix timestamp
     if not settings["system_started_at"] or settings["system_started_at"] == "" then
-        local now = os.time()
+        local now = time.unix()
         -- Persist only if missing
         nauthilus_redis.redis_hset(redis_handle, settings_key, "system_started_at", tostring(now))
         settings["system_started_at"] = tostring(now)
     end
 
     -- warmup_window_seconds: from env or default 86400 (24h)
-    local env_warmup = os.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS")
+    local env_warmup = NAUTHILUS_WARMUP_WINDOW_SECONDS
     local default_warmup = tostring(86400)
     local warmup_value = env_warmup and tostring(tonumber(env_warmup) or 0) or nil
     if not warmup_value or tonumber(warmup_value) == nil or tonumber(warmup_value) <= 0 then
@@ -96,16 +102,16 @@ local function get_metrics(redis_handle)
     metrics.captcha_accounts = (res[6] and res[6].value) or {}
 
     -- Compute warm-up diagnostics (aligned with dynamic_response.lua gating)
-    local now = os.time()
-    local warmup_seconds = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_SECONDS") or "3600")
-    local warmup_min_users = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_USERS") or "1000")
-    local warmup_min_attempts = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS") or "10000")
+    local now = time.unix()
+    local warmup_seconds = DYN_WARMUP_SECONDS
+    local warmup_min_users = DYN_WARMUP_MIN_USERS
+    local warmup_min_attempts = DYN_WARMUP_MIN_ATTEMPTS
 
     local first_seen_val = res[7] and res[7].value or nil
     local first_seen_ts = tonumber(first_seen_val or "0") or 0
     if first_seen_ts == 0 then
-        -- Initialize on first call to provide immediate feedback to UI; best-effort with TTL 30d
-        nauthilus_redis.redis_set(redis_handle, first_seen_key, tostring(now), 30 * 24 * 3600)
+        -- Initialize on first call to provide immediate feedback to UI; permanent
+        nauthilus_redis.redis_set(redis_handle, first_seen_key, tostring(now))
         first_seen_ts = now
     end
 
@@ -155,7 +161,7 @@ local function reset_protection_measures(redis_handle)
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
         {
-            3600, -- Expire after 1 hour
+            0, -- Permanent
             "captcha_enabled", "false",
             "rate_limit_enabled", "false",
             "monitoring_mode", "false",
@@ -298,9 +304,9 @@ function nauthilus_run_hook(logging, session)
         result.message = "Invalid action: " .. action
     end
 
-    if logging.log_level == "debug" or logging.log_level == "info" then
-        nauthilus_util.print_result(logging, result)
-    end
+    result.caller = N .. ".lua"
+    local level = result.level or "info"
+    nauthilus_util.log(logging, level, result)
 
     return result
 end

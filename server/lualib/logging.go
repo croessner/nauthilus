@@ -15,7 +15,14 @@
 
 package lualib
 
-import lua "github.com/yuin/gopher-lua"
+import (
+	"context"
+	"log/slog"
+
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/lualib/luastack"
+	lua "github.com/yuin/gopher-lua"
+)
 
 type CustomLogKeyValue []any
 
@@ -30,26 +37,53 @@ func (c *CustomLogKeyValue) Set(key string, value any) {
 	*c = append(*c, value)
 }
 
-// AddCustomLog creates a Lua function that appends a key-value pair to a CustomLogKeyValue slice for logging purposes.
-func AddCustomLog(keyval *CustomLogKeyValue) lua.LGFunction {
+// LoggingManager manages logging operations for Lua.
+type LoggingManager struct {
+	*BaseManager
+	keyval *CustomLogKeyValue
+}
+
+// NewLoggingManager creates a new LoggingManager.
+func NewLoggingManager(ctx context.Context, cfg config.File, logger *slog.Logger, keyval *CustomLogKeyValue) *LoggingManager {
+	return &LoggingManager{
+		BaseManager: NewBaseManager(ctx, cfg, logger),
+		keyval:      keyval,
+	}
+}
+
+// AddCustomLog appends a key-value pair to a CustomLogKeyValue slice for logging purposes.
+func (m *LoggingManager) AddCustomLog(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	key := stack.CheckString(1)
+	*m.keyval = append(*m.keyval, key)
+
+	luaValue := stack.CheckAny(2)
+
+	switch value := luaValue.(type) {
+	case lua.LBool:
+		*m.keyval = append(*m.keyval, bool(value))
+	case lua.LNumber:
+		*m.keyval = append(*m.keyval, float64(value))
+	case lua.LString:
+		*m.keyval = append(*m.keyval, value.String())
+	default:
+		*m.keyval = append(*m.keyval, "UNSUPPORTED")
+	}
+
+	return 0
+}
+
+// LoaderModLogging initializes the logging module for Lua.
+func LoaderModLogging(ctx context.Context, cfg config.File, logger *slog.Logger, keyval *CustomLogKeyValue) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.CheckString(1)
-		*keyval = append(*keyval, key)
+		stack := luastack.NewManager(L)
+		manager := NewLoggingManager(ctx, cfg, logger, keyval)
 
-		luaValue := L.Get(2)
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			"add": manager.AddCustomLog,
+		})
 
-		switch value := luaValue.(type) {
-		case lua.LBool:
-			*keyval = append(*keyval, bool(value))
-		case lua.LNumber:
-			*keyval = append(*keyval, float64(value))
-		case lua.LString:
-			*keyval = append(*keyval, value.String())
-		default:
-			*keyval = append(*keyval, "UNSUPPORTED")
-		}
-
-		return 0
+		return stack.PushResult(mod)
 	}
 }
 

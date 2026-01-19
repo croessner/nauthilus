@@ -27,6 +27,8 @@ local json = require("json")
 
 local HCCR = "http_client_concurrent_requests_total"
 
+local GEOIP_POLICY_URL = nauthilus_util.getenv("GEOIP_POLICY_URL", "")
+
 -- Shared helpers for filter and action
 local function add_custom_logs(object)
     for item, values in pairs(object) do
@@ -237,7 +239,7 @@ function nauthilus_call_filter(request)
     local response = nauthilus_cache.cache_get(cache_key)
 
     if response == nil then
-        response = http_geoip_request(os.getenv("GEOIP_POLICY_URL"), payload)
+        response = http_geoip_request(GEOIP_POLICY_URL, payload)
         nauthilus_cache.cache_set(cache_key, response, 30)
     end
 
@@ -303,7 +305,7 @@ function nauthilus_call_action(request)
     local response = nauthilus_cache.cache_get(cache_key)
     if response == nil then
         -- Append info=1 to URL (preserve existing query if present)
-        local base_url = os.getenv("GEOIP_POLICY_URL")
+        local base_url = GEOIP_POLICY_URL
         local sep = string.find(base_url or "", "?", 1, true) and "&" or "?"
         local url = (base_url or "") .. sep .. "info=1"
 

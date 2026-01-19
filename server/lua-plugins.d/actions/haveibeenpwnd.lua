@@ -48,17 +48,28 @@ local template = require("template")
 
 local HCCR = "http_client_concurrent_requests_total"
 
+local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
+local SMTP_USE_LMTP = nauthilus_util.getenv("SMTP_USE_LMTP", "false")
+local SMTP_SERVER = nauthilus_util.getenv("SMTP_SERVER", "localhost")
+local SMTP_PORT = nauthilus_util.getenv("SMTP_PORT", "25")
+local SMTP_HELO_NAME = nauthilus_util.getenv("SMTP_HELO_NAME", "localhost")
+local SMTP_TLS = nauthilus_util.getenv("SMTP_TLS", "false")
+local SMTP_STARTTLS = nauthilus_util.getenv("SMTP_STARTTLS", "false")
+local SMTP_USERNAME = nauthilus_util.getenv("SMTP_USERNAME", "")
+local SMTP_PASSWORD = nauthilus_util.getenv("SMTP_PASSWORD", "")
+local SMTP_MAIL_FROM = nauthilus_util.getenv("SMTP_MAIL_FROM", "postmaster@localhost")
+local SSP_WEBSITE = nauthilus_util.getenv("SSP_WEBSITE", "")
+
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
         local hash = string.lower(crypto.sha1(request.password))
 
         local custom_pool = "default"
-        local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-        if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+        if CUSTOM_REDIS_POOL ~= "default" then
             local err_redis_client
 
-            custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+            custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
             nauthilus_util.if_error_raise(err_redis_client)
         end
 
@@ -145,15 +156,6 @@ function nauthilus_call_action(request)
                 nauthilus_util.if_error_raise(err_run_script)
 
                 if script_result[1] == "send_mail" then
-                    local smtp_use_lmtp = os.getenv("SMTP_USE_LMTP")
-                    local smtp_server = os.getenv("SMTP_SERVER")
-                    local smtp_port = os.getenv("SMTP_PORT")
-                    local smtp_helo_name = os.getenv("SMTP_HELO_NAME")
-                    local smtp_tls = os.getenv("SMTP_TLS")
-                    local smtp_starttls = os.getenv("SMTP_STARTTLS")
-                    local smtp_username = os.getenv("SMTP_USERNAME")
-                    local smtp_password = os.getenv("SMTP_PASSWORD")
-                    local smtp_mail_from = os.getenv("SMTP_MAIL_FROM")
                     local smtp_rcpt_to = request.account
 
                     local mustache, err_tmpl = template.choose("mustache")
@@ -163,19 +165,19 @@ function nauthilus_call_action(request)
                         account = request.account,
                         hash = hash:sub(1, 5),
                         count = count,
-                        website = os.getenv("SSP_WEBSITE")
+                        website = SSP_WEBSITE
                     }
 
                     local err_smtp = nauthilus_mail.send_mail({
-                        lmtp = smtp_use_lmtp,
-                        server = smtp_server,
-                        port = tonumber(smtp_port),
-                        helo_name = smtp_helo_name,
-                        username = smtp_username,
-                        password = smtp_password,
-                        tls = nauthilus_util.toboolean(smtp_tls),
-                        smtp_starttls = nauthilus_util.toboolean(smtp_starttls),
-                        from = smtp_mail_from,
+                        lmtp = SMTP_USE_LMTP,
+                        server = SMTP_SERVER,
+                        port = tonumber(SMTP_PORT),
+                        helo_name = SMTP_HELO_NAME,
+                        username = SMTP_USERNAME,
+                        password = SMTP_PASSWORD,
+                        tls = nauthilus_util.toboolean(SMTP_TLS),
+                        smtp_starttls = nauthilus_util.toboolean(SMTP_STARTTLS),
+                        from = SMTP_MAIL_FROM,
                         to = { smtp_rcpt_to },
                         subject = "Password leak detected for your account <" .. request.account .. ">",
                         body = mustache:render(smtp_message, tmpl_data)

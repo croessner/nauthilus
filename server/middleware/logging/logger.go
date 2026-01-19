@@ -18,11 +18,11 @@ package logging
 import (
 	"crypto/tls"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -33,6 +33,14 @@ import (
 // LoggerMiddleware creates a middleware for logging HTTP requests and responses, including latency and client details.
 // It assigns a unique identifier (GUID) to each request and logs authentication methods, TLS info, and status codes.
 func LoggerMiddleware() gin.HandlerFunc {
+	return LoggerMiddlewareWithLogger(slog.Default())
+}
+
+// LoggerMiddlewareWithLogger is a deps-based variant of LoggerMiddleware.
+//
+// HTTP stack should not rely on `log.Logger` globals.
+// Call sites that are already DI-based should pass an injected `*slog.Logger`.
+func LoggerMiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			logWrapper func(logger *slog.Logger) level.Logger
@@ -51,8 +59,11 @@ func LoggerMiddleware() gin.HandlerFunc {
 		err := ctx.Errors.Last()
 
 		// Decide which logger to use
+		status := ctx.Writer.Status()
 		if err != nil {
 			logWrapper = level.Error
+		} else if status == http.StatusTooManyRequests {
+			logWrapper = level.Warn
 		} else {
 			logWrapper = level.Info
 		}
@@ -83,7 +94,12 @@ func LoggerMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		logWrapper(log.Logger).Log(
+		// Fall back to process default logger if caller passed nil.
+		if logger == nil {
+			logger = slog.Default()
+		}
+
+		keyvals := []any{
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMethod, ctx.Request.Method,
@@ -108,6 +124,12 @@ func LoggerMiddleware() gin.HandlerFunc {
 
 				return "HTTP request"
 			}(),
-		)
+		}
+
+		if reason, exists := ctx.Get(definitions.CtxRateLimitReasonKey); exists {
+			keyvals = append(keyvals, definitions.LogKeyRateLimitReason, reason)
+		}
+
+		logWrapper(logger).Log(keyvals...)
 	}
 }
