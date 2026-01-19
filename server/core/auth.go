@@ -2782,6 +2782,12 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 		return
 	}
 
+	if jsonRequest.Password == "" && ctx.Query("mode") != "no-auth" && ctx.Query("mode") != "list-accounts" {
+		HandleJSONValidationError(ctx, "Password", "This field is required")
+
+		return
+	}
+
 	setAuthenticationFields(auth, &jsonRequest)
 
 	// If no user_agent provided via JSON, fallback to HTTP header

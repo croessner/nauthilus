@@ -100,8 +100,10 @@ func TestAuthValidation_EmptyPassword_JSON(t *testing.T) {
 
 	// Assertions
 	assert.Nil(t, auth, "NewAuthStateWithSetupWithDeps should return nil for empty password")
-	assert.NotNil(t, ctx.Errors.Last(), "A Gin error should be registered")
-	assert.ErrorIs(t, ctx.Errors.Last().Err, errors.ErrEmptyPassword)
+	assert.True(t, ctx.IsAborted(), "Context should be aborted")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), `"field":"Password"`)
+	assert.Contains(t, w.Body.String(), `"message":"This field is required"`)
 }
 
 func TestAuthValidation_EmptyUsername_BasicAuth(t *testing.T) {
