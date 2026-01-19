@@ -1132,13 +1132,17 @@ func (a *AuthState) GetClientIP() string {
 // GetAccount returns the account value from the AuthState object. If the account field is not set or the account
 // value is not found in the attributes, an empty string is returned
 func (a *AuthState) GetAccount() string {
-	if a != nil && a.Runtime.AccountName != "" {
+	if a == nil {
+		return ""
+	}
+
+	if a.Runtime.AccountName != "" {
 		return a.Runtime.AccountName
 	}
 
 	// Prefer value stored in the Gin context for the current request
 	// to avoid redundant cache/Redis lookups within the same request.
-	if a != nil && a.Request.HTTPClientContext != nil {
+	if a.Request.HTTPClientContext != nil {
 		if v := a.Request.HTTPClientContext.GetString(definitions.CtxAccountKey); v != "" {
 			return v
 		}
@@ -1880,9 +1884,7 @@ func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) 
 		cr.Authenticated = passDBResult.Authenticated
 	}
 
-	if ctx != nil {
-		cr.HTTPStatus = ctx.Writer.Status()
-	}
+	cr.HTTPStatus = ctx.Writer.Status()
 
 	a.RunLuaPostAction(PostActionArgs{
 		Context:       a.Runtime.Context,
@@ -3341,11 +3343,12 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 		)
 
 		return found
-	} else {
-		lcSpan.SetAttributes(attribute.Bool("hit", false))
-
-		return false
 	}
+
+	lcSpan.SetAttributes(attribute.Bool("hit", false))
+
+	return false
+
 }
 
 // PreproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
