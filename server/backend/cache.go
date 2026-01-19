@@ -55,7 +55,7 @@ func LookupUserAccountFromRedis(ctx context.Context, cfg config.File, redisClien
 
 	defer sp.End()
 
-	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
+	key := rediscli.GetUserHashKey(cfg.GetServer().GetRedis().GetPrefix(), username)
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 

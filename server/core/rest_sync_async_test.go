@@ -150,7 +150,8 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 
 	// removeUserFromCache pipeline: HDEL USER hash field and UNLINK default positive cache key
 	defaultPos := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
-	mock.ExpectHDel(prefix+definitions.RedisUserHashKey, user).SetVal(1)
+	shardKey := rediscli.GetUserHashKey(prefix, user)
+	mock.ExpectHDel(shardKey, user).SetVal(1)
 	mock.ExpectUnlink(defaultPos).SetVal(1)
 
 	w := httptest.NewRecorder()

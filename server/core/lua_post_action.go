@@ -169,9 +169,11 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, r.CIDR)); err == nil && n != nil {
 				candidate := n.String()
 
-				// (1) Historical hit in the pre-result hash map?
+				// (1) Historical hit in the sharded hash map?
 				if !foundRepeating {
-					key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+					prefix := cfg.GetServer().GetRedis().GetPrefix()
+					key := rediscli.GetBruteForceHashKey(prefix, candidate)
+
 					stats.GetMetrics().GetRedisReadCounter().Inc()
 					if exists, err := redisClient.GetReadHandle().HExists(ctx, key, candidate).Result(); err == nil && exists {
 						if r.CIDR > bestCIDRRepeating {

@@ -1706,13 +1706,13 @@ func (a *AuthState) GetBruteForceCounter() map[string]uint {
 
 // GetBruteForceBucketRedisKey returns the Redis key for the specified brute force rule.
 func (a *AuthState) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
-	if a == nil || a.deps.Cfg == nil {
+	if a == nil {
 		return ""
 	}
 
-	key = a.deps.Cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey + "{" + a.Request.ClientIP + "}:" + rule.Name
+	bm := a.createBucketManager(a.Ctx())
 
-	return
+	return bm.GetBruteForceBucketRedisKey(rule)
 }
 
 // GetPasswordHistory returns the password history from the AuthState.

@@ -17,20 +17,6 @@ package rediscli
 
 // LuaScripts contains all the Lua scripts used in the application
 var LuaScripts = map[string]string{
-	// AuthPreflight performs a combined fetch of the mapped account name and a brute-force repeat check.
-	// KEYS[1] - Hash key for username->account mapping (USER hash)
-	// KEYS[2] - Hash key for brute-force network map
-	// ARGV[1] - username
-	// ARGV[2] - clientNet (can be empty)
-	"AuthPreflight": `
-local acc = redis.call('HGET', KEYS[1], ARGV[1])
-if not acc then acc = '' end
-local repeating = 0
-if ARGV[2] and ARGV[2] ~= '' then
-  if redis.call('HEXISTS', KEYS[2], ARGV[2]) == 1 then repeating = 1 end
-end
-return {acc, repeating}
-`,
 	// IncrementAndExpire increments a counter and sets an expiration time in a single atomic operation
 	// KEYS[1] - The key to increment
 	// ARGV[1] - The expiration time in seconds

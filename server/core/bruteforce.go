@@ -17,6 +17,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -35,6 +36,7 @@ import (
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -83,9 +85,23 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 
 		isRepeating := alreadyTriggered || (bfCount >= rule.GetFailedRequests())
 
-		// If still unknown, combine account lookup + repeating flag via Redis Lua preflight
+		// If still unknown, combine account lookup + repeating flag via Redis pipeline
 		if (!isRepeating || accountName == "") && clientNet != "" {
-			if acc, rep, err := rediscli.AuthPreflight(ctx.Request.Context(), a.Redis(), a.Request.Username, clientNet); err == nil {
+			prefix := a.cfg().GetServer().GetRedis().GetPrefix()
+			userKey := rediscli.GetUserHashKey(prefix, a.Request.Username)
+			bfKey := rediscli.GetBruteForceHashKey(prefix, clientNet)
+
+			dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx.Request.Context(), a.cfg())
+			pipe := a.Redis().GetReadHandle().Pipeline()
+			userCmd := pipe.HGet(dCtx, userKey, a.Request.Username)
+			bfCmd := pipe.HExists(dCtx, bfKey, clientNet)
+			_, err := pipe.Exec(dCtx)
+			cancel()
+
+			if err == nil || errors.Is(err, redis.Nil) {
+				acc, _ := userCmd.Result()
+				rep, _ := bfCmd.Result()
+
 				if accountName == "" && acc != "" {
 					accountName = acc
 					// Mirror into AuthState
@@ -453,7 +469,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	// 2) Determine repeating based on alreadyTriggered or counter >= limit; fallback to pre-result hash if buckets expired.
 	bfRepeating := alreadyTriggered || (a.Security.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
-		key := a.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+		prefix := a.cfg().GetServer().GetRedis().GetPrefix()
+		key := rediscli.GetBruteForceHashKey(prefix, bfClientNet)
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 

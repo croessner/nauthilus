@@ -320,9 +320,19 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 
 	logger := deps.effectiveLogger()
 	cfg := deps.effectiveCfg()
-	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
-	ipAddresses, err := deps.Redis.GetReadHandle().HGetAll(ctx, key).Result()
+	ipAddresses := make(map[string]string)
+
+	pipe := deps.Redis.GetReadHandle().Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, 256)
+
+	for i := 0; i < 256; i++ {
+		shardKey := fmt.Sprintf("%sBRUTEFORCE:{%02x}", prefix, i)
+		cmds[i] = pipe.HGetAll(ctx, shardKey)
+	}
+
+	_, err := pipe.Exec(ctx)
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(logger).Log(
@@ -337,6 +347,14 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 			return blockedIPAddresses, err
 		}
 	} else {
+		for _, cmd := range cmds {
+			if res, cerr := cmd.Result(); cerr == nil {
+				for k, v := range res {
+					ipAddresses[k] = v
+				}
+			}
+		}
+
 		if filterCmd != nil {
 			filteredIPs := make(map[string]string)
 
@@ -1044,12 +1062,7 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 	logger := deps.effectiveLogger()
 	redisClient := deps.effectiveRedis()
 
-	var sb strings.Builder
-
-	sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
-	sb.WriteString(definitions.RedisUserHashKey)
-
-	redisKey := sb.String()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
 	// Increment write counter once for the whole pipeline execution
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -1059,8 +1072,13 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 	pipe := redisClient.GetWriteHandle().Pipeline()
 	// Remove hash (whole hash or a single field) first
 	if removeHash {
-		pipe.Del(ctx, redisKey)
+		// Flush all 256 shards
+		for i := 0; i < 256; i++ {
+			shardKey := fmt.Sprintf("%sUSER:{%02x}", prefix, i)
+			pipe.Del(ctx, shardKey)
+		}
 	} else {
+		redisKey := rediscli.GetUserHashKey(prefix, userCmd.User)
 		pipe.HDel(ctx, redisKey, userCmd.User)
 	}
 
@@ -1081,9 +1099,14 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 		return removedKeys
 	}
 
-	// cmds[0] corresponds to Del/HDel of redisKey, which we do not report in removedKeys (preserving prior behavior)
+	// Calculate the offset for cmds based on whether we flushed one shard or 256
+	offset := 1
+	if removeHash {
+		offset = 256
+	}
+
 	for i, userKey := range keys {
-		idx := i + 1
+		idx := i + offset
 		if idx >= 0 && idx < len(cmds) {
 			if intCmd, ok := cmds[idx].(*redis.IntCmd); ok {
 				if val, cerr := intCmd.Result(); cerr == nil && val > 0 {

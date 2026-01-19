@@ -13,18 +13,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package backend
+package rediscli
 
 import (
-	"context"
-
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"fmt"
+	"hash/crc32"
 )
 
-// SetUserAccountMapping writes/updates the username → account mapping in Redis.
-func SetUserAccountMapping(ctx context.Context, cfg config.File, redisClient rediscli.Client, username, account string) error {
-	key := rediscli.GetUserHashKey(cfg.GetServer().GetRedis().GetPrefix(), username)
+// GetShardID calculates a 2-digit hex shard ID (00-FF) for a given input string.
+func GetShardID(input string) string {
+	hash := crc32.ChecksumIEEE([]byte(input))
+	return fmt.Sprintf("%02x", hash%256)
+}
 
-	return redisClient.GetWriteHandle().HSet(ctx, key, username, account).Err()
+// GetUserHashKey returns the sharded Redis key for user account mapping.
+func GetUserHashKey(prefix, username string) string {
+	return fmt.Sprintf("%sUSER:{%s}", prefix, GetShardID(username))
+}
+
+// GetBruteForceHashKey returns the sharded Redis key for brute-force tracking.
+func GetBruteForceHashKey(prefix, network string) string {
+	return fmt.Sprintf("%sBRUTEFORCE:{%s}", prefix, GetShardID(network))
 }

@@ -75,9 +75,10 @@ func TestBruteForceLogic(t *testing.T) {
 			Redis:  rediscli.GetClient(),
 		})
 		testNetwork := "192.168.0.0/16"
+		prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
 
 		mock.ExpectHMGet(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
+			rediscli.GetBruteForceHashKey(prefix, testNetwork),
 			testNetwork).SetVal([]interface{}{"testbucket"})
 
 		network := &net.IPNet{}
@@ -102,9 +103,10 @@ func TestBruteForceLogic(t *testing.T) {
 			Redis:  rediscli.GetClient(),
 		})
 		testNetwork := "192.168.0.0/16"
+		prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
 
 		mock.ExpectHMGet(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
+			rediscli.GetBruteForceHashKey(prefix, testNetwork),
 			testNetwork).SetVal([]interface{}{nil})
 
 		network := &net.IPNet{}
@@ -392,12 +394,12 @@ func TestBruteForceLogic(t *testing.T) {
 		rule := config.GetFile().GetBruteForceRules()[0]
 		_, network, _ := net.ParseCIDR("192.168.0.0/16")
 
-		// Add IP address to a pre-result map
+		prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+
+		// Add IP address to a sharded pre-result map
 		mock.ExpectHSet(
-			config.GetFile().
-				GetServer().
-				GetRedis().
-				GetPrefix()+definitions.RedisBruteForceHashKey, network.String(), rule.Name).
+			rediscli.GetBruteForceHashKey(prefix, network.String()),
+			network.String(), rule.Name).
 			SetVal(1)
 
 		// Bucket with account informtion - defer
@@ -644,10 +646,11 @@ func TestBruteForceFilters(t *testing.T) {
 		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "10.0.1.2", bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).WithProtocol("imap")
 		rule := config.GetFile().GetBruteForceRules()[0]
 
-		// Pre-result (cache) lookup uses BRUTEFORCE hash with the matching network key
+		// Pre-result (cache) lookup uses sharded BRUTEFORCE hash with the matching network key
 		_, network, _ := net.ParseCIDR("10.0.1.0/24")
+		prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
 		mock.ExpectHMGet(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
+			rediscli.GetBruteForceHashKey(prefix, network.String()),
 			network.String(),
 		).SetVal([]interface{}{rule.Name})
 
