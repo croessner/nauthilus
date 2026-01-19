@@ -614,7 +614,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 		var roles []string
 
 		// Add user info role if NoAuth is true
-		if auth.(*AuthState).NoAuth {
+		if auth.(*AuthState).Request.NoAuth {
 			roles = append(roles, definitions.RoleUserInfo)
 		}
 

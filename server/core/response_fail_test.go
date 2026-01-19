@@ -44,25 +44,29 @@ func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
 	a := &corepkg.AuthState{
-		GUID:     "guid-fail-json",
-		Service:  definitions.ServJSON,
-		Protocol: config.NewProtocol("imap"),
+		Request: corepkg.AuthRequest{
+			Service:  definitions.ServJSON,
+			Protocol: config.NewProtocol("imap"),
+		},
+		Runtime: corepkg.AuthRuntime{
+			GUID: "guid-fail-json",
+		},
 	}
-	a.SetStatusCodes(a.Service)
+	a.SetStatusCodes(a.Request.Service)
 
 	// Trigger failure path
 	a.AuthFail(ctx)
 
-	if w.Code != a.StatusCodeFail {
-		t.Fatalf("status code = %d, want %d", w.Code, a.StatusCodeFail)
+	if w.Code != a.Runtime.StatusCodeFail {
+		t.Fatalf("status code = %d, want %d", w.Code, a.Runtime.StatusCodeFail)
 	}
 	// Expect Auth-Status header set to default password fail message
 	if got := w.Header().Get("Auth-Status"); got != definitions.PasswordFail {
 		t.Fatalf("Auth-Status header = %q, want %q", got, definitions.PasswordFail)
 	}
 	// Expect session header
-	if got := w.Header().Get("X-Nauthilus-Session"); got != a.GUID {
-		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.GUID)
+	if got := w.Header().Get("X-Nauthilus-Session"); got != a.Runtime.GUID {
+		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.Runtime.GUID)
 	}
 
 	// Body should be JSON null
@@ -84,23 +88,27 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 
 	reason := "Temporary server problem"
 	a := &corepkg.AuthState{
-		GUID:     "guid-tempfail-json",
-		Service:  definitions.ServJSON,
-		Protocol: config.NewProtocol("imap"),
+		Request: corepkg.AuthRequest{
+			Service:  definitions.ServJSON,
+			Protocol: config.NewProtocol("imap"),
+		},
+		Runtime: corepkg.AuthRuntime{
+			GUID: "guid-tempfail-json",
+		},
 	}
-	a.SetStatusCodes(a.Service)
+	a.SetStatusCodes(a.Request.Service)
 
 	a.AuthTempFail(ctx, reason)
 
-	if w.Code != a.StatusCodeInternalError {
-		t.Fatalf("status code = %d, want %d", w.Code, a.StatusCodeInternalError)
+	if w.Code != a.Runtime.StatusCodeInternalError {
+		t.Fatalf("status code = %d, want %d", w.Code, a.Runtime.StatusCodeInternalError)
 	}
 
 	if got := w.Header().Get("Auth-Status"); got != reason {
 		t.Fatalf("Auth-Status header = %q, want %q", got, reason)
 	}
-	if got := w.Header().Get("X-Nauthilus-Session"); got != a.GUID {
-		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.GUID)
+	if got := w.Header().Get("X-Nauthilus-Session"); got != a.Runtime.GUID {
+		t.Fatalf("X-Nauthilus-Session = %q, want %q", got, a.Runtime.GUID)
 	}
 
 	var body map[string]any

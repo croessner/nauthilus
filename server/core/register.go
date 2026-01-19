@@ -238,17 +238,21 @@ func LoginPOST2FAHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	}
 
 	auth := &AuthState{
-		deps:              deps,
-		HTTPClientContext: ctx,
-		HTTPClientRequest: ctx.Request,
-		GUID:              guid,
-		Username:          ctx.PostForm("username"),
-		Password:          ctx.PostForm("password"),
-		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		deps: deps,
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
+			Username:          ctx.PostForm("username"),
+			Password:          ctx.PostForm("password"),
+			Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		},
+		Runtime: AuthRuntime{
+			GUID: guid,
+		},
 	}
 
 	// It might be the second call after 2FA! In this case, there does not exist any username or password.
-	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
+	if auth.Request.Username != "" && !util.ValidateUsername(auth.Request.Username) {
 		HandleErrWithDeps(ctx, errors.ErrInvalidUsername, deps)
 
 		return
@@ -427,7 +431,7 @@ func saveSessionData(ctx *gin.Context, authResult definitions.AuthResult, auth *
 	session.Set(definitions.CookieAuthResult, uint8(authResult))
 	session.Set(definitions.CookieUsername, ctx.PostForm("username"))
 	session.Set(definitions.CookieAccount, account)
-	session.Set(definitions.CookieUserBackend, uint8(auth.SourcePassDBBackend))
+	session.Set(definitions.CookieUserBackend, uint8(auth.Runtime.SourcePassDBBackend))
 
 	if err := session.Save(); err != nil {
 		return err
@@ -445,7 +449,7 @@ func saveSessionData(ctx *gin.Context, authResult definitions.AuthResult, auth *
 func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState, deps AuthDeps) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	auth.ClientIP = ctx.GetString(definitions.CtxClientIPKey)
+	auth.Request.ClientIP = ctx.GetString(definitions.CtxClientIPKey)
 
 	auth.UpdateBruteForceBucketsCounter(ctx)
 
@@ -732,12 +736,16 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	username := session.Get(definitions.CookieUsername).(string)
 
 	auth := &AuthState{
-		deps:              deps,
-		HTTPClientContext: ctx,
-		HTTPClientRequest: ctx.Request,
-		GUID:              guid,
-		Username:          username,
-		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		deps: deps,
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
+			Username:          username,
+			Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
+		},
+		Runtime: AuthRuntime{
+			GUID: guid,
+		},
 	}
 
 	sourceBackend := session.Get(definitions.CookieUserBackend)

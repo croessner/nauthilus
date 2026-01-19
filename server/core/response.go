@@ -129,7 +129,7 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	a.ResetLoginAttemptsOnSuccess()
 	setCommonHeaders(ctx, a)
 
-	switch a.Service {
+	switch a.Request.Service {
 	case definitions.ServNginx:
 		setNginxHeaders(ctx, a)
 	case definitions.ServHeader:
@@ -141,8 +141,8 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	handleLogging(ctx, a)
 
 	// Only authentication attempts
-	if !(a.NoAuth || a.ListAccounts) {
-		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
+	if !(a.Request.NoAuth || a.Request.ListAccounts) {
+		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
 		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
 
 		if !getDefaultConfigFile().HasFeature(definitions.FeatureBruteForce) {
@@ -160,18 +160,18 @@ func (globalResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
 	a := view.auth
 	ctx.Header("Auth-Status", reason)
-	ctx.Header("X-Nauthilus-Session", a.GUID)
+	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 	a.setSMPTHeaders(ctx)
 
-	a.StatusMessage = reason
+	a.Runtime.StatusMessage = reason
 
-	if a.Service == definitions.ServJSON {
-		ctx.JSON(a.StatusCodeInternalError, gin.H{"error": reason})
+	if a.Request.Service == definitions.ServJSON {
+		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
 
 		return
 	}
 
-	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
+	ctx.String(a.Runtime.StatusCodeInternalError, a.Runtime.StatusMessage)
 
 	keyvals := getLogSlice()
 
@@ -209,7 +209,7 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	a.ResetLoginAttemptsOnSuccess()
 	setCommonHeaders(ctx, a)
 
-	switch a.Service {
+	switch a.Request.Service {
 	case definitions.ServNginx:
 		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Env, w.deps.Logger, ctx, a)
 	case definitions.ServHeader:
@@ -221,8 +221,8 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	handleLogging(ctx, a)
 
 	// Only authentication attempts
-	if !(a.NoAuth || a.ListAccounts) {
-		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
+	if !(a.Request.NoAuth || a.Request.ListAccounts) {
+		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
 		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
 
 		if !w.deps.Cfg.HasFeature(definitions.FeatureBruteForce) {
@@ -242,18 +242,18 @@ func (w depResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
 	a := view.auth
 	ctx.Header("Auth-Status", reason)
-	ctx.Header("X-Nauthilus-Session", a.GUID)
+	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 	a.setSMPTHeaders(ctx)
 
-	a.StatusMessage = reason
+	a.Runtime.StatusMessage = reason
 
-	if a.Service == definitions.ServJSON {
-		ctx.JSON(a.StatusCodeInternalError, gin.H{"error": reason})
+	if a.Request.Service == definitions.ServJSON {
+		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
 
 		return
 	}
 
-	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
+	ctx.String(a.Runtime.StatusCodeInternalError, a.Runtime.StatusMessage)
 
 	keyvals := getLogSlice()
 
@@ -280,10 +280,10 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 
 	resp := response{
 		OK:           true,
-		AccountField: auth.AccountField,
-		TOTPSecret:   auth.TOTPSecretField,
-		Backend:      int(auth.SourcePassDBBackend),
-		Attributes:   auth.Attributes,
+		AccountField: auth.Runtime.AccountField,
+		TOTPSecret:   auth.Runtime.TOTPSecretField,
+		Backend:      int(auth.Runtime.SourcePassDBBackend),
+		Attributes:   auth.Attributes.Attributes,
 	}
 
 	// Use stable JSON encoding to avoid parallel_mismatched in client tests
@@ -295,5 +295,5 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 		return
 	}
 
-	ctx.Data(auth.StatusCodeOK, "application/json; charset=utf-8", b)
+	ctx.Data(auth.Runtime.StatusCodeOK, "application/json; charset=utf-8", b)
 }

@@ -118,20 +118,20 @@ func NewConfigLoadHandler(cfg config.File, logger *slog.Logger, redisClient redi
 func (a *AuthState) handleMasterUserMode() string {
 	cfg := a.deps.Cfg
 	if cfg.GetServer().GetMasterUser().IsEnabled() {
-		if strings.Count(a.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
-			parts := strings.Split(a.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
+		if strings.Count(a.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(a.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
 
 			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
-				return a.Username
+				return a.Request.Username
 			}
 
-			if !a.MasterUserMode {
-				a.MasterUserMode = true
+			if !a.Runtime.MasterUserMode {
+				a.Runtime.MasterUserMode = true
 
 				// Return master user
 				return parts[1]
 			} else {
-				a.MasterUserMode = false
+				a.Runtime.MasterUserMode = false
 
 				// Return real user
 				return parts[0]
@@ -139,12 +139,12 @@ func (a *AuthState) handleMasterUserMode() string {
 		}
 	}
 
-	return a.Username
+	return a.Request.Username
 }
 
 // HandleAuthentication handles the authentication logic based on the selected service type.
 func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
-	if a.ListAccounts {
+	if a.Request.ListAccounts {
 		allAccountsList := a.ListUserAccounts()
 
 		acceptHeader := ctx.GetHeader("Accept")
@@ -165,7 +165,7 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 			ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
 		}
 
-		level.Info(a.logger()).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMode, ctx.Query("mode"))
+		level.Info(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMode, ctx.Query("mode"))
 	} else {
 		if abort := a.ProcessFeatures(ctx); !abort {
 			a.ProcessAuthentication(ctx)
@@ -176,11 +176,11 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 // ProcessFeatures handles the processing of authentication-related features for a given context.
 // It determines the action to take based on various authentication results and applies the necessary response.
 func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
-	if a.Service == definitions.ServBasic {
+	if a.Request.Service == definitions.ServBasic {
 		var httpBasicAuthOk bool
 
 		// Decode HTTP basic Auth
-		a.Username, a.Password, httpBasicAuthOk = ctx.Request.BasicAuth()
+		a.Request.Username, a.Request.Password, httpBasicAuthOk = ctx.Request.BasicAuth()
 		if !httpBasicAuthOk {
 			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
@@ -188,22 +188,22 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 			return true
 		}
 
-		if a.Username == "" {
+		if a.Request.Username == "" {
 			ctx.Error(errors.ErrEmptyUsername)
-		} else if !util.ValidateUsername(a.Username) {
+		} else if !util.ValidateUsername(a.Request.Username) {
 			ctx.Error(errors.ErrInvalidUsername)
 		}
 
-		if a.Password == "" {
+		if a.Request.Password == "" {
 			ctx.Error(errors.ErrEmptyPassword)
 		}
 	}
 
-	if a.Service == definitions.ServOryHydra {
+	if a.Request.Service == definitions.ServOryHydra {
 		a.handleMasterUserMode()
 	}
 
-	if !(a.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
+	if !(a.Request.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
 		switch a.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
 			result := GetPassDBResultFromPool()
@@ -231,7 +231,7 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 
 			return true
 		default:
-			ctx.AbortWithStatus(a.StatusCodeInternalError)
+			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
 
 			return true
 		}
@@ -242,14 +242,14 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 
 // ProcessAuthentication handles the authentication logic for all services.
 func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
-	if a.Service == definitions.ServBasic {
+	if a.Request.Service == definitions.ServBasic {
 		var httpBasicAuthOk bool
 
 		if a.deps.Cfg.GetServer().GetBasicAuth().IsEnabled() {
 			if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug {
 				level.Debug(a.deps.Logger).Log(
-					definitions.LogKeyGUID, a.GUID,
-					definitions.LogKeyUsername, a.Username,
+					definitions.LogKeyGUID, a.Runtime.GUID,
+					definitions.LogKeyUsername, a.Request.Username,
 					definitions.LogKeyMsg, "Processing HTTP Basic Auth",
 				)
 			}
@@ -266,19 +266,19 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 		return
 	}
 
-	if a.Service == definitions.ServOryHydra {
+	if a.Request.Service == definitions.ServOryHydra {
 		a.handleMasterUserMode()
 	}
 
 	switch a.HandlePassword(ctx) {
 	case definitions.AuthResultOK:
 		if a.deps.Tolerate != nil {
-			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.ClientIP, a.Username, true)
+			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, true)
 		}
 		a.AuthOK(ctx)
 	case definitions.AuthResultFail:
 		if a.deps.Tolerate != nil {
-			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.ClientIP, a.Username, false)
+			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, false)
 		}
 		a.AuthFail(ctx)
 		ctx.Abort()
@@ -292,7 +292,7 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 		a.AuthFail(ctx)
 		ctx.Abort()
 	default:
-		ctx.AbortWithStatus(a.StatusCodeInternalError)
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
 	}
 }
 

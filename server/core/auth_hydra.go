@@ -45,7 +45,7 @@ func (a *AuthState) processClaim(claimName string, claimValue string, claims map
 
 		a.logger().Warn(
 			fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
-			definitions.LogKeyGUID, a.GUID,
+			definitions.LogKeyGUID, a.Runtime.GUID,
 		)
 	}
 }
@@ -68,7 +68,7 @@ func applyClaim(claimKey string, attributeKey string, auth *AuthState, claims ma
 	if !success {
 		auth.logger().Warn(
 			fmt.Sprintf("Claim '%s' not applied (no value for attribute '%s')", claimKey, attributeKey),
-			definitions.LogKeyGUID, auth.GUID,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
 		)
 	}
 }
@@ -181,7 +181,7 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 				a.Cfg(),
 				a.Logger(),
 				definitions.DbgAuth,
-				definitions.LogKeyGUID, a.GUID,
+				definitions.LogKeyGUID, a.Runtime.GUID,
 				"groups", fmt.Sprintf("%#v", value),
 			)
 
@@ -198,7 +198,7 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 		if !valueApplied {
 			a.logger().Warn(
 				fmt.Sprintf("Claim '%s' malformed or not returned from Database", definitions.ClaimGroups),
-				definitions.LogKeyGUID, a.GUID,
+				definitions.LogKeyGUID, a.Runtime.GUID,
 			)
 		}
 	}
@@ -231,7 +231,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 						a.Cfg(),
 						a.Logger(),
 						definitions.DbgAuth,
-						definitions.LogKeyGUID, a.GUID,
+						definitions.LogKeyGUID, a.Runtime.GUID,
 						"custom_claim_name", customClaimName,
 						"custom_claim_type", customClaimType,
 						"value", fmt.Sprintf("%#v", value),
@@ -269,7 +269,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 					default:
 						a.logger().Error(
 							"Unknown claim type.",
-							definitions.LogKeyGUID, a.GUID,
+							definitions.LogKeyGUID, a.Runtime.GUID,
 							"custom_claim_name", customClaimName,
 							definitions.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
 						)
@@ -313,7 +313,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[str
 					a.Cfg(),
 					a.Logger(),
 					definitions.DbgAuth,
-					definitions.LogKeyGUID, a.GUID,
+					definitions.LogKeyGUID, a.Runtime.GUID,
 					definitions.LogKeyMsg, fmt.Sprintf("Found client_id: %+v", client),
 				)
 
@@ -335,7 +335,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[str
 			if value, okay = a.GetAttribute(client.Subject); !okay {
 				a.logger().Info(
 					fmt.Sprintf("SearchAttributes did not contain requested field '%s'", client.Subject),
-					definitions.LogKeyGUID, a.GUID,
+					definitions.LogKeyGUID, a.Runtime.GUID,
 					"attributes", func() string {
 						var attributes []string
 
@@ -354,11 +354,11 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[str
 		}
 
 		if !clientIDFound {
-			a.logger().Warn("No client_id section found", definitions.LogKeyGUID, a.GUID)
+			a.logger().Warn("No client_id section found", definitions.LogKeyGUID, a.Runtime.GUID)
 		}
 	} else {
 		// Default result, if no oauth2/clients definition is found
-		subject = a.AccountField
+		subject = a.Runtime.AccountField
 	}
 
 	return subject, claims

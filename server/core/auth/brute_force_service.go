@@ -41,30 +41,30 @@ func (DefaultBruteForceService) WaitDelay(maxWaitDelay, loginAttempt uint) int {
 func (DefaultBruteForceService) LoadHistories(ctx *gin.Context, auth *core.AuthState, accountName string) {
 	var bm bruteforce.BucketManager
 
-	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), auth.GUID, auth.ClientIP, bruteforce.BucketManagerDeps{
+	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), auth.Runtime.GUID, auth.Request.ClientIP, bruteforce.BucketManagerDeps{
 		Cfg:      auth.Cfg(),
 		Logger:   auth.Logger(),
 		Redis:    auth.Redis(),
-		Tolerate: auth.Tolerate,
+		Tolerate: auth.Security.Tolerate,
 	}).
-		WithUsername(auth.Username).
-		WithPassword(auth.Password).
+		WithUsername(auth.Request.Username).
+		WithPassword(auth.Request.Password).
 		WithAccountName(accountName)
 
 	// Set the protocol if available
-	if auth.Protocol != nil && auth.Protocol.Get() != "" {
-		bm = bm.WithProtocol(auth.Protocol.Get())
+	if auth.Request.Protocol != nil && auth.Request.Protocol.Get() != "" {
+		bm = bm.WithProtocol(auth.Request.Protocol.Get())
 	}
 
 	// Set the OIDC Client ID if available
-	if auth.OIDCCID != "" {
-		bm = bm.WithOIDCCID(auth.OIDCCID)
+	if auth.Request.OIDCCID != "" {
+		bm = bm.WithOIDCCID(auth.Request.OIDCCID)
 	}
 
 	bm.LoadAllPasswordHistories()
 
 	// Synchronize with centralized login attempt manager; bucket authority overrides header hints.
 	auth.SyncLoginAttemptsFromBucket(bm.GetLoginAttempts())
-	auth.PasswordsAccountSeen = bm.GetPasswordsAccountSeen()
-	auth.PasswordsTotalSeen = bm.GetPasswordsTotalSeen()
+	auth.Security.PasswordsAccountSeen = bm.GetPasswordsAccountSeen()
+	auth.Security.PasswordsTotalSeen = bm.GetPasswordsTotalSeen()
 }

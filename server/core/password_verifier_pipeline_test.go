@@ -43,7 +43,7 @@ func TestVerifyPasswordPipeline_AllConfigErrors(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 
-	a := &AuthState{GUID: "cfg-err"}
+	a := &AuthState{Runtime: AuthRuntime{GUID: "cfg-err"}}
 
 	b0 := &PassDBMap{backend: definitions.BackendLDAP, fn: func(a *AuthState) (*PassDBResult, error) { return nil, serr.ErrLDAPConfig }}
 	b1 := &PassDBMap{backend: definitions.BackendLua, fn: func(a *AuthState) (*PassDBResult, error) { return nil, serr.ErrLuaConfig }}
@@ -59,7 +59,7 @@ func TestVerifyPasswordPipeline_NoBackends(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 
-	a := &AuthState{GUID: "no-backends"}
+	a := &AuthState{Runtime: AuthRuntime{GUID: "no-backends"}}
 	_, err := VerifyPasswordPipeline(ctx, a, []*PassDBMap{})
 	if !stderrors.Is(err, serr.ErrAllBackendConfigError) {
 		t.Fatalf("expected ErrAllBackendConfigError for no backends, got %v", err)

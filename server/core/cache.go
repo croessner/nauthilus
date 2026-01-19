@@ -33,9 +33,9 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	// Root span for cache backend lookup
 	tr := monittrace.New("nauthilus/cache_backend")
 	ctx, sp := tr.Start(auth.Ctx(), "cache.passdb",
-		attribute.String("service", auth.Service),
-		attribute.String("username", auth.Username),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = ctx
@@ -63,7 +63,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	if accountName != "" {
-		cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Channel(), auth.Protocol.Get(), definitions.CacheAll)
+		cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Channel(), auth.Request.Protocol.Get(), definitions.CacheAll)
 
 		for _, cacheName := range cacheNames.GetStringSlice() {
 			// Child span per cache name read attempt
@@ -110,7 +110,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			passDBResult.Backend = ppc.Backend
 			passDBResult.Attributes = ppc.Attributes
 
-			if auth.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(auth.Password)) {
+			if auth.Request.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(auth.Request.Password)) {
 				passDBResult.Authenticated = true
 			}
 

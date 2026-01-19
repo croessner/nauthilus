@@ -64,7 +64,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	}
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
-	ipAddress := net.ParseIP(a.ClientIP)
+	ipAddress := net.ParseIP(a.Request.ClientIP)
 	if ipAddress.IsLoopback() {
 		return false, "", nil
 	}
@@ -74,7 +74,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 			return false, "", nil
 		}
 
-		tmp := strings.Split(a.ClientIP, ".")
+		tmp := strings.Split(a.Request.ClientIP, ".")
 		tmp = []string{tmp[3], tmp[2], tmp[1], tmp[0]}
 		reverseIPAddr = strings.Join(tmp, ".")
 	} else {
@@ -82,7 +82,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 			return false, "", nil
 		}
 
-		tmp, err := netaddr.ParseIPv6(a.ClientIP) //nolint:govet // Ignore
+		tmp, err := netaddr.ParseIPv6(a.Request.ClientIP) //nolint:govet // Ignore
 		if err != nil {
 			return false, "", err
 		}
@@ -118,7 +118,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 		semconv.PeerService("dns"),
 		attribute.String("dns.question.name", query),
 		attribute.String("dns.question.type", func() string {
-			if strings.Contains(a.ClientIP, ":") {
+			if strings.Contains(a.Request.ClientIP, ":") {
 				return "AAAA"
 			}
 
@@ -175,7 +175,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, dnsResolverErr *atomic.Bool) {
 	isListed, rblName, rblErr := a.isListed(ctx, rbl)
 	if rblErr != nil {
-		handleRBLError(ctx.Request.Context(), a.Cfg(), a.Logger(), a.GUID, rblErr, rbl, dnsResolverErr)
+		handleRBLError(ctx.Request.Context(), a.Cfg(), a.Logger(), a.Runtime.GUID, rblErr, rbl, dnsResolverErr)
 		handleRBLOutcome(rblChan, 0)
 
 		return
@@ -220,8 +220,8 @@ func logMatchedRBL(auth *AuthState, rblName string, weight int) {
 		return
 	}
 
-	auth.AdditionalLogs = append(auth.AdditionalLogs, "rbl "+rblName)
-	auth.AdditionalLogs = append(auth.AdditionalLogs, weight)
+	auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, "rbl "+rblName)
+	auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, weight)
 }
 
 // checkRBLs checks the remote client IP address against a list of realtime blocklists.

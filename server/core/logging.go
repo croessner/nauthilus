@@ -61,7 +61,7 @@ func handleLogging(ctx *gin.Context, auth *AuthState) {
 	defer putLogSlice(keyvals)
 
 	status := func() string {
-		if !auth.NoAuth {
+		if !auth.Request.NoAuth {
 			return "ok"
 		}
 
@@ -99,54 +99,54 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 }
 
 func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint string) []any {
-	if a.StatusMessage == "" {
-		a.StatusMessage = "OK"
+	if a.Runtime.StatusMessage == "" {
+		a.Runtime.StatusMessage = "OK"
 	}
 
 	mode := "auth"
-	if a.NoAuth {
+	if a.Request.NoAuth {
 		mode = "no-auth"
 	}
 
 	backendName := definitions.NotAvailable
-	if a.BackendName != "" {
-		backendName = a.BackendName
+	if a.Runtime.BackendName != "" {
+		backendName = a.Runtime.BackendName
 	}
 
 	keyvals = append(keyvals,
-		definitions.LogKeyGUID, util.WithNotAvailable(a.GUID),
+		definitions.LogKeyGUID, util.WithNotAvailable(a.Runtime.GUID),
 		definitions.LogKeyMode, mode,
 		definitions.LogKeyBackendName, backendName,
-		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
-		definitions.LogKeyOIDCCID, util.WithNotAvailable(a.OIDCCID),
-		definitions.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
-		definitions.LogKeyPort, util.WithNotAvailable(a.XPort),
-		definitions.LogKeyClientIP, util.WithNotAvailable(a.ClientIP),
-		definitions.LogKeyClientPort, util.WithNotAvailable(a.XClientPort),
-		definitions.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
-		definitions.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
-		definitions.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
-		definitions.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
-		definitions.LogKeyUsername, util.WithNotAvailable(a.Username),
-		definitions.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.UsedPassDBBackend.String()),
+		definitions.LogKeyProtocol, util.WithNotAvailable(a.Request.Protocol.String()),
+		definitions.LogKeyOIDCCID, util.WithNotAvailable(a.Request.OIDCCID),
+		definitions.LogKeyLocalIP, util.WithNotAvailable(a.Request.XLocalIP),
+		definitions.LogKeyPort, util.WithNotAvailable(a.Request.XPort),
+		definitions.LogKeyClientIP, util.WithNotAvailable(a.Request.ClientIP),
+		definitions.LogKeyClientPort, util.WithNotAvailable(a.Request.XClientPort),
+		definitions.LogKeyClientHost, util.WithNotAvailable(a.Request.ClientHost),
+		definitions.LogKeyTLSSecure, util.WithNotAvailable(a.Request.XSSLProtocol),
+		definitions.LogKeyTLSCipher, util.WithNotAvailable(a.Request.XSSLCipher),
+		definitions.LogKeyAuthMethod, util.WithNotAvailable(a.Request.Method),
+		definitions.LogKeyUsername, util.WithNotAvailable(a.Request.Username),
+		definitions.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.Runtime.UsedPassDBBackend.String()),
 		// current_password_retries should mean: number of failed attempts (FailCount semantics)
 		definitions.LogKeyLoginAttempts, a.GetFailCount(),
-		definitions.LogKeyPasswordsAccountSeen, a.PasswordsAccountSeen,
-		definitions.LogKeyPasswordsTotalSeen, a.PasswordsTotalSeen,
-		definitions.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
-		definitions.LogKeyClientID, util.WithNotAvailable(a.XClientID),
-		definitions.LogKeyBruteForceName, util.WithNotAvailable(a.BruteForceName),
-		definitions.LogKeyFeatureName, util.WithNotAvailable(a.FeatureName),
-		definitions.LogKeyStatusMessage, util.WithNotAvailable(a.StatusMessage),
+		definitions.LogKeyPasswordsAccountSeen, a.Security.PasswordsAccountSeen,
+		definitions.LogKeyPasswordsTotalSeen, a.Security.PasswordsTotalSeen,
+		definitions.LogKeyUserAgent, util.WithNotAvailable(a.Request.UserAgent),
+		definitions.LogKeyClientID, util.WithNotAvailable(a.Request.XClientID),
+		definitions.LogKeyBruteForceName, util.WithNotAvailable(a.Security.BruteForceName),
+		definitions.LogKeyFeatureName, util.WithNotAvailable(a.Runtime.FeatureName),
+		definitions.LogKeyStatusMessage, util.WithNotAvailable(a.Runtime.StatusMessage),
 		definitions.LogKeyUriPath, endpoint,
 		definitions.LogKeyStatus, util.WithNotAvailable(status),
-		definitions.LogKeyAuthorized, a.Authorized,
-		definitions.LogKeyAuthenticatedBool, a.Authenticated,
-		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(a.StartTime)),
+		definitions.LogKeyAuthorized, a.Runtime.Authorized,
+		definitions.LogKeyAuthenticatedBool, a.Runtime.Authenticated,
+		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(a.Runtime.StartTime)),
 	)
 
-	if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
-		keyvals = append(keyvals, a.AdditionalLogs...)
+	if len(a.Runtime.AdditionalLogs) > 0 && len(a.Runtime.AdditionalLogs)%2 == 0 {
+		keyvals = append(keyvals, a.Runtime.AdditionalLogs...)
 	}
 
 	return keyvals
@@ -159,26 +159,26 @@ func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
 
 func (a *AuthState) fillLogLineProcessingTemplate(keyvals []any, endpoint string) []any {
 	mode := "auth"
-	if a.NoAuth {
+	if a.Request.NoAuth {
 		mode = "no-auth"
 	}
 
 	keyvals = append(keyvals,
-		definitions.LogKeyGUID, util.WithNotAvailable(a.GUID),
+		definitions.LogKeyGUID, util.WithNotAvailable(a.Runtime.GUID),
 		definitions.LogKeyMode, mode,
-		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
-		definitions.LogKeyOIDCCID, util.WithNotAvailable(a.OIDCCID),
-		definitions.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
-		definitions.LogKeyPort, util.WithNotAvailable(a.XPort),
-		definitions.LogKeyClientIP, util.WithNotAvailable(a.ClientIP),
-		definitions.LogKeyClientPort, util.WithNotAvailable(a.XClientPort),
-		definitions.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
-		definitions.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
-		definitions.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
-		definitions.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
-		definitions.LogKeyUsername, util.WithNotAvailable(a.Username),
-		definitions.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
-		definitions.LogKeyClientID, util.WithNotAvailable(a.XClientID),
+		definitions.LogKeyProtocol, util.WithNotAvailable(a.Request.Protocol.String()),
+		definitions.LogKeyOIDCCID, util.WithNotAvailable(a.Request.OIDCCID),
+		definitions.LogKeyLocalIP, util.WithNotAvailable(a.Request.XLocalIP),
+		definitions.LogKeyPort, util.WithNotAvailable(a.Request.XPort),
+		definitions.LogKeyClientIP, util.WithNotAvailable(a.Request.ClientIP),
+		definitions.LogKeyClientPort, util.WithNotAvailable(a.Request.XClientPort),
+		definitions.LogKeyClientHost, util.WithNotAvailable(a.Request.ClientHost),
+		definitions.LogKeyTLSSecure, util.WithNotAvailable(a.Request.XSSLProtocol),
+		definitions.LogKeyTLSCipher, util.WithNotAvailable(a.Request.XSSLCipher),
+		definitions.LogKeyAuthMethod, util.WithNotAvailable(a.Request.Method),
+		definitions.LogKeyUsername, util.WithNotAvailable(a.Request.Username),
+		definitions.LogKeyUserAgent, util.WithNotAvailable(a.Request.UserAgent),
+		definitions.LogKeyClientID, util.WithNotAvailable(a.Request.XClientID),
 		definitions.LogKeyUriPath, endpoint,
 	)
 

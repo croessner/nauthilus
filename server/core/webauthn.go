@@ -35,8 +35,8 @@ import (
 
 var webAuthn *webauthn.WebAuthn
 
-// json is a package-level variable for jsoniter with standard configuration
-var json = jsoniter.ConfigFastest
+// jsonIter is a package-level variable for jsoniter with standard configuration
+var jsonIter = jsoniter.ConfigFastest
 
 // getUser retrieves a User object with all their current credentials. This is Database depended. Which backend was used
 // can be gotten from the session cookie.
@@ -53,7 +53,7 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	_ = userName
 	_ = displayName
 
-	session := sessions.Default(a.HTTPClientContext)
+	session := sessions.Default(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
@@ -247,7 +247,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		// Serialize session data and save it to the encrypted session cookie.
-		sessionDataJSON, err := json.Marshal(*sessionData)
+		sessionDataJSON, err := jsonIter.Marshal(*sessionData)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
 			sessionCleaner(ctx)
@@ -349,7 +349,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			if value, assertOkay := cookieValue.([]byte); assertOkay {
 				sessionData = &webauthn.SessionData{}
 
-				if err := json.Unmarshal(value, sessionData); err != nil {
+				if err := jsonIter.Unmarshal(value, sessionData); err != nil {
 					sessionCleaner(ctx)
 					ctx.JSON(http.StatusInternalServerError, err)
 

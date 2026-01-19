@@ -77,14 +77,14 @@ func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, err
 			listed, rblName, rblErr := core.RBLIsListed(ctx, view, &r)
 			if rblErr != nil {
 				if strings.Contains(rblErr.Error(), "no such host") {
-					util.DebugModuleWithCfg(ctx.Request.Context(), auth.Cfg(), auth.Logger(), definitions.DbgRBL, definitions.LogKeyGUID, auth.GUID, definitions.LogKeyMsg, rblErr)
+					util.DebugModuleWithCfg(ctx.Request.Context(), auth.Cfg(), auth.Logger(), definitions.DbgRBL, definitions.LogKeyGUID, auth.Runtime.GUID, definitions.LogKeyMsg, rblErr)
 				} else {
 					if !r.IsAllowFailure() {
 						dnsResolverErr.Store(true)
 					}
 
 					level.Error(auth.Logger()).Log(
-						definitions.LogKeyGUID, auth.GUID,
+						definitions.LogKeyGUID, auth.Runtime.GUID,
 						definitions.LogKeyMsg, "RBL check failed",
 						definitions.LogKeyError, rblErr,
 					)
@@ -97,8 +97,8 @@ func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, err
 
 			if listed {
 				stats.GetMetrics().GetRblRejected().WithLabelValues(rblName).Inc()
-				auth.AdditionalLogs = append(auth.AdditionalLogs, "rbl "+rblName)
-				auth.AdditionalLogs = append(auth.AdditionalLogs, r.Weight)
+				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, "rbl "+rblName)
+				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, r.Weight)
 				rblChan <- r.Weight
 
 				return

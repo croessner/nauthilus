@@ -53,9 +53,9 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	tr := monittrace.New("nauthilus/lua_backend")
 	lctx, lsp := tr.Start(auth.Ctx(), "lua.passdb",
 		attribute.String("backend_name", lm.backendName),
-		attribute.String("service", auth.Service),
-		attribute.String("username", auth.Username),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = lctx
@@ -73,7 +73,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		defer stopTimer()
 	}
 
-	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Request.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		if err != nil {
 			lsp.RecordError(err)
 		}
@@ -93,45 +93,45 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.Repeating = false     // unavailable
 	commonRequest.UserFound = false     // set by backend_result
 	commonRequest.Authenticated = false // set by backend_result
-	commonRequest.NoAuth = auth.NoAuth
+	commonRequest.NoAuth = auth.Request.NoAuth
 	commonRequest.BruteForceCounter = 0 // unavailable
-	commonRequest.Service = auth.Service
-	commonRequest.Session = auth.GUID
-	commonRequest.ClientIP = auth.ClientIP
-	commonRequest.ClientPort = auth.XClientPort
+	commonRequest.Service = auth.Request.Service
+	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ClientIP = auth.Request.ClientIP
+	commonRequest.ClientPort = auth.Request.XClientPort
 	commonRequest.ClientNet = "" // unavailable
-	commonRequest.ClientHost = auth.ClientHost
-	commonRequest.ClientID = auth.XClientID
-	commonRequest.UserAgent = auth.UserAgent
-	commonRequest.LocalIP = auth.XLocalIP
-	commonRequest.LocalPort = auth.XPort
-	commonRequest.Username = auth.Username
+	commonRequest.ClientHost = auth.Request.ClientHost
+	commonRequest.ClientID = auth.Request.XClientID
+	commonRequest.UserAgent = auth.Request.UserAgent
+	commonRequest.LocalIP = auth.Request.XLocalIP
+	commonRequest.LocalPort = auth.Request.XPort
+	commonRequest.Username = auth.Request.Username
 	commonRequest.Account = ""      // set by nauthilus_backend_result
 	commonRequest.AccountField = "" // set by nauthilus_backend_result
 	commonRequest.UniqueUserID = "" // set by nauthilus_backend_result
 	commonRequest.DisplayName = ""  // set by nauthilus_backend_result
-	commonRequest.Password = auth.Password
-	commonRequest.Protocol = auth.Protocol.Get()
-	commonRequest.OIDCCID = auth.OIDCCID
+	commonRequest.Password = auth.Request.Password
+	commonRequest.Protocol = auth.Request.Protocol.Get()
+	commonRequest.OIDCCID = auth.Request.OIDCCID
 	commonRequest.BruteForceName = "" // unavailable
 	commonRequest.FeatureName = ""    // unavailable
-	commonRequest.StatusMessage = &auth.StatusMessage
-	commonRequest.XSSL = auth.XSSL
-	commonRequest.XSSLSessionID = auth.XSSLSessionID
-	commonRequest.XSSLClientVerify = auth.XSSLClientVerify
-	commonRequest.XSSLClientDN = auth.XSSLClientDN
-	commonRequest.XSSLClientCN = auth.XSSLClientCN
-	commonRequest.XSSLIssuer = auth.XSSLIssuer
-	commonRequest.XSSLClientNotBefore = auth.XSSLClientNotBefore
-	commonRequest.XSSLClientNotAfter = auth.XSSLClientNotAfter
-	commonRequest.XSSLSubjectDN = auth.XSSLSubjectDN
-	commonRequest.XSSLIssuerDN = auth.XSSLIssuerDN
-	commonRequest.XSSLClientSubjectDN = auth.XSSLClientSubjectDN
-	commonRequest.XSSLClientIssuerDN = auth.XSSLClientIssuerDN
-	commonRequest.XSSLProtocol = auth.XSSLProtocol
-	commonRequest.XSSLCipher = auth.XSSLCipher
-	commonRequest.SSLSerial = auth.SSLSerial
-	commonRequest.SSLFingerprint = auth.SSLFingerprint
+	commonRequest.StatusMessage = &auth.Runtime.StatusMessage
+	commonRequest.XSSL = auth.Request.XSSL
+	commonRequest.XSSLSessionID = auth.Request.XSSLSessionID
+	commonRequest.XSSLClientVerify = auth.Request.XSSLClientVerify
+	commonRequest.XSSLClientDN = auth.Request.XSSLClientDN
+	commonRequest.XSSLClientCN = auth.Request.XSSLClientCN
+	commonRequest.XSSLIssuer = auth.Request.XSSLIssuer
+	commonRequest.XSSLClientNotBefore = auth.Request.XSSLClientNotBefore
+	commonRequest.XSSLClientNotAfter = auth.Request.XSSLClientNotAfter
+	commonRequest.XSSLSubjectDN = auth.Request.XSSLSubjectDN
+	commonRequest.XSSLIssuerDN = auth.Request.XSSLIssuerDN
+	commonRequest.XSSLClientSubjectDN = auth.Request.XSSLClientSubjectDN
+	commonRequest.XSSLClientIssuerDN = auth.Request.XSSLClientIssuerDN
+	commonRequest.XSSLProtocol = auth.Request.XSSLProtocol
+	commonRequest.XSSLCipher = auth.Request.XSSLCipher
+	commonRequest.SSLSerial = auth.Request.SSLSerial
+	commonRequest.SSLFingerprint = auth.Request.SSLFingerprint
 
 	// Derive a timeout context for Lua backend work
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
@@ -141,22 +141,22 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandPassDB,
 		BackendName:       lm.backendName,
-		Service:           auth.Service,
-		Protocol:          auth.Protocol,
-		Context:           auth.Context,
+		Service:           auth.Request.Service,
+		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
 		LuaReplyChan:      luaReplyChan,
-		HTTPClientRequest: auth.HTTPClientRequest,
+		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		CommonRequest:     commonRequest,
 	}
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
 
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
 
@@ -167,13 +167,13 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 	if luaBackendResult.Logs != nil && len(*luaBackendResult.Logs) > 0 {
 		// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
-		additionalLogsLen := len(auth.AdditionalLogs)
+		additionalLogsLen := len(auth.Runtime.AdditionalLogs)
 		newAdditionalLogs := make([]any, additionalLogsLen+len(*luaBackendResult.Logs))
-		copy(newAdditionalLogs, auth.AdditionalLogs)
-		auth.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
+		copy(newAdditionalLogs, auth.Runtime.AdditionalLogs)
+		auth.Runtime.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
 
 		for index := range *luaBackendResult.Logs {
-			auth.AdditionalLogs = append(auth.AdditionalLogs, (*luaBackendResult.Logs)[index])
+			auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, (*luaBackendResult.Logs)[index])
 		}
 	}
 
@@ -185,8 +185,8 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		return
 	}
 
-	if statusMessage := luaRequest.StatusMessage; *statusMessage != auth.StatusMessage {
-		auth.StatusMessage = *statusMessage
+	if statusMessage := luaRequest.StatusMessage; *statusMessage != auth.Runtime.StatusMessage {
+		auth.Runtime.StatusMessage = *statusMessage
 	}
 
 	accountField := luaBackendResult.AccountField
@@ -208,7 +208,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 	// Update the authentication cache if the user is authenticated
 	if passDBResult.Authenticated {
-		localcache.AuthCache.Set(auth.Username, true)
+		localcache.AuthCache.Set(auth.Request.Username, true)
 	}
 
 	if luaBackendResult.UserFound {
@@ -259,8 +259,8 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	tr := monittrace.New("nauthilus/lua_backend")
 	actx, asp := tr.Start(auth.Ctx(), "lua.accountdb",
 		attribute.String("backend_name", lm.backendName),
-		attribute.String("service", auth.Service),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = actx
@@ -278,7 +278,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		defer stopTimer()
 	}
 
-	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Request.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		if err != nil {
 			asp.RecordError(err)
 		}
@@ -293,13 +293,13 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 
 	// Set the fields
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Service = auth.Service
-	commonRequest.Session = auth.GUID
-	commonRequest.ClientIP = auth.ClientIP
-	commonRequest.ClientPort = auth.XClientPort
-	commonRequest.LocalIP = auth.XLocalIP
-	commonRequest.LocalPort = auth.XPort
-	commonRequest.OIDCCID = auth.OIDCCID
+	commonRequest.Service = auth.Request.Service
+	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ClientIP = auth.Request.ClientIP
+	commonRequest.ClientPort = auth.Request.XClientPort
+	commonRequest.LocalIP = auth.Request.XLocalIP
+	commonRequest.LocalPort = auth.Request.XPort
+	commonRequest.OIDCCID = auth.Request.OIDCCID
 
 	// Derive a timeout context for Lua backend work (list accounts) using service-scoped context
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
@@ -309,8 +309,8 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandListAccounts,
 		BackendName:       lm.backendName,
-		Protocol:          auth.Protocol,
-		HTTPClientRequest: auth.HTTPClientRequest,
+		Protocol:          auth.Request.Protocol,
+		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest:     commonRequest,
@@ -344,7 +344,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 
 	if len(accounts) == 0 {
 		level.Warn(lm.effectiveLogger()).Log(
-			definitions.LogKeyGUID, auth.GUID,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
 			definitions.LogKeyMsg, "No accounts found in Lua backend",
 		)
 	}
@@ -360,8 +360,8 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	tr := monittrace.New("nauthilus/lua_backend")
 	mctx, msp := tr.Start(auth.Ctx(), "lua.add_totp",
 		attribute.String("backend_name", lm.backendName),
-		attribute.String("service", auth.Service),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = mctx
@@ -385,7 +385,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 		defer stopTimer()
 	}
 
-	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Request.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		return
 	}
 
@@ -396,14 +396,14 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 
 	// Set the fields
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Service = auth.Service
-	commonRequest.Session = auth.GUID
-	commonRequest.Username = auth.Username
-	commonRequest.ClientIP = auth.ClientIP
-	commonRequest.ClientPort = auth.XClientPort
-	commonRequest.LocalIP = auth.XLocalIP
-	commonRequest.LocalPort = auth.XPort
-	commonRequest.OIDCCID = auth.OIDCCID
+	commonRequest.Service = auth.Request.Service
+	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.Username = auth.Request.Username
+	commonRequest.ClientIP = auth.Request.ClientIP
+	commonRequest.ClientPort = auth.Request.XClientPort
+	commonRequest.LocalIP = auth.Request.XLocalIP
+	commonRequest.LocalPort = auth.Request.XPort
+	commonRequest.OIDCCID = auth.Request.OIDCCID
 
 	// Derive a timeout context for Lua backend work (add TOTP)
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
@@ -413,9 +413,9 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandAddMFAValue,
 		BackendName:       lm.backendName,
-		Protocol:          auth.Protocol,
+		Protocol:          auth.Request.Protocol,
 		TOTPSecret:        totp.GetValue(),
-		HTTPClientRequest: auth.HTTPClientRequest,
+		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest:     commonRequest,
@@ -423,10 +423,10 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
 

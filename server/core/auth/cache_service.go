@@ -33,11 +33,11 @@ type DefaultCacheService struct{}
 
 // OnSuccess updates the positive cache after a successful authentication attempt for the specified account name.
 func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) error {
-	if auth == nil || auth.Protocol == nil || accountName == "" {
+	if auth == nil || auth.Request.Protocol == nil || accountName == "" {
 		return nil
 	}
 
-	if auth.NoAuth || auth.Password == "" {
+	if auth.Request.NoAuth || auth.Request.Password == "" {
 		return nil
 	}
 
@@ -63,11 +63,11 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 	key := sb.String()
 
 	// Write hash with TTL
-	backend.SaveUserDataToRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.Redis(), auth.GUID, key, auth.Cfg().GetServer().GetRedis().GetPosCacheTTL(), ppc)
+	backend.SaveUserDataToRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.Redis(), auth.Runtime.GUID, key, auth.Cfg().GetServer().GetRedis().GetPosCacheTTL(), ppc)
 
 	// Metric is incremented inside SaveUserDataToRedis; keep a debug log here for parity
 	level.Debug(auth.Logger()).Log(
-		definitions.LogKeyGUID, auth.GUID,
+		definitions.LogKeyGUID, auth.Runtime.GUID,
 		definitions.LogKeyMsg, "Stored positive cache to redis",
 	)
 

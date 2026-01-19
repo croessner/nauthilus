@@ -50,7 +50,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 
 	if !auth.Cfg().HaveLuaFilters() {
 		// No filters configured → treat as authorized
-		auth.Authorized = true
+		auth.Runtime.Authorized = true
 
 		if passDBResult.Authenticated {
 			return definitions.AuthResultOK
@@ -77,17 +77,17 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	commonRequest.Authenticated = passDBResult.Authenticated
 
 	filterRequest := &filter.Request{
-		Session:            auth.GUID,
-		Username:           auth.Username,
-		Password:           auth.Password,
-		ClientIP:           auth.ClientIP,
+		Session:            auth.Runtime.GUID,
+		Username:           auth.Request.Username,
+		Password:           auth.Request.Password,
+		ClientIP:           auth.Request.ClientIP,
 		AccountName:        auth.GetAccount(),
-		AdditionalFeatures: auth.AdditionalFeatures,
+		AdditionalFeatures: auth.Runtime.AdditionalFeatures,
 		BackendServers:     backendServers,
-		UsedBackendAddr:    &auth.UsedBackendIP,
-		UsedBackendPort:    &auth.UsedBackendPort,
+		UsedBackendAddr:    &auth.Runtime.UsedBackendIP,
+		UsedBackendPort:    &auth.Runtime.UsedBackendPort,
 		Logs:               nil,
-		Context:            auth.Context,
+		Context:            auth.Runtime.Context,
 		CommonRequest:      commonRequest,
 	}
 
@@ -98,7 +98,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 			var ae *lua.ApiError
 			if stderrors.As(err, &ae) && ae != nil {
 				level.Error(auth.Logger()).Log(
-					definitions.LogKeyGUID, auth.GUID,
+					definitions.LogKeyGUID, auth.Runtime.GUID,
 					definitions.LogKeyMsg, "Error calling Lua filter",
 					definitions.LogKeyError, ae.Error(),
 					"stacktrace", ae.StackTrace,
@@ -109,28 +109,28 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 			lualib.PutCommonRequest(commonRequest)
 
 			// error during filter execution → not authorized
-			auth.Authorized = false
+			auth.Runtime.Authorized = false
 
 			return definitions.AuthResultTempFail
 		}
 
 		// Explicitly authorized when no filters are defined
-		auth.Authorized = true
+		auth.Runtime.Authorized = true
 	} else {
 		if filterRequest.Logs != nil && len(*filterRequest.Logs) > 0 {
 			// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
-			additionalLogsLen := len(auth.AdditionalLogs)
+			additionalLogsLen := len(auth.Runtime.AdditionalLogs)
 			newAdditionalLogs := make([]any, additionalLogsLen+len(*filterRequest.Logs))
-			copy(newAdditionalLogs, auth.AdditionalLogs)
-			auth.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
+			copy(newAdditionalLogs, auth.Runtime.AdditionalLogs)
+			auth.Runtime.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
 
 			for index := range *filterRequest.Logs {
-				auth.AdditionalLogs = append(auth.AdditionalLogs, (*filterRequest.Logs)[index])
+				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, (*filterRequest.Logs)[index])
 			}
 		}
 
-		if statusMessage := filterRequest.StatusMessage; *statusMessage != auth.StatusMessage {
-			auth.StatusMessage = *statusMessage
+		if statusMessage := filterRequest.StatusMessage; *statusMessage != auth.Runtime.StatusMessage {
+			auth.Runtime.StatusMessage = *statusMessage
 		}
 
 		for _, attributeName := range removeAttributes {
@@ -149,7 +149,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		}
 
 		if filterResult {
-			auth.Authorized = false
+			auth.Runtime.Authorized = false
 
 			// Return the CommonRequest to the pool before returning
 			lualib.PutCommonRequest(commonRequest)
@@ -158,10 +158,10 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		}
 
 		// filters accepted → authorized
-		auth.Authorized = true
+		auth.Runtime.Authorized = true
 
-		auth.UsedBackendIP = *filterRequest.UsedBackendAddr
-		auth.UsedBackendPort = *filterRequest.UsedBackendPort
+		auth.Runtime.UsedBackendIP = *filterRequest.UsedBackendAddr
+		auth.Runtime.UsedBackendPort = *filterRequest.UsedBackendPort
 	}
 
 	// Return the CommonRequest to the pool
@@ -184,7 +184,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	}
 
 	// Make sure we have all the required values and they're not nil
-	if auth.Protocol == nil || auth.HTTPClientRequest == nil || auth.Context == nil {
+	if auth.Request.Protocol == nil || auth.Request.HTTPClientRequest == nil || auth.Runtime.Context == nil {
 		return
 	}
 
@@ -198,10 +198,10 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	cr.Authenticated = passDBResult.Authenticated
 
 	args := core.PostActionArgs{
-		Context:       auth.Context,
-		HTTPRequest:   auth.HTTPClientRequest,
+		Context:       auth.Runtime.Context,
+		HTTPRequest:   auth.Request.HTTPClientRequest,
 		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
-		StatusMessage: auth.StatusMessage,
+		StatusMessage: auth.Runtime.StatusMessage,
 		Request:       *cr,
 	}
 

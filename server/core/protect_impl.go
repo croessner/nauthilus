@@ -43,12 +43,16 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 				Cfg:    cfg,
 				Logger: logger,
 			},
-			HTTPClientContext: ctx,
-			HTTPClientRequest: ctx.Request,
-			NoAuth:            true,
-			GUID:              guid,
-			Protocol:          protocol,
-			Method:            "plain",
+			Request: AuthRequest{
+				HTTPClientContext: ctx,
+				HTTPClientRequest: ctx.Request,
+				NoAuth:            true,
+				Protocol:          protocol,
+				Method:            "plain",
+			},
+			Runtime: AuthRuntime{
+				GUID: guid,
+			},
 		}
 
 		auth.WithUserAgent(ctx)
@@ -58,7 +62,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
 		}
 
-		util.ProcessXForwardedFor(ctx, cfg, logger, &clientIP, &clientPort, &auth.XSSL)
+		util.ProcessXForwardedFor(ctx, cfg, logger, &clientIP, &clientPort, &auth.Request.XSSL)
 
 		if clientIP == "" {
 			clientIP = definitions.NotAvailable
@@ -68,8 +72,8 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 			clientPort = definitions.NotAvailable
 		}
 
-		auth.ClientIP = clientIP
-		auth.XClientPort = clientPort
+		auth.Request.ClientIP = clientIP
+		auth.Request.XClientPort = clientPort
 
 		// Store remote client IP into connection context. It can be used for brute force updates.
 		ctx.Set(definitions.CtxClientIPKey, clientIP)

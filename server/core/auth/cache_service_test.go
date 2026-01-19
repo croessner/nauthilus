@@ -60,24 +60,24 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 		Redis:  rediscli.GetClient(),
 	}).(*core.AuthState)
 
-	auth.GUID = "guid-123"
-	auth.Protocol = config.NewProtocol("imap")
-	auth.UsedPassDBBackend = definitions.BackendLDAP // will map to CacheLDAP but default cache name applies
-	auth.SourcePassDBBackend = definitions.BackendLDAP
-	auth.AccountField = "uid"
-	auth.Password = "secret"
-	auth.Attributes = map[string][]any{"uid": {"acc"}}
+	auth.Runtime.GUID = "guid-123"
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Runtime.UsedPassDBBackend = definitions.BackendLDAP // will map to CacheLDAP but default cache name applies
+	auth.Runtime.SourcePassDBBackend = definitions.BackendLDAP
+	auth.Runtime.AccountField = "uid"
+	auth.Request.Password = "secret"
+	auth.ReplaceAllAttributes(map[string][]any{"uid": {"acc"}})
 
 	accountName := "acc"
 	cacheName := "__default__"
 	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
 	// Build expected hash map matching SaveUserDataToRedis behavior
-	attrsJSONBytes, _ := jsoniter.ConfigFastest.Marshal(auth.Attributes)
+	attrsJSONBytes, _ := jsoniter.ConfigFastest.Marshal(auth.Attributes.Attributes)
 	expected := map[string]any{
 		"backend":       int(definitions.BackendLDAP),
-		"password":      util.GetHash(util.PreparePassword(auth.Password)),
-		"account_field": auth.AccountField,
+		"password":      util.GetHash(util.PreparePassword(auth.Request.Password)),
+		"account_field": auth.Runtime.AccountField,
 		"attributes":    string(attrsJSONBytes),
 	}
 

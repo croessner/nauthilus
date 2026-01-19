@@ -37,14 +37,14 @@ func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bo
 
 	featReq := feature.Request{
 		Logs:               nil,
-		Context:            auth.Context,
-		HTTPClientContext:  auth.HTTPClientContext,
-		HTTPClientRequest:  auth.HTTPClientRequest,
-		NoAuth:             auth.NoAuth,
+		Context:            auth.Runtime.Context,
+		HTTPClientContext:  auth.Request.HTTPClientContext,
+		HTTPClientRequest:  auth.Request.HTTPClientRequest,
+		NoAuth:             auth.Request.NoAuth,
 		BruteForceCounter:  0,
-		MasterUserMode:     auth.MasterUserMode,
-		PasswordHistory:    auth.PasswordHistory,
-		AdditionalFeatures: auth.AdditionalFeatures,
+		MasterUserMode:     auth.Runtime.MasterUserMode,
+		PasswordHistory:    auth.Security.PasswordHistory,
+		AdditionalFeatures: auth.Runtime.AdditionalFeatures,
 		CommonRequest:      commonRequest,
 	}
 

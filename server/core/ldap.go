@@ -57,20 +57,20 @@ type ldapManagerImpl struct {
 // - string: the username based on the master user mode flag.
 func handleMasterUserMode(cfg config.File, auth *AuthState) string {
 	if cfg.GetServer().GetMasterUser().IsEnabled() {
-		if strings.Count(auth.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
-			parts := strings.Split(auth.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
+		if strings.Count(auth.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(auth.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
 
 			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
-				return auth.Username
+				return auth.Request.Username
 			}
 
-			if !auth.MasterUserMode {
-				auth.MasterUserMode = true
+			if !auth.Runtime.MasterUserMode {
+				auth.Runtime.MasterUserMode = true
 
 				// Return master user
 				return parts[1]
 			} else {
-				auth.MasterUserMode = false
+				auth.Runtime.MasterUserMode = false
 
 				// Return real user
 				return parts[0]
@@ -78,7 +78,7 @@ func handleMasterUserMode(cfg config.File, auth *AuthState) string {
 		}
 	}
 
-	return auth.Username
+	return auth.Request.Username
 }
 
 // saveMasterUserTOTPSecret checks if the master user has a TOTP secret and returns it if present.
@@ -144,9 +144,9 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.passdb",
 		attribute.String("pool_name", lm.poolName),
-		attribute.String("service", auth.Service),
-		attribute.String("username", auth.Username),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	defer lspan.End()
@@ -170,7 +170,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	pCtx, pSpan := tr.Start(lctx, "ldap.passdb.search.prepare")
 	_ = pCtx
 
-	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		pSpan.End()
 
 		return
@@ -219,17 +219,17 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	defer cancelSearch()
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:     auth.GUID,
+		GUID:     auth.Runtime.GUID,
 		Command:  definitions.LDAPSearch,
 		PoolName: lm.poolName,
 		MacroSource: &util.MacroSource{
 			Username:    username,
-			XLocalIP:    auth.XLocalIP,
-			XPort:       auth.XPort,
-			ClientIP:    auth.ClientIP,
-			XClientPort: auth.XClientPort,
-			TOTPSecret:  auth.TOTPSecret,
-			Protocol:    *auth.Protocol,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			TOTPSecret:  auth.Runtime.TOTPSecret,
+			Protocol:    *auth.Request.Protocol,
 		},
 		Filter:            filter,
 		BaseDN:            baseDN,
@@ -242,11 +242,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	// Find user with account status enabled
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
 
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
 
@@ -306,9 +306,9 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		passDBResult.Attributes = ldapReply.Result
 	}
 
-	totpSecretPre := saveMasterUserTOTPSecret(auth.MasterUserMode, ldapReply, protocol.TOTPSecretField)
+	totpSecretPre := saveMasterUserTOTPSecret(auth.Runtime.MasterUserMode, ldapReply, protocol.TOTPSecretField)
 
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
 
 		apCtx, apSpan := tr.Start(lctx, "ldap.passdb.auth.prepare")
@@ -320,21 +320,21 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		defer cancelBind()
 
 		ldapUserBindRequest := &bktype.LDAPAuthRequest{
-			GUID:              auth.GUID,
+			GUID:              auth.Runtime.GUID,
 			PoolName:          lm.poolName,
 			BindDN:            dn,
-			BindPW:            auth.Password,
+			BindPW:            auth.Request.Password,
 			LDAPReplyChan:     ldapReplyChan,
 			HTTPClientContext: ctxBind,
 		}
 
 		// Determine priority based on NoAuth flag and whether the user is already authenticated
 		priority := priorityqueue.PriorityLow
-		if !auth.NoAuth {
+		if !auth.Request.NoAuth {
 			priority = priorityqueue.PriorityMedium
 		}
 
-		if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 			priority = priorityqueue.PriorityHigh
 		}
 
@@ -355,7 +355,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 				lm.effectiveCfg(),
 				lm.effectiveLogger(),
 				definitions.DbgLDAP,
-				definitions.LogKeyGUID, auth.GUID,
+				definitions.LogKeyGUID, auth.Runtime.GUID,
 				definitions.LogKeyMsg, err,
 			)
 
@@ -379,11 +379,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	lspan.SetAttributes(attribute.Bool("authenticated", true))
 
 	// Update the authentication cache
-	localcache.AuthCache.Set(auth.Username, true)
+	localcache.AuthCache.Set(auth.Request.Username, true)
 
 	// We need to do a second user lookup, to retrieve correct data from LDAP.
-	if auth.MasterUserMode {
-		auth.NoAuth = true
+	if auth.Runtime.MasterUserMode {
+		auth.Request.NoAuth = true
 
 		passDBResult, err = lm.PassDB(auth)
 
@@ -398,8 +398,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	tr := monittrace.New("nauthilus/ldap")
 	actx, asp := tr.Start(auth.Ctx(), "ldap.accountdb",
 		attribute.String("pool_name", lm.poolName),
-		attribute.String("service", auth.Service),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = actx
@@ -427,7 +427,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	pCtx, pSpan := tr.Start(actx, "ldap.accountdb.prepare")
 	_ = pCtx
 
-	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		pSpan.End()
 
 		return
@@ -473,17 +473,17 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	defer cancelSearch()
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:     auth.GUID,
+		GUID:     auth.Runtime.GUID,
 		Command:  definitions.LDAPSearch,
 		PoolName: lm.poolName,
 		MacroSource: &util.MacroSource{
-			Username:    auth.Username,
-			XLocalIP:    auth.XLocalIP,
-			XPort:       auth.XPort,
-			ClientIP:    auth.ClientIP,
-			XClientPort: auth.XClientPort,
-			TOTPSecret:  auth.TOTPSecret,
-			Protocol:    *auth.Protocol,
+			Username:    auth.Request.Username,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			TOTPSecret:  auth.Runtime.TOTPSecret,
+			Protocol:    *auth.Request.Protocol,
 		},
 		Filter:            filter,
 		BaseDN:            baseDN,
@@ -527,7 +527,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	if len(accounts) == 0 {
 		level.Warn(lm.effectiveLogger()).Log(
-			definitions.LogKeyGUID, auth.GUID,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
 			definitions.LogKeyMsg, "No accounts found in LDAP backend",
 		)
 	}
@@ -540,8 +540,8 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	tr := monittrace.New("nauthilus/ldap")
 	mctx, msp := tr.Start(auth.Ctx(), "ldap.add_totp",
 		attribute.String("pool_name", lm.poolName),
-		attribute.String("service", auth.Service),
-		attribute.String("protocol", auth.Protocol.Get()),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
 	)
 
 	_ = mctx
@@ -569,7 +569,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	pCtx, pSpan := tr.Start(mctx, "ldap.add_totp.prepare")
 	_ = pCtx
 
-	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		pSpan.End()
 
 		return
@@ -603,7 +603,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		pSpan.End()
 
 		err = errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Protocol.Get()))
+			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Request.Protocol.Get()))
 
 		return
 	}
@@ -613,18 +613,18 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	defer cancelModify()
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:       auth.GUID,
+		GUID:       auth.Runtime.GUID,
 		Command:    definitions.LDAPModify,
 		PoolName:   lm.poolName,
 		SubCommand: definitions.LDAPModifyAdd,
 		MacroSource: &util.MacroSource{
-			Username:    auth.Username,
-			XLocalIP:    auth.XLocalIP,
-			XPort:       auth.XPort,
-			ClientIP:    auth.ClientIP,
-			XClientPort: auth.XClientPort,
-			TOTPSecret:  auth.TOTPSecret,
-			Protocol:    *auth.Protocol,
+			Username:    auth.Request.Username,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			TOTPSecret:  auth.Runtime.TOTPSecret,
+			Protocol:    *auth.Request.Protocol,
 		},
 		Filter:            filter,
 		BaseDN:            baseDN,
@@ -638,10 +638,10 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
+	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
 

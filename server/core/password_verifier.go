@@ -73,7 +73,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 
 		if e := ProcessPassDBResult(ctx, res, auth, passDB); e != nil {
 			level.Error(auth.Logger()).Log(
-				definitions.LogKeyGUID, auth.GUID,
+				definitions.LogKeyGUID, auth.Runtime.GUID,
 				definitions.LogKeyMsg, "Error processing passdb result",
 				definitions.LogKeyError, e,
 			)
@@ -86,7 +86,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 			auth.deps.Cfg,
 			auth.deps.Logger,
 			definitions.DbgAuth,
-			definitions.LogKeyGUID, auth.GUID,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
 			"passdb", passDB.backend.String(),
 			"result", fmt.Sprintf("%v", res),
 		)
@@ -96,7 +96,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		// Restore legacy no-auth semantics: if a backend finds the user in no-auth
 		// mode, treat it as authenticated. This keeps followers/SingleFlight safe
 		// because we only mutate the local PassDBResult, not AuthState.
-		if auth.NoAuth && res.UserFound && !res.Authenticated {
+		if auth.Request.NoAuth && res.UserFound && !res.Authenticated {
 			res.Authenticated = true
 		}
 

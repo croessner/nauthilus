@@ -44,10 +44,10 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 
 	action.RequestChan <- &action.Action{
 		LuaAction:     luaAction,
-		Context:       auth.Context,
+		Context:       auth.Runtime.Context,
 		FinishedChan:  finished,
-		HTTPRequest:   auth.HTTPClientRequest,
-		HTTPContext:   auth.HTTPClientContext,
+		HTTPRequest:   auth.Request.HTTPClientRequest,
+		HTTPContext:   auth.Request.HTTPClientContext,
 		CommonRequest: commonRequest,
 	}
 
