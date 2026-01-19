@@ -3024,7 +3024,6 @@ func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
 }
 
 // NewAuthStateFromContext initializes and returns an AuthState using the provided gin.Context.
-// It gets an AuthState from the pool, sets the context to a copied HTTPClientContext and assigns the current time to the StartTime field.
 func NewAuthStateFromContext(ctx *gin.Context) State {
 	return NewAuthStateFromContextWithDeps(ctx, AuthDeps{
 		Cfg:          getDefaultConfigFile(),
