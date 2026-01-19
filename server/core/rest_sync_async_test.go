@@ -109,7 +109,7 @@ func TestBruteForceFlushSync_OK(t *testing.T) {
 	r, mock := setupEngineWithMock(t)
 
 	// Expect bulk unlink of tolerate keys for the given IP (phase 4)
-	base := config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + "1.2.3.4"
+	base := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFTolerationPrefix + "1.2.3.4"
 
 	// The implementation issues UNLINK in a pipeline; redismock matches commands irrespective of pipeline grouping
 	mock.ExpectUnlink(base).SetVal(1)

@@ -1715,6 +1715,28 @@ func (a *AuthState) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (ke
 	return bm.GetBruteForceBucketRedisKey(rule)
 }
 
+// GetBucketKeys returns all Redis keys associated with a brute force rule.
+func (a *AuthState) GetBucketKeys(rule *config.BruteForceRule) []string {
+	if a == nil {
+		return nil
+	}
+
+	bm := a.createBucketManager(a.Ctx())
+
+	return bm.GetBucketKeys(rule)
+}
+
+// GetSlidingWindowKeys returns the current and previous window keys for a rule.
+func (a *AuthState) GetSlidingWindowKeys(rule *config.BruteForceRule, network *net.IPNet) (currentKey, prevKey string, weight float64) {
+	if a == nil {
+		return "", "", 0
+	}
+
+	bm := a.createBucketManager(a.Ctx())
+
+	return bm.GetSlidingWindowKeys(rule, network)
+}
+
 // GetPasswordHistory returns the password history from the AuthState.
 func (a *AuthState) GetPasswordHistory() *bruteforce.PasswordHistory {
 	return a.Security.PasswordHistory
@@ -2708,7 +2730,6 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		lam := a.ensureLAM()
 		if lam != nil {
 			lam.InitFromHeader(ctx.GetHeader(cfg.GetLoginAttempt()))
-			// Mirror for backward compatibility: store FailCount (number of failures)
 			a.Security.LoginAttempts = lam.FailCount()
 		}
 	}

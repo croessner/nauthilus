@@ -18,6 +18,8 @@ package rediscli
 import (
 	"fmt"
 	"hash/crc32"
+
+	"github.com/croessner/nauthilus/server/definitions"
 )
 
 // GetShardID calculates a 2-digit hex shard ID (00-FF) for a given input string.
@@ -28,10 +30,10 @@ func GetShardID(input string) string {
 
 // GetUserHashKey returns the sharded Redis key for user account mapping.
 func GetUserHashKey(prefix, username string) string {
-	return fmt.Sprintf("%sUSER:{%s}", prefix, GetShardID(username))
+	return fmt.Sprintf("%s%s:{%s}", prefix, definitions.RedisUserHashKey, GetShardID(username))
 }
 
 // GetBruteForceHashKey returns the sharded Redis key for brute-force tracking.
 func GetBruteForceHashKey(prefix, network string) string {
-	return fmt.Sprintf("%sBRUTEFORCE:{%s}", prefix, GetShardID(network))
+	return fmt.Sprintf("%s%s:{%s}", prefix, definitions.RedisBruteForceHashKey, GetShardID(network))
 }

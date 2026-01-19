@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -316,22 +317,50 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	bfCfg := cfg.GetBruteForce()
 	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
+		engine := l1.GetEngine()
+		swlKey := l1.KeySoftWhitelist(a.Request.Username, a.Request.ClientIP)
+		if dec, ok := engine.Get(swlKey); ok && dec.Allowed {
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
+
+			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted_l1"))
+
+			return false
+		}
+
 		if util.IsSoftWhitelisted(cctx, a.Cfg(), a.Logger(), a.Request.Username, a.Request.ClientIP, a.Runtime.GUID, bfCfg.SoftWhitelist) {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
 
+			// Cache result in L1
+			engine.Set(swlKey, l1.L1Decision{Allowed: true, Reason: "SoftWhitelist"}, 0)
+
 			return false
 		}
 	}
 
 	if bfCfg != nil && len(bfCfg.GetIPWhitelist()) > 0 {
+		engine := l1.GetEngine()
+		wlKey := l1.KeyWhitelist(a.Request.ClientIP)
+		if dec, ok := engine.Get(wlKey); ok && dec.Allowed {
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
+
+			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted_l1"))
+
+			return false
+		}
+
 		if a.IsInNetwork(bfCfg.IPWhitelist) {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
+
+			// Cache result in L1
+			engine.Set(wlKey, l1.L1Decision{Allowed: true, Reason: "IPWhitelist"}, 0)
 
 			return false
 		}

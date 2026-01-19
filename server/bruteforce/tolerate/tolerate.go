@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/ipscoper"
@@ -142,6 +143,9 @@ type Tolerate interface {
 
 	// GetTolerateMap retrieves a map containing toleration data as key-value pairs for a specific IP address.
 	GetTolerateMap(ctx context.Context, ipAddress string) map[string]int64
+
+	// GetReputationKey returns the Redis key used for reputation data for the given IP address.
+	GetReputationKey(ipAddress string) string
 }
 
 type tolerateDeps struct {
@@ -486,6 +490,12 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 						return false
 					}
 
+					// Store in L1 cache
+					l1.GetEngine().SetReputation(l1.KeyReputation(ipAddress), l1.L1Reputation{
+						Positive: positive,
+						Negative: negative,
+					}, 0)
+
 					t.logDbgTolerate(
 						ctx,
 						ipAddress,
@@ -646,6 +656,10 @@ func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map
 	return ipMap
 }
 
+func (t *tolerateImpl) GetReputationKey(ipAddress string) string {
+	return t.getRedisKey(ipAddress)
+}
+
 var _ Tolerate = (*tolerateImpl)(nil)
 
 // getHouseKeeper initializes and returns a singleton instance of houseKeeper in a thread-safe manner.
@@ -662,7 +676,7 @@ func (t *tolerateImpl) getRedisKey(ipAddress string) string {
 	cfg := t.deps.cfg
 	scoped := tolScoper.WithCfg(cfg).Scope(ipscoper.ScopeTolerations, ipAddress)
 
-	return cfg.GetServer().GetRedis().GetPrefix() + "bf:TR:{" + scoped + "}"
+	return cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBFTolerationPrefix + "{" + scoped + "}"
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.

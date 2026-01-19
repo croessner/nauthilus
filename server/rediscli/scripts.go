@@ -337,3 +337,12 @@ func UploadAllScripts(ctx context.Context, logger *slog.Logger, client Client) e
 
 	return nil
 }
+
+// ClearScriptCache clears the local script SHA1 cache.
+// This is primarily used for testing purposes to ensure scripts are re-uploaded.
+func ClearScriptCache() {
+	scriptsMutex.Lock()
+	defer scriptsMutex.Unlock()
+
+	scripts = make(map[string]string)
+}
