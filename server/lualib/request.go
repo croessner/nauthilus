@@ -44,24 +44,6 @@ func PutCommonRequest(cr *CommonRequest) {
 
 // CommonRequest represents a common request object with various properties used in different functionalities.
 type CommonRequest struct {
-	// Debug is a flag indicating if the action is executed in debug mode.
-	Debug bool
-
-	// Repeating is a flag indicating if the action would be repeated.
-	Repeating bool
-
-	// UserFound is a flag indicating if the user executing the action was found in the system.
-	UserFound bool
-
-	// Authenticated is a flag indicating if the user is authenticated.
-	Authenticated bool
-
-	// NoAuth is a flag indicating if the action requires no authentication.
-	NoAuth bool
-
-	// BruteForceCounter keeps track of unsuccessful login attempts for the user.
-	BruteForceCounter uint
-
 	// Service is the http routers endpoint name.
 	Service string
 
@@ -188,8 +170,26 @@ type CommonRequest struct {
 	// Latency represents the request latency in milliseconds.
 	Latency float64
 
+	// BruteForceCounter keeps track of unsuccessful login attempts for the user.
+	BruteForceCounter uint
+
 	// HTTPStatus represents the HTTP status code.
 	HTTPStatus int
+
+	// Debug is a flag indicating if the action is executed in debug mode.
+	Debug bool
+
+	// Repeating is a flag indicating if the action would be repeated.
+	Repeating bool
+
+	// UserFound is a flag indicating if the user executing the action was found in the system.
+	UserFound bool
+
+	// Authenticated is a flag indicating if the user is authenticated.
+	Authenticated bool
+
+	// NoAuth is a flag indicating if the action requires no authentication.
+	NoAuth bool
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.

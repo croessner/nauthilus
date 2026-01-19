@@ -206,10 +206,6 @@ type bucketManagerImpl struct {
 
 	deps BucketManagerDeps
 
-	loginAttempts        uint
-	passwordsAccountSeen uint
-	passwordsTotalSeen   uint
-
 	bruteForceCounter map[string]uint
 	passwordHistory   *PasswordHistory
 
@@ -224,18 +220,24 @@ type bucketManagerImpl struct {
 	oidcCID            string
 	additionalFeatures map[string]any
 
-	// request-context flags
-	alreadyTriggered bool
-
 	// ip scoper used to normalize addresses per feature context (e.g., RWP IPv6 CIDR)
 	scoper ipscoper.IPScoper
 
 	// Precalc fields (computed once per request)
-	parsedIP      net.IP
+	parsedIP net.IP
+
+	netByCIDR map[uint]*net.IPNet // CIDR -> network
+
+	loginAttempts        uint
+	passwordsAccountSeen uint
+	passwordsTotalSeen   uint
+
+	// request-context flags
+	alreadyTriggered bool
+
 	ipIsV4        bool
 	ipIsV6        bool
 	ipv6Validated bool
-	netByCIDR     map[uint]*net.IPNet // CIDR -> network
 }
 
 func (bm *bucketManagerImpl) cfg() config.File {

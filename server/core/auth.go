@@ -621,12 +621,6 @@ var _ State = (*AuthState)(nil)
 
 // PassDBResult is used in all password databases to store final results of an authentication process.
 type PassDBResult struct {
-	// Authenticated is a flag that is set if a user was not only found, but also succeeded authentication.
-	Authenticated bool
-
-	// UserFound is a flag that is set if the user was found in a password Database.
-	UserFound bool
-
 	// BackendName specifies the name of the backend that authenticated or found the user in the password database.
 	BackendName string
 
@@ -648,14 +642,20 @@ type PassDBResult struct {
 	// DisplayNameField is the display name of a user
 	DisplayNameField string
 
-	// Backend is set by the Database backend, which has found the user.
-	Backend definitions.Backend
-
 	// Attributes is the result catalog returned by the underlying password Database.
 	Attributes bktype.AttributeMapping
 
 	// AdditionalFeatures contains additional features for machine learning
 	AdditionalFeatures map[string]any
+
+	// Authenticated is a flag that is set if a user was not only found, but also succeeded authentication.
+	Authenticated bool
+
+	// UserFound is a flag that is set if the user was found in a password Database.
+	UserFound bool
+
+	// Backend is set by the Database backend, which has found the user.
+	Backend definitions.Backend
 }
 
 // Reset resets all fields of the PassDBResult to their zero values
