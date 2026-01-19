@@ -187,6 +187,16 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 
 			return true
 		}
+
+		if a.Username == "" {
+			ctx.Error(errors.ErrEmptyUsername)
+		} else if !util.ValidateUsername(a.Username) {
+			ctx.Error(errors.ErrInvalidUsername)
+		}
+
+		if a.Password == "" {
+			ctx.Error(errors.ErrEmptyPassword)
+		}
 	}
 
 	if a.Service == definitions.ServOryHydra {

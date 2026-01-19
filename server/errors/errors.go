@@ -84,6 +84,8 @@ var (
 	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_server_monitoring not enabled")
 	ErrMonitoringBackendServersEmpty           = errors.New("no monitoring backend servers configured")
 	ErrInvalidUsername                         = errors.New("invalid username")
+	ErrEmptyUsername                           = errors.New("empty_username")
+	ErrEmptyPassword                           = errors.New("empty_password")
 	ErrPasswordEncoding                        = errors.New("password encoding error")
 	ErrIncorrectCache                          = errors.New("incorrect cache")
 	ErrUnregisteredComponent                   = errors.New("unregistered component")

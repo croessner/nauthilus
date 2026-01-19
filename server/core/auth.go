@@ -2917,9 +2917,23 @@ func setupAuth(ctx *gin.Context, auth State) {
 	}
 
 	if ctx.Query("mode") != "list-accounts" && ctx.Query("mode") != "no-auth" && svc != definitions.ServBasic {
-		if !util.ValidateUsername(auth.GetUsername()) {
+		username := auth.GetUsername()
+
+		if username == "" {
+			ctx.Error(errors.ErrEmptyUsername)
+
+			return
+		} else if !util.ValidateUsername(username) {
 			auth.SetUsername("")
 			ctx.Error(errors.ErrInvalidUsername)
+
+			return
+		}
+
+		if auth.GetPassword() == "" {
+			ctx.Error(errors.ErrEmptyPassword)
+
+			return
 		}
 	}
 
@@ -2963,7 +2977,7 @@ func NewAuthStateWithSetup(ctx *gin.Context) State {
 		logProcessingRequest(ctx, a)
 	}
 
-	if ctx.Errors.Last() != nil {
+	if ctx.Errors.Last() != nil || ctx.IsAborted() {
 		return nil
 	}
 
@@ -3002,7 +3016,7 @@ func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
 		logProcessingRequest(ctx, a)
 	}
 
-	if ctx.Errors.Last() != nil {
+	if ctx.Errors.Last() != nil || ctx.IsAborted() {
 		return nil
 	}
 
