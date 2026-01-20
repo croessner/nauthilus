@@ -37,6 +37,9 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(commonRequest)
+
 	auth.FillCommonRequest(commonRequest)
 
 	commonRequest.UserFound = auth.GetAccount() != ""
@@ -52,6 +55,4 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 	}
 
 	<-finished
-
-	lualib.PutCommonRequest(commonRequest)
 }

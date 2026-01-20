@@ -1886,63 +1886,12 @@ func (a *AuthState) GetAccountField() string {
 }
 
 func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
-	tr := monittrace.New("nauthilus/auth")
-	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.post_action",
-		attribute.String("service", a.Request.Service),
-		attribute.String("username", a.Request.Username),
-	)
-
-	_ = lctx
-	if passDBResult != nil {
-		lspan.SetAttributes(
-			attribute.Bool("authenticated", passDBResult.Authenticated),
-			attribute.Bool("user_found", passDBResult.UserFound),
-		)
-
-		if passDBResult.BackendName != "" {
-			lspan.SetAttributes(attribute.String("backend", passDBResult.BackendName))
-		} else {
-			lspan.SetAttributes(attribute.String("backend", passDBResult.Backend.String()))
-		}
+	if disp := getPostAction(); disp != nil {
+		disp.Run(PostActionInput{
+			View:   a.View(),
+			Result: passDBResult,
+		})
 	}
-
-	defer lspan.End()
-
-	cr := lualib.GetCommonRequest()
-	a.FillCommonRequest(cr)
-
-	if passDBResult != nil {
-		cr.UserFound = passDBResult.UserFound
-		cr.Authenticated = passDBResult.Authenticated
-	}
-
-	if a.Runtime.StatusMessage == "" {
-		if cr.Authenticated {
-			a.Runtime.StatusMessage = "OK"
-		} else {
-			a.Runtime.StatusMessage = definitions.PasswordFail
-		}
-	}
-
-	cr.HTTPStatus = ctx.Writer.Status()
-
-	if cr.HTTPStatus == http.StatusOK {
-		if cr.Authenticated {
-			cr.HTTPStatus = a.Runtime.StatusCodeOK
-		} else {
-			cr.HTTPStatus = a.Runtime.StatusCodeFail
-		}
-	}
-
-	a.RunLuaPostAction(PostActionArgs{
-		Context:       a.Runtime.Context,
-		HTTPRequest:   a.Request.HTTPClientRequest,
-		ParentSpan:    lspan.SpanContext(),
-		StatusMessage: a.Runtime.StatusMessage,
-		Request:       *cr,
-	})
-
-	lualib.PutCommonRequest(cr)
 }
 
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
@@ -2017,6 +1966,8 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	a.SetOperationMode(ctx)
 
 	passDBResult := a.initializePassDBResult()
+
+	defer PutPassDBResultToPool(passDBResult)
 
 	// Since this path is a confirmed positive hit from the in-memory cache,
 	// the PassDB stage has already decided previously. Reflect that in AuthState
@@ -2390,6 +2341,8 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		return definitions.AuthResultTempFail
 	}
 
+	defer PutPassDBResultToPool(passDBResult)
+
 	if accountName, err = a.processUserFound(passDBResult); err != nil || passDBResult == nil {
 		// treat as tempfail
 		a.Runtime.Authenticated = false
@@ -2406,7 +2359,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
-			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, getDefaultEnvironment().GetLocalCacheAuthTTL())
+			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult.Clone(), getDefaultEnvironment().GetLocalCacheAuthTTL())
 		}
 
 		a.Runtime.Authenticated = true

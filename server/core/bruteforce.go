@@ -67,6 +67,8 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		// Get a CommonRequest from the pool
 		commonRequest := lualib.GetCommonRequest()
 
+		defer lualib.PutCommonRequest(commonRequest)
+
 		// Set the fields
 		commonRequest.Debug = cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 		// repeating is true if either pre-detection flagged (alreadyTriggered) or the
@@ -184,9 +186,6 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		}
 
 		<-finished
-
-		// Return the CommonRequest to the pool
-		lualib.PutCommonRequest(commonRequest)
 	}
 }
 
@@ -335,8 +334,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
 
-			// Cache result in L1
-			engine.Set(swlKey, l1.L1Decision{Allowed: true, Reason: "SoftWhitelist"}, 0)
+			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
+			engine.Set(swlKey, l1.L1Decision{Allowed: true, Reason: "SoftWhitelist"}, time.Second)
 
 			return false
 		}
@@ -360,8 +359,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
 
-			// Cache result in L1
-			engine.Set(wlKey, l1.L1Decision{Allowed: true, Reason: "IPWhitelist"}, 0)
+			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
+			engine.Set(wlKey, l1.L1Decision{Allowed: true, Reason: "IPWhitelist"}, time.Second)
 
 			return false
 		}
@@ -528,7 +527,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 	}
 
-	return triggered
+	// Always return triggered (block status) even if alreadyTriggered was true
+	return triggered || alreadyTriggered
 }
 
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.

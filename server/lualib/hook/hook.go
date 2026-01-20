@@ -497,9 +497,11 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	requestTable := L.NewTable()
 	cr := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(cr)
+
 	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
 	cr.SetupRequest(L, cfg, requestTable)
-	lualib.PutCommonRequest(cr)
 
 	_, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
 	if err != nil {
@@ -601,10 +603,12 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 
 	requestTable := L.NewTable()
 	cr := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(cr)
+
 	cr.Session = guid
 	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
 	cr.SetupRequest(L, cfg, requestTable)
-	lualib.PutCommonRequest(cr)
 
 	result, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
 	if err != nil {

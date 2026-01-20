@@ -385,6 +385,8 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	if auth.Runtime.MasterUserMode {
 		auth.Request.NoAuth = true
 
+		PutPassDBResultToPool(passDBResult)
+
 		passDBResult, err = lm.PassDB(auth)
 
 		restoreMasterUserTOTPSecret(passDBResult, totpSecretPre, protocol.TOTPSecretField)
