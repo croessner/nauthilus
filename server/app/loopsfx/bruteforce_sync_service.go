@@ -23,7 +23,6 @@ import (
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 	jsoniter "github.com/json-iterator/go"
@@ -110,7 +109,7 @@ func (s *BruteForceSyncService) handleMessage(payload string) {
 		return
 	}
 
-	l1.GetEngine().Set(msg.Key, l1.L1Decision{Blocked: msg.Block, Rule: msg.Rule}, 0)
+	bruteforce.UpdateL1Cache(msg.Key, msg.Block, msg.Rule)
 }
 
 // Stop terminates the sync service and waits for the listener to exit.

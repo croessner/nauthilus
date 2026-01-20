@@ -627,10 +627,6 @@ const (
 	// RedisPWHistIPsKey represents the key used for storing password history associated with IPs in Redis.
 	RedisPWHistIPsKey = "pw_hist_ips"
 
-	// RedisPWHistMetaKey represents the key prefix used for storing metadata (like protocol and OIDC client ID)
-	// associated with an IP seen in pw_hist. The full key is constructed as <prefix> + RedisPWHistMetaKey + ":" + <ip>.
-	RedisPWHistMetaKey = "pw_hist_meta"
-
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
 	RedisAffectedAccountsKey = "affected_accounts"
 
@@ -639,6 +635,15 @@ const (
 
 	// RedisUserPositiveCachePrefix is the prefix used for positive user cache entries in Redis.
 	RedisUserPositiveCachePrefix = "UCP:"
+
+	// RedisBFColdStartPrefix represents the prefix used for cold-start grace in Redis.
+	RedisBFColdStartPrefix = "bf:cold:"
+
+	// RedisBFSeedPrefix represents the prefix used for brute-force seeds in Redis.
+	RedisBFSeedPrefix = "bf:seed:"
+
+	// RedisBFRWPAllowPrefix represents the prefix used for repeating wrong password allowance in Redis.
+	RedisBFRWPAllowPrefix = "bf:rwp:allow:"
 )
 
 // ImageCopyright represents the copyright statement for a logo.

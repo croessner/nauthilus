@@ -43,7 +43,6 @@ func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bo
 		NoAuth:             auth.Request.NoAuth,
 		BruteForceCounter:  0,
 		MasterUserMode:     auth.Runtime.MasterUserMode,
-		PasswordHistory:    auth.Security.PasswordHistory,
 		AdditionalFeatures: auth.Runtime.AdditionalFeatures,
 		CommonRequest:      commonRequest,
 	}

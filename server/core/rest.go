@@ -328,7 +328,7 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 	cmds := make([]*redis.MapStringStringCmd, 256)
 
 	for i := 0; i < 256; i++ {
-		shardKey := fmt.Sprintf("%sBRUTEFORCE:{%02x}", prefix, i)
+		shardKey := fmt.Sprintf("%s%s:{%02x}", prefix, definitions.RedisBruteForceHashKey, i)
 		cmds[i] = pipe.HGetAll(ctx, shardKey)
 	}
 
@@ -355,24 +355,18 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 			}
 		}
 
-		if filterCmd != nil {
+		if filterCmd != nil && len(filterCmd.IPAddress) > 0 {
 			filteredIPs := make(map[string]string)
-
-			if len(filterCmd.IPAddress) == 0 {
-				ipAddresses = make(map[string]string)
-			}
 
 			for _, filterIPWanted := range filterCmd.IPAddress {
 				for network, bucket := range ipAddresses {
 					if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
 						filteredIPs[network] = bucket
-
-						break
 					}
 				}
-
-				ipAddresses = filteredIPs
 			}
+
+			ipAddresses = filteredIPs
 		}
 
 		blockedIPAddresses.IPAddresses = ipAddresses
@@ -989,33 +983,38 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 				userKeys.Set(sb.String())
 			}
 
-			// Also remove the PW_HIST meta key for this IP (protocol/oidc persistence)
+			// RWP allowance keys — delete for both raw and scoped IP combined with account
 			sb.Reset()
 			sb.WriteString(prefix)
-			sb.WriteString(definitions.RedisPWHistMetaKey)
+			sb.WriteString(definitions.RedisBFRWPAllowPrefix)
+			sb.WriteString(ip)
 			sb.WriteByte(':')
+			sb.WriteString(accountName)
+			userKeys.Set(sb.String())
+
+			if scopedRWP != ip {
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisBFRWPAllowPrefix)
+				sb.WriteString(scopedRWP)
+				sb.WriteByte(':')
+				sb.WriteString(accountName)
+				userKeys.Set(sb.String())
+			}
+
+			// Cold-start grace keys — delete for both raw and scoped IP
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisBFColdStartPrefix)
 			sb.WriteString(ip)
 			userKeys.Set(sb.String())
 
-			// Remove network-scoped PW_HIST meta keys for this IP for all matching brute-force rules
-			parsed := net.ParseIP(ip)
-			if parsed != nil {
-				for _, rule := range cfg.GetBruteForceRules() {
-					// Respect IPv4/IPv6 flags
-					if (parsed.To4() != nil && !rule.IPv4) || (parsed.To4() == nil && !rule.IPv6) {
-						continue
-					}
-					_, network, nerr := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, rule.CIDR))
-					if nerr == nil && network != nil {
-						sb.Reset()
-						sb.WriteString(prefix)
-						sb.WriteString(definitions.RedisPWHistMetaKey)
-						sb.WriteByte(':')
-						sb.WriteString(network.String())
-
-						userKeys.Set(sb.String())
-					}
-				}
+			if scopedRWP != ip {
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisBFColdStartPrefix)
+				sb.WriteString(scopedRWP)
+				userKeys.Set(sb.String())
 			}
 		}
 	}

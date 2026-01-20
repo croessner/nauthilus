@@ -481,7 +481,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		} else {
 			a.Security.LoginAttempts = bm.GetLoginAttempts()
 		}
-		a.Security.PasswordHistory = bm.GetPasswordHistory()
 	})
 
 	// Compute and store brute-force hints for the Post-Action.

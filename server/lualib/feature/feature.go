@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -149,7 +148,6 @@ type Request struct {
 	NoAuth            bool
 	BruteForceCounter uint
 	MasterUserMode    bool
-	PasswordHistory   *bruteforce.PasswordHistory
 }
 
 // CallFeatureLua executes Lua scripts associated with features within the context of a request.

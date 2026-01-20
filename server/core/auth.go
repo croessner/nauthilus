@@ -526,9 +526,6 @@ type AuthSecurity struct {
 	// BruteForceCounter keeps track of brute-force attempts.
 	BruteForceCounter map[string]uint
 
-	// PasswordHistory maintains the history of password attempts.
-	PasswordHistory *bruteforce.PasswordHistory
-
 	// attempts manages the login attempts.
 	attempts *defaultLoginAttemptManager
 
@@ -1737,11 +1734,6 @@ func (a *AuthState) GetSlidingWindowKeys(rule *config.BruteForceRule, network *n
 	return bm.GetSlidingWindowKeys(rule, network)
 }
 
-// GetPasswordHistory returns the password history from the AuthState.
-func (a *AuthState) GetPasswordHistory() *bruteforce.PasswordHistory {
-	return a.Security.PasswordHistory
-}
-
 // GetFeatureName returns the feature name from the AuthState.
 func (a *AuthState) GetFeatureName() string {
 	return a.Runtime.FeatureName
@@ -1795,7 +1787,6 @@ func (a *AuthState) LoadAllPasswordHistories() {
 
 	bm := a.createBucketManager(a.Ctx())
 	bm.LoadAllPasswordHistories()
-	a.Security.PasswordHistory = bm.GetPasswordHistory()
 }
 
 // CheckRepeatingBruteForcer checks for repeating brute force attacks based on the given rules.
