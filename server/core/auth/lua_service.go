@@ -197,6 +197,20 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	cr.UserFound = passDBResult.UserFound || auth.GetAccount() != ""
 	cr.Authenticated = passDBResult.Authenticated
 
+	if auth.Runtime.StatusMessage == "" {
+		if cr.Authenticated {
+			auth.Runtime.StatusMessage = "OK"
+		} else {
+			auth.Runtime.StatusMessage = definitions.PasswordFail
+		}
+	}
+
+	if cr.Authenticated {
+		cr.HTTPStatus = auth.Runtime.StatusCodeOK
+	} else {
+		cr.HTTPStatus = auth.Runtime.StatusCodeFail
+	}
+
 	args := core.PostActionArgs{
 		Context:       auth.Runtime.Context,
 		HTTPRequest:   auth.Request.HTTPClientRequest,

@@ -1676,6 +1676,12 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.FeatureName = a.Runtime.FeatureName
 	cr.StatusMessage = &a.Runtime.StatusMessage
 
+	if cr.Authenticated {
+		cr.HTTPStatus = a.Runtime.StatusCodeOK
+	} else {
+		cr.HTTPStatus = a.Runtime.StatusCodeFail
+	}
+
 	if a.Security.BruteForceName != "" {
 		if val, ok := a.Security.BruteForceCounter[a.Security.BruteForceName]; ok {
 			cr.BruteForceCounter = val
@@ -1909,7 +1915,23 @@ func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) 
 		cr.Authenticated = passDBResult.Authenticated
 	}
 
+	if a.Runtime.StatusMessage == "" {
+		if cr.Authenticated {
+			a.Runtime.StatusMessage = "OK"
+		} else {
+			a.Runtime.StatusMessage = definitions.PasswordFail
+		}
+	}
+
 	cr.HTTPStatus = ctx.Writer.Status()
+
+	if cr.HTTPStatus == http.StatusOK {
+		if cr.Authenticated {
+			cr.HTTPStatus = a.Runtime.StatusCodeOK
+		} else {
+			cr.HTTPStatus = a.Runtime.StatusCodeFail
+		}
+	}
 
 	a.RunLuaPostAction(PostActionArgs{
 		Context:       a.Runtime.Context,
