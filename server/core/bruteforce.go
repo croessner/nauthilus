@@ -117,7 +117,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 					}
 
 					// Store into in-process account cache
-					a.AccountCache().Set(a.Cfg(), a.Request.Username, acc)
+					a.AccountCache().Set(a.Cfg(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, acc)
 				}
 
 				if !isRepeating && rep {
@@ -434,7 +434,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	// IMPORTANT: set request attributes before running checks
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Runtime.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 	bm = bm.WithPassword(a.Request.Password).WithAccountName(accountName).WithUsername(a.Request.Username)
 
 	// Determine IP once
@@ -657,13 +657,13 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	// Try to avoid Redis if possible: use state or in-process cache first
 	accountName := a.GetAccount()
 	if accountName == "" {
-		if acc, ok := a.AccountCache().Get(a.Request.Username); ok {
+		if acc, ok := a.AccountCache().Get(a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID); ok {
 			accountName = acc
 		}
 	}
 
 	if accountName == "" {
-		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Runtime.GUID)
+		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 	}
 
 	bm = bm.WithUsername(a.Request.Username).WithPassword(a.Request.Password).WithAccountName(accountName)

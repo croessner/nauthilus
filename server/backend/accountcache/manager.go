@@ -54,13 +54,25 @@ func NewManager(cfg config.File) *Manager {
 	return m
 }
 
+func (m *Manager) makeKey(username, protocol, oidcClientID string) string {
+	return GetAccountMappingField(username, protocol, oidcClientID)
+}
+
+// GetAccountMappingField returns a composite field name for username -> account mapping.
+// It combines username, protocol and oidcClientID to allow context-specific mappings.
+func GetAccountMappingField(username, protocol, oidcClientID string) string {
+	return username + "|" + protocol + "|" + oidcClientID
+}
+
 // Get returns a cached account name for the given username (if present).
-func (m *Manager) Get(username string) (string, bool) {
+func (m *Manager) Get(username, protocol, oidcClientID string) (string, bool) {
 	if m == nil || m.cache == nil {
 		return "", false
 	}
 
-	if v, ok := m.cache.Get(username); ok {
+	key := m.makeKey(username, protocol, oidcClientID)
+
+	if v, ok := m.cache.Get(key); ok {
 		if s, ok2 := v.(string); ok2 {
 			return s, true
 		}
@@ -70,7 +82,7 @@ func (m *Manager) Get(username string) (string, bool) {
 }
 
 // Set stores the mapping with the configured TTL. If disabled, it is a no-op.
-func (m *Manager) Set(cfg config.File, username, account string) {
+func (m *Manager) Set(cfg config.File, username, protocol, oidcClientID, account string) {
 	if m == nil || m.cache == nil {
 		return
 	}
@@ -86,5 +98,7 @@ func (m *Manager) Set(cfg config.File, username, account string) {
 		// We keep it simple to avoid adding LRU complexity.
 	}
 
-	m.cache.Set(username, account, m.ttl)
+	key := m.makeKey(username, protocol, oidcClientID)
+
+	m.cache.Set(key, account, m.ttl)
 }
