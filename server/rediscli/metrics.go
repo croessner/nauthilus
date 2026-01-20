@@ -139,6 +139,18 @@ var (
 			Help: "Redis command latency in milliseconds",
 		}, []string{"instance", "command"},
 	)
+	redisUp = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_up",
+			Help: "Flag indicating redis instance is up",
+		}, []string{"instance"},
+	)
+	redisInstanceInfo = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_instance_info",
+			Help: "Information about the Redis instance",
+		}, []string{"instance", "role"},
+	)
 )
 
 // UpdateRedisServerMetrics periodically collects and updates Redis server metrics
@@ -187,6 +199,7 @@ func collectMetricsFromClient(ctx context.Context, logger *slog.Logger, client r
 	// Get Redis INFO
 	infoStr, err := client.Info(ctx).Result()
 	if err != nil {
+		redisUp.WithLabelValues(instance).Set(0)
 		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to get Redis INFO",
 			definitions.LogKeyError, err,
@@ -194,6 +207,8 @@ func collectMetricsFromClient(ctx context.Context, logger *slog.Logger, client r
 
 		return
 	}
+
+	redisUp.WithLabelValues(instance).Set(1)
 
 	// Parse INFO response
 	info := parseRedisInfo(infoStr)
@@ -296,6 +311,10 @@ func updateRedisMetrics(info map[string]string, instance string) {
 
 	if v, ok := info["instantaneous_output_kbps"]; ok {
 		redisInstantaneousOutputKbps.WithLabelValues(instance).Set(parseFloat(v))
+	}
+
+	if v, ok := info["role"]; ok {
+		redisInstanceInfo.WithLabelValues(instance, v).Set(1)
 	}
 }
 
