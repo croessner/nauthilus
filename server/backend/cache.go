@@ -46,11 +46,13 @@ var (
 )
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
-func LookupUserAccountFromRedis(ctx context.Context, cfg config.File, redisClient rediscli.Client, username string) (accountName string, err error) {
+func LookupUserAccountFromRedis(ctx context.Context, cfg config.File, redisClient rediscli.Client, username, protocol, oidcClientID string) (accountName string, err error) {
 	// Tracing span for a user account lookup in the generic backend layer
 	tr := monittrace.New("nauthilus/backend")
 	sctx, sp := tr.Start(ctx, "backend.lookup_user_account",
 		attribute.String("username", username),
+		attribute.String("protocol", protocol),
+		attribute.String("oidc_client_id", oidcClientID),
 	)
 
 	defer sp.End()
@@ -63,7 +65,9 @@ func LookupUserAccountFromRedis(ctx context.Context, cfg config.File, redisClien
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(sctx, cfg)
 	defer cancel()
 
-	accountName, err = redisClient.GetReadHandle().HGet(dCtx, key, username).Result()
+	field := accountcache.GetAccountMappingField(username, protocol, oidcClientID)
+
+	accountName, err = redisClient.GetReadHandle().HGet(dCtx, key, field).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			// Record real Redis errors (not a miss)
@@ -475,22 +479,24 @@ func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.Fi
 
 // GetUserAccountFromCache fetches the user account name from Redis cache using the provided username.
 // Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
-func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, username string, guid string) (accountName string) {
+func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, username, protocol, oidcClientID, guid string) (accountName string) {
 	// First try in-process account cache when enabled
-	if acc, ok := accountCache.Get(username); ok && acc != "" {
+	if acc, ok := accountCache.Get(username, protocol, oidcClientID); ok && acc != "" {
 		return acc
 	}
 
+	sfKey := accountcache.GetAccountMappingField(username, protocol, oidcClientID)
+
 	// Use singleflight to avoid redundant Redis lookups for the same user under high concurrency
-	val, err, _ := accountSF.Do(username, func() (any, error) {
-		res, lookupErr := LookupUserAccountFromRedis(ctx, cfg, redisClient, username)
+	val, err, _ := accountSF.Do(sfKey, func() (any, error) {
+		res, lookupErr := LookupUserAccountFromRedis(ctx, cfg, redisClient, username, protocol, oidcClientID)
 		if lookupErr != nil {
 			return "", lookupErr
 		}
 
 		if res != "" {
 			// Store positive result in in-process cache
-			accountCache.Set(cfg, username, res)
+			accountCache.Set(cfg, username, protocol, oidcClientID, res)
 		}
 
 		return res, nil
@@ -511,11 +517,11 @@ func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.
 
 // ResolveAccountIdentifier resolves an identifier that may be either a username or an account name.
 // It first tries to look up a mapping in the USER hash; if not found, it treats the identifier as an account name.
-func ResolveAccountIdentifier(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, identifier string, guid string) (accountName string) {
+func ResolveAccountIdentifier(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, identifier, protocol, oidcClientID, guid string) (accountName string) {
 	var err error
 
 	// Try to resolve username -> account name mapping
-	accountName, err = LookupUserAccountFromRedis(ctx, cfg, redisClient, identifier)
+	accountName, err = LookupUserAccountFromRedis(ctx, cfg, redisClient, identifier, protocol, oidcClientID)
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,

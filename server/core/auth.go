@@ -1535,7 +1535,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 			// Keep Redis nt:USER mapping in sync when attribute-derived account differs.
 			// Read the current mapping with a bounded read deadline.
 			dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(auth.Ctx(), auth.Cfg())
-			current, err := backend.LookupUserAccountFromRedis(dReadCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username)
+			current, err := backend.LookupUserAccountFromRedis(dReadCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, auth.Request.Protocol.Get(), auth.Request.OIDCCID)
 			cancelRead()
 
 			if err != nil {
@@ -1549,7 +1549,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 				defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 				dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil, auth.Cfg())
-				werr := backend.SetUserAccountMapping(dWriteCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, acc)
+				werr := backend.SetUserAccountMapping(dWriteCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, auth.Request.Protocol.Get(), auth.Request.OIDCCID, acc)
 				cancelWrite()
 
 				if werr != nil {
@@ -1592,7 +1592,7 @@ func (a *AuthState) SetStatusCodes(service string) {
 // It returns true if the account name is found, otherwise false.
 // An error is returned if there are issues during the Redis lookup.
 func (a *AuthState) userExists() (bool, error) {
-	accountName, err := backend.LookupUserAccountFromRedis(a.Ctx(), a.Cfg(), a.deps.Redis, a.Request.Username)
+	accountName, err := backend.LookupUserAccountFromRedis(a.Ctx(), a.Cfg(), a.deps.Redis, a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID)
 	if err != nil {
 		return false, err
 	}
@@ -1610,7 +1610,7 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 
 	// Use request/service context with bounded deadline to avoid leaks and reuse caller context
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(a.Ctx(), a.Cfg())
-	accountName = backend.GetUserAccountFromCache(dCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Runtime.GUID)
+	accountName = backend.GetUserAccountFromCache(dCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 	cancel()
 
 	if accountName == "" {
@@ -2542,7 +2542,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 	// Service-scoped read to avoid inheriting a canceled request context
 	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(nil, a.Cfg())
-	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Runtime.GUID)
+	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 	cancelRead()
 
 	if accountName != "" {
@@ -2568,7 +2568,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		// Service-scoped write for robust cache update
 		dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil, a.Cfg())
-		err = backend.SetUserAccountMapping(dWriteCtx, a.Cfg(), a.deps.Redis, a.Request.Username, accountName)
+		err = backend.SetUserAccountMapping(dWriteCtx, a.Cfg(), a.deps.Redis, a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, accountName)
 		cancelWrite()
 	}
 

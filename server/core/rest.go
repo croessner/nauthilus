@@ -759,7 +759,7 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 	cfg := deps.effectiveCfg()
 
 	// Accept either a username (resolved via USER hash) or a direct account name
-	if accountName = backend.ResolveAccountIdentifier(ctx.Request.Context(), cfg, logger, redisClient, userCmd.User, guid); accountName == "" {
+	if accountName = backend.ResolveAccountIdentifier(ctx.Request.Context(), cfg, logger, redisClient, userCmd.User, "", "", guid); accountName == "" {
 		return nil, true
 	}
 
