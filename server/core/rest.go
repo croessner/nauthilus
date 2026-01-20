@@ -320,9 +320,19 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 
 	logger := deps.effectiveLogger()
 	cfg := deps.effectiveCfg()
-	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
-	ipAddresses, err := deps.Redis.GetReadHandle().HGetAll(ctx, key).Result()
+	ipAddresses := make(map[string]string)
+
+	pipe := deps.Redis.GetReadHandle().Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, 256)
+
+	for i := 0; i < 256; i++ {
+		shardKey := fmt.Sprintf("%s%s:{%02x}", prefix, definitions.RedisBruteForceHashKey, i)
+		cmds[i] = pipe.HGetAll(ctx, shardKey)
+	}
+
+	_, err := pipe.Exec(ctx)
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(logger).Log(
@@ -337,24 +347,26 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 			return blockedIPAddresses, err
 		}
 	} else {
-		if filterCmd != nil {
-			filteredIPs := make(map[string]string)
-
-			if len(filterCmd.IPAddress) == 0 {
-				ipAddresses = make(map[string]string)
+		for _, cmd := range cmds {
+			if res, cerr := cmd.Result(); cerr == nil {
+				for k, v := range res {
+					ipAddresses[k] = v
+				}
 			}
+		}
+
+		if filterCmd != nil && len(filterCmd.IPAddress) > 0 {
+			filteredIPs := make(map[string]string)
 
 			for _, filterIPWanted := range filterCmd.IPAddress {
 				for network, bucket := range ipAddresses {
 					if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
 						filteredIPs[network] = bucket
-
-						break
 					}
 				}
-
-				ipAddresses = filteredIPs
 			}
+
+			ipAddresses = filteredIPs
 		}
 
 		blockedIPAddresses.IPAddresses = ipAddresses
@@ -939,7 +951,7 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 			// Tolerations keys — delete base hash and both positive/negative ZSETs for raw and scoped identifiers
 			sb.Reset()
 			sb.WriteString(prefix)
-			sb.WriteString("bf:TR:")
+			sb.WriteString(definitions.RedisBFTolerationPrefix)
 			sb.WriteString(ip)
 			baseTolRaw := sb.String()
 
@@ -956,7 +968,7 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 			if scopedTol != ip {
 				sb.Reset()
 				sb.WriteString(prefix)
-				sb.WriteString("bf:TR:")
+				sb.WriteString(definitions.RedisBFTolerationPrefix)
 				sb.WriteString(scopedTol)
 				baseTolScoped := sb.String()
 
@@ -971,33 +983,38 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 				userKeys.Set(sb.String())
 			}
 
-			// Also remove the PW_HIST meta key for this IP (protocol/oidc persistence)
+			// RWP allowance keys — delete for both raw and scoped IP combined with account
 			sb.Reset()
 			sb.WriteString(prefix)
-			sb.WriteString(definitions.RedisPWHistMetaKey)
+			sb.WriteString(definitions.RedisBFRWPAllowPrefix)
+			sb.WriteString(ip)
 			sb.WriteByte(':')
+			sb.WriteString(accountName)
+			userKeys.Set(sb.String())
+
+			if scopedRWP != ip {
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisBFRWPAllowPrefix)
+				sb.WriteString(scopedRWP)
+				sb.WriteByte(':')
+				sb.WriteString(accountName)
+				userKeys.Set(sb.String())
+			}
+
+			// Cold-start grace keys — delete for both raw and scoped IP
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(definitions.RedisBFColdStartPrefix)
 			sb.WriteString(ip)
 			userKeys.Set(sb.String())
 
-			// Remove network-scoped PW_HIST meta keys for this IP for all matching brute-force rules
-			parsed := net.ParseIP(ip)
-			if parsed != nil {
-				for _, rule := range cfg.GetBruteForceRules() {
-					// Respect IPv4/IPv6 flags
-					if (parsed.To4() != nil && !rule.IPv4) || (parsed.To4() == nil && !rule.IPv6) {
-						continue
-					}
-					_, network, nerr := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, rule.CIDR))
-					if nerr == nil && network != nil {
-						sb.Reset()
-						sb.WriteString(prefix)
-						sb.WriteString(definitions.RedisPWHistMetaKey)
-						sb.WriteByte(':')
-						sb.WriteString(network.String())
-
-						userKeys.Set(sb.String())
-					}
-				}
+			if scopedRWP != ip {
+				sb.Reset()
+				sb.WriteString(prefix)
+				sb.WriteString(definitions.RedisBFColdStartPrefix)
+				sb.WriteString(scopedRWP)
+				userKeys.Set(sb.String())
 			}
 		}
 	}
@@ -1044,12 +1061,7 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 	logger := deps.effectiveLogger()
 	redisClient := deps.effectiveRedis()
 
-	var sb strings.Builder
-
-	sb.WriteString(cfg.GetServer().GetRedis().GetPrefix())
-	sb.WriteString(definitions.RedisUserHashKey)
-
-	redisKey := sb.String()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
 	// Increment write counter once for the whole pipeline execution
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -1059,8 +1071,13 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 	pipe := redisClient.GetWriteHandle().Pipeline()
 	// Remove hash (whole hash or a single field) first
 	if removeHash {
-		pipe.Del(ctx, redisKey)
+		// Flush all 256 shards
+		for i := 0; i < 256; i++ {
+			shardKey := fmt.Sprintf("%s%s:{%02x}", prefix, definitions.RedisUserHashKey, i)
+			pipe.Del(ctx, shardKey)
+		}
 	} else {
+		redisKey := rediscli.GetUserHashKey(prefix, userCmd.User)
 		pipe.HDel(ctx, redisKey, userCmd.User)
 	}
 
@@ -1081,9 +1098,14 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 		return removedKeys
 	}
 
-	// cmds[0] corresponds to Del/HDel of redisKey, which we do not report in removedKeys (preserving prior behavior)
+	// Calculate the offset for cmds based on whether we flushed one shard or 256
+	offset := 1
+	if removeHash {
+		offset = 256
+	}
+
 	for i, userKey := range keys {
-		idx := i + 1
+		idx := i + offset
 		if idx >= 0 && idx < len(cmds) {
 			if intCmd, ok := cmds[idx].(*redis.IntCmd); ok {
 				if val, cerr := intCmd.Result(); cerr == nil && val > 0 {
@@ -1629,7 +1651,7 @@ func flushForBucket(ctx *gin.Context, deps restAdminDeps, bm bruteforce.BucketMa
 		removed = append(removed, key)
 	}
 
-	if bucketKey := bm.GetBruteForceBucketRedisKey(rule); bucketKey != "" {
+	for _, bucketKey := range bm.GetBucketKeys(rule) {
 		var err error
 		if removed, err = flushKey(ctx, deps, bucketKey, bm.GetBruteForceName(), removed); err != nil {
 			return removed, err
@@ -1680,7 +1702,7 @@ func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushR
 	}
 
 	// Phase 4: always drop tolerate-bucket keys for the IP using a single pipeline
-	base := cfg.GetServer().GetRedis().GetPrefix() + "bf:TR:" + cmd.IPAddress
+	base := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBFTolerationPrefix + cmd.IPAddress
 	keys := make([]string, 0, 1+len(trSuffixes))
 	keys = append(keys, base)
 

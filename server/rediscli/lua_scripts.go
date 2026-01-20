@@ -17,20 +17,6 @@ package rediscli
 
 // LuaScripts contains all the Lua scripts used in the application
 var LuaScripts = map[string]string{
-	// AuthPreflight performs a combined fetch of the mapped account name and a brute-force repeat check.
-	// KEYS[1] - Hash key for username->account mapping (USER hash)
-	// KEYS[2] - Hash key for brute-force network map
-	// ARGV[1] - username
-	// ARGV[2] - clientNet (can be empty)
-	"AuthPreflight": `
-local acc = redis.call('HGET', KEYS[1], ARGV[1])
-if not acc then acc = '' end
-local repeating = 0
-if ARGV[2] and ARGV[2] ~= '' then
-  if redis.call('HEXISTS', KEYS[2], ARGV[2]) == 1 then repeating = 1 end
-end
-return {acc, repeating}
-`,
 	// IncrementAndExpire increments a counter and sets an expiration time in a single atomic operation
 	// KEYS[1] - The key to increment
 	// ARGV[1] - The expiration time in seconds
@@ -152,5 +138,97 @@ if redis.call("GET", KEYS[1]) == ARGV[1] then
 else
   return 0
 end
+`,
+
+	// AddToSetAndExpireLimit adds a hash to a set and sets an expiration time,
+	// but only if the set hasn't reached the maximum number of entries.
+	// If it has reached the limit, it only refreshes TTL if the hash is already present.
+	// KEYS[1] - The set key
+	// ARGV[1] - The hash to add
+	// ARGV[2] - The expiration time in seconds
+	// ARGV[3] - The maximum number of entries allowed in the set
+	"AddToSetAndExpireLimit": `
+local key = KEYS[1]
+local hash = ARGV[1]
+local ttl = tonumber(ARGV[2])
+local max = tonumber(ARGV[3])
+
+if redis.call('SCARD', key) >= max then
+  if redis.call('SISMEMBER', key, hash) == 1 then
+    redis.call('EXPIRE', key, ttl)
+    return 1
+  end
+  return 0
+end
+
+redis.call('SADD', key, hash)
+redis.call('EXPIRE', key, ttl)
+return 1
+`,
+	// SlidingWindowCounter implements a sliding window counter for rate limiting with adaptive reputation scaling.
+	// KEYS:
+	//   [1] = current window key
+	//   [2] = previous window key
+	//   [3] = optional reputation hash key (bf:TR:{ip})
+	// ARGV:
+	//   [1] = increment value (e.g. 1 to increase, 0 to only check)
+	//   [2] = weight for previous window (float, 0.0 to 1.0)
+	//   [3] = ttl for current window (seconds)
+	//   [4] = base limit (number of failed requests - 1)
+	//   [5] = adaptive enabled (1 or 0)
+	//   [6] = min tolerate percent
+	//   [7] = max tolerate percent
+	//   [8] = scale factor
+	//   [9] = static tolerate percent
+	// Returns:
+	//   {tostring(total), exceeded, tostring(effective_limit)}
+	"SlidingWindowCounter": `
+local current_key = KEYS[1]
+local prev_key = KEYS[2]
+local rep_key = KEYS[3]
+
+local increment = tonumber(ARGV[1])
+local weight = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+local base_limit = tonumber(ARGV[4] or "-1")
+
+local adaptive_enabled = tonumber(ARGV[5] or "0") == 1
+local min_percent = tonumber(ARGV[6] or "0")
+local max_percent = tonumber(ARGV[7] or "0")
+local scale_factor = tonumber(ARGV[8] or "1")
+local static_percent = tonumber(ARGV[9] or "0")
+
+local limit = base_limit
+
+if rep_key and rep_key ~= "" then
+    local positive = tonumber(redis.call("HGET", rep_key, "positive") or "0")
+    if positive > 0 then
+        local percent = static_percent
+        if adaptive_enabled then
+            local factor = math.min(1, math.log(positive + 1) / math.log(100) * scale_factor)
+            percent = math.floor(min_percent + (max_percent - min_percent) * factor)
+            percent = math.max(min_percent, math.min(max_percent, percent))
+        end
+        limit = math.floor(base_limit * (1 + percent / 100))
+    end
+end
+
+local current_cnt = tonumber(redis.call("GET", current_key) or 0)
+if increment > 0 then
+    current_cnt = redis.call("INCRBY", current_key, increment)
+    if current_cnt == increment then
+        redis.call("EXPIRE", current_key, ttl)
+    end
+end
+
+local prev_cnt = tonumber(redis.call("GET", prev_key) or 0)
+local total = current_cnt + (prev_cnt * weight)
+
+local exceeded = 0
+if limit >= 0 and total > limit then
+    exceeded = 1
+end
+
+return {tostring(total), exceeded, tostring(limit)}
 `,
 }

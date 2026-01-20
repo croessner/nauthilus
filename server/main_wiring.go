@@ -174,6 +174,7 @@ type runtimeLifecycleParams struct {
 	StatsSvc      *loopsfx.StatsService
 	MonitoringSvc *loopsfx.BackendMonitoringService
 	ConnMgrSvc    *loopsfx.ConnMgrService
+	BFSyncSvc     *loopsfx.BruteForceSyncService
 	Env           config.Environment
 	Channel       backend.Channel
 }
@@ -267,6 +268,10 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 				return err
 			}
 
+			if err := p.BFSyncSvc.Start(p.Ctx); err != nil {
+				return err
+			}
+
 			return nil
 		},
 		OnStop: func(stopCtx context.Context) error {
@@ -284,6 +289,10 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			if err := p.ConnMgrSvc.Stop(stopCtx); err != nil {
 				stdlog.Printf("Unable to stop connection manager service. Error: %v", err)
+			}
+
+			if err := p.BFSyncSvc.Stop(stopCtx); err != nil {
+				stdlog.Printf("Unable to stop brute-force sync service. Error: %v", err)
 			}
 
 			// Best-effort: do not spend the entire fx stop budget on shutdown waits.

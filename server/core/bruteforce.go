@@ -17,6 +17,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -35,6 +37,7 @@ import (
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -83,9 +86,23 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 
 		isRepeating := alreadyTriggered || (bfCount >= rule.GetFailedRequests())
 
-		// If still unknown, combine account lookup + repeating flag via Redis Lua preflight
+		// If still unknown, combine account lookup + repeating flag via Redis pipeline
 		if (!isRepeating || accountName == "") && clientNet != "" {
-			if acc, rep, err := rediscli.AuthPreflight(ctx.Request.Context(), a.Redis(), a.Request.Username, clientNet); err == nil {
+			prefix := a.cfg().GetServer().GetRedis().GetPrefix()
+			userKey := rediscli.GetUserHashKey(prefix, a.Request.Username)
+			bfKey := rediscli.GetBruteForceHashKey(prefix, clientNet)
+
+			dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx.Request.Context(), a.cfg())
+			pipe := a.Redis().GetReadHandle().Pipeline()
+			userCmd := pipe.HGet(dCtx, userKey, a.Request.Username)
+			bfCmd := pipe.HExists(dCtx, bfKey, clientNet)
+			_, err := pipe.Exec(dCtx)
+			cancel()
+
+			if err == nil || errors.Is(err, redis.Nil) {
+				acc, _ := userCmd.Result()
+				rep, _ := bfCmd.Result()
+
 				if accountName == "" && acc != "" {
 					accountName = acc
 					// Mirror into AuthState
@@ -300,22 +317,50 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	bfCfg := cfg.GetBruteForce()
 	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
+		engine := l1.GetEngine()
+		swlKey := l1.KeySoftWhitelist(a.Request.Username, a.Request.ClientIP)
+		if dec, ok := engine.Get(swlKey); ok && dec.Allowed {
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
+
+			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted_l1"))
+
+			return false
+		}
+
 		if util.IsSoftWhitelisted(cctx, a.Cfg(), a.Logger(), a.Request.Username, a.Request.ClientIP, a.Runtime.GUID, bfCfg.SoftWhitelist) {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
 
+			// Cache result in L1
+			engine.Set(swlKey, l1.L1Decision{Allowed: true, Reason: "SoftWhitelist"}, 0)
+
 			return false
 		}
 	}
 
 	if bfCfg != nil && len(bfCfg.GetIPWhitelist()) > 0 {
+		engine := l1.GetEngine()
+		wlKey := l1.KeyWhitelist(a.Request.ClientIP)
+		if dec, ok := engine.Get(wlKey); ok && dec.Allowed {
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
+
+			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted_l1"))
+
+			return false
+		}
+
 		if a.IsInNetwork(bfCfg.IPWhitelist) {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
+
+			// Cache result in L1
+			engine.Set(wlKey, l1.L1Decision{Allowed: true, Reason: "IPWhitelist"}, 0)
 
 			return false
 		}
@@ -436,7 +481,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		} else {
 			a.Security.LoginAttempts = bm.GetLoginAttempts()
 		}
-		a.Security.PasswordHistory = bm.GetPasswordHistory()
 	})
 
 	// Compute and store brute-force hints for the Post-Action.
@@ -453,7 +497,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	// 2) Determine repeating based on alreadyTriggered or counter >= limit; fallback to pre-result hash if buckets expired.
 	bfRepeating := alreadyTriggered || (a.Security.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
-		key := a.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+		prefix := a.cfg().GetServer().GetRedis().GetPrefix()
+		key := rediscli.GetBruteForceHashKey(prefix, bfClientNet)
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 

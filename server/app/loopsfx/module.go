@@ -26,6 +26,7 @@ func Module() fx.Option {
 			NewDefaultStatsService,
 			NewDefaultBackendMonitoringService,
 			NewDefaultConnMgrService,
+			NewBruteForceSyncService,
 		),
 	)
 }

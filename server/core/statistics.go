@@ -77,9 +77,14 @@ func LoadStatsFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 		return nil
 	})
 
-	if err != nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		level.Error(logger).Log(definitions.LogKeyMsg, "Unable to load status from Redis", definitions.LogKeyError, err)
+
 		return
+	}
+
+	if errors.Is(err, redis.Nil) {
+		level.Info(logger).Log(definitions.LogKeyMsg, "No statistics on Redis server")
 	}
 
 	// Count as multiple Redis operations for metrics
@@ -100,13 +105,12 @@ func LoadStatsFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 		val, err := hgetCmd.Float64()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
-				level.Info(logger).Log(definitions.LogKeyMsg, "No statistics on Redis server")
-				return
+				continue
 			}
 
 			level.Error(logger).Log(definitions.LogKeyMsg, "Unexpected HGET comannd result", definitions.LogKeyError, err)
 
-			return
+			continue
 		}
 
 		stats.GetMetrics().GetLoginsCounter().WithLabelValues(counterTypes[i]).Add(val)

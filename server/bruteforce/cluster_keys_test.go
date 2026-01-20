@@ -73,8 +73,8 @@ func TestRedisClusterHashTags(t *testing.T) {
 		t.Fatalf("unexpected bucket hash-tag for r2: %q", k2)
 	}
 
-	// PW_HIST Lua gate is executed with two keys (hash + total); they must share the same hash slot.
-	h := impl.getPasswordHistoryRedisHashKey(true)
+	// PW_HIST Lua gate is executed with keys; they must share the same hash slot.
+	h := impl.getPasswordHistoryRedisSetKey(true)
 	total := impl.getPasswordHistoryTotalRedisKey(true)
 
 	if extractHashTag(t, h) != extractHashTag(t, total) {

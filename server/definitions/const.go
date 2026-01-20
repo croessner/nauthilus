@@ -608,34 +608,42 @@ const (
 
 const (
 	// RedisBruteForceHashKey represents the key used for brute force attempts in Redis.
-	RedisBruteForceHashKey = "BRUTEFORCE"
+	RedisBruteForceHashKey = "bruteforce"
 
 	// RedisUserHashKey represents the key used for user data in Redis.
-	RedisUserHashKey = "USER"
+	RedisUserHashKey = "user"
 
 	// RedisMetricsCounterHashKey represents the key used for a metrics counter in Redis.
-	RedisMetricsCounterHashKey = "COUNTER"
+	RedisMetricsCounterHashKey = "counter"
 
 	// RedisPwHashKey represents the key used for password history in Redis.
-	RedisPwHashKey = "PW_HIST"
+	RedisPwHashKey = "pw_hist"
 
 	// RedisPwHistTotalKey represents the key used for storing total counts for password history scopes in Redis.
-	// The full key is constructed similarly to PW_HIST but with this different prefix and the same suffix.
+	// The full key is constructed similarly to pw_hist but with this different prefix and the same suffix.
 	// Example: <prefix> + RedisPwHistTotalKey + ":<account>:<ip>" or ":<ip>"
 	RedisPwHistTotalKey = "pw_hist_total"
 
 	// RedisPWHistIPsKey represents the key used for storing password history associated with IPs in Redis.
-	RedisPWHistIPsKey = "PW_HIST_IPS"
-
-	// RedisPWHistMetaKey represents the key prefix used for storing metadata (like protocol and OIDC client ID)
-	// associated with an IP seen in PW_HIST. The full key is constructed as <prefix> + RedisPWHistMetaKey + ":" + <ip>.
-	RedisPWHistMetaKey = "PW_HIST_META"
+	RedisPWHistIPsKey = "pw_hist_ips"
 
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
-	RedisAffectedAccountsKey = "AFFECTED_ACCOUNTS"
+	RedisAffectedAccountsKey = "affected_accounts"
+
+	// RedisBFTolerationPrefix represents the prefix used for toleration buckets in Redis.
+	RedisBFTolerationPrefix = "bf:tr:"
 
 	// RedisUserPositiveCachePrefix is the prefix used for positive user cache entries in Redis.
 	RedisUserPositiveCachePrefix = "UCP:"
+
+	// RedisBFColdStartPrefix represents the prefix used for cold-start grace in Redis.
+	RedisBFColdStartPrefix = "bf:cold:"
+
+	// RedisBFSeedPrefix represents the prefix used for brute-force seeds in Redis.
+	RedisBFSeedPrefix = "bf:seed:"
+
+	// RedisBFRWPAllowPrefix represents the prefix used for repeating wrong password allowance in Redis.
+	RedisBFRWPAllowPrefix = "bf:rwp:allow:"
 )
 
 // ImageCopyright represents the copyright statement for a logo.
@@ -1812,4 +1820,7 @@ const (
 const (
 	// RedisBFBurstPrefix is the Redis key prefix for brute-force burst gating keys
 	RedisBFBurstPrefix = "bf:burst:"
+
+	// RedisBFBlocksChannel is the Pub/Sub channel used to broadcast brute-force blocks.
+	RedisBFBlocksChannel = "bf:blocks"
 )

@@ -19,13 +19,12 @@ import (
 	"context"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 )
 
 // SetUserAccountMapping writes/updates the username → account mapping in Redis.
 func SetUserAccountMapping(ctx context.Context, cfg config.File, redisClient rediscli.Client, username, account string) error {
-	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
+	key := rediscli.GetUserHashKey(cfg.GetServer().GetRedis().GetPrefix(), username)
 
 	return redisClient.GetWriteHandle().HSet(ctx, key, username, account).Err()
 }

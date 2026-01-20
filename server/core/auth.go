@@ -526,9 +526,6 @@ type AuthSecurity struct {
 	// BruteForceCounter keeps track of brute-force attempts.
 	BruteForceCounter map[string]uint
 
-	// PasswordHistory maintains the history of password attempts.
-	PasswordHistory *bruteforce.PasswordHistory
-
 	// attempts manages the login attempts.
 	attempts *defaultLoginAttemptManager
 
@@ -1679,6 +1676,18 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.FeatureName = a.Runtime.FeatureName
 	cr.StatusMessage = &a.Runtime.StatusMessage
 
+	if a.Security.BruteForceName != "" {
+		if val, ok := a.Security.BruteForceCounter[a.Security.BruteForceName]; ok {
+			cr.BruteForceCounter = val
+		} else {
+			// Handle cases like "rule,guessed"
+			parts := strings.Split(a.Security.BruteForceName, ",")
+			if val, ok := a.Security.BruteForceCounter[parts[0]]; ok {
+				cr.BruteForceCounter = val
+			}
+		}
+	}
+
 	if a.deps.Cfg != nil {
 		cr.Debug = a.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	}
@@ -1706,18 +1715,35 @@ func (a *AuthState) GetBruteForceCounter() map[string]uint {
 
 // GetBruteForceBucketRedisKey returns the Redis key for the specified brute force rule.
 func (a *AuthState) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
-	if a == nil || a.deps.Cfg == nil {
+	if a == nil {
 		return ""
 	}
 
-	key = a.deps.Cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey + "{" + a.Request.ClientIP + "}:" + rule.Name
+	bm := a.createBucketManager(a.Ctx())
 
-	return
+	return bm.GetBruteForceBucketRedisKey(rule)
 }
 
-// GetPasswordHistory returns the password history from the AuthState.
-func (a *AuthState) GetPasswordHistory() *bruteforce.PasswordHistory {
-	return a.Security.PasswordHistory
+// GetBucketKeys returns all Redis keys associated with a brute force rule.
+func (a *AuthState) GetBucketKeys(rule *config.BruteForceRule) []string {
+	if a == nil {
+		return nil
+	}
+
+	bm := a.createBucketManager(a.Ctx())
+
+	return bm.GetBucketKeys(rule)
+}
+
+// GetSlidingWindowKeys returns the current and previous window keys for a rule.
+func (a *AuthState) GetSlidingWindowKeys(rule *config.BruteForceRule, network *net.IPNet) (currentKey, prevKey string, weight float64) {
+	if a == nil {
+		return "", "", 0
+	}
+
+	bm := a.createBucketManager(a.Ctx())
+
+	return bm.GetSlidingWindowKeys(rule, network)
 }
 
 // GetFeatureName returns the feature name from the AuthState.
@@ -1773,7 +1799,6 @@ func (a *AuthState) LoadAllPasswordHistories() {
 
 	bm := a.createBucketManager(a.Ctx())
 	bm.LoadAllPasswordHistories()
-	a.Security.PasswordHistory = bm.GetPasswordHistory()
 }
 
 // CheckRepeatingBruteForcer checks for repeating brute force attacks based on the given rules.
@@ -2708,7 +2733,6 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		lam := a.ensureLAM()
 		if lam != nil {
 			lam.InitFromHeader(ctx.GetHeader(cfg.GetLoginAttempt()))
-			// Mirror for backward compatibility: store FailCount (number of failures)
 			a.Security.LoginAttempts = lam.FailCount()
 		}
 	}

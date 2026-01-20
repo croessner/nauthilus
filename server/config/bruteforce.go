@@ -22,34 +22,23 @@ import (
 )
 
 type BruteForceSection struct {
-	SoftWhitelist      `mapstructure:"soft_whitelist"`
-	IPWhitelist        []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
-	Buckets            []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
-	Learning           []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
-	ToleratePercent    uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
-	CustomTolerations  []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
-	TolerateTTL        time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
-	AdaptiveToleration bool             `mapstructure:"adaptive_toleration"`
-	MinToleratePercent uint8            `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
-	MaxToleratePercent uint8            `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
-	ScaleFactor        float64          `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
-
-	// Reduce PW_HIST write amplification while an IP/net is already blocked:
-	// If true, account-scoped PW_HIST entries are only written for known accounts (no fallback to username)
-	// when the request is served from an already-triggered (cached) brute-force block.
-	LogHistoryForKnownAccounts bool `mapstructure:"pw_history_for_known_accounts"`
-
-	// IPv6 scoping options for features that use password-history (PW_HIST), e.g., repeating-wrong-password.
-	// If set to >0, IPv6 addresses will be considered on the given CIDR instead of /128 for the respective context.
-	IPScoping IPScoping `mapstructure:"ip_scoping"`
-
-	// Cold-start grace: one-time grace for known accounts without negative PW history.
-	ColdStartGraceEnabled bool          `mapstructure:"cold_start_grace_enabled"`
-	ColdStartGraceTTL     time.Duration `mapstructure:"cold_start_grace_ttl" validate:"omitempty,gt=0,max=8760h"`
-
-	// RWP allowance: tolerate up to N unique wrong password hashes in a time window
-	AllowedUniqueWrongPWHashes uint          `mapstructure:"rwp_allowed_unique_hashes" validate:"omitempty,min=1,max=100"`
+	IPWhitelist                []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
+	Buckets                    []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
+	Learning                   []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
+	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
+	SoftWhitelist              `mapstructure:"soft_whitelist"`
+	TolerateTTL                time.Duration `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
+	ColdStartGraceTTL          time.Duration `mapstructure:"cold_start_grace_ttl" validate:"omitempty,gt=0,max=8760h"`
 	RWPWindow                  time.Duration `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
+	ScaleFactor                float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
+	AllowedUniqueWrongPWHashes uint          `mapstructure:"rwp_allowed_unique_hashes" validate:"omitempty,min=1,max=100"`
+	ToleratePercent            uint8         `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
+	MinToleratePercent         uint8         `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	MaxToleratePercent         uint8         `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	AdaptiveToleration         bool          `mapstructure:"adaptive_toleration"`
+	LogHistoryForKnownAccounts bool          `mapstructure:"pw_history_for_known_accounts"`
+	ColdStartGraceEnabled      bool          `mapstructure:"cold_start_grace_enabled"`
 }
 
 // IPScoping configures how client IPs are normalized/scoped for different contexts.
@@ -215,8 +204,6 @@ func (b *BruteForceSection) GetIPScoping() IPScoping {
 
 // GetPWHistKnownAccountsOnlyOnAlreadyTriggered returns whether per-account PW_HIST should be limited
 // to known accounts (no username fallback) when a request is already cached-blocked.
-// Supports both the new short key (pw_hist_known_cached) and the legacy long key
-// (pw_hist_known_accounts_only_on_already_triggered) for backward compatibility.
 func (b *BruteForceSection) GetPWHistKnownAccountsOnlyOnAlreadyTriggered() bool {
 	if b == nil {
 		return false
@@ -297,12 +284,12 @@ func (b *BruteForceSection) GetRWPWindow() time.Duration {
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).
 type Tolerate struct {
 	IPAddress          string        `mapstructure:"ip_address" validate:"required,ip_addr|cidr"`
-	ToleratePercent    uint8         `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
 	TolerateTTL        time.Duration `mapstructure:"tolerate_ttl" validate:"required,gt=0,max=8760h"`
-	AdaptiveToleration bool          `mapstructure:"adaptive_toleration"`
+	ScaleFactor        float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
+	ToleratePercent    uint8         `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
 	MinToleratePercent uint8         `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	MaxToleratePercent uint8         `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
-	ScaleFactor        float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
+	AdaptiveToleration bool          `mapstructure:"adaptive_toleration"`
 }
 
 // GetIPAddress retrieves the IP address from the Tolerate configuration.
@@ -390,14 +377,14 @@ func (t *Tolerate) GetScaleFactor() float64 {
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown
 // documentation for a description of the field names.
 type BruteForceRule struct {
+	FilterByProtocol []string      `mapstructure:"filter_by_protocol" validate:"omitempty"`
+	FilterByOIDCCID  []string      `mapstructure:"filter_by_oidc_cid" validate:"omitempty"`
 	Name             string        `mapstructure:"name" validate:"required"`
 	Period           time.Duration `mapstructure:"period" validate:"required,gt=0,max=8760h"`
 	CIDR             uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
+	FailedRequests   uint          `mapstructure:"failed_requests" validate:"required,min=1"`
 	IPv4             bool
 	IPv6             bool
-	FailedRequests   uint     `mapstructure:"failed_requests" validate:"required,min=1"`
-	FilterByProtocol []string `mapstructure:"filter_by_protocol" validate:"omitempty"`
-	FilterByOIDCCID  []string `mapstructure:"filter_by_oidc_cid" validate:"omitempty"`
 }
 
 func (b *BruteForceRule) String() string {

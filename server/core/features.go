@@ -91,7 +91,6 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		NoAuth:             a.Request.NoAuth,
 		BruteForceCounter:  0,
 		MasterUserMode:     a.Runtime.MasterUserMode,
-		PasswordHistory:    a.Security.PasswordHistory,
 		AdditionalFeatures: a.Runtime.AdditionalFeatures,
 	}
 
