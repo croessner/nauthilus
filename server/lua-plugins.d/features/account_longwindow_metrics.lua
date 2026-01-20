@@ -74,12 +74,12 @@ function nauthilus_call_feature(request)
         end
 
         local keys = {
-            "ntc:hll:acct:" .. tag .. username .. ":ips:86400",
-            "ntc:hll:acct:" .. tag .. username .. ":ips:604800",
-            "ntc:z:acct:" .. tag .. username .. ":fails",
-            "ntc:acct:" .. tag .. username .. ":longwindow",
-            "ntc:z:spray:pw:86400",
-            "ntc:z:spray:pw:604800",
+            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":ips:86400"),
+            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":ips:604800"),
+            nauthilus_util.get_redis_key(request, "z:acct:" .. tag .. username .. ":fails"),
+            nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":longwindow"),
+            nauthilus_util.get_redis_key(request, "z:spray:pw:86400"),
+            nauthilus_util.get_redis_key(request, "z:spray:pw:604800"),
         }
         local args = {
             now,

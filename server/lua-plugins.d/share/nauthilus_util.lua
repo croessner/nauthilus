@@ -131,6 +131,23 @@ function nauthilus_util.is_number(object)
     return type(object) == "number"
 end
 
+--- nauthilus_util.get_redis_key returns a Redis key with the prefix from the request.
+---@param request table
+---@param key string
+---@return string
+function nauthilus_util.get_redis_key(request, key)
+    if not nauthilus_util.is_table(request) then
+        return key
+    end
+
+    local prefix = request.redis_prefix
+    if prefix ~= nil and prefix ~= "" then
+        return prefix .. key
+    end
+
+    return key
+end
+
 --- nauthilus_util.toboolean converts a boolean value into a string.
 ---@param str string
 ---@return boolean

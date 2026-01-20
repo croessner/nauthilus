@@ -667,7 +667,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			// Build request table
 			request := Llocal.NewTable()
 
-			r.CommonRequest.SetupRequest(cfg, request)
+			r.CommonRequest.SetupRequest(Llocal, cfg, request)
 
 			// Set local override fields from Request struct
 			if r.Session != "" {

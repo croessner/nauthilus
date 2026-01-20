@@ -25,8 +25,8 @@ local N = "distributed-brute-force-test"
 local NAUTHILUS_WARMUP_WINDOW_SECONDS = nauthilus_util.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS", "86400")
 
 -- Ensure system start and warm-up settings exist; return settings table
-local function ensure_startup_settings(redis_handle)
-    local settings_key = "ntc:multilayer:global:settings"
+local function ensure_startup_settings(redis_handle, request)
+    local settings_key = nauthilus_util.get_redis_key(request, "multilayer:global:settings")
     local settings = nauthilus_redis.redis_hgetall(redis_handle, settings_key) or {}
 
     -- system_started_at: unix timestamp
@@ -54,8 +54,8 @@ local function ensure_startup_settings(redis_handle)
 end
 
 -- Compute warm-up diagnostics table
-local function get_warmup(redis_handle)
-    local settings = ensure_startup_settings(redis_handle)
+local function get_warmup(redis_handle, request)
+    local settings = ensure_startup_settings(redis_handle, request)
     local now = time.unix()
     local started_at = tonumber(settings["system_started_at"]) or now
     local warmup_window = tonumber(settings["warmup_window_seconds"]) or 86400
@@ -84,7 +84,7 @@ local function generate_random_ip()
 end
 
 -- Helper function to simulate a distributed brute force attack
-local function simulate_distributed_attack(redis_handle, username, num_ips, country_code)
+local function simulate_distributed_attack(redis_handle, username, num_ips, country_code, request)
     local timestamp = time.unix()
     local window_sizes = {60, 300, 900, 3600} -- 1min, 5min, 15min, 1hour
 
@@ -100,15 +100,15 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
             local request_id = "test-" .. username .. "-" .. i
 
             -- Add authentication attempt
-            local key = "nauthilus:global:auth_attempts:" .. window
+            local key = nauthilus_util.get_redis_key(request, "global:auth_attempts:" .. window)
             table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {key}, {timestamp, request_id, 0, timestamp - window, window * 2}})
 
             -- Add unique IP
-            local ip_key_w = "nauthilus:global:unique_ips:" .. window
+            local ip_key_w = nauthilus_util.get_redis_key(request, "global:unique_ips:" .. window)
             table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key_w}, {timestamp, ip, 0, timestamp - window, window * 2}})
 
             -- Add unique username
-            local user_key = "nauthilus:global:unique_users:" .. window
+            local user_key = nauthilus_util.get_redis_key(request, "global:unique_users:" .. window)
             table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {user_key}, {timestamp, username, 0, timestamp - window, window * 2}})
         end
 
@@ -116,19 +116,19 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
         local window = 3600 -- 1 hour window
 
         -- Add IP to account's unique IPs
-        local ip_key = "nauthilus:account:" .. username .. ":ips:" .. window
+        local ip_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":ips:" .. window)
         table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, ip, 0, timestamp - window, window * 2}})
 
         -- Add failed attempt for account
-        local fail_key = "nauthilus:account:" .. username .. ":fails:" .. window
+        local fail_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":fails:" .. window)
         table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {fail_key}, {timestamp, "test-fail-" .. i, 0, timestamp - window, window * 2}})
 
         -- Increment country count and country set if country code is provided
         if country_code and country_code ~= "" then
-            local country_key = "ntc:multilayer:global:country:" .. country_code
+            local country_key = nauthilus_util.get_redis_key(request, "multilayer:global:country:" .. country_code)
             table.insert(pipeline_cmds, {"run_script", "IncrementAndExpire", {country_key}, {24 * 3600}})
 
-            local countries_key = "ntc:multilayer:global:countries"
+            local countries_key = nauthilus_util.get_redis_key(request, "multilayer:global:countries")
             table.insert(pipeline_cmds, {"run_script", "AddToSetAndExpire", {countries_key}, {country_code, 24 * 3600}})
         end
 
@@ -138,7 +138,7 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
     end
 
     -- Update global metrics
-    local current_metrics_key = "ntc:multilayer:global:current_metrics"
+    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
 
     -- Get current metrics (bundle via HMGET)
     local res, rerr = nauthilus_redis.redis_pipeline(redis_handle, "read", {
@@ -179,7 +179,7 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
 
     -- Mark account as under attack if many IPs are targeting it
     if num_ips > 10 then
-        local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
+        local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
         nauthilus_redis.redis_zadd(redis_handle, attacked_accounts_key, {num_ips, username})
         nauthilus_redis.redis_expire(redis_handle, attacked_accounts_key, 3600) -- Expire after 1 hour
     end
@@ -188,27 +188,27 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
 end
 
 -- Helper function to check if the attack was detected
-local function check_attack_detection(redis_handle, username)
+local function check_attack_detection(redis_handle, username, request)
     local detection_result = {}
 
     -- Check threat level
-    local threat_level = nauthilus_redis.redis_hget(redis_handle, "ntc:multilayer:global:settings", "threat_level") or "0.0"
+    local threat_level = nauthilus_redis.redis_hget(redis_handle, nauthilus_util.get_redis_key(request, "multilayer:global:settings"), "threat_level") or "0.0"
     detection_result.threat_level = tonumber(threat_level) or 0.0
 
     -- Check if account is marked as under attack
-    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
+    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
     local attack_score = nauthilus_redis.redis_zscore(redis_handle, attacked_accounts_key, username)
     detection_result.account_under_attack = (attack_score ~= nil)
     detection_result.attack_score = attack_score
 
     -- Check protection measures
-    local settings = nauthilus_redis.redis_hgetall(redis_handle, "ntc:multilayer:global:settings")
+    local settings = nauthilus_redis.redis_hgetall(redis_handle, nauthilus_util.get_redis_key(request, "multilayer:global:settings"))
     detection_result.captcha_enabled = nauthilus_util.toboolean(settings.captcha_enabled)
     detection_result.rate_limit_enabled = nauthilus_util.toboolean(settings.rate_limit_enabled)
     detection_result.monitoring_mode = nauthilus_util.toboolean(settings.monitoring_mode)
 
     -- Check if account is in captcha accounts
-    local captcha_accounts_key = "ntc:multilayer:global:captcha_accounts"
+    local captcha_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts")
     local is_captcha_account = nauthilus_redis.redis_sismember(redis_handle, captcha_accounts_key, username)
     detection_result.is_captcha_account = is_captcha_account
 
@@ -225,7 +225,9 @@ local function check_attack_detection(redis_handle, username)
     return detection_result
 end
 
-function nauthilus_run_hook(logging, session)
+function nauthilus_run_hook(request)
+    local logging = request.logging
+    local session = request.session
     local result = {}
 
     result.level = "info"
@@ -264,7 +266,7 @@ function nauthilus_run_hook(logging, session)
         local num_ips = tonumber(num_ips_str) or 20 -- Default to 20 IPs
 
         -- Simulate attack
-        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code) then
+        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code, request) then
             result.level = "error"
             result.status = "error"
             result.message = "Failed to simulate attack"
@@ -280,7 +282,7 @@ function nauthilus_run_hook(logging, session)
         result.country_code = country_code
 
         -- Include warm-up diagnostics
-        local warmup = get_warmup(redis_handle)
+        local warmup = get_warmup(redis_handle, request)
         result.warmup = warmup
         if not warmup.warmup_complete then
             result.message = result.message .. " (Note: system is in warm-up; sliding windows may not reflect steady-state yet.)"
@@ -300,7 +302,7 @@ function nauthilus_run_hook(logging, session)
         end
 
         -- Check if attack was detected
-        local detection_result = check_attack_detection(redis_handle, username)
+        local detection_result = check_attack_detection(redis_handle, username, request)
 
         result.status = "success"
         result.message = "Detection check completed"
@@ -308,7 +310,7 @@ function nauthilus_run_hook(logging, session)
         result.detection_result = detection_result
 
         -- Include warm-up diagnostics
-        local warmup = get_warmup(redis_handle)
+        local warmup = get_warmup(redis_handle, request)
         result.warmup = warmup
         if not warmup.warmup_complete then
             result.message = result.message .. " (Note: system is in warm-up; sliding windows may not reflect steady-state yet.)"
@@ -335,8 +337,8 @@ function nauthilus_run_hook(logging, session)
         local _, err_reset = nauthilus_redis.redis_run_script(
             redis_handle, 
             "", 
-            "HSetMultiExpire", 
-            {"ntc:multilayer:global:settings"}, 
+            "HSetMultiExpire",
+                { nauthilus_util.get_redis_key(request, "multilayer:global:settings") },
             {
                 3600, -- Expire after 1 hour
                 "captcha_enabled", "false",
@@ -358,7 +360,7 @@ function nauthilus_run_hook(logging, session)
         end
 
         -- Simulate attack
-        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code) then
+        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code, request) then
             result.level = "error"
             result.status = "error"
             result.message = "Failed to simulate attack"
@@ -371,7 +373,7 @@ function nauthilus_run_hook(logging, session)
         time.sleep(1)
 
         -- Check if attack was detected
-        local detection_result = check_attack_detection(redis_handle, username)
+        local detection_result = check_attack_detection(redis_handle, username, request)
 
         result.status = "success"
         result.message = "Test completed"
@@ -381,7 +383,7 @@ function nauthilus_run_hook(logging, session)
         result.detection_result = detection_result
 
         -- Include warm-up diagnostics
-        local warmup = get_warmup(redis_handle)
+        local warmup = get_warmup(redis_handle, request)
         result.warmup = warmup
 
         -- Determine test result

@@ -34,7 +34,9 @@ local function rfc1123_now()
     return os.date("!%a, %d %b %Y %H:%M:%S GMT")
 end
 
-function nauthilus_run_hook(logging, session)
+function nauthilus_run_hook(request)
+    local logging = request.logging
+    local session = request.session
     local result = {
         level = "info",
         caller = N .. ".lua",

@@ -33,8 +33,6 @@ local SNAPSHOT_EVERY_SEC = tonumber(nauthilus_util.getenv("FAILED_LOGIN_SNAPSHOT
 local SNAPSHOT_TOPN = tonumber(nauthilus_util.getenv("FAILED_LOGIN_SNAPSHOT_TOPN", "10"))
 local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
-local ZKEY = "ntc:top_failed_logins"
-
 local function get_redis_client()
     local client = "default"
     if CUSTOM_REDIS_POOL ~= "default" then
@@ -45,20 +43,22 @@ local function get_redis_client()
     return client
 end
 
-local function maybe_snapshot_topN(client, now)
+local function maybe_snapshot_topN(client, now, request)
     -- Rate-limit via a simple timestamp key in Redis
-    local gate_key = "ntc:feature:" .. N .. ":last_snapshot"
+    local gate_key = nauthilus_util.get_redis_key(request, "feature:" .. N .. ":last_snapshot")
     local last = tonumber(nauthilus_redis.redis_get(client, gate_key) or "0")
     if last ~= nil and now - last < SNAPSHOT_EVERY_SEC then
         return
     end
 
+    local zkey = nauthilus_util.get_redis_key(request, "top_failed_logins")
+
     -- Pull small top-N for metrics; keep it cheap
-    local members = nauthilus_redis.redis_zrevrange(client, ZKEY, 0, SNAPSHOT_TOPN - 1)
+    local members = nauthilus_redis.redis_zrevrange(client, zkey, 0, SNAPSHOT_TOPN - 1)
     if members and nauthilus_util.is_table(members) and #members > 0 then
         for i = 1, #members do
             local uname = members[i]
-            local sc = nauthilus_redis.redis_zscore(client, ZKEY, uname)
+            local sc = nauthilus_redis.redis_zscore(client, zkey, uname)
             local score = tonumber(sc) or 0
             local rank = i - 1 -- i=1 -> rank 0
             nauthilus_prometheus.set_gauge(N .. "_top_score", score, { rank = tostring(rank), username = uname })
@@ -86,9 +86,11 @@ function nauthilus_call_feature(request)
     local client = get_redis_client()
     local now = time.unix()
 
+    local zkey = nauthilus_util.get_redis_key(request, "top_failed_logins")
+
     -- Get score and rank for this username
-    local score = nauthilus_redis.redis_zscore(client, ZKEY, username)
-    local rank = nauthilus_redis.redis_zrevrank(client, ZKEY, username)
+    local score = nauthilus_redis.redis_zscore(client, zkey, username)
+    local rank = nauthilus_redis.redis_zrevrank(client, zkey, username)
 
     local score_num = tonumber(score) or 0
     local rank_num = (rank ~= nil) and tonumber(rank) or -1
@@ -100,7 +102,7 @@ function nauthilus_call_feature(request)
     end
 
     -- Optional global snapshot (rate-limited), best-effort
-    local ok, err = pcall(maybe_snapshot_topN, client, now)
+    local ok, err = pcall(maybe_snapshot_topN, client, now, request)
     if not ok then
         local logs = { caller = N .. ".lua", message = "snapshot failed" }
         nauthilus_util.log_error(request, logs, tostring(err))

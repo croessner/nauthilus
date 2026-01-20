@@ -75,16 +75,16 @@ function nauthilus_call_filter(request)
     local w1, w2, w3 = windows[1], windows[2], windows[3]
 
     local keys = {
-        "ntc:multilayer:account:" .. tag .. username .. ":ips:" .. w1,
-        "ntc:multilayer:account:" .. tag .. username .. ":ips:" .. w2,
-        "ntc:multilayer:account:" .. tag .. username .. ":ips:" .. w3,
-        "ntc:multilayer:account:" .. tag .. username .. ":fails:" .. w1,
-        "ntc:multilayer:account:" .. tag .. username .. ":fails:" .. w2,
-        "ntc:multilayer:account:" .. tag .. username .. ":fails:" .. w3,
-        "ntc:multilayer:account:" .. tag .. username .. ":metrics:" .. w1,
-        "ntc:multilayer:account:" .. tag .. username .. ":metrics:" .. w2,
-        "ntc:multilayer:account:" .. tag .. username .. ":metrics:" .. w3,
-        "ntc:multilayer:distributed_attack:accounts",
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":ips:" .. w1),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":ips:" .. w2),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":ips:" .. w3),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":fails:" .. w1),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":fails:" .. w2),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":fails:" .. w3),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":metrics:" .. w1),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":metrics:" .. w2),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":metrics:" .. w3),
+        nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts"),
     }
 
     local fail_id = ""

@@ -190,6 +190,9 @@ type CommonRequest struct {
 
 	// NoAuth is a flag indicating if the action requires no authentication.
 	NoAuth bool
+
+	// RedisPrefix is the redis prefix for keys.
+	RedisPrefix string
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.
@@ -243,10 +246,11 @@ func (c *CommonRequest) Reset() {
 	c.UsedBackendPort = nil
 	c.Latency = 0
 	c.HTTPStatus = 0
+	c.RedisPrefix = ""
 }
 
 // SetupRequest sets up the request object with the common request properties
-func (c *CommonRequest) SetupRequest(cfg config.File, request *lua.LTable) *lua.LTable {
+func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lua.LTable) *lua.LTable {
 	logFormat := definitions.LogFormatDefault
 	logLevel := ""
 
@@ -307,11 +311,19 @@ func (c *CommonRequest) SetupRequest(cfg config.File, request *lua.LTable) *lua.
 	request.RawSetString(definitions.LuaRequestSSLSerial, lua.LString(c.SSLSerial))
 	request.RawSetString(definitions.LuaRequestSSLFingerprint, lua.LString(c.SSLFingerprint))
 
+	logging := L.NewTable()
+	logging.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
+	logging.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
+
+	request.RawSetString("logging", logging)
+
 	request.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
 	request.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
 
 	request.RawSetString(definitions.LuaRequestLatency, lua.LNumber(c.Latency))
 	request.RawSetString(definitions.LuaRequestHTTPStatus, lua.LNumber(c.HTTPStatus))
+
+	request.RawSetString(definitions.LuaRequestRedisPrefix, lua.LString(c.RedisPrefix))
 
 	return request
 }

@@ -37,12 +37,7 @@ local time = require("time")
 
 local N = "dynamic-textmap-demo"
 
-local KEY_CONTENT = "ntc:demo:textmap:content"
-local KEY_VERSION = "ntc:demo:textmap:version"
-local KEY_LASTMOD = "ntc:demo:textmap:last_modified"
-
 local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
-local TEXTMAP_DEMO_TTL_SECONDS = tonumber(nauthilus_util.getenv("TEXTMAP_DEMO_TTL_SECONDS", "60")) or 60
 
 local function rfc1123(ts)
     if ts == nil then
@@ -77,18 +72,22 @@ local function build_content(version, now)
     return table.concat(lines, "\n") .. "\n"
 end
 
-local function ensure_content(pool, ttl)
+local function ensure_content(pool, ttl, request)
+    local key_content = nauthilus_util.get_redis_key(request, "demo:textmap:content")
+    local key_version = nauthilus_util.get_redis_key(request, "demo:textmap:version")
+    local key_lastmod = nauthilus_util.get_redis_key(request, "demo:textmap:last_modified")
+
     -- Try to fetch existing values using a single round-trip (pipeline of GET commands)
     local results, perr = nauthilus_redis.redis_pipeline(pool, "read", {
-        {"get", KEY_CONTENT},
-        {"get", KEY_VERSION},
-        {"get", KEY_LASTMOD},
+        { "get", key_content },
+        { "get", key_version },
+        { "get", key_lastmod },
     })
     if perr then
         -- Fallback to non-pipelined GETs if pipeline isn't available
-        local content = nauthilus_redis.redis_get(pool, KEY_CONTENT)
-        local version = nauthilus_redis.redis_get(pool, KEY_VERSION)
-        local lastmod = nauthilus_redis.redis_get(pool, KEY_LASTMOD)
+        local content = nauthilus_redis.redis_get(pool, key_content)
+        local version = nauthilus_redis.redis_get(pool, key_version)
+        local lastmod = nauthilus_redis.redis_get(pool, key_lastmod)
         if content and version and lastmod then
             return content, tonumber(version) or 0, tonumber(lastmod) or time.unix()
         end
@@ -108,14 +107,14 @@ local function ensure_content(pool, ttl)
     -- (Re)build content when missing/expired
     -- First, get the new version using a single write pipeline
     local incrRes, ierr = nauthilus_redis.redis_pipeline(pool, "write", {
-        {"incr", KEY_VERSION},
+        { "incr", key_version },
     })
     local new_version
     if ierr or not incrRes or not incrRes[1] or not incrRes[1].ok then
         -- Fallback: if INCR not available, try to read current version and add 1
-        local current = tonumber(nauthilus_redis.redis_get(pool, KEY_VERSION) or "0") or 0
+        local current = tonumber(nauthilus_redis.redis_get(pool, key_version) or "0") or 0
         new_version = current + 1
-        nauthilus_redis.redis_set(pool, KEY_VERSION, tostring(new_version))
+        nauthilus_redis.redis_set(pool, key_version, tostring(new_version))
     else
         new_version = tonumber(incrRes[1].value) or 1
     end
@@ -125,21 +124,23 @@ local function ensure_content(pool, ttl)
 
     -- Set keys with TTL so content rotates (single pipeline write)
     local _, werr = nauthilus_redis.redis_pipeline(pool, "write", {
-        {"set", KEY_CONTENT, new_content, ttl},
-        {"set", KEY_LASTMOD, tostring(now), ttl},
-        {"set", KEY_VERSION, tostring(new_version)},
+        { "set", key_content, new_content, ttl },
+        { "set", key_lastmod, tostring(now), ttl },
+        { "set", key_version, tostring(new_version) },
     })
     if werr then
         -- As a minimal fallback, try non-pipelined sets
-        nauthilus_redis.redis_set(pool, KEY_CONTENT, new_content, ttl)
-        nauthilus_redis.redis_set(pool, KEY_LASTMOD, tostring(now), ttl)
-        nauthilus_redis.redis_set(pool, KEY_VERSION, tostring(new_version))
+        nauthilus_redis.redis_set(pool, key_content, new_content, ttl)
+        nauthilus_redis.redis_set(pool, key_lastmod, tostring(now), ttl)
+        nauthilus_redis.redis_set(pool, key_version, tostring(new_version))
     end
 
     return new_content, new_version, now
 end
 
-function nauthilus_run_hook(logging, session)
+function nauthilus_run_hook(request)
+    local logging = request.logging
+    local session = request.session
     local result = {
         level = "info",
         caller = N .. ".lua",
@@ -154,7 +155,7 @@ function nauthilus_run_hook(logging, session)
 
     local pool = get_redis_pool()
 
-    local content, version, lastmod_ts = ensure_content(pool, ttl)
+    local content, version, lastmod_ts = ensure_content(pool, ttl, request)
     local content_length = tostring(#content)
 
     -- Common headers

@@ -389,7 +389,7 @@ func (aw *Worker) setupGlobals(ctx context.Context, L *lua.LState, logs *lualib.
 func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	aw.luaActionRequest.CommonRequest.SetupRequest(aw.cfg, request)
+	aw.luaActionRequest.CommonRequest.SetupRequest(L, aw.cfg, request)
 
 	return request
 }

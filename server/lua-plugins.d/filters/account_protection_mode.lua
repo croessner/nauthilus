@@ -74,7 +74,7 @@ local function clamp(v, lo, hi)
     return v
 end
 
-local function compute_under_protection(pool, username)
+local function compute_under_protection(pool, username, request)
     -- Check short-lived in-process cache first
     local ckey = "prot:" .. (username or "")
     local cached = nauthilus_cache.cache_get(ckey)
@@ -83,8 +83,8 @@ local function compute_under_protection(pool, username)
     end
 
     local tag = nauthilus_keys.account_tag(username)
-    local lw_key = "ntc:acct:" .. tag .. username .. ":longwindow"
-    local prot_key = "ntc:acct:" .. tag .. username .. ":protection"
+    local lw_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":longwindow")
+    local prot_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":protection")
 
     -- Pipeline the related user-specific reads (same slot)
     local cmds = {
@@ -113,7 +113,7 @@ local function compute_under_protection(pool, username)
     local backoff_level = tonumber(val(5) or "0") or 0
 
     -- Separate call for the global attack set to avoid cross-slot pipeline issues
-    local attacked_val, err_a = nauthilus_redis.redis_zscore(pool, "ntc:multilayer:distributed_attack:accounts", username)
+    local attacked_val, err_a = nauthilus_redis.redis_zscore(pool, nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts"), username)
     nauthilus_util.if_error_raise(err_a)
     local attacked = (attacked_val ~= nil and attacked_val ~= false and attacked_val ~= "")
 
@@ -155,7 +155,7 @@ function nauthilus_call_filter(request)
     local now = time.unix()
 
     -- Evaluate protection state
-    local under, m, current_backoff, from_cache = compute_under_protection(CUSTOM_REDIS_POOL, username)
+    local under, m, current_backoff, from_cache = compute_under_protection(CUSTOM_REDIS_POOL, username, request)
 
     if under then
         local backoff_level = clamp(current_backoff + 1, 1, BACKOFF_MAX_LEVEL)
@@ -188,7 +188,7 @@ function nauthilus_call_filter(request)
             local until_ts = now + MODE_TTL
             local pipe_cmds = {
                 {
-                    "run_script", "", "HSetMultiExpire", { "ntc:acct:" .. tag .. username .. ":protection" },
+                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":protection") },
                     {
                         MODE_TTL,
                         "active", "true",
@@ -199,11 +199,11 @@ function nauthilus_call_filter(request)
                     }
                 },
                 {
-                    "run_script", "", "SAddMultiExpire", { "ntc:acct:protection_active" },
+                    "run_script", "", "SAddMultiExpire", { nauthilus_util.get_redis_key(request, "acct:protection_active") },
                     { MODE_TTL, username }
                 },
                 {
-                    "run_script", "", "HSetMultiExpire", { "ntc:acct:" .. tag .. username .. ":stepup" },
+                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":stepup") },
                     {
                         MODE_TTL,
                         "required", "true",

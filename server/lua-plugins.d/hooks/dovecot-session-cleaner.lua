@@ -31,7 +31,9 @@ local CATEGORIES = {
     ["service:managesieve-login"] = true,
 }
 
-function nauthilus_run_hook(logging, session)
+function nauthilus_run_hook(request)
+    local logging = request.logging
+    local session = request.session
     local result = {}
 
     result.level = "info"
@@ -66,9 +68,10 @@ function nauthilus_run_hook(logging, session)
 
     local function update_target_user_table(target)
         -- Pipeline HGET + HDEL to minimize roundtrips
+        local ds_account_key = nauthilus_util.get_redis_key(request, "DS_ACCOUNT")
         local cmds = {
-            {"hget", "ntc:DS_ACCOUNT", target},
-            {"hdel", "ntc:DS_ACCOUNT", target},
+            { "hget", ds_account_key, target },
+            { "hdel", ds_account_key, target },
         }
         local pres, perr = nauthilus_redis.redis_pipeline(custom_pool, "write", cmds)
         if perr then
@@ -131,9 +134,10 @@ function nauthilus_run_hook(logging, session)
     if CATEGORIES[result.category] then
         local target = result.remote_ip .. ":" .. result.remote_port
         local account = update_target_user_table(target)
-        local redis_key = "ntc:DS:" .. account
 
         if account then
+            local redis_key = nauthilus_util.get_redis_key(request, "DS:" .. account)
+
             -- Cleanup dovecot session
             local _, err_redis_hdel = nauthilus_redis.redis_hdel(custom_pool, redis_key, target)
             if err_redis_hdel then

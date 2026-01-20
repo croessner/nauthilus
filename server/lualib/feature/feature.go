@@ -187,7 +187,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context, cfg config.File, logger *slog
 func (r *Request) setRequest(cfg config.File, L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	r.CommonRequest.SetupRequest(cfg, request)
+	r.CommonRequest.SetupRequest(L, cfg, request)
 
 	return request
 }
@@ -271,7 +271,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			// Build per-feature request table from the common request
 			request := Llocal.NewTable()
 
-			r.CommonRequest.SetupRequest(cfg, request)
+			r.CommonRequest.SetupRequest(Llocal, cfg, request)
 
 			// Set local override fields from Request struct
 			if r.Session != "" {

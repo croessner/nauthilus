@@ -172,6 +172,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		commonRequest.XSSLCipher = a.Request.XSSLCipher
 		commonRequest.SSLSerial = a.Request.SSLSerial
 		commonRequest.SSLFingerprint = a.Request.SSLFingerprint
+		commonRequest.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:     definitions.LuaActionBruteForce,

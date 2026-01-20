@@ -27,8 +27,8 @@ local DYN_WARMUP_MIN_ATTEMPTS = tonumber(nauthilus_util.getenv("DYNAMIC_RESPONSE
 local NAUTHILUS_WARMUP_WINDOW_SECONDS = nauthilus_util.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS", "86400")
 
 -- Ensure system start and warm-up settings exist; return settings table
-local function ensure_startup_settings(redis_handle)
-    local settings_key = "ntc:multilayer:global:settings"
+local function ensure_startup_settings(redis_handle, request)
+    local settings_key = nauthilus_util.get_redis_key(request, "multilayer:global:settings")
     local settings = nauthilus_redis.redis_hgetall(redis_handle, settings_key) or {}
 
     -- system_started_at: unix timestamp
@@ -56,20 +56,20 @@ local function ensure_startup_settings(redis_handle)
 end
 
 -- Helper function to get metrics from Redis
-local function get_metrics(redis_handle)
+local function get_metrics(redis_handle, request)
     local metrics = {}
 
     -- Make sure startup-related settings exist
-    local settings = ensure_startup_settings(redis_handle)
+    local settings = ensure_startup_settings(redis_handle, request)
 
     -- Keys
-    local settings_key = "ntc:multilayer:global:settings"
-    local current_metrics_key = "ntc:multilayer:global:current_metrics"
-    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    local blocked_regions_key = "ntc:multilayer:global:blocked_regions"
-    local rate_limited_ips_key = "ntc:multilayer:global:rate_limited_ips"
-    local captcha_accounts_key = "ntc:multilayer:global:captcha_accounts"
-    local first_seen_key = "ntc:multilayer:bootstrap:first_seen_ts"
+    local settings_key = nauthilus_util.get_redis_key(request, "multilayer:global:settings")
+    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
+    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
+    local blocked_regions_key = nauthilus_util.get_redis_key(request, "multilayer:global:blocked_regions")
+    local rate_limited_ips_key = nauthilus_util.get_redis_key(request, "multilayer:global:rate_limited_ips")
+    local captcha_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts")
+    local first_seen_key = nauthilus_util.get_redis_key(request, "multilayer:bootstrap:first_seen_ts")
 
     -- Batch reads via pipeline: threat_level, current metrics, attacked accounts, blocked/rate/captcha sets, first_seen
     local cmds = {
@@ -153,13 +153,13 @@ local function get_metrics(redis_handle)
 end
 
 -- Helper function to reset protection measures
-local function reset_protection_measures(redis_handle)
+local function reset_protection_measures(redis_handle, request)
     -- Reset global settings
     local _, err_script = nauthilus_redis.redis_run_script(
         redis_handle, 
         "", 
-        "HSetMultiExpire", 
-        {"ntc:multilayer:global:settings"}, 
+        "HSetMultiExpire",
+            { nauthilus_util.get_redis_key(request, "multilayer:global:settings") },
         {
             0, -- Permanent
             "captcha_enabled", "false",
@@ -172,9 +172,9 @@ local function reset_protection_measures(redis_handle)
 
     -- Delete blocked regions, rate limited IPs, and captcha accounts using a single pipeline
     local pipeline_cmds = {
-        {"del", "ntc:multilayer:global:blocked_regions"},
-        {"del", "ntc:multilayer:global:rate_limited_ips"},
-        {"del", "ntc:multilayer:global:captcha_accounts"},
+        { "del", nauthilus_util.get_redis_key(request, "multilayer:global:blocked_regions") },
+        { "del", nauthilus_util.get_redis_key(request, "multilayer:global:rate_limited_ips") },
+        { "del", nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts") },
     }
     local _, pipe_err = nauthilus_redis.redis_pipeline(redis_handle, "write", pipeline_cmds)
     nauthilus_util.if_error_raise(pipe_err)
@@ -183,21 +183,21 @@ local function reset_protection_measures(redis_handle)
 end
 
 -- Helper function to reset a specific account
-local function reset_account(redis_handle, username)
+local function reset_account(redis_handle, username, request)
     if not username or username == "" then
         return false, "Username is required"
     end
 
     -- Prepare keys and members
-    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    local captcha_accounts_key = "ntc:multilayer:global:captcha_accounts"
+    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
+    local captcha_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts")
 
     local window = 3600 -- 1 hour window
-    local ip_key = "nauthilus:account:" .. username .. ":ips:" .. window
-    local fail_key = "nauthilus:account:" .. username .. ":fails:" .. window
+    local ip_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":ips:" .. window)
+    local fail_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":fails:" .. window)
 
     -- Load all IPs seen for this account (read) to build the deletion pipeline
-    local pw_hist_ips_key = "PW_HIST_IPS:" .. username
+    local pw_hist_ips_key = nauthilus_util.get_redis_key(request, "PW_HIST_IPS:" .. username)
     local ips = nauthilus_redis.redis_smembers(redis_handle, pw_hist_ips_key) or {}
 
     -- Build a single write pipeline to delete all related keys and set entries
@@ -227,7 +227,9 @@ local function reset_account(redis_handle, username)
     return true
 end
 
-function nauthilus_run_hook(logging, session)
+function nauthilus_run_hook(request)
+    local logging = request.logging
+    local session = request.session
     local result = {}
 
     result.level = "info"
@@ -248,7 +250,7 @@ function nauthilus_run_hook(logging, session)
 
     if action == "get_metrics" then
         -- Get metrics from Redis
-        local metrics = get_metrics(redis_handle)
+        local metrics = get_metrics(redis_handle, request)
 
         -- Check if we have any meaningful data
         local has_data = false
@@ -271,7 +273,7 @@ function nauthilus_run_hook(logging, session)
         result.metrics = metrics
     elseif action == "reset_protection" then
         -- Reset all protection measures
-        local success = reset_protection_measures(redis_handle)
+        local success = reset_protection_measures(redis_handle, request)
 
         result.status = "success"
         result.message = "Protection measures reset successfully"
@@ -285,7 +287,7 @@ function nauthilus_run_hook(logging, session)
             result.message = "Missing required parameter: username"
         else
             -- Reset account
-            local success, error_message = reset_account(redis_handle, username)
+            local success, error_message = reset_account(redis_handle, username, request)
 
             if success then
                 result.status = "success"

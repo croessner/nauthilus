@@ -77,7 +77,8 @@ local function wait_for_redis(client, logging)
     end
 end
 
-function nauthilus_run_hook(logging)
+function nauthilus_run_hook(request)
+    local logging = request.logging
     local result = {}
 
     result.caller = N .. ".lua"
