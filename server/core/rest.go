@@ -324,20 +324,38 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 
 	ipAddresses := make(map[string]string)
 
-	pipe := deps.Redis.GetReadHandle().Pipeline()
-	cmds := make([]*redis.MapStringStringCmd, 256)
+	activeKeysSet := prefix + definitions.RedisActiveBruteForceKeys
 
-	for i := 0; i < 256; i++ {
-		shardKey := fmt.Sprintf("%s%s:{%02x}", prefix, definitions.RedisBruteForceHashKey, i)
-		cmds[i] = pipe.HGetAll(ctx, shardKey)
+	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
+	shardKeys, err := deps.Redis.GetReadHandle().SMembers(dCtxR, activeKeysSet).Result()
+	cancelR()
+
+	if err != nil && !stderrors.Is(err, redis.Nil) {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error retrieving active brute force keys from Redis",
+			definitions.LogKeyError, err,
+		)
+
+		errMsg := err.Error()
+		blockedIPAddresses.Error = &errMsg
+
+		return blockedIPAddresses, err
 	}
 
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		if !stderrors.Is(err, redis.Nil) {
+	if len(shardKeys) > 0 {
+		pipe := deps.Redis.GetReadHandle().Pipeline()
+		cmds := make([]*redis.MapStringStringCmd, len(shardKeys))
+
+		for i, shardKey := range shardKeys {
+			cmds[i] = pipe.HGetAll(ctx, shardKey)
+		}
+
+		_, err = pipe.Exec(ctx)
+		if err != nil && !stderrors.Is(err, redis.Nil) {
 			level.Error(logger).Log(
 				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Error retrieving IP addresses from Redis",
+				definitions.LogKeyMsg, "Error retrieving IP addresses from Redis shards",
 				definitions.LogKeyError, err,
 			)
 
@@ -346,7 +364,7 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 
 			return blockedIPAddresses, err
 		}
-	} else {
+
 		for _, cmd := range cmds {
 			if res, cerr := cmd.Result(); cerr == nil {
 				for k, v := range res {
@@ -354,24 +372,24 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 				}
 			}
 		}
+	}
 
-		if filterCmd != nil && len(filterCmd.IPAddress) > 0 {
-			filteredIPs := make(map[string]string)
+	if filterCmd != nil && len(filterCmd.IPAddress) > 0 {
+		filteredIPs := make(map[string]string)
 
-			for _, filterIPWanted := range filterCmd.IPAddress {
-				for network, bucket := range ipAddresses {
-					if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
-						filteredIPs[network] = bucket
-					}
+		for _, filterIPWanted := range filterCmd.IPAddress {
+			for network, bucket := range ipAddresses {
+				if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
+					filteredIPs[network] = bucket
 				}
 			}
-
-			ipAddresses = filteredIPs
 		}
 
-		blockedIPAddresses.IPAddresses = ipAddresses
-		blockedIPAddresses.Error = nil
+		ipAddresses = filteredIPs
 	}
+
+	blockedIPAddresses.IPAddresses = ipAddresses
+	blockedIPAddresses.Error = nil
 
 	return blockedIPAddresses, nil
 }

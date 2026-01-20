@@ -6,6 +6,7 @@ COPY . ./
 
 # Set necessarry environment vairables and compile the app
 ENV CGO_ENABLED=0
+ENV GOEXPERIMENT=greenteagc
 
 RUN pwd && ls -a
 RUN cd blocklist && go build -mod=vendor -trimpath -ldflags="-s" -o blocklist .

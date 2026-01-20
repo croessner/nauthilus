@@ -630,6 +630,9 @@ const (
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
 	RedisAffectedAccountsKey = "affected_accounts"
 
+	// RedisActiveBruteForceKeys represents the key used for storing active brute force keys in Redis.
+	RedisActiveBruteForceKeys = "active_brute_force_keys"
+
 	// RedisBFTolerationPrefix represents the prefix used for toleration buckets in Redis.
 	RedisBFTolerationPrefix = "bf:tr:"
 

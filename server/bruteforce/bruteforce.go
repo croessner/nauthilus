@@ -1333,6 +1333,18 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 			)
 		} else if removed > 0 {
 			removedKey = key
+
+			// Check if map is now empty and remove from tracking set if so
+			if hlen, err := redisClient.GetWriteHandle().HLen(dCtx, key).Result(); err == nil && hlen == 0 {
+				activeKeysSet := prefix + definitions.RedisActiveBruteForceKeys
+				if err = redisClient.GetWriteHandle().SRem(dCtx, activeKeysSet, key).Err(); err != nil {
+					level.Error(logger).Log(
+						definitions.LogKeyGUID, bm.guid,
+						definitions.LogKeyMsg, "Error removing key from active brute force keys set",
+						definitions.LogKeyError, err,
+					)
+				}
+			}
 		}
 
 		return removedKey, nil
@@ -1499,15 +1511,16 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	// Atomically check/add using Lua script
 	argThreshold := strconv.FormatUint(uint64(threshold), 10)
 	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
+	argNow := strconv.FormatInt(time.Now().Unix(), 10)
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	res, execErr := rediscli.ExecuteScript(
 		dCtx,
 		bm.redis(),
-		"RWPAllowSet",
-		rediscli.LuaScripts["RWPAllowSet"],
+		"RWPSlidingWindow",
+		rediscli.LuaScripts["RWPSlidingWindow"],
 		[]string{allowKey},
-		argThreshold, argTTL, passwordHash,
+		passwordHash, argNow, argTTL, argThreshold,
 	)
 	cancel()
 
@@ -1516,7 +1529,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		// If totals equal the current hash count, treat as repeating within window.
 		level.Warn(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, fmt.Sprintf("RWPAllowSet script error, using totals fallback: %v", execErr),
+			definitions.LogKeyMsg, fmt.Sprintf("RWPSlidingWindow script error, using totals fallback: %v", execErr),
 		)
 
 		// Read account-scoped hash map to get current counter
@@ -2005,6 +2018,16 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 				definitions.LogKeyMsg, "Error setting brute force rule in Redis",
 				definitions.LogKeyError, err,
 			)
+		} else {
+			// Track the active brute force key for the list API
+			activeKeysSet := prefix + definitions.RedisActiveBruteForceKeys
+			if err = bm.redis().GetWriteHandle().SAdd(dCtx, activeKeysSet, key).Err(); err != nil {
+				level.Error(logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Error adding key to active brute force keys set",
+					definitions.LogKeyError, err,
+				)
+			}
 		}
 	}
 }

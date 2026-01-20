@@ -10,6 +10,7 @@ env:
   MAINTAINER: 'croessner'
   DESC: 'Multi purpose authentication server'
   CHGELOG_VERSION: '0.15.4'
+  GOEXPERIMENT: greenteagc
 
 jobs:
   build-artifact:
