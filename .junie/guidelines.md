@@ -9,6 +9,7 @@ This document captures practical, project-specific details to build, configure, 
   - Vendor mode: the Makefile builds with -mod=vendor. Keep vendor/ in sync (go mod vendor) when updating deps.
 - Makefile targets (preferred workflow)
   - make build: builds server binary to nauthilus/bin/nauthilus with trimpath and ldflags that set main.version and main.buildTime.
+  - make build-client: builds client binary to nauthilus/bin/nauthilus-client with trimpath.
   - make test: runs unit tests in short mode across all packages (excludes vendor).
   - make race: runs tests with -race in short mode.
   - make msan: runs tests with -msan in short mode (requires platform support).
@@ -135,6 +136,10 @@ We verified this flow by temporarily adding a trivial test under server/util and
   - Keep functions short and focused. As a guideline, aim for fewer than ~60 lines and low cyclomatic complexity; split into helpers or methods when a function grows, or when multiple responsibilities appear.
   - DRY: avoid duplication of logic. Extract common code into private helpers or shared packages; promote constants for repeated literals and use table-driven tests to consolidate similar test flows.
   - Favor early returns to keep indentation shallow; prefer explicit error handling over deeply nested branches.
+- Memory and Performance optimization (Structs)
+  - Optimize structs for padding by ordering fields from largest to smallest to minimize memory overhead.
+  - Keep structs GC PtrData-friendly: group pointer-containing fields (pointers, slices, maps, channels, interfaces)
+    together (preferably at the beginning) to reduce the PtrData area that the garbage collector needs to scan.
 - Profiles and observability
   - Block profiling is toggled via the configuration (insights). When enabled, runtime.SetBlockProfileRate(1) is applied. Ensure pprof endpoints or collection are configured if you need to consume profiles.
   - Prometheus metrics are used; instance info metric is labeled with instance name and version (stats.GetMetrics().GetInstanceInfo()).
@@ -150,7 +155,8 @@ We verified this flow by temporarily adding a trivial test under server/util and
 
 4. Quick commands reference
 
-- Build: make build
+- Build server: make build
+- Build client: make build-client
 - Test (short): make test or go test -short ./...
 - Test (race): make race
 - Per-package: go test -v ./server/lualib/redislib

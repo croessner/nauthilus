@@ -1,14 +1,17 @@
 OUTPUT := nauthilus/bin/nauthilus
+CLIENT_OUTPUT := nauthilus/bin/nauthilus-client
 PKG_LIST := $(shell go list ./... | grep -v /vendor/)
 GIT_TAG=$(shell git describe --tags --abbrev=0)
 GIT_COMMIT=$(shell git rev-parse --short HEAD)
 
-.PHONY: all test race msan build clean install uninstall
+export GOEXPERIMENT := greenteagc
 
-all: build
+.PHONY: all test race msan build build-client clean install uninstall
 
-$(OUTPUT):
-	mkdir -p $(dir $(OUTPUT))
+all: build build-client
+
+$(OUTPUT) $(CLIENT_OUTPUT):
+	mkdir -p $(dir $@)
 
 test:
 	go test -short ${PKG_LIST}
@@ -19,11 +22,15 @@ race:
 msan:
 	go test -msan -short ${PKG_LIST}
 
-build:
+build: $(OUTPUT)
 	go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) ./server
 
+build-client: $(CLIENT_OUTPUT)
+	go build -mod=vendor -trimpath -v -o $(CLIENT_OUTPUT) ./client
+
 clean: ## Remove previous build
-	[ -x $(OUTPUT) ] && rm -f $(OUTPUT)
+	[ -x $(OUTPUT) ] && rm -f $(OUTPUT) || true
+	[ -x $(CLIENT_OUTPUT) ] && rm -f $(CLIENT_OUTPUT) || true
 
 install: build ## Install nauthilus binary and systemd service
 	install -D -m 755 $(OUTPUT) /usr/local/sbin/nauthilus

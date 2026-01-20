@@ -2,6 +2,7 @@ image: golang:1.25-alpine
 
 variables:
   CGO_ENABLED: 0
+  GOEXPERIMENT: "greenteagc"
   RELEASE_CLI_VERSION: "v0.18.0"
   DEVELOPER_BRANCH: "features"
   PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${CI_PROJECT_NAME}/${CI_COMMIT_TAG}/"

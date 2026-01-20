@@ -8,6 +8,9 @@ on:
     branches:
       - features
 
+env:
+  GOEXPERIMENT: greenteagc
+
 jobs:
   test:
     runs-on: ubuntu-latest
