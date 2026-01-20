@@ -193,8 +193,8 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	}
 
 	isMatch = ok == effectiveExpectOK
-	isHttpErr = !isMatch || (resp.StatusCode >= 500)
 	isToleratedBF = resp.Header.Get(c.bfHeaderName) != ""
+	isHttpErr = (!isMatch && !isToleratedBF) || (resp.StatusCode >= 500)
 
 	return ok, isMatch, isHttpErr, false, isToleratedBF, latency, respBody, statusCode, nil
 }

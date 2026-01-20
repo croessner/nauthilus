@@ -1676,6 +1676,18 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.FeatureName = a.Runtime.FeatureName
 	cr.StatusMessage = &a.Runtime.StatusMessage
 
+	if a.Security.BruteForceName != "" {
+		if val, ok := a.Security.BruteForceCounter[a.Security.BruteForceName]; ok {
+			cr.BruteForceCounter = val
+		} else {
+			// Handle cases like "rule,guessed"
+			parts := strings.Split(a.Security.BruteForceName, ",")
+			if val, ok := a.Security.BruteForceCounter[parts[0]]; ok {
+				cr.BruteForceCounter = val
+			}
+		}
+	}
+
 	if a.deps.Cfg != nil {
 		cr.Debug = a.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	}
