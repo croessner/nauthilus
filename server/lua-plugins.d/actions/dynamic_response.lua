@@ -101,7 +101,7 @@ local function notify_administrators(request, subject, metrics)
 
     -- Cooldown window per subject to prevent alert storms
     local cooldown_sec = ADMIN_ALERT_COOLDOWN_SECONDS
-    local gate_key = "ntc:alerts:last_sent:" .. subject
+    local gate_key = nauthilus_util.get_redis_key(request, "alerts:last_sent:" .. subject)
     local last_sent = tonumber(nauthilus_redis.redis_get(client, gate_key) or "0")
     local in_cooldown = (last_sent ~= nil and (now - last_sent) < cooldown_sec)
 
@@ -299,8 +299,8 @@ local function apply_severe_measures(request, custom_pool, metrics)
     local _, err_script = nauthilus_redis.redis_run_script(
         custom_pool, 
         "", 
-        "HSetMultiExpire", 
-        {"ntc:multilayer:global:settings"}, 
+        "HSetMultiExpire",
+            { nauthilus_util.get_redis_key(request, "multilayer:global:settings") },
         {
             0, -- Permanent
             "captcha_enabled", "true",
@@ -320,8 +320,8 @@ local function apply_severe_measures(request, custom_pool, metrics)
         local _, err_script_regions = nauthilus_redis.redis_run_script(
             custom_pool, 
             "", 
-            "SAddMultiExpire", 
-            {"ntc:multilayer:global:blocked_regions"}, 
+            "SAddMultiExpire",
+                { nauthilus_util.get_redis_key(request, "multilayer:global:blocked_regions") },
             args
         )
         nauthilus_util.if_error_raise(err_script_regions)
@@ -344,8 +344,8 @@ local function apply_high_measures(request, custom_pool, metrics)
         local _, err_script = nauthilus_redis.redis_run_script(
             custom_pool, 
             "", 
-            "SAddMultiExpire", 
-            {"ntc:multilayer:global:captcha_accounts"}, 
+            "SAddMultiExpire",
+                { nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts") },
             args
         )
         nauthilus_util.if_error_raise(err_script)
@@ -361,8 +361,8 @@ local function apply_high_measures(request, custom_pool, metrics)
         local _, err_script = nauthilus_redis.redis_run_script(
             custom_pool, 
             "", 
-            "SAddMultiExpire", 
-            {"ntc:multilayer:global:rate_limited_ips"}, 
+            "SAddMultiExpire",
+                { nauthilus_util.get_redis_key(request, "multilayer:global:rate_limited_ips") },
             args
         )
         nauthilus_util.if_error_raise(err_script)
@@ -378,8 +378,8 @@ local function apply_moderate_measures(request, custom_pool, metrics)
     local _, err_script = nauthilus_redis.redis_run_script(
         custom_pool, 
         "", 
-        "HSetMultiExpire", 
-        {"ntc:multilayer:global:settings"}, 
+        "HSetMultiExpire",
+            { nauthilus_util.get_redis_key(request, "multilayer:global:settings") },
         {
             0, -- Permanent
             "monitoring_mode", "true"
@@ -415,8 +415,8 @@ function nauthilus_call_action(request)
     local metrics = {}
 
     -- Prepare Redis keys
-    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    local current_metrics_key = "ntc:multilayer:global:current_metrics"
+    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
+    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
 
     -- Batch: ZSCORE (attack_score) + HMGET (current metrics) in one read pipeline
     local read_cmds = {}
@@ -470,7 +470,7 @@ function nauthilus_call_action(request)
 
     -- Check historical patterns to detect sudden spikes (HMGET in same style)
     local hour_key = time.format(timestamp - 3600, "2006-01-02-15", "UTC") -- Previous hour
-    local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
+    local historical_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:historical_metrics:" .. hour_key)
 
     local hist_res, hist_err = nauthilus_redis.redis_pipeline(custom_pool, "read", {
         {"hmget", historical_metrics_key, "attempts", "unique_ips"},
@@ -541,7 +541,7 @@ function nauthilus_call_action(request)
         nauthilus_builtin.custom_log_add(N .. "_country_code", country_code)
 
         -- Get count of attempts from this country
-        local country_key = "ntc:multilayer:global:country:" .. country_code
+        local country_key = nauthilus_util.get_redis_key(request, "multilayer:global:country:" .. country_code)
         local country_count = nauthilus_redis.redis_get(custom_pool, country_key) or "0"
         country_count = tonumber(country_count) or 0
 
@@ -556,7 +556,7 @@ function nauthilus_call_action(request)
         nauthilus_util.if_error_raise(err_script)
 
         -- Get total countries using atomic Redis Lua script
-        local countries_key = "ntc:multilayer:global:countries"
+        local countries_key = nauthilus_util.get_redis_key(request, "multilayer:global:countries")
         local _, err_script_countries = nauthilus_redis.redis_run_script(
                 custom_pool, 
             "", 
@@ -587,7 +587,7 @@ function nauthilus_call_action(request)
     -- Per-account step-up hint: if a step-up flag exists for this username,
     -- add the account temporarily to captcha/step-up set to help HTTP/OIDC flows.
     if username and username ~= "" then
-        local stepup_key = "ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":stepup"
+        local stepup_key = nauthilus_util.get_redis_key(request, "acct:" .. nauthilus_keys.account_tag(username) .. username .. ":stepup")
         local required = nauthilus_redis.redis_hget(custom_pool, stepup_key, "required")
         if required == "true" then
             local args = {15 * 60} -- 15 minutes TTL
@@ -596,7 +596,7 @@ function nauthilus_call_action(request)
                 custom_pool,
                 "",
                 "SAddMultiExpire",
-                {"ntc:multilayer:global:captcha_accounts"},
+                    { nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts") },
                 args
             )
             nauthilus_util.if_error_raise(err_script)
@@ -609,7 +609,7 @@ function nauthilus_call_action(request)
     local warmup_min_users = DYN_WARMUP_MIN_USERS
     local warmup_min_attempts = DYN_WARMUP_MIN_ATTEMPTS
 
-    local first_seen_key = "ntc:multilayer:bootstrap:first_seen_ts"
+    local first_seen_key = nauthilus_util.get_redis_key(request, "multilayer:bootstrap:first_seen_ts")
     local first_seen_val = nauthilus_redis.redis_get(custom_pool, first_seen_key)
     local first_seen_ts = tonumber(first_seen_val or "0") or 0
     if first_seen_ts == 0 then
@@ -714,15 +714,15 @@ function nauthilus_call_action(request)
 
     -- Adaptive reset/hysteresis for monitoring_mode to avoid getting stuck in permanent monitoring
     local ok_threshold = MONITORING_OK_STREAK_MIN
-    local ok_streak_key = "ntc:multilayer:global:ok_streak"
-    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
+    local ok_streak_key = nauthilus_util.get_redis_key(request, "multilayer:global:ok_streak")
+    local attacked_accounts_key_reset = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
 
     local function disable_monitoring_mode()
         local _, err_clear = nauthilus_redis.redis_run_script(
             custom_pool,
             "",
             "HSetMultiExpire",
-            {"ntc:multilayer:global:settings"},
+                { nauthilus_util.get_redis_key(request, "multilayer:global:settings") },
             {
                 0, -- Permanent
                 "monitoring_mode", "false"
@@ -748,7 +748,7 @@ function nauthilus_call_action(request)
 
         if streak >= ok_threshold then
             -- Only disable monitoring if there are no currently attacked accounts
-            local attacked_accounts = nauthilus_redis.redis_zrange(custom_pool, attacked_accounts_key, 0, -1, "WITHSCORES") or {}
+            local attacked_accounts = nauthilus_redis.redis_zrange(custom_pool, attacked_accounts_key_reset, 0, -1, "WITHSCORES") or {}
             local any_attacked = nauthilus_util.table_length(attacked_accounts)
 
             -- Require also that global ratios look benign to prevent flapping
@@ -767,17 +767,17 @@ function nauthilus_call_action(request)
     end
 
     -- Store the current threat level in Redis for other components to use using atomic Redis Lua script
-    local _, err_script = nauthilus_redis.redis_run_script(
+    local _, err_script_settings = nauthilus_redis.redis_run_script(
             custom_pool, 
         "", 
-        "HSetMultiExpire", 
-        {"ntc:multilayer:global:settings"}, 
+        "HSetMultiExpire",
+            { nauthilus_util.get_redis_key(request, "multilayer:global:settings") },
         {
             0, -- Permanent (no EXPIRE called by HSetMultiExpire)
             "threat_level", threat_level
         }
     )
-    nauthilus_util.if_error_raise(err_script)
+    nauthilus_util.if_error_raise(err_script_settings)
 
     -- Enrich rt for downstream actions (e.g., telegram)
     do

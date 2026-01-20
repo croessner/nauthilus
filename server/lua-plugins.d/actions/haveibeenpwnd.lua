@@ -62,7 +62,7 @@ local SSP_WEBSITE = nauthilus_util.getenv("SSP_WEBSITE", "")
 
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
-        local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
+        local redis_key = nauthilus_util.get_redis_key(request, "HAVEIBEENPWND:" .. crypto.md5(request.account))
         local hash = string.lower(crypto.sha1(request.password))
 
         local custom_pool = "default"
@@ -108,7 +108,7 @@ function nauthilus_call_action(request)
 
         -- Redis gate to avoid repeated external requests for the same account+prefix in a short window
         do
-            local gate_key = "ntc:HAVEIBEENPWND:GATE:" .. crypto.md5(request.account) .. ":" .. hash:sub(1, 5)
+            local gate_key = nauthilus_util.get_redis_key(request, "HAVEIBEENPWND:GATE:" .. crypto.md5(request.account) .. ":" .. hash:sub(1, 5))
             local ok_gate, gate_err = nauthilus_redis.redis_set(custom_pool, gate_key, "1", { nx = true, ex = 300 })
             nauthilus_util.if_error_raise(gate_err)
             if ok_gate == nil then

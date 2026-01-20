@@ -55,7 +55,7 @@ local function clamp(v, lo, hi)
     return v
 end
 
-local function get_metrics(pool, username)
+local function get_metrics(pool, username, request)
     local ckey = "sdm:" .. (username or "")
     local cached = nauthilus_cache.cache_get(ckey)
     if cached and type(cached) == "table" then
@@ -63,7 +63,7 @@ local function get_metrics(pool, username)
     end
 
     local tag = nauthilus_keys.account_tag(username)
-    local snap_key = "ntc:acct:" .. tag .. username .. ":longwindow"
+    local snap_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":longwindow")
 
     -- Pipeline the related user-specific reads
     local cmds = {
@@ -95,7 +95,7 @@ local function get_metrics(pool, username)
     local fail7d = tonumber(val(4) or "0") or 0
 
     -- Separate call for the global attack set
-    local attack_score, err_a = nauthilus_redis.redis_zscore(pool, "ntc:multilayer:distributed_attack:accounts", username)
+    local attack_score, err_a = nauthilus_redis.redis_zscore(pool, nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts"), username)
     nauthilus_util.if_error_raise(err_a)
 
     local metrics = {
@@ -122,7 +122,7 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    local m, _ = get_metrics(CUSTOM_REDIS_POOL, username)
+    local m, _ = get_metrics(CUSTOM_REDIS_POOL, username, request)
     local applied_delay_ms = 0
 
     local risky = false
@@ -164,11 +164,11 @@ function nauthilus_call_filter(request)
                 ["peer.service"] = "soft_delay",
                 username = username or "",
                 client_ip = client_ip or "",
-                uniq_ips_24h = uniq24,
-                uniq_ips_7d = uniq7d,
-                fails_24h = fail24,
-                fails_7d = fail7d,
-                attacked = (attack_score ~= nil),
+                uniq_ips_24h = m.uniq24,
+                uniq_ips_7d = m.uniq7d,
+                fails_24h = m.fail24,
+                fails_7d = m.fail7d,
+                attacked = m.attacked,
                 applied_delay_ms = applied_delay_ms,
                 threshold_uniq24 = threshold_uniq24,
                 threshold_uniq7d = threshold_uniq7d,
@@ -187,11 +187,11 @@ function nauthilus_call_filter(request)
         message = risky and "Applied soft delay" or "No soft delay",
         username = username,
         client_ip = client_ip,
-        uniq_ips_24h = uniq24,
-        uniq_ips_7d = uniq7d,
-        fails_24h = fail24,
-        fails_7d = fail7d,
-        attacked = (attack_score ~= nil),
+        uniq_ips_24h = m.uniq24,
+        uniq_ips_7d = m.uniq7d,
+        fails_24h = m.fail24,
+        fails_7d = m.fail7d,
+        attacked = m.attacked,
         applied_delay_ms = applied_delay_ms,
     }
 

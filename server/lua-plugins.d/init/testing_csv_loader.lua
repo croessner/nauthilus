@@ -218,7 +218,9 @@ end
 
 -- Hook entrypoint called by Go after loading init scripts
 -- See server/lualib/definitions.go: definitions.LuaFnRunHook ("nauthilus_run_hook")
-function nauthilus_run_hook(logging, session)
+function nauthilus_run_hook(request)
+    local logging = request.logging
+    local session = request.session
     local csv_path = TESTING_CSV
   local ok, err = M.init({ csv = csv_path })
   if not ok then

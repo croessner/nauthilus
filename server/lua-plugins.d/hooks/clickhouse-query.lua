@@ -493,7 +493,9 @@ local function parse_filter_to_where(s)
     return where
 end
 
-function nauthilus_run_hook(logging, session)
+function nauthilus_run_hook(request)
+    local logging = request.logging
+    local session = request.session
     local result = {
         level = "info",
         caller = N .. ".lua",

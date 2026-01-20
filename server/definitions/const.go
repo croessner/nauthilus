@@ -1674,6 +1674,9 @@ const (
 
 	// LuaRequestMethod represents the authentication method used.
 	LuaRequestMethod = "method"
+
+	// LuaRequestRedisPrefix represents the redis prefix used for keys.
+	LuaRequestRedisPrefix = "redis_prefix"
 )
 
 const (

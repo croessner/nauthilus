@@ -259,7 +259,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	request := L.NewTable()
 
-	luaCommand, nret = setLuaRequestParameters(cfg, luaRequest, request)
+	luaCommand, nret = setLuaRequestParameters(cfg, L, luaRequest, request)
 
 	err := executeAndHandleError(ctx, cfg, logger, compiledScript, luaCommand, luaRequest, L, request, nret, logs)
 
@@ -288,13 +288,13 @@ func setupGlobals(ctx context.Context, cfg config.File, logger *slog.Logger, lua
 }
 
 // setLuaRequestParameters determines the Lua command and number of return values for a LuaRequest and modifies the request.
-func setLuaRequestParameters(cfg config.File, luaRequest *bktype.LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
+func setLuaRequestParameters(cfg config.File, L *lua.LState, luaRequest *bktype.LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
 	switch luaRequest.Function {
 	case definitions.LuaCommandPassDB:
 		luaCommand = definitions.LuaFnBackendVerifyPassword
 		nret = 2
 
-		luaRequest.SetupRequest(cfg, request)
+		luaRequest.SetupRequest(L, cfg, request)
 	case definitions.LuaCommandListAccounts:
 		luaCommand = definitions.LuaFnBackendListAccounts
 		nret = 2

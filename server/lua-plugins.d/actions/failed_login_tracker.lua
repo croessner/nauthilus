@@ -38,7 +38,7 @@ function nauthilus_call_action(request)
     end
 
     -- Define the key for the top-100 failed logins
-    local top_failed_logins_key = "ntc:top_failed_logins"
+    local top_failed_logins_key = nauthilus_util.get_redis_key(request, "top_failed_logins")
 
     -- Get the username from the request
     local username = request.username

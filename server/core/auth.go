@@ -1675,6 +1675,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.BruteForceName = a.Security.BruteForceName
 	cr.FeatureName = a.Runtime.FeatureName
 	cr.StatusMessage = &a.Runtime.StatusMessage
+	cr.RedisPrefix = a.Cfg().GetServer().GetRedis().GetPrefix()
 
 	if cr.Authenticated {
 		cr.HTTPStatus = a.Runtime.StatusCodeOK

@@ -140,7 +140,7 @@ function nauthilus_call_action(request)
         local username = (request.username ~= "" and request.username) or ""
         local cip = (request.client_ip ~= "" and request.client_ip) or ""
         if username ~= "" and cip ~= "" then
-            local dedup_key = "ntc:clickhouse:authdedup:" .. tostring(username) .. ":" .. tostring(cip)
+            local dedup_key = nauthilus_util.get_redis_key(request, "clickhouse:authdedup:" .. tostring(username) .. ":" .. tostring(cip))
             -- Use SET NX EX to reduce roundtrips (atomic gate)
             local ok, rerr = nauthilus_redis.redis_set("default", dedup_key, "1", { nx = true, ex = 300 })
             if rerr then

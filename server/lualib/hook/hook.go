@@ -430,22 +430,6 @@ func PreCompileLuaHooks(cfg config.File) error {
 	return nil
 }
 
-// setupLogging configures the logging settings in the Lua state and returns a table containing the log format and level.
-func setupLogging(cfg config.File, L *lua.LState) *lua.LTable {
-	logTable := L.NewTable()
-	logFormat := definitions.LogFormatDefault
-	logLevel := cfg.GetServer().GetLog().GetLogLevelName()
-
-	if cfg.GetServer().GetLog().IsLogFormatJSON() {
-		logFormat = definitions.LogFormatJSON
-	}
-
-	logTable.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
-	logTable.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
-
-	return logTable
-}
-
 // runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
 // Returns an error if the script is not found or if execution fails.
@@ -511,9 +495,13 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
 
-	logTable := setupLogging(cfg, L)
+	requestTable := L.NewTable()
+	cr := lualib.GetCommonRequest()
+	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
+	cr.SetupRequest(L, cfg, requestTable)
+	lualib.PutCommonRequest(cr)
 
-	_, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), logTable, L, hook, "")
+	_, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
 	if err != nil {
 		csp.RecordError(err)
 	}
@@ -611,9 +599,14 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	modManager.BindHTTPResponse(L, ctx)
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
 
-	logTable := setupLogging(cfg, L)
+	requestTable := L.NewTable()
+	cr := lualib.GetCommonRequest()
+	cr.Session = guid
+	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
+	cr.SetupRequest(L, cfg, requestTable)
+	lualib.PutCommonRequest(cr)
 
-	result, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), logTable, L, hook, guid)
+	result, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
 	if err != nil {
 		xsp.RecordError(err)
 		level.Error(logger).Log(
@@ -647,14 +640,12 @@ func RunLuaInit(ctx context.Context, cfg config.File, logger *slog.Logger, redis
 // executeAndHandleError executes a Lua script, invoking a predefined hook and processing its results or errors.
 // Parameters:
 //   - compiledScript: Precompiled Lua script to execute.
-//   - logTable: Lua table for logging configuration.
 //   - L: Lua state.
 //   - hook: Identifier for the script's hook.
-//   - guid: Unique identifier for tracing execution.
+//   - requestTable: Lua table for the request object.
 //
-// Returns a Gin-compatible result or an error encountered during executi
 // Returns a Gin-compatible result or an error encountered during execution.
-func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, logTable *lua.LTable, L *lua.LState, hook, guid string) (result gin.H, err error) {
+func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, L *lua.LState, hook string, requestTable *lua.LTable) (result gin.H, err error) {
 	if err = lualib.PackagePath(L, cfg); err != nil {
 		processError(logger, err, hook)
 	}
@@ -686,7 +677,7 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 		Fn:      runHookFn,
 		NRet:    1,
 		Protect: true,
-	}, logTable, lua.LString(guid)); err != nil {
+	}, requestTable); err != nil {
 		processError(logger, err, hook)
 	}
 

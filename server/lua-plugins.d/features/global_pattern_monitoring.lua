@@ -46,17 +46,17 @@ function nauthilus_call_feature(request)
 
     local keys = {}
     for _, w in ipairs(window_sizes) do
-        table.insert(keys, "ntc:multilayer:global:auth_attempts:" .. w)
-        table.insert(keys, "ntc:multilayer:global:unique_ips:" .. w)
-        table.insert(keys, "ntc:multilayer:global:unique_users:" .. w)
+        table.insert(keys, nauthilus_util.get_redis_key(request, "multilayer:global:auth_attempts:" .. w))
+        table.insert(keys, nauthilus_util.get_redis_key(request, "multilayer:global:unique_ips:" .. w))
+        table.insert(keys, nauthilus_util.get_redis_key(request, "multilayer:global:unique_users:" .. w))
     end
-    local current_metrics_key = "ntc:multilayer:global:current_metrics"
+    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
     local hour_key = time.format(timestamp, "2006-01-02-15", "UTC")
-    local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
+    local historical_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:historical_metrics:" .. hour_key)
     table.insert(keys, current_metrics_key)
     table.insert(keys, historical_metrics_key)
 
-    local per_attempt_key = "ntc:multilayer:global:metrics:" .. timestamp
+    local per_attempt_key = nauthilus_util.get_redis_key(request, "multilayer:global:metrics:" .. timestamp)
     local per_attempt_ttl = 3600
 
     local args = {

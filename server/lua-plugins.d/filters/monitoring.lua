@@ -50,7 +50,7 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    local redis_key = "ntc:DS:" .. request.account
+    local redis_key = nauthilus_util.get_redis_key(request, "DS:" .. request.account)
 
     local custom_pool = "default"
     local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
@@ -84,7 +84,7 @@ function nauthilus_call_filter(request)
     end
 
     local function update_target_user_table(session)
-        local _, err_redis_hset = nauthilus_redis.redis_hset(custom_pool, "ntc:DS_ACCOUNT", session, request.account)
+        local _, err_redis_hset = nauthilus_redis.redis_hset(custom_pool, nauthilus_util.get_redis_key(request, "DS_ACCOUNT"), session, request.account)
         if err_redis_hset then
             nauthilus_builtin.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
 

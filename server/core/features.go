@@ -21,6 +21,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -77,6 +78,11 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		defer stopTimer()
 	}
 
+	cr := lualib.GetCommonRequest()
+	defer lualib.PutCommonRequest(cr)
+
+	a.FillCommonRequest(cr)
+
 	fr := &feature.Request{
 		Session:            a.Runtime.GUID,
 		Username:           a.Request.Username,
@@ -92,6 +98,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		BruteForceCounter:  0,
 		MasterUserMode:     a.Runtime.MasterUserMode,
 		AdditionalFeatures: a.Runtime.AdditionalFeatures,
+		CommonRequest:      cr,
 	}
 
 	triggered, abortFeatures, err = fr.CallFeatureLua(ctx, a.Cfg(), a.Logger(), a.Redis())
