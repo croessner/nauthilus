@@ -434,15 +434,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 	}
 
 	// 1) Load account-scoped password history metrics
-	if key := bm.getPasswordHistoryRedisSetKey(true); key != "" {
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-		if count, err := bm.redis().GetReadHandle().SCard(dCtx, key).Result(); err == nil {
-			bm.passwordsAccountSeen = uint(count)
-		}
-		cancel()
-	}
+	bm.passwordsAccountSeen = bm.loadPasswordHistoryCount(true)
 
 	// 2) Read total counters (account-scoped and IP-only) for observability and test expectations
 	//    Even if not strictly required for logic, these counters are useful and inexpensive.
@@ -476,15 +468,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 	}
 
 	// 4) Load IP-only (overall) password history metrics
-	if key := bm.getPasswordHistoryRedisSetKey(false); key != "" {
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-		if count, err := bm.redis().GetReadHandle().SCard(dCtx, key).Result(); err == nil {
-			bm.passwordsTotalSeen = uint(count)
-		}
-		cancel()
-	}
+	bm.passwordsTotalSeen = bm.loadPasswordHistoryCount(false)
 }
 
 // CheckRepeatingBruteForcer checks a set of brute force rules against a given network and updates the message if triggered.
@@ -761,29 +745,8 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			return true, false, -1
 		}
 
-		// Reputation key for the client IP
-		repKey := ""
-		if bm.tolerate() != nil {
-			repKey = bm.tolerate().GetReputationKey(bm.clientIP)
-		}
-
-		// BF configuration for adaptive scaling
-		bfCfg := bm.cfg().GetBruteForce()
-		adaptiveEnabled := 0
-		minPct := uint8(0)
-		maxPct := uint8(0)
-		scaleFactor := 1.0
-		staticPct := uint8(0)
-
-		if bfCfg != nil {
-			if bfCfg.GetAdaptiveToleration() {
-				adaptiveEnabled = 1
-			}
-			minPct = bfCfg.GetMinToleratePercent()
-			maxPct = bfCfg.GetMaxToleratePercent()
-			scaleFactor = bfCfg.GetScaleFactor()
-			staticPct = bfCfg.GetToleratePercent()
-		}
+		// Reputation key for the client IP and adaptive scaling configuration
+		repKey, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct := bm.getAdaptiveScalingConfig()
 
 		// Redis Cluster: we use a pipeline to execute the script for each candidate.
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -1168,23 +1131,8 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 // It increments the counter and sets an expiration time for the Redis key if the conditions are met.
 // Logs errors encountered during Redis operations and updates Redis write metrics.
 func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
-		return
-	}
-
-	network, err := bm.getNetwork(rule)
-	if err != nil {
-		level.Error(bm.logger()).Log(
-			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Failed to get network for brute force rule",
-			definitions.LogKeyError, err,
-		)
-
-		return
-	}
-
-	currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, network)
-	if currentKey == "" {
+	currentKey, prevKey, weight, ok := bm.prepareSlidingWindow(rule)
+	if !ok {
 		return
 	}
 
@@ -1193,29 +1141,8 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 	defer cancel()
 
-	// Reputation key for the client IP
-	repKey := ""
-	if bm.tolerate() != nil {
-		repKey = bm.tolerate().GetReputationKey(bm.clientIP)
-	}
-
-	// BF configuration for adaptive scaling
-	bfCfg := bm.cfg().GetBruteForce()
-	adaptiveEnabled := 0
-	minPct := uint8(0)
-	maxPct := uint8(0)
-	scaleFactor := 1.0
-	staticPct := uint8(0)
-
-	if bfCfg != nil {
-		if bfCfg.GetAdaptiveToleration() {
-			adaptiveEnabled = 1
-		}
-		minPct = bfCfg.GetMinToleratePercent()
-		maxPct = bfCfg.GetMaxToleratePercent()
-		scaleFactor = bfCfg.GetScaleFactor()
-		staticPct = bfCfg.GetToleratePercent()
-	}
+	// Reputation key for the client IP and adaptive scaling configuration
+	repKey, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct := bm.getAdaptiveScalingConfig()
 
 	// Only increment if not already triggered by this rule
 	increment := 0
@@ -1228,7 +1155,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 
 	// Limit is not needed for Save in terms of triggering here, but we pass it anyway
 	// to maintain script logic.
-	_, err = rediscli.ExecuteScript(dCtx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"],
+	_, err := rediscli.ExecuteScript(dCtx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"],
 		[]string{currentKey, prevKey, repKey},
 		increment, weight, ttl, limit,
 		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct)
@@ -2004,23 +1931,8 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 // loadBruteForceBucketCounter loads a brute force bucket counter for the specified rule if the feature is enabled.
 // It retrieves the bucket counter from Redis, logs the operation, and updates the in-memory counter mapping for the rule.
 func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
-		return
-	}
-
-	network, err := bm.getNetwork(rule)
-	if err != nil {
-		level.Error(bm.logger()).Log(
-			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Failed to get network for brute force rule",
-			definitions.LogKeyError, err,
-		)
-
-		return
-	}
-
-	currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, network)
-	if currentKey == "" {
+	currentKey, prevKey, weight, ok := bm.prepareSlidingWindow(rule)
+	if !ok {
 		return
 	}
 
@@ -2029,29 +1941,8 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	defer cancel()
 
-	// Reputation key for the client IP
-	repKey := ""
-	if bm.tolerate() != nil {
-		repKey = bm.tolerate().GetReputationKey(bm.clientIP)
-	}
-
-	// BF configuration for adaptive scaling
-	bfCfg := bm.cfg().GetBruteForce()
-	adaptiveEnabled := 0
-	minPct := uint8(0)
-	maxPct := uint8(0)
-	scaleFactor := 1.0
-	staticPct := uint8(0)
-
-	if bfCfg != nil {
-		if bfCfg.GetAdaptiveToleration() {
-			adaptiveEnabled = 1
-		}
-		minPct = bfCfg.GetMinToleratePercent()
-		maxPct = bfCfg.GetMaxToleratePercent()
-		scaleFactor = bfCfg.GetScaleFactor()
-		staticPct = bfCfg.GetToleratePercent()
-	}
+	// Reputation key for the client IP and adaptive scaling configuration
+	repKey, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct := bm.getAdaptiveScalingConfig()
 
 	ttl := int64(math.Round(rule.Period.Seconds() * 2))
 	limit := int64(rule.FailedRequests) - 1
@@ -2167,6 +2058,69 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 			definitions.LogKeyError, err,
 		)
 	}
+}
+
+func (bm *bucketManagerImpl) loadPasswordHistoryCount(isAccountScoped bool) uint {
+	if key := bm.getPasswordHistoryRedisSetKey(isAccountScoped); key != "" {
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+		defer cancel()
+
+		if count, err := bm.redis().GetReadHandle().SCard(dCtx, key).Result(); err == nil {
+			return uint(count)
+		}
+	}
+
+	return 0
+}
+
+func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8) {
+	if bm.tolerate() != nil {
+		repKey = bm.tolerate().GetReputationKey(bm.clientIP)
+	}
+
+	bfCfg := bm.cfg().GetBruteForce()
+	scaleFactor = 1.0
+
+	if bfCfg != nil {
+		if bfCfg.GetAdaptiveToleration() {
+			adaptiveEnabled = 1
+		}
+
+		minPct = bfCfg.GetMinToleratePercent()
+		maxPct = bfCfg.GetMaxToleratePercent()
+		scaleFactor = bfCfg.GetScaleFactor()
+		staticPct = bfCfg.GetToleratePercent()
+	}
+
+	return
+}
+
+func (bm *bucketManagerImpl) prepareSlidingWindow(rule *config.BruteForceRule) (currentKey, prevKey string, weight float64, ok bool) {
+	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
+		return
+	}
+
+	network, err := bm.getNetwork(rule)
+	if err != nil {
+		level.Error(bm.logger()).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Failed to get network for brute force rule",
+			definitions.LogKeyError, err,
+		)
+
+		return
+	}
+
+	currentKey, prevKey, weight = bm.getSlidingWindowKeys(rule, network)
+	if currentKey == "" {
+		return
+	}
+
+	ok = true
+
+	return
 }
 
 // BucketManagerDeps bundles dependencies for BucketManager.
