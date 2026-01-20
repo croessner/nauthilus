@@ -334,7 +334,11 @@ func SetStatusMessage(status **string) lua.LGFunction {
 		stack := luastack.NewManager(L)
 		newStatus := stack.CheckString(1)
 
-		*status = &newStatus
+		if *status != nil {
+			**status = newStatus
+		} else {
+			*status = &newStatus
+		}
 
 		return 0
 	}

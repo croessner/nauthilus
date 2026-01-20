@@ -25,11 +25,13 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -69,6 +71,9 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(commonRequest)
+
 	auth.FillCommonRequest(commonRequest)
 
 	// UserFound and Authenticated are special because they might have been
@@ -104,9 +109,6 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 					"stacktrace", ae.StackTrace,
 				)
 			}
-
-			// Return the CommonRequest to the pool even if there's an error
-			lualib.PutCommonRequest(commonRequest)
 
 			// error during filter execution → not authorized
 			auth.Runtime.Authorized = false
@@ -151,9 +153,6 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		if filterResult {
 			auth.Runtime.Authorized = false
 
-			// Return the CommonRequest to the pool before returning
-			lualib.PutCommonRequest(commonRequest)
-
 			return definitions.AuthResultFail
 		}
 
@@ -163,9 +162,6 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		auth.Runtime.UsedBackendIP = *filterRequest.UsedBackendAddr
 		auth.Runtime.UsedBackendPort = *filterRequest.UsedBackendPort
 	}
-
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(commonRequest)
 
 	if passDBResult.Authenticated {
 		return definitions.AuthResultOK
@@ -179,9 +175,32 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	auth := input.View.Auth()
 	passDBResult := input.Result
 
+	if passDBResult == nil {
+		return
+	}
+
 	if !auth.Cfg().HaveLuaActions() {
 		return
 	}
+
+	tr := monittrace.New("nauthilus/auth")
+	_, lspan := tr.Start(auth.Ctx(), "auth.lua.post_action",
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+	)
+
+	lspan.SetAttributes(
+		attribute.Bool("authenticated", passDBResult.Authenticated),
+		attribute.Bool("user_found", passDBResult.UserFound),
+	)
+
+	if passDBResult.BackendName != "" {
+		lspan.SetAttributes(attribute.String("backend", passDBResult.BackendName))
+	} else {
+		lspan.SetAttributes(attribute.String("backend", passDBResult.Backend.String()))
+	}
+
+	defer lspan.End()
 
 	// Make sure we have all the required values and they're not nil
 	if auth.Request.Protocol == nil || auth.Request.HTTPClientRequest == nil || auth.Runtime.Context == nil {
@@ -190,6 +209,9 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 
 	// Get a CommonRequest from the pool
 	cr := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(cr)
+
 	auth.FillCommonRequest(cr)
 
 	// UserFound and Authenticated are special because they might have been
@@ -218,8 +240,6 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		StatusMessage: auth.Runtime.StatusMessage,
 		Request:       *cr,
 	}
-
-	lualib.PutCommonRequest(cr)
 
 	go auth.RunLuaPostAction(args)
 }

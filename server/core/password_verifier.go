@@ -78,6 +78,8 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 				definitions.LogKeyError, e,
 			)
 
+			PutPassDBResultToPool(res)
+
 			continue
 		}
 
@@ -90,6 +92,10 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 			"passdb", passDB.backend.String(),
 			"result", fmt.Sprintf("%v", res),
 		)
+
+		if finalRes != nil {
+			PutPassDBResultToPool(finalRes)
+		}
 
 		finalRes = res
 

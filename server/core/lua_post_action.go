@@ -71,6 +71,8 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 	// Get a CommonRequest from the pool and fill from args
 	cr := lualib.GetCommonRequest()
 
+	defer lualib.PutCommonRequest(cr)
+
 	// Derive brute-force hints if not provided
 	clientNet := args.Request.ClientNet
 	repeating := args.Request.Repeating
@@ -93,7 +95,13 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 	*cr = args.Request
 	cr.ClientNet = clientNet
 	cr.Repeating = repeating
-	cr.StatusMessage = &args.StatusMessage
+	// Deep copy StatusMessage string if it exists
+	if args.StatusMessage != "" {
+		sm := args.StatusMessage
+		cr.StatusMessage = &sm
+	} else {
+		cr.StatusMessage = nil
+	}
 
 	action.RequestChan <- &action.Action{
 		LuaAction:             definitions.LuaActionPost,
@@ -106,9 +114,6 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 	}
 
 	<-finished
-
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(cr)
 }
 
 // ComputeBruteForceHints derives clientNet and repeating fields for the post action

@@ -33,6 +33,9 @@ func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bo
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(commonRequest)
+
 	auth.FillCommonRequest(commonRequest)
 
 	featReq := feature.Request{
@@ -58,8 +61,6 @@ func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bo
 	}
 
 	newStatus := featReq.StatusMessage
-
-	lualib.PutCommonRequest(commonRequest)
 
 	return triggered, abort, logs, newStatus, err
 }

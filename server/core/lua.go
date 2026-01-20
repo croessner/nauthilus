@@ -88,6 +88,8 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
 
+	defer lualib.PutCommonRequest(commonRequest)
+
 	// Set the fields
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Repeating = false     // unavailable
@@ -247,9 +249,6 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		attribute.Bool("authenticated", luaBackendResult.Authenticated),
 	)
 
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(commonRequest)
-
 	return
 }
 
@@ -290,6 +289,8 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(commonRequest)
 
 	// Set the fields
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
@@ -336,9 +337,6 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 			}
 		}
 	}
-
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(commonRequest)
 
 	accounts = accountSet.GetStringSlice()
 
@@ -394,6 +392,8 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
 
+	defer lualib.PutCommonRequest(commonRequest)
+
 	// Set the fields
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Request.Service
@@ -438,14 +438,8 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
 
-		// Return the CommonRequest to the pool even if there's an error
-		lualib.PutCommonRequest(commonRequest)
-
 		return
 	}
-
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(commonRequest)
 
 	return
 }
