@@ -101,8 +101,8 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPAllowSet"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", hashedPW).SetVal(int64(1))
+		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
+		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, hashedPW, ".*", ".*", ".*").SetVal(int64(1))
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
@@ -127,8 +127,8 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPAllowSet"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", ".*").SetVal(int64(0))
+		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
+		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", ".*", ".*").SetVal(int64(0))
 
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
@@ -173,8 +173,8 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPAllowSet"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", hashedPW).SetVal(int64(0))
+		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
+		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, hashedPW, ".*", ".*", ".*").SetVal(int64(0))
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
@@ -209,8 +209,8 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPAllowSet"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", ".*").SetVal(int64(0))
+		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
+		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", ".*", ".*").SetVal(int64(0))
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")

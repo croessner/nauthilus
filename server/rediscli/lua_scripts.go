@@ -92,54 +92,6 @@ local max_negative = math.floor((percent * positive) / 100)
 return {percent, max_negative, positive, negative, 1}
 `,
 
-	// RWPAllowSet atomically checks whether a password hash is already in the allow-set or can be added
-	// within the configured threshold. Returns 1 if RWP allowance applies, 0 otherwise.
-	// KEYS[1] - The allow-set key (a Redis Set)
-	// ARGV[1] - Threshold (max unique hashes)
-	// ARGV[2] - TTL in seconds
-	// ARGV[3] - Current password hash
-	"RWPAllowSet": `
-local key = KEYS[1]
-local threshold = tonumber(ARGV[1])
-local ttl = tonumber(ARGV[2])
-local hash = ARGV[3]
-
-if redis.call('SISMEMBER', key, hash) == 1 then
-  redis.call('EXPIRE', key, ttl)
-  return 1
-end
-
-local card = redis.call('SCARD', key)
-if card < threshold then
-  redis.call('SADD', key, hash)
-  redis.call('EXPIRE', key, ttl)
-  return 1
-end
-
-return 0
-`,
-
-	// ColdStartGraceSeed atomically sets a one-time cold-start grace key and seeds a per-password evidence key.
-	// KEYS[1] - The cold-start key (SET NX EX ttl)
-	// KEYS[2] - The seed key for the current password (SET NX EX ttl)
-	// ARGV[1] - TTL in seconds
-	"ColdStartGraceSeed": `
-local c = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
-redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[1])
-if c then return 1 else return 0 end
-`,
-
-	// UnlockIfTokenMatches deletes the lock key only if the stored token matches the provided token
-	// KEYS[1] - The lock key
-	// ARGV[1] - The expected token
-	"UnlockIfTokenMatches": `
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-  return redis.call("DEL", KEYS[1])
-else
-  return 0
-end
-`,
-
 	// AddToSetAndExpireLimit adds a hash to a set and sets an expiration time,
 	// but only if the set hasn't reached the maximum number of entries.
 	// If it has reached the limit, it only refreshes TTL if the hash is already present.
@@ -164,6 +116,65 @@ end
 redis.call('SADD', key, hash)
 redis.call('EXPIRE', key, ttl)
 return 1
+`,
+
+	// ColdStartGraceSeed atomically sets a one-time cold-start grace key and seeds a per-password evidence key.
+	// KEYS[1] - The cold-start key (SET NX EX ttl)
+	// KEYS[2] - The seed key for the current password (SET NX EX ttl)
+	// ARGV[1] - TTL in seconds
+	"ColdStartGraceSeed": `
+local c = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
+redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[1])
+if c then return 1 else return 0 end
+`,
+
+	// UnlockIfTokenMatches deletes the lock key only if the stored token matches the provided token
+	// KEYS[1] - The lock key
+	// ARGV[1] - The expected token
+	"UnlockIfTokenMatches": `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+else
+  return 0
+end
+`,
+
+	// RWPSlidingWindow implements a sliding window for repeating-wrong-passwords using a sorted set.
+	// KEYS[1] - The sorted set key
+	// ARGV[1] - The password hash
+	// ARGV[2] - Current timestamp (seconds)
+	// ARGV[3] - TTL (seconds)
+	// ARGV[4] - Max allowed unique hashes in the window
+	"RWPSlidingWindow": `
+local key = KEYS[1]
+local hash = ARGV[1]
+local now = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+local max = tonumber(ARGV[4])
+
+-- Remove outdated entries
+redis.call('ZREMRANGEBYSCORE', key, '-inf', '(' .. (now - ttl))
+
+-- Check if hash already exists
+local score = redis.call('ZSCORE', key, hash)
+local card = redis.call('ZCARD', key)
+
+-- Always add/update the current hash
+redis.call('ZADD', key, now, hash)
+
+-- If we exceed the max unique hashes, remove the oldest one
+if redis.call('ZCARD', key) > max then
+    redis.call('ZREMRANGEBYRANK', key, 0, 0)
+end
+
+redis.call('EXPIRE', key, ttl)
+
+-- Return 1 if it was a repeat (existed before) or if we were below the limit
+if score or card < max then
+    return 1
+end
+
+return 0
 `,
 	// SlidingWindowCounter implements a sliding window counter for rate limiting with adaptive reputation scaling.
 	// KEYS:

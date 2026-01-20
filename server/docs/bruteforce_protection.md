@@ -105,10 +105,15 @@ windows.
 
 RWP detection prevents automated attacks that try common passwords across many accounts or the same password repeatedly.
 
-* **Data Structure:** Redis Set `bf:rwp:allow:<scoped_ip>:<account>`.
-* **Threshold:** `BruteForce.AllowedUniqueWrongPWHashes`.
-* **Logic:** Uses `RWPAllowSet` Lua script. It allows a certain number of unique failed password hashes within a window.
-  If exceeded, the request is no longer "allowed" under RWP grace and must undergo full brute-force enforcement.
+* **Data Structure:** Redis Sorted Set `bf:rwp:allow:<scoped_ip>:<account>`.
+* **Configuration:**
+    * `brute_force.rwp_allowed_unique_hashes`: The number of distinct wrong password hashes tolerated within the
+      window (default: 1).
+    * `brute_force.rwp_window`: The sliding window duration (default: 15 minutes).
+* **Logic:** Uses `RWPSlidingWindow` Lua script. It allows a certain number of unique failed password hashes within a
+  sliding window. If a hash is repeated, its timestamp is updated, keeping it "fresh" and avoiding it being evicted
+  from the window. If the number of unique hashes in the window exceeds the threshold, the request is no longer
+  "allowed" under RWP grace and must undergo full brute-force enforcement.
 
 ### 3.5 Cold Start Grace
 
@@ -155,13 +160,14 @@ All keys are prefixed with the configured Redis prefix.
 |:------------------------------------------|:-------|:------------------------------------------------------------------------------|
 | `bf:cnt:{rule}:{net}:win:{timestamp}`     | String | Sliding window counter for a specific rule and network.                       |
 | `bruteforce:{net}`                        | Hash   | Stores the "Pre-Result" (the name of the rule that triggered the block).      |
-| `bf:rwp:allow:{scoped_ip}:{account}`      | Set    | Stores hashes of unique wrong passwords for RWP detection.                    |
+| `bf:rwp:allow:{scoped_ip}:{account}`      | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.    |
 | `bf:cold:{scoped_ip}`                     | String | Cold-start grace flag for an IP.                                              |
 | `bf:seed:{scoped_ip}:{account}:{pw_hash}` | String | Evidence key for cold-start grace.                                            |
 | `bf:tr:{ip}`                              | Hash   | Reputation data (`positive` and `negative` counters).                         |
 | `bf:tr:{ip}:P`                            | ZSet   | Time-series of positive authentication events.                                |
 | `bf:tr:{ip}:N`                            | ZSet   | Time-series of negative authentication events.                                |
 | `affected_accounts`                       | Set    | List of accounts currently affected by brute-force triggers.                  |
+| `active_brute_force_keys`                 | Set    | List of active `bruteforce:{net}` hash keys (used for the list API).          |
 | `pw_hist:{account}:{ip}`                  | Set    | Failed password hashes for a specific account and IP.                         |
 | `pw_hist_ips:{account}`                   | Set    | List of IPs that have attempted logins for an account (used for cache flush). |
 
