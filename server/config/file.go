@@ -243,6 +243,9 @@ type File interface {
 	// HasFeature checks whether a specific feature is available.
 	HasFeature(feature string) bool
 
+	// ShouldRunFeature checks if a given feature is enabled and should be executed in the current auth context (noAuth).
+	ShouldRunFeature(feature string, noAuth bool) bool
+
 	/*
 		Authentication and security methods
 	*/
@@ -2360,6 +2363,25 @@ func (f *FileSettings) HasFeature(feature string) bool {
 	return false
 }
 
+// ShouldRunFeature checks if a given feature is enabled and should be executed in the current auth context (noAuth).
+func (f *FileSettings) ShouldRunFeature(feature string, noAuth bool) bool {
+	if f == nil || f.Server == nil || f.Server.Features == nil {
+		return false
+	}
+
+	for _, item := range f.Server.Features {
+		if item.Get() == feature {
+			if noAuth {
+				return item.GetWhenNoAuth()
+			}
+
+			return true
+		}
+	}
+
+	return false
+}
+
 // processVerboseLevel parses the input, sets the verbosity level, and returns a Verbosity instance or an error.
 func processVerboseLevel(input any) (any, error) {
 	verbosity := Verbosity{}
@@ -2417,10 +2439,42 @@ func processDebugModules(input any) (any, error) {
 func processFeatures(input any) (any, error) {
 	var features []*Feature
 
-	addFeature := func(data string) error {
+	addFeature := func(data any) error {
 		feature := &Feature{}
-		if err := feature.Set(data); err != nil {
-			return err
+
+		switch v := data.(type) {
+		case string:
+			if err := feature.Set(v); err != nil {
+				return err
+			}
+		case map[string]any:
+			name, ok := v["name"].(string)
+			if !ok {
+				return fmt.Errorf("feature name missing or not a string")
+			}
+
+			if err := feature.Set(name); err != nil {
+				return err
+			}
+
+			if whenNoAuth, ok := v["when_no_auth"].(bool); ok {
+				feature.SetWhenNoAuth(whenNoAuth)
+			}
+		case map[any]any:
+			name, ok := v["name"].(string)
+			if !ok {
+				return fmt.Errorf("feature name missing or not a string")
+			}
+
+			if err := feature.Set(name); err != nil {
+				return err
+			}
+
+			if whenNoAuth, ok := v["when_no_auth"].(bool); ok {
+				feature.SetWhenNoAuth(whenNoAuth)
+			}
+		default:
+			return fmt.Errorf("invalid feature type %T", data)
 		}
 
 		features = append(features, feature)
@@ -2441,12 +2495,7 @@ func processFeatures(input any) (any, error) {
 		}
 	case []any:
 		for _, feature := range data {
-			str, ok := feature.(string)
-			if !ok {
-				return nil, fmt.Errorf("invalid value in array, expected string, got %T", feature)
-			}
-
-			if err := addFeature(str); err != nil {
+			if err := addFeature(feature); err != nil {
 				return nil, err
 			}
 		}

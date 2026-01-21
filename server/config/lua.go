@@ -191,6 +191,7 @@ func (l *LuaAction) GetScriptPath() string {
 type LuaFeature struct {
 	Name       string `mapstructure:"name" validate:"required"`
 	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
+	WhenNoAuth bool   `mapstructure:"when_no_auth"`
 }
 
 func (l *LuaFeature) String() string {

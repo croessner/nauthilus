@@ -294,7 +294,8 @@ func (b *Backend) GetName() string {
 
 // Feature is a container for Nauthilus features.
 type Feature struct {
-	name string
+	name       string
+	whenNoAuth bool
 }
 
 func (f *Feature) String() string {
@@ -303,6 +304,24 @@ func (f *Feature) String() string {
 	}
 
 	return f.name
+}
+
+// SetWhenNoAuth sets the whenNoAuth field of the Feature.
+func (f *Feature) SetWhenNoAuth(value bool) {
+	if f == nil {
+		return
+	}
+
+	f.whenNoAuth = value
+}
+
+// GetWhenNoAuth returns the value of the whenNoAuth field.
+func (f *Feature) GetWhenNoAuth() bool {
+	if f == nil {
+		return false
+	}
+
+	return f.whenNoAuth
 }
 
 // Set updates the feature name based on the provided value.

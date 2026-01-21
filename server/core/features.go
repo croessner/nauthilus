@@ -277,7 +277,7 @@ func (a *AuthState) logFeatureWhitelisting(featureName string) {
 // Executes the checkFunc when the feature is enabled and not whitelisted, returning its outcome.
 // Returns false if the feature is not enabled in the configuration.
 func (a *AuthState) checkFeatureWithWhitelist(featureName string, isWhitelisted func() bool, checkFunc func()) {
-	if a.cfg().HasFeature(featureName) {
+	if a.cfg().ShouldRunFeature(featureName, a.Request.NoAuth) {
 		if isWhitelisted() {
 			a.logFeatureWhitelisting(featureName)
 		} else {
