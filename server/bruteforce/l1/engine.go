@@ -16,10 +16,14 @@
 package l1
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/localcache"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // L1Decision captures a local decision result.
@@ -38,7 +42,7 @@ type L1Reputation struct {
 
 // Engine is a dedicated L1 decision engine using an in-memory micro-cache.
 type Engine struct {
-	cache *localcache.Cache
+	cache *localcache.MemoryShardedCache
 }
 
 var (
@@ -53,7 +57,7 @@ func GetEngine() *Engine {
 		// Cleanup happens at the same interval.
 		ttl := 300 * time.Millisecond
 		l1Engine = &Engine{
-			cache: localcache.NewCache(ttl, ttl),
+			cache: localcache.NewMemoryShardedCache(32, ttl, ttl),
 		}
 	})
 
@@ -61,10 +65,14 @@ func GetEngine() *Engine {
 }
 
 // Get retrieves a decision from the L1 cache for the given key.
-func (e *Engine) Get(key string) (L1Decision, bool) {
+func (e *Engine) Get(ctx context.Context, key string) (L1Decision, bool) {
 	if e == nil || e.cache == nil {
 		return L1Decision{}, false
 	}
+
+	tr := monittrace.New("nauthilus/bruteforce/l1")
+	_, sp := tr.Start(ctx, "l1.get", attribute.String("key", key))
+	defer sp.End()
 
 	val, ok := e.cache.Get(key)
 	if !ok {
@@ -72,24 +80,44 @@ func (e *Engine) Get(key string) (L1Decision, bool) {
 	}
 
 	dec, ok := val.(L1Decision)
+
+	sp.SetAttributes(
+		attribute.Bool("hit", ok),
+		attribute.Bool("blocked", dec.Blocked),
+		attribute.String("rule", dec.Rule),
+	)
+
 	return dec, ok
 }
 
 // Set stores a decision in the L1 cache for the given key with a specific TTL.
 // If ttl is 0, the cache's default TTL is used.
-func (e *Engine) Set(key string, decision L1Decision, ttl time.Duration) {
+func (e *Engine) Set(ctx context.Context, key string, decision L1Decision, ttl time.Duration) {
 	if e == nil || e.cache == nil {
 		return
 	}
+
+	tr := monittrace.New("nauthilus/bruteforce/l1")
+	_, sp := tr.Start(ctx, "l1.set",
+		attribute.String("key", key),
+		attribute.String("ttl", ttl.String()),
+		attribute.Bool("blocked", decision.Blocked),
+		attribute.String("rule", decision.Rule),
+	)
+	defer sp.End()
 
 	e.cache.Set(key, decision, ttl)
 }
 
 // GetReputation retrieves reputation data from the L1 cache for the given key.
-func (e *Engine) GetReputation(key string) (L1Reputation, bool) {
+func (e *Engine) GetReputation(ctx context.Context, key string) (L1Reputation, bool) {
 	if e == nil || e.cache == nil {
 		return L1Reputation{}, false
 	}
+
+	tr := monittrace.New("nauthilus/bruteforce/l1")
+	_, sp := tr.Start(ctx, "l1.get_reputation", attribute.String("key", key))
+	defer sp.End()
 
 	val, ok := e.cache.Get(key)
 	if !ok {
@@ -97,14 +125,30 @@ func (e *Engine) GetReputation(key string) (L1Reputation, bool) {
 	}
 
 	rep, ok := val.(L1Reputation)
+
+	sp.SetAttributes(
+		attribute.Bool("hit", ok),
+		attribute.Int64("positive", rep.Positive),
+		attribute.Int64("negative", rep.Negative),
+	)
+
 	return rep, ok
 }
 
 // SetReputation stores reputation data in the L1 cache for the given key with a specific TTL.
-func (e *Engine) SetReputation(key string, reputation L1Reputation, ttl time.Duration) {
+func (e *Engine) SetReputation(ctx context.Context, key string, reputation L1Reputation, ttl time.Duration) {
 	if e == nil || e.cache == nil {
 		return
 	}
+
+	tr := monittrace.New("nauthilus/bruteforce/l1")
+	_, sp := tr.Start(ctx, "l1.set_reputation",
+		attribute.String("key", key),
+		attribute.String("ttl", ttl.String()),
+		attribute.Int64("positive", reputation.Positive),
+		attribute.Int64("negative", reputation.Negative),
+	)
+	defer sp.End()
 
 	e.cache.Set(key, reputation, ttl)
 }
@@ -140,7 +184,7 @@ func (e *Engine) Clear() {
 		return
 	}
 
-	// We use localcache.NewCache to replace the internal cache as a quick clear.
+	// We use localcache.NewMemoryShardedCache to replace the internal cache as a quick clear.
 	// Since it's for testing and micro-caching, this is acceptable.
-	e.cache = localcache.NewCache(300*time.Millisecond, 300*time.Millisecond)
+	e.cache = localcache.NewMemoryShardedCache(32, 300*time.Millisecond, 300*time.Millisecond)
 }

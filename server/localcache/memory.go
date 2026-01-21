@@ -16,12 +16,13 @@
 package localcache
 
 import (
-	"hash/fnv"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/objpool"
 	"github.com/croessner/nauthilus/server/stats"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // Item represents a cached item with expiration time
@@ -46,6 +47,8 @@ type MemoryShardedCache struct {
 }
 
 // Cache is a custom in-memory cache implementation (kept for backward compatibility)
+//
+// Deprecated: Use MemoryShardedCache instead.
 type Cache struct {
 	*MemoryShardedCache
 }
@@ -88,15 +91,16 @@ func NewMemoryShardedCache(numShards int, defaultExpiration, cleanupInterval tim
 
 // getShard returns the shard for the given key
 func (sc *MemoryShardedCache) getShard(key string) *MemoryCacheShard {
-	// Use FNV hash to determine the shard
-	h := fnv.New32a()
-	h.Write([]byte(key))
+	// Use xxhash to determine the shard
+	h := xxhash.Sum64String(key)
 
-	return sc.shards[h.Sum32()%uint32(sc.numShards)]
+	return sc.shards[h%uint64(sc.numShards)]
 }
 
 // NewCache creates a new cache with the given default expiration and cleanup interval
 // For backward compatibility, it now returns a MemoryShardedCache wrapped in a Cache struct
+//
+// Deprecated: Use NewMemoryShardedCache instead.
 func NewCache(defaultExpiration, cleanupInterval time.Duration) *Cache {
 	// Use 32 shards as a reasonable default for most systems
 	return &Cache{
