@@ -47,6 +47,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
@@ -55,10 +56,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/spf13/viper"
-	"golang.org/x/sync/singleflight"
-
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/singleflight"
 )
 
 var backchanSF singleflight.Group
@@ -1622,6 +1622,36 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 	return accountName
 }
 
+// traceSetupDetails adds details from the authentication state to the provided span.
+// It includes key request metadata while ensuring sensitive information like passwords
+// and local network details are excluded. SSL information is limited to common fields.
+func (a *AuthState) traceSetupDetails(tsp trace.Span) {
+	if tsp == nil {
+		return
+	}
+
+	mode := "auth"
+	if a.Request.NoAuth {
+		mode = "no-auth"
+	}
+
+	tsp.SetAttributes(
+		attribute.String(definitions.LogKeyGUID, a.Runtime.GUID),
+		attribute.String(definitions.LogKeyMode, mode),
+		attribute.String(definitions.LogKeyProtocol, a.Request.Protocol.String()),
+		attribute.String(definitions.LogKeyOIDCCID, a.Request.OIDCCID),
+		attribute.String(definitions.LogKeyClientIP, a.Request.ClientIP),
+		attribute.String(definitions.LogKeyClientPort, a.Request.XClientPort),
+		attribute.String(definitions.LogKeyClientHost, a.Request.ClientHost),
+		attribute.String(definitions.LogKeyTLSSecure, a.Request.XSSLProtocol),
+		attribute.String(definitions.LogKeyTLSCipher, a.Request.XSSLCipher),
+		attribute.String(definitions.LogKeyAuthMethod, a.Request.Method),
+		attribute.String(definitions.LogKeyUsername, a.Request.Username),
+		attribute.String(definitions.LogKeyUserAgent, a.Request.UserAgent),
+		attribute.String(definitions.LogKeyClientID, a.Request.XClientID),
+	)
+}
+
 // FillCommonRequest populates a CommonRequest object from the current AuthState.
 func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	if cr == nil {
@@ -1885,7 +1915,8 @@ func (a *AuthState) GetAccountField() string {
 	return a.Runtime.AccountField
 }
 
-func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
+// PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
+func (a *AuthState) PostLuaAction(_ *gin.Context, passDBResult *PassDBResult) {
 	if disp := getPostAction(); disp != nil {
 		disp.Run(PostActionInput{
 			View:   a.View(),
@@ -3019,6 +3050,7 @@ func NewAuthStateWithSetup(ctx *gin.Context) State {
 
 	// prominent early log: show all incoming data including session GUID
 	if a, ok := auth.(*AuthState); ok {
+		a.traceSetupDetails(tsp)
 		logProcessingRequest(ctx, a)
 	}
 
@@ -3058,6 +3090,7 @@ func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
 
 	// prominent early log: show all incoming data including session GUID
 	if a, ok := auth.(*AuthState); ok {
+		a.traceSetupDetails(tsp)
 		logProcessingRequest(ctx, a)
 	}
 
