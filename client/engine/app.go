@@ -188,12 +188,12 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 			}
 
 			if numReqs == 1 {
-				okResp, isMatch, isHttpErr, isTooManyRequests, isToleratedBF, latency, _, statusCode, _ := a.Client.DoRequest(ctx, row)
+				okResp, isMatch, isHttpErr, isTooManyRequests, isToleratedBF, isAborted, latency, _, statusCode, _ := a.Client.DoRequest(ctx, row)
 				if a.Config.RunFor > 0 && time.Since(a.startTime) > a.Config.RunFor {
 					continue
 				}
 
-				a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, isToleratedBF, isTooManyRequests, statusCode)
+				a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, isAborted, false, isToleratedBF, isTooManyRequests, statusCode)
 			} else {
 				var wg sync.WaitGroup
 				var bodies [][]byte
@@ -203,12 +203,12 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						okResp, isMatch, isHttpErr, isTooManyRequests, isToleratedBF, latency, rb, statusCode, _ := a.Client.DoRequest(ctx, row)
+						okResp, isMatch, isHttpErr, isTooManyRequests, isToleratedBF, isAborted, latency, rb, statusCode, _ := a.Client.DoRequest(ctx, row)
 						if a.Config.RunFor > 0 && time.Since(a.startTime) > a.Config.RunFor {
 							return
 						}
 
-						a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, false, false, isToleratedBF, isTooManyRequests, statusCode)
+						a.Collector.AddSample(latency, okResp, isMatch, isHttpErr, isAborted, false, isToleratedBF, isTooManyRequests, statusCode)
 						if a.Config.CompareParallel {
 							mu.Lock()
 							bodies = append(bodies, rb)
