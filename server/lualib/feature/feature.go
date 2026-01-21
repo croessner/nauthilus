@@ -58,7 +58,7 @@ func PreCompileLuaFeatures(cfg config.File, _ *slog.Logger) (err error) {
 		for index := range cfg.GetLua().Features {
 			var luaFeature *LuaFeature
 
-			luaFeature, err = NewLuaFeature(cfg.GetLua().Features[index].Name, cfg.GetLua().Features[index].ScriptPath)
+			luaFeature, err = NewLuaFeature(cfg.GetLua().Features[index].Name, cfg.GetLua().Features[index].ScriptPath, cfg.GetLua().Features[index].WhenNoAuth)
 			if err != nil {
 				return err
 			}
@@ -101,11 +101,12 @@ func (a *PreCompiledLuaFeatures) Reset() {
 type LuaFeature struct {
 	Name           string
 	CompiledScript *lua.FunctionProto
+	WhenNoAuth     bool
 }
 
 // NewLuaFeature creates a new LuaFeature instance by compiling the Lua script found at the given path and assigning its name.
 // Returns the LuaFeature instance or an error if either the name or scriptPath is empty, or if script compilation fails.
-func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
+func NewLuaFeature(name string, scriptPath string, whenNoAuth bool) (*LuaFeature, error) {
 	if name == "" {
 		return nil, errors.ErrFeatureLuaNameMissing
 	}
@@ -122,6 +123,7 @@ func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
 	return &LuaFeature{
 		Name:           name,
 		CompiledScript: compiledScript,
+		WhenNoAuth:     whenNoAuth,
 	}, nil
 }
 
@@ -222,6 +224,10 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 	for index := range LuaFeatures.LuaScripts {
 		idx := index
 		feature := LuaFeatures.LuaScripts[idx]
+
+		if r.NoAuth && !feature.WhenNoAuth {
+			continue
+		}
 
 		g.Go(func() error {
 			util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature,
