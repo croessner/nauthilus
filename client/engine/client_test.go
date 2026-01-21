@@ -29,7 +29,7 @@ func TestIdempotencyKey(t *testing.T) {
 		ExpectOK:  true,
 	}
 
-	ok, _, _, _, _, _, _, _, err := client.DoRequest(context.Background(), row)
+	ok, _, _, _, _, _, _, _, _, err := client.DoRequest(context.Background(), row)
 	assert.NoError(t, err)
 	assert.True(t, ok)
 }
@@ -55,7 +55,7 @@ func TestRandomEffects(t *testing.T) {
 	}
 
 	// Should have changed password to something else
-	ok, _, _, _, _, _, _, _, err := client.DoRequest(context.Background(), row)
+	ok, _, _, _, _, _, _, _, _, err := client.DoRequest(context.Background(), row)
 	assert.NoError(t, err)
 	assert.False(t, ok)
 }

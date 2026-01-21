@@ -153,6 +153,7 @@ func runApp(lifecycle fx.Lifecycle, app *engine.App, shutdown fx.Shutdowner) {
 			case <-done:
 			case <-stopCtx.Done():
 				cancel()
+				<-done
 			}
 
 			printStats(app)
@@ -165,7 +166,7 @@ func runApp(lifecycle fx.Lifecycle, app *engine.App, shutdown fx.Shutdowner) {
 func printStats(app *engine.App) {
 	stats := app.Collector.Snapshot()
 
-	if engine.IsTTY() {
+	if app.Config.ProgressBar && engine.IsTTY() {
 		fmt.Print("\x1b[2J\x1b[3J\x1b[H")
 	}
 

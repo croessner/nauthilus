@@ -97,7 +97,7 @@ func (c *AuthClient) Stop() {
 	}
 }
 
-func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch bool, isHttpErr bool, isTooManyRequests bool, isToleratedBF bool, latency time.Duration, respBody []byte, statusCode int, err error) {
+func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch bool, isHttpErr bool, isTooManyRequests bool, isToleratedBF bool, isAborted bool, latency time.Duration, respBody []byte, statusCode int, err error) {
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
 
@@ -137,7 +137,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	req, err := http.NewRequestWithContext(reqCtx, c.config.Method, reqURL, bytes.NewReader(body))
 	if err != nil {
-		return false, false, false, false, false, 0, nil, 0, err
+		return false, false, false, false, false, false, 0, nil, 0, err
 	}
 
 	// Add headers
@@ -166,15 +166,28 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	resp, err := c.httpClient.Do(req)
 	latency = time.Since(start)
 	if err != nil {
-		return false, false, true, false, false, latency, nil, 0, err
+		aborted := false
+		if ctx.Err() != nil || reqCtx.Err() != nil {
+			aborted = true
+		}
+
+		return false, false, !aborted, false, false, aborted, latency, nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	statusCode = resp.StatusCode
-	respBody, _ = io.ReadAll(resp.Body)
+	respBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		aborted := false
+		if ctx.Err() != nil || reqCtx.Err() != nil {
+			aborted = true
+		}
+
+		return false, false, !aborted, false, false, aborted, latency, nil, statusCode, err
+	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return false, false, false, true, false, latency, respBody, statusCode, nil
+		return false, false, false, true, false, false, latency, respBody, statusCode, nil
 	}
 
 	if c.config.UseJSONFlag {
@@ -196,7 +209,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	isToleratedBF = resp.Header.Get(c.bfHeaderName) != ""
 	isHttpErr = (!isMatch && !isToleratedBF) || (resp.StatusCode >= 500)
 
-	return ok, isMatch, isHttpErr, false, isToleratedBF, latency, respBody, statusCode, nil
+	return ok, isMatch, isHttpErr, false, isToleratedBF, false, latency, respBody, statusCode, nil
 }
 
 func (c *AuthClient) makePayload(fields map[string]string) map[string]any {
