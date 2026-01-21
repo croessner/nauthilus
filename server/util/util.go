@@ -403,25 +403,6 @@ func DebugModuleWithCfg(ctx context.Context, cfg config.File, logger *slog.Logge
 		return
 	}
 
-	tracer := monittrace.New("nauthilus/util")
-
-	var dbgCtx context.Context
-	var sp trace.Span
-
-	if gCtx, ok := ctx.(*gin.Context); ok {
-		dbgCtx, sp = tracer.Start(gCtx.Request.Context(), "util.debugmodule",
-			attribute.String("debug_module", moduleName),
-		)
-
-		gCtx.Request = gCtx.Request.WithContext(dbgCtx)
-	} else {
-		dbgCtx, sp = tracer.Start(ctx, "util.debugmodule",
-			attribute.String("debug_module", moduleName),
-		)
-	}
-
-	defer sp.End()
-
 	enabled := false
 	for _, dbgModule := range logCfg.GetDebugModules() {
 		mod := dbgModule.GetModule()
@@ -442,15 +423,13 @@ func DebugModuleWithCfg(ctx context.Context, cfg config.File, logger *slog.Logge
 
 	if pc, _, _, ok := runtime.Caller(1); ok {
 		if fn := runtime.FuncForPC(pc); fn != nil {
-			sp.SetAttributes(attribute.String("function", fn.Name()))
-
 			attrs = append(attrs, "function", fn.Name())
 		} else {
 			attrs = append(attrs, "function", "unknown")
 		}
 	}
 
-	level.Debug(logger).WithContext(dbgCtx).Log(attrs...)
+	level.Debug(logger).WithContext(ctx).Log(attrs...)
 }
 
 // WithNotAvailable returns a default "not available" string if the given value is an empty string.
