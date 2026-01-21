@@ -281,9 +281,9 @@ type State interface {
 	// ProcessAuthentication processes authentication requests using.
 	ProcessAuthentication(ctx *gin.Context)
 
-	// FilterLua applies Lua-based filtering logic to the provided PassDBResult and execution context.
+	// FilterLua applies Lua-based filtering logic to the provided execution context and PassDBResult.
 	// It returns an AuthResult indicating the outcome of the filtering process.
-	FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult
+	FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
 
 	// PostLuaAction performs actions or post-processing after executing Lua scripts during authentication workflow.
 	PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult)
@@ -2403,7 +2403,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	}
 
 	if !(a.Request.Protocol.Get() == definitions.ProtoOryHydra) {
-		authResult = a.FilterLua(passDBResult, ctx)
+		authResult = a.FilterLua(ctx, passDBResult)
 		aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
 		a.PostLuaAction(ctx, passDBResult)
@@ -2413,7 +2413,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 }
 
 // FilterLua calls Lua filters which can change the backend result.
-func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
+func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
 	tr := monittrace.New("nauthilus/auth")
 	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.filter",
 		attribute.String("service", a.Request.Service),
