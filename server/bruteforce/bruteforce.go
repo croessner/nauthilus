@@ -68,8 +68,8 @@ type BlockMessage struct {
 }
 
 // UpdateL1Cache updates the local L1 decision engine with a global decision.
-func UpdateL1Cache(key string, block bool, rule string) {
-	l1.GetEngine().Set(key, l1.L1Decision{Blocked: block, Rule: rule}, 0)
+func UpdateL1Cache(ctx context.Context, key string, block bool, rule string) {
+	l1.GetEngine().Set(ctx, key, l1.L1Decision{Blocked: block, Rule: rule}, 0)
 }
 
 // BroadcastBlock sends a block event to all Nauthilus instances via Redis Pub/Sub.
@@ -433,6 +433,13 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 		return
 	}
 
+	tr := monittrace.New("nauthilus/bruteforce")
+	_, sp := tr.Start(bm.ctx, "bruteforce.load_all_password_histories",
+		attribute.String("username", bm.username),
+		attribute.String("client_ip", bm.clientIP),
+	)
+	defer sp.End()
+
 	// 1) Load account-scoped password history metrics
 	bm.passwordsAccountSeen = bm.loadPasswordHistoryCount(true)
 
@@ -482,6 +489,13 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 	)
 	defer sp.End()
 
+	// Propagate span context to all downstream operations inside this method.
+	prevCtx := bm.ctx
+	bm.ctx = ctx
+	defer func() {
+		bm.ctx = prevCtx
+	}()
+
 	ipFamily := "unknown"
 	switch {
 	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
@@ -497,12 +511,12 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 	// L1 Decision Engine fast path: reuse a very recent decision for identical semantic request key.
 	_, msp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check.l1_engine")
-	dec, ok := l1.GetEngine().Get(l1.KeyBurst(bm.bfBurstKey()))
+	dec, ok := l1.GetEngine().Get(bm.ctx, l1.KeyBurst(bm.bfBurstKey()))
 	if !ok {
 		// Try network-based L1 check if available
 		for i := range rules {
 			if n, nErr := bm.getNetwork(&rules[i]); nErr == nil && n != nil {
-				if d, okNet := l1.GetEngine().Get(l1.KeyNetwork(n.String())); okNet && d.Blocked {
+				if d, okNet := l1.GetEngine().Get(bm.ctx, l1.KeyNetwork(n.String())); okNet && d.Blocked {
 					dec = d
 					ok = true
 					break
@@ -599,7 +613,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			fields[i] = c.field
 		}
 
-		cmds, errPipe := bm.pipelineHMGetFields(fields, "pipeline_hmget_preresult")
+		cmds, errPipe := bm.pipelineHMGetFields(bm.ctx, fields, "pipeline_hmget_preresult")
 		if errPipe != nil && !errors2.Is(errPipe, redis.Nil) {
 			// Fail-open: treat as no pre-result
 			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline HMGET pre-result failed: %v", errPipe))
@@ -670,6 +684,13 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		attribute.Int("rules.total", len(rules)),
 	)
 	defer sp.End()
+
+	// Propagate span context to all downstream operations inside this method.
+	prevCtx := bm.ctx
+	bm.ctx = ctx
+	defer func() {
+		bm.ctx = prevCtx
+	}()
 
 	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
 	if bm.parsedIP == nil || bm.netByCIDR == nil {
@@ -1042,7 +1063,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		bm.featureName = definitions.FeatureBruteForce
 
 		// Store L1 decision for a very short time to absorb bursts (read-path only)
-		l1.GetEngine().Set(l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: true, Rule: bm.bruteForceName}, 0)
+		l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: true, Rule: bm.bruteForceName}, 0)
 
 		sp.SetAttributes(attribute.Bool("triggered", true))
 
@@ -1050,7 +1071,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 	}
 
 	// Also cache negative decision (allow) to avoid immediate redundant HMGET/MGET for identical attempts
-	l1.GetEngine().Set(l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: false, Rule: ""}, 0)
+	l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: false, Rule: ""}, 0)
 
 	sp.SetAttributes(attribute.Bool("triggered", false))
 
@@ -1360,6 +1381,10 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 		return nil, false
 	}
 
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "bruteforce.is_ip_blocked", attribute.String("client_ip", bm.clientIP))
+	defer sp.End()
+
 	buckets = make([]string, 0)
 	rules := bm.cfg().GetBruteForce().Buckets
 
@@ -1399,7 +1424,7 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 		fields[i] = r.field
 	}
 
-	cmds, err := bm.pipelineHMGetFields(fields, "pipeline_hmget_is_blocked")
+	cmds, err := bm.pipelineHMGetFields(ctx, fields, "pipeline_hmget_is_blocked")
 
 	if err != nil && !errors2.Is(err, redis.Nil) {
 		level.Error(logger).Log(
@@ -1422,10 +1447,12 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 		}
 	}
 
+	sp.SetAttributes(attribute.Int("blocked_buckets_count", len(buckets)))
+
 	return buckets, len(buckets) > 0
 }
 
-func (bm *bucketManagerImpl) pipelineHMGetFields(fields []string, metricLabel string) ([]*redis.SliceCmd, error) {
+func (bm *bucketManagerImpl) pipelineHMGetFields(ctx context.Context, fields []string, metricLabel string) ([]*redis.SliceCmd, error) {
 	if len(fields) == 0 {
 		return nil, nil
 	}
@@ -1438,7 +1465,7 @@ func (bm *bucketManagerImpl) pipelineHMGetFields(fields []string, metricLabel st
 		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues(metricLabel).Inc()
 	}
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
 	defer cancel()
 
 	pipe := bm.redis().GetReadHandle().Pipeline()
@@ -1608,7 +1635,7 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		// Known account but no negative history yet.
 
 		// Optimization: check L1 reputation cache before hitting Redis for cold-start grace.
-		if rep, ok := l1.GetEngine().GetReputation(l1.KeyReputation(bm.clientIP)); ok {
+		if rep, ok := l1.GetEngine().GetReputation(bm.ctx, l1.KeyReputation(bm.clientIP)); ok {
 			// If IP has a very good reputation (e.g. > 50 positives and no negatives),
 			// skip brute-force enforcement for known accounts without history.
 			if rep.Positive > 50 && rep.Negative == 0 {
@@ -1944,14 +1971,18 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 // loadBruteForceBucketCounter loads a brute force bucket counter for the specified rule if the feature is enabled.
 // It retrieves the bucket counter from Redis, logs the operation, and updates the in-memory counter mapping for the rule.
 func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "bruteforce.load_bucket_counter", attribute.String("rule", rule.Name))
+	defer sp.End()
+
 	currentKey, prevKey, weight, ok := bm.prepareSlidingWindow(rule)
 	if !ok {
 		return
 	}
 
-	util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", currentKey)
+	util.DebugModuleWithCfg(ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", currentKey)
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
 	defer cancel()
 
 	// Reputation key for the client IP and adaptive scaling configuration
@@ -1985,6 +2016,8 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 		}
 	}
 
+	sp.SetAttributes(attribute.Int64("total", int64(total)))
+
 	if bm.bruteForceCounter == nil {
 		bm.bruteForceCounter = make(map[string]uint)
 	}
@@ -1994,6 +2027,10 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 
 // setPreResultBruteForceRedis stores a brute force rule in Redis under a hashed key, handling network resolution and errors.
 func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "bruteforce.set_pre_result", attribute.String("rule", rule.Name))
+	defer sp.End()
+
 	prefix := bm.cfg().GetServer().GetRedis().GetPrefix()
 	logger := bm.logger()
 
@@ -2009,7 +2046,7 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
 		defer cancel()
 
 		if err = bm.redis().GetWriteHandle().HSet(dCtx, key, network.String(), bm.bruteForceName).Err(); err != nil {
@@ -2039,13 +2076,17 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 		return
 	}
 
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "bruteforce.update_affected_account", attribute.String("account", bm.accountName))
+	defer sp.End()
+
 	key := bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 	logger := bm.logger()
 
 	// First check if the account is already a member
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
 
 	isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, bm.accountName).Result()
 	if err != nil {
@@ -2071,7 +2112,7 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	// Add the account to the set
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
+	dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
 	defer cancel()
 
 	if err := bm.redis().GetWriteHandle().SAdd(dCtx, key, bm.accountName).Err(); err != nil {

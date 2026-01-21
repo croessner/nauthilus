@@ -319,7 +319,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
 		engine := l1.GetEngine()
 		swlKey := l1.KeySoftWhitelist(a.Request.Username, a.Request.ClientIP)
-		if dec, ok := engine.Get(swlKey); ok && dec.Allowed {
+		if dec, ok := engine.Get(cctx, swlKey); ok && dec.Allowed {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.SoftWhitelisted)
 
@@ -335,7 +335,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
 
 			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
-			engine.Set(swlKey, l1.L1Decision{Allowed: true, Reason: "SoftWhitelist"}, time.Second)
+			engine.Set(cctx, swlKey, l1.L1Decision{Allowed: true, Reason: "SoftWhitelist"}, time.Second)
 
 			return false
 		}
@@ -344,7 +344,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	if bfCfg != nil && len(bfCfg.GetIPWhitelist()) > 0 {
 		engine := l1.GetEngine()
 		wlKey := l1.KeyWhitelist(a.Request.ClientIP)
-		if dec, ok := engine.Get(wlKey); ok && dec.Allowed {
+		if dec, ok := engine.Get(cctx, wlKey); ok && dec.Allowed {
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Whitelisted)
 
@@ -360,7 +360,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
 
 			// Cache result in L1 for 1 second to handle burst requests without hitting Redis
-			engine.Set(wlKey, l1.L1Decision{Allowed: true, Reason: "IPWhitelist"}, time.Second)
+			engine.Set(cctx, wlKey, l1.L1Decision{Allowed: true, Reason: "IPWhitelist"}, time.Second)
 
 			return false
 		}

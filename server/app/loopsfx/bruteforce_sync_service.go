@@ -25,7 +25,10 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+
 	jsoniter "github.com/json-iterator/go"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // BruteForceSyncService is a background service that listens for global brute-force block events
@@ -103,13 +106,23 @@ func (s *BruteForceSyncService) listenLoop(ctx context.Context) {
 
 // handleMessage unmarshals and applies a block event to the local cache.
 func (s *BruteForceSyncService) handleMessage(payload string) {
+	tr := monittrace.New("nauthilus/sync")
+	_, sp := tr.Start(s.ctx, "sync.handle_message", attribute.Int("payload_len", len(payload)))
+	defer sp.End()
+
 	var msg bruteforce.BlockMessage
 	if err := jsoniter.ConfigFastest.Unmarshal([]byte(payload), &msg); err != nil {
 		level.Error(s.logger).Log(definitions.LogKeyMsg, "Failed to unmarshal brute-force sync message", definitions.LogKeyError, err)
 		return
 	}
 
-	bruteforce.UpdateL1Cache(msg.Key, msg.Block, msg.Rule)
+	sp.SetAttributes(
+		attribute.String("key", msg.Key),
+		attribute.String("rule", msg.Rule),
+		attribute.Bool("block", msg.Block),
+	)
+
+	bruteforce.UpdateL1Cache(s.ctx, msg.Key, msg.Block, msg.Rule)
 }
 
 // Stop terminates the sync service and waits for the listener to exit.

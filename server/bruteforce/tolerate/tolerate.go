@@ -491,7 +491,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 					}
 
 					// Store in L1 cache
-					l1.GetEngine().SetReputation(l1.KeyReputation(ipAddress), l1.L1Reputation{
+					l1.GetEngine().SetReputation(ctx, l1.KeyReputation(ipAddress), l1.L1Reputation{
 						Positive: positive,
 						Negative: negative,
 					}, 0)
