@@ -13,9 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build hydra
-// +build hydra
-
 package core
 
 import (
@@ -42,24 +39,6 @@ import (
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
 )
-
-// sessionCleaner removes all user information from the current session.
-func sessionCleaner(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-
-	// Cleanup
-	session.Delete(definitions.CookieAuthResult)
-	session.Delete(definitions.CookieUsername)
-	session.Delete(definitions.CookieAccount)
-	session.Delete(definitions.CookieHaveTOTP)
-	session.Delete(definitions.CookieTOTPURL)
-	session.Delete(definitions.CookieUserBackend)
-	session.Delete(definitions.CookieUniqueUserID)
-	session.Delete(definitions.CookieDisplayName)
-	session.Delete(definitions.CookieRegistration)
-
-	session.Save()
-}
 
 // LoginGET2FAHandler Page '/2fa/v1/register'
 func LoginGET2FAHandler(deps AuthDeps) gin.HandlerFunc {
@@ -307,12 +286,23 @@ func LoginPOST2FAHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 // Finally, it returns the authentication result.
 func processTOTPSecret(ctx *gin.Context, deps AuthDeps) definitions.AuthResult {
 	authResult := definitions.AuthResultUnset
-	guid := ctx.GetString(definitions.CtxGUIDKey)
 	session := sessions.Default(ctx)
 
 	totpSecret, totpCode, account := getSessionTOTPSecret(ctx)
 	if totpSecret != "" && totpCode != "" && account != "" {
-		if errFail := totpValidation(guid, totpCode, account, totpSecret, deps); errFail != nil {
+		auth := NewAuthStateWithSetupWithDeps(ctx, deps).(*AuthState)
+		auth.SetUsername(session.Get(definitions.CookieUsername).(string))
+		auth.SetAccount(account)
+		auth.SetTOTPSecret(totpSecret)
+
+		if val := session.Get(definitions.CookieUserBackend); val != nil {
+			auth.Runtime.SourcePassDBBackend = definitions.Backend(val.(uint8))
+		}
+
+		// Fetch user from backend to get latest attributes (including recovery codes)
+		_, _ = auth.GetBackendManager(auth.Runtime.SourcePassDBBackend, definitions.DefaultBackendName).AccountDB(auth)
+
+		if errFail := TotpValidation(ctx, auth, totpCode, deps); errFail != nil {
 			authResult = definitions.AuthResultFail
 		} else {
 			cookieValue := session.Get(definitions.CookieAuthResult)
@@ -474,13 +464,6 @@ func sessionCleanupTOTP(ctx *gin.Context) {
 
 	session.Delete(definitions.CookieTOTPSecret)
 	session.Save()
-}
-
-// totpValidation calls the totpValidation method of the ApiConfig struct to validate a TOTP code for a given account.
-func totpValidation(guid string, code string, account string, totpSecret string, deps AuthDeps) error {
-	a := ApiConfig{guid: guid, deps: deps}
-
-	return a.totpValidation(code, account, totpSecret)
 }
 
 // Register2FAHomeHandler Page '/2fa/v1/register/home'
@@ -787,7 +770,7 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 		userKeys := config.NewStringSet()
 		protocols := deps.Cfg.GetAllProtocols()
 
-		accountName, err = backend.LookupUserAccountFromRedis(auth.Ctx(), deps.Cfg, deps.Redis, username)
+		accountName, err = backend.LookupUserAccountFromRedis(auth.Ctx(), deps.Cfg, deps.Redis, username, definitions.ProtoOryHydra, "")
 		if err != nil {
 			HandleErrWithDeps(ctx, err, deps)
 

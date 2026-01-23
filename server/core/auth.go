@@ -53,6 +53,7 @@ import (
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/spf13/viper"
@@ -62,18 +63,6 @@ import (
 )
 
 var backchanSF singleflight.Group
-
-// ClaimHandler represents a claim handler struct.
-// A claim handler in this context is something to work with JSON Web Tokens (JWT), often used for APIs.
-type ClaimHandler struct {
-	// Type is the reflected Kind of the claim value.
-	Type reflect.Kind
-
-	// ApplyFunc is a function that takes in three parameters: the claim value, the map of claims and the claim key.
-	// The function is intended to apply some process on the claim using the provided parameters,
-	// and return a boolean result.
-	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
-}
 
 // BackendServer represents a type for managing a slive of config.BackendServer
 type BackendServer struct {
@@ -109,6 +98,18 @@ func NewBackendServer() *BackendServer {
 
 // State is implemented by AuthState and defines the methods to interact with the authentication process.
 type State interface {
+	// DeleteWebAuthnCredential removes a WebAuthn credential for the user in the backend.
+	DeleteWebAuthnCredential(credential *webauthn.Credential) (err error)
+
+	// SaveWebAuthnCredential saves a WebAuthn credential for the user in the backend.
+	SaveWebAuthnCredential(credential *webauthn.Credential) (err error)
+
+	// UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
+	UpdateWebAuthnCredential(oldCredential *webauthn.Credential, newCredential *webauthn.Credential) (err error)
+
+	// GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
+	GetWebAuthnCredentials() (credentials []webauthn.Credential, err error)
+
 	// SetUsername sets the username for the current authentication state.
 	SetUsername(username string)
 
@@ -216,6 +217,9 @@ type State interface {
 
 	// SetOIDCCID sets the OIDC Client ID for the authentication state.
 	SetOIDCCID(oidcCID string)
+
+	// SetSAMLEntityID sets the SAML Entity ID for the authentication state.
+	SetSAMLEntityID(samlEntityID string)
 
 	// GetAccountOk returns the account field value and a boolean indicating if the account field is present and valid.
 	GetAccountOk() (string, bool)
@@ -360,6 +364,9 @@ type AuthRequest struct {
 
 	// OIDCCID is the OIDC client ID.
 	OIDCCID string
+
+	// SAMLEntityID is the SAML Entity ID.
+	SAMLEntityID string
 
 	// XSSL indicates whether the connection is SSL/TLS.
 	XSSL string // %[ssl_fc]
@@ -614,6 +621,167 @@ func (a *AuthState) GetLogger() *slog.Logger {
 	return a.deps.Logger
 }
 
+// GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
+func (a *AuthState) GetWebAuthnCredentials() (credentials []webauthn.Credential, err error) {
+	var (
+		passDB      definitions.Backend
+		backendName string
+		assertOk    bool
+	)
+
+	session := sessions.Default(a.Request.HTTPClientContext)
+
+	// We expect the same Database for credentials that was used for authenticating a user!
+	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
+		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
+			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
+				backendName, _ = cookieName.(string)
+			}
+
+			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+				return mgr.GetWebAuthnCredentials(a)
+			}
+		}
+	}
+
+	// No cookie (default login page), search all configured databases.
+	for _, backendType := range a.Cfg().GetServer().GetBackends() {
+		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
+			credentials, err = mgr.GetWebAuthnCredentials(a)
+			if err != nil {
+				return nil, err
+			}
+
+			if len(credentials) > 0 {
+				return credentials, nil
+			}
+		}
+	}
+
+	return []webauthn.Credential{}, nil
+}
+
+// SaveWebAuthnCredential saves a WebAuthn credential for the user in the backend.
+func (a *AuthState) SaveWebAuthnCredential(credential *webauthn.Credential) (err error) {
+	var (
+		passDB      definitions.Backend
+		backendName string
+		assertOk    bool
+	)
+
+	session := sessions.Default(a.Request.HTTPClientContext)
+
+	// We expect the same Database for credentials that was used for authenticating a user!
+	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
+		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
+			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
+				backendName, _ = cookieName.(string)
+			}
+
+			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+				return mgr.SaveWebAuthnCredential(a, credential)
+			}
+		}
+	}
+
+	// Default to first LDAP backend if none specified (safest bet for registration)
+	for _, backendType := range a.Cfg().GetServer().GetBackends() {
+		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
+			return mgr.SaveWebAuthnCredential(a, credential)
+		}
+	}
+
+	return errors.ErrUnknownDatabaseBackend
+}
+
+// DeleteWebAuthnCredential removes a WebAuthn credential for the user in the backend.
+func (a *AuthState) DeleteWebAuthnCredential(credential *webauthn.Credential) (err error) {
+	var (
+		passDB      definitions.Backend
+		backendName string
+		assertOk    bool
+	)
+
+	session := sessions.Default(a.Request.HTTPClientContext)
+
+	// We expect the same Database for credentials that was used for authenticating a user!
+	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
+		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
+			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
+				backendName, _ = cookieName.(string)
+			}
+
+			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+				return mgr.DeleteWebAuthnCredential(a, credential)
+			}
+		}
+	}
+
+	// No cookie, search all backends to find where it is stored and delete it
+	for _, backendType := range a.Cfg().GetServer().GetBackends() {
+		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
+			credentials, _ := mgr.GetWebAuthnCredentials(a)
+			for _, cred := range credentials {
+				if bytes.Equal(cred.ID, credential.ID) {
+					return mgr.DeleteWebAuthnCredential(a, credential)
+				}
+			}
+		}
+	}
+
+	return errors.ErrUnknownDatabaseBackend
+}
+
+// UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
+func (a *AuthState) UpdateWebAuthnCredential(oldCredential *webauthn.Credential, newCredential *webauthn.Credential) (err error) {
+	var (
+		passDB      definitions.Backend
+		backendName string
+		assertOk    bool
+	)
+
+	session := sessions.Default(a.Request.HTTPClientContext)
+
+	// We expect the same Database for credentials that was used for authenticating a user!
+	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
+		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
+			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
+				backendName, _ = cookieName.(string)
+			}
+
+			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+				return mgr.UpdateWebAuthnCredential(a, oldCredential, newCredential)
+			}
+		}
+	}
+
+	// No cookie, search all backends to find where it is stored and update it
+	for _, backendType := range a.Cfg().GetServer().GetBackends() {
+		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
+			credentials, _ := mgr.GetWebAuthnCredentials(a)
+			for _, cred := range credentials {
+				if bytes.Equal(cred.ID, oldCredential.ID) {
+					return mgr.UpdateWebAuthnCredential(a, oldCredential, newCredential)
+				}
+			}
+		}
+	}
+
+	return errors.ErrUnknownDatabaseBackend
+}
+
+// GetBackendManager returns a BackendManager based on the provided backend type and name.
+func (a *AuthState) GetBackendManager(backendType definitions.Backend, backendName string) BackendManager {
+	switch backendType {
+	case definitions.BackendLDAP:
+		return NewLDAPManager(backendName, a.deps)
+	case definitions.BackendLua:
+		return NewLuaManager(backendName, a.deps)
+	default:
+		return nil
+	}
+}
+
 var _ State = (*AuthState)(nil)
 
 // PassDBResult is used in all password databases to store final results of an authentication process.
@@ -789,6 +957,16 @@ func (a *AuthState) SetUsername(username string) {
 	a.Request.Username = username
 }
 
+// SetAccount sets the account for the AuthState instance.
+func (a *AuthState) SetAccount(account string) {
+	a.Runtime.AccountName = account
+}
+
+// SetTOTPSecret sets the TOTP secret for the AuthState instance.
+func (a *AuthState) SetTOTPSecret(totpSecret string) {
+	a.Runtime.TOTPSecret = totpSecret
+}
+
 // SetPassword sets the password for the AuthState instance.
 func (a *AuthState) SetPassword(password string) {
 	a.Request.Password = password
@@ -887,6 +1065,11 @@ func (a *AuthState) SetSSLFingerprint(sslFingerprint string) {
 // SetOIDCCID sets the OIDC Client ID for the AuthState instance. It updates the OIDCCID field with the provided value.
 func (a *AuthState) SetOIDCCID(oidcCID string) {
 	a.Request.OIDCCID = oidcCID
+}
+
+// SetSAMLEntityID sets the SAML Entity ID for the AuthState instance. It updates the SAMLEntityID field with the provided value.
+func (a *AuthState) SetSAMLEntityID(samlEntityID string) {
+	a.Request.SAMLEntityID = samlEntityID
 }
 
 // SetNoAuth configures the authentication state to enable or disable "NoAuth" mode based on the provided boolean value.
@@ -1164,6 +1347,10 @@ func (a *AuthState) GetAccountOk() (string, bool) {
 
 // GetTOTPSecret returns the TOTP secret for a user. If there is no secret, it returns the empty string "".
 func (a *AuthState) GetTOTPSecret() string {
+	if a.Runtime.TOTPSecret != "" {
+		return a.Runtime.TOTPSecret
+	}
+
 	if totpSecret, okay := a.GetAttribute(a.GetTOTPSecretField()); okay {
 		if value, assertOk := totpSecret[definitions.LDAPSingleValue].(string); assertOk {
 			return value
@@ -1179,6 +1366,27 @@ func (a *AuthState) GetTOTPSecretOk() (string, bool) {
 	totpSecret := a.GetTOTPSecret()
 
 	return totpSecret, totpSecret != ""
+}
+
+// GetTOTPRecoveryCodes returns the TOTP recovery codes for a user.
+func (a *AuthState) GetTOTPRecoveryCodes() []string {
+	if recoveryCodes, okay := a.GetAttribute(a.GetTOTPRecoveryField()); okay {
+		codes := make([]string, 0, len(recoveryCodes))
+		for _, v := range recoveryCodes {
+			if s, ok := v.(string); ok {
+				codes = append(codes, s)
+			}
+		}
+
+		return codes
+	}
+
+	return nil
+}
+
+// PurgeCache invalidates the user authentication cache.
+func (a *AuthState) PurgeCache() {
+	a.AccountCache().Purge(a.GetUsername())
 }
 
 // GetUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
@@ -1668,6 +1876,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.DisplayName = a.GetDisplayName()
 	cr.Service = a.Request.Service
 	cr.OIDCCID = a.Request.OIDCCID
+	cr.SAMLEntityID = a.Request.SAMLEntityID
 	cr.Protocol = a.Request.Protocol.Get()
 	cr.Method = a.Request.Method
 	cr.ClientPort = a.Request.XClientPort

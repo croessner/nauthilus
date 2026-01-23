@@ -131,6 +131,8 @@ func NewDbgModuleMapping() *DbgModuleMapping {
 			DbgTolerateName:  DbgTolerate,
 			DbgJWTName:       DbgJWT,
 			DbgHTTPName:      DbgHTTP,
+			DbgIdpName:       DbgIdp,
+			DbgHydraName:     DbgHydra,
 			DbgAccountName:   DbgAccount,
 		},
 		ModToStr: map[DbgModule]string{
@@ -138,6 +140,7 @@ func NewDbgModuleMapping() *DbgModuleMapping {
 			DbgAuth:      DbgAuthName,
 			DbgAccount:   DbgAccountName,
 			DbgHydra:     DbgHydraName,
+			DbgIdp:       DbgIdpName,
 			DbgWebAuthn:  DbgWebAuthnName,
 			DbgStats:     DbgStatsName,
 			DbgWhitelist: DbgWhitelistName,

@@ -1,0 +1,89 @@
+// Copyright (C) 2025 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+package config
+
+// IdPSection represents the configuration for the internal Identity Provider.
+type IdPSection struct {
+	OIDC  OIDCConfig  `mapstructure:"oidc"`
+	SAML2 SAML2Config `mapstructure:"saml2"`
+}
+
+// OIDCConfig represents the configuration for OpenID Connect.
+type OIDCConfig struct {
+	Enabled    bool         `mapstructure:"enabled"`
+	Issuer     string       `mapstructure:"issuer" validate:"required_if=Enabled true"`
+	SigningKey string       `mapstructure:"signing_key" validate:"required_if=Enabled true"`
+	Clients    []OIDCClient `mapstructure:"clients"`
+}
+
+// OIDCClient represents an OIDC client configuration.
+type OIDCClient struct {
+	ClientID        string        `mapstructure:"client_id" validate:"required"`
+	ClientSecret    string        `mapstructure:"client_secret" validate:"required"`
+	RedirectURIs    []string      `mapstructure:"redirect_uris" validate:"required,gt=0"`
+	Scopes          []string      `mapstructure:"scopes"`
+	SkipConsent     bool          `mapstructure:"skip_consent"`
+	DelayedResponse bool          `mapstructure:"delayed_response"`
+	Claims          IdTokenClaims `mapstructure:"claims"`
+}
+
+// IsDelayedResponse returns true if delayed response is enabled for this client.
+func (c *OIDCClient) IsDelayedResponse() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.DelayedResponse
+}
+
+// SAML2Config represents the configuration for SAML 2.0.
+type SAML2Config struct {
+	Enabled          bool                   `mapstructure:"enabled"`
+	EntityID         string                 `mapstructure:"entity_id" validate:"required_if=Enabled true"`
+	Certificate      string                 `mapstructure:"certificate" validate:"required_if=Enabled true"`
+	Key              string                 `mapstructure:"key" validate:"required_if=Enabled true"`
+	ServiceProviders []SAML2ServiceProvider `mapstructure:"service_providers"`
+}
+
+// SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
+type SAML2ServiceProvider struct {
+	EntityID        string `mapstructure:"entity_id" validate:"required"`
+	ACSURL          string `mapstructure:"acs_url" validate:"required"`
+	SLOURL          string `mapstructure:"slo_url"`
+	DelayedResponse bool   `mapstructure:"delayed_response"`
+}
+
+// IsDelayedResponse returns true if delayed response is enabled for this service provider.
+func (s *SAML2ServiceProvider) IsDelayedResponse() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.DelayedResponse
+}
+
+// GetIdP retrieves the IdPSection from the FileSettings instance. Returns nil if the FileSettings is nil.
+func (f *FileSettings) GetIdP() *IdPSection {
+	if f == nil {
+		return &IdPSection{}
+	}
+
+	if f.IdP == nil {
+		return &IdPSection{}
+	}
+
+	return f.IdP
+}

@@ -28,7 +28,15 @@
       UNIQUE KEY `UsernameIdx` (`username`),
       UNIQUE KEY `AccountIdx` (`account`),
       UNIQUE KEY `UniqueidIdx` (`uniqueid`)
-    ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+    CREATE TABLE `nauthilus_webauthn` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `username` varchar(255) NOT NULL,
+      `credential` text NOT NULL,
+      PRIMARY KEY (`id`),
+      KEY `UsernameIdx` (`username`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ]]--
 
 local nauthilus_util = require("nauthilus_util")
@@ -138,6 +146,66 @@ function nauthilus_backend_add_totp(request)
     nauthilus_util.if_error_raise(err_open)
 
     local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=\"" .. request.totp_secret .. "\" WHERE username=\"" .. request.username .. "\";")
+    nauthilus_util.if_error_raise(err_exec)
+
+    return nauthilus_builtin.BACKEND_RESULT_OK
+end
+
+function nauthilus_backend_delete_totp(request)
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    nauthilus_util.if_error_raise(err_open)
+
+    local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=NULL WHERE username=\"" .. request.username .. "\";")
+    nauthilus_util.if_error_raise(err_exec)
+
+    return nauthilus_builtin.BACKEND_RESULT_OK
+end
+
+function nauthilus_backend_get_webauthn_credentials(request)
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    nauthilus_util.if_error_raise(err_open)
+
+    local result, err_query = mysql:query("SELECT credential FROM nauthilus_webauthn WHERE username=\"" .. request.username .. "\";")
+    nauthilus_util.if_error_raise(err_query)
+
+    local credentials = {}
+    for _, row in pairs(result.rows) do
+        for id, _ in pairs(result.columns) do
+            table.insert(credentials, row[id])
+        end
+    end
+
+    return nauthilus_builtin.BACKEND_RESULT_OK, credentials
+end
+
+function nauthilus_backend_save_webauthn_credential(request)
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    nauthilus_util.if_error_raise(err_open)
+
+    local _, err_exec = mysql:exec("INSERT INTO nauthilus_webauthn (username, credential) VALUES (\"" .. request.username .. "\", \"" .. request.webauthn_credential .. "\");")
+    nauthilus_util.if_error_raise(err_exec)
+
+    return nauthilus_builtin.BACKEND_RESULT_OK
+end
+
+function nauthilus_backend_delete_webauthn_credential(request)
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    nauthilus_util.if_error_raise(err_open)
+
+    -- We assume the request.webauthn_credential contains the exact JSON string to delete.
+    -- In a real scenario, you might want to delete by ID if provided.
+    local _, err_exec = mysql:exec("DELETE FROM nauthilus_webauthn WHERE username=\"" .. request.username .. "\" AND credential=\"" .. request.webauthn_credential .. "\";")
+    nauthilus_util.if_error_raise(err_exec)
+
+    return nauthilus_builtin.BACKEND_RESULT_OK
+end
+
+function nauthilus_backend_update_webauthn_credential(request)
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    nauthilus_util.if_error_raise(err_open)
+
+    -- Update existing credential by replacing the old JSON string with the new one.
+    local _, err_exec = mysql:exec("UPDATE nauthilus_webauthn SET credential=\"" .. request.webauthn_credential .. "\" WHERE username=\"" .. request.username .. "\" AND credential=\"" .. request.webauthn_old_credential .. "\";")
     nauthilus_util.if_error_raise(err_exec)
 
     return nauthilus_builtin.BACKEND_RESULT_OK

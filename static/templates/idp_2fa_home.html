@@ -1,0 +1,60 @@
+{{ define "content" }}
+<div class="max-w-4xl mx-auto mt-10">
+    <h1 class="text-3xl font-bold mb-8">{{ .Title }}</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- TOTP Card -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">{{ .AuthenticatorAppTOTP }}</h2>
+                <p>{{ .TOTPDescription }}</p>
+                <div class="card-actions justify-end mt-4">
+                    {{ if .HaveTOTP }}
+                    <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
+                            hx-delete="/2fa/v1/totp">{{ .Deactivate }}
+                    </button>
+                    {{ else }}
+                    <a class="btn btn-primary" href="/2fa/v1/totp/register">{{ .RegisterTOTP }}</a>
+                    {{ end }}
+                </div>
+            </div>
+        </div>
+
+        <!-- WebAuthn Card -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">{{ .SecurityKeyWebAuthn }}</h2>
+                <p>{{ .WebAuthnDescription }}</p>
+                <div class="card-actions justify-end mt-4">
+                    {{ if .HaveWebAuthn }}
+                    <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateWebAuthnConfirm }}"
+                            hx-delete="/2fa/v1/webauthn">{{ .Deactivate }}
+                    </button>
+                    {{ else }}
+                    <a class="btn btn-primary" href="/2fa/v1/webauthn/register">{{ .RegisterWebAuthn }}</a>
+                    {{ end }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Recovery Codes Card -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">{{ .RecoveryCodes }}</h2>
+                {{ if .HaveRecoveryCodes }}
+                <p>{{ printf .RecoveryCodesLeft (int .NumRecoveryCodes) }}</p>
+                {{ else }}
+                <p>{{ .RecoveryCodesDescription }}</p>
+                {{ end }}
+                <div class="card-actions justify-end mt-4">
+                    <button class="btn btn-secondary" hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container">
+                        {{ .GenerateNewRecoveryCodes }}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ end }}
+
+{{ template "idp_base.html" . }}

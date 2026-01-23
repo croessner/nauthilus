@@ -1,0 +1,35 @@
+{{ define "content" }}
+<div class="flex justify-center items-center mt-10">
+    <div class="card w-full max-w-lg bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title justify-center text-2xl mb-4">{{ .Title }}</h2>
+
+            <p class="text-center mb-6">
+                {{ .Application }} <strong>{{ .ClientID }}</strong> {{ .WantsToAccessYourAccount }}.
+            </p>
+
+            <div class="bg-base-200 p-4 rounded-lg mb-6">
+                <h3 class="font-bold mb-2">{{ .RequestedPermissions }}:</h3>
+                <ul class="list-disc list-inside">
+                    {{ range .Scopes }}
+                    <li>{{ . }}</li>
+                    {{ end }}
+                </ul>
+            </div>
+
+            <form action="/oidc/consent?state={{ .State }}" method="POST">
+                <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
+                <input name="consent_challenge" type="hidden" value="{{ .ConsentChallenge }}"/>
+
+                <div class="flex gap-4">
+                    <button class="btn btn-primary flex-1" name="submit" type="submit" value="allow">{{ .Allow }}
+                    </button>
+                    <button class="btn btn-outline flex-1" name="submit" type="submit" value="deny">{{ .Deny }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{{ end }}
+
+{{ template "idp_base.html" . }}

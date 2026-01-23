@@ -605,6 +605,16 @@ func (p *LDAPSearchProtocol) GetCacheName() (string, error) {
 	return p.CacheName, nil
 }
 
+// GetTotpSecretField returns the LDAP attribute for the TOTP secret.
+func (p *LDAPSearchProtocol) GetTotpSecretField() string {
+	return p.LDAPAttributeMapping.GetTOTPSecretField()
+}
+
+// GetTotpRecoveryField returns the LDAP attribute for the TOTP recovery codes.
+func (p *LDAPSearchProtocol) GetTotpRecoveryField() string {
+	return p.LDAPAttributeMapping.GetTOTPRecoveryField()
+}
+
 // GetProtocols retrieves the list of protocols from the LDAPSearchProtocol.
 // Returns an empty slice if the LDAPSearchProtocol is nil or if the Protocols field is nil.
 func (p *LDAPSearchProtocol) GetProtocols() []string {

@@ -31,6 +31,9 @@ const (
 	// CookieUserBackend records which backend authenticated the user (e.g. LDAP/Lua).
 	CookieUserBackend = "user_backend"
 
+	// CookieUserBackendName is the name of the cookie that stores the logical name of the user backend.
+	CookieUserBackendName = "user_backend_name"
+
 	// CookieUniqueUserID stores a backend-specific unique user identifier.
 	CookieUniqueUserID = "unique_userid"
 
@@ -894,8 +897,10 @@ const (
 	// DbgHTTP represents the debug module for HTTP-related operations.
 	DbgHTTP
 
+	// DbgIdp represents the debug module for IdP (OIDC/SAML) related operations.
+	DbgIdp
+
 	// DbgAccount represents the debug module for tracing how/where the
-	// per-request account value was determined and set.
 	DbgAccount
 )
 
@@ -953,6 +958,9 @@ const (
 
 	// DbgHTTPName is the debug identifier for HTTP
 	DbgHTTPName = "http"
+
+	// DbgIdpName is the debug identifier for IdP
+	DbgIdpName = "idp"
 
 	// DbgAccountName is the debug identifier for account tracing
 	DbgAccountName = "account"
@@ -1028,6 +1036,27 @@ const (
 
 	// LuaCommandAddMFAValue represents the command for adding a Multi-Factor Authentication value in Lua
 	LuaCommandAddMFAValue
+
+	// LuaCommandDeleteMFAValue represents the command for deleting a Multi-Factor Authentication value in Lua
+	LuaCommandDeleteMFAValue
+
+	// LuaCommandGetWebAuthnCredentials represents the command for retrieving WebAuthn credentials in Lua
+	LuaCommandGetWebAuthnCredentials
+
+	// LuaCommandSaveWebAuthnCredential represents the command for saving a WebAuthn credential in Lua
+	LuaCommandSaveWebAuthnCredential
+
+	// LuaCommandDeleteWebAuthnCredential represents the command for deleting a WebAuthn credential in Lua
+	LuaCommandDeleteWebAuthnCredential
+
+	// LuaCommandAddTOTPRecoveryCodes represents the command for adding TOTP recovery codes in Lua
+	LuaCommandAddTOTPRecoveryCodes
+
+	// LuaCommandDeleteTOTPRecoveryCodes represents the command for deleting TOTP recovery codes in Lua
+	LuaCommandDeleteTOTPRecoveryCodes
+
+	// LuaCommandUpdateWebAuthnCredential represents the command for updating a WebAuthn credential in Lua
+	LuaCommandUpdateWebAuthnCredential
 )
 
 const (
@@ -1051,6 +1080,27 @@ const (
 
 	// LuaFnBackendAddTOTPSecret represents the function name for "nauthilus_backend_add_totp" in Lua
 	LuaFnBackendAddTOTPSecret = "nauthilus_backend_add_totp"
+
+	// LuaFnBackendDeleteTOTPSecret represents the function name for "nauthilus_backend_delete_totp" in Lua
+	LuaFnBackendDeleteTOTPSecret = "nauthilus_backend_delete_totp"
+
+	// LuaFnBackendGetWebAuthnCredentials represents the function name for "nauthilus_backend_get_webauthn_credentials" in Lua
+	LuaFnBackendGetWebAuthnCredentials = "nauthilus_backend_get_webauthn_credentials"
+
+	// LuaFnBackendSaveWebAuthnCredential represents the function name for "nauthilus_backend_save_webauthn_credential" in Lua
+	LuaFnBackendSaveWebAuthnCredential = "nauthilus_backend_save_webauthn_credential"
+
+	// LuaFnBackendDeleteWebAuthnCredential represents the function name for "nauthilus_backend_delete_webauthn_credential" in Lua
+	LuaFnBackendDeleteWebAuthnCredential = "nauthilus_backend_delete_webauthn_credential"
+
+	// LuaFnBackendAddTOTPRecoveryCodes represents the function name for "nauthilus_backend_add_totp_recovery_codes" in Lua
+	LuaFnBackendAddTOTPRecoveryCodes = "nauthilus_backend_add_totp_recovery_codes"
+
+	// LuaFnBackendDeleteTOTPRecoveryCodes represents the function name for "nauthilus_backend_delete_totp_recovery_codes" in Lua
+	LuaFnBackendDeleteTOTPRecoveryCodes = "nauthilus_backend_delete_totp_recovery_codes"
+
+	// LuaFnBackendUpdateWebAuthnCredential represents the function name for "nauthilus_backend_update_webauthn_credential" in Lua
+	LuaFnBackendUpdateWebAuthnCredential = "nauthilus_backend_update_webauthn_credential"
 
 	// LuaModMail represents the module name for "nauthilus_mail" in Lua
 	LuaModMail = "nauthilus_mail"
@@ -1600,6 +1650,9 @@ const (
 	// LuaRequestDisplayName signifies the display name of the user making the request.
 	LuaRequestDisplayName = "display_name"
 
+	// LuaRequestTOTPRecoveryCodes represents the constant for "totp_recovery_codes" in Lua.
+	LuaRequestTOTPRecoveryCodes = "totp_recovery_codes"
+
 	// LuaRequestPassword signifies the password of the user making the request.
 	LuaRequestPassword = "password"
 
@@ -1660,11 +1713,20 @@ const (
 	// LuaRequestTOTPSecret signifies the TOTP secret of the user.
 	LuaRequestTOTPSecret = "totp_secret"
 
+	// LuaRequestWebAuthnCredential represents the serialized WebAuthn credential in a Lua request.
+	LuaRequestWebAuthnCredential = "webauthn_credential"
+
+	// LuaRequestWebAuthnOldCredential represents the serialized WebAuthn old credential in a Lua request.
+	LuaRequestWebAuthnOldCredential = "webauthn_old_credential"
+
 	// LuaRequestStatusMessage represents the status message of a request.
 	LuaRequestStatusMessage = "status_message"
 
 	// LuaRequestOIDCCID represents the OpenID Connect Client ID used for authentication.
 	LuaRequestOIDCCID = "oidc_cid"
+
+	// LuaRequestSAMLEntityID represents the SAML Entity ID used for authentication.
+	LuaRequestSAMLEntityID = "saml_entity_id"
 
 	// LuaRequestLatency represents the request latency in milliseconds.
 	LuaRequestLatency = "latency"
@@ -1679,8 +1741,109 @@ const (
 	LuaRequestRedisPrefix = "redis_prefix"
 )
 
+// Standard OpenID Connect scopes.
 const (
+	// ScopeOpenId is the mandatory OpenID Connect scope.
+	ScopeOpenId = "openid"
 
+	// ScopeOfflineAccess enables refresh tokens.
+	ScopeOfflineAccess = "offline_access"
+
+	// ScopeProfile grants access to basic profile information.
+	ScopeProfile = "profile"
+
+	// ScopeEmail grants access to the user's email address.
+	ScopeEmail = "email"
+
+	// ScopeAddress grants access to the user's address information.
+	ScopeAddress = "address"
+
+	// ScopePhone grants access to the user's phone information.
+	ScopePhone = "phone"
+
+	// ScopeGroups grants access to the user's groups.
+	ScopeGroups = "groups"
+)
+
+// Custom defined types for claims.
+const (
+	// ClaimTypeString is the OIDC custom-claim type for strings.
+	ClaimTypeString = "string"
+
+	// ClaimTypeBoolean is the OIDC custom-claim type for booleans.
+	ClaimTypeBoolean = "boolean"
+
+	// ClaimTypeFloat is the OIDC custom-claim type for floating-point numbers.
+	ClaimTypeFloat = "float"
+
+	// ClaimTypeInteger is the OIDC custom-claim type for integers.
+	ClaimTypeInteger = "integer"
+)
+
+// Standard OIDC claim names.
+const (
+	// ClaimName is the "name" claim.
+	ClaimName = "name"
+
+	// ClaimGivenName is the "given_name" claim.
+	ClaimGivenName = "given_name"
+
+	// ClaimFamilyName is the "family_name" claim.
+	ClaimFamilyName = "family_name"
+
+	// ClaimMiddleName is the "middle_name" claim.
+	ClaimMiddleName = "middle_name"
+
+	// ClaimNickName is the "nickname" claim.
+	ClaimNickName = "nickname"
+
+	// ClaimPreferredUserName is the "preferred_username" claim.
+	ClaimPreferredUserName = "preferred_username"
+
+	// ClaimWebsite is the "website" claim.
+	ClaimWebsite = "website"
+
+	// ClaimProfile is the "profile" claim.
+	ClaimProfile = "profile"
+
+	// ClaimPicture is the "picture" claim.
+	ClaimPicture = "picture"
+
+	// ClaimEmail is the "email" claim.
+	ClaimEmail = "email"
+
+	// ClaimEmailVerified is the "email_verified" claim.
+	ClaimEmailVerified = "email_verified"
+
+	// ClaimGender is the "gender" claim.
+	ClaimGender = "gender"
+
+	// ClaimBirtDate is the "birthdate" claim.
+	ClaimBirtDate = "birthdate"
+
+	// ClaimZoneInfo is the "zoneinfo" claim.
+	ClaimZoneInfo = "zoneinfo"
+
+	// ClaimLocale is the "locale" claim.
+	ClaimLocale = "locale"
+
+	// ClaimPhoneNumber is the "phone_number" claim.
+	ClaimPhoneNumber = "phone_number"
+
+	// ClaimPhoneNumberVerified is the "phone_number_verified" claim.
+	ClaimPhoneNumberVerified = "phone_number_verified"
+
+	// ClaimAddress is the "address" claim.
+	ClaimAddress = "address"
+
+	// ClaimUpdatedAt is the "updated_at" claim.
+	ClaimUpdatedAt = "updated_at"
+
+	// ClaimGroups is the "groups" claim.
+	ClaimGroups = "groups"
+)
+
+const (
 	// LuaBackendResultAuthenticated represents the result of an authentication operation.
 	// It is a constant string with the value "authenticated".
 	LuaBackendResultAuthenticated = "authenticated"
@@ -1703,6 +1866,9 @@ const (
 
 	// LuaBackendResultDisplayNameField represents the field name for the display name in a Lua backend result.
 	LuaBackendResultDisplayNameField = "display_name_field"
+
+	// LuaBackendResultWebAuthnCredentials represents the field name for the WebAuthn credentials in a Lua backend result.
+	LuaBackendResultWebAuthnCredentials = "webauthn_credentials"
 
 	// LuaBackendResultAttributes represents the field name for the attributes in a Lua backend result.
 	LuaBackendResultAttributes = "attributes"
@@ -1752,6 +1918,9 @@ const (
 	// PromStoreTOTP is a constant representing the label used for storing TOTP secrets in the Prometheus metrics.
 	PromStoreTOTP = "store_totp"
 
+	// PromDeleteTOTP is a constant representing the label used for deleting TOTP secrets in the Prometheus metrics.
+	PromDeleteTOTP = "delete_totp"
+
 	// PromPostAction represents the constant value "post_action".
 	PromPostAction = "post_action"
 
@@ -1760,6 +1929,18 @@ const (
 
 	// PromAuth is a constant string representing the authentication flow label for Prometheus timers.
 	PromAuth = "auth"
+
+	// PromIdPLogin is a constant representing the IdP login metric.
+	PromIdPLogin = "idp_login"
+
+	// PromIdPToken is a constant representing the IdP token issuance metric.
+	PromIdPToken = "idp_token"
+
+	// PromIdPConsent is a constant representing the IdP consent metric.
+	PromIdPConsent = "idp_consent"
+
+	// PromIdPMFA is a constant representing the IdP MFA operation metric.
+	PromIdPMFA = "idp_mfa"
 )
 
 const (

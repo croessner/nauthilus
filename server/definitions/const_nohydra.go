@@ -14,22 +14,17 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 //go:build !hydra
-// +build !hydra
 
 package definitions
 
-// ProtoOryHydra corresponds to the "ory-hydra" protocol.
-// It remains defined in non-hydra builds to keep references compiling.
+// DbgHydra is a placeholder for the Hydra debug module when Hydra is disabled.
+const DbgHydra DbgModule = 3
+
+// DbgHydraName is a placeholder for the Hydra debug module name when Hydra is disabled.
+const DbgHydraName = "hydra"
+
+// ProtoOryHydra corresponds to the "ory-hydra" protocol (placeholder).
 const ProtoOryHydra = "ory-hydra"
 
-// ServOryHydra is the service identifier for Ory Hydra related flows.
-// It remains defined in non-hydra builds for API parity.
+// ServOryHydra is the service identifier for Ory Hydra related flows (placeholder).
 const ServOryHydra = "ory_hydra"
-
-// DbgHydra is the debugging module selector for Hydra related debug output.
-// In non-hydra builds, it maps to DbgNone to effectively disable hydra-specific logging.
-const DbgHydra DbgModule = DbgNone
-
-// DbgHydraName is the human-readable name for the Hydra debug module.
-// Keeping the name available allows configuration to include "hydra" without build errors.
-const DbgHydraName = "hydra"

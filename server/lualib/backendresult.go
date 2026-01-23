@@ -62,6 +62,9 @@ type LuaBackendResult struct {
 	// DisplayNameField is the display name associated with the user's account
 	DisplayNameField string
 
+	// WebAuthnCredentials holds a list of serialized WebAuthn credentials (JSON)
+	WebAuthnCredentials []string
+
 	// Err captures any error that occurred during the backend process
 	Err error
 
@@ -231,6 +234,36 @@ func (m *BackendResultManager) GetSetDisplayNameField(L *lua.LState) int {
 	return stack.PushResult(lua.LString(backendResult.DisplayNameField))
 }
 
+// GetSetWebAuthnCredentials sets or retrieves the WebAuthnCredentials field.
+func (m *BackendResultManager) GetSetWebAuthnCredentials(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		table := stack.CheckTable(2)
+		var credentials []string
+		table.ForEach(func(_, v lua.LValue) {
+			if str, ok := v.(lua.LString); ok {
+				credentials = append(credentials, string(str))
+			}
+		})
+		backendResult.WebAuthnCredentials = credentials
+
+		return 0
+	}
+
+	table := L.NewTable()
+	for _, cred := range backendResult.WebAuthnCredentials {
+		table.Append(lua.LString(cred))
+	}
+
+	return stack.PushResult(table)
+}
+
 // GetSetAttributes sets or retrieves the Attributes field.
 func (m *BackendResultManager) GetSetAttributes(L *lua.LState) int {
 	stack := luastack.NewManager(L)
@@ -260,14 +293,15 @@ func LoaderModBackendResult(ctx context.Context, cfg config.File, logger *slog.L
 		mt := L.NewTypeMetatable(definitions.LuaBackendResultTypeName)
 
 		L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaBackendResultAuthenticated:     manager.GetSetAuthenticated,
-			definitions.LuaBackendResultUserFound:         manager.GetSetUserFound,
-			definitions.LuaBackendResultAccountField:      manager.GetSetAccountField,
-			definitions.LuaBackendResultTOTPSecretField:   manager.GetSetTOTPSecretField,
-			definitions.LuaBackendResultTOTPRecoveryField: manager.GetSetTOTPRecoveryField,
-			definitions.LuaBAckendResultUniqueUserIDField: manager.GetSetUniqueUserIDField,
-			definitions.LuaBackendResultDisplayNameField:  manager.GetSetDisplayNameField,
-			definitions.LuaBackendResultAttributes:        manager.GetSetAttributes,
+			definitions.LuaBackendResultAuthenticated:       manager.GetSetAuthenticated,
+			definitions.LuaBackendResultUserFound:           manager.GetSetUserFound,
+			definitions.LuaBackendResultAccountField:        manager.GetSetAccountField,
+			definitions.LuaBackendResultTOTPSecretField:     manager.GetSetTOTPSecretField,
+			definitions.LuaBackendResultTOTPRecoveryField:   manager.GetSetTOTPRecoveryField,
+			definitions.LuaBAckendResultUniqueUserIDField:   manager.GetSetUniqueUserIDField,
+			definitions.LuaBackendResultDisplayNameField:    manager.GetSetDisplayNameField,
+			definitions.LuaBackendResultWebAuthnCredentials: manager.GetSetWebAuthnCredentials,
+			definitions.LuaBackendResultAttributes:          manager.GetSetAttributes,
 		}))
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{

@@ -230,6 +230,7 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	setup2FA func(*gin.Engine),
 	setupWebAuthn func(*gin.Engine),
 	setupNotify func(*gin.Engine),
+	setupIdP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 ) {
 	if setupHealth != nil {
@@ -246,7 +247,7 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 		rb := approuter.NewRouter(c.cfg)
 		rb.Engine = r
 
-		rb.WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify)
+		rb.WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP)
 	}
 
 	rb := approuter.NewRouter(c.cfg)
@@ -616,6 +617,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	setup2FA func(*gin.Engine),
 	setupWebAuthn func(*gin.Engine),
 	setupNotify func(*gin.Engine),
+	setupIdP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 	signals ServerSignals,
 ) {
@@ -641,7 +643,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	srv := a.HTTPServerFactory.New(router)
 
 	a.RouterComposer.ApplyCoreMiddlewares(router)
-	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel)
+	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP, setupBackchannel)
 
 	proxy := a.ProxyProvider.Get()
 	if proxy != nil {

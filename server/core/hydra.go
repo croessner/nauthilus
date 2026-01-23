@@ -25,10 +25,8 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
@@ -44,8 +42,6 @@ import (
 	"github.com/justinas/nosurf"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	openapi "github.com/ory/hydra-client-go/v2"
-	"github.com/pquerna/otp"
-	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -104,11 +100,11 @@ type ApiConfig struct {
 
 // HandleErr handles an error by logging the error details and printing a goroutine dump.
 func (h *HydraHandlers) HandleErr(ctx *gin.Context, err error) {
-	HandleErrWithDeps(ctx, err, h.deps)
+	HandleHydraErrWithDeps(ctx, err, h.deps)
 }
 
-// HandleErrWithDeps is the DI-capable variant of HandleErr.
-func HandleErrWithDeps(ctx *gin.Context, err error, deps AuthDeps) {
+// HandleHydraErrWithDeps is the Hydra specific error handler.
+func HandleHydraErrWithDeps(ctx *gin.Context, err error, deps AuthDeps) {
 	processErrorLogging(ctx, err, deps)
 	sessionCleaner(ctx)
 	ctx.Set(definitions.CtxFailureKey, true)
@@ -160,14 +156,14 @@ func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response, de
 	if httpResponse != nil {
 		switch httpResponse.StatusCode {
 		case http.StatusNotFound:
-			HandleErrWithDeps(ctx, errors.ErrUnknownJSON, deps)
+			HandleHydraErrWithDeps(ctx, errors.ErrUnknownJSON, deps)
 		case http.StatusGone:
-			HandleErrWithDeps(ctx, errors.ErrHTTPRequestGone, deps)
+			HandleHydraErrWithDeps(ctx, errors.ErrHTTPRequestGone, deps)
 		default:
-			HandleErrWithDeps(ctx, err, deps)
+			HandleHydraErrWithDeps(ctx, err, deps)
 		}
 	} else {
-		HandleErrWithDeps(ctx, err, deps)
+		HandleHydraErrWithDeps(ctx, err, deps)
 	}
 }
 
@@ -625,7 +621,7 @@ func (h *HydraHandlers) LoginGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
@@ -649,7 +645,7 @@ func (h *HydraHandlers) LoginGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -899,7 +895,7 @@ func (a *ApiConfig) handlePost2FA(auth State, account string) error {
 		return errors.ErrNoTOTPCode
 	}
 
-	err := a.totpValidation(code, account, totpSecret)
+	err := totpValidation(a.ctx, a.guid, code, account, totpSecret, a.deps)
 	if err != nil {
 		return err
 	}
@@ -1022,52 +1018,6 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, auth State) {
 // - totp.ValidateCustom(): A function to validate the TOTP code using the key and additional options.
 //
 // Note: This method assumes that the `ApiConfig` object is properly initialized with the `guid` field set.
-func (a *ApiConfig) totpValidation(code string, account string, totpSecret string) error {
-	var urlComponents []string
-
-	urlComponents = append(urlComponents, "otpauth://totp/")
-	urlComponents = append(urlComponents, url.QueryEscape(a.deps.Cfg.GetServer().Frontend.GetTotpIssuer()))
-	urlComponents = append(urlComponents, ":")
-	urlComponents = append(urlComponents, account)
-	urlComponents = append(urlComponents, "?secret=")
-	urlComponents = append(urlComponents, totpSecret)
-	urlComponents = append(urlComponents, "&issuer=")
-	urlComponents = append(urlComponents, url.QueryEscape(a.deps.Cfg.GetServer().Frontend.GetTotpIssuer()))
-	urlComponents = append(urlComponents, "&algorithm=SHA1")
-	urlComponents = append(urlComponents, "&digits=6")
-	urlComponents = append(urlComponents, "&period=30")
-
-	totpURL := strings.Join(urlComponents, "")
-
-	key, err := otp.NewKeyFromURL(totpURL)
-	if err != nil {
-		return err
-	}
-
-	if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && a.deps.Env.GetDevMode() {
-		util.DebugModuleWithCfg(
-			a.ctx.Request.Context(),
-			a.deps.Cfg,
-			a.deps.Logger,
-			definitions.DbgHydra,
-			definitions.LogKeyGUID, a.guid,
-			"totp_key", fmt.Sprintf("%+v", key),
-		)
-	}
-
-	codeValid, err := totp.ValidateCustom(code, key.Secret(), time.Now(), totp.ValidateOpts{
-		Period:    30,
-		Skew:      a.deps.Cfg.GetServer().Frontend.GetTotpSkew(),
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-
-	if !codeValid {
-		return errors.ErrTOTPCodeInvalid
-	}
-
-	return nil
-}
 
 // setSessionVariablesForAuth sets the necessary session variables for authentication.
 // It takes a `sessions.Session` object, `authResult` of type `definitions.AuthResult`, and the `subject` string as parameters.
@@ -1247,7 +1197,7 @@ func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.PostForm("ory.hydra.login_challenge")
 	if loginChallenge == "" {
-		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
@@ -1260,14 +1210,14 @@ func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 
 	auth, err := h.initializeAuthLogin(ctx)
 	if err != nil {
-		HandleErrWithDeps(ctx, err, h.deps)
+		HandleHydraErrWithDeps(ctx, err, h.deps)
 
 		return
 	}
 
 	authResult, recentSubject, rememberPost2FA, post2FA, err = handleSessionDataLogin(ctx, auth)
 	if err != nil {
-		HandleErrWithDeps(ctx, err, h.deps)
+		HandleHydraErrWithDeps(ctx, err, h.deps)
 
 		return
 	}
@@ -1284,7 +1234,7 @@ func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -1311,7 +1261,7 @@ func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 
 			authResult, err = apiConfig.processAuthOkLogin(ctx, auth, oldAuthResult, rememberPost2FA, recentSubject, post2FA, needLuaFilterAndPost)
 			if err != nil {
-				HandleErrWithDeps(ctx, err, h.deps)
+				HandleHydraErrWithDeps(ctx, err, h.deps)
 			}
 
 			// If auth-results have changed, filters must have ran. Do not run them again...
@@ -1330,7 +1280,7 @@ func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 
 			have2FA, err = apiConfig.processAuthFailLogin(auth, oldAuthResult, post2FA)
 			if err != nil {
-				HandleErrWithDeps(ctx, err, h.deps)
+				HandleHydraErrWithDeps(ctx, err, h.deps)
 
 				return
 			}
@@ -1350,7 +1300,7 @@ func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 
 			return
 		default:
-			HandleErrWithDeps(ctx, errors.ErrUnknownCause, h.deps)
+			HandleHydraErrWithDeps(ctx, errors.ErrUnknownCause, h.deps)
 			ctx.AbortWithStatus(http.StatusInternalServerError)
 
 			return
@@ -1388,7 +1338,7 @@ func (h *HydraHandlers) DeviceGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
@@ -1408,7 +1358,7 @@ func (h *HydraHandlers) DeviceGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -1500,7 +1450,7 @@ func DeviceGETHandler(deps AuthDeps) gin.HandlerFunc {
 
 // DevicePOSTHandler Page '/device/post'
 func (h *HydraHandlers) DevicePOSTHandler(ctx *gin.Context) {
-	HandleErrWithDeps(ctx, stderrors.New("not implemented yet"), h.deps)
+	HandleHydraErrWithDeps(ctx, stderrors.New("not implemented yet"), h.deps)
 }
 
 // handleRequestedScopes is a function that analyzes requested scopes from the user in a session.
@@ -1858,7 +1808,7 @@ func (h *HydraHandlers) ConsentGETHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.Query("consent_challenge")
 	if consentChallenge == "" {
-		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
@@ -1882,7 +1832,7 @@ func (h *HydraHandlers) ConsentGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -2108,7 +2058,7 @@ func (h *HydraHandlers) ConsentPOSTHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.PostForm("ory.hydra.consent_challenge")
 	if consentChallenge == "" {
-		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
@@ -2131,7 +2081,7 @@ func (h *HydraHandlers) ConsentPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -2224,7 +2174,7 @@ func (h *HydraHandlers) LogoutGETHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.Query("logout_challenge")
 	if logoutChallenge == "" {
-		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
@@ -2377,7 +2327,7 @@ func (h *HydraHandlers) LogoutPOSTHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.PostForm("ory.hydra.logout_challenge")
 	if logoutChallenge == "" {
-		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
+		HandleHydraErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}

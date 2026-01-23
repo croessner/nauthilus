@@ -75,3 +75,23 @@ func NewWebAuthn(value string) *WebAuthn {
 
 	return webAuthNObj
 }
+
+type TOTPRecovery struct {
+	codes []string
+}
+
+func (t *TOTPRecovery) GetCodes() []string {
+	return t.codes
+}
+
+func (t *TOTPRecovery) SetCodes(codes []string) {
+	t.codes = codes
+}
+
+func (t *TOTPRecovery) GetLDAPRecoveryField(protocol *config.LDAPSearchProtocol) string {
+	return protocol.GetTotpRecoveryField()
+}
+
+func NewTOTPRecovery(codes []string) *TOTPRecovery {
+	return &TOTPRecovery{codes: codes}
+}

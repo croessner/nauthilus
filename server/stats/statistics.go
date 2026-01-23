@@ -284,6 +284,18 @@ type Metrics interface {
 
 	// GetRedisRoundtripsTotal counts Redis roundtrips attributable to the brute-force path, labeled by kind.
 	GetRedisRoundtripsTotal() *prometheus.CounterVec
+
+	// GetIdpLoginsTotal tracks the total number of IdP logins.
+	GetIdpLoginsTotal() *prometheus.CounterVec
+
+	// GetIdpTokensIssuedTotal tracks the total number of IdP tokens issued.
+	GetIdpTokensIssuedTotal() *prometheus.CounterVec
+
+	// GetIdpConsentTotal tracks the total number of IdP consent operations.
+	GetIdpConsentTotal() *prometheus.CounterVec
+
+	// GetIdpMfaOperationsTotal tracks the total number of IdP MFA operations.
+	GetIdpMfaOperationsTotal() *prometheus.CounterVec
 }
 
 type metricsImpl struct {
@@ -339,6 +351,10 @@ type metricsImpl struct {
 	bruteForceCacheHitsTotal  *prometheus.CounterVec
 	bruteForceRulesMatchedTot prometheus.Counter
 	redisRoundtripsTotal      *prometheus.CounterVec
+	idpLoginsTotal            *prometheus.CounterVec
+	idpTokensIssuedTotal      *prometheus.CounterVec
+	idpConsentTotal           *prometheus.CounterVec
+	idpMfaOperationsTotal     *prometheus.CounterVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -594,6 +610,26 @@ func (m *metricsImpl) GetLdapRetriesTotal() *prometheus.CounterVec {
 // GetLdapAuthRateLimitedTotal returns the ldapAuthRateLimitedTotal field.
 func (m *metricsImpl) GetLdapAuthRateLimitedTotal() *prometheus.CounterVec {
 	return m.ldapAuthRateLimitedTotal
+}
+
+// GetIdpLoginsTotal returns the idpLoginsTotal field.
+func (m *metricsImpl) GetIdpLoginsTotal() *prometheus.CounterVec {
+	return m.idpLoginsTotal
+}
+
+// GetIdpTokensIssuedTotal returns the idpTokensIssuedTotal field.
+func (m *metricsImpl) GetIdpTokensIssuedTotal() *prometheus.CounterVec {
+	return m.idpTokensIssuedTotal
+}
+
+// GetIdpConsentTotal returns the idpConsentTotal field.
+func (m *metricsImpl) GetIdpConsentTotal() *prometheus.CounterVec {
+	return m.idpConsentTotal
+}
+
+// GetIdpMfaOperationsTotal returns the idpMfaOperationsTotal field.
+func (m *metricsImpl) GetIdpMfaOperationsTotal() *prometheus.CounterVec {
+	return m.idpMfaOperationsTotal
 }
 
 func NewMetrics() Metrics {
@@ -921,6 +957,30 @@ func NewMetrics() Metrics {
 				Help: "Total Redis roundtrips by kind in brute-force path",
 			},
 			[]string{"kind"},
+		),
+		idpLoginsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "idp_logins_total",
+				Help: "The total number of IdP logins",
+			}, []string{"protocol", "status"},
+		),
+		idpTokensIssuedTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "idp_tokens_issued_total",
+				Help: "The total number of IdP tokens issued",
+			}, []string{"protocol", "client_id", "grant_type"},
+		),
+		idpConsentTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "idp_consent_total",
+				Help: "The total number of IdP consent operations",
+			}, []string{"client_id", "status"},
+		),
+		idpMfaOperationsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "idp_mfa_operations_total",
+				Help: "The total number of IdP MFA operations",
+			}, []string{"type", "method", "status"},
 		),
 	}
 }

@@ -13,14 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build hydra
-// +build hydra
-
 package core
 
 import (
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -30,179 +26,6 @@ import (
 
 	openapi "github.com/ory/hydra-client-go/v2"
 )
-
-// processClaim copies a configured attribute (claimValue) into the output claims map under claimName.
-// It is used in the Hydra/OIDC claim processing flow.
-func (a *AuthState) processClaim(claimName string, claimValue string, claims map[string]any) {
-	if claimValue != "" {
-		if value, found := a.GetAttribute(claimValue); found {
-			if arg, assertOk := value[definitions.SliceWithOneElement].(string); assertOk {
-				claims[claimName] = arg
-
-				return
-			}
-		}
-
-		a.logger().Warn(
-			fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
-			definitions.LogKeyGUID, a.Runtime.GUID,
-		)
-	}
-}
-
-// applyClaim applies attribute values to a specific claim using the provided handlers.
-func applyClaim(claimKey string, attributeKey string, auth *AuthState, claims map[string]any, claimHandlers []ClaimHandler) {
-	var success bool
-
-	if attributeValue, found := auth.GetAttribute(attributeKey); found {
-		for _, handler := range claimHandlers {
-			if t := reflect.TypeOf(attributeValue).Kind(); t == handler.Type {
-				success = handler.ApplyFunc(attributeValue, claims, claimKey)
-				if success {
-					break
-				}
-			}
-		}
-	}
-
-	if !success {
-		auth.logger().Warn(
-			fmt.Sprintf("Claim '%s' not applied (no value for attribute '%s')", claimKey, attributeKey),
-			definitions.LogKeyGUID, auth.Runtime.GUID,
-		)
-	}
-}
-
-// processClientClaims evaluates standard OIDC claims configured on the client and fills them from attributes.
-func (a *AuthState) processClientClaims(client *config.Oauth2Client, claims map[string]any) map[string]any {
-	// Claim names to process
-	claimChecks := map[string]string{
-		definitions.ClaimName:              client.Claims.Name,
-		definitions.ClaimGivenName:         client.Claims.GivenName,
-		definitions.ClaimFamilyName:        client.Claims.FamilyName,
-		definitions.ClaimMiddleName:        client.Claims.MiddleName,
-		definitions.ClaimNickName:          client.Claims.NickName,
-		definitions.ClaimPreferredUserName: client.Claims.PreferredUserName,
-		definitions.ClaimProfile:           client.Claims.Profile,
-		definitions.ClaimWebsite:           client.Claims.Website,
-		definitions.ClaimPicture:           client.Claims.Picture,
-		definitions.ClaimEmail:             client.Claims.Email,
-		definitions.ClaimGender:            client.Claims.Gender,
-		definitions.ClaimBirtDate:          client.Claims.Birthdate,
-		definitions.ClaimZoneInfo:          client.Claims.ZoneInfo,
-		definitions.ClaimLocale:            client.Claims.Locale,
-		definitions.ClaimPhoneNumber:       client.Claims.PhoneNumber,
-	}
-
-	for claimName, claimVal := range claimChecks {
-		a.processClaim(claimName, claimVal, claims)
-	}
-
-	return claims
-}
-
-// applyClientClaimHandlers applies typed transformations for specific claims (verified flags, address, updatedAt).
-func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims map[string]any) map[string]any {
-	claimHandlers := []ClaimHandler{
-		{
-			Type: reflect.String,
-			ApplyFunc: func(value any, claims map[string]any, claimKey string) bool {
-				if strValue, ok := value.(string); ok {
-					if claimKey == definitions.ClaimEmailVerified || claimKey == definitions.ClaimPhoneNumberVerified {
-						if boolean, err := strconv.ParseBool(strValue); err == nil {
-							claims[claimKey] = boolean
-
-							return true
-						}
-					} else if claimKey == definitions.ClaimAddress {
-						claims[claimKey] = struct {
-							Formatted string `json:"formatted"`
-						}{Formatted: strValue}
-
-						return true
-					}
-				}
-
-				return false
-			},
-		},
-		{
-			Type: reflect.Bool,
-			ApplyFunc: func(value any, claims map[string]any, claimKey string) bool {
-				if boolValue, ok := value.(bool); ok {
-					claims[claimKey] = boolValue
-
-					return true
-				}
-
-				return false
-			},
-		},
-		{
-			Type: reflect.Float64,
-			ApplyFunc: func(value any, claims map[string]any, claimKey string) bool {
-				if floatValue, ok := value.(float64); ok {
-					claims[claimKey] = floatValue
-
-					return true
-				}
-
-				return false
-			},
-		},
-	}
-
-	claimKeys := map[string]string{
-		definitions.ClaimEmailVerified:       client.Claims.EmailVerified,
-		definitions.ClaimPhoneNumberVerified: client.Claims.PhoneNumberVerified,
-		definitions.ClaimAddress:             client.Claims.Address,
-		definitions.ClaimUpdatedAt:           client.Claims.UpdatedAt,
-	}
-
-	for claimKey, attrKey := range claimKeys {
-		if attrKey != "" {
-			applyClaim(claimKey, attrKey, a, claims, claimHandlers)
-		}
-	}
-
-	return claims
-}
-
-// processGroupsClaim populates the groups claim from the configured client groups attribute.
-func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
-	valueApplied := false
-
-	if a.cfg().GetOauth2().Clients[index].Claims.Groups != "" {
-		if value, found := a.GetAttribute(a.cfg().GetOauth2().Clients[index].Claims.Groups); found {
-			var stringSlice []string
-
-			util.DebugModuleWithCfg(
-				a.Ctx(),
-				a.Cfg(),
-				a.Logger(),
-				definitions.DbgAuth,
-				definitions.LogKeyGUID, a.Runtime.GUID,
-				"groups", fmt.Sprintf("%#v", value),
-			)
-
-			for anyIndex := range value {
-				if arg, assertOk := value[anyIndex].(string); assertOk {
-					stringSlice = append(stringSlice, arg)
-				}
-			}
-
-			claims[definitions.ClaimGroups] = stringSlice
-			valueApplied = true
-		}
-
-		if !valueApplied {
-			a.logger().Warn(
-				fmt.Sprintf("Claim '%s' malformed or not returned from Database", definitions.ClaimGroups),
-				definitions.LogKeyGUID, a.Runtime.GUID,
-			)
-		}
-	}
-}
 
 // processCustomClaims maps configured custom scope claims for the given OAuth2 client into the claims map.
 func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAuth2Client, claims map[string]any) {
@@ -287,7 +110,6 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[string]any) {
 	var (
 		okay    bool
-		index   int
 		subject string
 		client  config.Oauth2Client
 		claims  map[string]any
@@ -304,7 +126,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[str
 
 		clientIDFound := false
 
-		for index, client = range a.cfg().GetOauth2().Clients {
+		for _, client = range a.cfg().GetOauth2().Clients {
 			if client.ClientId == clientInterface.GetClientId() {
 				clientIDFound = true
 
@@ -317,9 +139,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[str
 					definitions.LogKeyMsg, fmt.Sprintf("Found client_id: %+v", client),
 				)
 
-				claims = a.processClientClaims(&client, claims)
-				claims = a.applyClientClaimHandlers(&client, claims)
-				a.processGroupsClaim(index, claims)
+				a.FillIdTokenClaims(&client.Claims, claims)
 
 				break //exit loop once first matching client found
 			}

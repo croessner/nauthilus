@@ -44,6 +44,12 @@ func PutCommonRequest(cr *CommonRequest) {
 
 // CommonRequest represents a common request object with various properties used in different functionalities.
 type CommonRequest struct {
+	// BackendServers holds the list of backend servers.
+	BackendServers []*config.BackendServer
+
+	// TOTPRecoveryCodes stores the user's TOTP recovery codes.
+	TOTPRecoveryCodes []string
+
 	// Service is the http routers endpoint name.
 	Service string
 
@@ -92,6 +98,12 @@ type CommonRequest struct {
 	// Password stores the user's password.
 	Password string
 
+	// WebAuthnCredential stores a serialized WebAuthn credential (JSON).
+	WebAuthnCredential string
+
+	// WebAuthnOldCredential stores a serialized WebAuthn credential (JSON).
+	WebAuthnOldCredential string
+
 	// Protocol stores the protocol that the user used to authenticate.
 	Protocol string
 
@@ -101,14 +113,14 @@ type CommonRequest struct {
 	// OIDCCID represents the OpenID Connect Client ID used for authentication.
 	OIDCCID string
 
+	// SAMLEntityID represents the SAML Entity ID used for authentication.
+	SAMLEntityID string
+
 	// BruteForceName stores the name of the brute force protection mechanism.
 	BruteForceName string
 
 	// FeatureName is a feature that triggered the action.
 	FeatureName string
-
-	// StatusMessage is a configurable message that is returned to the client upon errors (not tempfail).
-	StatusMessage *string
 
 	// XSSL contains SSL information.
 	XSSL string
@@ -158,8 +170,11 @@ type CommonRequest struct {
 	// SSLFingerprint represents the SSL certificate's fingerprint for the client in the request.
 	SSLFingerprint string
 
-	// BackendServers holds the list of backend servers.
-	BackendServers []*config.BackendServer
+	// RedisPrefix is the redis prefix for keys.
+	RedisPrefix string
+
+	// StatusMessage is a configurable message that is returned to the client upon errors (not tempfail).
+	StatusMessage *string
 
 	// UsedBackendAddr holds the address of the backend server used for authentication.
 	UsedBackendAddr *string
@@ -190,19 +205,12 @@ type CommonRequest struct {
 
 	// NoAuth is a flag indicating if the action requires no authentication.
 	NoAuth bool
-
-	// RedisPrefix is the redis prefix for keys.
-	RedisPrefix string
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.
 func (c *CommonRequest) Reset() {
-	c.Debug = false
-	c.Repeating = false
-	c.UserFound = false
-	c.Authenticated = false
-	c.NoAuth = false
-	c.BruteForceCounter = 0
+	c.BackendServers = nil
+	c.TOTPRecoveryCodes = nil
 	c.Service = ""
 	c.Session = ""
 	c.ClientIP = ""
@@ -219,12 +227,14 @@ func (c *CommonRequest) Reset() {
 	c.UniqueUserID = ""
 	c.DisplayName = ""
 	c.Password = ""
+	c.WebAuthnCredential = ""
+	c.WebAuthnOldCredential = ""
 	c.Protocol = ""
 	c.Method = ""
 	c.OIDCCID = ""
+	c.SAMLEntityID = ""
 	c.BruteForceName = ""
 	c.FeatureName = ""
-	c.StatusMessage = nil
 	c.XSSL = ""
 	c.XSSLSessionID = ""
 	c.XSSLClientVerify = ""
@@ -241,12 +251,18 @@ func (c *CommonRequest) Reset() {
 	c.XSSLCipher = ""
 	c.SSLSerial = ""
 	c.SSLFingerprint = ""
-	c.BackendServers = nil
+	c.RedisPrefix = ""
+	c.StatusMessage = nil
 	c.UsedBackendAddr = nil
 	c.UsedBackendPort = nil
 	c.Latency = 0
+	c.BruteForceCounter = 0
 	c.HTTPStatus = 0
-	c.RedisPrefix = ""
+	c.Debug = false
+	c.Repeating = false
+	c.UserFound = false
+	c.Authenticated = false
+	c.NoAuth = false
 }
 
 // SetupRequest sets up the request object with the common request properties
@@ -285,10 +301,20 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestAccountField, lua.LString(c.AccountField))
 	request.RawSetString(definitions.LuaRequestUniqueUserID, lua.LString(c.UniqueUserID))
 	request.RawSetString(definitions.LuaRequestDisplayName, lua.LString(c.DisplayName))
+	if len(c.TOTPRecoveryCodes) > 0 {
+		recoveryTable := L.NewTable()
+		for _, code := range c.TOTPRecoveryCodes {
+			recoveryTable.Append(lua.LString(code))
+		}
+		request.RawSetString(definitions.LuaRequestTOTPRecoveryCodes, recoveryTable)
+	}
 	request.RawSetString(definitions.LuaRequestPassword, lua.LString(c.Password))
+	request.RawSetString(definitions.LuaRequestWebAuthnCredential, lua.LString(c.WebAuthnCredential))
+	request.RawSetString(definitions.LuaRequestWebAuthnOldCredential, lua.LString(c.WebAuthnOldCredential))
 	request.RawSetString(definitions.LuaRequestProtocol, lua.LString(c.Protocol))
 	request.RawSetString(definitions.LuaRequestMethod, lua.LString(c.Method))
 	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
+	request.RawSetString(definitions.LuaRequestSAMLEntityID, lua.LString(c.SAMLEntityID))
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
 	if c.StatusMessage != nil {

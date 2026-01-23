@@ -291,6 +291,10 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		passDBResult.TOTPSecretField = protocol.TOTPSecretField
 	}
 
+	if protocol.GetTotpRecoveryField() != "" {
+		passDBResult.TOTPRecoveryField = protocol.GetTotpRecoveryField()
+	}
+
 	if protocol.UniqueUserIDField != "" {
 		passDBResult.UniqueUserIDField = protocol.UniqueUserIDField
 	}
@@ -661,6 +665,378 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 		return ldapError.Err
 	}
+
+	if ldapReply.Err != nil {
+		msp.RecordError(ldapReply.Err)
+	}
+
+	return ldapReply.Err
+}
+
+// DeleteTOTPSecret removes the TOTP secret from an LDAP server.
+func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
+	tr := monittrace.New("nauthilus/ldap")
+	mctx, msp := tr.Start(auth.Ctx(), "ldap.delete_totp",
+		attribute.String("pool_name", lm.poolName),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
+	)
+
+	_ = mctx
+
+	defer msp.End()
+
+	var (
+		filter      string
+		baseDN      string
+		configField string
+		ldapReply   *bktype.LDAPReply
+		scope       *config.LDAPScope
+		protocol    *config.LDAPSearchProtocol
+	)
+
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTP, "ldap_delete_totp_request_total")
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
+	ldapReplyChan := make(chan *bktype.LDAPReply)
+
+	pCtx, pSpan := tr.Start(mctx, "ldap.delete_totp.prepare")
+	_ = pCtx
+
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if filter, err = protocol.GetUserFilter(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	msp.SetAttributes(
+		attribute.String("base_dn", baseDN),
+		attribute.String("scope", scope.String()),
+	)
+
+	configField = protocol.GetTotpSecretField()
+	if configField == "" {
+		pSpan.End()
+
+		err = errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Request.Protocol.Get()))
+
+		return
+	}
+
+	// Derive a timeout context for LDAP modify using service-scoped context
+	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
+	defer cancelModify()
+
+	ldapRequest := &bktype.LDAPRequest{
+		GUID:       auth.Runtime.GUID,
+		Command:    definitions.LDAPModify,
+		PoolName:   lm.poolName,
+		SubCommand: definitions.LDAPModifyDelete,
+		MacroSource: &util.MacroSource{
+			Username:    auth.Request.Username,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			Protocol:    *auth.Request.Protocol,
+		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		Scope:             *scope,
+		LDAPReplyChan:     ldapReplyChan,
+		HTTPClientContext: ctxModify,
+	}
+
+	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
+	ldapRequest.ModifyAttributes[configField] = []string{}
+
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	pSpan.End()
+
+	// Use priority queue instead of channel
+	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+
+	_, wSpan := tr.Start(mctx, "ldap.delete_totp.wait")
+	ldapReply = <-ldapReplyChan
+	wSpan.End()
+
+	if ldapReply.Err != nil {
+		msp.RecordError(ldapReply.Err)
+	}
+
+	return ldapReply.Err
+}
+
+// AddTOTPRecoveryCodes adds the specified TOTP recovery codes to the user's authentication state in the LDAP backend.
+func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.TOTPRecovery) (err error) {
+	tr := monittrace.New("nauthilus/ldap")
+	mctx, msp := tr.Start(auth.Ctx(), "ldap.add_totp_recovery",
+		attribute.String("pool_name", lm.poolName),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
+	)
+
+	_ = mctx
+
+	defer msp.End()
+
+	var (
+		filter      string
+		baseDN      string
+		configField string
+		ldapReply   *bktype.LDAPReply
+		scope       *config.LDAPScope
+		protocol    *config.LDAPSearchProtocol
+	)
+
+	// stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTPRecovery, "ldap_store_totp_recovery_request_total")
+	// if stopTimer != nil {
+	// 	defer stopTimer()
+	// }
+
+	ldapReplyChan := make(chan *bktype.LDAPReply)
+
+	pCtx, pSpan := tr.Start(mctx, "ldap.add_totp_recovery.prepare")
+	_ = pCtx
+
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if filter, err = protocol.GetUserFilter(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	msp.SetAttributes(
+		attribute.String("base_dn", baseDN),
+		attribute.String("scope", scope.String()),
+	)
+
+	configField = recovery.GetLDAPRecoveryField(protocol)
+	if configField == "" {
+		pSpan.End()
+
+		err = errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("Missing LDAP TOTP recovery field; protocol=%s", auth.Request.Protocol.Get()))
+
+		return
+	}
+
+	// Derive a timeout context for LDAP modify using service-scoped context
+	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
+	defer cancelModify()
+
+	ldapRequest := &bktype.LDAPRequest{
+		GUID:       auth.Runtime.GUID,
+		Command:    definitions.LDAPModify,
+		PoolName:   lm.poolName,
+		SubCommand: definitions.LDAPModifyReplace,
+		MacroSource: &util.MacroSource{
+			Username:    auth.Request.Username,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			Protocol:    *auth.Request.Protocol,
+		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		Scope:             *scope,
+		LDAPReplyChan:     ldapReplyChan,
+		HTTPClientContext: ctxModify,
+	}
+
+	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
+	ldapRequest.ModifyAttributes[configField] = recovery.GetCodes()
+
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	pSpan.End()
+
+	// Use priority queue instead of channel
+	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+
+	_, wSpan := tr.Start(mctx, "ldap.add_totp_recovery.wait")
+	ldapReply = <-ldapReplyChan
+	wSpan.End()
+
+	if ldapReply.Err != nil {
+		msp.RecordError(ldapReply.Err)
+	}
+
+	return ldapReply.Err
+}
+
+// DeleteTOTPRecoveryCodes removes all TOTP recovery codes for the user in the LDAP backend.
+func (lm *ldapManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) {
+	tr := monittrace.New("nauthilus/ldap")
+	mctx, msp := tr.Start(auth.Ctx(), "ldap.delete_totp_recovery",
+		attribute.String("pool_name", lm.poolName),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
+	)
+
+	_ = mctx
+
+	defer msp.End()
+
+	var (
+		filter      string
+		baseDN      string
+		configField string
+		ldapReply   *bktype.LDAPReply
+		scope       *config.LDAPScope
+		protocol    *config.LDAPSearchProtocol
+	)
+
+	// stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTPRecovery, "ldap_delete_totp_recovery_request_total")
+	// if stopTimer != nil {
+	// 	defer stopTimer()
+	// }
+
+	ldapReplyChan := make(chan *bktype.LDAPReply)
+
+	pCtx, pSpan := tr.Start(mctx, "ldap.delete_totp_recovery.prepare")
+	_ = pCtx
+
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if filter, err = protocol.GetUserFilter(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
+		return
+	}
+
+	msp.SetAttributes(
+		attribute.String("base_dn", baseDN),
+		attribute.String("scope", scope.String()),
+	)
+
+	configField = protocol.GetTotpRecoveryField()
+	if configField == "" {
+		pSpan.End()
+
+		err = errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("Missing LDAP TOTP recovery field; protocol=%s", auth.Request.Protocol.Get()))
+
+		return
+	}
+
+	// Derive a timeout context for LDAP modify using service-scoped context
+	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
+	defer cancelModify()
+
+	ldapRequest := &bktype.LDAPRequest{
+		GUID:       auth.Runtime.GUID,
+		Command:    definitions.LDAPModify,
+		PoolName:   lm.poolName,
+		SubCommand: definitions.LDAPModifyDelete,
+		MacroSource: &util.MacroSource{
+			Username:    auth.Request.Username,
+			XLocalIP:    auth.Request.XLocalIP,
+			XPort:       auth.Request.XPort,
+			ClientIP:    auth.Request.ClientIP,
+			XClientPort: auth.Request.XClientPort,
+			Protocol:    *auth.Request.Protocol,
+		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		Scope:             *scope,
+		LDAPReplyChan:     ldapReplyChan,
+		HTTPClientContext: ctxModify,
+	}
+
+	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
+	ldapRequest.ModifyAttributes[configField] = []string{}
+
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	pSpan.End()
+
+	// Use priority queue instead of channel
+	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+
+	_, wSpan := tr.Start(mctx, "ldap.delete_totp_recovery.wait")
+	ldapReply = <-ldapReplyChan
+	wSpan.End()
 
 	if ldapReply.Err != nil {
 		msp.RecordError(ldapReply.Err)

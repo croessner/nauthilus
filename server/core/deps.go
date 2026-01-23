@@ -34,6 +34,7 @@ type AuthDeps struct {
 	Tolerate     tolerate.Tolerate
 	AccountCache *accountcache.Manager
 	Channel      backend.Channel
+	Backend      BackendManager
 }
 
 type HydraHandlers struct {

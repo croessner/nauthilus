@@ -35,6 +35,7 @@ type HTTPApplication interface {
 		setup2FA func(*gin.Engine),
 		setupWebAuthn func(*gin.Engine),
 		setupNotify func(*gin.Engine),
+		setupIdP func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 		signals ServerSignals,
 	)
@@ -52,6 +53,7 @@ type RouterComposer interface {
 		setup2FA func(*gin.Engine),
 		setupWebAuthn func(*gin.Engine),
 		setupNotify func(*gin.Engine),
+		setupIdP func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 	)
 }

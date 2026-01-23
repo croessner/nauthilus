@@ -159,6 +159,23 @@ func (s *DefaultServices) BeginRegistration() gin.HandlerFunc { return notFound(
 // FinishRegistration returns a handler function that responds with a 404 status, indicating the registration endpoint is disabled.
 func (s *DefaultServices) FinishRegistration() gin.HandlerFunc { return notFound() }
 
+func (d *Deps) Auth() core.AuthDeps {
+	return core.AuthDeps{
+		Cfg:          d.Cfg,
+		Env:          d.Env,
+		Logger:       d.Logger,
+		Redis:        d.Redis,
+		AccountCache: d.AccountCache,
+		Channel:      d.Channel,
+	}
+}
+
+func (d *Deps) AuthPtr() *core.AuthDeps {
+	auth := d.Auth()
+
+	return &auth
+}
+
 // Deps aggregates top-level dependencies to be injected into handler modules.
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {

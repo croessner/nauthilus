@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,21 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build hydra
-// +build hydra
+//go:build !hydra
 
 package core
 
 import (
-	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/gin-gonic/gin"
 )
 
-// ldapGetWebAuthnCredentials returns the WebAuthn credentials for the given unique user ID
-// fetched from the LDAP backend. The concrete implementation will be wired up to the
-// configured LDAP schema/protocol. In non-hydra builds, this helper is not compiled.
-func ldapGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, error) {
-	_ = uniqueUserID
+// InitHTTPClient is a no-op placeholder.
+func InitHTTPClient(_ config.File) {}
 
-	// TODO: Implement LDAP lookup for WebAuthn credentials using the configured protocol
-	return []webauthn.Credential{}, nil
+// WithLanguageMiddleware provides a no-op language middleware.
+func WithLanguageMiddleware(_ AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) { ctx.Next() }
 }

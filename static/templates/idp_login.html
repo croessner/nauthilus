@@ -1,0 +1,53 @@
+{{ define "content" }}
+<div class="flex justify-center items-center mt-10">
+    <div class="card w-96 bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title justify-center text-2xl mb-4">{{ .Title }}</h2>
+
+            {{ if .HaveError }}
+            <div class="alert alert-error mb-4">
+                <svg class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"
+                          stroke-width="2"/>
+                </svg>
+                <span>{{ .ErrorMessage }}</span>
+            </div>
+            {{ end }}
+
+            <form action="{{ .PostLoginEndpoint }}" method="POST">
+                <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
+                <input name="return_to" type="hidden" value="{{ .ReturnTo }}"/>
+
+                <div class="form-control w-full">
+                    <label class="label">
+                        <span class="label-text">{{ .Login }}</span>
+                    </label>
+                    <input autofocus class="input input-bordered w-full" name="username" placeholder="{{ .Login }}"
+                           required type="text"/>
+                </div>
+
+                <div class="form-control w-full mt-4">
+                    <label class="label">
+                        <span class="label-text">{{ .Password }}</span>
+                    </label>
+                    <input class="input input-bordered w-full" name="password" placeholder="{{ .Password }}"
+                           required type="password"/>
+                </div>
+
+                <div class="form-control mt-6">
+                    <button class="btn btn-primary" type="submit">{{ .Submit }}</button>
+                </div>
+            </form>
+
+            <div class="divider">{{ .Or }}</div>
+
+            <a class="btn btn-outline" href="/login/webauthn">
+                {{ .LoginWithWebAuthn }}
+            </a>
+        </div>
+    </div>
+</div>
+{{ end }}
+
+{{ template "idp_base.html" . }}

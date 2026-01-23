@@ -13,18 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build hydra
-// +build hydra
-
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/log/level"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -42,12 +43,12 @@ var jsonIter = jsoniter.ConfigFastest
 // can be gotten from the session cookie.
 func (a *AuthState) getUser(userName string, uniqueUserID string, displayName string) (*backend.User, error) {
 	var (
-		passDB        definitions.Backend
-		assertOk      bool
-		err           error
-		user          *backend.User
-		credentialDBs []WebAuthnCredentialDBFunc
-		credentials   []webauthn.Credential
+		passDB      definitions.Backend
+		backendName string
+		assertOk    bool
+		err         error
+		user        *backend.User
+		credentials []webauthn.Credential
 	)
 
 	_ = userName
@@ -58,38 +59,32 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
 		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-			switch passDB {
-			case definitions.BackendLDAP:
-				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-			default:
-				return nil, errors.ErrUnknownDatabaseBackend
+			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
+				backendName, _ = cookieName.(string)
+			}
+
+			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+				credentials, err = mgr.GetWebAuthnCredentials(a)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
 
 	// No cookie (default login page), search all configured databases.
-	if passDB == definitions.BackendUnknown {
+	if passDB == definitions.BackendUnknown || len(credentials) == 0 {
 		for _, backendType := range a.Cfg().GetServer().GetBackends() {
-			switch backendType.Get() {
-			case definitions.BackendCache:
-				credentialDBs = append(credentialDBs, nil)
-			case definitions.BackendLDAP:
-				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-			// TODO: Add more databases
-			default:
-				return nil, errors.ErrUnknownDatabaseBackend
+			if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
+				credentials, err = mgr.GetWebAuthnCredentials(a)
+				if err != nil {
+					return nil, err
+				}
+
+				if len(credentials) > 0 {
+					break
+				}
 			}
-		}
-	}
-
-	for _, credentialDB := range credentialDBs {
-		credentials, err = credentialDB(uniqueUserID)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(credentials) > 0 {
-			break
 		}
 	}
 
@@ -122,20 +117,23 @@ func (a *AuthState) updateUser(user *backend.User) {
 
 // BeginRegistration Page: '/2fa/v1/webauthn/register/begin'
 func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
+	tracer := monittrace.New("nauthilus/core/webauthn")
+
 	return func(ctx *gin.Context) {
+		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.begin_registration")
+		defer sp.End()
+
 		var (
-			userName      string
-			displayName   string
-			uniqueUserID  string
-			passDB        definitions.Backend
-			assertOk      bool
-			credentialDBs []WebAuthnCredentialDBFunc
+			userName     string
+			displayName  string
+			uniqueUserID string
 		)
 
 		session := sessions.Default(ctx)
 
 		cookieValue := session.Get(definitions.CookieAuthResult)
 		if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
+			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 			sessionCleaner(ctx)
 
@@ -183,39 +181,6 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			sessionCleaner(ctx)
 
 			return
-		}
-
-		// We expect the same Database for credentials that was used for authenticating a user!
-		if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
-			if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-				switch passDB {
-				case definitions.BackendLDAP:
-					credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-				default:
-					ctx.JSON(http.StatusInternalServerError, errors.ErrUnknownDatabaseBackend.Error())
-					sessionCleaner(ctx)
-
-					return
-				}
-			}
-		}
-
-		// No cookie (default login page), search all configured databases.
-		if passDB == definitions.BackendUnknown {
-			for _, backendType := range deps.Cfg.GetServer().GetBackends() {
-				switch backendType.Get() {
-				case definitions.BackendCache:
-					credentialDBs = append(credentialDBs, nil)
-				case definitions.BackendLDAP:
-					credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-				// TODO: Add more databases
-				default:
-					ctx.JSON(http.StatusInternalServerError, errors.ErrUnknownDatabaseBackend.Error())
-					sessionCleaner(ctx)
-
-					return
-				}
-			}
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
@@ -275,21 +240,27 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		// Return the options generated
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
 		ctx.JSON(http.StatusOK, options)
 	}
 }
 
 // FinishRegistration Page: '/2fa/v1/webauthn/register/finish'
 func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
+	tracer := monittrace.New("nauthilus/core/webauthn")
+
 	return func(ctx *gin.Context) {
+		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.finish_registration")
+		defer sp.End()
+
 		var (
-			userName      string
-			uniqueUserID  string
-			displayName   string
-			sessionData   *webauthn.SessionData
-			passDB        definitions.Backend
-			assertOk      bool
-			credentialDBs []WebAuthnCredentialDBFunc
+			userName     string
+			uniqueUserID string
+			displayName  string
+			sessionData  *webauthn.SessionData
+			passDB       definitions.Backend
+			backendName  string
+			assertOk     bool
 		)
 
 		session := sessions.Default(ctx)
@@ -298,6 +269,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		cookieValue := session.Get(definitions.CookieAuthResult)
 		if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
+			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 
 			return
@@ -378,32 +350,8 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		// We expect the same Database for credentials that was used for authenticating a user!
 		if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
 			if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-				switch passDB {
-				case definitions.BackendLDAP:
-					credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-				default:
-					ctx.JSON(http.StatusInternalServerError, errors.ErrUnknownDatabaseBackend.Error())
-					sessionCleaner(ctx)
-
-					return
-				}
-			}
-		}
-
-		// No cookie (default login page), search all configured databases.
-		if passDB == definitions.BackendUnknown {
-			for _, backendType := range deps.Cfg.GetServer().GetBackends() {
-				switch backendType.Get() {
-				case definitions.BackendCache:
-					credentialDBs = append(credentialDBs, nil)
-				case definitions.BackendLDAP:
-					credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-				// TODO: Add more databases
-				default:
-					ctx.JSON(http.StatusInternalServerError, errors.ErrUnknownDatabaseBackend.Error())
-					sessionCleaner(ctx)
-
-					return
+				if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
+					backendName, _ = cookieName.(string)
 				}
 			}
 		}
@@ -434,6 +382,197 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		auth.(*AuthState).updateUser(user)
 
+		// Persist to backend if possible
+		if passDB != definitions.BackendUnknown {
+			if mgr := auth.(*AuthState).GetBackendManager(passDB, backendName); mgr != nil {
+				if err = mgr.SaveWebAuthnCredential(auth.(*AuthState), credential); err != nil {
+					level.Error(deps.Logger).Log(
+						definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+						definitions.LogKeyMsg, "Failed to persist WebAuthn credential to backend",
+						definitions.LogKeyError, err,
+					)
+				}
+			}
+		}
+
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
 		ctx.JSON(http.StatusOK, "Registration success")
+	}
+}
+
+// LoginWebAuthnBegin Page: '/login/webauthn/begin'
+func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
+	tracer := monittrace.New("nauthilus/core/webauthn")
+
+	return func(ctx *gin.Context) {
+		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_begin")
+		defer sp.End()
+
+		var (
+			userName string
+		)
+
+		session := sessions.Default(ctx)
+		cookieValue := session.Get(definitions.CookieUsername)
+		if cookieValue != nil {
+			if value, assertOkay := cookieValue.(string); assertOkay {
+				userName = value
+			}
+		}
+
+		if userName == "" {
+			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
+
+			return
+		}
+
+		auth := NewAuthStateFromContextWithDeps(ctx, deps)
+		// For login, we don't have uniqueUserID yet if we just started the MFA flow.
+		// However, getUser tries to find it.
+		user, err := auth.(*AuthState).getUser(userName, "", "")
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		if user == nil || len(user.Credentials) == 0 {
+			ctx.JSON(http.StatusBadRequest, "No WebAuthn credentials found")
+
+			return
+		}
+
+		options, sessionData, err := webAuthn.BeginLogin(user)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		sessionDataJSON, err := jsonIter.Marshal(*sessionData)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		session.Set(definitions.CookieRegistration, sessionDataJSON)
+		if err = session.Save(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		ctx.JSON(http.StatusOK, options)
+	}
+}
+
+// LoginWebAuthnFinish Page: '/login/webauthn/finish'
+func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
+	tracer := monittrace.New("nauthilus/core/webauthn")
+
+	return func(ctx *gin.Context) {
+		_, sp := tracer.Start(ctx.Request.Context(), "webauthn.login_finish")
+		defer sp.End()
+
+		var (
+			userName    string
+			sessionData *webauthn.SessionData
+		)
+
+		session := sessions.Default(ctx)
+		cookieValue := session.Get(definitions.CookieUsername)
+		if cookieValue != nil {
+			if value, assertOkay := cookieValue.(string); assertOkay {
+				userName = value
+			}
+		}
+
+		if userName == "" {
+			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
+
+			return
+		}
+
+		cookieValue = session.Get(definitions.CookieRegistration)
+		if cookieValue != nil {
+			if value, assertOkay := cookieValue.([]byte); assertOkay {
+				sessionData = &webauthn.SessionData{}
+				if err := jsonIter.Unmarshal(value, sessionData); err != nil {
+					ctx.JSON(http.StatusInternalServerError, err.Error())
+
+					return
+				}
+			}
+		}
+
+		if sessionData == nil {
+			ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData.Error())
+
+			return
+		}
+
+		auth := NewAuthStateFromContextWithDeps(ctx, deps)
+		user, err := auth.(*AuthState).getUser(userName, "", "")
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		if user == nil {
+			ctx.JSON(http.StatusBadRequest, "User not found")
+
+			return
+		}
+
+		credential, err := webAuthn.FinishLogin(user, *sessionData, ctx.Request)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, err.Error())
+
+			return
+		}
+
+		// Update sign count if necessary (the library handles it in the credential object)
+		// We should persist the updated sign count to the backend.
+		existingCredentials, err := auth.GetWebAuthnCredentials()
+		if err == nil {
+			var oldCredential *webauthn.Credential
+			for _, cred := range existingCredentials {
+				if bytes.Equal(cred.ID, credential.ID) {
+					oldCredential = &cred
+					break
+				}
+			}
+
+			if oldCredential != nil {
+				// Update the credential in the backend
+				_ = auth.UpdateWebAuthnCredential(oldCredential, credential)
+			}
+		}
+
+		// Success!
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
+
+		// Set AuthResult to OK if it was Fail (delayed response)
+		authResult := session.Get(definitions.CookieAuthResult)
+		if authResult != nil && definitions.AuthResult(authResult.(uint8)) == definitions.AuthResultFail {
+			session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
+		}
+
+		// Important: store user info for next steps
+		session.Set(definitions.CookieAccount, user.Name)
+		session.Set(definitions.CookieUniqueUserID, user.Id)
+		session.Set(definitions.CookieDisplayName, user.DisplayName)
+		session.Set(definitions.CookieSubject, user.Id)
+
+		session.Delete(definitions.CookieRegistration)
+		if err = session.Save(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		ctx.JSON(http.StatusOK, "Login success")
 	}
 }

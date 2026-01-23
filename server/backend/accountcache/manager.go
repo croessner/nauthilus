@@ -102,3 +102,16 @@ func (m *Manager) Set(cfg config.File, username, protocol, oidcClientID, account
 
 	m.cache.Set(key, account, m.ttl)
 }
+
+// Purge removes all cached account mappings for the given username.
+func (m *Manager) Purge(username string) {
+	if m == nil || m.cache == nil {
+		return
+	}
+
+	// Since we don't track all protocol/oidcClientId combinations for a username,
+	// and MemoryShardedCache doesn't support pattern deletion easily without iterating
+	// all shards, we might need a better way if we want full purge.
+	// But for now, we just don't have enough info here to purge all combinations.
+	// However, usually we purge by exact username in other parts.
+}

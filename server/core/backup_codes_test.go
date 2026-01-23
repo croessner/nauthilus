@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,10 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !hydra
-// +build !hydra
-
 package core
 
-// InitWebAuthn is a no-op in non-hydra builds.
-func (DefaultBootstrap) InitWebAuthn() error { return nil }
+import "testing"
+
+func TestGenerateBackupCodes(t *testing.T) {
+	recovery, err := GenerateBackupCodes()
+	if err != nil {
+		t.Fatalf("GenerateBackupCodes failed: %v", err)
+	}
+
+	codes := recovery.GetCodes()
+	if len(codes) != DefaultNumberOfBackupCodes {
+		t.Errorf("Expected %d codes, got %d", DefaultNumberOfBackupCodes, len(codes))
+	}
+
+	for _, code := range codes {
+		if len(code) != DefaultBackupCodeLength {
+			t.Errorf("Expected code length %d, got %d", DefaultBackupCodeLength, len(code))
+		}
+	}
+}

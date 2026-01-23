@@ -16,6 +16,7 @@
 package backend
 
 import (
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -25,7 +26,8 @@ type User struct {
 	Name        string `redis:"name"`
 	DisplayName string `redis:"display_name"`
 
-	Credentials []webauthn.Credential `redis:"credentials"`
+	Credentials []webauthn.Credential   `redis:"credentials"`
+	Attributes  bktype.AttributeMapping `redis:"-"`
 }
 
 // NewUser creates and returns a new User

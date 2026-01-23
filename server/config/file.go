@@ -336,6 +336,9 @@ type File interface {
 
 	// GetLDAP returns the LDAPSection object containing configuration and search definitions for LDAP operations.
 	GetLDAP() *LDAPSection
+
+	// GetIdP returns the IdPSection object containing configuration for the internal Identity Provider.
+	GetIdP() *IdPSection
 }
 
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
@@ -350,6 +353,7 @@ type FileSettings struct {
 	Lua                     *LuaSection              `mapstructure:"lua" validate:"omitempty"`
 	LDAP                    *LDAPSection             `mapstructure:"ldap" validate:"omitempty"`
 	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" validate:"omitempty"`
+	IdP                     *IdPSection              `mapstructure:"idp" validate:"omitempty"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex
 }

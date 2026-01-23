@@ -217,7 +217,8 @@ var (
 // misc.
 
 var (
-	ErrInvalidRange = errors.New("invalid range")
+	ErrNotImplemented = errors.New("not implemented yet")
+	ErrInvalidRange   = errors.New("invalid range")
 )
 
 // connection.

@@ -34,11 +34,13 @@ import (
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	handlerhydra "github.com/croessner/nauthilus/server/handler/frontend/hydra"
+	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
 	handlernotify "github.com/croessner/nauthilus/server/handler/frontend/notify"
 	handlertwofa "github.com/croessner/nauthilus/server/handler/frontend/twofa"
 	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
 	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
+	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
@@ -400,7 +402,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	// Build frontend/backchannel setup callbacks to avoid core->handler import cycles
 	var setupHealth func(*gin.Engine)
 	var setupMetrics func(*gin.Engine)
-	var setupHydra, setup2FA, setupWebAuthn, setupNotify func(*gin.Engine)
+	var setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP func(*gin.Engine)
 	var setupBackchannel func(*gin.Engine)
 
 	// Health endpoint (always register)
@@ -441,6 +443,29 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 			deps.Redis = store.redisClient
 			handlernotify.New(sessStore, deps).Register(e)
 		}
+
+		if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
+			setupIdP = func(e *gin.Engine) {
+				deps.Env = env
+				deps.Redis = store.redisClient
+				nauthilusIdP := idp.NewNauthilusIdP(deps)
+
+				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
+					frontendHandler := handleridp.NewFrontendHandler(deps)
+					frontendHandler.Register(e)
+				}
+
+				if cfg.GetIdP().OIDC.Enabled {
+					oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIdP)
+					oidcHandler.Register(e)
+				}
+
+				if cfg.GetIdP().SAML2.Enabled {
+					samlHandler := handleridp.NewSAMLHandler(deps, nauthilusIdP)
+					samlHandler.Register(e)
+				}
+			}
+		}
 	}
 
 	// Backchannel API
@@ -457,7 +482,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		Redis:  store.redisClient,
 	})
 
-	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel, signals)
+	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP, setupBackchannel, signals)
 
 	return nil
 }
