@@ -218,27 +218,27 @@ func (s *DefaultServices) NotifyGETHandler() gin.HandlerFunc {
 
 // LoginGET2FAHandler handles GET requests for the 2FA registration page, managing session state and TOTP page display logic.
 func (s *DefaultServices) LoginGET2FAHandler() gin.HandlerFunc {
-	return core.LoginGET2FAHandler(s.deps.Auth())
+	return core.NewNativeIdPHandlers(s.deps.Auth()).LoginGET2FA
 }
 
 // LoginPOST2FAHandler handles POST requests for the '/2fa/v1/register/post' endpoint, managing TOTP-based 2FA processing.
 func (s *DefaultServices) LoginPOST2FAHandler() gin.HandlerFunc {
-	return core.LoginPOST2FAHandler(s.deps.Auth())
+	return core.NewNativeIdPHandlers(s.deps.Auth()).LoginPOST2FA
 }
 
 // Register2FAHomeHandler serves as the handler for the '/2fa/v1/register/home' endpoint, managing TOTP and WebAuthn setups.
 func (s *DefaultServices) Register2FAHomeHandler() gin.HandlerFunc {
-	return core.Register2FAHomeHandler(s.deps.Auth())
+	return core.NewNativeIdPHandlers(s.deps.Auth()).Register2FAHome
 }
 
 // RegisterTotpGETHandler serves the TOTP registration page, handles session validation and CSRF protection.
 func (s *DefaultServices) RegisterTotpGETHandler() gin.HandlerFunc {
-	return core.RegisterTotpGETHandler(s.deps.Auth())
+	return core.NewNativeIdPHandlers(s.deps.Auth()).RegisterTotpGET
 }
 
 // RegisterTotpPOSTHandler handles POST requests for TOTP registration, validates the TOTP code, and completes the registration.
 func (s *DefaultServices) RegisterTotpPOSTHandler() gin.HandlerFunc {
-	return core.RegisterTotpPOSTHandler(s.deps.Auth())
+	return core.NewNativeIdPHandlers(s.deps.Auth()).RegisterTotpPOST
 }
 
 // WebAuthn

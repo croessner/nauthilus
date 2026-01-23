@@ -44,3 +44,11 @@ type HydraHandlers struct {
 func NewHydraHandlers(deps AuthDeps) *HydraHandlers {
 	return &HydraHandlers{deps: deps}
 }
+
+type NativeIdPHandlers struct {
+	deps AuthDeps
+}
+
+func NewNativeIdPHandlers(deps AuthDeps) *NativeIdPHandlers {
+	return &NativeIdPHandlers{deps: deps}
+}
