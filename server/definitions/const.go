@@ -66,6 +66,9 @@ const (
 
 	// CookieHome marks that the user reached the 2FA home page in the flow.
 	CookieHome = "home"
+
+	// CookieOIDCClients stores a list of OIDC client IDs the user is logged into.
+	CookieOIDCClients = "oidc_clients"
 )
 
 // SingleflightWaitCap defines the maximum time a follower waits for an in-process

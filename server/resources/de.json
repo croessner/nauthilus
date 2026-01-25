@@ -73,5 +73,7 @@
   "Close": "Schließen",
   "Please enter your 2FA code": "Bitte geben Sie Ihren 2FA-Code ein",
   "Please use your security key to login": "Bitte nutzen Sie Ihren Sicherheitsschlüssel zur Anmeldung",
-  "Completing login...": "Anmeldung wird abgeschlossen..."
+  "Completing login...": "Anmeldung wird abgeschlossen...",
+  "Logging out from all applications...": "Sie werden von allen Anwendungen abgemeldet...",
+  "Please wait while the logout process is completed.": "Bitte warten Sie, während der Abmeldevorgang abgeschlossen wird."
 }

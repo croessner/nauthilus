@@ -1,0 +1,30 @@
+{{ define "content" }}
+<div class="flex justify-center items-center mt-10">
+    <div class="card w-96 bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title justify-center text-2xl mb-4">{{ .Title }}</h2>
+            <p class="text-center mb-6">{{ .LoggingOutFromAllApplications }}</p>
+
+            <div class="hidden" id="logout-frames">
+                {{ range .FrontChannelLogoutURIs }}
+                <iframe src="{{ . }}" style="display:none; width:0; height:0; border:0;"></iframe>
+                {{ end }}
+            </div>
+
+            <div class="flex flex-col items-center">
+                <span class="loading loading-spinner loading-lg text-primary mb-4"></span>
+                <p class="text-sm opacity-70">{{ .PleaseWaitWhileLogoutProcessIsCompleted }}</p>
+            </div>
+
+            <script>
+                // Nach einer kurzen Verzögerung weiterleiten, damit die iFrames laden können
+                setTimeout(function () {
+                    window.location.href = "/idp/login";
+                }, 2000);
+            </script>
+        </div>
+    </div>
+</div>
+{{ end }}
+
+{{ template "idp_base.html" . }}

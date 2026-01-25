@@ -29,6 +29,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -88,6 +89,21 @@ func (n *NauthilusIdP) IsDelayedResponse(clientID string, samlEntityID string) b
 // ValidateRedirectURI checks if the given redirect URI is valid for the client.
 func (n *NauthilusIdP) ValidateRedirectURI(client *config.OIDCClient, redirectURI string) bool {
 	for _, uri := range client.RedirectURIs {
+		if uri == redirectURI {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ValidatePostLogoutRedirectURI checks if the given post-logout redirect URI is valid for the client.
+func (n *NauthilusIdP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, redirectURI string) bool {
+	if redirectURI == "" {
+		return true
+	}
+
+	for _, uri := range client.PostLogoutRedirectURIs {
 		if uri == redirectURI {
 			return true
 		}
@@ -169,6 +185,40 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	return idTokenString, accessTokenString, nil
+}
+
+// IssueLogoutToken generates a logout token for the given client and user.
+func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, userID string) (string, error) {
+	_, sp := n.tracer.Start(ctx, "idp.issue_logout_token",
+		attribute.String("client_id", clientID),
+		attribute.String("user_id", userID),
+	)
+	defer sp.End()
+
+	signingKey := n.deps.Cfg.GetIdP().OIDC.SigningKey
+	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
+
+	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
+	if err != nil {
+		return "", err
+	}
+
+	claims := jwt.MapClaims{
+		"iss": issuer,
+		"sub": userID,
+		"aud": clientID,
+		"iat": time.Now().Unix(),
+		"jti": ksuid.New().String(),
+		"events": map[string]any{
+			"http://schemas.openid.net/event/backchannel-logout": map[string]any{},
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+
+	token.Header["kid"] = "default"
+
+	return token.SignedString(key)
 }
 
 // ValidateToken parses and validates a signed JWT token.

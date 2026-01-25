@@ -54,14 +54,18 @@ func (o *OIDCConfig) String() string {
 
 // OIDCClient represents an OIDC client configuration.
 type OIDCClient struct {
-	ClientID        string        `mapstructure:"client_id" validate:"required"`
-	ClientSecret    string        `mapstructure:"client_secret" validate:"required"`
-	RedirectURIs    []string      `mapstructure:"redirect_uris" validate:"required,gt=0"`
-	Scopes          []string      `mapstructure:"scopes"`
-	SkipConsent     bool          `mapstructure:"skip_consent"`
-	DelayedResponse bool          `mapstructure:"delayed_response"`
-	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
-	Claims          IdTokenClaims `mapstructure:"claims"`
+	ClientID                          string        `mapstructure:"client_id" validate:"required"`
+	ClientSecret                      string        `mapstructure:"client_secret" validate:"required"`
+	RedirectURIs                      []string      `mapstructure:"redirect_uris" validate:"required,gt=0"`
+	Scopes                            []string      `mapstructure:"scopes"`
+	SkipConsent                       bool          `mapstructure:"skip_consent"`
+	DelayedResponse                   bool          `mapstructure:"delayed_response"`
+	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
+	Claims                            IdTokenClaims `mapstructure:"claims"`
+	PostLogoutRedirectURIs            []string      `mapstructure:"post_logout_redirect_uris"`
+	BackChannelLogoutURI              string        `mapstructure:"backchannel_logout_uri"`
+	FrontChannelLogoutURI             string        `mapstructure:"frontchannel_logout_uri"`
+	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this client.

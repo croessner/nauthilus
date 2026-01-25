@@ -71,5 +71,7 @@
   "Close": "Close",
   "Please enter your 2FA code": "Please enter your 2FA code",
   "Please use your security key to login": "Please use your security key to login",
-  "Completing login...": "Completing login..."
+  "Completing login...": "Completing login...",
+  "Logging out from all applications...": "Logging out from all applications...",
+  "Please wait while the logout process is completed.": "Please wait while the logout process is completed."
 }

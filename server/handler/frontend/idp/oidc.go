@@ -16,6 +16,7 @@
 package idp
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"math/big"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
@@ -70,6 +72,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.POST("/oidc/token", h.Token)
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.GET("/oidc/jwks", h.JWKS)
+	router.GET("/oidc/logout", sessionMW, h.Logout)
 	router.GET("/oidc/consent", sessionMW, i18nMW, h.ConsentGET)
 	router.GET("/oidc/consent/:languageTag", sessionMW, i18nMW, h.ConsentGET)
 	router.POST("/oidc/consent", sessionMW, i18nMW, h.ConsentPOST)
@@ -85,6 +88,11 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 		"token_endpoint":                        issuer + "/oidc/token",
 		"userinfo_endpoint":                     issuer + "/oidc/userinfo",
 		"jwks_uri":                              issuer + "/oidc/jwks",
+		"end_session_endpoint":                  issuer + "/oidc/logout",
+		"frontchannel_logout_supported":         true,
+		"frontchannel_logout_session_supported": false,
+		"backchannel_logout_supported":          true,
+		"backchannel_logout_session_supported":  false,
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
@@ -209,6 +217,8 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
+
+	h.addClientToSession(session, clientID)
 
 	// Redirect back to client
 	target := fmt.Sprintf("%s?code=%s", redirectURI, code)
@@ -431,5 +441,168 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 
 	// Redirect back to client
 	target := fmt.Sprintf("%s?code=%s&state=%s", session.RedirectURI, code, state)
+
+	h.addClientToSession(sessions.Default(ctx), session.ClientID)
+
 	ctx.Redirect(http.StatusFound, target)
+}
+
+func (h *OIDCHandler) addClientToSession(session sessions.Session, clientID string) {
+	clientsRaw := session.Get(definitions.CookieOIDCClients)
+
+	var clients []string
+
+	if clientsRaw != nil {
+		clients = strings.Split(clientsRaw.(string), ",")
+	}
+
+	for _, c := range clients {
+		if c == clientID {
+			return
+		}
+	}
+
+	clients = append(clients, clientID)
+
+	session.Set(definitions.CookieOIDCClients, strings.Join(clients, ","))
+
+	_ = session.Save()
+}
+
+// Logout handles the OIDC logout request.
+func (h *OIDCHandler) Logout(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.logout")
+	defer sp.End()
+
+	idTokenHint := ctx.Query("id_token_hint")
+	postLogoutRedirectURI := ctx.Query("post_logout_redirect_uri")
+	state := ctx.Query("state")
+
+	session := sessions.Default(ctx)
+	account := session.Get(definitions.CookieAccount)
+
+	userID := ""
+	if account != nil {
+		userID = account.(string)
+	}
+
+	// Validate id_token_hint if provided
+	var client *config.OIDCClient
+
+	if idTokenHint != "" {
+		claims, err := h.idp.ValidateToken(ctx.Request.Context(), idTokenHint)
+		if err == nil {
+			if cid, ok := claims["aud"].(string); ok {
+				client, _ = h.idp.FindClient(cid)
+			}
+
+			if userID == "" {
+				if sub, ok := claims["sub"].(string); ok {
+					userID = sub
+				}
+			}
+		}
+	}
+
+	// Get clients to logout from
+	clientsRaw := session.Get(definitions.CookieOIDCClients)
+
+	var clientIDs []string
+
+	if clientsRaw != nil {
+		clientIDs = strings.Split(clientsRaw.(string), ",")
+	}
+
+	var frontChannelURIs []string
+
+	for _, cid := range clientIDs {
+		c, ok := h.idp.FindClient(cid)
+		if !ok {
+			continue
+		}
+
+		// Back-channel logout
+		if c.BackChannelLogoutURI != "" && userID != "" {
+			go h.doBackChannelLogout(cid, userID, c.BackChannelLogoutURI)
+		}
+
+		// Front-channel logout
+		if c.FrontChannelLogoutURI != "" {
+			uri := c.FrontChannelLogoutURI
+			// In a real implementation, we could add sid here if required
+			frontChannelURIs = append(frontChannelURIs, uri)
+		}
+	}
+
+	// Redirect or show logout page
+	if client != nil && postLogoutRedirectURI != "" {
+		if h.idp.ValidatePostLogoutRedirectURI(client, postLogoutRedirectURI) {
+			target := postLogoutRedirectURI
+
+			if state != "" {
+				if strings.Contains(target, "?") {
+					target += "&state=" + url.QueryEscape(state)
+				} else {
+					target += "?state=" + url.QueryEscape(state)
+				}
+			}
+
+			session.Clear()
+
+			_ = session.Save()
+
+			ctx.Redirect(http.StatusFound, target)
+
+			return
+		}
+	}
+
+	if len(frontChannelURIs) > 0 {
+		data := BasePageData(ctx, h.deps.Cfg)
+		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
+		data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
+		data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
+		data["FrontChannelLogoutURIs"] = frontChannelURIs
+
+		session.Clear()
+
+		_ = session.Save()
+
+		ctx.HTML(http.StatusOK, "idp_logout_frames.html", data)
+
+		return
+	}
+
+	session.Clear()
+
+	_ = session.Save()
+
+	ctx.Redirect(http.StatusFound, "/idp/login")
+}
+
+func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	token, err := h.idp.IssueLogoutToken(ctx, clientID, userID)
+	if err != nil {
+		return
+	}
+
+	form := url.Values{}
+	form.Set("logout_token", token)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, logoutURI, strings.NewReader(form.Encode()))
+	if err != nil {
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+
+	defer resp.Body.Close()
 }

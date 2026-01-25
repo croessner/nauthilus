@@ -23,7 +23,7 @@ fully integrated into the Nauthilus core, leveraging existing authentication and
 - **`server/idp/`**: The "Brain" of the IdP. Defines the `IdentityProvider` interface and implements the `NauthilusIdP`
   which orchestrates authentication and token issuance.
 - **`server/handler/frontend/idp/`**: The "Face" and "Voice".
-    - `oidc.go`: Implements the OpenID Connect 1.0 specification (Discovery, Authorize, Token, UserInfo, JWKS).
+    - `oidc.go`: Implements the OpenID Connect 1.0 specification (Discovery, Authorize, Token, UserInfo, JWKS, Logout).
     - `saml.go`: Implements the SAML 2.0 Identity Provider logic (Metadata, SSO).
     - `frontend.go`: Manages the web-based flows (Login, Consent, 2FA Portal).
 - **`server/idp/redis_storage.go`**: The "Short-term Memory". Handles volatile state like OIDC codes and session data in
@@ -99,7 +99,27 @@ sequenceDiagram
     H -->> B: 200 OK (JSON Tokens)
 ```
 
-### 3.2 SAML 2.0 SSO Flow (Redirect/POST Binding)
+### 3.3 OIDC Logout (Front-channel and Back-channel)
+
+Nauthilus supports both Front-channel and Back-channel logout to ensure that users are logged out from all Relying
+Parties (RPs) when they end their session at the IdP.
+
+#### Signal Flow
+
+1. **Logout Initiation**: The user or an RP redirects the browser to `/idp/oidc/logout`.
+2. **Validation**: If an `id_token_hint` and `post_logout_redirect_uri` are provided, the IdP validates them against the
+   client configuration.
+3. **Session Identification**: The IdP uses a session cookie (`oidc_clients`) to track which RPs the user has logged
+   into during the current session.
+4. **Back-channel Logout**: For all RPs that have a `backchannel_logout_uri` configured, the IdP asynchronously sends a
+   POST request with a signed `logout_token` (JWT).
+5. **Front-channel Logout**: If any RPs have a `frontchannel_logout_uri`, the IdP renders a page
+   (`idp_logout_frames.html`) containing hidden iFrames for each RP. This allows the browser to trigger logout at the
+   RPs directly.
+6. **Local Logout**: The IdP clears the local user session.
+7. **Redirection**: Finally, the user is redirected to the `post_logout_redirect_uri` or back to the login page.
+
+### 3.4 SAML 2.0 SSO Flow (Redirect/POST Binding)
 
 Nauthilus supports the Identity Provider initiated and Service Provider initiated SSO.
 

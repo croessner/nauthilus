@@ -84,6 +84,29 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.False(t, idp.ValidateRedirectURI(client, "http://malicious.com"))
 	})
 
+	t.Run("ValidatePostLogoutRedirectURI", func(t *testing.T) {
+		client := &config.OIDCClient{
+			PostLogoutRedirectURIs: []string{"https://app.com/logout-cb"},
+		}
+		assert.True(t, idp.ValidatePostLogoutRedirectURI(client, "https://app.com/logout-cb"))
+		assert.True(t, idp.ValidatePostLogoutRedirectURI(client, ""))
+		assert.False(t, idp.ValidatePostLogoutRedirectURI(client, "https://evil.com"))
+	})
+
+	t.Run("IssueLogoutToken", func(t *testing.T) {
+		token, err := idp.IssueLogoutToken(ctx, "client1", "user123")
+		assert.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		claims, err := idp.ValidateToken(ctx, token)
+		assert.NoError(t, err)
+		assert.Equal(t, "user123", claims["sub"])
+		assert.Equal(t, "client1", claims["aud"])
+		events, ok := claims["events"].(map[string]any)
+		assert.True(t, ok)
+		assert.Contains(t, events, "http://schemas.openid.net/event/backchannel-logout")
+	})
+
 	t.Run("IssueAndValidateToken", func(t *testing.T) {
 		session := &OIDCSession{
 			ClientID: "client1",
