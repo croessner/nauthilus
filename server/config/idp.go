@@ -17,6 +17,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -38,10 +39,11 @@ func (i *IdPSection) String() string {
 
 // OIDCConfig represents the configuration for OpenID Connect.
 type OIDCConfig struct {
-	Enabled    bool         `mapstructure:"enabled"`
-	Issuer     string       `mapstructure:"issuer" validate:"required_if=Enabled true"`
-	SigningKey string       `mapstructure:"signing_key" validate:"required_if=Enabled true"`
-	Clients    []OIDCClient `mapstructure:"clients"`
+	Enabled        bool         `mapstructure:"enabled"`
+	Issuer         string       `mapstructure:"issuer" validate:"required_if=Enabled true"`
+	SigningKey     string       `mapstructure:"signing_key" validate:"required_if=Enabled true SigningKeyFile ''"`
+	SigningKeyFile string       `mapstructure:"signing_key_file" validate:"required_if=Enabled true SigningKey ''"`
+	Clients        []OIDCClient `mapstructure:"clients"`
 }
 
 func (o *OIDCConfig) String() string {
@@ -50,6 +52,11 @@ func (o *OIDCConfig) String() string {
 	}
 
 	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v}", o.Enabled, o.Issuer, o.Clients)
+}
+
+// GetSigningKey returns the signing key content.
+func (o *OIDCConfig) GetSigningKey() (string, error) {
+	return getContent(o.SigningKey, o.SigningKeyFile)
 }
 
 // OIDCClient represents an OIDC client configuration.
@@ -81,8 +88,10 @@ func (c *OIDCClient) IsDelayedResponse() bool {
 type SAML2Config struct {
 	Enabled          bool                   `mapstructure:"enabled"`
 	EntityID         string                 `mapstructure:"entity_id" validate:"required_if=Enabled true"`
-	Certificate      string                 `mapstructure:"certificate" validate:"required_if=Enabled true"`
-	Key              string                 `mapstructure:"key" validate:"required_if=Enabled true"`
+	Cert             string                 `mapstructure:"cert" validate:"required_if=Enabled true CertFile ''"`
+	CertFile         string                 `mapstructure:"cert_file" validate:"required_if=Enabled true Cert ''"`
+	Key              string                 `mapstructure:"key" validate:"required_if=Enabled true KeyFile ''"`
+	KeyFile          string                 `mapstructure:"key_file" validate:"required_if=Enabled true Key ''"`
 	ServiceProviders []SAML2ServiceProvider `mapstructure:"service_providers"`
 }
 
@@ -92,6 +101,33 @@ func (s *SAML2Config) String() string {
 	}
 
 	return fmt.Sprintf("SAML2Config: {Enabled:%t EntityID:%s ServiceProviders:%+v}", s.Enabled, s.EntityID, s.ServiceProviders)
+}
+
+// GetCert returns the certificate content.
+func (s *SAML2Config) GetCert() (string, error) {
+	return getContent(s.Cert, s.CertFile)
+}
+
+// GetKey returns the key content.
+func (s *SAML2Config) GetKey() (string, error) {
+	return getContent(s.Key, s.KeyFile)
+}
+
+func getContent(raw, path string) (string, error) {
+	if raw != "" {
+		return raw, nil
+	}
+
+	if path != "" {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+
+		return string(content), nil
+	}
+
+	return "", nil
 }
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.

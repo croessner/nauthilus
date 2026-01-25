@@ -121,7 +121,10 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	defer sp.End()
 
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
-	signingKey := n.deps.Cfg.GetIdP().OIDC.SigningKey
+	signingKey, err := n.deps.Cfg.GetIdP().OIDC.GetSigningKey()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get signing key: %w", err)
+	}
 
 	// Load private key
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
@@ -195,7 +198,11 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 	)
 	defer sp.End()
 
-	signingKey := n.deps.Cfg.GetIdP().OIDC.SigningKey
+	signingKey, err := n.deps.Cfg.GetIdP().OIDC.GetSigningKey()
+	if err != nil {
+		return "", err
+	}
+
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
 
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
@@ -226,7 +233,12 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 	_, sp := n.tracer.Start(ctx, "idp.validate_token")
 	defer sp.End()
 
-	signingKey := n.deps.Cfg.GetIdP().OIDC.SigningKey
+	signingKey, err := n.deps.Cfg.GetIdP().OIDC.GetSigningKey()
+	if err != nil {
+		sp.RecordError(err)
+
+		return nil, fmt.Errorf("failed to get signing key: %w", err)
+	}
 
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
 	if err != nil {

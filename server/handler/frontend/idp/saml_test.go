@@ -38,8 +38,8 @@ func (m *mockSAMLCfg) GetIdP() *config.IdPSection {
 			Issuer: "https://auth.example.com",
 		},
 		SAML2: config.SAML2Config{
-			EntityID:    m.entityID,
-			Certificate: m.certificate,
+			EntityID: m.entityID,
+			Cert:     m.certificate,
 		},
 	}
 }

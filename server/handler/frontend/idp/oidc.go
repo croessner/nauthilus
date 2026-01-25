@@ -338,7 +338,13 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 
 // JWKS handles the OIDC JWKS request.
 func (h *OIDCHandler) JWKS(ctx *gin.Context) {
-	signingKey := h.deps.Cfg.GetIdP().OIDC.SigningKey
+	signingKey, err := h.deps.Cfg.GetIdP().OIDC.GetSigningKey()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get signing key"})
+
+		return
+	}
+
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
 
 	if err != nil {

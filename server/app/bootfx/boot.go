@@ -36,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util/keygen"
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
@@ -61,11 +62,40 @@ func ParseFlagsAndPrintVersion(version string) {
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	configFlag := flag.String("config", "", "path to configuration file")
 	configFormatFlag := flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
+	genOIDCKey := flag.Bool("gen-oidc-key", false, "generate a new RSA key for OIDC signing")
+	genSAMLCert := flag.String("gen-saml-cert", "", "generate a self-signed certificate for SAML (provide common name)")
+	keyBits := flag.Int("key-bits", 4096, "bits for the generated RSA key")
+	certYears := flag.Int("cert-years", 10, "validity in years for the generated certificate")
 
 	flag.Parse()
 
 	if *versionFlag {
 		fmt.Println("Version: ", version)
+		os.Exit(0)
+	}
+
+	if *genOIDCKey {
+		key, err := keygen.GenerateRSAKey(*keyBits)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to generate OIDC key: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println(key)
+		os.Exit(0)
+	}
+
+	if *genSAMLCert != "" {
+		cert, key, err := keygen.GenerateSelfSignedCert(*genSAMLCert, *keyBits, *certYears)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to generate SAML certificate: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("Certificate:")
+		fmt.Println(cert)
+		fmt.Println("Key:")
+		fmt.Println(key)
 		os.Exit(0)
 	}
 

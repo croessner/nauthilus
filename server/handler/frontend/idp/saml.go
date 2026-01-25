@@ -74,7 +74,13 @@ func (h *SAMLHandler) Metadata(ctx *gin.Context) {
 	issuer := h.deps.Cfg.GetIdP().OIDC.Issuer
 
 	// Clean up certificate for metadata (remove headers and newlines)
-	cert := samlCfg.Certificate
+	cert, err := samlCfg.GetCert()
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Failed to get certificate")
+
+		return
+	}
+
 	cert = strings.ReplaceAll(cert, "-----BEGIN CERTIFICATE-----", "")
 	cert = strings.ReplaceAll(cert, "-----END CERTIFICATE-----", "")
 	cert = strings.ReplaceAll(cert, "\n", "")
