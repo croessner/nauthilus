@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
@@ -45,42 +46,72 @@ import (
 // FrontendHandler handles general IdP frontend pages like login and consent.
 type FrontendHandler struct {
 	deps   *deps.Deps
+	store  sessions.Store
 	tracer monittrace.Tracer
 }
 
 // NewFrontendHandler creates a new FrontendHandler.
-func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
+func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler {
 	return &FrontendHandler{
 		deps:   d,
+		store:  sessStore,
 		tracer: monittrace.New("nauthilus/idp/frontend"),
 	}
 }
 
 // Register adds frontend routes to the router.
 func (h *FrontendHandler) Register(router gin.IRouter) {
+	staticPath := filepath.Clean(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath())
+	assetBase := staticPath
+
+	if filepath.Base(staticPath) == "templates" {
+		assetBase = filepath.Dir(staticPath)
+	}
+
+	router.StaticFile("/favicon.ico", filepath.Join(assetBase, "img", "favicon.ico"))
+	router.Static("/static/css", filepath.Join(assetBase, "css"))
+	router.Static("/static/js", filepath.Join(assetBase, "js"))
+	router.Static("/static/img", filepath.Join(assetBase, "img"))
+	router.Static("/static/fonts", filepath.Join(assetBase, "fonts"))
+
+	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger)
 
-	router.GET("/login", i18nMW, h.Login)
-	router.POST("/login", i18nMW, h.PostLogin)
-	router.GET("/login/totp", i18nMW, h.LoginTOTP)
-	router.POST("/login/totp", i18nMW, h.PostLoginTOTP)
-	router.GET("/login/webauthn", i18nMW, h.LoginWebAuthn)
-	router.GET("/login/webauthn/begin", i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
-	router.POST("/login/webauthn/finish", i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.GET("/login", sessionMW, i18nMW, h.Login)
+	router.GET("/login/:languageTag", sessionMW, i18nMW, h.Login)
+	router.POST("/login", sessionMW, i18nMW, h.PostLogin)
+	router.POST("/login/:languageTag", sessionMW, i18nMW, h.PostLogin)
+	router.GET("/login/totp", sessionMW, i18nMW, h.LoginTOTP)
+	router.GET("/login/totp/:languageTag", sessionMW, i18nMW, h.LoginTOTP)
+	router.POST("/login/totp", sessionMW, i18nMW, h.PostLoginTOTP)
+	router.POST("/login/totp/:languageTag", sessionMW, i18nMW, h.PostLoginTOTP)
+	router.GET("/login/webauthn", sessionMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/:languageTag", sessionMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/begin", sessionMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.GET("/login/webauthn/begin/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.POST("/login/webauthn/finish", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.POST("/login/webauthn/finish/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
 
 	// Auth protected routes
-	authGroup := router.Group("/", h.AuthMiddleware(), i18nMW)
+	authGroup := router.Group("/", sessionMW, h.AuthMiddleware(), i18nMW)
 	authGroup.GET("/2fa/v1/register/home", h.TwoFAHome)
+	authGroup.GET("/2fa/v1/register/home/:languageTag", h.TwoFAHome)
 	authGroup.GET("/2fa/v1/totp/register", h.RegisterTOTP)
+	authGroup.GET("/2fa/v1/totp/register/:languageTag", h.RegisterTOTP)
 	authGroup.POST("/2fa/v1/totp/register", h.PostRegisterTOTP)
+	authGroup.POST("/2fa/v1/totp/register/:languageTag", h.PostRegisterTOTP)
 	authGroup.DELETE("/2fa/v1/totp", h.DeleteTOTP)
 
 	authGroup.GET("/2fa/v1/webauthn/register", h.RegisterWebAuthn)
+	authGroup.GET("/2fa/v1/webauthn/register/:languageTag", h.RegisterWebAuthn)
 	authGroup.GET("/2fa/v1/webauthn/register/begin", core.BeginRegistration(h.deps.Auth()))
+	authGroup.GET("/2fa/v1/webauthn/register/begin/:languageTag", core.BeginRegistration(h.deps.Auth()))
 	authGroup.POST("/2fa/v1/webauthn/register/finish", core.FinishRegistration(h.deps.Auth()))
+	authGroup.POST("/2fa/v1/webauthn/register/finish/:languageTag", core.FinishRegistration(h.deps.Auth()))
 	authGroup.DELETE("/2fa/v1/webauthn", h.DeleteWebAuthn)
 
 	authGroup.POST("/2fa/v1/recovery/generate", h.PostGenerateRecoveryCodes)
+	authGroup.POST("/2fa/v1/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
 }
 
 // AuthMiddleware ensures the user is logged in.
@@ -101,7 +132,12 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 }
 
 func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
-	return BasePageData(ctx, h.deps.Cfg)
+	data := BasePageData(ctx, h.deps.Cfg)
+
+	data["DevMode"] = h.deps.Env.GetDevMode()
+	data["HXRequest"] = ctx.GetHeader("HX-Request") != ""
+
+	return data
 }
 
 // BasePageData returns the common data for all IdP frontend pages.
@@ -153,8 +189,10 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-	data["Login"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-	data["Password"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+	data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+	data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
+	data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 	data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
@@ -231,8 +269,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 		data := h.basePageData(ctx)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-		data["Login"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-		data["Password"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+		data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+		data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
+		data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+		data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
@@ -319,7 +359,7 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	}
 
 	data := h.basePageData(ctx)
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 	data["WebAuthnVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please use your security key to login")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
@@ -346,7 +386,7 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	}
 
 	data := h.basePageData(ctx)
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 	data["TOTPVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your 2FA code")
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
@@ -442,8 +482,10 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 		data := h.basePageData(ctx)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-		data["Login"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-		data["Password"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+		data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+		data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
+		data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+		data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")

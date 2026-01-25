@@ -1,3 +1,8 @@
+{{ if and .DevMode (not .HXRequest) }}
+{{ template "idp_base.html" . }}
+{{ end }}
+
+{{ define "content" }}
 <div class="modal modal-open" id="recovery-modal">
     <div class="modal-box">
         <h3 class="font-bold text-lg">{{ .NewRecoveryCodes }}</h3>
@@ -15,3 +20,8 @@
         </div>
     </div>
 </div>
+{{ end }}
+
+{{ if or (not .DevMode) .HXRequest }}
+{{ template "content" . }}
+{{ end }}

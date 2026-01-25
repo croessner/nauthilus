@@ -1,5 +1,7 @@
 {
-  "Login": "Login",
+  "Login": "Anmelden",
+  "Username": "Benutzername",
+  "2FA Verification": "2FA-Verifizierung",
   "Get further information about this application...": "Mehr über diese Anwendung erfahren...",
   "We'll never share your data with anyone else.": "Ihre Zugangsdaten werden sicher verarbeitet",
   "Please enter your username or email address": "Bitte Benutzername oder E-Mail Adresse eingeben",

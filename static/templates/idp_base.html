@@ -7,8 +7,18 @@
     <link href="/static/css/daisyui.min.css" rel="stylesheet" type="text/css"/>
     <script src="/static/js/tailwind.min.js"></script>
     <script src="/static/js/htmx.min.js"></script>
+    {{ if .DevMode }}
+    <script>
+        htmx.logAll();
+    </script>
+    {{ end }}
 </head>
 <body class="min-h-screen bg-base-200">
+{{ if .DevMode }}
+<div class="bg-warning text-warning-content text-center py-1 text-xs font-bold">
+    DEVELOPER MODE ACTIVE - SESSION COOKIES ARE NOT SECURE
+</div>
+{{ end }}
 <div class="navbar bg-base-100 shadow-lg">
     <div class="flex-1">
         <a class="btn btn-ghost normal-case text-xl" href="/">Nauthilus IdP</a>

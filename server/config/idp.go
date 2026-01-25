@@ -15,10 +15,22 @@
 
 package config
 
+import (
+	"fmt"
+)
+
 // IdPSection represents the configuration for the internal Identity Provider.
 type IdPSection struct {
 	OIDC  OIDCConfig  `mapstructure:"oidc"`
 	SAML2 SAML2Config `mapstructure:"saml2"`
+}
+
+func (i *IdPSection) String() string {
+	if i == nil {
+		return "IdPSection: <nil>"
+	}
+
+	return fmt.Sprintf("IdPSection: {OIDC:%s SAML2:%s}", i.OIDC.String(), i.SAML2.String())
 }
 
 // OIDCConfig represents the configuration for OpenID Connect.
@@ -27,6 +39,14 @@ type OIDCConfig struct {
 	Issuer     string       `mapstructure:"issuer" validate:"required_if=Enabled true"`
 	SigningKey string       `mapstructure:"signing_key" validate:"required_if=Enabled true"`
 	Clients    []OIDCClient `mapstructure:"clients"`
+}
+
+func (o *OIDCConfig) String() string {
+	if o == nil {
+		return "OIDCConfig: <nil>"
+	}
+
+	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v}", o.Enabled, o.Issuer, o.Clients)
 }
 
 // OIDCClient represents an OIDC client configuration.
@@ -56,6 +76,14 @@ type SAML2Config struct {
 	Certificate      string                 `mapstructure:"certificate" validate:"required_if=Enabled true"`
 	Key              string                 `mapstructure:"key" validate:"required_if=Enabled true"`
 	ServiceProviders []SAML2ServiceProvider `mapstructure:"service_providers"`
+}
+
+func (s *SAML2Config) String() string {
+	if s == nil {
+		return "SAML2Config: <nil>"
+	}
+
+	return fmt.Sprintf("SAML2Config: {Enabled:%t EntityID:%s ServiceProviders:%+v}", s.Enabled, s.EntityID, s.ServiceProviders)
 }
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.

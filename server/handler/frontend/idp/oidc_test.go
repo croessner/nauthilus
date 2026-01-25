@@ -79,7 +79,7 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	}
 
 	// idpInstance can be nil for Discovery
-	h := NewOIDCHandler(d, nil)
+	h := NewOIDCHandler(nil, d, nil)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -101,7 +101,7 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 	db, _ := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
 	d := &deps.Deps{Cfg: cfg, Redis: rClient}
-	h := NewOIDCHandler(d, nil)
+	h := NewOIDCHandler(nil, d, nil)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)

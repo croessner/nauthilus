@@ -51,7 +51,7 @@ func TestSAMLHandler_Metadata(t *testing.T) {
 	cfg := &mockSAMLCfg{entityID: entityID, certificate: cert}
 
 	d := &deps.Deps{Cfg: cfg}
-	h := NewSAMLHandler(d, nil)
+	h := NewSAMLHandler(nil, d, nil)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)

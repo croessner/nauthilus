@@ -21,11 +21,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/accountcache"
@@ -81,9 +83,15 @@ func (b DefaultBootstrap) InitSessionStore() sessions.Store {
 		[]byte(b.cfg.GetServer().Frontend.CookieStoreAuthKey),
 		[]byte(b.cfg.GetServer().Frontend.CookieStoreEncKey),
 	)
+
+	secure := true
+	if b.env.GetDevMode() {
+		secure = false
+	}
+
 	store.Options(sessions.Options{
 		Path:     "/",
-		Secure:   true,
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	})
 
@@ -242,6 +250,28 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	}
 
 	if c.cfg.GetServer().Frontend.Enabled {
+		r.SetFuncMap(template.FuncMap{
+			"int": func(v any) int {
+				switch x := v.(type) {
+				case int:
+					return x
+				case int32:
+					return int(x)
+				case int64:
+					return int(x)
+				case float32:
+					return int(x)
+				case float64:
+					return int(x)
+				default:
+					return 0
+				}
+			},
+			"upper": func(s string) string {
+				return strings.ToUpper(s)
+			},
+		})
+
 		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
 		rb := approuter.NewRouter(c.cfg)

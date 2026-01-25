@@ -114,6 +114,10 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 
 // FeatureTLSEncryption checks, if the remote client connection was secured.
 func (a *AuthState) FeatureTLSEncryption(ctx *gin.Context) (triggered bool) {
+	if config.GetEnvironment().GetDevMode() {
+		return
+	}
+
 	if isLocalOrEmptyIP(a.Request.ClientIP) {
 		a.logAddLocalhost(definitions.FeatureTLSEncryption)
 

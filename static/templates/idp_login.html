@@ -21,17 +21,18 @@
 
                 <div class="form-control w-full">
                     <label class="label">
-                        <span class="label-text">{{ .Login }}</span>
+                        <span class="label-text">{{ .UsernameLabel }}</span>
                     </label>
-                    <input autofocus class="input input-bordered w-full" name="username" placeholder="{{ .Login }}"
+                    <input autofocus class="input input-bordered w-full" name="username"
+                           placeholder="{{ .UsernamePlaceholder }}"
                            required type="text"/>
                 </div>
 
                 <div class="form-control w-full mt-4">
                     <label class="label">
-                        <span class="label-text">{{ .Password }}</span>
+                        <span class="label-text">{{ .PasswordLabel }}</span>
                     </label>
-                    <input class="input input-bordered w-full" name="password" placeholder="{{ .Password }}"
+                    <input class="input input-bordered w-full" name="password" placeholder="{{ .PasswordPlaceholder }}"
                            required type="password"/>
                 </div>
 

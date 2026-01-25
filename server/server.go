@@ -417,7 +417,14 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Frontend handlers only if enabled (keeps logic parity)
 	if cfg.GetServer().Frontend.Enabled {
-		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{Cfg: cfg, Logger: logger}).InitSessionStore()
+		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{
+			Cfg:          cfg,
+			Logger:       logger,
+			Env:          env,
+			Redis:        store.redisClient,
+			AccountCache: store.accountCache,
+		}).InitSessionStore()
+
 		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Logger: logger}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
@@ -451,19 +458,29 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 				nauthilusIdP := idp.NewNauthilusIdP(deps)
 
 				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
-					frontendHandler := handleridp.NewFrontendHandler(deps)
+					frontendHandler := handleridp.NewFrontendHandler(sessStore, deps)
 					frontendHandler.Register(e)
 				}
 
 				if cfg.GetIdP().OIDC.Enabled {
-					oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIdP)
+					oidcHandler := handleridp.NewOIDCHandler(sessStore, deps, nauthilusIdP)
 					oidcHandler.Register(e)
 				}
 
 				if cfg.GetIdP().SAML2.Enabled {
-					samlHandler := handleridp.NewSAMLHandler(deps, nauthilusIdP)
+					samlHandler := handleridp.NewSAMLHandler(sessStore, deps, nauthilusIdP)
 					samlHandler.Register(e)
 				}
+			}
+		}
+
+		if env.GetDevMode() {
+			if setupHydra == nil && setupIdP == nil {
+				level.Warn(logger).Log(definitions.LogKeyMsg, "Frontend is enabled, but neither Hydra nor internal IdP (OIDC/SAML2) is enabled. Login routes will not be registered")
+			}
+
+			if !tags.HydraEnabled && len(cfg.GetOauth2().GetClients()) > 0 {
+				level.Warn(logger).Log(definitions.LogKeyMsg, "OAuth2 clients are configured in 'oauth2' section, but Hydra is disabled (build tag 'hydra' missing). These clients are NOT used by the internal IdP. Use 'idp.oidc.clients' for the internal IdP")
 			}
 		}
 	}
@@ -476,10 +493,11 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	}
 
 	app := core.NewDefaultHTTPApp(core.HTTPDeps{
-		Cfg:    cfg,
-		Logger: logger,
-		Env:    env,
-		Redis:  store.redisClient,
+		Cfg:          cfg,
+		Logger:       logger,
+		Env:          env,
+		Redis:        store.redisClient,
+		AccountCache: store.accountCache,
 	})
 
 	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP, setupBackchannel, signals)

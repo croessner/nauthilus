@@ -19,6 +19,9 @@
 package hydra
 
 import (
+	"path/filepath"
+	"strings"
+
 	"github.com/croessner/nauthilus/server/handler/common"
 	"github.com/croessner/nauthilus/server/handler/deps"
 
@@ -39,14 +42,21 @@ func New(store sessions.Store, d *deps.Deps) *Handler {
 }
 
 func (h *Handler) Register(router gin.IRouter) {
+	staticPath := filepath.Clean(h.Deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath())
+	assetBase := staticPath
+
+	if filepath.Base(staticPath) == "templates" {
+		assetBase = filepath.Dir(staticPath)
+	}
+
 	// Static assets (favicon, css, js, img, fonts) for Hydra frontend
 	g := router.Group("/")
 
-	g.StaticFile("/favicon.ico", viper.GetString("html_static_content_path")+"/img/favicon.ico")
-	g.Static("/static/css", viper.GetString("html_static_content_path")+"/css")
-	g.Static("/static/js", viper.GetString("html_static_content_path")+"/js")
-	g.Static("/static/img", viper.GetString("html_static_content_path")+"/img")
-	g.Static("/static/fonts", viper.GetString("html_static_content_path")+"/fonts")
+	g.StaticFile("/favicon.ico", filepath.Join(assetBase, "img", "favicon.ico"))
+	g.Static("/static/css", filepath.Join(assetBase, "css"))
+	g.Static("/static/js", filepath.Join(assetBase, "js"))
+	g.Static("/static/img", filepath.Join(assetBase, "img"))
+	g.Static("/static/fonts", filepath.Join(assetBase, "fonts"))
 
 	// Login page
 	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("login_page"), router, h.Store, h.Deps.Svc.LoginGETHandler(), h.Deps.Svc.LoginPOSTHandler())

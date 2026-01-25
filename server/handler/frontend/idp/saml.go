@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/idp"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,22 +33,26 @@ import (
 type SAMLHandler struct {
 	deps   *deps.Deps
 	idp    *idp.NauthilusIdP
+	store  sessions.Store
 	tracer monittrace.Tracer
 }
 
 // NewSAMLHandler creates a new SAMLHandler.
-func NewSAMLHandler(d *deps.Deps, idp *idp.NauthilusIdP) *SAMLHandler {
+func NewSAMLHandler(sessStore sessions.Store, d *deps.Deps, idp *idp.NauthilusIdP) *SAMLHandler {
 	return &SAMLHandler{
 		deps:   d,
 		idp:    idp,
+		store:  sessStore,
 		tracer: monittrace.New("nauthilus/idp/saml"),
 	}
 }
 
 // Register adds SAML routes to the router.
 func (h *SAMLHandler) Register(router gin.IRouter) {
+	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
+
 	router.GET("/saml/metadata", h.Metadata)
-	router.GET("/saml/sso", h.SSO)
+	router.GET("/saml/sso", sessionMW, h.SSO)
 }
 
 // Metadata returns the SAML IdP metadata.

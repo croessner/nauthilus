@@ -363,6 +363,15 @@ const (
 	// InstanceName is the name of the server instance
 	InstanceName = "nauthilus"
 
+	// LanguageResourcesPath is the default path for language resources.
+	LanguageResourcesPath = "server/resources"
+
+	// HTMLStaticContentPath is the default path for HTML static content.
+	HTMLStaticContentPath = "static/templates"
+
+	// DefaultLanguage is the default language for the application.
+	DefaultLanguage = "en"
+
 	// DNSResolveTimeout is the default DNS resolver timeout.
 	DNSResolveTimeout = 5
 

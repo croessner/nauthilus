@@ -104,7 +104,9 @@ func SetupConfiguration() error {
 	}
 
 	if file.GetServer().Frontend.Enabled {
-		loadLanguageBundles(file)
+		if err = loadLanguageBundles(file); err != nil {
+			return fmt.Errorf("unable to load language bundles: %w", err)
+		}
 	}
 
 	log.SetupLogging(
@@ -213,6 +215,7 @@ func DebugLoadableConfig(cfg config.File, logger *slog.Logger) {
 	debugIfNotNil(definitions.FeatureBackendServersMonitoring, file.GetBackendServerMonitoring())
 	debugIfNotNil(definitions.LogKeyBruteForce, file.GetBruteForce())
 	debugIfNotNil("oauth2", file.GetOauth2())
+	debugIfNotNil("idp", file.GetIdP())
 
 	ldap := file.GetLDAP()
 	if ldap != nil {
@@ -253,20 +256,26 @@ func InitializeBruteForceTolerate(ctx context.Context, cfg config.File, logger *
 	go t.StartHouseKeeping(ctx)
 }
 
-func loadLanguageBundles(cfg config.File) {
+func loadLanguageBundles(cfg config.File) error {
 	core.LangBundle = i18n.NewBundle(language.English)
 
 	core.LangBundle.RegisterUnmarshalFunc("json", json.Unmarshal)
 
-	loadLanguageBundle(cfg, "en")
-	loadLanguageBundle(cfg, "de")
-	loadLanguageBundle(cfg, "fr")
+	for _, lang := range []string{"en", "de", "fr"} {
+		if err := loadLanguageBundle(cfg, lang); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-func loadLanguageBundle(cfg config.File, lang string) {
+func loadLanguageBundle(cfg config.File, lang string) error {
 	if _, err := core.LangBundle.LoadMessageFile(cfg.GetServer().Frontend.GetLanguageResources() + "/" + lang + ".json"); err != nil {
-		panic(err.Error())
+		return err
 	}
+
+	return nil
 }
 
 // setTimeZone configures the process time zone based on the TZ environment variable.

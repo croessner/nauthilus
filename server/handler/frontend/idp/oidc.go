@@ -43,15 +43,17 @@ import (
 type OIDCHandler struct {
 	deps    *deps.Deps
 	idp     *idp.NauthilusIdP
+	store   sessions.Store
 	storage *idp.RedisTokenStorage
 	tracer  monittrace.Tracer
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
-func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIdP) *OIDCHandler {
+func NewOIDCHandler(sessStore sessions.Store, d *deps.Deps, idpInstance *idp.NauthilusIdP) *OIDCHandler {
 	return &OIDCHandler{
 		deps:    d,
 		idp:     idpInstance,
+		store:   sessStore,
 		storage: idp.NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
 		tracer:  monittrace.New("nauthilus/idp/oidc"),
 	}
@@ -59,15 +61,19 @@ func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIdP) *OIDCHandler {
 
 // Register registers the OIDC routes.
 func (h *OIDCHandler) Register(router gin.IRouter) {
+	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger)
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
-	router.GET("/oidc/authorize", i18nMW, h.Authorize)
+	router.GET("/oidc/authorize", sessionMW, i18nMW, h.Authorize)
+	router.GET("/oidc/authorize/:languageTag", sessionMW, i18nMW, h.Authorize)
 	router.POST("/oidc/token", h.Token)
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.GET("/oidc/jwks", h.JWKS)
-	router.GET("/oidc/consent", i18nMW, h.ConsentGET)
-	router.POST("/oidc/consent", i18nMW, h.ConsentPOST)
+	router.GET("/oidc/consent", sessionMW, i18nMW, h.ConsentGET)
+	router.GET("/oidc/consent/:languageTag", sessionMW, i18nMW, h.ConsentGET)
+	router.POST("/oidc/consent", sessionMW, i18nMW, h.ConsentPOST)
+	router.POST("/oidc/consent/:languageTag", sessionMW, i18nMW, h.ConsentPOST)
 }
 
 // Discovery returns the OIDC discovery document.

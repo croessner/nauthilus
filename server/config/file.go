@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -2031,6 +2032,72 @@ func (f *FileSettings) setDefaultPasswordHistory() error {
 	return nil
 }
 
+// setDefaultLanguageResources sets the path to the language resources to a default value if it is not already configured.
+func (f *FileSettings) setDefaultLanguageResources() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.LanguageResources == "" {
+		f.Server.Frontend.LanguageResources = definitions.LanguageResourcesPath
+	}
+
+	return nil
+}
+
+// setDefaultHTMLStaticContentPath sets the path to the HTML static content to a default value if it is not already configured.
+func (f *FileSettings) setDefaultHTMLStaticContentPath() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.HTMLStaticContentPath == "" {
+		f.Server.Frontend.HTMLStaticContentPath = definitions.HTMLStaticContentPath
+	}
+
+	return nil
+}
+
+// setDefaultDefaultLanguage sets the default language to a default value if it is not already configured.
+func (f *FileSettings) setDefaultDefaultLanguage() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.DefaultLanguage == "" {
+		f.Server.Frontend.DefaultLanguage = definitions.DefaultLanguage
+	}
+
+	return nil
+}
+
+// validateFrontend checks if the frontend-related directories exist.
+func (f *FileSettings) validateFrontend() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if !f.Server.Frontend.Enabled {
+		return nil
+	}
+
+	// Check LanguageResources directory
+	if f.Server.Frontend.LanguageResources != "" {
+		if _, err := os.Stat(f.Server.Frontend.LanguageResources); os.IsNotExist(err) {
+			return fmt.Errorf("frontend language resources directory does not exist: %s", f.Server.Frontend.LanguageResources)
+		}
+	}
+
+	// Check HTMLStaticContentPath directory
+	if f.Server.Frontend.HTMLStaticContentPath != "" {
+		if _, err := os.Stat(f.Server.Frontend.HTMLStaticContentPath); os.IsNotExist(err) {
+			return fmt.Errorf("frontend HTML static content directory does not exist: %s", f.Server.Frontend.HTMLStaticContentPath)
+		}
+	}
+
+	return nil
+}
+
 // validate ensures that the FileSettings object is correctly configured by running a series of validation and default-setting functions.
 // Returns an error if any validation function fails, otherwise returns nil.
 func (f *FileSettings) validate() (err error) {
@@ -2050,6 +2117,10 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultHeaders,
 		f.setDefaultMaxConcurrentRequests,
 		f.setDefaultPasswordHistory,
+		f.setDefaultLanguageResources,
+		f.setDefaultHTMLStaticContentPath,
+		f.setDefaultDefaultLanguage,
+		f.validateFrontend,
 	}
 
 	for _, validatorFunc := range validators {
