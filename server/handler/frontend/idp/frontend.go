@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -199,8 +200,37 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 
 	data["CSRFToken"] = "TODO_CSRF"
 	data["PostLoginEndpoint"] = "/login"
-	data["ReturnTo"] = ctx.Query("return_to")
+	returnTo := ctx.Query("return_to")
+	data["ReturnTo"] = returnTo
 	data["HaveError"] = false
+
+	var oidcCID, samlEntityID string
+	if returnTo != "" {
+		if u, err := url.Parse(returnTo); err == nil {
+			oidcCID = u.Query().Get("client_id")
+			samlEntityID = u.Query().Get("entity_id")
+		}
+	}
+
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+	showRememberMe := false
+
+	if oidcCID != "" {
+		if client, ok := idpInstance.FindClient(oidcCID); ok {
+			showRememberMe = client.RememberMeTTL > 0
+		}
+	} else if samlEntityID != "" {
+		if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+			showRememberMe = sp.RememberMeTTL > 0
+		}
+	}
+
+	data["ShowRememberMe"] = showRememberMe
+	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
+	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
 
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 }
@@ -223,6 +253,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	username := ctx.PostForm("username")
 	password := ctx.PostForm("password")
 	returnTo := ctx.PostForm("return_to")
+	rememberMe := ctx.PostForm("remember_me") == "on"
 
 	// Try to extract client_id or saml_entity_id from returnTo
 	var oidcCID, samlEntityID string
@@ -233,6 +264,26 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		}
 	}
 
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+
+	var rememberMeTTL int
+
+	if rememberMe {
+		var ttl time.Duration
+
+		if oidcCID != "" {
+			if client, ok := idpInstance.FindClient(oidcCID); ok {
+				ttl = client.RememberMeTTL
+			}
+		} else if samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+				ttl = sp.RememberMeTTL
+			}
+		}
+
+		rememberMeTTL = int(ttl.Seconds())
+	}
+
 	sp.SetAttributes(
 		attribute.String("username", username),
 		attribute.String("oidc_cid", oidcCID),
@@ -240,7 +291,6 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	)
 
 	// Try to get user to see if MFA is present
-	idpInstance := idp.NewNauthilusIdP(h.deps)
 	user, err := idpInstance.Authenticate(ctx, username, password, oidcCID, samlEntityID)
 
 	if err != nil {
@@ -254,6 +304,11 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 					session := sessions.Default(ctx)
 					session.Set(definitions.CookieUsername, username)
 					session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultFail))
+
+					if rememberMeTTL > 0 {
+						session.Set(definitions.CookieRememberTTL, rememberMeTTL)
+					}
+
 					session.Save()
 
 					if h.hasWebAuthn(user) {
@@ -293,6 +348,11 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		session := sessions.Default(ctx)
 		session.Set(definitions.CookieUsername, username)
 		session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
+
+		if rememberMeTTL > 0 {
+			session.Set(definitions.CookieRememberTTL, rememberMeTTL)
+		}
+
 		session.Save()
 
 		if h.hasWebAuthn(user) {
@@ -309,6 +369,14 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	session.Set(definitions.CookieUniqueUserID, user.Id)
 	session.Set(definitions.CookieDisplayName, user.DisplayName)
 	session.Set(definitions.CookieSubject, user.Id)
+
+	if rememberMeTTL > 0 {
+		session.Options(sessions.Options{
+			MaxAge: rememberMeTTL,
+			Path:   "/",
+		})
+	}
+
 	session.Save()
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
@@ -511,6 +579,15 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	session.Set(definitions.CookieUniqueUserID, user.Id)
 	session.Set(definitions.CookieDisplayName, user.DisplayName)
 	session.Set(definitions.CookieSubject, user.Id)
+
+	if ttlVal := session.Get(definitions.CookieRememberTTL); ttlVal != nil {
+		session.Options(sessions.Options{
+			MaxAge: ttlVal.(int),
+			Path:   "/",
+		})
+		session.Delete(definitions.CookieRememberTTL)
+	}
+
 	session.Delete(definitions.CookieUsername)
 	session.Delete(definitions.CookieAuthResult)
 	session.Save()

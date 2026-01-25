@@ -17,12 +17,15 @@ package config
 
 import (
 	"fmt"
+	"time"
 )
 
 // IdPSection represents the configuration for the internal Identity Provider.
 type IdPSection struct {
-	OIDC  OIDCConfig  `mapstructure:"oidc"`
-	SAML2 SAML2Config `mapstructure:"saml2"`
+	OIDC              OIDCConfig  `mapstructure:"oidc"`
+	SAML2             SAML2Config `mapstructure:"saml2"`
+	TermsOfServiceURL string      `mapstructure:"terms_of_service_url"`
+	PrivacyPolicyURL  string      `mapstructure:"privacy_policy_url"`
 }
 
 func (i *IdPSection) String() string {
@@ -30,7 +33,7 @@ func (i *IdPSection) String() string {
 		return "IdPSection: <nil>"
 	}
 
-	return fmt.Sprintf("IdPSection: {OIDC:%s SAML2:%s}", i.OIDC.String(), i.SAML2.String())
+	return fmt.Sprintf("IdPSection: {OIDC:%s SAML2:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s}", i.OIDC.String(), i.SAML2.String(), i.TermsOfServiceURL, i.PrivacyPolicyURL)
 }
 
 // OIDCConfig represents the configuration for OpenID Connect.
@@ -57,6 +60,7 @@ type OIDCClient struct {
 	Scopes          []string      `mapstructure:"scopes"`
 	SkipConsent     bool          `mapstructure:"skip_consent"`
 	DelayedResponse bool          `mapstructure:"delayed_response"`
+	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
 	Claims          IdTokenClaims `mapstructure:"claims"`
 }
 
@@ -88,10 +92,11 @@ func (s *SAML2Config) String() string {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
-	EntityID        string `mapstructure:"entity_id" validate:"required"`
-	ACSURL          string `mapstructure:"acs_url" validate:"required"`
-	SLOURL          string `mapstructure:"slo_url"`
-	DelayedResponse bool   `mapstructure:"delayed_response"`
+	EntityID        string        `mapstructure:"entity_id" validate:"required"`
+	ACSURL          string        `mapstructure:"acs_url" validate:"required"`
+	SLOURL          string        `mapstructure:"slo_url"`
+	DelayedResponse bool          `mapstructure:"delayed_response"`
+	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this service provider.

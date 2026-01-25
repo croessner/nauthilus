@@ -36,6 +36,15 @@
                            required type="password"/>
                 </div>
 
+                {{ if .ShowRememberMe }}
+                <div class="form-control mt-4">
+                    <label class="label cursor-pointer justify-start gap-4">
+                        <input class="checkbox checkbox-primary" name="remember_me" type="checkbox"/>
+                        <span class="label-text">{{ .RememberMeLabel }}</span>
+                    </label>
+                </div>
+                {{ end }}
+
                 <div class="form-control mt-6">
                     <button class="btn btn-primary" type="submit">{{ .Submit }}</button>
                 </div>
@@ -43,9 +52,20 @@
 
             <div class="divider">{{ .Or }}</div>
 
-            <a class="btn btn-outline" href="/login/webauthn">
+            <a class="btn btn-outline mb-4" href="/login/webauthn">
                 {{ .LoginWithWebAuthn }}
             </a>
+
+            {{ if or .TermsOfServiceURL .PrivacyPolicyURL }}
+            <div class="flex justify-center gap-4 text-xs opacity-70">
+                {{ if .TermsOfServiceURL }}
+                <a class="link link-hover" href="{{ .TermsOfServiceURL }}" target="_blank">{{ .LegalNoticeLabel }}</a>
+                {{ end }}
+                {{ if .PrivacyPolicyURL }}
+                <a class="link link-hover" href="{{ .PrivacyPolicyURL }}" target="_blank">{{ .PrivacyPolicyLabel }}</a>
+                {{ end }}
+            </div>
+            {{ end }}
         </div>
     </div>
 </div>

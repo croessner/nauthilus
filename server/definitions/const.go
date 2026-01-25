@@ -55,6 +55,9 @@ const (
 	// CookieRemember signals a "remember me" option for the session.
 	CookieRemember = "remember"
 
+	// CookieRememberTTL stores the TTL for the "remember me" option.
+	CookieRememberTTL = "remember_ttl"
+
 	// CookieRegistration is used during WebAuthn device registration.
 	CookieRegistration = "webauthn_registration"
 

@@ -566,7 +566,18 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		session.Set(definitions.CookieDisplayName, user.DisplayName)
 		session.Set(definitions.CookieSubject, user.Id)
 
+		if ttlVal := session.Get(definitions.CookieRememberTTL); ttlVal != nil {
+			session.Options(sessions.Options{
+				MaxAge: ttlVal.(int),
+				Path:   "/",
+			})
+			session.Delete(definitions.CookieRememberTTL)
+		}
+
 		session.Delete(definitions.CookieRegistration)
+		session.Delete(definitions.CookieUsername)
+		session.Delete(definitions.CookieAuthResult)
+
 		if err = session.Save(); err != nil {
 			ctx.JSON(http.StatusInternalServerError, err.Error())
 
