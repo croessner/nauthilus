@@ -39,11 +39,12 @@ func (i *IdPSection) String() string {
 
 // OIDCConfig represents the configuration for OpenID Connect.
 type OIDCConfig struct {
-	Enabled        bool         `mapstructure:"enabled"`
-	Issuer         string       `mapstructure:"issuer" validate:"required_if=Enabled true"`
-	SigningKey     string       `mapstructure:"signing_key" validate:"required_if=Enabled true SigningKeyFile ''"`
-	SigningKeyFile string       `mapstructure:"signing_key_file" validate:"required_if=Enabled true SigningKey ''"`
-	Clients        []OIDCClient `mapstructure:"clients"`
+	Enabled        bool                `mapstructure:"enabled"`
+	Issuer         string              `mapstructure:"issuer" validate:"required_if=Enabled true"`
+	SigningKey     string              `mapstructure:"signing_key" validate:"required_if=Enabled true SigningKeyFile ''"`
+	SigningKeyFile string              `mapstructure:"signing_key_file" validate:"required_if=Enabled true SigningKey ''"`
+	Clients        []OIDCClient        `mapstructure:"clients"`
+	CustomScopes   []Oauth2CustomScope `mapstructure:"custom_scopes" validate:"omitempty,dive"`
 }
 
 func (o *OIDCConfig) String() string {
@@ -68,6 +69,8 @@ type OIDCClient struct {
 	SkipConsent                       bool          `mapstructure:"skip_consent"`
 	DelayedResponse                   bool          `mapstructure:"delayed_response"`
 	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
+	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
+	RefreshTokenLifetime              time.Duration `mapstructure:"refresh_token_lifetime"`
 	Claims                            IdTokenClaims `mapstructure:"claims"`
 	PostLogoutRedirectURIs            []string      `mapstructure:"post_logout_redirect_uris"`
 	BackChannelLogoutURI              string        `mapstructure:"backchannel_logout_uri"`

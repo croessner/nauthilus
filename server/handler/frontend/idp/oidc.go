@@ -82,6 +82,12 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 // Discovery returns the OIDC discovery document.
 func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	issuer := h.deps.Cfg.GetIdP().OIDC.Issuer
+	scopesSupported := []string{"openid", "profile", "email", "offline_access"}
+
+	for _, customScope := range h.deps.Cfg.GetIdP().OIDC.CustomScopes {
+		scopesSupported = append(scopesSupported, customScope.Name)
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"issuer":                                issuer,
 		"authorization_endpoint":                issuer + "/oidc/authorize",
@@ -96,7 +102,7 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
-		"scopes_supported":                      []string{"openid", "profile", "email"},
+		"scopes_supported":                      scopesSupported,
 		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
 		"claims_supported":                      []string{"sub", "name", "preferred_username", "email"},
 	})
@@ -171,7 +177,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
-	claims, err := h.idp.GetClaims(user, client)
+	claims, err := h.idp.GetClaims(user, client, strings.Split(scope, " "))
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error mapping claims")
 
@@ -246,7 +252,6 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	)
 
 	grantType := ctx.PostForm("grant_type")
-	code := ctx.PostForm("code")
 	clientID := ctx.PostForm("client_id")
 	clientSecret := ctx.PostForm("client_secret")
 
@@ -264,12 +269,6 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 	sp.SetAttributes(attribute.String("client_id", clientID))
 
-	if grantType != "authorization_code" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_grant_type"})
-
-		return
-	}
-
 	client, ok := h.idp.FindClient(clientID)
 	if !ok || client.ClientSecret != clientSecret {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
@@ -277,23 +276,44 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		return
 	}
 
-	session, err := h.storage.GetSession(ctx.Request.Context(), code)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+	var idToken, accessToken, refreshToken string
+
+	var expiresIn time.Duration
+
+	var err error
+
+	switch grantType {
+	case "authorization_code":
+		code := ctx.PostForm("code")
+
+		session, err := h.storage.GetSession(ctx.Request.Context(), code)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+
+			return
+		}
+
+		// Delete code after one-time use
+		_ = h.storage.DeleteSession(ctx.Request.Context(), code)
+
+		if session.ClientID != clientID {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+
+			return
+		}
+
+		idToken, accessToken, refreshToken, expiresIn, err = h.idp.IssueTokens(ctx.Request.Context(), session)
+
+	case "refresh_token":
+		rt := ctx.PostForm("refresh_token")
+		idToken, accessToken, refreshToken, expiresIn, err = h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
+
+	default:
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_grant_type"})
 
 		return
 	}
 
-	// Delete code after one-time use
-	_ = h.storage.DeleteSession(ctx.Request.Context(), code)
-
-	if session.ClientID != clientID {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
-
-		return
-	}
-
-	idToken, accessToken, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 
@@ -302,12 +322,18 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpTokensIssuedTotal().WithLabelValues("oidc", clientID, grantType).Inc()
 
-	ctx.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"access_token": accessToken,
 		"id_token":     idToken,
 		"token_type":   "Bearer",
-		"expires_in":   3600,
-	})
+		"expires_in":   int(expiresIn.Seconds()),
+	}
+
+	if refreshToken != "" {
+		resp["refresh_token"] = refreshToken
+	}
+
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // UserInfo handles the OIDC userinfo request.

@@ -94,8 +94,18 @@ sequenceDiagram
     R -->> H: sessionData
     H ->> I: IssueTokens(ctx, sessionData)
     I ->> I: Sign JWTs (RS256)
-    I -->> H: {access_token, id_token, expires_in}
+    I -->> H: {access_token, id_token, refresh_token, expires_in}
     H ->> R: DeleteSession(code)
+    H -->> B: 200 OK (JSON Tokens)
+    Note over B, A: Refresh Token Flow
+    B ->> H: POST /idp/oidc/token (grant_type=refresh_token, refresh_token=...)
+    H ->> R: GetRefreshToken(rt)
+    R -->> H: sessionData
+    H ->> I: ExchangeRefreshToken(ctx, rt)
+    I ->> R: DeleteRefreshToken(rt)
+    I ->> I: IssueTokens(ctx, sessionData)
+    I ->> R: StoreRefreshToken(new_rt, sessionData)
+    I -->> H: {access_token, id_token, refresh_token, expires_in}
     H -->> B: 200 OK (JSON Tokens)
 ```
 
@@ -164,11 +174,12 @@ The `FrontendHandler` uses **HTMX** to provide a single-page-application (SPA) f
 
 All IdP state is transient and stored in Redis.
 
-| Key                                       | Format | TTL | Purpose                                   |
-|:------------------------------------------|:-------|:----|:------------------------------------------|
-| `{prefix}nauthilus:oidc:code:{code}`      | JSON   | 5m  | Stores OIDC session during code exchange. |
-| `{prefix}nauthilus:webauthn:session:{id}` | Binary | 10m | WebAuthn challenge/state.                 |
-| `{prefix}nauthilus:mfa:stepup:{session}`  | String | 15m | Step-up auth verification flag.           |
+| Key                                            | Format | TTL | Purpose                                   |
+|:-----------------------------------------------|:-------|:----|:------------------------------------------|
+| `{prefix}nauthilus:oidc:code:{code}`           | JSON   | 5m  | Stores OIDC session during code exchange. |
+| `{prefix}nauthilus:oidc:refresh_token:{token}` | JSON   | var | Stores OIDC session for refresh tokens.   |
+| `{prefix}nauthilus:webauthn:session:{id}`      | Binary | 10m | WebAuthn challenge/state.                 |
+| `{prefix}nauthilus:mfa:stepup:{session}`       | String | 15m | Step-up auth verification flag.           |
 
 ## 5. Observability & Debugging
 
@@ -207,17 +218,82 @@ Nauthilus supports dynamic claim mapping. When an OIDC token is issued, the IdP 
 idp:
   oidc:
     clients:
-      - id: my-app
+      - client_id: my-app
         claims:
           email: "mail"         # Map LDAP 'mail' to OIDC 'email'
           groups: "memberOf"    # Map LDAP 'memberOf' to OIDC 'groups'
+          my_custom_claim: "someAttribute" # Custom claim mapping
 ```
 
 The mapping logic handles:
 
-- **Direct mapping**: String attributes.
-- **Slices**: Multi-valued attributes like groups.
-- **Nested objects**: Future-proofing for complex claim structures.
+- **Direct mapping**: String attributes (e.g., `email`, `name`, `preferred_username`).
+- **Slices**: Multi-valued attributes like `groups`.
+- **Custom Claims**: Any additional fields in the `claims` section are treated as custom claims and mapped from the
+  specified backend attribute.
+- **Complex Types**: Booleans (e.g., `email_verified`) and structured objects (e.g., `address`).
+
+### 6.1 Scope-based Claim Filtering
+
+The IdP automatically filters claims based on the scopes requested by the client. Standard OIDC scopes are supported:
+
+- **`profile`**: Includes `name`, `family_name`, `given_name`, `middle_name`, `nickname`, `preferred_username`,
+  `profile`, `picture`, `website`, `gender`, `birthdate`, `zoneinfo`, `locale`, and `updated_at`.
+- **`email`**: Includes `email` and `email_verified`.
+- **`address`**: Includes `address`.
+- **`phone`**: Includes `phone_number` and `phone_number_verified`.
+- **`groups`**: Includes `groups`.
+
+If a client requests specific scopes, only the claims associated with those scopes (and any requested custom scopes)
+will be included in the ID token. If no specific scopes are requested (legacy behavior), all configured claims for the
+client are included.
+
+### 6.2 Custom Scopes
+
+Similar to the Hydra integration, the native IdP supports custom scopes. These are defined globally and can group one or
+more custom claims:
+
+```yaml
+idp:
+  oidc:
+    custom_scopes:
+      - name: "nauthilus"
+        description: "Special access scope"
+        claims:
+          - name: "custom_claim_1"
+            type: "string"
+          - name: "custom_claim_2"
+            type: "string"
+```
+
+To use these, the client must have a mapping for the claim names:
+
+```yaml
+idp:
+  oidc:
+    clients:
+      - client_id: "my-client"
+        claims:
+          custom_claim_1: "someBackendAttribute"
+          custom_claim_2: "anotherBackendAttribute"
+```
+
+### 6.3 Token Lifetime Configuration
+
+The lifetime of access tokens and refresh tokens can be configured per client:
+
+```yaml
+idp:
+  oidc:
+    clients:
+      - client_id: my-app
+        access_token_lifetime: 1h
+        refresh_token_lifetime: 30d
+```
+
+- **`access_token_lifetime`**: Duration of validity for access tokens and ID tokens (default: 1h).
+- **`refresh_token_lifetime`**: Duration of validity for refresh tokens (default: 30d). Refresh tokens are only issued
+  if the `offline_access` scope is requested.
 
 ## 7. Backend & LDAP Interaction
 

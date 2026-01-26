@@ -48,20 +48,76 @@ func TestFillIdTokenClaims(t *testing.T) {
 		EmailVerified:       "email_verified",
 		PhoneNumberVerified: "phone_verified",
 		Address:             "address",
+		CustomClaims: map[string]any{
+			"my_custom_claim": "custom_attr",
+		},
 	}
 
+	auth.ReplaceAllAttributes(map[string][]any{
+		"cn":             {"Max Mustermann"},
+		"mail":           {"max@example.com"},
+		"memberOf":       {"group1", "group2"},
+		"email_verified": {"true"},
+		"phone_verified": {true},
+		"address":        {"Musterstraße 1"},
+		"custom_attr":    {"custom_value"},
+	})
+
 	claims := make(map[string]any)
-	auth.FillIdTokenClaims(cfgClaims, claims)
+	auth.FillIdTokenClaims(cfgClaims, claims, nil)
 
 	assert.Equal(t, "Max Mustermann", claims[definitions.ClaimName])
 	assert.Equal(t, "max@example.com", claims[definitions.ClaimEmail])
 	assert.Equal(t, []string{"group1", "group2"}, claims[definitions.ClaimGroups])
 	assert.Equal(t, true, claims[definitions.ClaimEmailVerified])
 	assert.Equal(t, true, claims[definitions.ClaimPhoneNumberVerified])
+	assert.Equal(t, "custom_value", claims["my_custom_claim"])
 
 	address, ok := claims[definitions.ClaimAddress].(struct {
 		Formatted string `json:"formatted"`
 	})
 	assert.True(t, ok)
 	assert.Equal(t, "Musterstraße 1", address.Formatted)
+}
+
+func TestFillIdTokenClaims_WithCustomScopes(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	auth := &AuthState{
+		deps: AuthDeps{
+			Logger: logger,
+			Cfg: &config.FileSettings{
+				IdP: &config.IdPSection{
+					OIDC: config.OIDCConfig{
+						CustomScopes: []config.Oauth2CustomScope{
+							{
+								Name: "my_scope",
+								Claims: []config.OIDCCustomClaim{
+									{Name: "my_claim", Type: "string"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	auth.ReplaceAllAttributes(map[string][]any{
+		"custom_attr": {"custom_value"},
+	})
+
+	cfgClaims := &config.IdTokenClaims{
+		CustomClaims: map[string]any{
+			"my_claim": "custom_attr",
+		},
+	}
+
+	// 1. Without the scope
+	claims := make(map[string]any)
+	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid"})
+	assert.Nil(t, claims["my_claim"])
+
+	// 2. With the scope
+	claims = make(map[string]any)
+	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid", "my_scope"})
+	assert.Equal(t, "custom_value", claims["my_claim"])
 }

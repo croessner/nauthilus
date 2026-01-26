@@ -139,7 +139,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[str
 					definitions.LogKeyMsg, fmt.Sprintf("Found client_id: %+v", client),
 				)
 
-				a.FillIdTokenClaims(&client.Claims, claims)
+				a.FillIdTokenClaims(&client.Claims, claims, nil)
 
 				break //exit loop once first matching client found
 			}

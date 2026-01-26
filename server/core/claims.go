@@ -77,24 +77,46 @@ func ApplyClaim(claimKey string, attributeKey string, auth *AuthState, claims ma
 }
 
 // FillIdTokenClaims populates a map of claims from IdTokenClaims configuration.
-func (a *AuthState) FillIdTokenClaims(cfgClaims *config.IdTokenClaims, claims map[string]any) {
+func (a *AuthState) FillIdTokenClaims(cfgClaims *config.IdTokenClaims, claims map[string]any, requestedScopes []string) {
+	hasScope := func(s string) bool {
+		if len(requestedScopes) == 0 {
+			return true
+		}
+
+		for _, rs := range requestedScopes {
+			if rs == s {
+				return true
+			}
+		}
+
+		return false
+	}
+
 	// Standard claims
-	claimChecks := map[string]string{
-		definitions.ClaimName:              cfgClaims.Name,
-		definitions.ClaimGivenName:         cfgClaims.GivenName,
-		definitions.ClaimFamilyName:        cfgClaims.FamilyName,
-		definitions.ClaimMiddleName:        cfgClaims.MiddleName,
-		definitions.ClaimNickName:          cfgClaims.NickName,
-		definitions.ClaimPreferredUserName: cfgClaims.PreferredUserName,
-		definitions.ClaimProfile:           cfgClaims.Profile,
-		definitions.ClaimWebsite:           cfgClaims.Website,
-		definitions.ClaimPicture:           cfgClaims.Picture,
-		definitions.ClaimEmail:             cfgClaims.Email,
-		definitions.ClaimGender:            cfgClaims.Gender,
-		definitions.ClaimBirtDate:          cfgClaims.Birthdate,
-		definitions.ClaimZoneInfo:          cfgClaims.ZoneInfo,
-		definitions.ClaimLocale:            cfgClaims.Locale,
-		definitions.ClaimPhoneNumber:       cfgClaims.PhoneNumber,
+	claimChecks := make(map[string]string)
+
+	if hasScope(definitions.ScopeProfile) {
+		claimChecks[definitions.ClaimName] = cfgClaims.Name
+		claimChecks[definitions.ClaimGivenName] = cfgClaims.GivenName
+		claimChecks[definitions.ClaimFamilyName] = cfgClaims.FamilyName
+		claimChecks[definitions.ClaimMiddleName] = cfgClaims.MiddleName
+		claimChecks[definitions.ClaimNickName] = cfgClaims.NickName
+		claimChecks[definitions.ClaimPreferredUserName] = cfgClaims.PreferredUserName
+		claimChecks[definitions.ClaimProfile] = cfgClaims.Profile
+		claimChecks[definitions.ClaimWebsite] = cfgClaims.Website
+		claimChecks[definitions.ClaimPicture] = cfgClaims.Picture
+		claimChecks[definitions.ClaimGender] = cfgClaims.Gender
+		claimChecks[definitions.ClaimBirtDate] = cfgClaims.Birthdate
+		claimChecks[definitions.ClaimZoneInfo] = cfgClaims.ZoneInfo
+		claimChecks[definitions.ClaimLocale] = cfgClaims.Locale
+	}
+
+	if hasScope(definitions.ScopeEmail) {
+		claimChecks[definitions.ClaimEmail] = cfgClaims.Email
+	}
+
+	if hasScope(definitions.ScopePhone) {
+		claimChecks[definitions.ClaimPhoneNumber] = cfgClaims.PhoneNumber
 	}
 
 	for claimName, claimVal := range claimChecks {
@@ -151,11 +173,22 @@ func (a *AuthState) FillIdTokenClaims(cfgClaims *config.IdTokenClaims, claims ma
 		},
 	}
 
-	claimKeys := map[string]string{
-		definitions.ClaimEmailVerified:       cfgClaims.EmailVerified,
-		definitions.ClaimPhoneNumberVerified: cfgClaims.PhoneNumberVerified,
-		definitions.ClaimAddress:             cfgClaims.Address,
-		definitions.ClaimUpdatedAt:           cfgClaims.UpdatedAt,
+	claimKeys := make(map[string]string)
+
+	if hasScope(definitions.ScopeEmail) {
+		claimKeys[definitions.ClaimEmailVerified] = cfgClaims.EmailVerified
+	}
+
+	if hasScope(definitions.ScopePhone) {
+		claimKeys[definitions.ClaimPhoneNumberVerified] = cfgClaims.PhoneNumberVerified
+	}
+
+	if hasScope(definitions.ScopeAddress) {
+		claimKeys[definitions.ClaimAddress] = cfgClaims.Address
+	}
+
+	if hasScope(definitions.ScopeProfile) {
+		claimKeys[definitions.ClaimUpdatedAt] = cfgClaims.UpdatedAt
 	}
 
 	for claimKey, attrKey := range claimKeys {
@@ -165,7 +198,7 @@ func (a *AuthState) FillIdTokenClaims(cfgClaims *config.IdTokenClaims, claims ma
 	}
 
 	// Groups claim
-	if cfgClaims.Groups != "" {
+	if cfgClaims.Groups != "" && hasScope(definitions.ScopeGroups) {
 		if value, found := a.GetAttribute(cfgClaims.Groups); found {
 			var stringSlice []string
 
@@ -186,6 +219,33 @@ func (a *AuthState) FillIdTokenClaims(cfgClaims *config.IdTokenClaims, claims ma
 
 			if len(stringSlice) > 0 {
 				claims[definitions.ClaimGroups] = stringSlice
+			}
+		}
+	}
+
+	// Custom scopes from config
+	if a.Cfg() != nil {
+		for _, customScope := range a.Cfg().GetIdP().OIDC.CustomScopes {
+			if hasScope(customScope.Name) {
+				for _, customClaim := range customScope.Claims {
+					if attrName, ok := cfgClaims.CustomClaims[customClaim.Name].(string); ok {
+						a.ProcessClaim(customClaim.Name, attrName, claims)
+					}
+				}
+			}
+		}
+	}
+
+	// Custom claims (direct mapping in client config)
+	// We only include these if they haven't been filled by a specific scope yet,
+	// and if no specific scopes were requested (legacy/compat).
+	// If scopes are requested, custom claims must be associated with a scope to be included.
+	if len(requestedScopes) == 0 {
+		for claimName, claimAttr := range cfgClaims.CustomClaims {
+			if attrName, ok := claimAttr.(string); ok {
+				if _, exists := claims[claimName]; !exists {
+					a.ProcessClaim(claimName, attrName, claims)
+				}
 			}
 		}
 	}

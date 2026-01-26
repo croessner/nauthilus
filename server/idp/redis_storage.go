@@ -81,3 +81,36 @@ func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) erro
 	key := s.prefix + fmt.Sprintf("nauthilus:oidc:code:%s", code)
 	return s.redis.GetWriteHandle().Del(ctx, key).Err()
 }
+
+// StoreRefreshToken stores a refresh token session in Redis.
+func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
+	data, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+
+	key := s.prefix + fmt.Sprintf("nauthilus:oidc:refresh_token:%s", token)
+	return s.redis.GetWriteHandle().Set(ctx, key, string(data), ttl).Err()
+}
+
+// GetRefreshToken retrieves a refresh token session from Redis.
+func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (*OIDCSession, error) {
+	key := s.prefix + fmt.Sprintf("nauthilus:oidc:refresh_token:%s", token)
+	data, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	session := &OIDCSession{}
+	if err := json.Unmarshal([]byte(data), session); err != nil {
+		return nil, err
+	}
+
+	return session, nil
+}
+
+// DeleteRefreshToken removes a refresh token session from Redis.
+func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string) error {
+	key := s.prefix + fmt.Sprintf("nauthilus:oidc:refresh_token:%s", token)
+	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+}

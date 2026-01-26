@@ -29,7 +29,7 @@ type IdentityProvider interface {
 	GetUserByUsername(ctx *gin.Context, username string, oidcCID string, samlEntityID string) (*backend.User, error)
 
 	// GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.
-	GetClaims(user *backend.User, client any) (map[string]any, error)
+	GetClaims(user *backend.User, client any, scopes []string) (map[string]any, error)
 
 	// IsDelayedResponse returns true if delayed response is enabled for the given client.
 	IsDelayedResponse(clientID string, samlEntityID string) bool

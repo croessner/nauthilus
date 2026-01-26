@@ -103,6 +103,8 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Equal(t, issuer, resp["issuer"])
 	assert.Equal(t, issuer+"/oidc/authorize", resp["authorization_endpoint"])
 	assert.Equal(t, issuer+"/oidc/logout", resp["end_session_endpoint"])
+	scopes := resp["scopes_supported"].([]any)
+	assert.Contains(t, scopes, "offline_access")
 }
 
 func TestOIDCHandler_JWKS(t *testing.T) {
@@ -172,7 +174,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		r.GET("/logout", sessions.Sessions("test-session", store), h.Logout)
 
 		// Create a mock ID token hint
-		idToken, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
+		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
 			ClientID: "test-client",
 			UserID:   "user123",
 			AuthTime: time.Now(),

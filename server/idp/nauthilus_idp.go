@@ -33,17 +33,25 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+var (
+	tokenGenerator = func() string {
+		return ksuid.New().String()
+	}
+)
+
 // NauthilusIdP implements the IdentityProvider interface using Nauthilus core.
 type NauthilusIdP struct {
-	deps   *deps.Deps
-	tracer monittrace.Tracer
+	deps    *deps.Deps
+	storage *RedisTokenStorage
+	tracer  monittrace.Tracer
 }
 
 // NewNauthilusIdP creates a new instance of NauthilusIdP.
 func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
 	return &NauthilusIdP{
-		deps:   d,
-		tracer: monittrace.New("nauthilus/idp"),
+		deps:    d,
+		storage: NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
+		tracer:  monittrace.New("nauthilus/idp"),
 	}
 }
 
@@ -113,17 +121,27 @@ func (n *NauthilusIdP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, 
 }
 
 // IssueTokens generates an ID token and an access token for the given OIDC session.
-func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, error) {
+func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.issue_tokens",
 		attribute.String("client_id", session.ClientID),
 		attribute.String("user_id", session.UserID),
 	)
 	defer sp.End()
 
+	client, ok := n.FindClient(session.ClientID)
+	if !ok {
+		return "", "", "", 0, fmt.Errorf("client not found")
+	}
+
+	accessTokenLifetime := client.AccessTokenLifetime
+	if accessTokenLifetime == 0 {
+		accessTokenLifetime = 1 * time.Hour
+	}
+
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
 	signingKey, err := n.deps.Cfg.GetIdP().OIDC.GetSigningKey()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get signing key: %w", err)
+		return "", "", "", 0, fmt.Errorf("failed to get signing key: %w", err)
 	}
 
 	// Load private key
@@ -131,7 +149,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	if err != nil {
 		sp.RecordError(err)
 
-		return "", "", fmt.Errorf("failed to parse signing key: %w", err)
+		return "", "", "", 0, fmt.Errorf("failed to parse signing key: %w", err)
 	}
 
 	now := time.Now()
@@ -141,7 +159,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 		"iss":       issuer,
 		"sub":       session.UserID,
 		"aud":       session.ClientID,
-		"exp":       now.Add(1 * time.Hour).Unix(),
+		"exp":       now.Add(accessTokenLifetime).Unix(),
 		"iat":       now.Unix(),
 		"auth_time": session.AuthTime.Unix(),
 	}
@@ -157,7 +175,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	if err != nil {
 		sp.RecordError(err)
 
-		return "", "", fmt.Errorf("failed to sign ID token: %w", err)
+		return "", "", "", 0, fmt.Errorf("failed to sign ID token: %w", err)
 	}
 
 	// Access Token Claims (simplified)
@@ -165,7 +183,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 		"iss":   issuer,
 		"sub":   session.UserID,
 		"aud":   session.ClientID,
-		"exp":   now.Add(1 * time.Hour).Unix(),
+		"exp":   now.Add(accessTokenLifetime).Unix(),
 		"iat":   now.Unix(),
 		"scope": strings.Join(session.Scopes, " "),
 	}
@@ -184,10 +202,59 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	if err != nil {
 		sp.RecordError(err)
 
-		return "", "", fmt.Errorf("failed to sign access token: %w", err)
+		return "", "", "", 0, fmt.Errorf("failed to sign access token: %w", err)
 	}
 
-	return idTokenString, accessTokenString, nil
+	refreshTokenString := ""
+	hasOfflineAccess := false
+
+	for _, s := range session.Scopes {
+		if s == "offline_access" {
+			hasOfflineAccess = true
+
+			break
+		}
+	}
+
+	if hasOfflineAccess {
+		refreshTokenString = tokenGenerator()
+		refreshTokenLifetime := client.RefreshTokenLifetime
+
+		if refreshTokenLifetime == 0 {
+			refreshTokenLifetime = 30 * 24 * time.Hour // 30 days default
+		}
+
+		err = n.storage.StoreRefreshToken(ctx, refreshTokenString, session, refreshTokenLifetime)
+		if err != nil {
+			sp.RecordError(err)
+
+			return "", "", "", 0, fmt.Errorf("failed to store refresh token: %w", err)
+		}
+	}
+
+	return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
+}
+
+// ExchangeRefreshToken exchanges a refresh token for a new set of tokens.
+func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken string, clientID string) (string, string, string, time.Duration, error) {
+	_, sp := n.tracer.Start(ctx, "idp.exchange_refresh_token",
+		attribute.String("client_id", clientID),
+	)
+	defer sp.End()
+
+	session, err := n.storage.GetRefreshToken(ctx, refreshToken)
+	if err != nil {
+		return "", "", "", 0, fmt.Errorf("invalid refresh token")
+	}
+
+	if session.ClientID != clientID {
+		return "", "", "", 0, fmt.Errorf("client mismatch")
+	}
+
+	// Rotation: delete old refresh token
+	_ = n.storage.DeleteRefreshToken(ctx, refreshToken)
+
+	return n.IssueTokens(ctx, session)
 }
 
 // IssueLogoutToken generates a logout token for the given client and user.
@@ -341,7 +408,7 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 }
 
 // GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.
-func (n *NauthilusIdP) GetClaims(user *backend.User, client any) (map[string]any, error) {
+func (n *NauthilusIdP) GetClaims(user *backend.User, client any, scopes []string) (map[string]any, error) {
 	claims := make(map[string]any)
 
 	// Standard fixed claims
@@ -353,10 +420,10 @@ func (n *NauthilusIdP) GetClaims(user *backend.User, client any) (map[string]any
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
 		// We need an AuthState to use FillIdTokenClaims
 		// We can create a lightweight AuthState just for mapping
-		auth := &core.AuthState{}
+		auth := core.NewAuthStateFromContextWithDeps(nil, n.deps.Auth()).(*core.AuthState)
 		auth.ReplaceAllAttributes(user.Attributes)
 
-		auth.FillIdTokenClaims(&oidcClient.Claims, claims)
+		auth.FillIdTokenClaims(&oidcClient.Claims, claims, scopes)
 	}
 
 	return claims, nil
