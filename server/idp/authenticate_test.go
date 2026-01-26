@@ -20,13 +20,16 @@ import (
 	"os"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -55,6 +58,9 @@ func setupMockContext(ctx *gin.Context, guid, service string) {
 func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
 			Redis: config.Redis{
@@ -64,7 +70,9 @@ func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
 	}
 
 	d := &deps.Deps{
-		Cfg: cfg,
+		Cfg:          cfg,
+		Redis:        redisClient,
+		AccountCache: accountcache.NewManager(cfg),
 	}
 	idp := NewNauthilusIdP(d)
 
@@ -74,6 +82,10 @@ func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
 		ctx.Request = httptest.NewRequest("POST", "/login", nil)
 		ctx.Request.RemoteAddr = "192.168.1.100:12345"
 		setupMockContext(ctx, "test-oidc-guid", definitions.ServIdP)
+
+		// Mock Redis lookup for user account
+		userKey := "test:user:{55}" // Shard for user1 with prefix test:
+		mock.ExpectHGet(userKey, "user1|oidc|client1").RedisNil()
 
 		// We expect authentication to fail because no backends are configured,
 		// but we want to ensure it reaches the HandlePassword stage.
@@ -91,6 +103,10 @@ func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {
 		ctx.Request = httptest.NewRequest("POST", "/login", nil)
 		ctx.Request.RemoteAddr = "192.168.1.101:54321"
 		setupMockContext(ctx, "test-saml-guid", definitions.ServIdP)
+
+		// Mock Redis lookup for user account
+		userKey := "test:user:{ef}" // Shard for user2 with prefix test:
+		mock.ExpectHGet(userKey, "user2|saml|").RedisNil()
 
 		user, err := idp.Authenticate(ctx, "user2", "pass2", "", "sp1")
 

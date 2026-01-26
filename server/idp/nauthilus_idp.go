@@ -372,6 +372,27 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 
 	auth.FinishSetup(ctx)
 
+	if auth.CheckBruteForce(ctx) {
+		auth.UpdateBruteForceBucketsCounter(ctx)
+		auth.AuthFail(ctx)
+		auth.FinishLogging(ctx, definitions.AuthResultFail)
+
+		err := fmt.Errorf("authentication failed due to brute force protection")
+		sp.RecordError(err)
+
+		return nil, err
+	}
+
+	if res := auth.HandleFeatures(ctx); res != definitions.AuthResultOK && res != definitions.AuthResultUnset {
+		auth.AuthFail(ctx)
+		auth.FinishLogging(ctx, res)
+
+		err := fmt.Errorf("authentication failed with feature result: %d", res)
+		sp.RecordError(err)
+
+		return nil, err
+	}
+
 	result := auth.HandlePassword(ctx)
 
 	auth.FinishLogging(ctx, result)
