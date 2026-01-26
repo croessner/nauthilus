@@ -92,7 +92,7 @@ func (b DefaultBootstrap) InitSessionStore() sessions.Store {
 	store.Options(sessions.Options{
 		Path:     "/",
 		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	return store

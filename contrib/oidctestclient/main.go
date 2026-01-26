@@ -27,10 +27,11 @@ import (
 	"time"
 
 	"fmt"
+	"html/template"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
-	"html/template"
 )
 
 var (
@@ -58,6 +59,18 @@ const successPageTmpl = `
             font-weight: bold;
         }
         .logout-btn:hover { background-color: #c9302c; }
+        .twofa-btn { 
+            display: inline-block; 
+            padding: 10px 20px; 
+            background-color: #5cb85c; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 5px;
+            margin-top: 20px;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        .twofa-btn:hover { background-color: #4cae4c; }
         .container { max-width: 1000px; margin: 0 auto; }
     </style>
 </head>
@@ -66,11 +79,16 @@ const successPageTmpl = `
         <h1>Login Successful</h1>
         <p>The following tokens and claims were received from the provider:</p>
         <pre>{{.JSON}}</pre>
-        {{if .LogoutURL}}
-            <a href="{{.LogoutURL}}" class="logout-btn">Logout from Provider</a>
-        {{else}}
-            <p><em>Note: End session endpoint not found in provider metadata. Logout link unavailable.</em></p>
-        {{end}}
+        <div style="margin-top: 20px;">
+            {{if .TwoFAHomeURL}}
+                <a href="{{.TwoFAHomeURL}}" class="twofa-btn">Manage 2FA (TOTP/WebAuthn)</a>
+            {{end}}
+            {{if .LogoutURL}}
+                <a href="{{.LogoutURL}}" class="logout-btn">Logout from Provider</a>
+            {{else}}
+                <p><em>Note: End session endpoint not found in provider metadata. Logout link unavailable.</em></p>
+            {{end}}
+        </div>
     </div>
 </body>
 </html>
@@ -256,6 +274,14 @@ func main() {
 
 		log.Printf("Sending response back to browser (%d bytes)", len(data))
 
+		twoFAHomeURL := ""
+		if u, err := url.Parse(openIDProvider); err == nil {
+			u.Path = "/2fa/v1/register/home"
+			u.RawQuery = ""
+			u.Fragment = ""
+			twoFAHomeURL = u.String()
+		}
+
 		logoutURL := ""
 		if providerClaims.EndSessionEndpoint != "" {
 			u, _ := url.Parse(providerClaims.EndSessionEndpoint)
@@ -268,11 +294,13 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		err = tmpl.Execute(w, struct {
-			JSON      string
-			LogoutURL string
+			JSON         string
+			LogoutURL    string
+			TwoFAHomeURL string
 		}{
-			JSON:      string(data),
-			LogoutURL: logoutURL,
+			JSON:         string(data),
+			LogoutURL:    logoutURL,
+			TwoFAHomeURL: twoFAHomeURL,
 		})
 		if err != nil {
 			log.Printf("Failed to render template: %v", err)

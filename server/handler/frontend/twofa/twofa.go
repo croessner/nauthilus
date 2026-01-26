@@ -22,7 +22,6 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/common"
 	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/tags"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -38,10 +37,6 @@ func New(store sessions.Store, d *deps.Deps) *Handler {
 }
 
 func (h *Handler) Register(router gin.IRouter) {
-	if !tags.Register2FA {
-		return
-	}
-
 	// Register 2FA routes under TwoFAv1Root
 	group := router.Group(definitions.TwoFAv1Root)
 
