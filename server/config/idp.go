@@ -71,6 +71,7 @@ type OIDCClient struct {
 	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
 	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
 	RefreshTokenLifetime              time.Duration `mapstructure:"refresh_token_lifetime"`
+	TokenEndpointAuthMethod           string        `mapstructure:"token_endpoint_auth_method"`
 	Claims                            IdTokenClaims `mapstructure:"claims"`
 	PostLogoutRedirectURIs            []string      `mapstructure:"post_logout_redirect_uris"`
 	BackChannelLogoutURI              string        `mapstructure:"backchannel_logout_uri"`

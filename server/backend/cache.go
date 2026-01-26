@@ -372,10 +372,6 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 	// If the hash is empty, treat it as a Redis nil error
 	if len(hashValues) == 0 {
 		err = redis.Nil
-		level.Error(logger).Log(
-			definitions.LogKeyMsg, "WebAuthn user not found in redis",
-			definitions.LogKeyError, err,
-		)
 
 		return nil, err
 	}

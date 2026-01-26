@@ -20,16 +20,20 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -68,10 +72,17 @@ func generateTestKey() string {
 }
 
 func (m *mockOIDCCfg) GetServer() *config.ServerSection {
+	var log config.Log
+	_ = log.Level.Set("debug")
+	all := &config.DbgModule{}
+	_ = all.Set("all")
+	log.DbgModules = []*config.DbgModule{all}
+
 	return &config.ServerSection{
 		Redis: config.Redis{
 			Prefix: "test:",
 		},
+		Log: log,
 	}
 }
 
@@ -186,5 +197,316 @@ func TestOIDCHandler_Logout(t *testing.T) {
 
 		assert.Equal(t, http.StatusFound, w.Code)
 		assert.Equal(t, "https://app.com/post-logout", w.Header().Get("Location"))
+	})
+}
+
+func TestOIDCHandler_Consent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	issuer := "https://auth.example.com"
+	signingKey := generateTestKey()
+	client := config.OIDCClient{
+		ClientID:     "test-client",
+		RedirectURIs: []string{"https://app.com/callback"},
+	}
+
+	cfg := &mockOIDCCfg{
+		issuer:     issuer,
+		signingKey: signingKey,
+		clients:    []config.OIDCClient{client},
+	}
+
+	db, mock := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	idpInstance := idp.NewNauthilusIdP(d)
+	store := cookie.NewStore([]byte("secret"))
+	h := NewOIDCHandler(store, d, idpInstance)
+
+	t.Run("ConsentPOST redirects with code and state", func(t *testing.T) {
+		consentChallenge := "challenge123"
+		state := "state456"
+		oidcSession := &idp.OIDCSession{
+			ClientID:    "test-client",
+			UserID:      "user123",
+			RedirectURI: "https://app.com/callback",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		// Mock GetSession for consent
+		mock.ExpectGet("test:nauthilus:oidc:code:consent:" + consentChallenge).SetVal(string(sessionData))
+
+		// Mock StoreSession for code (code is random)
+		mock.Regexp().ExpectSet("test:nauthilus:oidc:code:.*", string(sessionData), 10*time.Minute).SetVal("OK")
+
+		// Mock DeleteSession for consent
+		mock.ExpectDel("test:nauthilus:oidc:code:consent:" + consentChallenge).SetVal(1)
+
+		w := httptest.NewRecorder()
+		r := gin.New()
+		r.Use(sessions.Sessions("test-session", store))
+		r.POST("/consent", h.ConsentPOST)
+
+		form := "consent_challenge=" + consentChallenge + "&state=" + state + "&submit=allow"
+		req, _ := http.NewRequest(http.MethodPost, "/consent", io.NopCloser(strings.NewReader(form)))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusFound, w.Code)
+		location := w.Header().Get("Location")
+		assert.Contains(t, location, "https://app.com/callback?code=")
+		assert.Contains(t, location, "&state="+state)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("ConsentPOST with state in query", func(t *testing.T) {
+		consentChallenge := "challenge-query"
+		state := "state-in-query"
+		oidcSession := &idp.OIDCSession{
+			ClientID:    "test-client",
+			UserID:      "user123",
+			RedirectURI: "https://app.com/callback",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		mock.ExpectGet("test:nauthilus:oidc:code:consent:" + consentChallenge).SetVal(string(sessionData))
+		mock.Regexp().ExpectSet("test:nauthilus:oidc:code:.*", string(sessionData), 10*time.Minute).SetVal("OK")
+		mock.ExpectDel("test:nauthilus:oidc:code:consent:" + consentChallenge).SetVal(1)
+
+		w := httptest.NewRecorder()
+		r := gin.New()
+		r.Use(sessions.Sessions("test-session", store))
+		r.POST("/consent", h.ConsentPOST)
+
+		form := "consent_challenge=" + consentChallenge + "&submit=allow"
+		req, _ := http.NewRequest(http.MethodPost, "/consent?state="+state, io.NopCloser(strings.NewReader(form)))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusFound, w.Code)
+		location := w.Header().Get("Location")
+		assert.Contains(t, location, "&state="+state)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestOIDCHandler_Token(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+	issuer := "https://auth.example.com"
+	signingKey := generateTestKey()
+	client := config.OIDCClient{
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		RedirectURIs: []string{"https://app.com/callback"},
+	}
+
+	cfg := &mockOIDCCfg{
+		issuer:     issuer,
+		signingKey: signingKey,
+		clients:    []config.OIDCClient{client},
+	}
+
+	db, mock := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	idpInstance := idp.NewNauthilusIdP(d)
+	h := NewOIDCHandler(nil, d, idpInstance)
+
+	t.Run("Token request with Basic Auth", func(t *testing.T) {
+		code := "code123"
+		oidcSession := &idp.OIDCSession{
+			ClientID:    "test-client",
+			UserID:      "user123",
+			RedirectURI: "https://app.com/callback",
+			Nonce:       "test-nonce",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		mock.ExpectGet("test:nauthilus:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:nauthilus:oidc:code:" + code).SetVal(1)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", code)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// Verifiziere ID-Token Inhalt (optional, da wir IssueTokens bereits separat testen)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NotEmpty(t, resp["id_token"])
+
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Token request with client_id in body and secret in Basic Auth (should fail)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", "any-code")
+		form.Add("client_id", "test-client") // client_id im Body
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret") // secret im Header
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		// MUST NOT use more than one authentication method
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("Token request with URL-encoded characters in Basic Auth", func(t *testing.T) {
+		code := "code789"
+		specialClientID := "client@test"
+		specialSecret := "pass+word"
+		oidcSession := &idp.OIDCSession{
+			ClientID:    specialClientID,
+			UserID:      "user123",
+			RedirectURI: "https://app.com/callback",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		// Mock client with special characters
+		cfg.clients = append(cfg.clients, config.OIDCClient{
+			ClientID:     specialClientID,
+			ClientSecret: specialSecret,
+			RedirectURIs: []string{"https://app.com/callback"},
+		})
+
+		mock.ExpectGet("test:nauthilus:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:nauthilus:oidc:code:" + code).SetVal(1)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", code)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		// URL-encode parts manually to simulate RFC 6749 Section 2.3.1
+		authValue := url.QueryEscape(specialClientID) + ":" + url.QueryEscape(specialSecret)
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(authValue)))
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Token request with both Header and Body (matching - should fail)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", "any-code")
+		form.Add("client_id", "test-client")
+		form.Add("client_secret", "test-secret")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		// MUST NOT use more than one authentication method
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("Token request with 11 vs 6 chars mismatch (reproduce user log)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", "any-code")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "secret") // 6 chars
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("Token request with multiple methods (should fail)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", "any-code")
+		form.Add("client_id", "test-client")
+		form.Add("client_secret", "test-secret")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, "invalid_client", resp["error"])
+	})
+
+	t.Run("Token request with enforced method (mismatch should fail)", func(t *testing.T) {
+		// Update client to enforce basic auth
+		cfg.clients[0].TokenEndpointAuthMethod = "client_secret_basic"
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", "any-code")
+		form.Add("client_id", "test-client")
+		form.Add("client_secret", "test-secret") // Post Body
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, "invalid_client", resp["error"])
 	})
 }

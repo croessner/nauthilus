@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
@@ -49,6 +50,11 @@ func NewSAMLHandler(sessStore sessions.Store, d *deps.Deps, idp *idp.NauthilusId
 
 // Register adds SAML routes to the router.
 func (h *SAMLHandler) Register(router gin.IRouter) {
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+		ctx.Next()
+	}, mdlua.LuaContextMiddleware())
+
 	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
 
 	router.GET("/saml/metadata", h.Metadata)

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -64,4 +65,38 @@ func TestSAMLHandler_Metadata(t *testing.T) {
 	assert.Contains(t, w.Body.String(), entityID)
 	assert.Contains(t, w.Body.String(), "ABC")
 	assert.NotContains(t, w.Body.String(), "-----BEGIN CERTIFICATE-----")
+}
+
+func TestSAML_Routes_HaveLuaContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &mockSAMLCfg{entityID: "test", certificate: "test"}
+	d := &deps.Deps{Cfg: cfg}
+	h := NewSAMLHandler(nil, d, nil)
+
+	r := gin.New()
+	h.Register(r)
+
+	routes := []string{"/saml/metadata", "/saml/sso"}
+	for _, path := range routes {
+		t.Run(path, func(t *testing.T) {
+			// Let's define r and the test to be more precise
+			r := gin.New()
+			var capturedCtx *gin.Context
+			r.Use(func(c *gin.Context) {
+				c.Next()
+				capturedCtx = c
+			})
+			h.Register(r)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", path, nil)
+			r.ServeHTTP(w, req)
+
+			_, exists := capturedCtx.Get(definitions.CtxDataExchangeKey)
+			assert.True(t, exists, "Lua context should be set for path: %s", path)
+
+			svc, _ := capturedCtx.Get(definitions.CtxServiceKey)
+			assert.Equal(t, definitions.ServIdP, svc)
+		})
+	}
 }

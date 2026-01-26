@@ -21,6 +21,7 @@ package webauthn
 import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	"github.com/croessner/nauthilus/server/tags"
 
 	"github.com/gin-contrib/sessions"
@@ -45,7 +46,7 @@ func (h *Handler) Register(r gin.IRouter) {
 	group := r.Group(definitions.TwoFAv1Root)
 
 	regGroup := group.Group(viper.GetString("webauthn_page"))
-	regGroup.Use(sessions.Sessions(definitions.SessionName, h.Store))
+	regGroup.Use(sessions.Sessions(definitions.SessionName, h.Store), mdlua.LuaContextMiddleware())
 	regGroup.GET("/register/begin", h.Deps.Svc.BeginRegistration())
 	regGroup.POST("/register/finish", h.Deps.Svc.FinishRegistration())
 }

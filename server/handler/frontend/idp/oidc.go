@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
+	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -63,6 +64,11 @@ func NewOIDCHandler(sessStore sessions.Store, d *deps.Deps, idpInstance *idp.Nau
 
 // Register registers the OIDC routes.
 func (h *OIDCHandler) Register(router gin.IRouter) {
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+		ctx.Next()
+	}, mdlua.LuaContextMiddleware())
+
 	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger)
 
@@ -132,6 +138,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	redirectURI := ctx.Query("redirect_uri")
 	scope := ctx.Query("scope")
 	state := ctx.Query("state")
+	nonce := ctx.Query("nonce")
 	responseType := ctx.Query("response_type")
 
 	sp.SetAttributes(
@@ -193,6 +200,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		Scopes:      strings.Split(scope, " "),
 		RedirectURI: redirectURI,
 		AuthTime:    time.Now(),
+		Nonce:       nonce,
 		Claims:      claims,
 	}
 
@@ -240,6 +248,55 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
 	defer sp.End()
 
+	grantType := ctx.PostForm("grant_type")
+
+	// Client authentication extraction (RFC 6749 Section 2.3.1)
+	var clientID, clientSecret string
+	var authSource string
+
+	// 1. Try Basic Auth
+	if hClientID, hClientSecret, ok := ctx.Request.BasicAuth(); ok {
+		if uClientID, err := url.QueryUnescape(hClientID); err == nil {
+			clientID = uClientID
+		} else {
+			clientID = hClientID
+		}
+
+		if uClientSecret, err := url.QueryUnescape(hClientSecret); err == nil {
+			clientSecret = uClientSecret
+		} else {
+			clientSecret = hClientSecret
+		}
+
+		authSource = "client_secret_basic"
+	}
+
+	// 2. Try Body
+	bClientID := ctx.PostForm("client_id")
+	bClientSecret := ctx.PostForm("client_secret")
+
+	if bClientID != "" || bClientSecret != "" {
+		if authSource != "" {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "Multiple OIDC client authentication methods used",
+				"methods", authSource+",client_secret_post",
+			)
+
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+			return
+		}
+
+		clientID = bClientID
+		clientSecret = bClientSecret
+		authSource = "client_secret_post"
+	}
+
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -247,30 +304,101 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "OIDC Token request",
-		"grant_type", ctx.PostForm("grant_type"),
-		"client_id", ctx.PostForm("client_id"),
+		"grant_type", grantType,
+		"client_id", clientID,
+		"auth_source", authSource,
 	)
 
-	grantType := ctx.PostForm("grant_type")
-	clientID := ctx.PostForm("client_id")
-	clientSecret := ctx.PostForm("client_secret")
-
-	// Fallback to Basic Auth if not in post form
 	if clientID == "" {
-		var ok bool
-		clientID, clientSecret, ok = ctx.Request.BasicAuth()
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
-		if !ok {
+		return
+	}
+
+	sp.SetAttributes(attribute.String("client_id", clientID))
+
+	client, ok := h.idp.FindClient(clientID)
+	if !ok {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC client not found",
+			"client_id", clientID,
+		)
+
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+		return
+	}
+
+	// Enforce TokenEndpointAuthMethod if configured
+	if client.TokenEndpointAuthMethod != "" {
+		allowed := false
+		switch client.TokenEndpointAuthMethod {
+		case "client_secret_basic":
+			if authSource == "client_secret_basic" {
+				allowed = true
+			}
+		case "client_secret_post":
+			if authSource == "client_secret_post" {
+				allowed = true
+			}
+		case "none":
+			if authSource == "" {
+				allowed = true
+			}
+		default:
+			// If unknown, default to allowing existing behavior (basic or post)
+			allowed = (authSource == "client_secret_basic" || authSource == "client_secret_post")
+		}
+
+		if !allowed {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "OIDC client authentication method not allowed",
+				"client_id", clientID,
+				"auth_source", authSource,
+				"expected_method", client.TokenEndpointAuthMethod,
+			)
+
 			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
 			return
 		}
 	}
 
-	sp.SetAttributes(attribute.String("client_id", clientID))
+	if client.ClientSecret != clientSecret {
+		keyvals := []any{
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC client secret mismatch",
+			"client_id", clientID,
+			"expected_len", len(client.ClientSecret),
+			"received_len", len(clientSecret),
+		}
 
-	client, ok := h.idp.FindClient(clientID)
-	if !ok || client.ClientSecret != clientSecret {
+		if clientSecret == "secret" {
+			keyvals = append(keyvals, "hint", "Client sent literal string 'secret' - check client configuration")
+		}
+
+		if strings.TrimSpace(clientSecret) != clientSecret {
+			keyvals = append(keyvals, "hint", "Received secret contains leading/trailing whitespace")
+		}
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			keyvals...,
+		)
+
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
 		return
@@ -421,6 +549,7 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	data["Scopes"] = session.Scopes
 	data["ConsentChallenge"] = consentChallenge
 	data["State"] = state
+	data["PostConsentEndpoint"] = ctx.Request.URL.Path + "?state=" + url.QueryEscape(state)
 	data["CSRFToken"] = "TODO_CSRF"
 
 	ctx.HTML(http.StatusOK, "idp_consent.html", data)
@@ -433,6 +562,9 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 
 	consentChallenge := ctx.PostForm("consent_challenge")
 	state := ctx.PostForm("state")
+	if state == "" {
+		state = ctx.Query("state")
+	}
 	submit := ctx.PostForm("submit")
 
 	session, err := h.storage.GetSession(ctx.Request.Context(), "consent:"+consentChallenge)

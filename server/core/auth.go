@@ -110,6 +110,9 @@ type State interface {
 	// GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
 	GetWebAuthnCredentials() (credentials []webauthn.Credential, err error)
 
+	// FinishSetup completes the initialization of the state and logs the incoming request.
+	FinishSetup(ctx *gin.Context)
+
 	// SetUsername sets the username for the current authentication state.
 	SetUsername(username string)
 
@@ -151,6 +154,9 @@ type State interface {
 
 	// GetProtocol retrieves the protocol configuration associated with the current state.
 	GetProtocol() *config.Protocol
+
+	// FinishLogging logs the authentication result and updates metrics.
+	FinishLogging(ctx *gin.Context, result definitions.AuthResult)
 
 	// SetLoginAttempts sets the number of login attempts for the current authentication process.
 	SetLoginAttempts(uint)
@@ -1080,6 +1086,37 @@ func (a *AuthState) SetNoAuth(noAuth bool) {
 // SetProtocol sets the protocol for the AuthState using the given Protocol configuration.
 func (a *AuthState) SetProtocol(protocol *config.Protocol) {
 	a.Request.Protocol = protocol
+}
+
+// FinishSetup completes the initialization of the state and logs the incoming request.
+func (a *AuthState) FinishSetup(ctx *gin.Context) {
+	if a == nil || ctx == nil {
+		return
+	}
+
+	svc := ctx.GetString(definitions.CtxServiceKey)
+	if svc == "" {
+		// Fallback for native-idp if not set
+		svc = definitions.CatAuth
+	}
+
+	a.SetStatusCodes(svc)
+	setupAuth(ctx, a)
+
+	logProcessingRequest(ctx, a)
+}
+
+// FinishLogging logs the authentication result and updates metrics.
+func (a *AuthState) FinishLogging(ctx *gin.Context, result definitions.AuthResult) {
+	if a == nil || ctx == nil {
+		return
+	}
+
+	if result == definitions.AuthResultOK {
+		handleLogging(ctx, a)
+	} else {
+		a.loginAttemptProcessing(ctx)
+	}
 }
 
 // SetLoginAttempts sets the number of login attempts for the AuthState instance.
@@ -2952,11 +2989,6 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 			a.Security.LoginAttempts = lam.FailCount()
 		}
 	}
-
-	auth.WithClientInfo(ctx)
-	auth.WithLocalInfo(ctx)
-	auth.WithUserAgent(ctx)
-	auth.WithXSSL(ctx)
 }
 
 // processApplicationXWWWFormUrlencoded processes the application/x-www-form-urlencoded data from the request context and updates the AuthState object.
@@ -3142,12 +3174,8 @@ func setupBodyBasedAuth(ctx *gin.Context, auth State) {
 // setupHTTPBasicAuth sets up basic authentication for HTTP requests.
 // It takes in a gin.Context object and a pointer to an AuthState object.
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods of the AuthState object to set client, local, user-agent, and X-SSL information, respectively
-func setupHTTPBasicAuth(ctx *gin.Context, auth State) {
+func setupHTTPBasicAuth(_ *gin.Context, _ State) {
 	// NOTE: We must get username and password later!
-	auth.WithClientInfo(ctx)
-	auth.WithLocalInfo(ctx)
-	auth.WithUserAgent(ctx)
-	auth.WithXSSL(ctx)
 }
 
 // InitMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
@@ -3185,13 +3213,20 @@ func setupAuth(ctx *gin.Context, auth State) {
 		}
 	}
 
-	auth.SetProtocol(&config.Protocol{})
+	if auth.GetProtocol() == nil || auth.GetProtocol().Get() == "" {
+		auth.SetProtocol(&config.Protocol{})
+	}
+
+	auth.WithClientInfo(ctx)
+	auth.WithLocalInfo(ctx)
+	auth.WithUserAgent(ctx)
+	auth.WithXSSL(ctx)
 
 	svc := ctx.GetString(definitions.CtxServiceKey)
 	switch svc {
 	case definitions.ServNginx, definitions.ServHeader:
 		setupHeaderBasedAuth(ctx, auth)
-	case definitions.ServSaslauthd, definitions.ServJSON:
+	case definitions.ServSaslauthd, definitions.ServJSON, definitions.ServIdP:
 		setupBodyBasedAuth(ctx, auth)
 	case definitions.ServBasic:
 		setupHTTPBasicAuth(ctx, auth)
@@ -3201,7 +3236,7 @@ func setupAuth(ctx *gin.Context, auth State) {
 		return
 	}
 
-	if ctx.Query("mode") != "list-accounts" && ctx.Query("mode") != "no-auth" && svc != definitions.ServBasic {
+	if ctx.Query("mode") != "list-accounts" && ctx.Query("mode") != "no-auth" && svc != definitions.ServBasic && svc != definitions.ServIdP {
 		username := auth.GetUsername()
 
 		if username == "" {
@@ -3287,20 +3322,9 @@ func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
 
 	auth := NewAuthStateFromContextWithDeps(ctx, deps)
 
-	svc := ctx.GetString(definitions.CtxServiceKey)
-	if svc == "" {
-		ctx.AbortWithStatus(http.StatusInternalServerError)
-
-		return nil
-	}
-
-	auth.SetStatusCodes(svc)
-	setupAuth(ctx, auth)
-
-	// prominent early log: show all incoming data including session GUID
 	if a, ok := auth.(*AuthState); ok {
 		a.traceSetupDetails(tsp)
-		logProcessingRequest(ctx, a)
+		a.FinishSetup(ctx)
 	}
 
 	if ctx.Errors.Last() != nil || ctx.IsAborted() {
@@ -3433,6 +3457,11 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 			}
 
 			util.ProcessXForwardedFor(ctx, a.Cfg(), a.Logger(), &a.Request.ClientIP, &a.Request.XClientPort, &a.Request.XSSL)
+		}
+
+		// Fallback if ClientIP is still empty
+		if a.Request.ClientIP == "" && ctx.Request != nil && ctx.Request.RemoteAddr != "" {
+			a.Request.ClientIP, a.Request.XClientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
 		}
 	}
 

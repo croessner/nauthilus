@@ -582,6 +582,12 @@ const (
 	// ProtoHTTP corresponds to the "http" protocol
 	ProtoHTTP = "http"
 
+	// ProtoOIDC corresponds to the "oidc" protocol
+	ProtoOIDC = "oidc"
+
+	// ProtoSAML corresponds to the "saml" protocol
+	ProtoSAML = "saml"
+
 	// ProtoDefault corresponds to the default protocol
 	ProtoDefault = "default"
 )
@@ -706,6 +712,9 @@ const (
 
 	// ServLoad is a constant representing the "load" service category.
 	ServLoad = "load"
+
+	// ServIdP is a constant for the "idp" service.
+	ServIdP = "idp"
 )
 
 // TwoFAv1Root is the root path for the two-factor authentication (2FA) version 1 endpoints.

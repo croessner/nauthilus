@@ -1,4 +1,4 @@
-{{ define "content" }}
+{{ template "idp_header.html" . }}
 <div class="max-w-4xl mx-auto mt-10">
     <h1 class="text-3xl font-bold mb-8">{{ .Title }}</h1>
 
@@ -55,6 +55,4 @@
         </div>
     </div>
 </div>
-{{ end }}
-
-{{ template "idp_base.html" . }}
+{{ template "idp_footer.html" . }}

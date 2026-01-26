@@ -1,4 +1,4 @@
-{{ define "content" }}
+{{ template "idp_header.html" . }}
 <div class="flex justify-center items-center mt-10">
     <div class="card w-full max-w-lg bg-base-100 shadow-xl">
         <div class="card-body">
@@ -17,9 +17,10 @@
                 </ul>
             </div>
 
-            <form action="/oidc/consent?state={{ .State }}" method="POST">
+            <form action="{{ .PostConsentEndpoint }}" method="POST">
                 <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
                 <input name="consent_challenge" type="hidden" value="{{ .ConsentChallenge }}"/>
+                <input name="state" type="hidden" value="{{ .State }}"/>
 
                 <div class="flex gap-4">
                     <button class="btn btn-primary flex-1" name="submit" type="submit" value="allow">{{ .Allow }}
@@ -30,6 +31,4 @@
         </div>
     </div>
 </div>
-{{ end }}
-
-{{ template "idp_base.html" . }}
+{{ template "idp_footer.html" . }}

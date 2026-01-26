@@ -116,6 +116,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 			UserID:   "user123",
 			Scopes:   []string{"openid", "profile"},
 			AuthTime: fixedTime,
+			Nonce:    "test-nonce",
 		}
 
 		idToken, accessToken, refreshToken, expiresIn, err := idp.IssueTokens(ctx, session)
@@ -129,6 +130,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "user123", claims["sub"])
 		assert.Equal(t, "https://issuer.example.com", claims["iss"])
+		assert.Equal(t, "test-nonce", claims["nonce"])
 	})
 
 	t.Run("IssueWithOfflineAccess", func(t *testing.T) {

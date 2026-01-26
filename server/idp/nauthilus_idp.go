@@ -57,9 +57,10 @@ func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
 
 // FindClient returns an OIDC client by its ID.
 func (n *NauthilusIdP) FindClient(clientID string) (*config.OIDCClient, bool) {
-	for _, client := range n.deps.Cfg.GetIdP().OIDC.Clients {
-		if client.ClientID == clientID {
-			return &client, true
+	clients := n.deps.Cfg.GetIdP().OIDC.Clients
+	for i := range clients {
+		if clients[i].ClientID == clientID {
+			return &clients[i], true
 		}
 	}
 
@@ -162,6 +163,9 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 		"exp":       now.Add(accessTokenLifetime).Unix(),
 		"iat":       now.Unix(),
 		"auth_time": session.AuthTime.Unix(),
+	}
+	if session.Nonce != "" {
+		idClaims["nonce"] = session.Nonce
 	}
 
 	// Add mapped claims from session
@@ -346,13 +350,32 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	)
 	defer sp.End()
 
-	auth := core.NewAuthStateWithSetupWithDeps(ctx, n.deps.Auth()).(*core.AuthState)
+	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
+	auth, ok := authRaw.(*core.AuthState)
+	if !ok || auth == nil {
+		err := fmt.Errorf("failed to create AuthState")
+		sp.RecordError(err)
+
+		return nil, err
+	}
+
 	auth.SetUsername(username)
 	auth.SetPassword(password)
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
 
+	if oidcCID != "" {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
+	} else if samlEntityID != "" {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
+	}
+
+	auth.FinishSetup(ctx)
+
 	result := auth.HandlePassword(ctx)
+
+	auth.FinishLogging(ctx, result)
+
 	if result != definitions.AuthResultOK {
 		err := fmt.Errorf("authentication failed with result: %d", result)
 		sp.RecordError(err)
@@ -372,11 +395,25 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 	)
 	defer sp.End()
 
-	auth := core.NewAuthStateWithSetupWithDeps(ctx, n.deps.Auth()).(*core.AuthState)
+	authRaw := core.NewAuthStateWithSetupWithDeps(ctx, n.deps.Auth())
+	auth, ok := authRaw.(*core.AuthState)
+	if !ok || auth == nil {
+		err := fmt.Errorf("failed to create AuthState")
+		sp.RecordError(err)
+
+		return nil, err
+	}
+
 	auth.SetUsername(username)
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
 	auth.SetNoAuth(true)
+
+	if oidcCID != "" {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
+	} else if samlEntityID != "" {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
+	}
 
 	// We use HandlePassword with NoAuth=true which should skip password check but load attributes
 	// depending on how backends handle NoAuth.
@@ -420,7 +457,12 @@ func (n *NauthilusIdP) GetClaims(user *backend.User, client any, scopes []string
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
 		// We need an AuthState to use FillIdTokenClaims
 		// We can create a lightweight AuthState just for mapping
-		auth := core.NewAuthStateFromContextWithDeps(nil, n.deps.Auth()).(*core.AuthState)
+		authRaw := core.NewAuthStateFromContextWithDeps(nil, n.deps.Auth())
+		auth, ok := authRaw.(*core.AuthState)
+		if !ok || auth == nil {
+			return nil, fmt.Errorf("failed to create AuthState for mapping")
+		}
+
 		auth.ReplaceAllAttributes(user.Attributes)
 
 		auth.FillIdTokenClaims(&oidcClient.Claims, claims, scopes)

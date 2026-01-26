@@ -35,6 +35,7 @@ type OIDCSession struct {
 	Scopes      []string       `json:"scopes"`
 	RedirectURI string         `json:"redirect_uri"`
 	AuthTime    time.Time      `json:"auth_time"`
+	Nonce       string         `json:"nonce,omitempty"`
 	Claims      map[string]any `json:"claims"`
 }
 

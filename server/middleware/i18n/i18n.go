@@ -80,7 +80,7 @@ func WithLanguage(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 
 		ctx.Set(definitions.CtxLocalizedKey, localizer)
 
-		if needRedirect {
+		if needRedirect && ctx.Request.Method == http.MethodGet {
 			var sb strings.Builder
 
 			path := ctx.Request.URL.Path

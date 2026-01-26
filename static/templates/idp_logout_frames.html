@@ -1,4 +1,4 @@
-{{ define "content" }}
+{{ template "idp_header.html" . }}
 <div class="flex justify-center items-center mt-10">
     <div class="card w-96 bg-base-100 shadow-xl">
         <div class="card-body">
@@ -25,6 +25,4 @@
         </div>
     </div>
 </div>
-{{ end }}
-
-{{ template "idp_base.html" . }}
+{{ template "idp_footer.html" . }}

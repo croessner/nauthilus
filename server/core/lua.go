@@ -311,6 +311,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		Command:           definitions.LuaCommandListAccounts,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
 		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
@@ -414,6 +415,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 		Command:           definitions.LuaCommandAddMFAValue,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
 		TOTPSecret:        totp.GetValue(),
 		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
@@ -505,6 +507,7 @@ func (lm *luaManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 		Command:           definitions.LuaCommandDeleteMFAValue,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
 		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
@@ -578,6 +581,7 @@ func (lm *luaManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.TO
 	luaRequest := &bktype.LuaRequest{
 		Command:       definitions.LuaCommandAddTOTPRecoveryCodes,
 		BackendName:   lm.backendName,
+		Context:       auth.Runtime.Context,
 		LuaReplyChan:  luaReplyChan,
 		CommonRequest: commonRequest,
 	}
@@ -647,6 +651,7 @@ func (lm *luaManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) {
 	luaRequest := &bktype.LuaRequest{
 		Command:       definitions.LuaCommandDeleteTOTPRecoveryCodes,
 		BackendName:   lm.backendName,
+		Context:       auth.Runtime.Context,
 		LuaReplyChan:  luaReplyChan,
 		CommonRequest: commonRequest,
 	}

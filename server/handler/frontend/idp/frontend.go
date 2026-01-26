@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
+	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
@@ -60,6 +61,26 @@ func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler
 	}
 }
 
+func (h *FrontendHandler) getLoginURL(ctx *gin.Context) string {
+	lang := ctx.Param("languageTag")
+	if lang != "" {
+		return "/login/" + lang
+	}
+
+	return "/login"
+}
+
+func (h *FrontendHandler) getMFAURL(ctx *gin.Context, mfaType string) string {
+	path := "/login/" + mfaType
+	lang := ctx.Param("languageTag")
+
+	if lang != "" {
+		return path + "/" + lang
+	}
+
+	return path
+}
+
 // Register adds frontend routes to the router.
 func (h *FrontendHandler) Register(router gin.IRouter) {
 	staticPath := filepath.Clean(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath())
@@ -74,6 +95,11 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	router.Static("/static/js", filepath.Join(assetBase, "js"))
 	router.Static("/static/img", filepath.Join(assetBase, "img"))
 	router.Static("/static/fonts", filepath.Join(assetBase, "fonts"))
+
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+		ctx.Next()
+	}, mdlua.LuaContextMiddleware())
 
 	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger)
@@ -122,7 +148,7 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 		account := session.Get(definitions.CookieAccount)
 
 		if account == nil {
-			ctx.Redirect(http.StatusFound, "/login?return_to="+ctx.Request.URL.Path)
+			ctx.Redirect(http.StatusFound, h.getLoginURL(ctx)+"?return_to="+ctx.Request.URL.Path)
 			ctx.Abort()
 
 			return
@@ -197,9 +223,10 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 	data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
+	data["WebAuthnLoginURL"] = h.getMFAURL(ctx, "webauthn")
 
 	data["CSRFToken"] = "TODO_CSRF"
-	data["PostLoginEndpoint"] = "/login"
+	data["PostLoginEndpoint"] = ctx.Request.URL.Path
 	returnTo := ctx.Query("return_to")
 	data["ReturnTo"] = returnTo
 	data["HaveError"] = false
@@ -312,9 +339,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 					session.Save()
 
 					if h.hasWebAuthn(user) {
-						ctx.Redirect(http.StatusFound, "/login/webauthn?return_to="+url.QueryEscape(returnTo))
+						ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "webauthn")+"?return_to="+url.QueryEscape(returnTo))
 					} else {
-						ctx.Redirect(http.StatusFound, "/login/totp?return_to="+url.QueryEscape(returnTo))
+						ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "totp")+"?return_to="+url.QueryEscape(returnTo))
 					}
 
 					return
@@ -331,9 +358,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
+		data["WebAuthnLoginURL"] = h.getMFAURL(ctx, "webauthn")
 
 		data["CSRFToken"] = "TODO_CSRF"
-		data["PostLoginEndpoint"] = "/login"
+		data["PostLoginEndpoint"] = ctx.Request.URL.Path
 		data["ReturnTo"] = returnTo
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
@@ -356,9 +384,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		session.Save()
 
 		if h.hasWebAuthn(user) {
-			ctx.Redirect(http.StatusFound, "/login/webauthn?return_to="+url.QueryEscape(returnTo))
+			ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "webauthn")+"?return_to="+url.QueryEscape(returnTo))
 		} else {
-			ctx.Redirect(http.StatusFound, "/login/totp?return_to="+url.QueryEscape(returnTo))
+			ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "totp")+"?return_to="+url.QueryEscape(returnTo))
 		}
 
 		return
@@ -421,7 +449,7 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	username := session.Get(definitions.CookieUsername)
 
 	if username == nil {
-		ctx.Redirect(http.StatusFound, "/login")
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
 	}
@@ -448,7 +476,7 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	username := session.Get(definitions.CookieUsername)
 
 	if username == nil {
-		ctx.Redirect(http.StatusFound, "/login")
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
 	}
@@ -460,7 +488,7 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
 	data["CSRFToken"] = "TODO_CSRF"
-	data["PostTOTPVerifyEndpoint"] = "/login/totp"
+	data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 	data["ReturnTo"] = ctx.Query("return_to")
 	data["HaveError"] = false
 
@@ -479,7 +507,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	returnTo := ctx.PostForm("return_to")
 
 	if username == nil || authResult == nil || code == "" {
-		ctx.Redirect(http.StatusFound, "/login")
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
 	}
@@ -496,7 +524,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	user, err := idpInstance.GetUserByUsername(ctx, username.(string), oidcCID, samlEntityID)
 
 	if err != nil {
-		ctx.Redirect(http.StatusFound, "/login")
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
 	}
@@ -534,7 +562,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
 		data["CSRFToken"] = "TODO_CSRF"
-		data["PostTOTPVerifyEndpoint"] = "/login/totp"
+		data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 		data["ReturnTo"] = returnTo
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid OTP code")
@@ -557,9 +585,15 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
+		data["WebAuthnLoginURL"] = h.getMFAURL(ctx, "webauthn")
 
 		data["CSRFToken"] = "TODO_CSRF"
-		data["PostLoginEndpoint"] = "/login"
+		lang := ctx.Param("languageTag")
+		if lang != "" {
+			data["PostLoginEndpoint"] = "/login/" + lang
+		} else {
+			data["PostLoginEndpoint"] = "/login"
+		}
 		data["ReturnTo"] = returnTo
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")

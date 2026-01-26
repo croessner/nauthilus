@@ -184,6 +184,8 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
+		auth.WithDefaults(ctx)
+
 		user, err := auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
 		if err != nil {
 			// If it does not exist, create a new one
@@ -357,6 +359,8 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
+		auth.WithDefaults(ctx)
+
 		user, err := auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, err.Error())

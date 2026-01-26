@@ -499,6 +499,57 @@ func (m *LDAPAttributeMapping) GetSignCountField() string {
 	return m.SignCountField
 }
 
+// GetAllMappedFields returns all attribute names that are part of the mapping.
+func (m *LDAPAttributeMapping) GetAllMappedFields() []string {
+	if m == nil {
+		return nil
+	}
+
+	fields := make([]string, 0, 10)
+
+	if m.AccountField != "" {
+		fields = append(fields, m.AccountField)
+	}
+
+	if m.TOTPSecretField != "" {
+		fields = append(fields, m.TOTPSecretField)
+	}
+
+	if m.TOTPRecoveryField != "" {
+		fields = append(fields, m.TOTPRecoveryField)
+	}
+
+	if m.DisplayNameField != "" {
+		fields = append(fields, m.DisplayNameField)
+	}
+
+	if m.CredentialObject != "" {
+		fields = append(fields, m.CredentialObject)
+	}
+
+	if m.CredentialIDField != "" {
+		fields = append(fields, m.CredentialIDField)
+	}
+
+	if m.PublicKeyField != "" {
+		fields = append(fields, m.PublicKeyField)
+	}
+
+	if m.UniqueUserIDField != "" {
+		fields = append(fields, m.UniqueUserIDField)
+	}
+
+	if m.AAGUIDField != "" {
+		fields = append(fields, m.AAGUIDField)
+	}
+
+	if m.SignCountField != "" {
+		fields = append(fields, m.SignCountField)
+	}
+
+	return fields
+}
+
 type LDAPSearchProtocol struct {
 	Protocols []string `mapstructure:"protocol" validate:"required"`
 	CacheName string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
@@ -524,15 +575,40 @@ func (p *LDAPSearchProtocol) GetAccountField() (string, error) {
 	return p.AccountField, nil
 }
 
-// GetAttributes returns a list of attributes that are requested from the LDAP server.  It returns a DetailedError, if
+// GetAttributes returns a list of attributes that are requested from the LDAP server. It returns a DetailedError, if
 // no value has been configured.
 func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
-	if p == nil || len(p.Attributes) == 0 {
+	if p == nil {
+		return nil, errors.ErrLDAPConfig.WithDetail("LDAPSearchProtocol is nil")
+	}
+
+	uniqueAttributes := make(map[string]struct{})
+
+	// Add configured attributes
+	for _, attr := range p.Attributes {
+		if attr != "" {
+			uniqueAttributes[attr] = struct{}{}
+		}
+	}
+
+	// Add mapped fields
+	for _, field := range p.LDAPAttributeMapping.GetAllMappedFields() {
+		if field != "" {
+			uniqueAttributes[field] = struct{}{}
+		}
+	}
+
+	if len(uniqueAttributes) == 0 {
 		return nil, errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP result attribute; protocols=%v", p.Protocols))
 	}
 
-	return p.Attributes, nil
+	result := make([]string, 0, len(uniqueAttributes))
+	for attr := range uniqueAttributes {
+		result = append(result, attr)
+	}
+
+	return result, nil
 }
 
 // GetUserFilter returns an LDAP search filter to find a user.  It returns a DetailedError, if no value has
