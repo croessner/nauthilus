@@ -56,7 +56,6 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
@@ -1532,7 +1531,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 
 	switch a.Request.Service {
 	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON:
-		maxWaitDelay := viper.GetUint("nginx_wait_delay")
+		maxWaitDelay := uint(a.Cfg().GetServer().GetNginxWaitDelay())
 
 		if maxWaitDelay > 0 {
 			waitDelay := bfWaitDelay(maxWaitDelay, a.Security.LoginAttempts)
@@ -2636,7 +2635,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
-			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult.Clone(), getDefaultEnvironment().GetLocalCacheAuthTTL())
+			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult.Clone(), a.Cfg().GetServer().GetLocalCacheAuthTTL())
 		}
 
 		a.Runtime.Authenticated = true

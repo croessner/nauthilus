@@ -26,7 +26,6 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 )
 
 type Handler struct {
@@ -45,7 +44,7 @@ func (h *Handler) Register(r gin.IRouter) {
 
 	group := r.Group(definitions.TwoFAv1Root)
 
-	regGroup := group.Group(viper.GetString("webauthn_page"))
+	regGroup := group.Group(h.Deps.Cfg.GetServer().Frontend.GetWebAuthnPage())
 	regGroup.Use(sessions.Sessions(definitions.SessionName, h.Store), mdlua.LuaContextMiddleware())
 	regGroup.GET("/register/begin", h.Deps.Svc.BeginRegistration())
 	regGroup.POST("/register/finish", h.Deps.Svc.FinishRegistration())

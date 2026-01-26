@@ -25,6 +25,7 @@ import (
 type IdPSection struct {
 	OIDC              OIDCConfig  `mapstructure:"oidc"`
 	SAML2             SAML2Config `mapstructure:"saml2"`
+	WebAuthn          WebAuthn    `mapstructure:"webauthn"`
 	TermsOfServiceURL string      `mapstructure:"terms_of_service_url"`
 	PrivacyPolicyURL  string      `mapstructure:"privacy_policy_url"`
 }
@@ -34,7 +35,22 @@ func (i *IdPSection) String() string {
 		return "IdPSection: <nil>"
 	}
 
-	return fmt.Sprintf("IdPSection: {OIDC:%s SAML2:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s}", i.OIDC.String(), i.SAML2.String(), i.TermsOfServiceURL, i.PrivacyPolicyURL)
+	return fmt.Sprintf("IdPSection: {OIDC:%s SAML2:%s WebAuthn:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s}", i.OIDC.String(), i.SAML2.String(), i.WebAuthn.String(), i.TermsOfServiceURL, i.PrivacyPolicyURL)
+}
+
+// WebAuthn represents the configuration for WebAuthn.
+type WebAuthn struct {
+	RPDisplayName string   `mapstructure:"rp_display_name"`
+	RPID          string   `mapstructure:"rp_id"`
+	RPOrigins     []string `mapstructure:"rp_origins"`
+}
+
+func (w *WebAuthn) String() string {
+	if w == nil {
+		return "WebAuthn: <nil>"
+	}
+
+	return fmt.Sprintf("WebAuthn: {RPDisplayName:%s RPID:%s RPOrigins:%v}", w.RPDisplayName, w.RPID, w.RPOrigins)
 }
 
 // OIDCConfig represents the configuration for OpenID Connect.

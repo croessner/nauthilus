@@ -58,10 +58,10 @@ func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 // If the Protocol is definitions.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is definitions.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
-	setNginxHeadersWithDeps(getDefaultConfigFile(), getDefaultEnvironment(), getDefaultLogger(), ctx, auth)
+	setNginxHeadersWithDeps(getDefaultConfigFile(), getDefaultLogger(), ctx, auth)
 }
 
-func setNginxHeadersWithDeps(cfg config.File, env config.Environment, logger *slog.Logger, ctx *gin.Context, auth *AuthState) {
+func setNginxHeadersWithDeps(cfg config.File, logger *slog.Logger, ctx *gin.Context, auth *AuthState) {
 	if cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
@@ -80,14 +80,14 @@ func setNginxHeadersWithDeps(cfg config.File, env config.Environment, logger *sl
 	} else {
 		switch auth.Request.Protocol.Get() {
 		case definitions.ProtoSMTP:
-			ctx.Header("Auth-Server", env.GetSMTPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetSMTPBackendPort()))
+			ctx.Header("Auth-Server", cfg.GetServer().GetSMTPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", cfg.GetServer().GetSMTPBackendPort()))
 		case definitions.ProtoIMAP:
-			ctx.Header("Auth-Server", env.GetIMAPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetIMAPBackendPort()))
+			ctx.Header("Auth-Server", cfg.GetServer().GetIMAPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", cfg.GetServer().GetIMAPBackendPort()))
 		case definitions.ProtoPOP3:
-			ctx.Header("Auth-Server", env.GetPOP3BackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetPOP3BackendPort()))
+			ctx.Header("Auth-Server", cfg.GetServer().GetPOP3BackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", cfg.GetServer().GetPOP3BackendPort()))
 		}
 	}
 }

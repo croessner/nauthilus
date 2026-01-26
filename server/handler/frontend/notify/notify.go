@@ -25,7 +25,6 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 )
 
 type Handler struct {
@@ -38,7 +37,7 @@ func New(store sessions.Store, d *deps.Deps) *Handler {
 }
 
 func (h *Handler) Register(router gin.IRouter) {
-	group := router.Group(viper.GetString("notify_page"))
+	group := router.Group(h.Deps.Cfg.GetServer().Frontend.GetNotifyPage())
 
 	group.Use(sessions.Sessions(definitions.SessionName, h.Store))
 	group.GET("/", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(h.Deps.Cfg, h.Deps.Logger), core.WithLanguageMiddleware(core.AuthDeps{Cfg: h.Deps.Cfg, Logger: h.Deps.Logger, Redis: h.Deps.Redis}), h.Deps.Svc.NotifyGETHandler())

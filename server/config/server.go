@@ -32,6 +32,16 @@ type ServerSection struct {
 	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries" validate:"omitempty,gte=1"`
 	HTTP3                     bool                     `mapstructure:"http3"`
 	HAproxyV2                 bool                     `mapstructure:"haproxy_v2"`
+	SMTPBackendAddress        string                   `mapstructure:"smtp_backend_address" validate:"omitempty,hostname_rfc1123"`
+	SMTPBackendPort           int                      `mapstructure:"smtp_backend_port" validate:"omitempty,gte=1,lte=65535"`
+	IMAPBackendAddress        string                   `mapstructure:"imap_backend_address" validate:"omitempty,hostname_rfc1123"`
+	IMAPBackendPort           int                      `mapstructure:"imap_backend_port" validate:"omitempty,gte=1,lte=65535"`
+	POP3BackendAddress        string                   `mapstructure:"pop3_backend_address" validate:"omitempty,hostname_rfc1123"`
+	POP3BackendPort           int                      `mapstructure:"pop3_backend_port" validate:"omitempty,gte=1,lte=65535"`
+	NginxWaitDelay            uint8                    `mapstructure:"nginx_wait_delay" validate:"omitempty"`
+	MaxLoginAttempts          uint8                    `mapstructure:"max_login_attempts" validate:"omitempty"`
+	LuaScriptTimeout          time.Duration            `mapstructure:"lua_script_timeout" validate:"omitempty"`
+	LocalCacheAuthTTL         time.Duration            `mapstructure:"local_cache_auth_ttl" validate:"omitempty"`
 	RateLimitPerSecond        float64                  `mapstructure:"rate_limit_per_second" validate:"omitempty,min=0"`
 	RateLimitBurst            int                      `mapstructure:"rate_limit_burst" validate:"omitempty,min=0"`
 	DisabledEndpoints         Endpoint                 `mapstructure:"disabled_endpoints" validate:"omitempty"`
@@ -202,6 +212,96 @@ func (s *ServerSection) GetInstanceName() string {
 	}
 
 	return s.InstanceName
+}
+
+// GetSMTPBackendAddress returns the address of the SMTP backend server.
+func (s *ServerSection) GetSMTPBackendAddress() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.SMTPBackendAddress
+}
+
+// GetSMTPBackendPort returns the port of the SMTP backend server.
+func (s *ServerSection) GetSMTPBackendPort() int {
+	if s == nil {
+		return 0
+	}
+
+	return s.SMTPBackendPort
+}
+
+// GetIMAPBackendAddress returns the address of the IMAP backend server.
+func (s *ServerSection) GetIMAPBackendAddress() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.IMAPBackendAddress
+}
+
+// GetIMAPBackendPort returns the port of the IMAP backend server.
+func (s *ServerSection) GetIMAPBackendPort() int {
+	if s == nil {
+		return 0
+	}
+
+	return s.IMAPBackendPort
+}
+
+// GetPOP3BackendAddress returns the address of the POP3 backend server.
+func (s *ServerSection) GetPOP3BackendAddress() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.POP3BackendAddress
+}
+
+// GetPOP3BackendPort returns the port of the POP3 backend server.
+func (s *ServerSection) GetPOP3BackendPort() int {
+	if s == nil {
+		return 0
+	}
+
+	return s.POP3BackendPort
+}
+
+// GetNginxWaitDelay returns the wait delay for Nginx in seconds.
+func (s *ServerSection) GetNginxWaitDelay() uint8 {
+	if s == nil {
+		return 0
+	}
+
+	return s.NginxWaitDelay
+}
+
+// GetMaxLoginAttempts returns the maximum number of login attempts.
+func (s *ServerSection) GetMaxLoginAttempts() uint8 {
+	if s == nil {
+		return 0
+	}
+
+	return s.MaxLoginAttempts
+}
+
+// GetLuaScriptTimeout returns the timeout for Lua scripts.
+func (s *ServerSection) GetLuaScriptTimeout() time.Duration {
+	if s == nil {
+		return 0
+	}
+
+	return s.LuaScriptTimeout
+}
+
+// GetLocalCacheAuthTTL returns the TTL for local cache authentication.
+func (s *ServerSection) GetLocalCacheAuthTTL() time.Duration {
+	if s == nil {
+		return 0
+	}
+
+	return s.LocalCacheAuthTTL
 }
 
 // GetEndpoint retrieves a pointer to the DisabledEndpoints configuration from the ServerSection instance.
@@ -1859,7 +1959,15 @@ type Frontend struct {
 	HydraAdminUri           string `mapstructure:"hydra_admin_uri" validate:"omitempty,url"`
 	TotpIssuer              string `mapstructure:"totp_issuer" validate:"omitempty"`
 	TotpSkew                uint   `mapstructure:"totp_skew" validate:"omitempty"`
+	TotpPage                string `mapstructure:"totp_page" validate:"omitempty"`
+	TotpWelcome             string `mapstructure:"totp_welcome" validate:"omitempty"`
+	TotpPageLogoImageAlt    string `mapstructure:"totp_page_logo_image_alt" validate:"omitempty"`
 	LoginRememberFor        int    `mapstructure:"login_remember_for" validate:"omitempty"`
+	ConsentRememberFor      int    `mapstructure:"consent_remember_for" validate:"omitempty"`
+	WebAuthnPage            string `mapstructure:"webauthn_page" validate:"omitempty"`
+	Login2FAPage            string `mapstructure:"login_2fa_page" validate:"omitempty"`
+	Login2FAPageWelcome     string `mapstructure:"login_2fa_page_welcome" validate:"omitempty"`
+	Login2FAPostPage        string `mapstructure:"login_2fa_post_page" validate:"omitempty"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -2126,6 +2234,78 @@ func (f *Frontend) GetLoginRememberFor() int {
 	}
 
 	return f.LoginRememberFor
+}
+
+// GetConsentRememberFor retrieves the consent remember duration from the Frontend configuration.
+func (f *Frontend) GetConsentRememberFor() int {
+	if f == nil {
+		return 0
+	}
+
+	return f.ConsentRememberFor
+}
+
+// GetTotpPage retrieves the TOTP page from the Frontend configuration.
+func (f *Frontend) GetTotpPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.TotpPage
+}
+
+// GetTotpWelcome retrieves the TOTP welcome message from the Frontend configuration.
+func (f *Frontend) GetTotpWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.TotpWelcome
+}
+
+// GetTotpPageLogoImageAlt retrieves the TOTP page logo image alt text from the Frontend configuration.
+func (f *Frontend) GetTotpPageLogoImageAlt() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.TotpPageLogoImageAlt
+}
+
+// GetWebAuthnPage retrieves the WebAuthn page from the Frontend configuration.
+func (f *Frontend) GetWebAuthnPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.WebAuthnPage
+}
+
+// GetLogin2FAPage retrieves the 2FA login page from the Frontend configuration.
+func (f *Frontend) GetLogin2FAPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.Login2FAPage
+}
+
+// GetLogin2FAPageWelcome retrieves the 2FA login page welcome message from the Frontend configuration.
+func (f *Frontend) GetLogin2FAPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.Login2FAPageWelcome
+}
+
+// GetLogin2FAPostPage retrieves the 2FA login post page from the Frontend configuration.
+func (f *Frontend) GetLogin2FAPostPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.Login2FAPostPage
 }
 
 func validateCookieStoreEncKey(fl validator.FieldLevel) bool {

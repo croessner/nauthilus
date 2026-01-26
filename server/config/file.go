@@ -2071,6 +2071,183 @@ func (f *FileSettings) setDefaultDefaultLanguage() error {
 	return nil
 }
 
+// setDefaultBackendServerSettings sets the default backend server settings if they are not already configured.
+func (f *FileSettings) setDefaultBackendServerSettings() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.SMTPBackendAddress == "" {
+		f.Server.SMTPBackendAddress = definitions.SMTPBackendAddress
+	}
+
+	if f.Server.SMTPBackendPort == 0 {
+		f.Server.SMTPBackendPort = definitions.SMTPBackendPort
+	}
+
+	if f.Server.IMAPBackendAddress == "" {
+		f.Server.IMAPBackendAddress = definitions.IMAPBackendAddress
+	}
+
+	if f.Server.IMAPBackendPort == 0 {
+		f.Server.IMAPBackendPort = definitions.IMAPBackendPort
+	}
+
+	if f.Server.POP3BackendAddress == "" {
+		f.Server.POP3BackendAddress = definitions.POP3BackendAddress
+	}
+
+	if f.Server.POP3BackendPort == 0 {
+		f.Server.POP3BackendPort = definitions.POP3BackendPort
+	}
+
+	return nil
+}
+
+// setDefaultSecuritySettings sets the default security-related settings if they are not already configured.
+func (f *FileSettings) setDefaultSecuritySettings() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.NginxWaitDelay == 0 {
+		f.Server.NginxWaitDelay = definitions.WaitDelay
+	}
+
+	if f.Server.MaxLoginAttempts == 0 {
+		f.Server.MaxLoginAttempts = definitions.MaxLoginAttempts
+	}
+
+	if f.Server.LuaScriptTimeout == 0 {
+		f.Server.LuaScriptTimeout = definitions.LuaMaxExecutionTime
+	}
+
+	if f.Server.LocalCacheAuthTTL == 0 {
+		f.Server.LocalCacheAuthTTL = 30 * time.Second
+	}
+
+	return nil
+}
+
+// setDefaultFrontendSettings sets the default frontend settings if they are not already configured.
+func (f *FileSettings) setDefaultFrontendSettings() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.DefaultLogoImage == "" {
+		f.Server.Frontend.DefaultLogoImage = "/static/img/logo.png"
+	}
+
+	if f.Server.Frontend.Homepage == "" {
+		f.Server.Frontend.Homepage = "https://nauthilus.org"
+	}
+
+	if f.Server.Frontend.LoginPage == "" {
+		f.Server.Frontend.LoginPage = "/login"
+	}
+
+	if f.Server.Frontend.LoginPageLogoImageAlt == "" {
+		f.Server.Frontend.LoginPageLogoImageAlt = definitions.ImageCopyright
+	}
+
+	if f.Server.Frontend.LoginRememberFor == 0 {
+		f.Server.Frontend.LoginRememberFor = 10800
+	}
+
+	if f.Server.Frontend.ConsentPage == "" {
+		f.Server.Frontend.ConsentPage = "/consent"
+	}
+
+	if f.Server.Frontend.ConsentPageLogoImageAlt == "" {
+		f.Server.Frontend.ConsentPageLogoImageAlt = definitions.ImageCopyright
+	}
+
+	if f.Server.Frontend.ConsentRememberFor == 0 {
+		f.Server.Frontend.ConsentRememberFor = 3600
+	}
+
+	if f.Server.Frontend.LogoutPage == "" {
+		f.Server.Frontend.LogoutPage = "/logout"
+	}
+
+	if f.Server.Frontend.DevicePage == "" {
+		f.Server.Frontend.DevicePage = "/device"
+	}
+
+	if f.Server.Frontend.WebAuthnPage == "" {
+		f.Server.Frontend.WebAuthnPage = "/webauthn"
+	}
+
+	if f.Server.Frontend.Login2FAPage == "" {
+		f.Server.Frontend.Login2FAPage = "/register"
+	}
+
+	if f.Server.Frontend.Login2FAPostPage == "" {
+		f.Server.Frontend.Login2FAPostPage = f.Server.Frontend.Login2FAPage + "/home"
+	}
+
+	if f.Server.Frontend.TotpSkew == 0 {
+		f.Server.Frontend.TotpSkew = 1
+	}
+
+	if f.Server.Frontend.TotpPage == "" {
+		f.Server.Frontend.TotpPage = "/totp"
+	}
+
+	if f.Server.Frontend.TotpIssuer == "" {
+		f.Server.Frontend.TotpIssuer = "Nauthilus"
+	}
+
+	if f.Server.Frontend.TotpPageLogoImageAlt == "" {
+		f.Server.Frontend.TotpPageLogoImageAlt = definitions.ImageCopyright
+	}
+
+	if f.Server.Frontend.NotifyPage == "" {
+		f.Server.Frontend.NotifyPage = "/notify"
+	}
+
+	if f.Server.Frontend.NotifyPageLogoImageAlt == "" {
+		f.Server.Frontend.NotifyPageLogoImageAlt = definitions.ImageCopyright
+	}
+
+	return nil
+}
+
+// setDefaultIdPSettings sets the default IdP settings if they are not already configured.
+func (f *FileSettings) setDefaultIdPSettings() error {
+	if f == nil || f.IdP == nil {
+		return nil
+	}
+
+	if f.IdP.WebAuthn.RPDisplayName == "" {
+		f.IdP.WebAuthn.RPDisplayName = "Nauthilus"
+	}
+
+	if f.IdP.WebAuthn.RPID == "" {
+		f.IdP.WebAuthn.RPID = "localhost"
+	}
+
+	if len(f.IdP.WebAuthn.RPOrigins) == 0 {
+		f.IdP.WebAuthn.RPOrigins = []string{"https://localhost"}
+	}
+
+	return nil
+}
+
+// setDefaultTrustedProxies sets the default trusted proxies if they are not already configured.
+func (f *FileSettings) setDefaultTrustedProxies() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if len(f.Server.TrustedProxies) == 0 {
+		f.Server.TrustedProxies = []string{"127.0.0.1", "::1"}
+	}
+
+	return nil
+}
+
 // validateFrontend checks if the frontend-related directories exist.
 func (f *FileSettings) validateFrontend() error {
 	if f == nil || f.Server == nil {
@@ -2120,6 +2297,11 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultLanguageResources,
 		f.setDefaultHTMLStaticContentPath,
 		f.setDefaultDefaultLanguage,
+		f.setDefaultBackendServerSettings,
+		f.setDefaultSecuritySettings,
+		f.setDefaultFrontendSettings,
+		f.setDefaultIdPSettings,
+		f.setDefaultTrustedProxies,
 		f.validateFrontend,
 	}
 

@@ -19,24 +19,26 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/spf13/viper"
 )
 
 // InitWebAuthn initializes the global WebAuthn configuration using values
 // from the environment/config. The legacy behavior (logging on error) is preserved.
 func (DefaultBootstrap) InitWebAuthn() error {
 	var err error
+	cfg := config.GetFile()
+	idpCfg := cfg.GetIdP()
 
-	rpID := viper.GetString("webauthn_rp_id")
-	origins := viper.GetStringSlice("webauthn_rp_origins")
+	rpID := idpCfg.WebAuthn.RPID
+	origins := idpCfg.WebAuthn.RPOrigins
 
 	// If RPID is localhost (our new default) or empty, try to get a better one from IdP issuer
 	if rpID == "" || rpID == "localhost" {
-		issuer := viper.GetString("idp.oidc.issuer")
+		issuer := idpCfg.OIDC.Issuer
 		if issuer != "" {
 			if u, err := url.Parse(issuer); err == nil {
 				rpID = u.Hostname()
@@ -45,7 +47,7 @@ func (DefaultBootstrap) InitWebAuthn() error {
 	}
 
 	// Always ensure localhost is in origins if we are in developer mode
-	if viper.GetBool("developer_mode") {
+	if config.GetEnvironment().GetDevMode() {
 		localhostFound := false
 
 		for _, o := range origins {
@@ -62,7 +64,7 @@ func (DefaultBootstrap) InitWebAuthn() error {
 	}
 
 	webAuthn, err = webauthn.New(&webauthn.Config{
-		RPDisplayName: viper.GetString("webauthn_display_name"),
+		RPDisplayName: idpCfg.WebAuthn.RPDisplayName,
 		RPID:          rpID,
 		RPOrigins:     origins,
 		Timeouts: webauthn.TimeoutsConfig{

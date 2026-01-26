@@ -68,7 +68,7 @@ func TotpValidation(ctx *gin.Context, auth *AuthState, code string, deps AuthDep
 func totpValidation(ctx *gin.Context, guid string, code string, account string, totpSecret string, deps AuthDeps) error {
 	codeValid, err := totp.ValidateCustom(code, totpSecret, time.Now(), totp.ValidateOpts{
 		Period:    30,
-		Skew:      1,
+		Skew:      deps.Cfg.GetServer().Frontend.GetTotpSkew(),
 		Digits:    otp.DigitsSix,
 		Algorithm: otp.AlgorithmSHA1,
 	})

@@ -27,7 +27,6 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 )
 
 // Handler registers the Hydra-related frontend endpoints (login, device, consent, logout)
@@ -59,14 +58,14 @@ func (h *Handler) Register(router gin.IRouter) {
 	g.Static("/static/fonts", filepath.Join(assetBase, "fonts"))
 
 	// Login page
-	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("login_page"), router, h.Store, h.Deps.Svc.LoginGETHandler(), h.Deps.Svc.LoginPOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, h.Deps.Cfg.GetServer().Frontend.GetLoginPage(), router, h.Store, h.Deps.Svc.LoginGETHandler(), h.Deps.Svc.LoginPOSTHandler())
 
 	// Device/U2F/FIDO2 login page
-	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("device_page"), router, h.Store, h.Deps.Svc.DeviceGETHandler(), h.Deps.Svc.DevicePOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, h.Deps.Cfg.GetServer().Frontend.GetDevicePage(), router, h.Store, h.Deps.Svc.DeviceGETHandler(), h.Deps.Svc.DevicePOSTHandler())
 
 	// Consent page
-	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("consent_page"), router, h.Store, h.Deps.Svc.ConsentGETHandler(), h.Deps.Svc.ConsentPOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, h.Deps.Cfg.GetServer().Frontend.GetConsentPage(), router, h.Store, h.Deps.Svc.ConsentGETHandler(), h.Deps.Svc.ConsentPOSTHandler())
 
 	// Logout page
-	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, viper.GetString("logout_page"), router, h.Store, h.Deps.Svc.LogoutGETHandler(), h.Deps.Svc.LogoutPOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, h.Deps.AccountCache, h.Deps.Cfg.GetServer().Frontend.GetLogoutPage(), router, h.Store, h.Deps.Svc.LogoutGETHandler(), h.Deps.Svc.LogoutPOSTHandler())
 }
