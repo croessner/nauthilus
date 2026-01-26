@@ -43,15 +43,12 @@ func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
-	a := &corepkg.AuthState{
-		Request: corepkg.AuthRequest{
-			Service:  definitions.ServJSON,
-			Protocol: config.NewProtocol("imap"),
-		},
-		Runtime: corepkg.AuthRuntime{
-			GUID: "guid-fail-json",
-		},
-	}
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	deps := corepkg.AuthDeps{Cfg: cfg}
+	a := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	a.Request.Service = definitions.ServJSON
+	a.Request.Protocol = config.NewProtocol("imap")
+	a.Runtime.GUID = "guid-fail-json"
 	a.SetStatusCodes(a.Request.Service)
 
 	// Trigger failure path
@@ -87,15 +84,12 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
 	reason := "Temporary server problem"
-	a := &corepkg.AuthState{
-		Request: corepkg.AuthRequest{
-			Service:  definitions.ServJSON,
-			Protocol: config.NewProtocol("imap"),
-		},
-		Runtime: corepkg.AuthRuntime{
-			GUID: "guid-tempfail-json",
-		},
-	}
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	deps := corepkg.AuthDeps{Cfg: cfg}
+	a := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	a.Request.Service = definitions.ServJSON
+	a.Request.Protocol = config.NewProtocol("imap")
+	a.Runtime.GUID = "guid-tempfail-json"
 	a.SetStatusCodes(a.Request.Service)
 
 	a.AuthTempFail(ctx, reason)

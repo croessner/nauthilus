@@ -202,7 +202,6 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			bootfx.EnableBlockProfile(snap.File)
 			bootfx.InitializeBruteForceTolerate(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
-			bootfx.InitializeHTTPClients(snap.File)
 			core.InitPassDBResultPool()
 
 			if snap.File == nil {

@@ -81,24 +81,8 @@ func (r *Router) WithStatic(setup func(*gin.Engine)) *Router {
 	return r
 }
 
-// WithFrontend calls the provided setup functions to register the frontend pages.
-func (r *Router) WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP func(*gin.Engine)) *Router {
-	if setupHydra != nil {
-		setupHydra(r.Engine)
-	}
-
-	if setup2FA != nil {
-		setup2FA(r.Engine)
-	}
-
-	if setupWebAuthn != nil {
-		setupWebAuthn(r.Engine)
-	}
-
-	if setupNotify != nil {
-		setupNotify(r.Engine)
-	}
-
+// WithFrontend calls the provided setup function to register the frontend pages.
+func (r *Router) WithFrontend(setupIdP func(*gin.Engine)) *Router {
 	if setupIdP != nil {
 		setupIdP(r.Engine)
 	}

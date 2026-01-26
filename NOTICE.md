@@ -18,7 +18,6 @@ The following libraries are used in this project:
 | [github.com/mackerelio/go-osstat](http://github.com/mackerelio/go-osstat)         | Apache-2.0   |
 | [github.com/mitchellh/mapstructure](http://github.com/mitchellh/mapstructure)     | MIT          |
 | [github.com/nicksnyder/go-i18n](http://github.com/nicksnyder/go-i18n)/v2          | MIT          |
-| [github.com/ory/hydra-client-go](http://github.com/ory/hydra-client-go)/v2        | Apache-2.0   |
 | [github.com/patrickmn/go-cache](http://github.com/patrickmn/go-cache)             | MIT          |
 | [github.com/pires/go-proxyproto](http://github.com/pires/go-proxyproto)           | Apache-2.0   |
 | [github.com/pquerna/otp](http://github.com/pquerna/otp)                           | Apache-2.0   |

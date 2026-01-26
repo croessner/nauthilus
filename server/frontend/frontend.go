@@ -96,7 +96,7 @@ func GetLocalized(ctx *gin.Context, cfg config.File, logger *slog.Logger, messag
 			ctx.Request.Context(),
 			cfg,
 			logger,
-			definitions.DbgHydra,
+			definitions.DbgAuth,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			"message_id", messageID,
 			definitions.LogKeyMsg, "Failed to get localized message",

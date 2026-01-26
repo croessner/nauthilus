@@ -33,11 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
-	handlerhydra "github.com/croessner/nauthilus/server/handler/frontend/hydra"
 	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
-	handlernotify "github.com/croessner/nauthilus/server/handler/frontend/notify"
-	handlertwofa "github.com/croessner/nauthilus/server/handler/frontend/twofa"
-	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
 	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
 	"github.com/croessner/nauthilus/server/idp"
@@ -45,7 +41,6 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -402,7 +397,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	// Build frontend/backchannel setup callbacks to avoid core->handler import cycles
 	var setupHealth func(*gin.Engine)
 	var setupMetrics func(*gin.Engine)
-	var setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP func(*gin.Engine)
+	var setupIdP func(*gin.Engine)
 	var setupBackchannel func(*gin.Engine)
 
 	// Health endpoint (always register)
@@ -428,29 +423,6 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Logger: logger}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
-		if tags.HydraEnabled {
-			setupHydra = func(e *gin.Engine) {
-				deps.Env = env
-				deps.Redis = store.redisClient
-				handlerhydra.New(sessStore, deps).Register(e)
-			}
-			setup2FA = func(e *gin.Engine) {
-				deps.Env = env
-				deps.Redis = store.redisClient
-				handlertwofa.New(sessStore, deps).Register(e)
-			}
-			setupWebAuthn = func(e *gin.Engine) {
-				deps.Env = env
-				deps.Redis = store.redisClient
-				handlerwebauthn.New(sessStore, deps).Register(e)
-			}
-		}
-		setupNotify = func(e *gin.Engine) {
-			deps.Env = env
-			deps.Redis = store.redisClient
-			handlernotify.New(sessStore, deps).Register(e)
-		}
-
 		if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
 			setupIdP = func(e *gin.Engine) {
 				deps.Env = env
@@ -475,12 +447,8 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		}
 
 		if env.GetDevMode() {
-			if setupHydra == nil && setupIdP == nil {
-				level.Warn(logger).Log(definitions.LogKeyMsg, "Frontend is enabled, but neither Hydra nor internal IdP (OIDC/SAML2) is enabled. Login routes will not be registered")
-			}
-
-			if !tags.HydraEnabled && len(cfg.GetOauth2().GetClients()) > 0 {
-				level.Warn(logger).Log(definitions.LogKeyMsg, "OAuth2 clients are configured in 'oauth2' section, but Hydra is disabled (build tag 'hydra' missing). These clients are NOT used by the internal IdP. Use 'idp.oidc.clients' for the internal IdP")
+			if setupIdP == nil {
+				level.Warn(logger).Log(definitions.LogKeyMsg, "Frontend is enabled, but internal IdP (OIDC/SAML2) is not enabled. Login routes will not be registered")
 			}
 		}
 	}
@@ -500,7 +468,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		AccountCache: store.accountCache,
 	})
 
-	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP, setupBackchannel, signals)
+	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupIdP, setupBackchannel, signals)
 
 	return nil
 }

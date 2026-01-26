@@ -58,17 +58,13 @@ func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
-	a := &corepkg.AuthState{
-		Request: corepkg.AuthRequest{
-			Service:  definitions.ServNginx,
-			Protocol: config.NewProtocol("imap"),
-		},
-		Runtime: corepkg.AuthRuntime{
-			GUID:            "guid-nginx",
-			UsedBackendIP:   "10.0.0.5",
-			UsedBackendPort: 993,
-		},
-	}
+	deps := corepkg.AuthDeps{Cfg: cfg}
+	a := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	a.Request.Service = definitions.ServNginx
+	a.Request.Protocol = config.NewProtocol("imap")
+	a.Runtime.GUID = "guid-nginx"
+	a.Runtime.UsedBackendIP = "10.0.0.5"
+	a.Runtime.UsedBackendPort = 993
 	a.SetStatusCodes(a.Request.Service)
 
 	// No local cache hit in ctx by default; expect Miss header
@@ -99,17 +95,14 @@ func TestResponseWriter_OK_JSONBodyIncludesOK(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
-	a := &corepkg.AuthState{
-		Request: corepkg.AuthRequest{
-			Service:  definitions.ServJSON,
-			Protocol: config.NewProtocol("imap"),
-		},
-		Runtime: corepkg.AuthRuntime{
-			GUID:                "guid-json",
-			SourcePassDBBackend: definitions.BackendLDAP,
-			AccountField:        "uid",
-		},
-	}
+	cfgSettings := &config.FileSettings{Server: &config.ServerSection{}}
+	deps := corepkg.AuthDeps{Cfg: cfgSettings}
+	a := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	a.Request.Service = definitions.ServJSON
+	a.Request.Protocol = config.NewProtocol("imap")
+	a.Runtime.GUID = "guid-json"
+	a.Runtime.SourcePassDBBackend = definitions.BackendLDAP
+	a.Runtime.AccountField = "uid"
 	a.ReplaceAllAttributes(map[string][]any{"uid": {"alice"}})
 	a.SetStatusCodes(a.Request.Service)
 

@@ -900,7 +900,7 @@ func (h *FrontendHandler) purgeCache(auth *core.AuthState, username string) {
 		return
 	}
 
-	accountName, err := backend.LookupUserAccountFromRedis(auth.Ctx(), authDeps.Cfg, authDeps.Redis, username, definitions.ProtoOryHydra, "")
+	accountName, err := backend.LookupUserAccountFromRedis(auth.Ctx(), authDeps.Cfg, authDeps.Redis, username, definitions.ProtoOIDC, "")
 	if err != nil {
 		return
 	}

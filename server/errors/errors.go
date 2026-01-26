@@ -156,14 +156,10 @@ var (
 	ErrWrongIPAddress         = errors.New("unable to parse IP address")
 )
 
-// hydra.
+// auth.
 
 var (
-	ErrNoLoginChallenge = errors.New("missing login challenge")
 	ErrNoAccount        = errors.New("no account found")
-	ErrUnknownJSON      = errors.New("unable to parse JSON response")
-	ErrHTTPRequestGone  = errors.New("http request gone")
-	ErrHydraNoClientId  = errors.New("no client_id returned from hydra server")
 	ErrNoTLS            = errors.New("no tls connection")
 	ErrTOTPCodeInvalid  = errors.New("totp code invalid")
 	ErrNoTOTPCode       = errors.New("totp code not found")

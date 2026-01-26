@@ -63,7 +63,7 @@ function nauthilus_backend_verify_password(request)
 
     -- We do not want to return all results to each protocol
     local filter_result_value = function(key)
-        if request.protocol ~= "ory-hydra" then
+        if request.protocol ~= "oidc" and request.protocol ~= "saml" then
             if key == "totp_secret" then
                 return true
             elseif key == "uniqueid" then

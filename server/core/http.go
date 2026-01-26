@@ -229,15 +229,11 @@ func (c DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
 }
 
 // RegisterRoutes wires health and metrics routes, then (if enabled) the frontend
-// routes (Hydra, 2FA, WebAuthn, Notify) and finally the backchannel routes. The
+// routes (IdP) and finally the backchannel routes. The
 // order is kept to preserve exact behavior of the legacy implementation.
 func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
-	setupHydra func(*gin.Engine),
-	setup2FA func(*gin.Engine),
-	setupWebAuthn func(*gin.Engine),
-	setupNotify func(*gin.Engine),
 	setupIdP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 ) {
@@ -277,7 +273,7 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 		rb := approuter.NewRouter(c.cfg)
 		rb.Engine = r
 
-		rb.WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP)
+		rb.WithFrontend(setupIdP)
 	}
 
 	rb := approuter.NewRouter(c.cfg)
@@ -643,10 +639,6 @@ func NewDefaultHTTPApp(deps HTTPDeps) *DefaultHTTPApp {
 func (a *DefaultHTTPApp) Start(ctx context.Context,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
-	setupHydra func(*gin.Engine),
-	setup2FA func(*gin.Engine),
-	setupWebAuthn func(*gin.Engine),
-	setupNotify func(*gin.Engine),
 	setupIdP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 	signals ServerSignals,
@@ -673,7 +665,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	srv := a.HTTPServerFactory.New(router)
 
 	a.RouterComposer.ApplyCoreMiddlewares(router)
-	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupIdP, setupBackchannel)
+	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupIdP, setupBackchannel)
 
 	proxy := a.ProxyProvider.Get()
 	if proxy != nil {

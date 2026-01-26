@@ -50,18 +50,15 @@ func TestResponseWriter_OK_JSONBodyMatchesGolden(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
-	a := &corepkg.AuthState{
-		Request: corepkg.AuthRequest{
-			Service:  definitions.ServJSON,
-			Protocol: config.NewProtocol("imap"),
-		},
-		Runtime: corepkg.AuthRuntime{
-			GUID:                "guid-json-golden",
-			SourcePassDBBackend: definitions.BackendLDAP, // 2
-			AccountField:        "account",
-			TOTPSecretField:     "totp",
-		},
-	}
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	deps := corepkg.AuthDeps{Cfg: cfg}
+	a := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	a.Request.Service = definitions.ServJSON
+	a.Request.Protocol = config.NewProtocol("imap")
+	a.Runtime.GUID = "guid-json-golden"
+	a.Runtime.SourcePassDBBackend = definitions.BackendLDAP
+	a.Runtime.AccountField = "account"
+	a.Runtime.TOTPSecretField = "totp"
 	a.ReplaceAllAttributes(map[string][]any{"dn": {"cn=user,dc=example,dc=org"}})
 	a.SetStatusCodes(a.Request.Service)
 

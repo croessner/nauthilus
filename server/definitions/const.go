@@ -721,7 +721,7 @@ const (
 const TwoFAv1Root = "/2fa/v1"
 
 // Keys for the encrypted session cookie.
-// SessionName remains available in all builds; other cookie constants are gated under hydra.
+// SessionName remains available in all builds.
 const (
 	// SessionName constant is for the name of the session
 	SessionName = "Nauthilus_session"
@@ -872,9 +872,6 @@ const (
 
 	// DbgAuth is the debugging module for authentication processes.
 	DbgAuth
-
-	// _DbgHydraSlot reserves the Hydra debug iota position when Hydra is disabled.
-	_
 
 	// DbgWebAuthn is the debugging module for WebAuthn related processes.
 	DbgWebAuthn

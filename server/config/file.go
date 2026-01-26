@@ -281,12 +281,6 @@ type File interface {
 	// GetAuthMethod provides the authentication method used.
 	GetAuthMethod() string
 
-	// GetSkipTOTP checks if TOTP (Two-Factor Authentication) is skipped.
-	GetSkipTOTP(string) bool
-
-	// GetSkipConsent checks if consent is skipped.
-	GetSkipConsent(string) bool
-
 	/*
 		Network-related methods
 	*/
@@ -332,9 +326,6 @@ type File interface {
 	// GetLua retrieves the LuaSection from the configuration, containing actions, features, filters, hooks, and related config.
 	GetLua() *LuaSection
 
-	// GetOauth2 retrieves the Oauth2Section configuration, containing custom scopes and clients for OAuth2 authentication.
-	GetOauth2() *Oauth2Section
-
 	// GetLDAP returns the LDAPSection object containing configuration and search definitions for LDAP operations.
 	GetLDAP() *LDAPSection
 
@@ -353,7 +344,6 @@ type FileSettings struct {
 	BruteForce              *BruteForceSection       `mapstructure:"brute_force" validate:"omitempty"`
 	Lua                     *LuaSection              `mapstructure:"lua" validate:"omitempty"`
 	LDAP                    *LDAPSection             `mapstructure:"ldap" validate:"omitempty"`
-	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" validate:"omitempty"`
 	IdP                     *IdPSection              `mapstructure:"idp" validate:"omitempty"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex
@@ -419,15 +409,6 @@ func (f *FileSettings) GetLua() *LuaSection {
 	}
 
 	return f.Lua
-}
-
-// GetOauth2 returns the Oauth2Section of the FileSettings instance. Returns nil if the FileSettings instance is nil.
-func (f *FileSettings) GetOauth2() *Oauth2Section {
-	if f == nil {
-		return &Oauth2Section{}
-	}
-
-	return f.Oauth2
 }
 
 // GetLDAP retrieves the LDAPSection from the FileSettings instance. Returns nil if the FileSettings is nil.
@@ -1374,47 +1355,6 @@ func (f *FileSettings) GetAllProtocols() []string {
 	return protocols.GetStringSlice()
 }
 
-// getOAuth2ClientIndex returns the index and found status of an OAuth-2 client with the given client ID in the LoadableConfig.Oauth2.Clients slice. If the client is found, the index
-func (f *FileSettings) getOAuth2ClientIndex(clientId string) (index int, found bool) {
-	oauth2 := f.GetOauth2()
-	if oauth2 != nil {
-		clients := oauth2.GetClients()
-		for index = range clients {
-			if clients[index].GetClientId() != clientId {
-				continue
-			}
-
-			found = true
-
-			break
-		}
-	}
-
-	return
-}
-
-// GetSkipTOTP returns a boolean true, if TOTP two-factor authentication shall be skipped for an OAuth-2 client.
-func (f *FileSettings) GetSkipTOTP(clientId string) (skip bool) {
-	if index, found := f.getOAuth2ClientIndex(clientId); found {
-		clients := f.GetOauth2().GetClients()
-
-		return clients[index].IsSkipTOTP()
-	}
-
-	return
-}
-
-// GetSkipConsent returns a boolean true, if the consent dialog shall be skipped for an OAuth-2 client.
-func (f *FileSettings) GetSkipConsent(clientId string) (skip bool) {
-	if index, found := f.getOAuth2ClientIndex(clientId); found {
-		clients := f.GetOauth2().GetClients()
-
-		return clients[index].IsSkipConsent()
-	}
-
-	return
-}
-
 // GetUsername returns the HTTP request header for the username
 func (f *FileSettings) GetUsername() string {
 	if f == nil {
@@ -1799,36 +1739,6 @@ func (f *FileSettings) validatePassDBBackends() error {
 	return nil
 }
 
-// validateOAuth2 validates and processes the OAuth2 configuration in the FileSettings struct, ensuring valid custom scope descriptions.
-func (f *FileSettings) validateOAuth2() error {
-	if f.GetOauth2() != nil {
-		var descriptions map[string]any
-
-		for customScopeIndex := range f.Oauth2.CustomScopes {
-			descriptions = make(map[string]any)
-
-			for key, value := range f.Oauth2.CustomScopes[customScopeIndex].Other {
-				if !strings.HasPrefix(key, "description_") {
-					continue
-				}
-
-				for _, languageTag := range DefaultLanguageTags {
-					baseName, _ := languageTag.Base()
-					if key == "description_"+baseName.String() {
-						if description, assertOk := value.(string); assertOk {
-							descriptions[key] = description
-						}
-					}
-				}
-			}
-
-			f.Oauth2.CustomScopes[customScopeIndex].Other = descriptions
-		}
-	}
-
-	return nil
-}
-
 // checkAddress verifies the validity of a network address, returning an error if it is improperly formatted.
 func checkAddress(address string) error {
 	_, _, err := net.SplitHostPort(address)
@@ -1851,19 +1761,6 @@ func (f *FileSettings) validateAddress() error {
 	}
 
 	return checkAddress(f.Server.Address)
-}
-
-// setDefaultHydraAdminUrl sets the Hydra admin URL to a default value if it is not already configured.
-func (f *FileSettings) setDefaultHydraAdminUrl() error {
-	if f == nil || f.Server == nil {
-		return nil
-	}
-
-	if f.GetServer().HydraAdminUrl == "" {
-		f.Server.HydraAdminUrl = "http://127.0.0.1:4445"
-	}
-
-	return nil
 }
 
 // setDefaultInstanceName ensures the Server.InstanceName field is set to a default value if it is currently empty.
@@ -2143,38 +2040,6 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		f.Server.Frontend.Homepage = "https://nauthilus.org"
 	}
 
-	if f.Server.Frontend.LoginPage == "" {
-		f.Server.Frontend.LoginPage = "/login"
-	}
-
-	if f.Server.Frontend.LoginPageLogoImageAlt == "" {
-		f.Server.Frontend.LoginPageLogoImageAlt = definitions.ImageCopyright
-	}
-
-	if f.Server.Frontend.LoginRememberFor == 0 {
-		f.Server.Frontend.LoginRememberFor = 10800
-	}
-
-	if f.Server.Frontend.ConsentPage == "" {
-		f.Server.Frontend.ConsentPage = "/consent"
-	}
-
-	if f.Server.Frontend.ConsentPageLogoImageAlt == "" {
-		f.Server.Frontend.ConsentPageLogoImageAlt = definitions.ImageCopyright
-	}
-
-	if f.Server.Frontend.ConsentRememberFor == 0 {
-		f.Server.Frontend.ConsentRememberFor = 3600
-	}
-
-	if f.Server.Frontend.LogoutPage == "" {
-		f.Server.Frontend.LogoutPage = "/logout"
-	}
-
-	if f.Server.Frontend.DevicePage == "" {
-		f.Server.Frontend.DevicePage = "/device"
-	}
-
 	if f.Server.Frontend.WebAuthnPage == "" {
 		f.Server.Frontend.WebAuthnPage = "/webauthn"
 	}
@@ -2201,14 +2066,6 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 
 	if f.Server.Frontend.TotpPageLogoImageAlt == "" {
 		f.Server.Frontend.TotpPageLogoImageAlt = definitions.ImageCopyright
-	}
-
-	if f.Server.Frontend.NotifyPage == "" {
-		f.Server.Frontend.NotifyPage = "/notify"
-	}
-
-	if f.Server.Frontend.NotifyPageLogoImageAlt == "" {
-		f.Server.Frontend.NotifyPageLogoImageAlt = definitions.ImageCopyright
 	}
 
 	return nil
@@ -2281,11 +2138,9 @@ func (f *FileSettings) validate() (err error) {
 	validators := []func() error{
 		f.validateBruteForce,
 		f.validatePassDBBackends,
-		f.validateOAuth2,
 		f.validateAddress,
 
 		// Without errors, but fixing things
-		f.setDefaultHydraAdminUrl,
 		f.setDefaultInstanceName,
 		f.setDefaultDnsTimeout,
 		f.setDefaultPosCacheTTL,

@@ -327,9 +327,6 @@ type State interface {
 
 	// Channel returns the backend channel.
 	Channel() backend.Channel
-
-	// GetOauth2SubjectAndClaims retrieves the subject and claims for OAuth2/OIDC.
-	GetOauth2SubjectAndClaims(client any) (string, map[string]any)
 }
 
 // AuthRequest holds data directly extracted from the HTTP request or connection metadata.
@@ -2252,13 +2249,11 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 
 	authResult := definitions.AuthResultOK
 
-	if !(a.Request.Protocol.Get() == definitions.ProtoOryHydra) {
-		if lf := getLuaFilter(); lf != nil {
-			authResult = lf.Filter(ctx, a.View(), passDBResult)
-		}
-
-		a.PostLuaAction(ctx, passDBResult)
+	if lf := getLuaFilter(); lf != nil {
+		authResult = lf.Filter(ctx, a.View(), passDBResult)
 	}
+
+	a.PostLuaAction(ctx, passDBResult)
 
 	return authResult
 }
@@ -2647,12 +2642,10 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		authResult = definitions.AuthResultFail
 	}
 
-	if !(a.Request.Protocol.Get() == definitions.ProtoOryHydra) {
-		authResult = a.FilterLua(ctx, passDBResult)
-		aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
+	authResult = a.FilterLua(ctx, passDBResult)
+	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
-		a.PostLuaAction(ctx, passDBResult)
-	}
+	a.PostLuaAction(ctx, passDBResult)
 
 	return authResult
 }

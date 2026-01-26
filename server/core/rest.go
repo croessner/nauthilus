@@ -199,7 +199,7 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 		}
 	}
 
-	if a.Request.Service == definitions.ServOryHydra {
+	if a.Request.Service == definitions.ServIdP {
 		a.handleMasterUserMode()
 	}
 
@@ -266,7 +266,7 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 		return
 	}
 
-	if a.Request.Service == definitions.ServOryHydra {
+	if a.Request.Service == definitions.ServIdP {
 		a.handleMasterUserMode()
 	}
 

@@ -244,7 +244,6 @@ func DebugLoadableConfig(cfg config.File, logger *slog.Logger) {
 	debugIfNotNil(definitions.FeatureRelayDomains, file.GetRelayDomains())
 	debugIfNotNil(definitions.FeatureBackendServersMonitoring, file.GetBackendServerMonitoring())
 	debugIfNotNil(definitions.LogKeyBruteForce, file.GetBruteForce())
-	debugIfNotNil("oauth2", file.GetOauth2())
 	debugIfNotNil("idp", file.GetIdP())
 
 	ldap := file.GetLDAP()
@@ -261,12 +260,6 @@ func InitializeInstanceInfo(cfg config.File, version string) {
 	})
 
 	infoMetric.Set(1)
-}
-
-func InitializeHTTPClients(cfg config.File) {
-	if cfg.GetServer().Frontend.Enabled {
-		core.InitHTTPClient(cfg)
-	}
 }
 
 // RunLuaInitScript executes Lua init scripts (if configured).

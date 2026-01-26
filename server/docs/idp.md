@@ -250,7 +250,7 @@ client are included.
 
 ### 6.2 Custom Scopes
 
-Similar to the Hydra integration, the native IdP supports custom scopes. These are defined globally and can group one or
+The native IdP supports custom scopes. These are defined globally and can group one or
 more custom claims:
 
 ```yaml

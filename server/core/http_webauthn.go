@@ -19,7 +19,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 
@@ -28,9 +27,9 @@ import (
 
 // InitWebAuthn initializes the global WebAuthn configuration using values
 // from the environment/config. The legacy behavior (logging on error) is preserved.
-func (DefaultBootstrap) InitWebAuthn() error {
+func (b DefaultBootstrap) InitWebAuthn() error {
 	var err error
-	cfg := config.GetFile()
+	cfg := b.cfg
 	idpCfg := cfg.GetIdP()
 
 	rpID := idpCfg.WebAuthn.RPID
@@ -47,7 +46,7 @@ func (DefaultBootstrap) InitWebAuthn() error {
 	}
 
 	// Always ensure localhost is in origins if we are in developer mode
-	if config.GetEnvironment().GetDevMode() {
+	if b.env.GetDevMode() {
 		localhostFound := false
 
 		for _, o := range origins {
@@ -82,7 +81,7 @@ func (DefaultBootstrap) InitWebAuthn() error {
 	})
 
 	if err != nil {
-		level.Error(getDefaultLogger()).Log(
+		level.Error(b.logger).Log(
 			definitions.LogKeyMsg, "Failed to create WebAuthn from environment",
 			definitions.LogKeyError, err,
 		)
