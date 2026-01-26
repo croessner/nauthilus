@@ -63,11 +63,15 @@ func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler
 
 func (h *FrontendHandler) getLoginURL(ctx *gin.Context) string {
 	lang := ctx.Param("languageTag")
+	var path string
+
 	if lang != "" {
-		return "/login/" + lang
+		path = "/login/" + lang
+	} else {
+		path = "/login"
 	}
 
-	return "/login"
+	return h.appendQueryString(path, ctx.Request.URL.RawQuery)
 }
 
 func (h *FrontendHandler) getMFAURL(ctx *gin.Context, mfaType string) string {
@@ -75,10 +79,23 @@ func (h *FrontendHandler) getMFAURL(ctx *gin.Context, mfaType string) string {
 	lang := ctx.Param("languageTag")
 
 	if lang != "" {
-		return path + "/" + lang
+		path += "/" + lang
 	}
 
-	return path
+	return h.appendQueryString(path, ctx.Request.URL.RawQuery)
+}
+
+func (h *FrontendHandler) appendQueryString(path string, query string) string {
+	if query == "" {
+		return path
+	}
+
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+
+	return path + separator + query
 }
 
 // Register adds frontend routes to the router.
@@ -339,9 +356,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 					session.Save()
 
 					if h.hasWebAuthn(user) {
-						ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "webauthn")+"?return_to="+url.QueryEscape(returnTo))
+						ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "webauthn"), "return_to="+url.QueryEscape(returnTo)))
 					} else {
-						ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "totp")+"?return_to="+url.QueryEscape(returnTo))
+						ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "totp"), "return_to="+url.QueryEscape(returnTo)))
 					}
 
 					return
@@ -382,11 +399,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		}
 
 		session.Save()
-
 		if h.hasWebAuthn(user) {
-			ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "webauthn")+"?return_to="+url.QueryEscape(returnTo))
+			ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "webauthn"), "return_to="+url.QueryEscape(returnTo)))
 		} else {
-			ctx.Redirect(http.StatusFound, h.getMFAURL(ctx, "totp")+"?return_to="+url.QueryEscape(returnTo))
+			ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "totp"), "return_to="+url.QueryEscape(returnTo)))
 		}
 
 		return
@@ -448,24 +464,23 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 	username := session.Get(definitions.CookieUsername)
 
-	if username == nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
-
-		return
-	}
-
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 	data["WebAuthnVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please use your security key to login")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
 	data["CSRFToken"] = "TODO_CSRF"
 	data["ReturnTo"] = ctx.Query("return_to")
+	data["WebAuthnBeginEndpoint"] = h.getMFAURL(ctx, "webauthn/begin")
+	data["WebAuthnFinishEndpoint"] = h.getMFAURL(ctx, "webauthn/finish")
+	data["BackURL"] = h.getLoginURL(ctx)
 
 	// JS Localizations
 	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
 	data["JSCompletingLogin"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing login...")
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
+	data["Username"] = username
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_verify.html", data)
 }
@@ -486,10 +501,12 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	data["TOTPVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your 2FA code")
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
 	data["CSRFToken"] = "TODO_CSRF"
 	data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 	data["ReturnTo"] = ctx.Query("return_to")
+	data["BackURL"] = h.getLoginURL(ctx)
 	data["HaveError"] = false
 
 	ctx.HTML(http.StatusOK, "idp_totp_verify.html", data)

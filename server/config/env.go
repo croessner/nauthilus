@@ -251,8 +251,8 @@ func setWebAuthnDefaultEnvVars() {
 	viper.SetDefault("device_page", "/device")
 	viper.SetDefault("webauthn_page", "/webauthn")
 	viper.SetDefault("webauthn_display_name", "Nauthilus")
-	viper.SetDefault("webauthn_rp_id", viper.GetString("totp_issuer"))
-	viper.SetDefault("webauthn_rp_origins", []string{"https://login.nauthilus.me"})
+	viper.SetDefault("webauthn_rp_id", "localhost")
+	viper.SetDefault("webauthn_rp_origins", []string{"https://localhost:9443", "http://localhost:9094"})
 }
 
 // setRegisterPageDefaultEnvVars sets the default environment variables for the registration page using viper configuration.
@@ -266,7 +266,7 @@ func setRegisterPageDefaultEnvVars() {
 func setTOTPPageDefaultEnvVars() {
 	viper.SetDefault("totp_skew", uint(1))
 	viper.SetDefault("totp_page", "/totp")
-	viper.SetDefault("totp_issuer", "nauthilus.me")
+	viper.SetDefault("totp_issuer", "Nauthilus")
 	viper.SetDefault("totp_welcome", "")
 	viper.SetDefault("totp_page_logo_image_alt", definitions.ImageCopyright)
 }

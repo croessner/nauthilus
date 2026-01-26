@@ -1,5 +1,8 @@
 {
   "Login": "Login",
+  "Username": "Username",
+  "2FA Verification": "2FA Verification",
+  "Back": "Back",
   "Get further information about this application...": "Get further information about this application...",
   "We'll never share your data with anyone else.": "We'll never share your data with anyone else.",
   "Please enter your username or email address": "Please enter your username or email address",

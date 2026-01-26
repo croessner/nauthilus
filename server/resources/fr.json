@@ -1,5 +1,8 @@
 {
   "Login": "Connexion",
+  "Username": "Nom d'utilisateur",
+  "2FA Verification": "Vérification 2FA",
+  "Back": "Retour",
   "Get further information about this application...": "Pour en savoir plus...",
   "We'll never share your data with anyone else.": "Nous ne partagerons jamais vos données avec qui que ce soit.",
   "Please enter your username or email address": "Veuillez saisir votre nom d'utilisateur ou votre adresse électronique",

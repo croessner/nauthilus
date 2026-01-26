@@ -3410,8 +3410,8 @@ func (a *AuthState) WithLocalInfo(ctx *gin.Context) State {
 	}
 
 	cfg := a.cfg()
-	a.Request.XLocalIP = ctx.GetHeader(cfg.GetLocalIP())
-	a.Request.XPort = ctx.GetHeader(cfg.GetLocalPort())
+	util.ApplyStringField(ctx.GetHeader(cfg.GetLocalIP()), &a.Request.XLocalIP)
+	util.ApplyStringField(ctx.GetHeader(cfg.GetLocalPort()), &a.Request.XPort)
 
 	return a
 }
@@ -3438,11 +3438,11 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	}
 
 	cfg := a.cfg()
-	a.Request.OIDCCID = ctx.GetHeader(cfg.GetOIDCCID())
-	a.Request.ClientIP = ctx.GetHeader(cfg.GetClientIP())
-	a.Request.XClientPort = ctx.GetHeader(cfg.GetClientPort())
-	a.Request.XClientID = ctx.GetHeader(cfg.GetClientID())
-	a.Request.ClientHost = ctx.GetHeader(cfg.GetClientHost())
+	util.ApplyStringField(ctx.GetHeader(cfg.GetOIDCCID()), &a.Request.OIDCCID)
+	util.ApplyStringField(ctx.GetHeader(cfg.GetClientIP()), &a.Request.ClientIP)
+	util.ApplyStringField(ctx.GetHeader(cfg.GetClientPort()), &a.Request.XClientPort)
+	util.ApplyStringField(ctx.GetHeader(cfg.GetClientID()), &a.Request.XClientID)
+	util.ApplyStringField(ctx.GetHeader(cfg.GetClientHost()), &a.Request.ClientHost)
 
 	if a.Request.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
@@ -3488,22 +3488,22 @@ func (a *AuthState) WithXSSL(ctx *gin.Context) State {
 	}
 
 	h := a.cfg().GetServer().GetDefaultHTTPRequestHeader()
-	a.Request.XSSL = ctx.GetHeader(h.GetSSL())
-	a.Request.XSSLSessionID = ctx.GetHeader(h.GetSSLSessionID())
-	a.Request.XSSLClientVerify = ctx.GetHeader(h.GetSSLVerify())
-	a.Request.XSSLClientDN = ctx.GetHeader(h.GetSSLSubject())
-	a.Request.XSSLClientCN = ctx.GetHeader(h.GetSSLClientCN())
-	a.Request.XSSLIssuer = ctx.GetHeader(h.GetSSLIssuer())
-	a.Request.XSSLClientNotBefore = ctx.GetHeader(h.GetSSLClientNotBefore())
-	a.Request.XSSLClientNotAfter = ctx.GetHeader(h.GetSSLClientNotAfter())
-	a.Request.XSSLSubjectDN = ctx.GetHeader(h.GetSSLSubjectDN())
-	a.Request.XSSLIssuerDN = ctx.GetHeader(h.GetSSLIssuerDN())
-	a.Request.XSSLClientSubjectDN = ctx.GetHeader(h.GetSSLClientSubjectDN())
-	a.Request.XSSLClientIssuerDN = ctx.GetHeader(h.GetSSLClientIssuerDN())
-	a.Request.XSSLCipher = ctx.GetHeader(h.GetSSLCipher())
-	a.Request.XSSLProtocol = ctx.GetHeader(h.GetSSLProtocol())
-	a.Request.SSLSerial = ctx.GetHeader(h.GetSSLSerial())
-	a.Request.SSLFingerprint = ctx.GetHeader(h.GetSSLFingerprint())
+	util.ApplyStringField(ctx.GetHeader(h.GetSSL()), &a.Request.XSSL)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLSessionID()), &a.Request.XSSLSessionID)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLVerify()), &a.Request.XSSLClientVerify)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLSubject()), &a.Request.XSSLClientDN)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientCN()), &a.Request.XSSLClientCN)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLIssuer()), &a.Request.XSSLIssuer)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientNotBefore()), &a.Request.XSSLClientNotBefore)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientNotAfter()), &a.Request.XSSLClientNotAfter)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLSubjectDN()), &a.Request.XSSLSubjectDN)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLIssuerDN()), &a.Request.XSSLIssuerDN)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientSubjectDN()), &a.Request.XSSLClientSubjectDN)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientIssuerDN()), &a.Request.XSSLClientIssuerDN)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLCipher()), &a.Request.XSSLCipher)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLProtocol()), &a.Request.XSSLProtocol)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLSerial()), &a.Request.SSLSerial)
+	util.ApplyStringField(ctx.GetHeader(h.GetSSLFingerprint()), &a.Request.SSLFingerprint)
 
 	return a
 }

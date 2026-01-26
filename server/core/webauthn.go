@@ -18,6 +18,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/backend"
@@ -424,29 +425,39 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 			}
 		}
 
-		if userName == "" {
-			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
+		var user *backend.User
 
-			return
+		if userName != "" {
+			auth := NewAuthStateFromContextWithDeps(ctx, deps)
+			// For login, we don't have uniqueUserID yet if we just started the MFA flow.
+			// However, getUser tries to find it.
+			var err error
+			user, err = auth.(*AuthState).getUser(userName, "", "")
+			if err != nil {
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+
+				return
+			}
+
+			if user == nil || len(user.Credentials) == 0 {
+				ctx.JSON(http.StatusBadRequest, "No WebAuthn credentials found")
+
+				return
+			}
 		}
 
-		auth := NewAuthStateFromContextWithDeps(ctx, deps)
-		// For login, we don't have uniqueUserID yet if we just started the MFA flow.
-		// However, getUser tries to find it.
-		user, err := auth.(*AuthState).getUser(userName, "", "")
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, err.Error())
+		var (
+			options     *protocol.CredentialAssertion
+			sessionData *webauthn.SessionData
+			err         error
+		)
 
-			return
+		if user == nil {
+			options, sessionData, err = webAuthn.BeginDiscoverableLogin()
+		} else {
+			options, sessionData, err = webAuthn.BeginLogin(user)
 		}
 
-		if user == nil || len(user.Credentials) == 0 {
-			ctx.JSON(http.StatusBadRequest, "No WebAuthn credentials found")
-
-			return
-		}
-
-		options, sessionData, err := webAuthn.BeginLogin(user)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, err.Error())
 
@@ -492,12 +503,6 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			}
 		}
 
-		if userName == "" {
-			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
-
-			return
-		}
-
 		cookieValue = session.Get(definitions.CookieRegistration)
 		if cookieValue != nil {
 			if value, assertOkay := cookieValue.([]byte); assertOkay {
@@ -517,11 +522,41 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
-		user, err := auth.(*AuthState).getUser(userName, "", "")
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, err.Error())
+		var user *backend.User
 
-			return
+		if userName != "" {
+			var err error
+			user, err = auth.(*AuthState).getUser(userName, "", "")
+			if err != nil {
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+
+				return
+			}
+		} else {
+			// Passwordless path: Identify user by handle from response
+			bodyBytes, _ := io.ReadAll(ctx.Request.Body)
+			ctx.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+			parsedResponse, err := protocol.ParseCredentialRequestResponseBody(bytes.NewBuffer(bodyBytes))
+			if err != nil {
+				ctx.JSON(http.StatusBadRequest, "Invalid response body")
+
+				return
+			}
+
+			userHandle := string(parsedResponse.Response.UserHandle)
+			if userHandle == "" {
+				ctx.JSON(http.StatusBadRequest, "No user handle provided")
+
+				return
+			}
+
+			user, err = backend.GetWebAuthnFromRedis(ctx.Request.Context(), auth.(*AuthState).Cfg(), auth.(*AuthState).Logger(), auth.(*AuthState).Redis(), userHandle)
+			if err != nil {
+				ctx.JSON(http.StatusBadRequest, "User not found")
+
+				return
+			}
 		}
 
 		if user == nil {

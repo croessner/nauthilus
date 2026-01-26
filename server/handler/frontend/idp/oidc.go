@@ -114,6 +114,47 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	})
 }
 
+func hasClientConsent(session sessions.Session, clientID string) bool {
+	oidcClientsRaw := session.Get(definitions.CookieOIDCClients)
+	if oidcClientsRaw == nil {
+		return false
+	}
+
+	oidcClients, ok := oidcClientsRaw.(string)
+	if !ok {
+		return false
+	}
+
+	for _, id := range strings.Split(oidcClients, ",") {
+		if id == clientID {
+			return true
+		}
+	}
+
+	return false
+}
+
+func addClientToSession(session sessions.Session, clientID string) {
+	oidcClientsRaw := session.Get(definitions.CookieOIDCClients)
+	var oidcClients string
+
+	if oidcClientsRaw != nil {
+		oidcClients = oidcClientsRaw.(string)
+		for _, id := range strings.Split(oidcClients, ",") {
+			if id == clientID {
+				return
+			}
+		}
+
+		oidcClients += "," + clientID
+	} else {
+		oidcClients = clientID
+	}
+
+	session.Set(definitions.CookieOIDCClients, oidcClients)
+	_ = session.Save()
+}
+
 // Authorize handles the OIDC authorization request.
 func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.authorize")
@@ -140,6 +181,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	state := ctx.Query("state")
 	nonce := ctx.Query("nonce")
 	responseType := ctx.Query("response_type")
+	prompt := ctx.Query("prompt")
 
 	sp.SetAttributes(
 		attribute.String("client_id", clientID),
@@ -167,6 +209,16 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	if account == nil {
+		if prompt == "none" {
+			target := fmt.Sprintf("%s?error=login_required", redirectURI)
+			if state != "" {
+				target += "&state=" + url.QueryEscape(state)
+			}
+			ctx.Redirect(http.StatusFound, target)
+
+			return
+		}
+
 		// User not logged in, redirect to login page
 		loginURL := "/login"
 		// Append original request to return_to
@@ -191,7 +243,6 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
-	// Check if consent is needed
 	oidcSession := &idp.OIDCSession{
 		ClientID:    clientID,
 		UserID:      user.Id,
@@ -204,7 +255,23 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		Claims:      claims,
 	}
 
-	if !client.SkipConsent {
+	// Check if consent is needed
+	needsConsent := !client.SkipConsent && !hasClientConsent(session, clientID)
+	if !client.SkipConsent && prompt == "consent" {
+		needsConsent = true
+	}
+
+	if needsConsent {
+		if prompt == "none" {
+			target := fmt.Sprintf("%s?error=consent_required", redirectURI)
+			if state != "" {
+				target += "&state=" + url.QueryEscape(state)
+			}
+			ctx.Redirect(http.StatusFound, target)
+
+			return
+		}
+
 		consentChallenge := ksuid.New().String()
 		err := h.storage.StoreSession(ctx.Request.Context(), "consent:"+consentChallenge, oidcSession, 10*time.Minute)
 
@@ -232,7 +299,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
 
-	h.addClientToSession(session, clientID)
+	addClientToSession(session, clientID)
 
 	// Redirect back to client
 	target := fmt.Sprintf("%s?code=%s", redirectURI, code)
@@ -606,31 +673,9 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	// Redirect back to client
 	target := fmt.Sprintf("%s?code=%s&state=%s", session.RedirectURI, code, state)
 
-	h.addClientToSession(sessions.Default(ctx), session.ClientID)
+	addClientToSession(sessions.Default(ctx), session.ClientID)
 
 	ctx.Redirect(http.StatusFound, target)
-}
-
-func (h *OIDCHandler) addClientToSession(session sessions.Session, clientID string) {
-	clientsRaw := session.Get(definitions.CookieOIDCClients)
-
-	var clients []string
-
-	if clientsRaw != nil {
-		clients = strings.Split(clientsRaw.(string), ",")
-	}
-
-	for _, c := range clients {
-		if c == clientID {
-			return
-		}
-	}
-
-	clients = append(clients, clientID)
-
-	session.Set(definitions.CookieOIDCClients, strings.Join(clients, ","))
-
-	_ = session.Save()
 }
 
 // Logout handles the OIDC logout request.
@@ -741,7 +786,7 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 
 	_ = session.Save()
 
-	ctx.Redirect(http.StatusFound, "/idp/login")
+	ctx.Redirect(http.StatusFound, "/login")
 }
 
 func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {

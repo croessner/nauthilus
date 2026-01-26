@@ -16,6 +16,7 @@
 package core
 
 import (
+	"net/url"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -29,10 +30,41 @@ import (
 // from the environment/config. The legacy behavior (logging on error) is preserved.
 func (DefaultBootstrap) InitWebAuthn() error {
 	var err error
+
+	rpID := viper.GetString("webauthn_rp_id")
+	origins := viper.GetStringSlice("webauthn_rp_origins")
+
+	// If RPID is localhost (our new default) or empty, try to get a better one from IdP issuer
+	if rpID == "" || rpID == "localhost" {
+		issuer := viper.GetString("idp.oidc.issuer")
+		if issuer != "" {
+			if u, err := url.Parse(issuer); err == nil {
+				rpID = u.Hostname()
+			}
+		}
+	}
+
+	// Always ensure localhost is in origins if we are in developer mode
+	if viper.GetBool("developer_mode") {
+		localhostFound := false
+
+		for _, o := range origins {
+			if o == "https://localhost:9443" {
+				localhostFound = true
+
+				break
+			}
+		}
+
+		if !localhostFound {
+			origins = append(origins, "https://localhost:9443", "http://localhost:9094")
+		}
+	}
+
 	webAuthn, err = webauthn.New(&webauthn.Config{
 		RPDisplayName: viper.GetString("webauthn_display_name"),
-		RPID:          viper.GetString("webauthn_rp_id"),
-		RPOrigins:     viper.GetStringSlice("webauthn_rp_origins"),
+		RPID:          rpID,
+		RPOrigins:     origins,
 		Timeouts: webauthn.TimeoutsConfig{
 			Login: webauthn.TimeoutConfig{
 				Enforce:    true,

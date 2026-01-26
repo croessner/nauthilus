@@ -27,6 +27,12 @@
             <button class="btn btn-primary btn-lg w-full" id="login-button">
                 {{ .Submit }}
             </button>
+
+            <div class="mt-4 text-center">
+                <a class="link link-hover text-sm" href="{{ .BackURL }}">
+                    {{ .Back }}
+                </a>
+            </div>
         </div>
     </div>
 </div>
@@ -66,7 +72,7 @@
 
         try {
             // 1. Begin Login
-            const response = await fetch("/login/webauthn/begin");
+            const response = await fetch("{{ .WebAuthnBeginEndpoint }}");
             if (!response.ok) {
                 throw new Error(await response.text());
             }
@@ -89,7 +95,7 @@
             // 3. Finish Login
             statusText.innerText = "{{ .JSCompletingLogin }}";
 
-            const finishResponse = await fetch("/login/webauthn/finish", {
+            const finishResponse = await fetch("{{ .WebAuthnFinishEndpoint }}", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"

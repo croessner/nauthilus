@@ -64,3 +64,49 @@ func TestBasePageData(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
 	r.ServeHTTP(w, req)
 }
+
+func TestURLParamsPreservation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &FrontendHandler{}
+
+	t.Run("getLoginURL with params", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request, _ = http.NewRequest("GET", "/login?client_id=foo&return_to=bar", nil)
+		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
+
+		url := h.getLoginURL(ctx)
+		assert.Equal(t, "/login/en?client_id=foo&return_to=bar", url)
+	})
+
+	t.Run("getLoginURL without lang with params", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request, _ = http.NewRequest("GET", "/login?client_id=foo", nil)
+
+		url := h.getLoginURL(ctx)
+		assert.Equal(t, "/login?client_id=foo", url)
+	})
+
+	t.Run("getMFAURL with params", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request, _ = http.NewRequest("GET", "/login/en?client_id=foo", nil)
+		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
+
+		url := h.getMFAURL(ctx, "webauthn")
+		assert.Equal(t, "/login/webauthn/en?client_id=foo", url)
+	})
+
+	t.Run("getMFAURL for begin with params", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request, _ = http.NewRequest("GET", "/login/webauthn/en?client_id=foo", nil)
+		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
+
+		url := h.getMFAURL(ctx, "webauthn/begin")
+		assert.Equal(t, "/login/webauthn/begin/en?client_id=foo", url)
+	})
+
+	t.Run("appendQueryString helper", func(t *testing.T) {
+		assert.Equal(t, "/path?q=v", h.appendQueryString("/path", "q=v"))
+		assert.Equal(t, "/path?a=b&q=v", h.appendQueryString("/path?a=b", "q=v"))
+		assert.Equal(t, "/path", h.appendQueryString("/path", ""))
+	})
+}
