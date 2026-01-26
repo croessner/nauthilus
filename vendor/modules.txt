@@ -405,9 +405,6 @@ github.com/nicksnyder/go-i18n/v2/internal
 github.com/nicksnyder/go-i18n/v2/internal/plural
 # github.com/onsi/gomega v1.36.3
 ## explicit; go 1.23.0
-# github.com/ory/hydra-client-go/v2 v2.2.1
-## explicit; go 1.17
-github.com/ory/hydra-client-go/v2
 # github.com/patrickmn/go-cache v2.1.0+incompatible
 ## explicit
 github.com/patrickmn/go-cache
@@ -805,7 +802,6 @@ golang.org/x/text/encoding/internal
 golang.org/x/text/encoding/internal/identifier
 golang.org/x/text/encoding/unicode
 golang.org/x/text/internal
-golang.org/x/text/internal/catmsg
 golang.org/x/text/internal/format
 golang.org/x/text/internal/language
 golang.org/x/text/internal/language/compact
@@ -813,7 +809,6 @@ golang.org/x/text/internal/tag
 golang.org/x/text/internal/utf8internal
 golang.org/x/text/language
 golang.org/x/text/language/display
-golang.org/x/text/message/catalog
 golang.org/x/text/runes
 golang.org/x/text/secure/bidirule
 golang.org/x/text/transform
