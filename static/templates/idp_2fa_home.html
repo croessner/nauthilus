@@ -24,7 +24,7 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveTOTP }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
-                            .BackendError end hx-delete="/2fa/v1/totp" if {{ }} }}disabled{{>{{ .Deactivate }}
+                            hx-delete="/2fa/v1/totp" {{ if .BackendError }}disabled{{ end }}>{{ .Deactivate }}
                     </button>
                     {{ else }}
                     <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}" href="/2fa/v1/totp/register">{{
@@ -42,7 +42,7 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveWebAuthn }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateWebAuthnConfirm }}"
-                            .BackendError end hx-delete="/2fa/v1/webauthn" if {{ }} }}disabled{{>{{ .Deactivate }}
+                            hx-delete="/2fa/v1/webauthn" {{ if .BackendError }}disabled{{ end }}>{{ .Deactivate }}
                     </button>
                     {{ else }}
                     <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}"
@@ -62,8 +62,8 @@
                 <p>{{ .RecoveryCodesDescription }}</p>
                 {{ end }}
                 <div class="card-actions justify-end mt-4">
-                    <button .BackendError class="btn btn-secondary"
-                            end hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container" if {{ }} }}disabled{{>
+                    <button class="btn btn-secondary"
+                            hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container" {{ if .BackendError }}disabled{{ end }}>
                         {{ .GenerateNewRecoveryCodes }}
                     </button>
                 </div>
@@ -72,3 +72,4 @@
     </div>
 </div>
 {{ template "idp_footer.html" . }}
+
