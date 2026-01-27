@@ -42,6 +42,10 @@ func TotpValidation(ctx *gin.Context, auth *AuthState, code string, deps AuthDep
 				backend = auth.GetBackendManager(auth.GetUsedPassDBBackend(), "")
 			}
 
+			if backend == nil {
+				return errors.ErrUnknownDatabaseBackend
+			}
+
 			err := backend.DeleteTOTPRecoveryCodes(auth)
 			if err != nil {
 				return err
