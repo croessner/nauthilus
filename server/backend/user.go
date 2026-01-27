@@ -26,8 +26,10 @@ type User struct {
 	Name        string `redis:"name"`
 	DisplayName string `redis:"display_name"`
 
-	Credentials []webauthn.Credential   `redis:"credentials"`
-	Attributes  bktype.AttributeMapping `redis:"-"`
+	Credentials       []webauthn.Credential   `redis:"credentials"`
+	Attributes        bktype.AttributeMapping `redis:"-"`
+	TOTPSecretField   string                  `redis:"totp_secret_field"`
+	TOTPRecoveryField string                  `redis:"totp_recovery_field"`
 }
 
 // NewUser creates and returns a new User

@@ -442,9 +442,12 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 }
 
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
-	var totpField string
-	if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
-		totpField = protocols[0].GetTotpSecretField()
+	totpField := user.TOTPSecretField
+
+	if totpField == "" {
+		if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
+			totpField = protocols[0].GetTotpSecretField()
+		}
 	}
 
 	if totpField != "" {
@@ -560,18 +563,11 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
 
-	// We need to load user into auth to get TOTP secret
+	// We need to load user into auth to get TOTP secret and recovery codes
 	// GetUserByUsername already did some of this, but TotpValidation expects secrets in AuthState
-	var totpField string
-	if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
-		totpField = protocols[0].GetTotpSecretField()
-	}
-
-	if totpField != "" {
-		if val, ok := user.Attributes[totpField]; ok && len(val) > 0 {
-			auth.SetTOTPSecret(val[0].(string))
-		}
-	}
+	auth.ReplaceAllAttributes(user.Attributes)
+	auth.SetTOTPSecretField(user.TOTPSecretField)
+	auth.SetTOTPRecoveryField(user.TOTPRecoveryField)
 
 	err = core.TotpValidation(ctx, auth, code, authDeps)
 

@@ -969,6 +969,16 @@ func (a *AuthState) SetTOTPSecret(totpSecret string) {
 	a.Runtime.TOTPSecret = totpSecret
 }
 
+// SetTOTPSecretField sets the TOTP secret field for the AuthState object.
+func (a *AuthState) SetTOTPSecretField(totpSecretField string) {
+	a.Runtime.TOTPSecretField = totpSecretField
+}
+
+// SetTOTPRecoveryField sets the TOTP recovery field for the AuthState object.
+func (a *AuthState) SetTOTPRecoveryField(totpRecoveryField string) {
+	a.Runtime.TOTPRecoveryField = totpRecoveryField
+}
+
 // SetPassword sets the password for the AuthState instance.
 func (a *AuthState) SetPassword(password string) {
 	a.Request.Password = password
@@ -1729,6 +1739,10 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 
 	if passDBResult.TOTPSecretField != "" {
 		auth.Runtime.TOTPSecretField = passDBResult.TOTPSecretField
+	}
+
+	if passDBResult.TOTPRecoveryField != "" {
+		auth.Runtime.TOTPRecoveryField = passDBResult.TOTPRecoveryField
 	}
 
 	if passDBResult.UniqueUserIDField != "" {

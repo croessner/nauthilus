@@ -465,6 +465,8 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 
 	user := backend.NewUser(accountName, displayName, uniqueID)
 	user.Attributes = auth.GetAttributes()
+	user.TOTPSecretField = auth.GetTOTPSecretField()
+	user.TOTPRecoveryField = auth.GetTOTPRecoveryField()
 
 	return user, nil
 }
