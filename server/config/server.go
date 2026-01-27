@@ -1155,18 +1155,19 @@ func (d *DNS) GetResolveClientIP() bool {
 
 // Redis represents the configuration settings for a Redis instance, including master, replica, sentinel, and cluster setups.
 type Redis struct {
-	DatabaseNmuber int           `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
-	Prefix         string        `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
-	PasswordNonce  string        `mapstructure:"password_nonce" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
-	PoolSize       int           `mapstructure:"pool_size" validate:"omitempty,gte=1"`
-	IdlePoolSize   int           `mapstructure:"idle_pool_size" validate:"omitempty,gte=0"`
-	TLS            TLS           `mapstructure:"tls" validate:"omitempty"`
-	PosCacheTTL    time.Duration `mapstructure:"positive_cache_ttl" validate:"omitempty,max=8760h"`
-	NegCacheTTL    time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=8760h"`
-	Master         Master        `mapstructure:"master" validate:"omitempty"`
-	Replica        Replica       `mapstructure:"replica" validate:"omitempty"`
-	Sentinels      Sentinels     `mapstructure:"sentinels" validate:"omitempty"`
-	Cluster        Cluster       `mapstructure:"cluster" validate:"omitempty"`
+	DatabaseNmuber   int           `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
+	Prefix           string        `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
+	PasswordNonce    string        `mapstructure:"password_nonce" validate:"required,min=16,alphanumsymbol,excludesall= "`
+	EncryptionSecret string        `mapstructure:"encryption_secret" validate:"required,min=16,alphanumsymbol,excludesall= "`
+	PoolSize         int           `mapstructure:"pool_size" validate:"omitempty,gte=1"`
+	IdlePoolSize     int           `mapstructure:"idle_pool_size" validate:"omitempty,gte=0"`
+	TLS              TLS           `mapstructure:"tls" validate:"omitempty"`
+	PosCacheTTL      time.Duration `mapstructure:"positive_cache_ttl" validate:"omitempty,max=8760h"`
+	NegCacheTTL      time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=8760h"`
+	Master           Master        `mapstructure:"master" validate:"omitempty"`
+	Replica          Replica       `mapstructure:"replica" validate:"omitempty"`
+	Sentinels        Sentinels     `mapstructure:"sentinels" validate:"omitempty"`
+	Cluster          Cluster       `mapstructure:"cluster" validate:"omitempty"`
 
 	// Connection/timeout tuning; defaults mirror previous hard-coded values
 	// Sensible bounds via validator tags to avoid extreme misconfiguration
@@ -1303,6 +1304,15 @@ func (r *Redis) GetPasswordNonce() string {
 	}
 
 	return r.PasswordNonce
+}
+
+// GetEncryptionSecret returns the encryption secret for Redis.
+func (r *Redis) GetEncryptionSecret() string {
+	if r == nil {
+		return ""
+	}
+
+	return r.EncryptionSecret
 }
 
 // GetPoolSize retrieves the size of the connection pool configured for the Redis instance.
