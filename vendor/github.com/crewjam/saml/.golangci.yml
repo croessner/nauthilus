@@ -1,0 +1,70 @@
+version: "2"
+linters:
+  enable:
+    - bodyclose
+    - gocritic
+    - gocyclo
+    - gosec
+    - misspell
+    - nakedret
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+  disable:
+    # TODO(ross): fix errors reported by these checkers and enable them
+    - depguard
+    - dupl
+    - gochecknoglobals
+    - gochecknoinits
+    - goconst
+    - lll
+  settings:
+    govet:
+      enable:
+        - asmdecl
+        - assign
+        - atomic
+        - bools
+        - buildtag
+        - cgocall
+        - composites
+        - copylocks
+        - errorsas
+        - httpresponse
+        - loopclosure
+        - lostcancel
+        - nilfunc
+        - printf
+        - shift
+        - stdmethods
+        - structtag
+        - tests
+        - unmarshal
+        - unreachable
+        - unsafeptr
+        - unusedresult
+      disable:
+        - shadow
+  exclusions:
+    generated: lax
+    rules:
+      - path: (.+)\.go$
+        text: G104 # 'Errors unhandled. (gosec)
+    paths:
+      - example/.*\.go$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/crewjam/saml
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
