@@ -727,7 +727,15 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	}
 
 	authDeps := h.deps.Auth()
-	dummyAuth := core.NewAuthStateWithSetupWithDeps(ctx, authDeps).(*core.AuthState)
+	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+	if state == nil {
+		h.handleTwoFAHomeError(ctx, data, nil, username)
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
+
 	dummyAuth.SetUsername(username)
 
 	protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
@@ -746,11 +754,22 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	}
 
 	// Fetch user from backend to get latest attributes
-	if _, err := dummyAuth.GetBackendManager(definitions.BackendLDAP, definitions.DefaultBackendName).AccountDB(dummyAuth); err == nil {
-		codes := dummyAuth.GetTOTPRecoveryCodes()
-		data["HaveRecoveryCodes"] = len(codes) > 0
-		data["NumRecoveryCodes"] = len(codes)
-	}
+	if mgr := dummyAuth.GetBackendManager(definitions.Backend(sourceBackend), definitions.DefaultBackendName); mgr != nil {
+		if res, err := mgr.PassDB(dummyAuth); err == nil {
+			defer core.PutPassDBResultToPool(res)
+
+			dummyAuth.ReplaceAllAttributes(res.Attributes)
+			dummyAuth.SetTOTPSecretField(res.TOTPSecretField)
+			dummyAuth.SetTOTPRecoveryField(res.TOTPRecoveryField)
+
+			codes := dummyAuth.GetTOTPRecoveryCodes()
+			data["HaveRecoveryCodes"] = len(codes) > 0
+			data["NumRecoveryCodes"] = len(codes)
+
+			hasTOTPInBackend := false
+			if secret, ok := dummyAuth.GetTOTPSecretOk(); ok && secret != "" {
+				hasTOTPInBackend = true
+			}
 
 			if data["HaveTOTP"] != hasTOTPInBackend {
 				data["HaveTOTP"] = hasTOTPInBackend
@@ -765,6 +784,18 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		data["HaveWebAuthn"] = err == nil && user != nil && len(user.WebAuthnCredentials()) > 0
 	}
 
+	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
+}
+
+func (h *FrontendHandler) handleTwoFAHomeError(ctx *gin.Context, data gin.H, err error, username string) {
+	h.deps.Logger.Error("Session error in TwoFAHome",
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		"username", username,
+		definitions.LogKeyError, err,
+	)
+
+	data["BackendError"] = true
+	data["BackendErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An internal error occurred. Please contact your administrator.")
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
 }

@@ -2,6 +2,19 @@
 <div class="max-w-4xl mx-auto mt-10">
     <h1 class="text-3xl font-bold mb-8">{{ .Title }}</h1>
 
+    {{ if .BackendError }}
+    <div class="alert alert-error shadow-lg mb-8">
+        <div>
+            <svg class="stroke-current flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"
+                      stroke-width="2"/>
+            </svg>
+            <span>{{ .BackendErrorMessage }}</span>
+        </div>
+    </div>
+    {{ end }}
+
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <!-- TOTP Card -->
         <div class="card bg-base-100 shadow-xl">
@@ -11,10 +24,11 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveTOTP }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
-                            hx-delete="/2fa/v1/totp">{{ .Deactivate }}
+                            .BackendError end hx-delete="/2fa/v1/totp" if {{ }} }}disabled{{>{{ .Deactivate }}
                     </button>
                     {{ else }}
-                    <a class="btn btn-primary" href="/2fa/v1/totp/register">{{ .RegisterTOTP }}</a>
+                    <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}" href="/2fa/v1/totp/register">{{
+                        .RegisterTOTP }}</a>
                     {{ end }}
                 </div>
             </div>
@@ -28,10 +42,11 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveWebAuthn }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateWebAuthnConfirm }}"
-                            hx-delete="/2fa/v1/webauthn">{{ .Deactivate }}
+                            .BackendError end hx-delete="/2fa/v1/webauthn" if {{ }} }}disabled{{>{{ .Deactivate }}
                     </button>
                     {{ else }}
-                    <a class="btn btn-primary" href="/2fa/v1/webauthn/register">{{ .RegisterWebAuthn }}</a>
+                    <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}"
+                       href="/2fa/v1/webauthn/register">{{ .RegisterWebAuthn }}</a>
                     {{ end }}
                 </div>
             </div>
@@ -47,7 +62,8 @@
                 <p>{{ .RecoveryCodesDescription }}</p>
                 {{ end }}
                 <div class="card-actions justify-end mt-4">
-                    <button class="btn btn-secondary" hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container">
+                    <button .BackendError class="btn btn-secondary" end
+                            hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container" if {{ }} }}disabled{{>
                         {{ .GenerateNewRecoveryCodes }}
                     </button>
                 </div>
