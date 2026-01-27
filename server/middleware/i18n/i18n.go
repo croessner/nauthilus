@@ -52,8 +52,16 @@ func WithLanguage(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 			langFromCookie = cookieValue
 		}
 
-		lang, needCookie, needRedirect := setLanguageDetails(cfg, langFromURL, langFromCookie)
+		lang, needCookie, needRedirect := setLanguageDetails(cfg, langFromURL, langFromCookie, "")
 		accept := ctx.GetHeader("Accept-Language")
+
+		if lang == "" {
+			tag, _ := language.MatchStrings(config.Matcher, accept)
+			baseName, _ := tag.Base()
+			langFromBrowser := baseName.String()
+			lang, needCookie, needRedirect = setLanguageDetails(cfg, langFromURL, langFromCookie, langFromBrowser)
+		}
+
 		tag, _ := language.MatchStrings(config.Matcher, lang, accept)
 		baseName, _ := tag.Base()
 
@@ -107,28 +115,37 @@ func WithLanguage(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-func setLanguageDetails(cfg config.File, langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
+func setLanguageDetails(cfg config.File, langFromURL string, langFromCookie string, langFromBrowser string) (lang string, needCookie bool, needRedirect bool) {
 	switch {
-	case langFromURL == "" && langFromCookie == "":
-		// 1. No language from URL and no cookie is set
-		lang = cfg.GetServer().Frontend.GetDefaultLanguage()
+	case langFromURL == "" && langFromCookie == "" && langFromBrowser == "":
+		// 1. No language from URL, no cookie and no browser language
+		lang = ""
+	case langFromURL == "" && langFromCookie == "" && langFromBrowser != "":
+		// 2. No language from URL and no cookie, but browser language is set
+		lang = langFromBrowser
 		needCookie = true
 		needRedirect = true
 	case langFromURL == "" && langFromCookie != "":
-		// 2. No language from URL, but a cookie is set
+		// 3. No language from URL, but a cookie is set
 		lang = langFromCookie
 		needRedirect = true
 	case langFromURL != "" && langFromCookie == "":
-		// 3. Language from URL and no cookie
+		// 4. Language from URL and no cookie
 		lang = langFromURL
 		needCookie = true
 	case langFromURL != "" && langFromCookie != "":
-		// 4. Langauge given from URL and cookie, but both differ
+		// 5. Language given from URL and cookie, but both differ
 		if langFromURL != langFromCookie {
 			needCookie = true
 		}
 
 		lang = langFromURL
+	}
+
+	if lang == "" && langFromURL == "" && langFromCookie == "" && langFromBrowser == "" {
+		lang = cfg.GetServer().Frontend.GetDefaultLanguage()
+		needCookie = true
+		needRedirect = true
 	}
 
 	return lang, needCookie, needRedirect

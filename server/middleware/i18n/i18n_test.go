@@ -37,25 +37,29 @@ func (m *mockI18nConfig) GetServer() *config.ServerSection {
 
 func TestSetLanguageDetails(t *testing.T) {
 	cfg := &mockI18nConfig{defaultLang: "en"}
+	langFromBrowser := "de"
 
 	tests := []struct {
 		name         string
 		urlLang      string
 		cookieLang   string
+		browserLang  string
 		wantLang     string
 		wantCookie   bool
 		wantRedirect bool
 	}{
-		{"NoUrlNoCookie", "", "", "en", true, true},
-		{"NoUrlWithCookie", "", "de", "de", false, true},
-		{"WithUrlNoCookie", "fr", "", "fr", true, false},
-		{"WithUrlWithSameCookie", "de", "de", "de", false, false},
-		{"WithUrlWithDifferentCookie", "de", "en", "de", true, false},
+		{"NoUrlNoCookieNoBrowser", "", "", "", "en", true, true},
+		{"NoUrlNoCookieWithBrowser", "", "", langFromBrowser, "de", true, true},
+		{"NoUrlWithCookie", "", "de", "", "de", false, true},
+		{"WithUrlNoCookie", "fr", "", "", "fr", true, false},
+		{"WithUrlWithSameCookie", "de", "de", "", "de", false, false},
+		{"WithUrlWithDifferentCookie", "de", "en", "", "de", true, false},
+		{"WithUrlCookieAndBrowser", "fr", "en", "de", "fr", true, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lang, needCookie, needRedirect := setLanguageDetails(cfg, tt.urlLang, tt.cookieLang)
+			lang, needCookie, needRedirect := setLanguageDetails(cfg, tt.urlLang, tt.cookieLang, tt.browserLang)
 			assert.Equal(t, tt.wantLang, lang)
 			assert.Equal(t, tt.wantCookie, needCookie)
 			assert.Equal(t, tt.wantRedirect, needRedirect)
