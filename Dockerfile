@@ -19,6 +19,10 @@ RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     -o nauthilus . && \
     upx --best --lzma nauthilus
 
+RUN cd client && go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client . && upx --best --lzma nauthilus-client
+RUN cd contrib/oidctestclient && go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient . && upx --best --lzma oidctestclient
+RUN cd contrib/saml2testclient && go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient . && upx --best --lzma saml2testclient
+
 RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s -w" -o healthcheck . && upx --best --lzma healthcheck
 RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
 RUN cd contrib/imap-server && go build -mod=vendor -trimpath -ldflags="-s -w" -o fakeimap . && upx --best --lzma fakeimap
@@ -39,9 +43,9 @@ RUN addgroup -S nauthilus; \
 RUN apk --no-cache --upgrade add ca-certificates bash curl
 
 # Copy binary to destination image
-COPY --from=builder ["/build/server/nauthilus", "./"]
-COPY --from=builder ["/build/server/resources", "./resources/"]
-COPY --from=builder ["/build/server/lua-plugins.d", "./lua-plugins.d/"]
+COPY --from=builder ["/build/server/nauthilus", "/build/client/nauthilus-client", "/build/contrib/oidctestclient/oidctestclient", "/build/contrib/saml2testclient/saml2testclient", "./"]
+COPY --from=builder ["/build/server/resources", "./server/resources/"]
+COPY --from=builder ["/build/server/lua-plugins.d", "./server/lua-plugins.d/"]
 COPY --from=builder ["/build/docker-healthcheck/healthcheck", "./"]
 COPY --from=builder ["/build/contrib/smtp-server/fakesmtp", "./"]
 COPY --from=builder ["/build/contrib/imap-server/fakeimap", "./"]
