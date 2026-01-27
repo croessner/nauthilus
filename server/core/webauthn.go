@@ -46,7 +46,6 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	var (
 		passDB      definitions.Backend
 		backendName string
-		assertOk    bool
 		err         error
 		user        *backend.User
 		credentials []webauthn.Credential
@@ -58,17 +57,14 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	session := sessions.Default(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
-		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
-				backendName, _ = cookieName.(string)
-			}
+	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
+		passDB = definitions.Backend(cookieValue)
+		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
 
-			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-				credentials, err = mgr.GetWebAuthnCredentials(a)
-				if err != nil {
-					return nil, err
-				}
+		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+			credentials, err = mgr.GetWebAuthnCredentials(a)
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -132,8 +128,8 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		session := sessions.Default(ctx)
 
-		cookieValue := session.Get(definitions.CookieAuthResult)
-		if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
+		authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
+		if err != nil || definitions.AuthResult(authResult) != definitions.AuthResultOK {
 			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -142,13 +138,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		// We use the account name as username!
-		cookieValue = session.Get(definitions.CookieAccount)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.(string); assertOkay {
-				userName = value
-			}
-		}
-
+		userName, _ = util.GetSessionValue[string](session, definitions.CookieAccount)
 		if userName == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -156,13 +146,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		cookieValue = session.Get(definitions.CookieUniqueUserID)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.(string); assertOkay {
-				uniqueUserID = value
-			}
-		}
-
+		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
 		if uniqueUserID == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -170,13 +154,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		cookieValue = session.Get(definitions.CookieDisplayName)
-		if cookieValue != nil {
-			if value, assertOk := cookieValue.(string); assertOk {
-				displayName = value
-			}
-		}
-
+		displayName, _ = util.GetSessionValue[string](session, definitions.CookieDisplayName)
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
 			SessionCleaner(ctx)
@@ -263,41 +241,28 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			sessionData  *webauthn.SessionData
 			passDB       definitions.Backend
 			backendName  string
-			assertOk     bool
 		)
 
 		session := sessions.Default(ctx)
 
 		defer SessionCleaner(ctx)
 
-		cookieValue := session.Get(definitions.CookieAuthResult)
-		if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
+		authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
+		if err != nil || definitions.AuthResult(authResult) != definitions.AuthResultOK {
 			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 
 			return
 		}
 
-		cookieValue = session.Get(definitions.CookieUsername)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.(string); assertOkay {
-				userName = value
-			}
-		}
-
+		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
 		if userName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
 
 			return
 		}
 
-		cookieValue = session.Get(definitions.CookieUniqueUserID)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.(string); assertOkay {
-				uniqueUserID = value
-			}
-		}
-
+		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
 		if uniqueUserID == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -305,13 +270,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		cookieValue = session.Get(definitions.CookieDisplayName)
-		if cookieValue != nil {
-			if value, assertOk := cookieValue.(string); assertOk {
-				displayName = value
-			}
-		}
-
+		displayName, _ = util.GetSessionValue[string](session, definitions.CookieDisplayName)
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
 			SessionCleaner(ctx)
@@ -319,17 +278,14 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		cookieValue = session.Get(definitions.CookieRegistration)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.([]byte); assertOkay {
-				sessionData = &webauthn.SessionData{}
+		if cookieValue, err := util.GetSessionValue[[]byte](session, definitions.CookieRegistration); err == nil {
+			sessionData = &webauthn.SessionData{}
 
-				if err := jsonIter.Unmarshal(value, sessionData); err != nil {
-					SessionCleaner(ctx)
-					ctx.JSON(http.StatusInternalServerError, err)
+			if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
+				SessionCleaner(ctx)
+				ctx.JSON(http.StatusInternalServerError, err.Error())
 
-					return
-				}
+				return
 			}
 		}
 
@@ -351,12 +307,9 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		)
 
 		// We expect the same Database for credentials that was used for authenticating a user!
-		if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
-			if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-				if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
-					backendName, _ = cookieName.(string)
-				}
-			}
+		if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
+			passDB = definitions.Backend(cookieValue)
+			backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
@@ -418,12 +371,7 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 		)
 
 		session := sessions.Default(ctx)
-		cookieValue := session.Get(definitions.CookieUsername)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.(string); assertOkay {
-				userName = value
-			}
-		}
+		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
 
 		var user *backend.User
 
@@ -496,22 +444,14 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		)
 
 		session := sessions.Default(ctx)
-		cookieValue := session.Get(definitions.CookieUsername)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.(string); assertOkay {
-				userName = value
-			}
-		}
+		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
 
-		cookieValue = session.Get(definitions.CookieRegistration)
-		if cookieValue != nil {
-			if value, assertOkay := cookieValue.([]byte); assertOkay {
-				sessionData = &webauthn.SessionData{}
-				if err := jsonIter.Unmarshal(value, sessionData); err != nil {
-					ctx.JSON(http.StatusInternalServerError, err.Error())
+		if cookieValue, err := util.GetSessionValue[[]byte](session, definitions.CookieRegistration); err == nil {
+			sessionData = &webauthn.SessionData{}
+			if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
+				ctx.JSON(http.StatusInternalServerError, err.Error())
 
-					return
-				}
+				return
 			}
 		}
 

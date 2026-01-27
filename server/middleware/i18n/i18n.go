@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
@@ -47,9 +48,8 @@ func WithLanguage(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 		// Try to get language tag from cookie
 		session := sessions.Default(ctx)
 
-		cookieValue := session.Get(definitions.CookieLang)
-		if cookieValue != nil {
-			langFromCookie, _ = cookieValue.(string)
+		if cookieValue, err := util.GetSessionValue[string](session, definitions.CookieLang); err == nil {
+			langFromCookie = cookieValue
 		}
 
 		lang, needCookie, needRedirect := setLanguageDetails(cfg, langFromURL, langFromCookie)

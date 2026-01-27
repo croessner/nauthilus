@@ -29,7 +29,7 @@ import (
 )
 
 type mockFrontendCfg struct {
-	config.File
+	config.FileSettings
 }
 
 func (m *mockFrontendCfg) GetServer() *config.ServerSection {

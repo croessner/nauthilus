@@ -628,21 +628,17 @@ func (a *AuthState) GetWebAuthnCredentials() (credentials []webauthn.Credential,
 	var (
 		passDB      definitions.Backend
 		backendName string
-		assertOk    bool
 	)
 
 	session := sessions.Default(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
-		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
-				backendName, _ = cookieName.(string)
-			}
+	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
+		passDB = definitions.Backend(cookieValue)
+		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
 
-			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-				return mgr.GetWebAuthnCredentials(a)
-			}
+		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+			return mgr.GetWebAuthnCredentials(a)
 		}
 	}
 
@@ -668,21 +664,17 @@ func (a *AuthState) SaveWebAuthnCredential(credential *webauthn.Credential) (err
 	var (
 		passDB      definitions.Backend
 		backendName string
-		assertOk    bool
 	)
 
 	session := sessions.Default(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
-		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
-				backendName, _ = cookieName.(string)
-			}
+	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
+		passDB = definitions.Backend(cookieValue)
+		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
 
-			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-				return mgr.SaveWebAuthnCredential(a, credential)
-			}
+		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+			return mgr.SaveWebAuthnCredential(a, credential)
 		}
 	}
 
@@ -701,21 +693,17 @@ func (a *AuthState) DeleteWebAuthnCredential(credential *webauthn.Credential) (e
 	var (
 		passDB      definitions.Backend
 		backendName string
-		assertOk    bool
 	)
 
 	session := sessions.Default(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
-		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
-				backendName, _ = cookieName.(string)
-			}
+	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
+		passDB = definitions.Backend(cookieValue)
+		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
 
-			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-				return mgr.DeleteWebAuthnCredential(a, credential)
-			}
+		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+			return mgr.DeleteWebAuthnCredential(a, credential)
 		}
 	}
 
@@ -739,21 +727,17 @@ func (a *AuthState) UpdateWebAuthnCredential(oldCredential *webauthn.Credential,
 	var (
 		passDB      definitions.Backend
 		backendName string
-		assertOk    bool
 	)
 
 	session := sessions.Default(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
-		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
-			if cookieName := session.Get(definitions.CookieUserBackendName); cookieName != nil {
-				backendName, _ = cookieName.(string)
-			}
+	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
+		passDB = definitions.Backend(cookieValue)
+		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
 
-			if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-				return mgr.UpdateWebAuthnCredential(a, oldCredential, newCredential)
-			}
+		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
+			return mgr.UpdateWebAuthnCredential(a, oldCredential, newCredential)
 		}
 	}
 

@@ -169,9 +169,9 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		session := sessions.Default(ctx)
-		account := session.Get(definitions.CookieAccount)
+		_, err := util.GetSessionValue[string](session, definitions.CookieAccount)
 
-		if account == nil {
+		if err != nil {
 			ctx.Redirect(http.StatusFound, h.getLoginURL(ctx)+"?return_to="+ctx.Request.URL.Path)
 			ctx.Abort()
 
@@ -196,8 +196,8 @@ func BasePageData(ctx *gin.Context, cfg config.File) gin.H {
 	session := sessions.Default(ctx)
 	lang := "en"
 
-	if l := session.Get(definitions.CookieLang); l != nil {
-		lang = l.(string)
+	if l, err := util.GetSessionValue[string](session, definitions.CookieLang); err == nil {
+		lang = l
 	}
 
 	tag := language.Make(lang)
@@ -219,11 +219,13 @@ func BasePageData(ctx *gin.Context, cfg config.File) gin.H {
 		}
 	}
 
+	username, _ := util.GetSessionValue[string](session, definitions.CookieAccount)
+
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
 		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, cfg, path, config.DefaultLanguageTags, currentName),
-		"Username":            session.Get(definitions.CookieAccount),
+		"Username":            username,
 	}
 }
 
@@ -355,6 +357,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 					session := sessions.Default(ctx)
 					session.Set(definitions.CookieUsername, username)
 					session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultFail))
+					session.Set(definitions.CookieProtocol, protocol)
 
 					if rememberMeTTL > 0 {
 						session.Set(definitions.CookieRememberTTL, rememberMeTTL)
@@ -420,6 +423,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	session.Set(definitions.CookieUniqueUserID, user.Id)
 	session.Set(definitions.CookieDisplayName, user.DisplayName)
 	session.Set(definitions.CookieSubject, user.Id)
+	session.Set(definitions.CookieProtocol, protocol)
 
 	if rememberMeTTL > 0 {
 		session.Options(sessions.Options{
@@ -472,7 +476,13 @@ func (h *FrontendHandler) hasWebAuthn(user *backend.User) bool {
 // LoginWebAuthn renders the WebAuthn verification page during login.
 func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	session := sessions.Default(ctx)
-	username := session.Get(definitions.CookieUsername)
+	username, err := util.GetSessionValue[string](session, definitions.CookieUsername)
+
+	if err != nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
 
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
@@ -498,9 +508,7 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 // LoginTOTP renders the TOTP verification page during login.
 func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	session := sessions.Default(ctx)
-	username := session.Get(definitions.CookieUsername)
-
-	if username == nil {
+	if _, err := util.GetSessionValue[string](session, definitions.CookieUsername); err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -528,12 +536,12 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	defer sp.End()
 
 	session := sessions.Default(ctx)
-	username := session.Get(definitions.CookieUsername)
-	authResult := session.Get(definitions.CookieAuthResult)
+	username, errU := util.GetSessionValue[string](session, definitions.CookieUsername)
+	authResult, errA := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
 	code := ctx.PostForm("code")
 	returnTo := ctx.PostForm("return_to")
 
-	if username == nil || authResult == nil || code == "" {
+	if errU != nil || errA != nil || code == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -548,7 +556,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
-	user, err := idpInstance.GetUserByUsername(ctx, username.(string), oidcCID, samlEntityID)
+	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 
 	if err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
@@ -558,8 +566,15 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 	// Verify TOTP
 	authDeps := h.deps.Auth()
-	auth := core.NewAuthStateWithSetupWithDeps(ctx, authDeps).(*core.AuthState)
-	auth.SetUsername(username.(string))
+	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+	if state == nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	auth := state.(*core.AuthState)
+	auth.SetUsername(username)
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
 
@@ -593,7 +608,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	}
 
 	// MFA OK. Now check if the original password was OK.
-	if authResult.(uint8) != uint8(definitions.AuthResultOK) {
+	if authResult != uint8(definitions.AuthResultOK) {
 		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
 		data := h.basePageData(ctx)
@@ -634,9 +649,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	session.Set(definitions.CookieDisplayName, user.DisplayName)
 	session.Set(definitions.CookieSubject, user.Id)
 
-	if ttlVal := session.Get(definitions.CookieRememberTTL); ttlVal != nil {
+	if ttlVal, err := util.GetSessionValue[int](session, definitions.CookieRememberTTL); err == nil {
 		session.Options(sessions.Options{
-			MaxAge: ttlVal.(int),
+			MaxAge: ttlVal,
 			Path:   "/",
 		})
 		session.Delete(definitions.CookieRememberTTL)
@@ -689,13 +704,24 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["GenerateNewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Generate new recovery codes")
 	data["RecoveryCodesLeft"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You have %d recovery codes left.")
 
-	data["HaveTOTP"] = session.Get(definitions.CookieHaveTOTP) == true
+	haveTOTP, _ := util.GetSessionValue[bool](session, definitions.CookieHaveTOTP)
+	data["HaveTOTP"] = haveTOTP
 
-	username := session.Get(definitions.CookieAccount).(string)
+	username, err := util.GetSessionValue[string](session, definitions.CookieAccount)
+	if err != nil {
+		h.handleTwoFAHomeError(ctx, data, err, "")
+
+		return
+	}
+
 	authDeps := h.deps.Auth()
 	dummyAuth := core.NewAuthStateWithSetupWithDeps(ctx, authDeps).(*core.AuthState)
 	dummyAuth.SetUsername(username)
-	dummyAuth.SetProtocol(config.NewProtocol("oidc")) // Use OIDC as default for attribute mapping
+
+	protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
+	if err != nil {
+		protocol = definitions.ProtoOIDC
+	}
 
 	// Fetch user from backend to get latest attributes
 	if _, err := dummyAuth.GetBackendManager(definitions.BackendLDAP, definitions.DefaultBackendName).AccountDB(dummyAuth); err == nil {
@@ -704,9 +730,19 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		data["NumRecoveryCodes"] = len(codes)
 	}
 
-	uniqueUserID := session.Get(definitions.CookieUniqueUserID).(string)
-	user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
-	data["HaveWebAuthn"] = err == nil && user != nil && len(user.WebAuthnCredentials()) > 0
+			if data["HaveTOTP"] != hasTOTPInBackend {
+				data["HaveTOTP"] = hasTOTPInBackend
+				session.Set(definitions.CookieHaveTOTP, hasTOTPInBackend)
+				_ = session.Save()
+			}
+		}
+	}
+
+	if uniqueUserID, err := util.GetSessionValue[string](session, definitions.CookieUniqueUserID); err == nil {
+		user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
+		data["HaveWebAuthn"] = err == nil && user != nil && len(user.WebAuthnCredentials()) > 0
+	}
+
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
 }
@@ -714,7 +750,11 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 // RegisterTOTP renders the TOTP registration page.
 func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 	session := sessions.Default(ctx)
-	account := session.Get(definitions.CookieAccount).(string)
+
+	haveTOTP, _ := util.GetSessionValue[bool](session, definitions.CookieHaveTOTP)
+	if haveTOTP {
+		ctx.Header("HX-Redirect", "/2fa/v1/register/home")
+		ctx.Status(http.StatusFound)
 
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      h.deps.Cfg.GetServer().Frontend.GetTotpIssuer(),
@@ -747,17 +787,17 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	defer sp.End()
 
 	session := sessions.Default(ctx)
-	secret := session.Get(definitions.CookieTOTPSecret)
+	secret, errS := util.GetSessionValue[string](session, definitions.CookieTOTPSecret)
 	code := ctx.PostForm("code")
-	username := session.Get(definitions.CookieAccount).(string)
+	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
 
-	if secret == nil || code == "" {
+	if errS != nil || errU != nil || code == "" {
 		ctx.String(http.StatusBadRequest, "Invalid request")
 
 		return
 	}
 
-	if !totp.Validate(code, secret.(string)) {
+	if !totp.Validate(code, secret) {
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
 		ctx.String(http.StatusBadRequest, "Invalid OTP code")
 
@@ -766,11 +806,14 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 
 	// Save to backend (LDAP/Lua)
 	authDeps := h.deps.Auth()
-	sourceBackend := session.Get(definitions.CookieUserBackend)
+	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
+	if err != nil {
+		sourceBackend = uint8(definitions.BackendLDAP)
+	}
 
 	var addTOTPSecret core.AddTOTPSecretFunc
 
-	switch sourceBackend.(uint8) {
+	switch sourceBackend {
 	case uint8(definitions.BackendLDAP):
 		addTOTPSecret = core.NewLDAPManager(definitions.DefaultBackendName, authDeps).AddTOTPSecret
 	case uint8(definitions.BackendLua):
@@ -783,10 +826,17 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	}
 
 	// We need a dummy AuthState for addTOTPSecret
-	dummyAuth := core.NewAuthStateWithSetupWithDeps(ctx, authDeps).(*core.AuthState)
+	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+	if state == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
 	dummyAuth.SetUsername(username)
 
-	if err := addTOTPSecret(dummyAuth, core.NewTOTPSecret(secret.(string))); err != nil {
+	if err := addTOTPSecret(dummyAuth, core.NewTOTPSecret(secret)); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
 		ctx.String(http.StatusInternalServerError, "Failed to save TOTP secret: "+err.Error())
@@ -813,10 +863,18 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	defer sp.End()
 
 	session := sessions.Default(ctx)
-	username := session.Get(definitions.CookieAccount).(string)
+	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
+	if errU != nil {
+		ctx.String(http.StatusBadRequest, "Invalid request")
+
+		return
+	}
 
 	authDeps := h.deps.Auth()
-	sourceBackend := session.Get(definitions.CookieUserBackend)
+	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
+	if err != nil {
+		sourceBackend = uint8(definitions.BackendLDAP)
+	}
 
 	var (
 		addTOTPRecoveryCodes    func(auth *core.AuthState, recovery *mfa.TOTPRecovery) error
@@ -838,7 +896,14 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 		return
 	}
 
-	dummyAuth := core.NewAuthStateWithSetupWithDeps(ctx, authDeps).(*core.AuthState)
+	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+	if state == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
 	dummyAuth.SetUsername(username)
 	dummyAuth.SetProtocol(config.NewProtocol("oidc"))
 
@@ -938,14 +1003,22 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	defer sp.End()
 
 	session := sessions.Default(ctx)
-	username := session.Get(definitions.CookieAccount).(string)
+	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
+	if errU != nil {
+		ctx.String(http.StatusBadRequest, "Invalid request")
+
+		return
+	}
 
 	authDeps := h.deps.Auth()
-	sourceBackend := session.Get(definitions.CookieUserBackend)
+	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
+	if err != nil {
+		sourceBackend = uint8(definitions.BackendLDAP)
+	}
 
 	var deleteTOTPSecret func(auth *core.AuthState) error
 
-	switch sourceBackend.(uint8) {
+	switch sourceBackend {
 	case uint8(definitions.BackendLDAP):
 		deleteTOTPSecret = core.NewLDAPManager(definitions.DefaultBackendName, authDeps).DeleteTOTPSecret
 	case uint8(definitions.BackendLua):
@@ -957,7 +1030,14 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 		return
 	}
 
-	dummyAuth := core.NewAuthStateWithSetupWithDeps(ctx, authDeps).(*core.AuthState)
+	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+	if state == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
 	dummyAuth.SetUsername(username)
 
 	if err := deleteTOTPSecret(dummyAuth); err != nil {
@@ -984,8 +1064,14 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	defer sp.End()
 
 	session := sessions.Default(ctx)
-	userID := session.Get(definitions.CookieUniqueUserID).(string)
-	username := session.Get(definitions.CookieAccount).(string)
+	userID, errU := util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
+	username, errA := util.GetSessionValue[string](session, definitions.CookieAccount)
+
+	if errU != nil || errA != nil {
+		ctx.String(http.StatusBadRequest, "Invalid request")
+
+		return
+	}
 
 	key := h.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + userID
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
@@ -995,7 +1081,14 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
 	}
 
-	dummyAuth := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth()).(*core.AuthState)
+	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+	if state == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
 	h.purgeUserCache(dummyAuth, username)
 
 	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
@@ -1004,6 +1097,23 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 
 // RegisterWebAuthn renders the WebAuthn registration page.
 func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
+	session := sessions.Default(ctx)
+
+	if uniqueUserID, err := util.GetSessionValue[string](session, definitions.CookieUniqueUserID); err == nil {
+		user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
+
+		if err == nil && user != nil && len(user.WebAuthnCredentials()) > 0 {
+			ctx.Header("HX-Redirect", "/2fa/v1/register/home")
+			ctx.Status(http.StatusFound)
+
+			return
+		}
+	} else {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register WebAuthn")
 	data["WebAuthnMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please connect your security key and follow the instructions")
