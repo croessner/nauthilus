@@ -256,6 +256,9 @@ type State interface {
 	// GetUsedPassDBBackend returns the backend used for the password database during the authentication process.
 	GetUsedPassDBBackend() definitions.Backend
 
+	// GetUsedPassDBBackendName returns the name of the backend used for the password database during the authentication process.
+	GetUsedPassDBBackendName() string
+
 	// GetAttributes retrieves a map of database attributes where keys are field names and values are the corresponding data.
 	GetAttributes() bktype.AttributeMapping
 
@@ -1208,6 +1211,11 @@ func (a *AuthState) GetDisplayNameField() string {
 // GetUsedPassDBBackend returns the currently used backend for password database operations.
 func (a *AuthState) GetUsedPassDBBackend() definitions.Backend {
 	return a.Runtime.UsedPassDBBackend
+}
+
+// GetUsedPassDBBackendName returns the name of the currently used backend for password database operations.
+func (a *AuthState) GetUsedPassDBBackendName() string {
+	return a.Runtime.BackendName
 }
 
 // GetAttributes retrieves the stored database attributes from the AuthState and returns them as a AttributeMapping.
