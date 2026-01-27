@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -143,6 +144,7 @@ func newContextStoreForRuntime(
 	redisClient redifx.Client,
 	channel backend.Channel,
 	accountCache *accountcache.Manager,
+	langManager language.Manager,
 ) *contextStore {
 	store := newContextStore()
 	store.cfgProvider = cfgProvider
@@ -151,6 +153,7 @@ func newContextStoreForRuntime(
 	store.redisClient = redisClient
 	store.channel = channel
 	store.accountCache = accountCache
+	store.langManager = langManager
 	store.action = newContextTuple(ctx)
 
 	return store
@@ -177,6 +180,7 @@ type runtimeLifecycleParams struct {
 	BFSyncSvc     *loopsfx.BruteForceSyncService
 	Env           config.Environment
 	Channel       backend.Channel
+	LangManager   language.Manager
 }
 
 // registerRuntimeLifecycle wires the legacy startup/shutdown sequence into fx.Lifecycle.

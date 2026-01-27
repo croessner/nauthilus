@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/envfx"
+	"github.com/croessner/nauthilus/server/app/languagefx"
 	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/opsfx"
@@ -92,6 +93,7 @@ func main() {
 		fx.Provide(newAccountCache),
 		fx.Provide(newBackendChannel),
 		envfx.Module(),
+		languagefx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),
 		reloadfx.Module(),

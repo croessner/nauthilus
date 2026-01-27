@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -74,4 +75,5 @@ type Deps struct {
 	AccountCache *accountcache.Manager
 	Channel      backend.Channel
 	Svc          Services
+	LangManager  language.Manager
 }

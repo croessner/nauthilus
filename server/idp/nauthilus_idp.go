@@ -161,7 +161,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 
 	accessTokenLifetime := client.AccessTokenLifetime
 	if accessTokenLifetime == 0 {
-		accessTokenLifetime = 1 * time.Hour
+		accessTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultAccessTokenLifetime()
 	}
 
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
@@ -250,7 +250,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 		refreshTokenLifetime := client.RefreshTokenLifetime
 
 		if refreshTokenLifetime == 0 {
-			refreshTokenLifetime = 30 * 24 * time.Hour // 30 days default
+			refreshTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultRefreshTokenLifetime()
 		}
 
 		err = n.storage.StoreRefreshToken(ctx, refreshTokenString, session, refreshTokenLifetime)

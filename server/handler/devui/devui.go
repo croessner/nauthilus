@@ -26,7 +26,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
@@ -109,7 +108,7 @@ func (h *DevUIHandler) Register(router gin.IRouter) {
 	store := cookie.NewStore([]byte("dev-secret"))
 	group := router.Group("/dev/ui", sessions.Sessions("nauthilus_dev", store))
 
-	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger)
+	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 
 	group.GET("", h.Index)
 	group.GET("/render/:template", i18nMW, h.RenderTemplate)
@@ -150,9 +149,9 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 		return endpoints[i].Path < endpoints[j].Path
 	})
 
-	languages := make([]map[string]string, 0, len(config.DefaultLanguageTags))
+	languages := make([]map[string]string, 0, len(h.deps.LangManager.GetTags()))
 
-	for _, tag := range config.DefaultLanguageTags {
+	for _, tag := range h.deps.LangManager.GetTags() {
 		languages = append(languages, map[string]string{
 			"Tag":  tag.String(),
 			"Name": tag.String(), // Could be improved with display name
@@ -271,7 +270,7 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	}
 
 	// Dummy data
-	data := handleridp.BasePageData(ctx, h.deps.Cfg)
+	data := handleridp.BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 	data["DevMode"] = true
 	data["HXRequest"] = false
 	data["Title"] = "Dev Preview: " + templateName

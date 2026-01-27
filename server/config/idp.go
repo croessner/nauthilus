@@ -40,6 +40,19 @@ func (i *IdPSection) String() string {
 	return fmt.Sprintf("IdPSection: {OIDC:%s SAML2:%s WebAuthn:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s}", i.OIDC.String(), i.SAML2.String(), i.WebAuthn.String(), i.TermsOfServiceURL, i.PrivacyPolicyURL)
 }
 
+// warnUnsupported returns a list of warnings for unsupported Identity Provider configuration parameters.
+func (i *IdPSection) warnUnsupported() []string {
+	if i == nil {
+		return nil
+	}
+
+	var warnings []string
+	warnings = append(warnings, i.OIDC.warnUnsupported()...)
+	warnings = append(warnings, i.SAML2.warnUnsupported()...)
+
+	return warnings
+}
+
 // WebAuthn represents the configuration for WebAuthn.
 type WebAuthn struct {
 	RPDisplayName string   `mapstructure:"rp_display_name"`
@@ -57,12 +70,24 @@ func (w *WebAuthn) String() string {
 
 // OIDCConfig represents the configuration for OpenID Connect.
 type OIDCConfig struct {
-	Enabled        bool                `mapstructure:"enabled"`
-	Issuer         string              `mapstructure:"issuer" validate:"required_if=Enabled true"`
-	SigningKey     string              `mapstructure:"signing_key" validate:"required_if=Enabled true SigningKeyFile ''"`
-	SigningKeyFile string              `mapstructure:"signing_key_file" validate:"required_if=Enabled true SigningKey ''"`
-	Clients        []OIDCClient        `mapstructure:"clients"`
-	CustomScopes   []Oauth2CustomScope `mapstructure:"custom_scopes" validate:"omitempty,dive"`
+	Enabled                            bool                `mapstructure:"enabled"`
+	Issuer                             string              `mapstructure:"issuer" validate:"required_if=Enabled true"`
+	SigningKey                         string              `mapstructure:"signing_key" validate:"required_if=Enabled true SigningKeyFile ''"`
+	SigningKeyFile                     string              `mapstructure:"signing_key_file" validate:"required_if=Enabled true SigningKey ''"`
+	Clients                            []OIDCClient        `mapstructure:"clients"`
+	CustomScopes                       []Oauth2CustomScope `mapstructure:"custom_scopes" validate:"omitempty,dive"`
+	ScopesSupported                    []string            `mapstructure:"scopes_supported"`
+	ResponseTypesSupported             []string            `mapstructure:"response_types_supported"`
+	SubjectTypesSupported              []string            `mapstructure:"subject_types_supported"`
+	IDTokenSigningAlgValuesSupported   []string            `mapstructure:"id_token_signing_alg_values_supported"`
+	TokenEndpointAuthMethodsSupported  []string            `mapstructure:"token_endpoint_auth_methods_supported"`
+	ClaimsSupported                    []string            `mapstructure:"claims_supported"`
+	FrontChannelLogoutSupported        *bool               `mapstructure:"front_channel_logout_supported"`
+	FrontChannelLogoutSessionSupported *bool               `mapstructure:"front_channel_logout_session_supported"`
+	BackChannelLogoutSupported         *bool               `mapstructure:"back_channel_logout_supported"`
+	BackChannelLogoutSessionSupported  *bool               `mapstructure:"back_channel_logout_session_supported"`
+	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
+	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
 }
 
 func (o *OIDCConfig) String() string {
@@ -70,12 +95,170 @@ func (o *OIDCConfig) String() string {
 		return "OIDCConfig: <nil>"
 	}
 
-	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v}", o.Enabled, o.Issuer, o.Clients)
+	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s}",
+		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime)
 }
 
 // GetSigningKey returns the signing key content.
 func (o *OIDCConfig) GetSigningKey() (string, error) {
 	return getContent(o.SigningKey, o.SigningKeyFile)
+}
+
+// GetScopesSupported returns the supported scopes.
+func (o *OIDCConfig) GetScopesSupported() []string {
+	if len(o.ScopesSupported) > 0 {
+		return o.ScopesSupported
+	}
+
+	return []string{
+		definitions.ScopeOpenId,
+		definitions.ScopeProfile,
+		definitions.ScopeEmail,
+		definitions.ScopeGroups,
+		definitions.ScopeOfflineAccess,
+	}
+}
+
+// GetResponseTypesSupported returns the supported response types.
+func (o *OIDCConfig) GetResponseTypesSupported() []string {
+	if len(o.ResponseTypesSupported) > 0 {
+		return o.ResponseTypesSupported
+	}
+
+	return []string{"code"}
+}
+
+// GetSubjectTypesSupported returns the supported subject types.
+func (o *OIDCConfig) GetSubjectTypesSupported() []string {
+	if len(o.SubjectTypesSupported) > 0 {
+		return o.SubjectTypesSupported
+	}
+
+	return []string{"public"}
+}
+
+// GetIDTokenSigningAlgValuesSupported returns the supported ID token signing algorithms.
+func (o *OIDCConfig) GetIDTokenSigningAlgValuesSupported() []string {
+	if len(o.IDTokenSigningAlgValuesSupported) > 0 {
+		return o.IDTokenSigningAlgValuesSupported
+	}
+
+	return []string{"RS256"}
+}
+
+// GetTokenEndpointAuthMethodsSupported returns the supported token endpoint auth methods.
+func (o *OIDCConfig) GetTokenEndpointAuthMethodsSupported() []string {
+	if len(o.TokenEndpointAuthMethodsSupported) > 0 {
+		return o.TokenEndpointAuthMethodsSupported
+	}
+
+	return []string{"client_secret_post", "client_secret_basic"}
+}
+
+// GetClaimsSupported returns the supported claims.
+func (o *OIDCConfig) GetClaimsSupported() []string {
+	if len(o.ClaimsSupported) > 0 {
+		return o.ClaimsSupported
+	}
+
+	return []string{"sub", "name", "preferred_username", "email"}
+}
+
+// GetFrontChannelLogoutSupported returns true if front-channel logout is supported.
+func (o *OIDCConfig) GetFrontChannelLogoutSupported() bool {
+	if o.FrontChannelLogoutSupported != nil {
+		return *o.FrontChannelLogoutSupported
+	}
+
+	return true
+}
+
+// GetFrontChannelLogoutSessionSupported returns true if front-channel logout session is supported.
+func (o *OIDCConfig) GetFrontChannelLogoutSessionSupported() bool {
+	if o.FrontChannelLogoutSessionSupported != nil {
+		return *o.FrontChannelLogoutSessionSupported
+	}
+
+	return false
+}
+
+// GetBackChannelLogoutSupported returns true if back-channel logout is supported.
+func (o *OIDCConfig) GetBackChannelLogoutSupported() bool {
+	if o.BackChannelLogoutSupported != nil {
+		return *o.BackChannelLogoutSupported
+	}
+
+	return true
+}
+
+// GetBackChannelLogoutSessionSupported returns true if back-channel logout session is supported.
+func (o *OIDCConfig) GetBackChannelLogoutSessionSupported() bool {
+	if o.BackChannelLogoutSessionSupported != nil {
+		return *o.BackChannelLogoutSessionSupported
+	}
+
+	return false
+}
+
+// GetDefaultAccessTokenLifetime returns the default access token lifetime.
+func (o *OIDCConfig) GetDefaultAccessTokenLifetime() time.Duration {
+	if o.DefaultAccessTokenLifetime > 0 {
+		return o.DefaultAccessTokenLifetime
+	}
+
+	return 1 * time.Hour
+}
+
+// GetDefaultRefreshTokenLifetime returns the default refresh token lifetime.
+func (o *OIDCConfig) GetDefaultRefreshTokenLifetime() time.Duration {
+	if o.DefaultRefreshTokenLifetime > 0 {
+		return o.DefaultRefreshTokenLifetime
+	}
+
+	return 30 * 24 * time.Hour
+}
+
+// warnUnsupported returns a list of warnings for unsupported OIDC configuration parameters.
+func (o *OIDCConfig) warnUnsupported() []string {
+	if !o.Enabled {
+		return nil
+	}
+
+	var warnings []string
+
+	if len(o.ResponseTypesSupported) > 0 {
+		for _, rt := range o.ResponseTypesSupported {
+			if rt != "code" {
+				warnings = append(warnings, fmt.Sprintf("oidc.response_types_supported: '%s' is currently not supported (only 'code' is supported)", rt))
+			}
+		}
+	}
+
+	if len(o.SubjectTypesSupported) > 0 {
+		for _, st := range o.SubjectTypesSupported {
+			if st != "public" {
+				warnings = append(warnings, fmt.Sprintf("oidc.subject_types_supported: '%s' is currently not supported (only 'public' is supported)", st))
+			}
+		}
+	}
+
+	if len(o.IDTokenSigningAlgValuesSupported) > 0 {
+		for _, alg := range o.IDTokenSigningAlgValuesSupported {
+			if alg != "RS256" {
+				warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only 'RS256' is supported)", alg))
+			}
+		}
+	}
+
+	if o.FrontChannelLogoutSessionSupported != nil && *o.FrontChannelLogoutSessionSupported {
+		warnings = append(warnings, "oidc.front_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
+	}
+
+	if o.BackChannelLogoutSessionSupported != nil && *o.BackChannelLogoutSessionSupported {
+		warnings = append(warnings, "oidc.back_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
+	}
+
+	return warnings
 }
 
 // OIDCClient represents an OIDC client configuration.
@@ -128,13 +311,16 @@ func (c *OIDCClient) IsDelayedResponse() bool {
 
 // SAML2Config represents the configuration for SAML 2.0.
 type SAML2Config struct {
-	Enabled          bool                   `mapstructure:"enabled"`
-	EntityID         string                 `mapstructure:"entity_id" validate:"required_if=Enabled true"`
-	Cert             string                 `mapstructure:"cert" validate:"required_if=Enabled true CertFile ''"`
-	CertFile         string                 `mapstructure:"cert_file" validate:"required_if=Enabled true Cert ''"`
-	Key              string                 `mapstructure:"key" validate:"required_if=Enabled true KeyFile ''"`
-	KeyFile          string                 `mapstructure:"key_file" validate:"required_if=Enabled true Key ''"`
-	ServiceProviders []SAML2ServiceProvider `mapstructure:"service_providers"`
+	Enabled           bool                   `mapstructure:"enabled"`
+	EntityID          string                 `mapstructure:"entity_id" validate:"required_if=Enabled true"`
+	Cert              string                 `mapstructure:"cert" validate:"required_if=Enabled true CertFile ''"`
+	CertFile          string                 `mapstructure:"cert_file" validate:"required_if=Enabled true Cert ''"`
+	Key               string                 `mapstructure:"key" validate:"required_if=Enabled true KeyFile ''"`
+	KeyFile           string                 `mapstructure:"key_file" validate:"required_if=Enabled true Key ''"`
+	ServiceProviders  []SAML2ServiceProvider `mapstructure:"service_providers"`
+	SignatureMethod   string                 `mapstructure:"signature_method"`
+	DefaultExpireTime time.Duration          `mapstructure:"default_expire_time"`
+	NameIDFormat      string                 `mapstructure:"name_id_format"`
 }
 
 func (s *SAML2Config) String() string {
@@ -142,7 +328,8 @@ func (s *SAML2Config) String() string {
 		return "SAML2Config: <nil>"
 	}
 
-	return fmt.Sprintf("SAML2Config: {Enabled:%t EntityID:%s ServiceProviders:%+v}", s.Enabled, s.EntityID, s.ServiceProviders)
+	return fmt.Sprintf("SAML2Config: {Enabled:%t EntityID:%s ServiceProviders:%+v SignatureMethod:%s DefaultExpireTime:%s NameIDFormat:%s}",
+		s.Enabled, s.EntityID, s.ServiceProviders, s.SignatureMethod, s.DefaultExpireTime, s.NameIDFormat)
 }
 
 // GetCert returns the certificate content.
@@ -153,6 +340,48 @@ func (s *SAML2Config) GetCert() (string, error) {
 // GetKey returns the key content.
 func (s *SAML2Config) GetKey() (string, error) {
 	return getContent(s.Key, s.KeyFile)
+}
+
+// GetSignatureMethod returns the signature method.
+func (s *SAML2Config) GetSignatureMethod() string {
+	if s.SignatureMethod != "" {
+		return s.SignatureMethod
+	}
+
+	return "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+}
+
+// GetDefaultExpireTime returns the default expire time.
+func (s *SAML2Config) GetDefaultExpireTime() time.Duration {
+	if s.DefaultExpireTime > 0 {
+		return s.DefaultExpireTime
+	}
+
+	return time.Hour
+}
+
+// GetNameIDFormat returns the NameID format.
+func (s *SAML2Config) GetNameIDFormat() string {
+	if s.NameIDFormat != "" {
+		return s.NameIDFormat
+	}
+
+	return "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+}
+
+// warnUnsupported returns a list of warnings for unsupported SAML2 configuration parameters.
+func (s *SAML2Config) warnUnsupported() []string {
+	if !s.Enabled {
+		return nil
+	}
+
+	var warnings []string
+
+	if s.SignatureMethod != "" && s.SignatureMethod != "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" {
+		warnings = append(warnings, fmt.Sprintf("saml2.signature_method: '%s' is currently not supported (only 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256' is supported)", s.SignatureMethod))
+	}
+
+	return warnings
 }
 
 func getContent(raw, path string) (string, error) {

@@ -71,7 +71,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	}, mdlua.LuaContextMiddleware())
 
 	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
-	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger)
+	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
 	router.GET("/oidc/authorize", sessionMW, i18nMW, h.Authorize)
@@ -89,16 +89,12 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 
 // Discovery returns the OIDC discovery document.
 func (h *OIDCHandler) Discovery(ctx *gin.Context) {
-	issuer := h.deps.Cfg.GetIdP().OIDC.Issuer
-	scopesSupported := []string{
-		definitions.ScopeOpenId,
-		definitions.ScopeProfile,
-		definitions.ScopeEmail,
-		definitions.ScopeGroups,
-		definitions.ScopeOfflineAccess,
-	}
+	oidcCfg := h.deps.Cfg.GetIdP().OIDC
+	issuer := oidcCfg.Issuer
 
-	for _, customScope := range h.deps.Cfg.GetIdP().OIDC.CustomScopes {
+	scopesSupported := oidcCfg.GetScopesSupported()
+
+	for _, customScope := range oidcCfg.CustomScopes {
 		scopesSupported = append(scopesSupported, customScope.Name)
 	}
 
@@ -109,16 +105,16 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 		"userinfo_endpoint":                     issuer + "/oidc/userinfo",
 		"jwks_uri":                              issuer + "/oidc/jwks",
 		"end_session_endpoint":                  issuer + "/oidc/logout",
-		"frontchannel_logout_supported":         true,
-		"frontchannel_logout_session_supported": false,
-		"backchannel_logout_supported":          true,
-		"backchannel_logout_session_supported":  false,
-		"response_types_supported":              []string{"code"},
-		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"RS256"},
+		"frontchannel_logout_supported":         oidcCfg.GetFrontChannelLogoutSupported(),
+		"frontchannel_logout_session_supported": oidcCfg.GetFrontChannelLogoutSessionSupported(),
+		"backchannel_logout_supported":          oidcCfg.GetBackChannelLogoutSupported(),
+		"backchannel_logout_session_supported":  oidcCfg.GetBackChannelLogoutSessionSupported(),
+		"response_types_supported":              oidcCfg.GetResponseTypesSupported(),
+		"subject_types_supported":               oidcCfg.GetSubjectTypesSupported(),
+		"id_token_signing_alg_values_supported": oidcCfg.GetIDTokenSigningAlgValuesSupported(),
 		"scopes_supported":                      scopesSupported,
-		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
-		"claims_supported":                      []string{"sub", "name", "preferred_username", "email"},
+		"token_endpoint_auth_methods_supported": oidcCfg.GetTokenEndpointAuthMethodsSupported(),
+		"claims_supported":                      oidcCfg.GetClaimsSupported(),
 	})
 }
 
@@ -615,7 +611,7 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 		return
 	}
 
-	data := BasePageData(ctx, h.deps.Cfg)
+	data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Consent")
 	data["Application"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Application")
 	data["WantsToAccessYourAccount"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "wants to access your account")
@@ -803,7 +799,7 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	}
 
 	if len(frontChannelURIs) > 0 {
-		data := BasePageData(ctx, h.deps.Cfg)
+		data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
 		data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
 		data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")

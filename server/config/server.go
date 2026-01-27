@@ -1942,25 +1942,26 @@ func (m *MasterUser) GetDelimiter() string {
 
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
-	Enabled               bool   `mapstructure:"enabled"`
-	CSRFSecret            string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
-	CookieStoreAuthKey    string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
-	CookieStoreEncKey     string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
-	HTMLStaticContentPath string `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
-	DefaultLogoImage      string `mapstructure:"default_logo_image" validate:"omitempty"`
-	ErrorPage             string `mapstructure:"error_page" validate:"omitempty"`
-	Homepage              string `mapstructure:"homepage" validate:"omitempty,url"`
-	LanguageResources     string `mapstructure:"language_resources" validate:"omitempty,dir"`
-	DefaultLanguage       string `mapstructure:"default_language" validate:"omitempty"`
-	TotpIssuer            string `mapstructure:"totp_issuer" validate:"omitempty"`
-	TotpSkew              uint   `mapstructure:"totp_skew" validate:"omitempty"`
-	TotpPage              string `mapstructure:"totp_page" validate:"omitempty"`
-	TotpWelcome           string `mapstructure:"totp_welcome" validate:"omitempty"`
-	TotpPageLogoImageAlt  string `mapstructure:"totp_page_logo_image_alt" validate:"omitempty"`
-	WebAuthnPage          string `mapstructure:"webauthn_page" validate:"omitempty"`
-	Login2FAPage          string `mapstructure:"login_2fa_page" validate:"omitempty"`
-	Login2FAPageWelcome   string `mapstructure:"login_2fa_page_welcome" validate:"omitempty"`
-	Login2FAPostPage      string `mapstructure:"login_2fa_post_page" validate:"omitempty"`
+	Enabled               bool     `mapstructure:"enabled"`
+	CSRFSecret            string   `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreAuthKey    string   `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreEncKey     string   `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
+	HTMLStaticContentPath string   `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
+	DefaultLogoImage      string   `mapstructure:"default_logo_image" validate:"omitempty"`
+	ErrorPage             string   `mapstructure:"error_page" validate:"omitempty"`
+	Homepage              string   `mapstructure:"homepage" validate:"omitempty,url"`
+	LanguageResources     string   `mapstructure:"language_resources" validate:"omitempty,dir"`
+	Languages             []string `mapstructure:"languages" validate:"omitempty"`
+	DefaultLanguage       string   `mapstructure:"default_language" validate:"omitempty"`
+	TotpIssuer            string   `mapstructure:"totp_issuer" validate:"omitempty"`
+	TotpSkew              uint     `mapstructure:"totp_skew" validate:"omitempty"`
+	TotpPage              string   `mapstructure:"totp_page" validate:"omitempty"`
+	TotpWelcome           string   `mapstructure:"totp_welcome" validate:"omitempty"`
+	TotpPageLogoImageAlt  string   `mapstructure:"totp_page_logo_image_alt" validate:"omitempty"`
+	WebAuthnPage          string   `mapstructure:"webauthn_page" validate:"omitempty"`
+	Login2FAPage          string   `mapstructure:"login_2fa_page" validate:"omitempty"`
+	Login2FAPageWelcome   string   `mapstructure:"login_2fa_page_welcome" validate:"omitempty"`
+	Login2FAPostPage      string   `mapstructure:"login_2fa_post_page" validate:"omitempty"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -2050,6 +2051,15 @@ func (f *Frontend) GetLanguageResources() string {
 	}
 
 	return f.LanguageResources
+}
+
+// GetLanguages retrieves the languages from the Frontend configuration.
+func (f *Frontend) GetLanguages() []string {
+	if f == nil {
+		return nil
+	}
+
+	return f.Languages
 }
 
 // GetDefaultLanguage retrieves the default language from the Frontend configuration.

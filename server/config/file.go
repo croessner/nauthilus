@@ -2284,6 +2284,17 @@ func (f *FileSettings) warnDeprecatedConfig() {
 	}
 }
 
+// warnUnsupportedConfig logs warnings for unsupported configuration parameters.
+func (f *FileSettings) warnUnsupportedConfig() {
+	if f == nil {
+		return
+	}
+
+	for _, warning := range f.GetIdP().warnUnsupported() {
+		safeWarn("msg", "unsupported configuration parameter", "warning", warning)
+	}
+}
+
 // safeWarn logs a warning using go-kit logger when available; otherwise falls back to slog.
 func safeWarn(keyvals ...any) {
 	var msg string
@@ -2813,6 +2824,9 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	// Emit deprecation warnings once after successful load/validation
 	f.warnDeprecatedConfig()
+
+	// Emit unsupported configuration warnings
+	f.warnUnsupportedConfig()
 
 	// Throw away unsupported keys
 	f.Other = nil

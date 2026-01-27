@@ -211,7 +211,7 @@ func (h *SAMLHandler) getSAMLIdP(ctx *gin.Context) (*saml.IdentityProvider, erro
 		SSOURL:                  *ssoURL,
 		LogoutURL:               *sloURL,
 		ServiceProviderProvider: h,
-		SignatureMethod:         "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+		SignatureMethod:         samlCfg.GetSignatureMethod(),
 		Logger:                  &samlLogger{logger: h.deps.Logger},
 	}, nil
 }
@@ -362,11 +362,11 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	samlSession := &saml.Session{
 		ID:           samlSessionID,
 		CreateTime:   time.Now().UTC(),
-		ExpireTime:   time.Now().Add(time.Hour).UTC(),
+		ExpireTime:   time.Now().Add(h.deps.Cfg.GetIdP().SAML2.GetDefaultExpireTime()).UTC(),
 		Index:        samlSessionIndex,
 		UserName:     username,
 		NameID:       username,
-		NameIDFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+		NameIDFormat: h.deps.Cfg.GetIdP().SAML2.GetNameIDFormat(),
 	}
 
 	// Add attributes

@@ -27,7 +27,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -39,10 +38,8 @@ import (
 	"github.com/croessner/nauthilus/server/util/keygen"
 
 	jsoniter "github.com/json-iterator/go"
-	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
-	"golang.org/x/text/language"
 )
 
 var json = jsoniter.ConfigFastest
@@ -131,12 +128,6 @@ func SetupConfiguration() error {
 	file, err := config.NewFile()
 	if err != nil {
 		return fmt.Errorf("unable to load config file: %w", err)
-	}
-
-	if file.GetServer().Frontend.Enabled {
-		if err = loadLanguageBundles(file); err != nil {
-			return fmt.Errorf("unable to load language bundles: %w", err)
-		}
 	}
 
 	log.SetupLogging(
@@ -277,28 +268,6 @@ func InitializeBruteForceTolerate(ctx context.Context, cfg config.File, logger *
 	tolerate.SetTolerate(t)
 
 	go t.StartHouseKeeping(ctx)
-}
-
-func loadLanguageBundles(cfg config.File) error {
-	core.LangBundle = i18n.NewBundle(language.English)
-
-	core.LangBundle.RegisterUnmarshalFunc("json", json.Unmarshal)
-
-	for _, lang := range []string{"en", "de", "fr"} {
-		if err := loadLanguageBundle(cfg, lang); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func loadLanguageBundle(cfg config.File, lang string) error {
-	if _, err := core.LangBundle.LoadMessageFile(cfg.GetServer().Frontend.GetLanguageResources() + "/" + lang + ".json"); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // setTimeZone configures the process time zone based on the TZ environment variable.

@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
@@ -123,7 +124,7 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	}, mdlua.LuaContextMiddleware())
 
 	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
-	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger)
+	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 
 	router.GET("/login", sessionMW, i18nMW, h.Login)
 	router.GET("/login/:languageTag", sessionMW, i18nMW, h.Login)
@@ -183,7 +184,7 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 }
 
 func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
-	data := BasePageData(ctx, h.deps.Cfg)
+	data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 
 	data["DevMode"] = h.deps.Env.GetDevMode()
 	data["HXRequest"] = ctx.GetHeader("HX-Request") != ""
@@ -192,7 +193,7 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 }
 
 // BasePageData returns the common data for all IdP frontend pages.
-func BasePageData(ctx *gin.Context, cfg config.File) gin.H {
+func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manager) gin.H {
 	session := sessions.Default(ctx)
 	lang := "en"
 
@@ -209,7 +210,7 @@ func BasePageData(ctx *gin.Context, cfg config.File) gin.H {
 
 	if len(parts) > 1 {
 		lastPart := parts[len(parts)-1]
-		for _, t := range config.DefaultLanguageTags {
+		for _, t := range langManager.GetTags() {
 			b, _ := t.Base()
 			if b.String() == lastPart {
 				path = strings.Join(parts[:len(parts)-1], "/")
@@ -224,7 +225,7 @@ func BasePageData(ctx *gin.Context, cfg config.File) gin.H {
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
-		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, cfg, path, config.DefaultLanguageTags, currentName),
+		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, cfg, path, langManager.GetTags(), currentName),
 		"Username":            username,
 	}
 }

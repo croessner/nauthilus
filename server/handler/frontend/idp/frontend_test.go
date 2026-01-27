@@ -21,12 +21,26 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/text/language"
 )
+
+type mockLangManager struct {
+	corelang.Manager
+}
+
+func (m *mockLangManager) GetTags() []language.Tag {
+	return []language.Tag{language.English}
+}
+
+func (m *mockLangManager) GetMatcher() language.Matcher {
+	return language.NewMatcher([]language.Tag{language.English})
+}
 
 type mockFrontendCfg struct {
 	config.FileSettings
@@ -54,7 +68,7 @@ func TestBasePageData(t *testing.T) {
 			session.Set(definitions.CookieLang, "de")
 			session.Save()
 
-			data := BasePageData(c, cfg)
+			data := BasePageData(c, cfg, &mockLangManager{})
 			assert.Equal(t, "de", data["LanguageTag"])
 			assert.Equal(t, "testuser", data["Username"])
 			c.Status(http.StatusOK)

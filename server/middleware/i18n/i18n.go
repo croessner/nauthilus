@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
+	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -33,7 +33,7 @@ import (
 )
 
 // WithLanguage is a middleware function that handles the language setup for the application.
-func WithLanguage(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Manager) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			langFromURL    string
@@ -56,13 +56,13 @@ func WithLanguage(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 		accept := ctx.GetHeader("Accept-Language")
 
 		if lang == "" {
-			tag, _ := language.MatchStrings(config.Matcher, accept)
+			tag, _ := language.MatchStrings(langManager.GetMatcher(), accept)
 			baseName, _ := tag.Base()
 			langFromBrowser := baseName.String()
 			lang, needCookie, needRedirect = setLanguageDetails(cfg, langFromURL, langFromCookie, langFromBrowser)
 		}
 
-		tag, _ := language.MatchStrings(config.Matcher, lang, accept)
+		tag, _ := language.MatchStrings(langManager.GetMatcher(), lang, accept)
 		baseName, _ := tag.Base()
 
 		// Language not found in catalog
@@ -72,7 +72,7 @@ func WithLanguage(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 			return
 		}
 
-		localizer := i18n.NewLocalizer(core.LangBundle, lang, accept)
+		localizer := i18n.NewLocalizer(langManager.GetBundle(), lang, accept)
 
 		if needCookie {
 			session.Set(definitions.CookieLang, baseName.String())

@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
@@ -82,6 +83,9 @@ type contextStore struct {
 
 	// signals holds server lifecycle channels via the interface (no globals)
 	signals core.ServerSignals
+
+	// langManager is the injected language manager.
+	langManager language.Manager
 }
 
 // newContextStore creates and initializes a new instance of the contextStore structure and returns a pointer to it.
@@ -426,6 +430,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 			Logger:       logger,
 			Channel:      store.channel,
 			AccountCache: store.accountCache,
+			LangManager:  store.langManager,
 		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
@@ -461,7 +466,14 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Backchannel API
 	setupBackchannel = func(e *gin.Engine) {
-		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Env: env, Logger: logger, Redis: store.redisClient}
+		deps := &handlerdeps.Deps{
+			Cfg:         cfg,
+			CfgProvider: store.cfgProvider,
+			Env:         env,
+			Logger:      logger,
+			Redis:       store.redisClient,
+			LangManager: store.langManager,
+		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		handlerbackchannel.SetupWithDeps(e, deps)
 	}

@@ -207,3 +207,50 @@ func TestOIDCClient_GetAllowedScopes(t *testing.T) {
 		assert.Equal(t, []string{"openid", "custom"}, scopes)
 	})
 }
+
+func TestIdPConfig_WarnUnsupported(t *testing.T) {
+	t.Run("OIDC unsupported", func(t *testing.T) {
+		cfg := &OIDCConfig{
+			Enabled:                          true,
+			ResponseTypesSupported:           []string{"code", "id_token"},
+			SubjectTypesSupported:            []string{"public", "pairwise"},
+			IDTokenSigningAlgValuesSupported: []string{"RS256", "HS256"},
+		}
+		sessionSupport := true
+		cfg.FrontChannelLogoutSessionSupported = &sessionSupport
+		cfg.BackChannelLogoutSessionSupported = &sessionSupport
+
+		warnings := cfg.warnUnsupported()
+		assert.Contains(t, warnings, "oidc.response_types_supported: 'id_token' is currently not supported (only 'code' is supported)")
+		assert.Contains(t, warnings, "oidc.subject_types_supported: 'pairwise' is currently not supported (only 'public' is supported)")
+		assert.Contains(t, warnings, "oidc.id_token_signing_alg_values_supported: 'HS256' is currently not supported (only 'RS256' is supported)")
+		assert.Contains(t, warnings, "oidc.front_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
+		assert.Contains(t, warnings, "oidc.back_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
+	})
+
+	t.Run("SAML unsupported", func(t *testing.T) {
+		cfg := &SAML2Config{
+			Enabled:         true,
+			SignatureMethod: "invalid",
+		}
+		warnings := cfg.warnUnsupported()
+		assert.Contains(t, warnings, "saml2.signature_method: 'invalid' is currently not supported (only 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256' is supported)")
+	})
+
+	t.Run("All supported", func(t *testing.T) {
+		cfg := &IdPSection{
+			OIDC: OIDCConfig{
+				Enabled:                          true,
+				ResponseTypesSupported:           []string{"code"},
+				SubjectTypesSupported:            []string{"public"},
+				IDTokenSigningAlgValuesSupported: []string{"RS256"},
+			},
+			SAML2: SAML2Config{
+				Enabled:         true,
+				SignatureMethod: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+			},
+		}
+		warnings := cfg.warnUnsupported()
+		assert.Empty(t, warnings)
+	})
+}

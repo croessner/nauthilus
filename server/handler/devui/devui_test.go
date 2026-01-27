@@ -22,10 +22,29 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/gin-gonic/gin"
+	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/text/language"
 )
+
+type mockLangManager struct {
+	corelang.Manager
+}
+
+func (m *mockLangManager) GetTags() []language.Tag {
+	return []language.Tag{language.English}
+}
+
+func (m *mockLangManager) GetMatcher() language.Matcher {
+	return language.NewMatcher(m.GetTags())
+}
+
+func (m *mockLangManager) GetBundle() *i18n.Bundle {
+	return i18n.NewBundle(language.English)
+}
 
 func TestDevUIHandler_GetVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -34,7 +53,8 @@ func TestDevUIHandler_GetVersion(t *testing.T) {
 
 	h := &DevUIHandler{
 		deps: &deps.Deps{
-			Cfg: &config.FileSettings{},
+			Cfg:         &config.FileSettings{},
+			LangManager: &mockLangManager{},
 		},
 		version: 12345,
 	}
@@ -63,7 +83,8 @@ func TestDevUIHandler_Index(t *testing.T) {
 
 	h := &DevUIHandler{
 		deps: &deps.Deps{
-			Cfg: &config.FileSettings{},
+			Cfg:         &config.FileSettings{},
+			LangManager: &mockLangManager{},
 		},
 		version: 12345,
 	}

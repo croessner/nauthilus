@@ -18,16 +18,20 @@ package config
 import "golang.org/x/text/language"
 
 var (
-	Matcher             language.Matcher
-	DefaultLanguageTags []language.Tag
-)
-
-func init() {
+	// DefaultLanguageTags contains the list of supported languages.
+	// Initialized with a sensible default list.
 	DefaultLanguageTags = []language.Tag{
 		language.English,
 		language.German,
 		language.French,
+		language.Spanish,
+		language.Italian,
+		language.Portuguese,
+		language.Russian,
+		language.Chinese,
+		language.Hindi,
+		language.Persian,
+		language.Arabic,
+		language.Japanese,
 	}
-
-	Matcher = language.NewMatcher(DefaultLanguageTags)
-}
+)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
+	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 
@@ -35,12 +36,12 @@ import (
 
 // CreateMiddlewareChain constructs the standard middleware chain for frontend routes
 // including sessions, CSRF, Lua context, language handling and endpoint protection.
-func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, _ rediscli.Client, _ *accountcache.Manager, sessionStore sessions.Store) []gin.HandlerFunc {
+func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, _ rediscli.Client, _ *accountcache.Manager, langManager corelang.Manager, sessionStore sessions.Store) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
 		sessions.Sessions(definitions.SessionName, sessionStore),
 		adapter.Wrap(nosurf.NewPure),
 		mdlua.LuaContextMiddleware(),
-		i18n.WithLanguage(cfg, logger),
+		i18n.WithLanguage(cfg, logger, langManager),
 		mdauth.ProtectEndpointMiddleware(cfg, logger),
 	}
 }
