@@ -174,7 +174,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		clients:    []config.OIDCClient{client},
 	}
 
-	db, _ := redismock.NewClientMock()
+	db, mock := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
 
 	d := &deps.Deps{
@@ -187,7 +187,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 	store := cookie.NewStore([]byte("secret"))
 	h := NewOIDCHandler(store, d, idpInstance)
 
-	t.Run("Logout without session redirects to login", func(t *testing.T) {
+	t.Run("Logout without session redirects to logged_out", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := gin.New()
 		r.GET("/logout", sessions.Sessions("test-session", store), h.Logout)
@@ -196,7 +196,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusFound, w.Code)
-		assert.Equal(t, "/login", w.Header().Get("Location"))
+		assert.Equal(t, "/logged_out", w.Header().Get("Location"))
 	})
 
 	t.Run("Logout with valid post_logout_redirect_uri", func(t *testing.T) {
@@ -211,12 +211,40 @@ func TestOIDCHandler_Logout(t *testing.T) {
 			AuthTime: time.Now(),
 		})
 
+		// Expectations for DeleteUserRefreshTokens
+		userKey := "test:nauthilus:oidc:user_refresh_tokens:user123"
+		mock.ExpectSMembers(userKey).SetVal([]string{})
+
 		url := "/logout?id_token_hint=" + idToken + "&post_logout_redirect_uri=https://app.com/post-logout"
 		req, _ := http.NewRequest(http.MethodGet, url, nil)
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusFound, w.Code)
 		assert.Equal(t, "https://app.com/post-logout", w.Header().Get("Location"))
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Logout with client in session and LogoutRedirectURI", func(t *testing.T) {
+		clientWithLogout := config.OIDCClient{
+			ClientID:          "logout-client",
+			LogoutRedirectURI: "https://custom-logout.com",
+		}
+		cfg.clients = append(cfg.clients, clientWithLogout)
+
+		w := httptest.NewRecorder()
+		r := gin.New()
+		r.GET("/logout", sessions.Sessions("test-session", store), func(c *gin.Context) {
+			session := sessions.Default(c)
+			session.Set(definitions.CookieOIDCClients, "logout-client")
+			_ = session.Save()
+			h.Logout(c)
+		})
+
+		req, _ := http.NewRequest(http.MethodGet, "/logout", nil)
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusFound, w.Code)
+		assert.Equal(t, "https://custom-logout.com", w.Header().Get("Location"))
 	})
 }
 

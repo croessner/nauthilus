@@ -98,6 +98,10 @@ func (h *FrontendHandler) appendQueryString(path string, query string) string {
 	return path + separator + query
 }
 
+func (h *FrontendHandler) redirectWithQuery(ctx *gin.Context, target string) {
+	ctx.Redirect(http.StatusFound, h.appendQueryString(target, ctx.Request.URL.RawQuery))
+}
+
 // Register adds frontend routes to the router.
 func (h *FrontendHandler) Register(router gin.IRouter) {
 	staticPath := filepath.Clean(h.deps.Cfg.GetServer().Frontend.GetHTMLStaticContentPath())
@@ -156,6 +160,9 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 
 	authGroup.POST("/2fa/v1/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/2fa/v1/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
+
+	router.GET("/logged_out", sessionMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out/:languageTag", sessionMW, i18nMW, h.LoggedOut)
 }
 
 // AuthMiddleware ensures the user is logged in.
@@ -1012,4 +1019,15 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_register.html", data)
+}
+
+// LoggedOut renders the logout confirmation page.
+func (h *FrontendHandler) LoggedOut(ctx *gin.Context) {
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logged Out")
+	data["LoggedOutTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Successfully Logged Out")
+	data["LoggedOutMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You have been successfully logged out of your session.")
+	data["BackToLogin"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to Login")
+
+	ctx.HTML(http.StatusOK, "idp_logged_out.html", data)
 }

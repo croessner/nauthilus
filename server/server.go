@@ -420,7 +420,13 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 			AccountCache: store.accountCache,
 		}).InitSessionStore()
 
-		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Logger: logger}
+		deps := &handlerdeps.Deps{
+			Cfg:          cfg,
+			CfgProvider:  store.cfgProvider,
+			Logger:       logger,
+			Channel:      store.channel,
+			AccountCache: store.accountCache,
+		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
 		if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {

@@ -77,4 +77,19 @@ func TestRedisTokenStorage(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("DeleteUserRefreshTokens", func(t *testing.T) {
+		userID := "user123"
+		userKey := prefix + "nauthilus:oidc:user_refresh_tokens:" + userID
+		tokens := []string{"rt1", "rt2"}
+
+		mock.ExpectSMembers(userKey).SetVal(tokens)
+		mock.ExpectDel(prefix + "nauthilus:oidc:refresh_token:rt1").SetVal(1)
+		mock.ExpectDel(prefix + "nauthilus:oidc:refresh_token:rt2").SetVal(1)
+		mock.ExpectDel(userKey).SetVal(1)
+
+		err := storage.DeleteUserRefreshTokens(ctx, userID)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
 }

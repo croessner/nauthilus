@@ -83,7 +83,7 @@ func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) erro
 	return s.redis.GetWriteHandle().Del(ctx, key).Err()
 }
 
-// StoreRefreshToken stores a refresh token session in Redis.
+// StoreRefreshToken stores a refresh token session in Redis and tracks it for the user.
 func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
 	data, err := json.Marshal(session)
 	if err != nil {
@@ -91,7 +91,17 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 	}
 
 	key := s.prefix + fmt.Sprintf("nauthilus:oidc:refresh_token:%s", token)
-	return s.redis.GetWriteHandle().Set(ctx, key, string(data), ttl).Err()
+	userKey := s.prefix + fmt.Sprintf("nauthilus:oidc:user_refresh_tokens:%s", session.UserID)
+
+	pipe := s.redis.GetWriteHandle().Pipeline()
+	pipe.Set(ctx, key, string(data), ttl)
+	pipe.SAdd(ctx, userKey, token)
+	// Keep the user mapping alive as long as there might be active tokens
+	pipe.Expire(ctx, userKey, 30*24*time.Hour)
+
+	_, err = pipe.Exec(ctx)
+
+	return err
 }
 
 // GetRefreshToken retrieves a refresh token session from Redis.
@@ -110,8 +120,45 @@ func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (
 	return session, nil
 }
 
-// DeleteRefreshToken removes a refresh token session from Redis.
+// DeleteRefreshToken removes a refresh token session from Redis and its user tracking.
 func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string) error {
+	session, err := s.GetRefreshToken(ctx, token)
+	if err == nil && session != nil {
+		userKey := s.prefix + fmt.Sprintf("nauthilus:oidc:user_refresh_tokens:%s", session.UserID)
+		_ = s.redis.GetWriteHandle().SRem(ctx, userKey, token).Err()
+	}
+
 	key := s.prefix + fmt.Sprintf("nauthilus:oidc:refresh_token:%s", token)
+
 	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+}
+
+// DeleteUserRefreshTokens removes all refresh tokens for a given user from Redis.
+func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+
+	userKey := s.prefix + fmt.Sprintf("nauthilus:oidc:user_refresh_tokens:%s", userID)
+
+	tokens, err := s.redis.GetReadHandle().SMembers(ctx, userKey).Result()
+	if err != nil {
+		return err
+	}
+
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	pipe := s.redis.GetWriteHandle().Pipeline()
+
+	for _, token := range tokens {
+		pipe.Del(ctx, s.prefix+fmt.Sprintf("nauthilus:oidc:refresh_token:%s", token))
+	}
+
+	pipe.Del(ctx, userKey)
+
+	_, err = pipe.Exec(ctx)
+
+	return err
 }

@@ -63,7 +63,7 @@ func TestSessionCleaner(t *testing.T) {
 	})
 
 	r.GET("/clean", func(c *gin.Context) {
-		sessionCleaner(c)
+		SessionCleaner(c)
 		c.Status(http.StatusOK)
 	})
 

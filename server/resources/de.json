@@ -76,5 +76,9 @@
   "Please use your security key to login": "Bitte nutzen Sie Ihren Sicherheitsschlüssel zur Anmeldung",
   "Completing login...": "Anmeldung wird abgeschlossen...",
   "Logging out from all applications...": "Sie werden von allen Anwendungen abgemeldet...",
-  "Please wait while the logout process is completed.": "Bitte warten Sie, während der Abmeldevorgang abgeschlossen wird."
+  "Please wait while the logout process is completed.": "Bitte warten Sie, während der Abmeldevorgang abgeschlossen wird.",
+  "Logged Out": "Abgemeldet",
+  "Successfully Logged Out": "Abmeldung erfolgreich",
+  "You have been successfully logged out of your session.": "Sie wurden erfolgreich von Ihrer Sitzung abgemeldet.",
+  "Back to Login": "Zurück zur Anmeldung"
 }

@@ -416,8 +416,9 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 	)
 	defer sp.End()
 
-	authRaw := core.NewAuthStateWithSetupWithDeps(ctx, n.deps.Auth())
+	authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
 	auth, ok := authRaw.(*core.AuthState)
+
 	if !ok || auth == nil {
 		err := fmt.Errorf("failed to create AuthState")
 		sp.RecordError(err)
@@ -428,13 +429,16 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 	auth.SetUsername(username)
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
-	auth.SetNoAuth(true)
 
 	if oidcCID != "" {
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
 	} else if samlEntityID != "" {
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
 	}
+
+	auth.FinishSetup(ctx)
+
+	auth.SetNoAuth(true)
 
 	// We use HandlePassword with NoAuth=true which should skip password check but load attributes
 	// depending on how backends handle NoAuth.

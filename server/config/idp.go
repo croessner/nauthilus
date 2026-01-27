@@ -93,6 +93,7 @@ type OIDCClient struct {
 	BackChannelLogoutURI              string        `mapstructure:"backchannel_logout_uri"`
 	FrontChannelLogoutURI             string        `mapstructure:"frontchannel_logout_uri"`
 	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
+	LogoutRedirectURI                 string        `mapstructure:"logout_redirect_uri"`
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this client.
@@ -152,11 +153,12 @@ func getContent(raw, path string) (string, error) {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
-	EntityID        string        `mapstructure:"entity_id" validate:"required"`
-	ACSURL          string        `mapstructure:"acs_url" validate:"required"`
-	SLOURL          string        `mapstructure:"slo_url"`
-	DelayedResponse bool          `mapstructure:"delayed_response"`
-	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
+	EntityID          string        `mapstructure:"entity_id" validate:"required"`
+	ACSURL            string        `mapstructure:"acs_url" validate:"required"`
+	SLOURL            string        `mapstructure:"slo_url"`
+	DelayedResponse   bool          `mapstructure:"delayed_response"`
+	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
+	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this service provider.

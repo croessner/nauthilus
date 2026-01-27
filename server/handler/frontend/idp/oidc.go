@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
@@ -79,6 +80,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.GET("/oidc/jwks", h.JWKS)
 	router.GET("/oidc/logout", sessionMW, h.Logout)
+	router.GET("/logout", sessionMW, h.Logout)
 	router.GET("/oidc/consent", sessionMW, i18nMW, h.ConsentGET)
 	router.GET("/oidc/consent/:languageTag", sessionMW, i18nMW, h.ConsentGET)
 	router.POST("/oidc/consent", sessionMW, i18nMW, h.ConsentPOST)
@@ -612,6 +614,11 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	data["Allow"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Allow")
 	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
 
+	// Ensure ReturnTo is set for the header logout link
+	if data["ReturnTo"] == "" || data["ReturnTo"] == nil {
+		data["ReturnTo"] = ctx.Request.URL.String()
+	}
+
 	data["ClientID"] = session.ClientID
 	data["Scopes"] = session.Scopes
 	data["ConsentChallenge"] = consentChallenge
@@ -678,6 +685,20 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, target)
 }
 
+func (h *OIDCHandler) calculateLogoutTarget(client *config.OIDCClient, sessionClients []string) string {
+	if client != nil && client.LogoutRedirectURI != "" {
+		return client.LogoutRedirectURI
+	}
+
+	if len(sessionClients) == 1 {
+		if c, ok := h.idp.FindClient(sessionClients[0]); ok && c.LogoutRedirectURI != "" {
+			return c.LogoutRedirectURI
+		}
+	}
+
+	return "/logged_out"
+}
+
 // Logout handles the OIDC logout request.
 func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.logout")
@@ -689,9 +710,12 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 
 	session := sessions.Default(ctx)
 	account := session.Get(definitions.CookieAccount)
+	uniqueUserIDRaw := session.Get(definitions.CookieUniqueUserID)
 
 	userID := ""
-	if account != nil {
+	if uniqueUserIDRaw != nil {
+		userID = uniqueUserIDRaw.(string)
+	} else if account != nil {
 		userID = account.(string)
 	}
 
@@ -711,6 +735,10 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 				}
 			}
 		}
+	}
+
+	if userID != "" {
+		_ = h.storage.DeleteUserRefreshTokens(ctx.Request.Context(), userID)
 	}
 
 	// Get clients to logout from
@@ -756,9 +784,8 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 				}
 			}
 
-			session.Clear()
-
-			_ = session.Save()
+			core.SessionCleaner(ctx)
+			core.ClearBrowserCookies(ctx)
 
 			ctx.Redirect(http.StatusFound, target)
 
@@ -772,21 +799,20 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 		data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
 		data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
 		data["FrontChannelLogoutURIs"] = frontChannelURIs
+		data["LogoutTarget"] = h.calculateLogoutTarget(client, clientIDs)
 
-		session.Clear()
-
-		_ = session.Save()
+		core.SessionCleaner(ctx)
+		core.ClearBrowserCookies(ctx)
 
 		ctx.HTML(http.StatusOK, "idp_logout_frames.html", data)
 
 		return
 	}
 
-	session.Clear()
+	core.SessionCleaner(ctx)
+	core.ClearBrowserCookies(ctx)
 
-	_ = session.Save()
-
-	ctx.Redirect(http.StatusFound, "/login")
+	ctx.Redirect(http.StatusFound, h.calculateLogoutTarget(client, clientIDs))
 }
 
 func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {

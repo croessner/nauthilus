@@ -16,10 +16,15 @@
                 <p class="text-sm opacity-70">{{ .PleaseWaitWhileLogoutProcessIsCompleted }}</p>
             </div>
 
+            <div data-logout-target="{{ .LogoutTarget }}" id="logout-config"></div>
+
             <script>
-                // Nach einer kurzen Verzögerung weiterleiten, damit die iFrames laden können
+                // Redirect after a short delay to allow iFrames to load
                 setTimeout(function () {
-                    window.location.href = "/login";
+                    const config = document.getElementById('logout-config');
+                    const target = config ? config.dataset.logoutTarget : "/logged_out";
+
+                    window.location.href = target;
                 }, 2000);
             </script>
         </div>

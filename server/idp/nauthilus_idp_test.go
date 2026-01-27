@@ -143,6 +143,8 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 		sessionData, _ := json.Marshal(session)
 		mock.ExpectSet("test:nauthilus:oidc:refresh_token:fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "fixed-token").SetVal(1)
+		mock.ExpectExpire("test:nauthilus:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
 		idToken, accessToken, refreshToken, _, err := idp.IssueTokens(ctx, session)
 		assert.NoError(t, err)
@@ -165,9 +167,13 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		// Get old RT
 		mock.ExpectGet("test:nauthilus:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
 		// Delete old RT
+		mock.ExpectGet("test:nauthilus:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSRem("test:nauthilus:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
 		mock.ExpectDel("test:nauthilus:oidc:refresh_token:" + refreshToken).SetVal(1)
 		// Store new RT (fixed-token due to mock)
 		mock.ExpectSet("test:nauthilus:oidc:refresh_token:fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "fixed-token").SetVal(1)
+		mock.ExpectExpire("test:nauthilus:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
 		idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
 		assert.NoError(t, err)

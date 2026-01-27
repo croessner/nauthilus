@@ -136,7 +136,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
 			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -151,7 +151,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		if userName == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -165,7 +165,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		if uniqueUserID == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -179,7 +179,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -209,7 +209,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -218,7 +218,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		sessionDataJSON, err := jsonIter.Marshal(*sessionData)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -237,7 +237,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		if err = session.Save(); err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -268,7 +268,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		session := sessions.Default(ctx)
 
-		defer sessionCleaner(ctx)
+		defer SessionCleaner(ctx)
 
 		cookieValue := session.Get(definitions.CookieAuthResult)
 		if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
@@ -300,7 +300,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		if uniqueUserID == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -314,7 +314,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 
 			return
 		}
@@ -325,7 +325,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 				sessionData = &webauthn.SessionData{}
 
 				if err := jsonIter.Unmarshal(value, sessionData); err != nil {
-					sessionCleaner(ctx)
+					SessionCleaner(ctx)
 					ctx.JSON(http.StatusInternalServerError, err)
 
 					return
@@ -334,7 +334,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		if sessionData == nil {
-			sessionCleaner(ctx)
+			SessionCleaner(ctx)
 			ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData)
 
 			return

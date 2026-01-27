@@ -108,8 +108,21 @@ func setCallbackCookie(w http.ResponseWriter, r *http.Request, name, value strin
 	c := &http.Cookie{
 		Name:     name,
 		Value:    value,
+		Path:     "/",
 		MaxAge:   int(time.Hour.Seconds()),
 		Secure:   r.TLS != nil,
+		HttpOnly: true,
+	}
+
+	http.SetCookie(w, c)
+}
+
+func deleteCallbackCookie(w http.ResponseWriter, name string) {
+	c := &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
 		HttpOnly: true,
 	}
 
@@ -249,6 +262,9 @@ func main() {
 
 			return
 		}
+
+		deleteCallbackCookie(w, "state")
+		deleteCallbackCookie(w, "nonce")
 
 		log.Println("Extracting claims from ID Token...")
 		resp := struct {

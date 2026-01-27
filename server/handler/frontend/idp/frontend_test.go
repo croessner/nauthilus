@@ -42,27 +42,28 @@ func (m *mockFrontendCfg) GetServer() *config.ServerSection {
 
 func TestBasePageData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := gin.New()
 	store := cookie.NewStore([]byte("secret"))
-	r.Use(sessions.Sessions("test-session", store))
-
 	cfg := &mockFrontendCfg{}
 
-	r.GET("/test", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set(definitions.CookieAccount, "testuser")
-		session.Set(definitions.CookieLang, "de")
-		session.Save()
+	t.Run("Basic Session Data", func(t *testing.T) {
+		r := gin.New()
+		r.Use(sessions.Sessions("test-session", store))
+		r.GET("/test", func(c *gin.Context) {
+			session := sessions.Default(c)
+			session.Set(definitions.CookieAccount, "testuser")
+			session.Set(definitions.CookieLang, "de")
+			session.Save()
 
-		data := BasePageData(c, cfg)
-		assert.Equal(t, "de", data["LanguageTag"])
-		assert.Equal(t, "testuser", data["Username"])
-		c.Status(http.StatusOK)
+			data := BasePageData(c, cfg)
+			assert.Equal(t, "de", data["LanguageTag"])
+			assert.Equal(t, "testuser", data["Username"])
+			c.Status(http.StatusOK)
+		})
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		r.ServeHTTP(w, req)
 	})
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-	r.ServeHTTP(w, req)
 }
 
 func TestURLParamsPreservation(t *testing.T) {
