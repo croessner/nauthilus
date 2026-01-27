@@ -1403,6 +1403,15 @@ const (
 	// LuaFnRedisPFMerge represents the Lua function name for the Redis HyperLogLog PFMERGE command. Added in version 1.8.4
 	LuaFnRedisPFMerge = "redis_pfmerge"
 
+	// LuaFnRedisEncrypt encrypts a string using the Redis security manager.
+	LuaFnRedisEncrypt = "redis_encrypt"
+
+	// LuaFnRedisDecrypt decrypts a string using the Redis security manager.
+	LuaFnRedisDecrypt = "redis_decrypt"
+
+	// LuaFnRedisIsEncryptionEnabled checks if encryption is enabled in the Redis security manager.
+	LuaFnRedisIsEncryptionEnabled = "redis_is_encryption_enabled"
+
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
