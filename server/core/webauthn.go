@@ -534,9 +534,10 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
 
 		// Set AuthResult to OK if it was Fail (delayed response)
-		authResult := session.Get(definitions.CookieAuthResult)
-		if authResult != nil && definitions.AuthResult(authResult.(uint8)) == definitions.AuthResultFail {
-			session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
+		if authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult); err == nil {
+			if definitions.AuthResult(authResult) == definitions.AuthResultFail {
+				session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
+			}
 		}
 
 		// Important: store user info for next steps
@@ -545,9 +546,16 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		session.Set(definitions.CookieDisplayName, user.DisplayName)
 		session.Set(definitions.CookieSubject, user.Id)
 
-		if ttlVal := session.Get(definitions.CookieRememberTTL); ttlVal != nil {
+		protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
+		if err != nil {
+			protocol = definitions.ProtoOIDC
+		}
+
+		session.Set(definitions.CookieProtocol, protocol)
+
+		if ttlVal, err := util.GetSessionValue[int](session, definitions.CookieRememberTTL); err == nil {
 			session.Options(sessions.Options{
-				MaxAge: ttlVal.(int),
+				MaxAge: ttlVal,
 				Path:   "/",
 			})
 			session.Delete(definitions.CookieRememberTTL)

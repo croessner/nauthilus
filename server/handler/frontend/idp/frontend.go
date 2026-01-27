@@ -346,6 +346,11 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	// Try to get user to see if MFA is present
 	user, err := idpInstance.Authenticate(ctx, username, password, oidcCID, samlEntityID)
 
+	protocol := definitions.ProtoOIDC
+	if samlEntityID != "" {
+		protocol = definitions.ProtoSAML
+	}
+
 	if err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
@@ -403,6 +408,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		session := sessions.Default(ctx)
 		session.Set(definitions.CookieUsername, username)
 		session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
+		session.Set(definitions.CookieProtocol, protocol)
 
 		if rememberMeTTL > 0 {
 			session.Set(definitions.CookieRememberTTL, rememberMeTTL)
@@ -643,11 +649,17 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
+	protocol := definitions.ProtoOIDC
+	if samlEntityID != "" {
+		protocol = definitions.ProtoSAML
+	}
+
 	// All OK!
 	session.Set(definitions.CookieAccount, user.Name)
 	session.Set(definitions.CookieUniqueUserID, user.Id)
 	session.Set(definitions.CookieDisplayName, user.DisplayName)
 	session.Set(definitions.CookieSubject, user.Id)
+	session.Set(definitions.CookieProtocol, protocol)
 
 	if ttlVal, err := util.GetSessionValue[int](session, definitions.CookieRememberTTL); err == nil {
 		session.Options(sessions.Options{
@@ -723,6 +735,16 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		protocol = definitions.ProtoOIDC
 	}
 
+	dummyAuth.SetProtocol(config.NewProtocol(protocol))
+	dummyAuth.SetNoAuth(true)
+
+	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
+	if err != nil {
+		h.handleTwoFAHomeError(ctx, data, err, username)
+
+		return
+	}
+
 	// Fetch user from backend to get latest attributes
 	if _, err := dummyAuth.GetBackendManager(definitions.BackendLDAP, definitions.DefaultBackendName).AccountDB(dummyAuth); err == nil {
 		codes := dummyAuth.GetTOTPRecoveryCodes()
@@ -755,6 +777,16 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 	if haveTOTP {
 		ctx.Header("HX-Redirect", "/2fa/v1/register/home")
 		ctx.Status(http.StatusFound)
+
+		return
+	}
+
+	account, err := util.GetSessionValue[string](session, definitions.CookieAccount)
+	if err != nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
 
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      h.deps.Cfg.GetServer().Frontend.GetTotpIssuer(),
@@ -881,7 +913,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 		deleteTOTPRecoveryCodes func(auth *core.AuthState) error
 	)
 
-	switch sourceBackend.(uint8) {
+	switch sourceBackend {
 	case uint8(definitions.BackendLDAP):
 		mgr := core.NewLDAPManager(definitions.DefaultBackendName, authDeps)
 		addTOTPRecoveryCodes = mgr.AddTOTPRecoveryCodes

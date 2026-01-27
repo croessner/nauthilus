@@ -67,6 +67,9 @@ const (
 	// CookieHome marks that the user reached the 2FA home page in the flow.
 	CookieHome = "home"
 
+	// CookieProtocol stores the network protocol used during authentication.
+	CookieProtocol = "protocol"
+
 	// CookieOIDCClients stores a list of OIDC client IDs the user is logged into.
 	CookieOIDCClients = "oidc_clients"
 )
