@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/croessner/nauthilus/server/definitions"
 )
 
 // IdPSection represents the configuration for the internal Identity Provider.
@@ -94,6 +96,25 @@ type OIDCClient struct {
 	FrontChannelLogoutURI             string        `mapstructure:"frontchannel_logout_uri"`
 	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
 	LogoutRedirectURI                 string        `mapstructure:"logout_redirect_uri"`
+}
+
+// GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.
+func (c *OIDCClient) GetAllowedScopes() []string {
+	if c == nil {
+		return nil
+	}
+
+	if len(c.Scopes) == 0 {
+		return []string{
+			definitions.ScopeOpenId,
+			definitions.ScopeProfile,
+			definitions.ScopeEmail,
+			definitions.ScopeGroups,
+			definitions.ScopeOfflineAccess,
+		}
+	}
+
+	return c.Scopes
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this client.

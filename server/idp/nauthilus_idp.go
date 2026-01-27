@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/segmentio/ksuid"
@@ -53,6 +54,30 @@ func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
 		storage: NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
 		tracer:  monittrace.New("nauthilus/idp"),
 	}
+}
+
+// FilterScopes filters the requested scopes against the allowed scopes for the client.
+func (n *NauthilusIdP) FilterScopes(client *config.OIDCClient, requestedScopes []string) []string {
+	allowed := client.GetAllowedScopes()
+	allowedMap := make(map[string]struct{}, len(allowed))
+
+	for _, s := range allowed {
+		allowedMap[s] = struct{}{}
+	}
+
+	var filtered []string
+
+	for _, rs := range requestedScopes {
+		if rs == "" {
+			continue
+		}
+
+		if _, ok := allowedMap[rs]; ok {
+			filtered = append(filtered, rs)
+		}
+	}
+
+	return filtered
 }
 
 // FindClient returns an OIDC client by its ID.
@@ -404,6 +429,10 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 		return nil, err
 	}
 
+	session := sessions.Default(ctx)
+	session.Set(definitions.CookieUserBackend, uint8(auth.GetUsedPassDBBackend()))
+	session.Set(definitions.CookieUserBackendName, auth.GetUsedPassDBBackendName())
+
 	return n.userFromAuthState(auth)
 }
 
@@ -450,6 +479,10 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 
 		return nil, err
 	}
+
+	session := sessions.Default(ctx)
+	session.Set(definitions.CookieUserBackend, uint8(auth.GetUsedPassDBBackend()))
+	session.Set(definitions.CookieUserBackendName, auth.GetUsedPassDBBackendName())
 
 	return n.userFromAuthState(auth)
 }

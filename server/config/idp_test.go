@@ -181,3 +181,29 @@ func TestIdPConfig_Validation(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
+
+func TestOIDCClient_GetAllowedScopes(t *testing.T) {
+	t.Run("NilClient", func(t *testing.T) {
+		var c *OIDCClient
+		assert.Nil(t, c.GetAllowedScopes())
+	})
+
+	t.Run("DefaultScopes", func(t *testing.T) {
+		c := &OIDCClient{}
+		scopes := c.GetAllowedScopes()
+		assert.Contains(t, scopes, "openid")
+		assert.Contains(t, scopes, "profile")
+		assert.Contains(t, scopes, "email")
+		assert.Contains(t, scopes, "groups")
+		assert.Contains(t, scopes, "offline_access")
+		assert.Equal(t, 5, len(scopes))
+	})
+
+	t.Run("ConfiguredScopes", func(t *testing.T) {
+		c := &OIDCClient{
+			Scopes: []string{"openid", "custom"},
+		}
+		scopes := c.GetAllowedScopes()
+		assert.Equal(t, []string{"openid", "custom"}, scopes)
+	})
+}

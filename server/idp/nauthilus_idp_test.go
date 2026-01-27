@@ -221,4 +221,27 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.Nil(t, claims["email"])
 		assert.Equal(t, []string{"group1"}, claims["groups"])
 	})
+
+	t.Run("FilterScopes", func(t *testing.T) {
+		client := &config.OIDCClient{
+			ClientID: "client1",
+			Scopes:   []string{"openid", "profile"},
+		}
+
+		// Requested allowed scopes
+		requested := []string{"openid", "profile"}
+		filtered := idp.FilterScopes(client, requested)
+		assert.Equal(t, []string{"openid", "profile"}, filtered)
+
+		// Requested mixed scopes
+		requested = []string{"openid", "profile", "email", "invalid"}
+		filtered = idp.FilterScopes(client, requested)
+		assert.Equal(t, []string{"openid", "profile"}, filtered)
+
+		// Default scopes when none configured
+		clientNoScopes := &config.OIDCClient{ClientID: "client2"}
+		requested = []string{"openid", "profile", "email", "groups", "offline_access", "invalid"}
+		filtered = idp.FilterScopes(clientNoScopes, requested)
+		assert.Equal(t, []string{"openid", "profile", "email", "groups", "offline_access"}, filtered)
+	})
 }

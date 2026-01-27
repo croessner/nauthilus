@@ -90,7 +90,13 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 // Discovery returns the OIDC discovery document.
 func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	issuer := h.deps.Cfg.GetIdP().OIDC.Issuer
-	scopesSupported := []string{"openid", "profile", "email", "offline_access"}
+	scopesSupported := []string{
+		definitions.ScopeOpenId,
+		definitions.ScopeProfile,
+		definitions.ScopeEmail,
+		definitions.ScopeGroups,
+		definitions.ScopeOfflineAccess,
+	}
 
 	for _, customScope := range h.deps.Cfg.GetIdP().OIDC.CustomScopes {
 		scopesSupported = append(scopesSupported, customScope.Name)
@@ -238,7 +244,10 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
-	claims, err := h.idp.GetClaims(user, client, strings.Split(scope, " "))
+	requestedScopes := strings.Split(scope, " ")
+	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
+
+	claims, err := h.idp.GetClaims(user, client, filteredScopes)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error mapping claims")
 
@@ -250,7 +259,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		UserID:      user.Id,
 		Username:    user.Name,
 		DisplayName: user.DisplayName,
-		Scopes:      strings.Split(scope, " "),
+		Scopes:      filteredScopes,
 		RedirectURI: redirectURI,
 		AuthTime:    time.Now(),
 		Nonce:       nonce,

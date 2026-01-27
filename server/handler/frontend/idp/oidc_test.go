@@ -136,6 +136,8 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Equal(t, issuer+"/oidc/logout", resp["end_session_endpoint"])
 	scopes := resp["scopes_supported"].([]any)
 	assert.Contains(t, scopes, "offline_access")
+	assert.Contains(t, scopes, "groups")
+	assert.Contains(t, scopes, "openid")
 }
 
 func TestOIDCHandler_JWKS(t *testing.T) {
