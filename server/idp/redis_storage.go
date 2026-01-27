@@ -57,8 +57,13 @@ func (s *RedisTokenStorage) StoreSession(ctx context.Context, code string, sessi
 		return err
 	}
 
+	encryptedData, err := s.redis.GetSecurityManager().Encrypt(string(data))
+	if err != nil {
+		return err
+	}
+
 	key := s.prefix + fmt.Sprintf("nauthilus:oidc:code:%s", code)
-	return s.redis.GetWriteHandle().Set(ctx, key, string(data), ttl).Err()
+	return s.redis.GetWriteHandle().Set(ctx, key, encryptedData, ttl).Err()
 }
 
 // GetSession retrieves an OIDC session from Redis.
@@ -69,8 +74,13 @@ func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCS
 		return nil, err
 	}
 
+	decryptedData, err := s.redis.GetSecurityManager().Decrypt(data)
+	if err != nil {
+		return nil, err
+	}
+
 	session := &OIDCSession{}
-	if err := json.Unmarshal([]byte(data), session); err != nil {
+	if err := json.Unmarshal([]byte(decryptedData), session); err != nil {
 		return nil, err
 	}
 
@@ -90,11 +100,16 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 		return err
 	}
 
+	encryptedData, err := s.redis.GetSecurityManager().Encrypt(string(data))
+	if err != nil {
+		return err
+	}
+
 	key := s.prefix + fmt.Sprintf("nauthilus:oidc:refresh_token:%s", token)
 	userKey := s.prefix + fmt.Sprintf("nauthilus:oidc:user_refresh_tokens:%s", session.UserID)
 
 	pipe := s.redis.GetWriteHandle().Pipeline()
-	pipe.Set(ctx, key, string(data), ttl)
+	pipe.Set(ctx, key, encryptedData, ttl)
 	pipe.SAdd(ctx, userKey, token)
 	// Keep the user mapping alive as long as there might be active tokens
 	pipe.Expire(ctx, userKey, 30*24*time.Hour)
@@ -112,8 +127,13 @@ func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (
 		return nil, err
 	}
 
+	decryptedData, err := s.redis.GetSecurityManager().Decrypt(data)
+	if err != nil {
+		return nil, err
+	}
+
 	session := &OIDCSession{}
-	if err := json.Unmarshal([]byte(data), session); err != nil {
+	if err := json.Unmarshal([]byte(decryptedData), session); err != nil {
 		return nil, err
 	}
 
