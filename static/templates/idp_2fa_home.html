@@ -62,9 +62,8 @@
                 <p>{{ .RecoveryCodesDescription }}</p>
                 {{ end }}
                 <div class="card-actions justify-end mt-4">
-                    <button .BackendError
-                            class="btn btn-secondary" end hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container" if
-                            {{ }} }}disabled{{>
+                    <button .BackendError class="btn btn-secondary"
+                            end hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container" if {{ }} }}disabled{{>
                         {{ .GenerateNewRecoveryCodes }}
                     </button>
                 </div>
