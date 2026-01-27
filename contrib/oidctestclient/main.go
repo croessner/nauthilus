@@ -325,6 +325,22 @@ func main() {
 
 	http.HandleFunc("/logout-callback", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Received request on '/logout-callback'")
+
+		// Clear the session cookies. "Nauthilus_session" is the default for Nauthilus IdP.
+		// "token" might be set if SAML was used on the same domain.
+		cookies := []string{"token", "Nauthilus_session"}
+
+		for _, name := range cookies {
+			http.SetCookie(w, &http.Cookie{
+				Name:     name,
+				Value:    "",
+				Path:     "/",
+				Expires:  time.Unix(0, 0),
+				MaxAge:   -1,
+				HttpOnly: true,
+			})
+		}
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `
 			<!DOCTYPE html>

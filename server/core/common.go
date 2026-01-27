@@ -58,6 +58,8 @@ func SessionCleaner(ctx *gin.Context) {
 
 // ClearBrowserCookies explicitly overwrites security-relevant cookies in the browser with an expired state.
 func ClearBrowserCookies(ctx *gin.Context) {
+	ctx.SetCookie(definitions.SessionName, "", -1, "/", "", false, true)
+	ctx.SetCookie("token", "", -1, "/", "", false, true)
 	ctx.SetCookie(definitions.CookieAccount, "", -1, "/", "", false, true)
 	ctx.SetCookie(definitions.CookieAuthResult, "", -1, "/", "", false, true)
 	ctx.SetCookie(definitions.CookieUsername, "", -1, "/", "", false, true)

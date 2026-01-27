@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
@@ -185,6 +186,8 @@ func (h *SAMLHandler) getSAMLIdP(ctx *gin.Context) (*saml.IdentityProvider, erro
 	metadataURL, _ := url.Parse(entityID)
 
 	ssoURLStr := issuer + "/saml/sso"
+	sloURLStr := issuer + "/saml/slo"
+
 	if samlCfg.EntityID != "" {
 		// If EntityID is a full URL, try to use it as base for SSO URL
 		if u, err := url.Parse(samlCfg.EntityID); err == nil && u.Scheme != "" && u.Host != "" {
@@ -192,15 +195,21 @@ func (h *SAMLHandler) getSAMLIdP(ctx *gin.Context) (*saml.IdentityProvider, erro
 			u.RawQuery = ""
 			u.Fragment = ""
 			ssoURLStr = u.String()
+
+			u.Path = "/saml/slo"
+			sloURLStr = u.String()
 		}
 	}
+
 	ssoURL, _ := url.Parse(ssoURLStr)
+	sloURL, _ := url.Parse(sloURLStr)
 
 	return &saml.IdentityProvider{
 		Key:                     key.(crypto.PrivateKey),
 		Certificate:             cert,
 		MetadataURL:             *metadataURL,
 		SSOURL:                  *ssoURL,
+		LogoutURL:               *sloURL,
 		ServiceProviderProvider: h,
 		SignatureMethod:         "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
 		Logger:                  &samlLogger{logger: h.deps.Logger},
@@ -218,6 +227,8 @@ func (h *SAMLHandler) Register(router gin.IRouter) {
 
 	router.GET("/saml/metadata", h.Metadata)
 	router.GET("/saml/sso", sessionMW, h.SSO)
+	router.GET("/saml/slo", sessionMW, h.SLO)
+	router.POST("/saml/slo", sessionMW, h.SLO)
 }
 
 // Metadata returns the SAML IdP metadata.
@@ -326,7 +337,7 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	// User is logged in
 	username := account.(string)
 
-	// Wir brauchen User-Details für die Assertion
+	// We need user details for the assertion
 	issuerValue := ""
 	if req.Request.Issuer != nil {
 		issuerValue = req.Request.Issuer.Value
@@ -344,7 +355,7 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		req.HTTPRequest.RemoteAddr = ip
 	}
 
-	// Saml Session erstellen
+	// Create SAML session
 	samlSessionID, _ := util.GenerateRandomString(32)
 	samlSessionIndex, _ := util.GenerateRandomString(32)
 
@@ -358,7 +369,7 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		NameIDFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
 	}
 
-	// Attribute hinzufügen
+	// Add attributes
 	for k, v := range user.Attributes {
 		if len(v) > 0 {
 			samlSession.CustomAttributes = append(samlSession.CustomAttributes, saml.Attribute{
@@ -389,4 +400,23 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 
 		return
 	}
+}
+
+// SLO handles the SAML Single Logout request.
+func (h *SAMLHandler) SLO(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "saml.slo")
+	defer sp.End()
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "SAML SLO request",
+	)
+
+	core.ClearBrowserCookies(ctx)
+
+	ctx.Redirect(http.StatusFound, "/logged_out")
 }

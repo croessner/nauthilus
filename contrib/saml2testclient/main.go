@@ -84,7 +84,7 @@ const successPageTmpl = `
             {{if .TwoFAHomeURL}}
                 <a href="{{.TwoFAHomeURL}}" class="twofa-btn">Manage 2FA (TOTP/WebAuthn)</a>
             {{end}}
-            <a href="/" class="back-btn">Start over</a>
+            <a href="/logout" class="back-btn" style="background-color: #d9534f;">Clear Session</a>
         </div>
     </div>
 </body>
@@ -189,6 +189,18 @@ func main() {
 		log.Fatalf("Failed to initialize SAML SP: %v", err)
 	}
 
+	var sloURL string
+	if idpMetadata != nil {
+		for _, idpSSODescriptor := range idpMetadata.IDPSSODescriptors {
+			for _, endpoint := range idpSSODescriptor.SingleLogoutServices {
+				if endpoint.Binding == "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" {
+					sloURL = endpoint.Location
+					break
+				}
+			}
+		}
+	}
+
 	tmpl, err := template.New("success").Parse(successPageTmpl)
 	if err != nil {
 		log.Fatalf("Failed to parse template: %v", err)
@@ -209,6 +221,30 @@ func main() {
 		r.URL.Path = "/"
 		samlSP.HandleStartAuthFlow(w, r)
 	})))
+
+	http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+		// Clear the session cookies. "token" is the default for samlsp.
+		// "Nauthilus_session" is the default for Nauthilus IdP.
+		cookies := []string{"token", "Nauthilus_session"}
+
+		for _, name := range cookies {
+			http.SetCookie(w, &http.Cookie{
+				Name:     name,
+				Value:    "",
+				Path:     "/",
+				Expires:  time.Unix(0, 0),
+				MaxAge:   -1,
+				HttpOnly: true,
+			})
+		}
+
+		if sloURL != "" {
+			http.Redirect(w, r, sloURL, http.StatusFound)
+
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
