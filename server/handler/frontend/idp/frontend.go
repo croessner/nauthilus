@@ -255,6 +255,8 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["PostLoginEndpoint"] = ctx.Request.URL.Path
 	returnTo := ctx.Query("return_to")
 	data["ReturnTo"] = returnTo
+	protocol := ctx.Query("protocol")
+	data["Protocol"] = protocol
 	data["HaveError"] = false
 
 	var oidcCID, samlEntityID string
@@ -262,7 +264,15 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		if u, err := url.Parse(returnTo); err == nil {
 			oidcCID = u.Query().Get("client_id")
 			samlEntityID = u.Query().Get("entity_id")
+
+			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
+				samlEntityID = definitions.ProtoSAML
+			}
 		}
+	}
+
+	if protocol == definitions.ProtoSAML && samlEntityID == "" {
+		samlEntityID = definitions.ProtoSAML
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
@@ -306,6 +316,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	username := ctx.PostForm("username")
 	password := ctx.PostForm("password")
 	returnTo := ctx.PostForm("return_to")
+	protocolParam := ctx.PostForm("protocol")
 	rememberMe := ctx.PostForm("remember_me") == "on"
 
 	// Try to extract client_id or saml_entity_id from returnTo
@@ -314,7 +325,22 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		if u, err := url.Parse(returnTo); err == nil {
 			oidcCID = u.Query().Get("client_id")
 			samlEntityID = u.Query().Get("entity_id") // Assuming entity_id for SAML
+
+			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
+				// It's a SAML request, even if we don't have the entity_id yet
+				if protocolParam == "" {
+					protocolParam = definitions.ProtoSAML
+				}
+			}
 		}
+	}
+
+	// If we have an explicit protocol parameter, respect it
+	if protocolParam == definitions.ProtoSAML && samlEntityID == "" {
+		// We need some non-empty string to trigger ProtoSAML in Authenticate for now,
+		// or we modify Authenticate to take protocol as well.
+		// Let's use a special marker if we don't know the entity ID yet.
+		samlEntityID = "urn:nauthilus:saml:unknown"
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
@@ -370,11 +396,17 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 					session.Save()
 
-					if h.hasWebAuthn(user) {
-						ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "webauthn"), "return_to="+url.QueryEscape(returnTo)))
-					} else {
-						ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "totp"), "return_to="+url.QueryEscape(returnTo)))
+					mfaURL := h.getMFAURL(ctx, "webauthn")
+					if !h.hasWebAuthn(user) {
+						mfaURL = h.getMFAURL(ctx, "totp")
 					}
+
+					redirectURL := h.appendQueryString(mfaURL, "return_to="+url.QueryEscape(returnTo))
+					if protocolParam != "" {
+						redirectURL = h.appendQueryString(redirectURL, "protocol="+url.QueryEscape(protocolParam))
+					}
+
+					ctx.Redirect(http.StatusFound, redirectURL)
 
 					return
 				}
@@ -530,6 +562,7 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	data["CSRFToken"] = "TODO_CSRF"
 	data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 	data["ReturnTo"] = ctx.Query("return_to")
+	data["Protocol"] = ctx.Query("protocol")
 	data["BackURL"] = h.getLoginURL(ctx)
 	data["HaveError"] = false
 
@@ -546,6 +579,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	authResult, errA := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
 	code := ctx.PostForm("code")
 	returnTo := ctx.PostForm("return_to")
+	protocolParam := ctx.PostForm("protocol")
 
 	if errU != nil || errA != nil || code == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
@@ -558,7 +592,15 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		if u, err := url.Parse(returnTo); err == nil {
 			oidcCID = u.Query().Get("client_id")
 			samlEntityID = u.Query().Get("entity_id")
+
+			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
+				samlEntityID = definitions.ProtoSAML
+			}
 		}
+	}
+
+	if protocolParam == definitions.ProtoSAML && samlEntityID == "" {
+		samlEntityID = definitions.ProtoSAML
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
@@ -605,6 +647,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["CSRFToken"] = "TODO_CSRF"
 		data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 		data["ReturnTo"] = returnTo
+		data["Protocol"] = protocolParam
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid OTP code")
 

@@ -39,6 +39,7 @@ var (
 	samlIDPMetadataURL = os.Getenv("SAML2_IDP_METADATA_URL")
 	samlSPEntityID     = os.Getenv("SAML2_SP_ENTITY_ID")
 	samlSPURL          = os.Getenv("SAML2_SP_URL")
+	insecureSkipVerify = os.Getenv("SAML2_INSECURE_SKIP_VERIFY") != "false" // Default to true for test client
 )
 
 const successPageTmpl = `
@@ -127,13 +128,13 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 
 func main() {
 	if samlIDPMetadataURL == "" {
-		samlIDPMetadataURL = "http://127.0.0.1:8080/saml/metadata"
+		samlIDPMetadataURL = "https://localhost:9443/saml/metadata"
 	}
 	if samlSPEntityID == "" {
-		samlSPEntityID = "http://127.0.0.1:9095/saml/metadata"
+		samlSPEntityID = "https://localhost:9095/saml/metadata"
 	}
 	if samlSPURL == "" {
-		samlSPURL = "http://127.0.0.1:9095"
+		samlSPURL = "https://localhost:9095"
 	}
 
 	var keyPair tls.Certificate
@@ -158,18 +159,25 @@ func main() {
 		log.Fatalf("Invalid SP URL: %v", err)
 	}
 
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
+		},
+	}
+
 	opts := samlsp.Options{
 		URL:               *spURL,
 		Key:               keyPair.PrivateKey.(*rsa.PrivateKey),
 		Certificate:       keyPair.Leaf,
 		EntityID:          samlSPEntityID,
 		AllowIDPInitiated: true,
+		HTTPClient:        httpClient,
 	}
 
 	// Try to fetch IDP metadata, but don't fail immediately if IdP is not up yet
 	// (though samlsp.New might need it if we want it fully initialized)
 	log.Printf("Fetching IdP metadata from %s...", samlIDPMetadataURL)
-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient, *idpMetadataURL)
+	idpMetadata, err := samlsp.FetchMetadata(context.Background(), httpClient, *idpMetadataURL)
 	if err != nil {
 		log.Printf("Warning: Could not fetch IdP metadata: %v. The client might not work until restarted or metadata is available.", err)
 	} else {
@@ -186,9 +194,24 @@ func main() {
 		log.Fatalf("Failed to parse template: %v", err)
 	}
 
-	http.Handle("/saml/", samlSP)
+	// Request logging middleware
+	logRequest := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			log.Printf("Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	http.Handle("/saml/", logRequest(samlSP))
+	http.Handle("/saml/login", logRequest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Ensure that after successful login, we are redirected back to / instead of /saml/login,
+		// which would cause a loop.
+		r.URL.Path = "/"
+		samlSP.HandleStartAuthFlow(w, r)
+	})))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
 		session, err := samlSP.Session.GetSession(r)
 		if session != nil && err == nil {
 			// User is logged in, show attributes
@@ -222,8 +245,26 @@ func main() {
 		fmt.Fprintf(w, `<html><body><h1>SAML2 Test Client</h1><a href="/saml/login">Login via SAML2</a></body></html>`)
 	})
 
-	log.Printf("listening on http://%s/", "127.0.0.1:9095")
-	if err := http.ListenAndServe("127.0.0.1:9095", nil); err != nil {
-		log.Fatal(err)
+	isHTTPS := spURL.Scheme == "https"
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{keyPair},
+	}
+
+	server := &http.Server{
+		Addr:      spURL.Host,
+		TLSConfig: tlsConfig,
+	}
+
+	if isHTTPS {
+		log.Printf("listening on https://%s/", server.Addr)
+		if err := server.ListenAndServeTLS("", ""); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Printf("listening on http://%s/", server.Addr)
+		if err := server.ListenAndServe(); err != nil {
+			log.Fatal(err)
+		}
 	}
 }

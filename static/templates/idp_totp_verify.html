@@ -20,6 +20,7 @@
             <form action="{{ .PostTOTPVerifyEndpoint }}" method="POST">
                 <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
                 <input name="return_to" type="hidden" value="{{ .ReturnTo }}"/>
+                <input name="protocol" type="hidden" value="{{ .Protocol }}"/>
 
                 <div class="form-control w-full">
                     <label class="label">

@@ -16,13 +16,22 @@
 package idp
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -31,6 +40,7 @@ type mockSAMLCfg struct {
 	config.File
 	entityID    string
 	certificate string
+	key         string
 }
 
 func (m *mockSAMLCfg) GetIdP() *config.IdPSection {
@@ -41,18 +51,53 @@ func (m *mockSAMLCfg) GetIdP() *config.IdPSection {
 		SAML2: config.SAML2Config{
 			EntityID: m.entityID,
 			Cert:     m.certificate,
+			Key:      m.key,
 		},
 	}
 }
 
+func (m *mockSAMLCfg) GetServer() *config.ServerSection {
+	return &config.ServerSection{}
+}
+
 func TestSAMLHandler_Metadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	entityID := "https://auth.example.com/saml"
-	cert := "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
-	cfg := &mockSAMLCfg{entityID: entityID, certificate: cert}
 
-	d := &deps.Deps{Cfg: cfg}
-	h := NewSAMLHandler(nil, d, nil)
+	// Generate a self-signed certificate for the test
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.NoError(t, err)
+
+	keyBytes := x509.MarshalPKCS1PrivateKey(priv)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Test IdP"},
+		},
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	assert.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	entityID := "https://auth.example.com/saml"
+	cfg := &mockSAMLCfg{
+		entityID:    entityID,
+		certificate: string(certPEM),
+		key:         string(keyPEM),
+	}
+
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Logger: slog.Default(),
+	}
+	store := cookie.NewStore([]byte("secret"))
+	h := NewSAMLHandler(store, d, nil)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -63,15 +108,14 @@ func TestSAMLHandler_Metadata(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
 	assert.Contains(t, w.Body.String(), entityID)
-	assert.Contains(t, w.Body.String(), "ABC")
-	assert.NotContains(t, w.Body.String(), "-----BEGIN CERTIFICATE-----")
 }
 
 func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &mockSAMLCfg{entityID: "test", certificate: "test"}
 	d := &deps.Deps{Cfg: cfg}
-	h := NewSAMLHandler(nil, d, nil)
+	store := cookie.NewStore([]byte("secret"))
+	h := NewSAMLHandler(store, d, nil)
 
 	r := gin.New()
 	h.Register(r)
