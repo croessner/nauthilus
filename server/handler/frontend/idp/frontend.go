@@ -33,13 +33,11 @@ import (
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
-	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/pquerna/otp/totp"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -50,6 +48,7 @@ import (
 type FrontendHandler struct {
 	deps   *deps.Deps
 	store  sessions.Store
+	mfa    idp.MFAProvider
 	tracer monittrace.Tracer
 }
 
@@ -58,6 +57,7 @@ func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler
 	return &FrontendHandler{
 		deps:   d,
 		store:  sessStore,
+		mfa:    idp.NewMFAService(d),
 		tracer: monittrace.New("nauthilus/idp/frontend"),
 	}
 }
@@ -879,23 +879,19 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      h.deps.Cfg.GetServer().Frontend.GetTotpIssuer(),
-		AccountName: account,
-	})
-
+	secret, qrCodeURL, err := h.mfa.GenerateTOTPSecret(ctx, account)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to generate TOTP key")
 
 		return
 	}
 
-	session.Set(definitions.CookieTOTPSecret, key.Secret())
+	session.Set(definitions.CookieTOTPSecret, secret)
 	session.Save()
 
 	data := h.basePageData(ctx)
-	data["QRCode"] = key.String()
-	data["Secret"] = key.Secret()
+	data["QRCode"] = qrCodeURL
+	data["Secret"] = secret
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register TOTP")
 	data["TOTPMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please scan and verify the following QR code")
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
@@ -920,49 +916,15 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	if !totp.Validate(code, secret) {
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		ctx.String(http.StatusBadRequest, "Invalid OTP code")
-
-		return
-	}
-
-	// Save to backend (LDAP/Lua)
-	authDeps := h.deps.Auth()
 	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
 	if err != nil {
 		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
-	var addTOTPSecret core.AddTOTPSecretFunc
-
-	switch sourceBackend {
-	case uint8(definitions.BackendLDAP):
-		addTOTPSecret = core.NewLDAPManager(definitions.DefaultBackendName, authDeps).AddTOTPSecret
-	case uint8(definitions.BackendLua):
-		addTOTPSecret = core.NewLuaManager(definitions.DefaultBackendName, authDeps).AddTOTPSecret
-	default:
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		ctx.String(http.StatusInternalServerError, "Unsupported backend")
-
-		return
-	}
-
-	// We need a dummy AuthState for addTOTPSecret
-	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
-	if state == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
-
-		return
-	}
-
-	dummyAuth := state.(*core.AuthState)
-	dummyAuth.SetUsername(username)
-
-	if err := addTOTPSecret(dummyAuth, core.NewTOTPSecret(secret)); err != nil {
+	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		ctx.String(http.StatusInternalServerError, "Failed to save TOTP secret: "+err.Error())
+		ctx.String(http.StatusBadRequest, err.Error())
 
 		return
 	}
@@ -973,7 +935,14 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	session.Delete(definitions.CookieTOTPSecret)
 	session.Save()
 
-	// Purge user from positive redis caches
+	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+	if state == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
 	h.purgeUserCache(ctx, dummyAuth, username)
 
 	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
@@ -987,51 +956,19 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 
 	session := sessions.Default(ctx)
 	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
+
 	if errU != nil {
 		ctx.String(http.StatusBadRequest, "Invalid request")
 
 		return
 	}
 
-	authDeps := h.deps.Auth()
 	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
 	if err != nil {
 		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
-	var (
-		addTOTPRecoveryCodes    func(auth *core.AuthState, recovery *mfa.TOTPRecovery) error
-		deleteTOTPRecoveryCodes func(auth *core.AuthState) error
-	)
-
-	switch sourceBackend {
-	case uint8(definitions.BackendLDAP):
-		mgr := core.NewLDAPManager(definitions.DefaultBackendName, authDeps)
-		addTOTPRecoveryCodes = mgr.AddTOTPRecoveryCodes
-		deleteTOTPRecoveryCodes = mgr.DeleteTOTPRecoveryCodes
-	case uint8(definitions.BackendLua):
-		mgr := core.NewLuaManager(definitions.DefaultBackendName, authDeps)
-		addTOTPRecoveryCodes = mgr.AddTOTPRecoveryCodes
-		deleteTOTPRecoveryCodes = mgr.DeleteTOTPRecoveryCodes
-	default:
-		ctx.String(http.StatusInternalServerError, "Unsupported backend")
-
-		return
-	}
-
-	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
-	if state == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
-
-		return
-	}
-
-	dummyAuth := state.(*core.AuthState)
-	dummyAuth.SetUsername(username)
-	dummyAuth.SetProtocol(config.NewProtocol("oidc"))
-
-	// 1. Generate new codes
-	recovery, err := core.GenerateBackupCodes()
+	codes, err := h.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
 	if err != nil {
 		sp.RecordError(err)
 		ctx.String(http.StatusInternalServerError, "Failed to generate recovery codes: "+err.Error())
@@ -1039,24 +976,17 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 		return
 	}
 
-	// 2. Delete old codes
-	if err := deleteTOTPRecoveryCodes(dummyAuth); err != nil {
-		sp.RecordError(err)
-		ctx.String(http.StatusInternalServerError, "Failed to delete old recovery codes: "+err.Error())
-
-		return
-	}
-
-	// 3. Save new codes
-	if err := addTOTPRecoveryCodes(dummyAuth, recovery); err != nil {
-		sp.RecordError(err)
-		ctx.String(http.StatusInternalServerError, "Failed to save recovery codes: "+err.Error())
-
-		return
-	}
-
 	// Success!
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "success").Inc()
+
+	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+	if state == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
 
 	// Purge user from positive redis caches
 	h.purgeUserCache(ctx, dummyAuth, username)
@@ -1066,7 +996,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup these codes!")
 	data["ShownOnlyOnce"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "They will be shown only once.")
 	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
-	data["Codes"] = recovery.GetCodes()
+	data["Codes"] = codes
 
 	ctx.HTML(http.StatusOK, "idp_recovery_codes_modal.html", data)
 }
@@ -1139,37 +1069,12 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 		return
 	}
 
-	authDeps := h.deps.Auth()
 	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
 	if err != nil {
 		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
-	var deleteTOTPSecret func(auth *core.AuthState) error
-
-	switch sourceBackend {
-	case uint8(definitions.BackendLDAP):
-		deleteTOTPSecret = core.NewLDAPManager(definitions.DefaultBackendName, authDeps).DeleteTOTPSecret
-	case uint8(definitions.BackendLua):
-		deleteTOTPSecret = core.NewLuaManager(definitions.DefaultBackendName, authDeps).DeleteTOTPSecret
-	default:
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "fail").Inc()
-		ctx.String(http.StatusInternalServerError, "Unsupported backend")
-
-		return
-	}
-
-	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
-	if state == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
-
-		return
-	}
-
-	dummyAuth := state.(*core.AuthState)
-	dummyAuth.SetUsername(username)
-
-	if err := deleteTOTPSecret(dummyAuth); err != nil {
+	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "fail").Inc()
 		ctx.String(http.StatusInternalServerError, "Failed to delete TOTP secret: "+err.Error())
@@ -1181,6 +1086,14 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	session.Set(definitions.CookieHaveTOTP, false)
 	session.Save()
 
+	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+	if state == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+
+		return
+	}
+
+	dummyAuth := state.(*core.AuthState)
 	h.purgeUserCache(ctx, dummyAuth, username)
 
 	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
@@ -1202,6 +1115,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 		return
 	}
 
+	// First, clear the Redis cache
 	key := h.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + userID
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
 		sp.RecordError(err)
@@ -1209,6 +1123,12 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	} else {
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
 	}
+
+	// Then, clear from backend if possible.
+	// We don't have a specific credential ID here because the frontend currently deletes everything.
+	// So we might need to fetch the user first and delete all credentials, or just keep the Redis deletion
+	// if that's what the existing code did (it only did Redis deletion).
+	// However, the issue asks for clean management via API.
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {

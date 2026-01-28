@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
+	handlerapiv1 "github.com/croessner/nauthilus/server/handler/api/v1"
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
@@ -447,6 +448,9 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
 					frontendHandler := handleridp.NewFrontendHandler(sessStore, deps)
 					frontendHandler.Register(e)
+
+					mfaAPI := handlerapiv1.NewMFAAPI(deps)
+					mfaAPI.Register(e)
 				}
 
 				if cfg.GetIdP().OIDC.Enabled {

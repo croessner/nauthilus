@@ -22,6 +22,8 @@ fully integrated into the Nauthilus core, leveraging existing authentication and
 
 - **`server/idp/`**: The "Brain" of the IdP. Defines the `IdentityProvider` interface and implements the `NauthilusIdP`
   which orchestrates authentication and token issuance.
+- **`server/handler/api/v1/`**: The "JSON Interface".
+    - `mfa.go`: Provides a clean JSON API for managing TOTP, Recovery Codes, and WebAuthn credentials.
 - **`server/handler/frontend/idp/`**: The "Face" and "Voice".
     - `oidc.go`: Implements the OpenID Connect 1.0 specification (Discovery, Authorize, Token, Introspect, UserInfo,
       JWKS, Logout).
@@ -45,6 +47,9 @@ graph TD
     AS <--> BE[Backends server/backend]
     IC <--> RTS[Redis Token Storage server/idp/redis_storage.go]
     PH <--> RTS
+    FE <--> MFA[MFA API server/handler/api/v1/mfa.go]
+    MFA <--> MS[MFA Service server/idp/mfa.go]
+    MS <--> AS
 ```
 
 ## 3. Detailed Signal Flows
@@ -110,7 +115,46 @@ sequenceDiagram
     H -->> B: 200 OK (JSON Tokens)
 ```
 
-### 3.2 OIDC Token Introspection
+## 4. MFA Management API (/api/v1/mfa)
+
+The IdP provides a JSON API for managing Multi-Factor Authentication. This API is used internally by the HTMX frontend
+and can be used by external clients.
+
+### 4.1 TOTP Management
+
+- **`GET /api/v1/mfa/totp/setup`**:
+    - Starts the TOTP registration process.
+    - Returns JSON: `{"secret": "...", "qr_code_url": "..."}`.
+    - Stores the secret in the user's session for verification.
+- **`POST /api/v1/mfa/totp/register`**:
+    - Finalizes TOTP registration by verifying a code.
+    - Request Body: `{"code": "123456"}`.
+    - Returns 200 OK on success.
+- **`DELETE /api/v1/mfa/totp`**:
+    - Deletes the TOTP configuration for the user.
+    - Returns 200 OK on success.
+
+### 4.2 Recovery Codes
+
+- **`POST /api/v1/mfa/recovery-codes/generate`**:
+    - Generates and returns a new set of 10 recovery codes.
+    - Replaces any existing recovery codes in the backend.
+    - Returns JSON: `{"codes": ["...", "..."]}`.
+
+### 4.3 WebAuthn Management
+
+- **`GET /api/v1/mfa/webauthn/register/begin`**:
+    - Initiates WebAuthn registration.
+    - Returns `CredentialCreationOptions` as JSON (standard WebAuthn format).
+- **`POST /api/v1/mfa/webauthn/register/finish`**:
+    - Finalizes WebAuthn registration.
+    - Request Body: The credential object from `navigator.credentials.create()`.
+    - Returns 200 OK on success.
+- **`DELETE /api/v1/mfa/webauthn/:credentialID`**:
+    - Deletes a specific WebAuthn credential by its ID.
+    - Returns 200 OK on success.
+
+## 5. Protocol-Specific Flows
 
 RFC 7662 allows clients to query the IdP to determine the active state of an OAuth 2.0 token and to determine
 meta-information about this token.
