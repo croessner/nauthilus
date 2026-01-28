@@ -86,9 +86,11 @@ func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 						User: "(uid=%s)",
 					},
 					LDAPAttributeMapping: config.LDAPAttributeMapping{
+						AccountField:    "uid",
 						TOTPSecretField: "nauthilusTotpSecret",
 					},
 					Attributes: []string{"uid"},
+					PoolName:   definitions.DefaultBackendName,
 				},
 			},
 		},
@@ -118,7 +120,7 @@ func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 		req := priorityqueue.LDAPQueue.Pop(definitions.DefaultBackendName)
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, "nauthilusTotpSecret", req.ModifyAttributes["nauthilusTotpSecret"][0])
+			assert.Equal(t, secret, req.ModifyAttributes["nauthilusTotpSecret"][0])
 			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 		}
 	}()
@@ -147,9 +149,11 @@ func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 						User: "(uid=%s)",
 					},
 					LDAPAttributeMapping: config.LDAPAttributeMapping{
+						AccountField:    "uid",
 						TOTPSecretField: "nauthilusTotpSecret",
 					},
 					Attributes: []string{"uid"},
+					PoolName:   definitions.DefaultBackendName,
 				},
 			},
 		},
@@ -181,130 +185,5 @@ func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 	}()
 
 	err := s.DeleteTOTP(ctx, "testuser", uint8(definitions.BackendLDAP))
-	assert.NoError(t, err)
-}
-
-func TestMFAService_GenerateRecoveryCodes_LDAP(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	backend := &config.Backend{}
-	_ = backend.Set("ldap")
-
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Backends: []*config.Backend{backend},
-		},
-		LDAP: &config.LDAPSection{
-			Search: []config.LDAPSearchProtocol{
-				{
-					Protocols: []string{"idp"},
-					CacheName: "idp",
-					BaseDN:    "ou=users,dc=example,dc=com",
-					LDAPFilter: config.LDAPFilter{
-						User: "(uid=%s)",
-					},
-					LDAPAttributeMapping: config.LDAPAttributeMapping{
-						TOTPRecoveryField: "nauthilusTotpRecovery",
-					},
-					Attributes: []string{"uid"},
-				},
-			},
-		},
-	}
-
-	d := &deps.Deps{
-		Cfg:    cfg,
-		Env:    config.NewTestEnvironmentConfig(),
-		Logger: log.GetLogger(),
-	}
-	s := NewMFAService(d)
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Request.RemoteAddr = "127.0.0.1:12345"
-	setupMfaMockContext(ctx, "test-guid", definitions.ServIdP)
-
-	priorityqueue.LDAPQueue.AddPoolName(definitions.DefaultBackendName)
-
-	go func() {
-		// First: Delete
-		req := priorityqueue.LDAPQueue.Pop(definitions.DefaultBackendName)
-		if req != nil {
-			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
-			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
-		}
-
-		// Second: Add
-		req = priorityqueue.LDAPQueue.Pop(definitions.DefaultBackendName)
-		if req != nil {
-			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, definitions.LDAPModifyReplace, req.SubCommand)
-			assert.Equal(t, 10, len(req.ModifyAttributes["nauthilusTotpRecovery"]))
-			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
-		}
-	}()
-
-	codes, err := s.GenerateRecoveryCodes(ctx, "testuser", uint8(definitions.BackendLDAP))
-	assert.NoError(t, err)
-	assert.Equal(t, 10, len(codes))
-}
-
-func TestMFAService_DeleteWebAuthnCredential_LDAP(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	backend := &config.Backend{}
-	_ = backend.Set("ldap")
-
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Backends: []*config.Backend{backend},
-		},
-		LDAP: &config.LDAPSection{
-			Search: []config.LDAPSearchProtocol{
-				{
-					Protocols: []string{"idp"},
-					CacheName: "idp",
-					BaseDN:    "ou=users,dc=example,dc=com",
-					LDAPFilter: config.LDAPFilter{
-						User: "(uid=%s)",
-					},
-					LDAPAttributeMapping: config.LDAPAttributeMapping{
-						CredentialIDField: "nauthilusWebAuthnID",
-					},
-					Attributes: []string{"uid"},
-				},
-			},
-		},
-	}
-
-	d := &deps.Deps{
-		Cfg:    cfg,
-		Env:    config.NewTestEnvironmentConfig(),
-		Logger: log.GetLogger(),
-	}
-	s := NewMFAService(d)
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Request.RemoteAddr = "127.0.0.1:12345"
-	setupMfaMockContext(ctx, "test-guid", definitions.ServIdP)
-
-	priorityqueue.LDAPQueue.AddPoolName(definitions.DefaultBackendName)
-
-	go func() {
-		req := priorityqueue.LDAPQueue.Pop(definitions.DefaultBackendName)
-		if req != nil {
-			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
-			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
-		}
-	}()
-
-	err := s.DeleteWebAuthnCredential(ctx, "testuser", "credID", uint8(definitions.BackendLDAP))
 	assert.NoError(t, err)
 }

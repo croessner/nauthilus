@@ -173,6 +173,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		pSpan.End()
 
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
+
 		return
 	}
 
@@ -435,6 +440,11 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		pSpan.End()
+
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
 
 		return
 	}

@@ -33,6 +33,7 @@ type MFAProvider interface {
 	VerifyAndSaveTOTP(ctx *gin.Context, username string, secret string, code string, sourceBackend uint8) error
 	DeleteTOTP(ctx *gin.Context, username string, sourceBackend uint8) error
 	GenerateRecoveryCodes(ctx *gin.Context, username string, sourceBackend uint8) ([]string, error)
+	UseRecoveryCode(ctx *gin.Context, username string, code string, sourceBackend uint8) (bool, error)
 	DeleteWebAuthnCredential(ctx *gin.Context, username string, credentialID string, sourceBackend uint8) error
 }
 
@@ -126,6 +127,56 @@ func (s *MFAService) GenerateRecoveryCodes(ctx *gin.Context, username string, so
 	}
 
 	return recovery.GetCodes(), nil
+}
+
+// UseRecoveryCode verifies a recovery code and removes it from the backend if valid.
+func (s *MFAService) UseRecoveryCode(ctx *gin.Context, username string, code string, sourceBackend uint8) (bool, error) {
+	authDeps := s.deps.Auth()
+	mgr, err := s.getBackendManager(sourceBackend, authDeps)
+	if err != nil {
+		return false, err
+	}
+
+	dummyAuth, err := s.getAuthState(ctx, username)
+	if err != nil {
+		return false, err
+	}
+
+	// We need to fetch the current codes.
+	// In the current architecture, we get them by doing a "Password login" without actual password verification
+	// or by fetching the user attributes.
+	// Since we are already authenticated (password-wise), we can just get the user.
+	idpInstance := NewNauthilusIdP(s.deps)
+	user, err := idpInstance.GetUserByUsername(ctx, username, "", "")
+	if err != nil {
+		return false, err
+	}
+
+	dummyAuth.ReplaceAllAttributes(user.Attributes)
+	dummyAuth.SetTOTPRecoveryField(user.TOTPRecoveryField)
+
+	recoveryCodes := dummyAuth.GetTOTPRecoveryCodes()
+	found := false
+	newCodes := make([]string, 0)
+
+	for _, c := range recoveryCodes {
+		if c == code {
+			found = true
+		} else {
+			newCodes = append(newCodes, c)
+		}
+	}
+
+	if !found {
+		return false, nil
+	}
+
+	// Save updated codes
+	if err := mgr.AddTOTPRecoveryCodes(dummyAuth, mfa.NewTOTPRecovery(newCodes)); err != nil {
+		return true, err // Code was valid, but failed to update backend
+	}
+
+	return true, nil
 }
 
 // DeleteWebAuthnCredential removes a WebAuthn credential from the backend.

@@ -143,6 +143,12 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	router.GET("/login/webauthn/begin/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
 	router.POST("/login/webauthn/finish", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
 	router.POST("/login/webauthn/finish/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.GET("/login/mfa", sessionMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/mfa/:languageTag", sessionMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/recovery", sessionMW, i18nMW, h.LoginRecovery)
+	router.GET("/login/recovery/:languageTag", sessionMW, i18nMW, h.LoginRecovery)
+	router.POST("/login/recovery", sessionMW, i18nMW, h.PostLoginRecovery)
+	router.POST("/login/recovery/:languageTag", sessionMW, i18nMW, h.PostLoginRecovery)
 
 	// Auth protected routes
 	authGroup := router.Group("/", sessionMW, h.AuthMiddleware(), i18nMW)
@@ -417,12 +423,14 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 					session.Save()
 
-					mfaURL := h.getMFAURL(ctx, "webauthn")
-					if !h.hasWebAuthn(user) {
-						mfaURL = h.getMFAURL(ctx, "totp")
+					// If user has only one MFA option, redirect directly to it
+					if redirectURL, ok := h.getMFARedirectURL(user, returnTo, protocolParam); ok {
+						ctx.Redirect(http.StatusFound, redirectURL)
+
+						return
 					}
 
-					redirectURL := h.appendQueryString(mfaURL, "return_to="+url.QueryEscape(returnTo))
+					redirectURL := h.appendQueryString("/login/mfa", "return_to="+url.QueryEscape(returnTo))
 					if protocolParam != "" {
 						redirectURL = h.appendQueryString(redirectURL, "protocol="+url.QueryEscape(protocolParam))
 					}
@@ -468,11 +476,22 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		}
 
 		session.Save()
-		if h.hasWebAuthn(user) {
-			ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "webauthn"), "return_to="+url.QueryEscape(returnTo)))
-		} else {
-			ctx.Redirect(http.StatusFound, h.appendQueryString(h.getMFAURL(ctx, "totp"), "return_to="+url.QueryEscape(returnTo)))
+
+		// If user has only one MFA option, redirect directly to it
+		if redirectURL, ok := h.getMFARedirectURL(user, returnTo, protocolParam); ok {
+			ctx.Redirect(http.StatusFound, redirectURL)
+
+			return
 		}
+
+		// If user has multiple MFA options OR if we want to show the selection page anyway
+		// Requirement says: "If a person has configured one or more MFA options, there should be an intermediate page..."
+		redirectURL := h.appendQueryString("/login/mfa", "return_to="+url.QueryEscape(returnTo))
+		if protocolParam != "" {
+			redirectURL = h.appendQueryString(redirectURL, "protocol="+url.QueryEscape(protocolParam))
+		}
+
+		ctx.Redirect(http.StatusFound, redirectURL)
 
 		return
 	}
@@ -530,6 +549,249 @@ func (h *FrontendHandler) hasWebAuthn(user *backend.User) bool {
 	userWA, err := backend.GetWebAuthnFromRedis(ctx, h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
 
 	return err == nil && userWA != nil && len(userWA.WebAuthnCredentials()) > 0
+}
+
+func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
+	recoveryField := user.TOTPRecoveryField
+
+	if recoveryField == "" {
+		if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
+			recoveryField = protocols[0].GetTotpRecoveryField()
+		}
+	}
+
+	if recoveryField != "" {
+		if val, ok := user.Attributes[recoveryField]; ok {
+			return len(val) > 0
+		}
+	}
+
+	return false
+}
+
+// LoginMFASelect renders the MFA selection page.
+func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
+	session := sessions.Default(ctx)
+	username, err := util.GetSessionValue[string](session, definitions.CookieUsername)
+
+	if err != nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	returnTo := ctx.Query("return_to")
+	protocol := ctx.Query("protocol")
+
+	// Get user to check available MFA methods
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+	user, err := idpInstance.GetUserByUsername(ctx, username, "", "")
+	if err != nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	// If user has only one MFA option, redirect directly to it
+	if redirectURL, ok := h.getMFARedirectURL(user, returnTo, protocol); ok {
+		ctx.Redirect(http.StatusFound, redirectURL)
+
+		return
+	}
+
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
+	data["SelectMFA"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Select Multi-Factor Authentication")
+	data["ChooseMFADescription"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Choose your preferred second factor")
+	data["AuthenticatorApp"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Authenticator App")
+	data["SecurityKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Security Key")
+	data["RecoveryCode"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Code")
+	data["Recommended"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recommended")
+	data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
+	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
+	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+
+	data["HaveTOTP"] = h.hasTOTP(user)
+	data["HaveWebAuthn"] = h.hasWebAuthn(user)
+	data["HaveRecoveryCodes"] = h.hasRecoveryCodes(user)
+
+	data["QueryString"] = h.appendQueryString("", ctx.Request.URL.RawQuery)
+	data["ReturnTo"] = returnTo
+	data["Protocol"] = protocol
+
+	// Check for last used MFA method
+	lastMFA, _ := ctx.Cookie("last_mfa_method")
+	data["LastMFAMethod"] = lastMFA
+
+	ctx.HTML(http.StatusOK, "idp_mfa_select.html", data)
+}
+
+// LoginRecovery renders the recovery code verification page during login.
+func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
+	session := sessions.Default(ctx)
+	if _, err := util.GetSessionValue[string](session, definitions.CookieUsername); err != nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
+	data["RecoveryVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter one of your recovery codes")
+	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Code")
+	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
+
+	data["CSRFToken"] = "TODO_CSRF"
+	data["PostRecoveryVerifyEndpoint"] = ctx.Request.URL.Path
+	data["ReturnTo"] = ctx.Query("return_to")
+	data["Protocol"] = ctx.Query("protocol")
+	data["QueryString"] = h.appendQueryString("", ctx.Request.URL.RawQuery)
+	data["HaveError"] = false
+
+	ctx.HTML(http.StatusOK, "idp_recovery_login.html", data)
+}
+
+// PostLoginRecovery handles the recovery code verification during login.
+func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
+	defer sp.End()
+
+	session := sessions.Default(ctx)
+	username, errU := util.GetSessionValue[string](session, definitions.CookieUsername)
+	_, errA := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
+	code := ctx.PostForm("code")
+	returnTo := ctx.PostForm("return_to")
+	protocolParam := ctx.PostForm("protocol")
+
+	if errU != nil || errA != nil || code == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	var oidcCID, samlEntityID string
+	if returnTo != "" {
+		if u, err := url.Parse(returnTo); err == nil {
+			oidcCID = u.Query().Get("client_id")
+			samlEntityID = u.Query().Get("entity_id")
+
+			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
+				samlEntityID = definitions.ProtoSAML
+			}
+		}
+	}
+
+	if protocolParam == definitions.ProtoSAML && samlEntityID == "" {
+		samlEntityID = definitions.ProtoSAML
+	}
+
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
+
+	if err != nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	// Verify Recovery Code
+	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
+	if err != nil {
+		sourceBackend = uint8(definitions.BackendLDAP)
+	}
+
+	success, err := h.mfa.UseRecoveryCode(ctx, username, code, sourceBackend)
+	if err != nil {
+		h.deps.Logger.Error("Failed to use recovery code", "error", err)
+	}
+
+	if !success {
+		data := h.basePageData(ctx)
+		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
+		data["RecoveryVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter one of your recovery codes")
+		data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Code")
+		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+		data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
+
+		data["CSRFToken"] = "TODO_CSRF"
+		data["PostRecoveryVerifyEndpoint"] = ctx.Request.URL.Path
+		data["ReturnTo"] = returnTo
+		data["Protocol"] = protocolParam
+		data["QueryString"] = h.appendQueryString("", "return_to="+url.QueryEscape(returnTo)+"&protocol="+url.QueryEscape(protocolParam))
+		data["HaveError"] = true
+		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid recovery code")
+
+		ctx.HTML(http.StatusOK, "idp_recovery_login.html", data)
+
+		return
+	}
+
+	// MFA Success
+	h.setLastMFAMethod(ctx, "recovery")
+	h.finalizeMFALogin(ctx, user, returnTo)
+}
+
+func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
+	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", true, true)
+}
+
+func (h *FrontendHandler) getMFARedirectURL(user *backend.User, returnTo string, protocolParam string) (string, bool) {
+	haveTOTP := h.hasTOTP(user)
+	haveWebAuthn := h.hasWebAuthn(user)
+
+	// If both are present, we need selection
+	if haveTOTP && haveWebAuthn {
+		return "", false
+	}
+
+	var target string
+	if haveTOTP {
+		target = "/login/totp"
+	} else if haveWebAuthn {
+		target = "/login/webauthn"
+	} else {
+		// Only recovery codes or nothing (should not happen if this is called correctly)
+		return "", false
+	}
+
+	redirectURL := h.appendQueryString(target, "return_to="+url.QueryEscape(returnTo))
+	if protocolParam != "" {
+		redirectURL = h.appendQueryString(redirectURL, "protocol="+url.QueryEscape(protocolParam))
+	}
+
+	return redirectURL, true
+}
+
+func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User, returnTo string) {
+	session := sessions.Default(ctx)
+	protocol, _ := util.GetSessionValue[string](session, definitions.CookieProtocol)
+	rememberMeTTL, _ := util.GetSessionValue[int](session, definitions.CookieRememberTTL)
+
+	session.Set(definitions.CookieAccount, user.Name)
+	session.Set(definitions.CookieUniqueUserID, user.Id)
+	session.Set(definitions.CookieDisplayName, user.DisplayName)
+	session.Set(definitions.CookieSubject, user.Id)
+	session.Set(definitions.CookieProtocol, protocol)
+
+	if rememberMeTTL > 0 {
+		session.Options(sessions.Options{
+			MaxAge: rememberMeTTL,
+			Path:   "/",
+		})
+	}
+
+	session.Save()
+
+	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
+
+	if returnTo != "" {
+		ctx.Redirect(http.StatusFound, returnTo)
+
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, "/2fa/v1/register/home")
 }
 
 // LoginWebAuthn renders the WebAuthn verification page during login.
@@ -713,41 +975,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
-	protocol := definitions.ProtoIDP
-	if oidcCID != "" {
-		protocol = definitions.ProtoOIDC
-	} else if samlEntityID != "" {
-		protocol = definitions.ProtoSAML
-	}
-
 	// All OK!
-	session.Set(definitions.CookieAccount, user.Name)
-	session.Set(definitions.CookieUniqueUserID, user.Id)
-	session.Set(definitions.CookieDisplayName, user.DisplayName)
-	session.Set(definitions.CookieSubject, user.Id)
-	session.Set(definitions.CookieProtocol, protocol)
-
-	if ttlVal, err := util.GetSessionValue[int](session, definitions.CookieRememberTTL); err == nil {
-		session.Options(sessions.Options{
-			MaxAge: ttlVal,
-			Path:   "/",
-		})
-		session.Delete(definitions.CookieRememberTTL)
-	}
-
-	session.Delete(definitions.CookieUsername)
-	session.Delete(definitions.CookieAuthResult)
-	session.Save()
-
-	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
-
-	if returnTo != "" {
-		ctx.Redirect(http.StatusFound, returnTo)
-
-		return
-	}
-
-	ctx.Redirect(http.StatusFound, "/2fa/v1/register/home")
+	h.setLastMFAMethod(ctx, "totp")
+	h.finalizeMFALogin(ctx, user, returnTo)
 }
 
 // TwoFAHome renders the 2FA management overview.
@@ -923,6 +1153,19 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
 	if err != nil {
 		sourceBackend = uint8(definitions.BackendLDAP)
+	}
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		ctx.String(http.StatusInternalServerError, "Failed to fetch user data")
+
+		return
+	}
+
+	if !userData.HaveTOTP && !userData.HaveWebAuthn {
+		ctx.String(http.StatusBadRequest, "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes")
+
+		return
 	}
 
 	codes, err := h.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)

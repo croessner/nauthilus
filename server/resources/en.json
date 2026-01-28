@@ -62,5 +62,13 @@
   "Please wait while the logout process is completed.": "Please wait while the logout process is completed.",
   "Logged Out": "Logged Out",
   "Successfully Logged Out": "Successfully Logged Out",
-  "You have been successfully logged out of your session.": "You have been successfully logged out of your session."
+  "You have been successfully logged out of your session.": "You have been successfully logged out of your session.",
+  "Select Multi-Factor Authentication": "Select Multi-Factor Authentication",
+  "Choose your preferred second factor": "Choose your preferred second factor",
+  "Authenticator App": "Authenticator App",
+  "Security Key": "Security Key",
+  "Recovery Code": "Recovery Code",
+  "Recommended": "Recommended",
+  "Please enter one of your recovery codes": "Please enter one of your recovery codes",
+  "Invalid recovery code": "Invalid recovery code"
 }

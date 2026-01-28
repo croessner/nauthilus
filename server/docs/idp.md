@@ -499,7 +499,7 @@ ldap:
         display_name_field: "cn"
         totp_secret_field: "nauthilusTotpSecret"
         # JSON mode: Use the field that stores all credentials
-        credential_object: "nauthilusFido2Credential"
+        webauthn_credential_field: "nauthilusFido2Credential"
 ```
 
 ### 7.5 FIDO2 LDAP Schema & LDIF Examples

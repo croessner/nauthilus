@@ -26,7 +26,7 @@
   "Security Key (WebAuthn)": "Clé de sécurité (WebAuthn)",
   "Security Keys (WebAuthn)": "Clés de sécurité (WebAuthn)",
   "Registered Devices": "Appareils enregistrés",
-  "Device ID": "Identifiant de l'appareil",
+  "Device ID": "ID de l'appareil",
   "No registered security keys found.": "Aucune clé de sécurité enregistrée trouvée.",
   "Last used": "Dernière utilisation",
   "Never": "Jamais",
@@ -62,5 +62,13 @@
   "Please wait while the logout process is completed.": "Veuillez patienter pendant la fin de la procédure de déconnexion.",
   "Logged Out": "Déconnecté",
   "Successfully Logged Out": "Déconnexion réussie",
-  "You have been successfully logged out of your session.": "Vous avez été déconnecté avec succès de votre session."
+  "You have been successfully logged out of your session.": "Vous avez été déconnecté avec succès de votre session.",
+  "Select Multi-Factor Authentication": "Sélectionner l'authentification multi-facteurs",
+  "Choose your preferred second factor": "Choisissez votre deuxième facteur préféré",
+  "Authenticator App": "Application d'authentification",
+  "Security Key": "Clé de sécurité",
+  "Recovery Code": "Code de récupération",
+  "Recommended": "Recommandé",
+  "Please enter one of your recovery codes": "Veuillez saisir l'un de vos codes de récupération",
+  "Invalid recovery code": "Code de récupération invalide"
 }

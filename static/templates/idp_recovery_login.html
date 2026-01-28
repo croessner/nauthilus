@@ -1,0 +1,46 @@
+{{ template "idp_header.html" . }}
+<div class="max-w-md mx-auto mt-10">
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title text-2xl font-bold mb-6 justify-center">{{ .Title }}</h2>
+            <p class="text-center mb-8 text-base-content/70">{{ .RecoveryVerifyMessage }}</p>
+
+            {{ if .HaveError }}
+            <div class="alert alert-error shadow-lg mb-6">
+                <div>
+                    <svg class="stroke-current flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"
+                         xmlns="http://www.w3.org/2000/svg">
+                        <path d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"
+                              stroke-width="2"/>
+                    </svg>
+                    <span>{{ .ErrorMessage }}</span>
+                </div>
+            </div>
+            {{ end }}
+
+            <form action="{{ .PostRecoveryVerifyEndpoint }}" method="POST">
+                <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}">
+                <input name="return_to" type="hidden" value="{{ .ReturnTo }}">
+                <input name="protocol" type="hidden" value="{{ .Protocol }}">
+
+                <div class="form-control w-full">
+                    <label class="label">
+                        <span class="label-text">{{ .Code }}</span>
+                    </label>
+                    <input autocomplete="off" autofocus class="input input-bordered w-full text-center text-2xl tracking-widest font-mono"
+                           name="code" placeholder="{{ .Code }}"
+                           required type="text">
+                </div>
+
+                <div class="card-actions justify-end mt-8">
+                    <button class="btn btn-primary w-full" type="submit">{{ .Submit }}</button>
+                </div>
+            </form>
+
+            <div class="card-actions justify-center mt-6">
+                <a class="btn btn-link btn-sm" href="/login/mfa{{ .QueryString }}">{{ .Back }}</a>
+            </div>
+        </div>
+    </div>
+</div>
+{{ template "idp_footer.html" . }}

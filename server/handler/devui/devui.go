@@ -129,16 +129,21 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 	endpoints := []Endpoint{
 		{Method: "GET", Path: "/login", Template: "idp_login.html"},
 		{Method: "POST", Path: "/login", Template: "idp_login.html"},
+		{Method: "GET", Path: "/login/mfa", Template: "idp_mfa_select.html"},
 		{Method: "GET", Path: "/login/totp", Template: "idp_totp_verify.html"},
 		{Method: "POST", Path: "/login/totp", Template: "idp_totp_verify.html"},
 		{Method: "GET", Path: "/login/webauthn", Template: "idp_webauthn_verify.html"},
+		{Method: "GET", Path: "/login/recovery", Template: "idp_recovery_login.html"},
+		{Method: "POST", Path: "/login/recovery", Template: "idp_recovery_login.html"},
 		{Method: "GET", Path: "/2fa/v1/register/home", Template: "idp_2fa_home.html"},
 		{Method: "GET", Path: "/2fa/v1/totp/register", Template: "idp_totp_register.html"},
 		{Method: "POST", Path: "/2fa/v1/totp/register", Template: "idp_totp_register.html"},
 		{Method: "GET", Path: "/2fa/v1/webauthn/register", Template: "idp_webauthn_register.html"},
 		{Method: "GET", Path: "/2fa/v1/webauthn/devices", Template: "idp_2fa_webauthn_devices.html"},
+		{Method: "GET", Path: "/2fa/v1/recovery/codes", Template: "idp_recovery_codes_modal.html"},
 		{Method: "GET", Path: "/logged_out", Template: "idp_logged_out.html"},
 		{Method: "GET", Path: "/oidc/consent", Template: "idp_consent.html"},
+		{Method: "GET", Path: "/oidc/logout", Template: "idp_logout_frames.html"},
 	}
 
 	// Sort by path, then method
@@ -318,8 +323,20 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["BackToLogin"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to Login")
 
 	data["TOTPVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your 2FA code")
-	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
+	data["RecoveryVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter one of your recovery codes")
+	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Code")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
+
+	data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
+	data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
+	data["FrontChannelLogoutURIs"] = []string{"https://app1.example.com/logout", "https://app2.example.com/logout"}
+	data["LogoutTarget"] = "/logged_out"
+
+	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New Recovery Codes")
+	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please backup these codes!")
+	data["ShownOnlyOnce"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "They will be shown only once.")
+	data["Codes"] = []string{"ABCD-1234", "EFGH-5678", "IJKL-9012", "MNOP-3456"}
+	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
 
 	data["WebAuthnVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please use your security key to login")
 	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
@@ -342,7 +359,11 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["PostLoginEndpoint"] = "#"
 	data["PostTOTPVerifyEndpoint"] = "#"
 	data["PostConsentEndpoint"] = "#"
+	data["PostRecoveryVerifyEndpoint"] = "#"
 	data["ReturnTo"] = ""
+	data["QueryString"] = ""
+	data["Protocol"] = "oidc"
+	data["LastMFAMethod"] = "totp"
 	data["HaveError"] = true
 	data["ErrorMessage"] = "This is a sample error message for dev preview."
 	data["BackendErrorMessage"] = "This is a sample backend error message for dev preview."

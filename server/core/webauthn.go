@@ -549,6 +549,9 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		// Success!
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
 
+		// Set last MFA method cookie
+		ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", true, true)
+
 		// Persist the updated user to Redis (cache)
 		authState := auth.(*AuthState)
 		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())

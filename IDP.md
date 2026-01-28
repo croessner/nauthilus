@@ -339,6 +339,8 @@ Nauthilus calls specific functions when a user changes their MFA:
 | `/login`                    | GET/POST | Central Login Page                 |
 | `/login/totp`               | GET/POST | TOTP Verification during login     |
 | `/login/webauthn`           | GET      | WebAuthn Verification during login |
+| `/login/mfa`                | GET      | MFA Method Selection page          |
+| `/login/recovery`           | GET/POST | Recovery Code login                |
 | `/2fa/v1/register/home`     | GET      | MFA Management Overview            |
 | `/2fa/v1/totp/register`     | GET/POST | TOTP Registration                  |
 | `/2fa/v1/webauthn/register` | GET      | WebAuthn Registration              |
@@ -437,5 +439,17 @@ lost your phone or security key).
 - **Generation**: In the MFA Portal, click on **Generate new recovery codes**. This will create a list of 10 one-time
   use codes.
 - **Storage**: **Copy and save these codes** in a safe place (e.g., a password manager or a printed document).
-- **Usage**: If prompted for a 2FA code during login, you can enter one of your recovery codes instead.
+- **Usage**: If prompted for a 2FA code during login, you can click on **Recovery Code** on the MFA selection page and
+  enter one of your codes.
 - **Replacement**: Generating new recovery codes will automatically invalidate all previously generated codes.
+
+### 12.6 MFA Selection & Preferred Method
+
+If you have configured more than one second factor (e.g., both TOTP and a Security Key), Nauthilus will display a *
+*selection page** after you enter your password.
+
+- **Choose your factor**: You can decide for each login which method you want to use.
+- **Recommendations**: Nauthilus remembers which method you used last and will mark it as "Recommended" for your next
+  login.
+- **Backup Access**: If your preferred method is unavailable, you can always choose one of your other active factors or
+  use a **Recovery Code**.

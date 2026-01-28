@@ -17,6 +17,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
@@ -39,10 +40,15 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName)
 	if err != nil || protocol == nil {
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
+
 		return nil, err
 	}
 
-	credentialField := protocol.GetCredentialObject()
+	credentialField := protocol.GetWebAuthnCredentialField()
 	if credentialField == "" {
 		return []mfa.PersistentCredential{}, nil
 	}
@@ -123,12 +129,17 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName)
 	if err != nil || protocol == nil {
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
+
 		return err
 	}
 
-	credentialField := protocol.GetCredentialObject()
+	credentialField := protocol.GetWebAuthnCredentialField()
 	if credentialField == "" {
-		return errors.ErrLDAPConfig.WithDetail("Missing LDAP credential_object mapping")
+		return errors.ErrLDAPConfig.WithDetail("Missing LDAP webauthn_credential_field mapping")
 	}
 
 	filter, err := protocol.GetUserFilter()
@@ -195,12 +206,17 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName)
 	if err != nil || protocol == nil {
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
+
 		return err
 	}
 
-	credentialField := protocol.GetCredentialObject()
+	credentialField := protocol.GetWebAuthnCredentialField()
 	if credentialField == "" {
-		return errors.ErrLDAPConfig.WithDetail("Missing LDAP credential_object mapping")
+		return errors.ErrLDAPConfig.WithDetail("Missing LDAP webauthn_credential_field mapping")
 	}
 
 	filter, err := protocol.GetUserFilter()
@@ -267,12 +283,17 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName)
 	if err != nil || protocol == nil {
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
+
 		return err
 	}
 
-	credentialField := protocol.GetCredentialObject()
+	credentialField := protocol.GetWebAuthnCredentialField()
 	if credentialField == "" {
-		return errors.ErrLDAPConfig.WithDetail("Missing LDAP credential_object mapping")
+		return errors.ErrLDAPConfig.WithDetail("Missing LDAP webauthn_credential_field mapping")
 	}
 
 	filter, err := protocol.GetUserFilter()

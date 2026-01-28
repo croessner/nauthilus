@@ -85,11 +85,23 @@ const successPageTmpl = `
         }
         .twofa-btn:hover { background-color: #4cae4c; }
         .section { margin-bottom: 2em; }
+        .info-box {
+            background-color: #e7f3fe;
+            border-left: 6px solid #2196F3;
+            margin-bottom: 15px;
+            padding: 4px 12px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Login Successful</h1>
+
+        <div class="info-box">
+            <p><strong>Configuring Logout in Nauthilus:</strong><br>
+            Front-channel Logout URI: <code>{{.FrontChannelLogoutURI}}</code><br>
+            Back-channel Logout URI: <code>{{.BackChannelLogoutURI}}</code></p>
+        </div>
         
         <div class="section">
             <h2>Signature Verification</h2>
@@ -406,23 +418,106 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		err = tmpl.Execute(w, struct {
-			JSON              string
-			LogoutURL         string
-			TwoFAHomeURL      string
-			SignatureVerified bool
-			JWKS              string
-			JwksURI           string
+			JSON                  string
+			LogoutURL             string
+			TwoFAHomeURL          string
+			SignatureVerified     bool
+			JWKS                  string
+			JwksURI               string
+			FrontChannelLogoutURI string
+			BackChannelLogoutURI  string
 		}{
-			JSON:              string(data),
-			LogoutURL:         logoutURL,
-			TwoFAHomeURL:      twoFAHomeURL,
-			SignatureVerified: signatureVerified,
-			JWKS:              jwksJSON,
-			JwksURI:           providerClaims.JwksURI,
+			JSON:                  string(data),
+			LogoutURL:             logoutURL,
+			TwoFAHomeURL:          twoFAHomeURL,
+			SignatureVerified:     signatureVerified,
+			JWKS:                  jwksJSON,
+			JwksURI:               providerClaims.JwksURI,
+			FrontChannelLogoutURI: "http://127.0.0.1:9094/frontchannel-logout",
+			BackChannelLogoutURI:  "http://127.0.0.1:9094/backchannel-logout",
 		})
 		if err != nil {
 			log.Printf("Failed to render template: %v", err)
 		}
+	})
+
+	http.HandleFunc("/frontchannel-logout", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Received request on '/frontchannel-logout'")
+		iss := r.URL.Query().Get("iss")
+		sid := r.URL.Query().Get("sid")
+		log.Printf("Front-channel logout params: iss=%s, sid=%s", iss, sid)
+
+		// Clear cookies (best effort)
+		deleteCallbackCookie(w, "state")
+		deleteCallbackCookie(w, "nonce")
+
+		// Also clear typical session cookies if on the same domain
+		cookies := []string{"token", "Nauthilus_session"}
+		for _, name := range cookies {
+			http.SetCookie(w, &http.Cookie{
+				Name:     name,
+				Value:    "",
+				Path:     "/",
+				Expires:  time.Unix(0, 0),
+				MaxAge:   -1,
+				HttpOnly: true,
+			})
+		}
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "Front-channel logout processed")
+	})
+
+	http.HandleFunc("/backchannel-logout", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Received request on '/backchannel-logout'")
+		if err := r.ParseForm(); err != nil {
+			log.Printf("Failed to parse form: %v", err)
+			http.Error(w, "Failed to parse form", http.StatusBadRequest)
+			return
+		}
+
+		logoutToken := r.FormValue("logout_token")
+		if logoutToken == "" {
+			log.Println("Missing logout_token")
+			http.Error(w, "Missing logout_token", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("Received logout_token: %s", logoutToken)
+
+		// Verify logout_token
+		token, err := verifier.Verify(ctx, logoutToken)
+		if err != nil {
+			log.Printf("Failed to verify logout_token: %v", err)
+			http.Error(w, "Invalid logout_token", http.StatusBadRequest)
+			return
+		}
+
+		var claims struct {
+			Events map[string]interface{} `json:"events"`
+			Sid    string                 `json:"sid"`
+			Nonce  string                 `json:"nonce"`
+		}
+		if err := token.Claims(&claims); err != nil {
+			log.Printf("Failed to extract logout_token claims: %v", err)
+			http.Error(w, "Invalid logout_token claims", http.StatusBadRequest)
+			return
+		}
+
+		if claims.Nonce != "" {
+			log.Println("logout_token contains nonce, which is forbidden")
+			http.Error(w, "logout_token contains nonce", http.StatusBadRequest)
+			return
+		}
+
+		if _, ok := claims.Events["http://schemas.openid.net/event/backchannel-logout"]; !ok {
+			log.Println("logout_token missing backchannel-logout event")
+			http.Error(w, "Missing backchannel-logout event", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("Back-channel logout successful for sid: %s", claims.Sid)
+		w.WriteHeader(http.StatusOK)
 	})
 
 	http.HandleFunc("/logout-callback", func(w http.ResponseWriter, r *http.Request) {

@@ -62,5 +62,13 @@
   "Please wait while the logout process is completed.": "Bitte warten Sie, während der Abmeldevorgang abgeschlossen wird.",
   "Logged Out": "Abgemeldet",
   "Successfully Logged Out": "Abmeldung erfolgreich",
-  "You have been successfully logged out of your session.": "Sie wurden erfolgreich von Ihrer Sitzung abgemeldet."
+  "You have been successfully logged out of your session.": "Sie wurden erfolgreich von Ihrer Sitzung abgemeldet.",
+  "Select Multi-Factor Authentication": "Zweiten Faktor auswählen",
+  "Choose your preferred second factor": "Bitte wählen Sie das gewünschte Verfahren für den zweiten Faktor aus.",
+  "Authenticator App": "Authenticator App",
+  "Security Key": "Sicherheitsschlüssel",
+  "Recovery Code": "Wiederherstellungscode",
+  "Recommended": "Empfohlen",
+  "Please enter one of your recovery codes": "Bitte geben Sie einen Ihrer Wiederherstellungscodes ein",
+  "Invalid recovery code": "Wiederherstellungscode ungültig"
 }

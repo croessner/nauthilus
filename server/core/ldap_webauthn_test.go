@@ -57,7 +57,7 @@ func (m *mockConfig) GetServer() *config.ServerSection {
 func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
-			CredentialObject: "nauthilusFido2Credential",
+			WebAuthnCredentialField: "nauthilusFido2Credential",
 		},
 		BaseDN: "dc=example,dc=com",
 		LDAPFilter: config.LDAPFilter{
@@ -115,7 +115,7 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
-			CredentialObject: "nauthilusFido2Credential",
+			WebAuthnCredentialField: "nauthilusFido2Credential",
 		},
 		BaseDN: "dc=example,dc=com",
 		LDAPFilter: config.LDAPFilter{
@@ -170,7 +170,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
-			CredentialObject: "nauthilusFido2Credential",
+			WebAuthnCredentialField: "nauthilusFido2Credential",
 		},
 		BaseDN: "dc=example,dc=com",
 		LDAPFilter: config.LDAPFilter{
@@ -225,7 +225,7 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
-			CredentialObject: "nauthilusFido2Credential",
+			WebAuthnCredentialField: "nauthilusFido2Credential",
 		},
 		BaseDN: "dc=example,dc=com",
 		LDAPFilter: config.LDAPFilter{
