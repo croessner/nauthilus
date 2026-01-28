@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
@@ -776,18 +777,33 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["GenerateNewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Generate new recovery codes")
 	data["RecoveryCodesLeft"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You have %d recovery codes left.")
 
-	haveTOTP, _ := util.GetSessionValue[bool](session, definitions.CookieHaveTOTP)
-	data["HaveTOTP"] = haveTOTP
+	username, _ := util.GetSessionValue[string](session, definitions.CookieAccount)
+	if username == "" {
+		// Try token from Authorization header if session is missing account
+		authHeader := ctx.GetHeader("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			idpInstance := idp.NewNauthilusIdP(h.deps)
 
-	username, err := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if err != nil {
-		h.handleTwoFAHomeError(ctx, data, err, "")
+			claims, err := idpInstance.ValidateToken(ctx.Request.Context(), tokenString)
+			if err == nil {
+				if sub, ok := claims["sub"].(string); ok {
+					username = sub
+					data["Username"] = username
+				}
+			}
+		}
+	}
+
+	if username == "" {
+		h.handleTwoFAHomeError(ctx, data, errors.ErrNotLoggedIn, "")
 
 		return
 	}
 
 	authDeps := h.deps.Auth()
 	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+
 	if state == nil {
 		h.handleTwoFAHomeError(ctx, data, nil, username)
 
@@ -797,51 +813,42 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	dummyAuth := state.(*core.AuthState)
 
 	dummyAuth.SetUsername(username)
-
-	protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
-	if err != nil {
-		protocol = definitions.ProtoIDP
-	}
-
-	dummyAuth.SetProtocol(config.NewProtocol(protocol))
+	dummyAuth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	dummyAuth.SetNoAuth(true)
 
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		h.handleTwoFAHomeError(ctx, data, err, username)
-
-		return
-	}
-
-	// Fetch user from backend to get latest attributes
-	if mgr := dummyAuth.GetBackendManager(definitions.Backend(sourceBackend), definitions.DefaultBackendName); mgr != nil {
-		if res, err := mgr.PassDB(dummyAuth); err == nil {
-			defer core.PutPassDBResultToPool(res)
-
-			dummyAuth.ReplaceAllAttributes(res.Attributes)
-			dummyAuth.SetTOTPSecretField(res.TOTPSecretField)
-			dummyAuth.SetTOTPRecoveryField(res.TOTPRecoveryField)
-
-			codes := dummyAuth.GetTOTPRecoveryCodes()
-			data["HaveRecoveryCodes"] = len(codes) > 0
-			data["NumRecoveryCodes"] = len(codes)
-
-			hasTOTPInBackend := false
-			if secret, ok := dummyAuth.GetTOTPSecretOk(); ok && secret != "" {
-				hasTOTPInBackend = true
-			}
-
-			if data["HaveTOTP"] != hasTOTPInBackend {
-				data["HaveTOTP"] = hasTOTPInBackend
-				session.Set(definitions.CookieHaveTOTP, hasTOTPInBackend)
-				_ = session.Save()
-			}
+	// Perform backend lookup using HandlePassword (orchestrates all backends if needed)
+	if authResult := dummyAuth.HandlePassword(ctx); authResult == definitions.AuthResultOK {
+		// Update display name if available
+		if disp, ok := dummyAuth.GetDisplayNameOk(); ok {
+			data["DisplayName"] = disp
 		}
-	}
 
-	if uniqueUserID, err := util.GetSessionValue[string](session, definitions.CookieUniqueUserID); err == nil {
-		user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
-		data["HaveWebAuthn"] = err == nil && user != nil && len(user.WebAuthnCredentials()) > 0
+		// TOTP status
+		hasTOTP := false
+		if secret, ok := dummyAuth.GetTOTPSecretOk(); ok && secret != "" {
+			hasTOTP = true
+		}
+
+		data["HaveTOTP"] = hasTOTP
+
+		// Sync session if it exists
+		if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
+			session.Set(definitions.CookieHaveTOTP, hasTOTP)
+			_ = session.Save()
+		}
+
+		// Recovery codes
+		codes := dummyAuth.GetTOTPRecoveryCodes()
+		data["HaveRecoveryCodes"] = len(codes) > 0
+		data["NumRecoveryCodes"] = len(codes)
+
+		// WebAuthn status
+		if uniqueID, ok := dummyAuth.GetUniqueUserIDOk(); ok && uniqueID != "" {
+			user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueID)
+			data["HaveWebAuthn"] = err == nil && user != nil && len(user.WebAuthnCredentials()) > 0
+		}
+	} else {
+		h.deps.Logger.Warn("User not found in backend during TwoFAHome", "username", username)
 	}
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
