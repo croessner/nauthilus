@@ -46,8 +46,21 @@ const successPageTmpl = `
 <head>
     <title>OIDC Test Client - Success</title>
     <style>
-        body { font-family: sans-serif; margin: 2em; line-height: 1.5; }
-        pre { background: #f4f4f4; padding: 1em; border-radius: 5px; overflow-x: auto; border: 1px solid #ddd; }
+        body { font-family: sans-serif; margin: 2em; line-height: 1.5; background-color: #f9f9f9; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 2em; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        pre { background: #f4f4f4; padding: 1em; border-radius: 5px; overflow-x: auto; border: 1px solid #ddd; font-size: 0.9em; }
+        h1 { color: #333; }
+        h2 { color: #555; margin-top: 1.5em; border-bottom: 2px solid #eee; padding-bottom: 0.3em; }
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.8em;
+        }
+        .status-success { background-color: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
+        .status-error { background-color: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
         .logout-btn { 
             display: inline-block; 
             padding: 10px 20px; 
@@ -71,14 +84,36 @@ const successPageTmpl = `
             font-weight: bold;
         }
         .twofa-btn:hover { background-color: #4cae4c; }
-        .container { max-width: 1000px; margin: 0 auto; }
+        .section { margin-bottom: 2em; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Login Successful</h1>
-        <p>The following tokens and claims were received from the provider:</p>
-        <pre>{{.JSON}}</pre>
+        
+        <div class="section">
+            <h2>Signature Verification</h2>
+            {{if .SignatureVerified}}
+                <span class="status-badge status-success">✓ Signature Verified</span>
+                <p>The ID Token signature has been successfully verified against the provider's public keys.</p>
+            {{else}}
+                <span class="status-badge status-error">✗ Verification Failed</span>
+                <p>Could not verify the ID Token signature.</p>
+            {{end}}
+        </div>
+
+        <div class="section">
+            <h2>JWKS (Public Keys)</h2>
+            <p>Discovered from: <code>{{.JwksURI}}</code></p>
+            <pre>{{.JWKS}}</pre>
+        </div>
+
+        <div class="section">
+            <h2>Tokens & Claims</h2>
+            <p>The following tokens and claims were received from the provider:</p>
+            <pre>{{.JSON}}</pre>
+        </div>
+
         <div style="margin-top: 20px;">
             {{if .TwoFAHomeURL}}
                 <a href="{{.TwoFAHomeURL}}" class="twofa-btn">Manage 2FA (TOTP/WebAuthn)</a>
@@ -141,12 +176,22 @@ func main() {
 	log.Printf("OIDC Provider endpoints: %+v", provider.Endpoint())
 
 	var providerClaims struct {
-		EndSessionEndpoint string `json:"end_session_endpoint"`
+		EndSessionEndpoint    string `json:"end_session_endpoint"`
+		IntrospectionEndpoint string `json:"introspection_endpoint"`
+		JwksURI               string `json:"jwks_uri"`
 	}
 	if err := provider.Claims(&providerClaims); err != nil {
 		log.Printf("Warning: Failed to extract provider claims: %v", err)
-	} else if providerClaims.EndSessionEndpoint != "" {
-		log.Printf("Logout endpoint discovered: %s", providerClaims.EndSessionEndpoint)
+	} else {
+		if providerClaims.EndSessionEndpoint != "" {
+			log.Printf("Logout endpoint discovered: %s", providerClaims.EndSessionEndpoint)
+		}
+		if providerClaims.IntrospectionEndpoint != "" {
+			log.Printf("Introspection endpoint discovered: %s", providerClaims.IntrospectionEndpoint)
+		}
+		if providerClaims.JwksURI != "" {
+			log.Printf("JWKS URI discovered: %s", providerClaims.JwksURI)
+		}
 	}
 
 	tmpl, err := template.New("success").Parse(successPageTmpl)
@@ -238,6 +283,7 @@ func main() {
 		log.Printf("Raw ID Token received (length: %d)", len(rawIDToken))
 
 		log.Println("Verifying ID Token...")
+		signatureVerified := false
 		idToken, err := verifier.Verify(ctx, rawIDToken)
 		if err != nil {
 			log.Printf("ID Token verification failed: %v", err)
@@ -245,6 +291,7 @@ func main() {
 
 			return
 		}
+		signatureVerified = true
 		log.Println("ID Token verification successful")
 
 		nonceCookie, err := r.Cookie("nonce")
@@ -268,9 +315,10 @@ func main() {
 
 		log.Println("Extracting claims from ID Token...")
 		resp := struct {
-			OAuth2Token   *oauth2.Token
-			IDTokenClaims *json.RawMessage // ID Token payload is just JSON.
-		}{oauth2Token, new(json.RawMessage)}
+			OAuth2Token         *oauth2.Token
+			IDTokenClaims       *json.RawMessage // ID Token payload is just JSON.
+			IntrospectionResult *json.RawMessage `json:",omitempty"`
+		}{oauth2Token, new(json.RawMessage), nil}
 
 		if err := idToken.Claims(&resp.IDTokenClaims); err != nil {
 			log.Printf("Failed to extract claims: %v", err)
@@ -279,6 +327,33 @@ func main() {
 			return
 		}
 		log.Println("Claims extracted successfully")
+
+		if providerClaims.IntrospectionEndpoint != "" {
+			log.Printf("Performing introspection at: %s", providerClaims.IntrospectionEndpoint)
+			form := url.Values{}
+			form.Set("token", oauth2Token.AccessToken)
+			form.Set("client_id", clientID)
+			form.Set("client_secret", clientSecret)
+
+			respIntr, err := http.PostForm(providerClaims.IntrospectionEndpoint, form)
+			if err != nil {
+				log.Printf("Introspection request failed: %v", err)
+			} else {
+				defer respIntr.Body.Close()
+				if respIntr.StatusCode == http.StatusOK {
+					var intr json.RawMessage
+					if err := json.NewDecoder(respIntr.Body).Decode(&intr); err != nil {
+						log.Printf("Failed to decode introspection response: %v", err)
+					} else {
+						resp.IntrospectionResult = &intr
+						log.Println("Introspection successful")
+					}
+				} else {
+					body, _ := io.ReadAll(respIntr.Body)
+					log.Printf("Introspection failed with status %d: %s", respIntr.StatusCode, string(body))
+				}
+			}
+		}
 
 		data, err := json.MarshalIndent(resp, "", "    ")
 		if err != nil {
@@ -289,6 +364,27 @@ func main() {
 		}
 
 		log.Printf("Sending response back to browser (%d bytes)", len(data))
+
+		jwksJSON := ""
+		if providerClaims.JwksURI != "" {
+			respJwks, err := http.Get(providerClaims.JwksURI)
+			if err != nil {
+				log.Printf("Failed to fetch JWKS: %v", err)
+			} else {
+				defer respJwks.Body.Close()
+				body, _ := io.ReadAll(respJwks.Body)
+				var prettyJWKS json.RawMessage
+				if err := json.Unmarshal(body, &prettyJWKS); err == nil {
+					if indent, err := json.MarshalIndent(prettyJWKS, "", "    "); err == nil {
+						jwksJSON = string(indent)
+					} else {
+						jwksJSON = string(body)
+					}
+				} else {
+					jwksJSON = string(body)
+				}
+			}
+		}
 
 		twoFAHomeURL := ""
 		if u, err := url.Parse(openIDProvider); err == nil {
@@ -310,13 +406,19 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		err = tmpl.Execute(w, struct {
-			JSON         string
-			LogoutURL    string
-			TwoFAHomeURL string
+			JSON              string
+			LogoutURL         string
+			TwoFAHomeURL      string
+			SignatureVerified bool
+			JWKS              string
+			JwksURI           string
 		}{
-			JSON:         string(data),
-			LogoutURL:    logoutURL,
-			TwoFAHomeURL: twoFAHomeURL,
+			JSON:              string(data),
+			LogoutURL:         logoutURL,
+			TwoFAHomeURL:      twoFAHomeURL,
+			SignatureVerified: signatureVerified,
+			JWKS:              jwksJSON,
+			JwksURI:           providerClaims.JwksURI,
 		})
 		if err != nil {
 			log.Printf("Failed to render template: %v", err)

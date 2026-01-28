@@ -45,18 +45,20 @@ import (
 )
 
 type mockOIDCCfg struct {
-	config.File
-	issuer     string
-	signingKey string
-	clients    []config.OIDCClient
+	issuer       string
+	signingKey   string
+	signingKeyID string
+	clients      []config.OIDCClient
 }
 
 func (m *mockOIDCCfg) GetIdP() *config.IdPSection {
 	return &config.IdPSection{
 		OIDC: config.OIDCConfig{
-			Issuer:     m.issuer,
-			SigningKey: m.signingKey,
-			Clients:    m.clients,
+			Issuer: m.issuer,
+			SigningKeys: []config.OIDCKey{
+				{ID: m.signingKeyID, Key: m.signingKey, Active: true},
+			},
+			Clients: m.clients,
 		},
 	}
 }
@@ -105,6 +107,127 @@ func (m *mockOIDCCfg) GetLocalIP() string    { return "X-Local-IP" }
 func (m *mockOIDCCfg) GetLocalPort() string  { return "X-Local-Port" }
 func (m *mockOIDCCfg) GetUsername() string   { return "X-Nauthilus-Username" }
 func (m *mockOIDCCfg) GetPassword() string   { return "X-Nauthilus-Password" }
+func (m *mockOIDCCfg) HandleFile() error     { return nil }
+func (m *mockOIDCCfg) GetConfigFileAsJSON() ([]byte, error) {
+	return json.Marshal(m)
+}
+func (m *mockOIDCCfg) HaveLuaFeatures() bool { return false }
+func (m *mockOIDCCfg) HaveLuaFilters() bool  { return false }
+func (m *mockOIDCCfg) HaveLuaHooks() bool    { return false }
+func (m *mockOIDCCfg) HaveLuaActions() bool  { return false }
+func (m *mockOIDCCfg) HaveLua() bool         { return false }
+func (m *mockOIDCCfg) HaveLuaBackend() bool  { return false }
+func (m *mockOIDCCfg) HaveLDAPBackend() bool { return false }
+func (m *mockOIDCCfg) GetLDAP() *config.LDAPSection {
+	return &config.LDAPSection{}
+}
+func (m *mockOIDCCfg) GetLua() *config.LuaSection {
+	return &config.LuaSection{}
+}
+func (m *mockOIDCCfg) GetBruteForce() *config.BruteForceSection {
+	return &config.BruteForceSection{}
+}
+func (m *mockOIDCCfg) GetRBLs() *config.RBLSection {
+	return &config.RBLSection{}
+}
+func (m *mockOIDCCfg) GetRelayDomains() *config.RelayDomainsSection {
+	return &config.RelayDomainsSection{}
+}
+func (m *mockOIDCCfg) GetClearTextList() []string {
+	return []string{}
+}
+func (m *mockOIDCCfg) GetBackendServerMonitoring() *config.BackendServerMonitoring {
+	return &config.BackendServerMonitoring{}
+}
+func (m *mockOIDCCfg) GetBackendServers() []*config.BackendServer {
+	return []*config.BackendServer{}
+}
+func (m *mockOIDCCfg) GetBackendServer(protocol string) *config.BackendServer {
+	return &config.BackendServer{}
+}
+func (m *mockOIDCCfg) HaveServer() bool {
+	return true
+}
+func (m *mockOIDCCfg) HaveLuaInit() bool            { return false }
+func (m *mockOIDCCfg) GetLuaInitScriptPath() string { return "" }
+func (m *mockOIDCCfg) GetLuaInitScriptPaths() []string {
+	return []string{}
+}
+func (m *mockOIDCCfg) GetLuaPackagePath() string { return "" }
+func (m *mockOIDCCfg) GetLuaScriptPath() string  { return "" }
+func (m *mockOIDCCfg) RetrieveGetterMap() map[definitions.Backend]config.GetterHandler {
+	return nil
+}
+func (m *mockOIDCCfg) GetConfig(backend definitions.Backend) any { return nil }
+func (m *mockOIDCCfg) GetProtocols(backend definitions.Backend) any {
+	return nil
+}
+func (m *mockOIDCCfg) GetSection(backend definitions.Backend) any {
+	return nil
+}
+func (m *mockOIDCCfg) GetBruteForceRules() []config.BruteForceRule {
+	return nil
+}
+func (m *mockOIDCCfg) GetAllProtocols() []string { return nil }
+func (m *mockOIDCCfg) HasFeature(feature string) bool {
+	return false
+}
+func (m *mockOIDCCfg) ShouldRunFeature(feature string, noAuth bool) bool {
+	return false
+}
+func (m *mockOIDCCfg) GetPasswordEncoded() string { return "" }
+func (m *mockOIDCCfg) GetProtocol() string        { return "" }
+func (m *mockOIDCCfg) GetLoginAttempt() string    { return "" }
+func (m *mockOIDCCfg) GetAuthMethod() string      { return "" }
+func (m *mockOIDCCfg) GetSSL() string             { return "" }
+func (m *mockOIDCCfg) GetSSLSessionID() string    { return "" }
+func (m *mockOIDCCfg) GetSSLVerify() string       { return "" }
+func (m *mockOIDCCfg) GetSSLSubject() string      { return "" }
+func (m *mockOIDCCfg) GetSSLClientCN() string     { return "" }
+func (m *mockOIDCCfg) GetSSLIssuer() string       { return "" }
+func (m *mockOIDCCfg) GetSSLClientNotBefore() string {
+	return ""
+}
+func (m *mockOIDCCfg) GetSSLClientNotAfter() string { return "" }
+func (m *mockOIDCCfg) GetSSLSubjectDN() string      { return "" }
+func (m *mockOIDCCfg) GetSSLIssuerDN() string       { return "" }
+func (m *mockOIDCCfg) GetSSLClientSubjectDN() string {
+	return ""
+}
+func (m *mockOIDCCfg) GetSSLClientIssuerDN() string     { return "" }
+func (m *mockOIDCCfg) GetSSLCipher() string             { return "" }
+func (m *mockOIDCCfg) GetSSLProtocol() string           { return "" }
+func (m *mockOIDCCfg) GetSSLSerial() string             { return "" }
+func (m *mockOIDCCfg) GetSSLFingerprint() string        { return "" }
+func (m *mockOIDCCfg) GetLuaNumberOfWorkers() int       { return 0 }
+func (m *mockOIDCCfg) GetLuaActionNumberOfWorkers() int { return 0 }
+func (m *mockOIDCCfg) GetLuaFeatureVMPoolSize() int     { return 0 }
+func (m *mockOIDCCfg) GetLuaFilterVMPoolSize() int      { return 0 }
+func (m *mockOIDCCfg) GetLuaHookVMPoolSize() int        { return 0 }
+func (m *mockOIDCCfg) GetLuaSearchProtocol(protocol string, backendName string) (*config.LuaSearchProtocol, error) {
+	return nil, nil
+}
+func (m *mockOIDCCfg) GetLuaOptionalBackends() map[string]*config.LuaConf { return nil }
+func (m *mockOIDCCfg) LDAPHavePoolOnly(backendName string) bool           { return false }
+func (m *mockOIDCCfg) GetLDAPSearchProtocol(protocol string, poolName string) (*config.LDAPSearchProtocol, error) {
+	return nil, nil
+}
+func (m *mockOIDCCfg) GetLDAPOptionalPools() map[string]*config.LDAPConf { return nil }
+func (m *mockOIDCCfg) GetLDAPConfigLookupPoolSize() int                  { return 0 }
+func (m *mockOIDCCfg) GetLDAPConfigAuthPoolSize() int                    { return 0 }
+func (m *mockOIDCCfg) GetLDAPConfigConnectAbortTimeout() time.Duration   { return 0 }
+func (m *mockOIDCCfg) GetLDAPConfigBindDN() string                       { return "" }
+func (m *mockOIDCCfg) GetLDAPConfigBindPW() string                       { return "" }
+func (m *mockOIDCCfg) GetLDAPConfigTLSCAFile() string                    { return "" }
+func (m *mockOIDCCfg) GetLDAPConfigTLSClientCert() string                { return "" }
+func (m *mockOIDCCfg) GetLDAPConfigTLSClientKey() string                 { return "" }
+func (m *mockOIDCCfg) GetLDAPConfigServerURIs() []string                 { return nil }
+func (m *mockOIDCCfg) GetLDAPConfigNumberOfWorkers() int                 { return 0 }
+func (m *mockOIDCCfg) GetLDAPConfigStartTLS() bool                       { return false }
+func (m *mockOIDCCfg) GetLDAPConfigTLSSkipVerify() bool                  { return false }
+func (m *mockOIDCCfg) GetLDAPConfigSASLExternal() bool                   { return false }
+func (m *mockOIDCCfg) GetLDAPConfigLookupIdlePoolSize() int              { return 0 }
+func (m *mockOIDCCfg) GetLDAPConfigAuthIdlePoolSize() int                { return 0 }
 
 func TestOIDCHandler_Discovery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -133,6 +256,8 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, issuer, resp["issuer"])
 	assert.Equal(t, issuer+"/oidc/authorize", resp["authorization_endpoint"])
+	assert.Equal(t, issuer+"/oidc/token", resp["token_endpoint"])
+	assert.Equal(t, issuer+"/oidc/introspect", resp["introspection_endpoint"])
 	assert.Equal(t, issuer+"/oidc/logout", resp["end_session_endpoint"])
 	scopes := resp["scopes_supported"].([]any)
 	assert.Contains(t, scopes, "offline_access")
@@ -142,14 +267,15 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 
 func TestOIDCHandler_JWKS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: generateTestKey()}
+	cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: generateTestKey(), signingKeyID: "default"}
 	db, _ := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
 	d := &deps.Deps{Cfg: cfg, Redis: rClient}
-	h := NewOIDCHandler(nil, d, nil)
+	h := NewOIDCHandler(nil, d, idp.NewNauthilusIdP(d))
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/jwks", nil)
 
 	h.JWKS(ctx)
 
@@ -159,6 +285,36 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.NotNil(t, resp["keys"])
+	keys := resp["keys"].([]any)
+	assert.Len(t, keys, 1)
+	key := keys[0].(map[string]any)
+	assert.Equal(t, "default", key["kid"])
+}
+
+func TestOIDCHandler_JWKS_CustomKid(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: generateTestKey(), signingKeyID: "custom-kid"}
+	db, _ := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+	d := &deps.Deps{Cfg: cfg, Redis: rClient}
+	h := NewOIDCHandler(nil, d, idp.NewNauthilusIdP(d))
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/jwks", nil)
+
+	h.JWKS(ctx)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp["keys"])
+	keys := resp["keys"].([]any)
+	assert.Len(t, keys, 1)
+	key := keys[0].(map[string]any)
+	assert.Equal(t, "custom-kid", key["kid"])
 }
 
 func TestOIDCHandler_Logout(t *testing.T) {
@@ -323,6 +479,96 @@ func TestOIDCHandler_Consent(t *testing.T) {
 	t.Run("ConsentPOST with state in query", func(t *testing.T) {
 		t.Skip("Skipping integration test due to complex IdP dependencies. addClientToSession is covered by unit tests.")
 	})
+}
+
+func TestOIDCHandler_Introspect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	issuer := "https://auth.example.com"
+	signingKey := generateTestKey()
+	client := config.OIDCClient{
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+	}
+
+	cfg := &mockOIDCCfg{
+		issuer:     issuer,
+		signingKey: signingKey,
+		clients:    []config.OIDCClient{client},
+	}
+
+	db, mock := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	idpInstance := idp.NewNauthilusIdP(d)
+	h := NewOIDCHandler(nil, d, idpInstance)
+
+	// Issue a token first
+	accessToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
+		ClientID: "test-client",
+		UserID:   "user123",
+		AuthTime: time.Now(),
+		Scopes:   []string{"openid", "profile"},
+	})
+
+	t.Run("Valid token introspection", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
+		ctx.Request.PostForm = url.Values{
+			"token": {accessToken},
+		}
+		ctx.Request.SetBasicAuth("test-client", "test-secret")
+
+		h.Introspect(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.True(t, resp["active"].(bool))
+		assert.Equal(t, "user123", resp["sub"])
+		assert.Equal(t, "test-client", resp["aud"])
+	})
+
+	t.Run("Invalid token introspection", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
+		ctx.Request.PostForm = url.Values{
+			"token": {"invalid-token"},
+		}
+		ctx.Request.SetBasicAuth("test-client", "test-secret")
+
+		h.Introspect(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.False(t, resp["active"].(bool))
+	})
+
+	t.Run("Unauthorized client", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
+		ctx.Request.PostForm = url.Values{
+			"token": {accessToken},
+		}
+		ctx.Request.SetBasicAuth("other-client", "wrong-secret")
+
+		h.Introspect(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestOIDCHandler_Token(t *testing.T) {

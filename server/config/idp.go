@@ -72,8 +72,10 @@ func (w *WebAuthn) String() string {
 type OIDCConfig struct {
 	Enabled                            bool                `mapstructure:"enabled"`
 	Issuer                             string              `mapstructure:"issuer" validate:"required_if=Enabled true"`
-	SigningKey                         string              `mapstructure:"signing_key" validate:"required_if=Enabled true SigningKeyFile ''"`
-	SigningKeyFile                     string              `mapstructure:"signing_key_file" validate:"required_if=Enabled true SigningKey ''"`
+	SigningKeys                        []OIDCKey           `mapstructure:"signing_keys"`
+	AutoKeyRotation                    bool                `mapstructure:"auto_key_rotation"`
+	KeyRotationInterval                time.Duration       `mapstructure:"key_rotation_interval"`
+	KeyMaxAge                          time.Duration       `mapstructure:"key_max_age"`
 	Clients                            []OIDCClient        `mapstructure:"clients"`
 	CustomScopes                       []Oauth2CustomScope `mapstructure:"custom_scopes" validate:"omitempty,dive"`
 	ScopesSupported                    []string            `mapstructure:"scopes_supported"`
@@ -90,18 +92,32 @@ type OIDCConfig struct {
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
 }
 
+// OIDCKey represents a single OIDC signing key.
+type OIDCKey struct {
+	ID      string `mapstructure:"id"`
+	Key     string `mapstructure:"key"`
+	KeyFile string `mapstructure:"key_file"`
+	Active  bool   `mapstructure:"active"`
+}
+
 func (o *OIDCConfig) String() string {
 	if o == nil {
 		return "OIDCConfig: <nil>"
 	}
 
-	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s}",
-		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime)
+	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s SigningKeys:%v AutoKeyRotation:%t KeyRotationInterval:%s KeyMaxAge:%s}",
+		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime, o.SigningKeys, o.AutoKeyRotation, o.KeyRotationInterval, o.KeyMaxAge)
 }
 
 // GetSigningKey returns the signing key content.
 func (o *OIDCConfig) GetSigningKey() (string, error) {
-	return getContent(o.SigningKey, o.SigningKeyFile)
+	for _, k := range o.SigningKeys {
+		if k.Active {
+			return GetContent(k.Key, k.KeyFile)
+		}
+	}
+
+	return "", fmt.Errorf("no signing key configured")
 }
 
 // GetScopesSupported returns the supported scopes.
@@ -216,6 +232,40 @@ func (o *OIDCConfig) GetDefaultRefreshTokenLifetime() time.Duration {
 	}
 
 	return 30 * 24 * time.Hour
+}
+
+// GetAutoKeyRotation returns true if auto key rotation is enabled.
+func (o *OIDCConfig) GetAutoKeyRotation() bool {
+	return o.AutoKeyRotation
+}
+
+// GetKeyRotationInterval returns the interval for auto key rotation.
+func (o *OIDCConfig) GetKeyRotationInterval() time.Duration {
+	if o.KeyRotationInterval > 0 {
+		return o.KeyRotationInterval
+	}
+
+	return 24 * time.Hour
+}
+
+// GetKeyMaxAge returns the maximum age for OIDC keys.
+func (o *OIDCConfig) GetKeyMaxAge() time.Duration {
+	if o.KeyMaxAge > 0 {
+		return o.KeyMaxAge
+	}
+
+	return 7 * 24 * time.Hour
+}
+
+// GetSigningKeyID returns the signing key ID.
+func (o *OIDCConfig) GetSigningKeyID() string {
+	for _, k := range o.SigningKeys {
+		if k.Active {
+			return k.ID
+		}
+	}
+
+	return "default"
 }
 
 // warnUnsupported returns a list of warnings for unsupported OIDC configuration parameters.
@@ -334,12 +384,12 @@ func (s *SAML2Config) String() string {
 
 // GetCert returns the certificate content.
 func (s *SAML2Config) GetCert() (string, error) {
-	return getContent(s.Cert, s.CertFile)
+	return GetContent(s.Cert, s.CertFile)
 }
 
 // GetKey returns the key content.
 func (s *SAML2Config) GetKey() (string, error) {
-	return getContent(s.Key, s.KeyFile)
+	return GetContent(s.Key, s.KeyFile)
 }
 
 // GetSignatureMethod returns the signature method.
@@ -384,7 +434,7 @@ func (s *SAML2Config) warnUnsupported() []string {
 	return warnings
 }
 
-func getContent(raw, path string) (string, error) {
+func GetContent(raw, path string) (string, error) {
 	if raw != "" {
 		return raw, nil
 	}

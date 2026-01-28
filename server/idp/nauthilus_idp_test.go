@@ -61,8 +61,10 @@ func (m *mockIdpConfig) GetServer() *config.ServerSection {
 func TestNauthilusIdP_Tokens(t *testing.T) {
 	signingKey := generateTestKey()
 	oidcCfg := config.OIDCConfig{
-		Issuer:     "https://issuer.example.com",
-		SigningKey: signingKey,
+		Issuer: "https://issuer.example.com",
+		SigningKeys: []config.OIDCKey{
+			{ID: "default", Key: signingKey, Active: true},
+		},
 		Clients: []config.OIDCClient{
 			{
 				ClientID:             "client1",

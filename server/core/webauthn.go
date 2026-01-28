@@ -548,7 +548,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
 		if err != nil {
-			protocol = definitions.ProtoOIDC
+			protocol = definitions.ProtoIDP
 		}
 
 		session.Set(definitions.CookieProtocol, protocol)

@@ -232,6 +232,18 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 
 // Login renders the modern login page.
 func (h *FrontendHandler) Login(ctx *gin.Context) {
+	session := sessions.Default(ctx)
+	if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
+		returnTo := ctx.Query("return_to")
+		if returnTo == "" {
+			returnTo = "/2fa/v1/register/home"
+		}
+
+		ctx.Redirect(http.StatusFound, returnTo)
+
+		return
+	}
+
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -373,8 +385,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	// Try to get user to see if MFA is present
 	user, err := idpInstance.Authenticate(ctx, username, password, oidcCID, samlEntityID)
 
-	protocol := definitions.ProtoOIDC
-	if samlEntityID != "" {
+	protocol := definitions.ProtoIDP
+	if oidcCID != "" {
+		protocol = definitions.ProtoOIDC
+	} else if samlEntityID != "" {
 		protocol = definitions.ProtoSAML
 	}
 
@@ -481,7 +495,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, "/")
+	ctx.Redirect(http.StatusFound, "/2fa/v1/register/home")
 }
 
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
@@ -693,8 +707,10 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
-	protocol := definitions.ProtoOIDC
-	if samlEntityID != "" {
+	protocol := definitions.ProtoIDP
+	if oidcCID != "" {
+		protocol = definitions.ProtoOIDC
+	} else if samlEntityID != "" {
 		protocol = definitions.ProtoSAML
 	}
 
@@ -725,7 +741,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, "/")
+	ctx.Redirect(http.StatusFound, "/2fa/v1/register/home")
 }
 
 // TwoFAHome renders the 2FA management overview.
@@ -784,7 +800,7 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 
 	protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
 	if err != nil {
-		protocol = definitions.ProtoOIDC
+		protocol = definitions.ProtoIDP
 	}
 
 	dummyAuth.SetProtocol(config.NewProtocol(protocol))
@@ -958,7 +974,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	session.Save()
 
 	// Purge user from positive redis caches
-	h.purgeUserCache(dummyAuth, username)
+	h.purgeUserCache(ctx, dummyAuth, username)
 
 	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
 	ctx.Status(http.StatusOK)
@@ -1043,7 +1059,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "success").Inc()
 
 	// Purge user from positive redis caches
-	h.purgeUserCache(dummyAuth, username)
+	h.purgeUserCache(ctx, dummyAuth, username)
 
 	data := h.basePageData(ctx)
 	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New recovery codes")
@@ -1055,11 +1071,11 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_recovery_codes_modal.html", data)
 }
 
-func (h *FrontendHandler) purgeUserCache(auth *core.AuthState, username string) {
-	h.purgeCache(auth, username)
+func (h *FrontendHandler) purgeUserCache(ctx *gin.Context, auth *core.AuthState, username string) {
+	h.purgeCache(ctx, auth, username)
 }
 
-func (h *FrontendHandler) purgeCache(auth *core.AuthState, username string) {
+func (h *FrontendHandler) purgeCache(ctx *gin.Context, auth *core.AuthState, username string) {
 	authDeps := h.deps.Auth()
 	useCache := false
 
@@ -1075,7 +1091,13 @@ func (h *FrontendHandler) purgeCache(auth *core.AuthState, username string) {
 		return
 	}
 
-	accountName, err := backend.LookupUserAccountFromRedis(auth.Ctx(), authDeps.Cfg, authDeps.Redis, username, definitions.ProtoOIDC, "")
+	session := sessions.Default(ctx)
+	protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
+	if err != nil {
+		protocol = definitions.ProtoIDP
+	}
+
+	accountName, err := backend.LookupUserAccountFromRedis(auth.Ctx(), authDeps.Cfg, authDeps.Redis, username, protocol, "")
 	if err != nil {
 		return
 	}
@@ -1159,7 +1181,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	session.Set(definitions.CookieHaveTOTP, false)
 	session.Save()
 
-	h.purgeUserCache(dummyAuth, username)
+	h.purgeUserCache(ctx, dummyAuth, username)
 
 	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
 	ctx.Status(http.StatusOK)
@@ -1196,7 +1218,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	}
 
 	dummyAuth := state.(*core.AuthState)
-	h.purgeUserCache(dummyAuth, username)
+	h.purgeUserCache(ctx, dummyAuth, username)
 
 	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
 	ctx.Status(http.StatusOK)

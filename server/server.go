@@ -440,6 +440,10 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 				deps.Redis = store.redisClient
 				nauthilusIdP := idp.NewNauthilusIdP(deps)
 
+				if cfg.GetIdP().OIDC.Enabled {
+					nauthilusIdP.GetKeyManager().StartRotationJob(store.server.ctx)
+				}
+
 				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
 					frontendHandler := handleridp.NewFrontendHandler(sessStore, deps)
 					frontendHandler.Register(e)

@@ -38,7 +38,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -78,6 +77,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.GET("/oidc/authorize/:languageTag", sessionMW, i18nMW, h.Authorize)
 	router.POST("/oidc/token", h.Token)
 	router.GET("/oidc/userinfo", h.UserInfo)
+	router.POST("/oidc/introspect", h.Introspect)
 	router.GET("/oidc/jwks", h.JWKS)
 	router.GET("/oidc/logout", sessionMW, h.Logout)
 	router.GET("/logout", sessionMW, h.Logout)
@@ -99,22 +99,24 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"issuer":                                issuer,
-		"authorization_endpoint":                issuer + "/oidc/authorize",
-		"token_endpoint":                        issuer + "/oidc/token",
-		"userinfo_endpoint":                     issuer + "/oidc/userinfo",
-		"jwks_uri":                              issuer + "/oidc/jwks",
-		"end_session_endpoint":                  issuer + "/oidc/logout",
-		"frontchannel_logout_supported":         oidcCfg.GetFrontChannelLogoutSupported(),
-		"frontchannel_logout_session_supported": oidcCfg.GetFrontChannelLogoutSessionSupported(),
-		"backchannel_logout_supported":          oidcCfg.GetBackChannelLogoutSupported(),
-		"backchannel_logout_session_supported":  oidcCfg.GetBackChannelLogoutSessionSupported(),
-		"response_types_supported":              oidcCfg.GetResponseTypesSupported(),
-		"subject_types_supported":               oidcCfg.GetSubjectTypesSupported(),
-		"id_token_signing_alg_values_supported": oidcCfg.GetIDTokenSigningAlgValuesSupported(),
-		"scopes_supported":                      scopesSupported,
-		"token_endpoint_auth_methods_supported": oidcCfg.GetTokenEndpointAuthMethodsSupported(),
-		"claims_supported":                      oidcCfg.GetClaimsSupported(),
+		"issuer":                                        issuer,
+		"authorization_endpoint":                        issuer + "/oidc/authorize",
+		"token_endpoint":                                issuer + "/oidc/token",
+		"introspection_endpoint":                        issuer + "/oidc/introspect",
+		"userinfo_endpoint":                             issuer + "/oidc/userinfo",
+		"jwks_uri":                                      issuer + "/oidc/jwks",
+		"end_session_endpoint":                          issuer + "/oidc/logout",
+		"frontchannel_logout_supported":                 oidcCfg.GetFrontChannelLogoutSupported(),
+		"frontchannel_logout_session_supported":         oidcCfg.GetFrontChannelLogoutSessionSupported(),
+		"backchannel_logout_supported":                  oidcCfg.GetBackChannelLogoutSupported(),
+		"backchannel_logout_session_supported":          oidcCfg.GetBackChannelLogoutSessionSupported(),
+		"response_types_supported":                      oidcCfg.GetResponseTypesSupported(),
+		"subject_types_supported":                       oidcCfg.GetSubjectTypesSupported(),
+		"id_token_signing_alg_values_supported":         oidcCfg.GetIDTokenSigningAlgValuesSupported(),
+		"scopes_supported":                              scopesSupported,
+		"token_endpoint_auth_methods_supported":         oidcCfg.GetTokenEndpointAuthMethodsSupported(),
+		"introspection_endpoint_auth_methods_supported": oidcCfg.GetTokenEndpointAuthMethodsSupported(),
+		"claims_supported":                              oidcCfg.GetClaimsSupported(),
 	})
 }
 
@@ -317,15 +319,10 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, target)
 }
 
-// Token handles the OIDC token request.
-func (h *OIDCHandler) Token(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
-	defer sp.End()
-
-	grantType := ctx.PostForm("grant_type")
-
-	// Client authentication extraction (RFC 6749 Section 2.3.1)
+// authenticateClient extracts and authenticates the OIDC client.
+func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, bool) {
 	var clientID, clientSecret string
+
 	var authSource string
 
 	// 1. Try Basic Auth
@@ -363,7 +360,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
-			return
+			return nil, false
 		}
 
 		clientID = bClientID
@@ -371,25 +368,11 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		authSource = "client_secret_post"
 	}
 
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "OIDC Token request",
-		"grant_type", grantType,
-		"client_id", clientID,
-		"auth_source", authSource,
-	)
-
 	if clientID == "" {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
-		return
+		return nil, false
 	}
-
-	sp.SetAttributes(attribute.String("client_id", clientID))
 
 	client, ok := h.idp.FindClient(clientID)
 	if !ok {
@@ -405,7 +388,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
-		return
+		return nil, false
 	}
 
 	// Enforce TokenEndpointAuthMethod if configured
@@ -444,7 +427,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
-			return
+			return nil, false
 		}
 	}
 
@@ -475,8 +458,38 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
 
+		return nil, false
+	}
+
+	return client, true
+}
+
+// Token handles the OIDC token request.
+func (h *OIDCHandler) Token(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
+	defer sp.End()
+
+	grantType := ctx.PostForm("grant_type")
+
+	client, ok := h.authenticateClient(ctx)
+	if !ok {
 		return
 	}
+
+	clientID := client.ClientID
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "OIDC Token request",
+		"grant_type", grantType,
+		"client_id", clientID,
+	)
+
+	sp.SetAttributes(attribute.String("client_id", clientID))
 
 	var idToken, accessToken, refreshToken string
 
@@ -564,38 +577,87 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, claims)
 }
 
+// Introspect handles the OIDC token introspection request.
+func (h *OIDCHandler) Introspect(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.introspect")
+	defer sp.End()
+
+	client, ok := h.authenticateClient(ctx)
+	if !ok {
+		return
+	}
+
+	token := ctx.PostForm("token")
+	if token == "" {
+		ctx.JSON(http.StatusOK, gin.H{"active": false})
+
+		return
+	}
+
+	claims, err := h.idp.ValidateToken(ctx.Request.Context(), token)
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC token introspection failed",
+			"error", err,
+		)
+
+		ctx.JSON(http.StatusOK, gin.H{"active": false})
+
+		return
+	}
+
+	// Verify that the token was issued to the client making the request,
+	// or that the client is otherwise authorized to introspect this token.
+	if aud, ok := claims["aud"].(string); ok && aud != client.ClientID {
+		ctx.JSON(http.StatusOK, gin.H{"active": false})
+
+		return
+	}
+
+	response := gin.H{
+		"active": true,
+	}
+
+	for k, v := range claims {
+		response[k] = v
+	}
+
+	ctx.JSON(http.StatusOK, response)
+}
+
 // JWKS handles the OIDC JWKS request.
 func (h *OIDCHandler) JWKS(ctx *gin.Context) {
-	signingKey, err := h.deps.Cfg.GetIdP().OIDC.GetSigningKey()
+	allKeys, err := h.idp.GetKeyManager().GetAllKeys(ctx.Request.Context())
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get signing key"})
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get keys"})
 
 		return
 	}
 
-	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
+	var keys []gin.H
 
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse signing key"})
+	for kid, key := range allKeys {
+		publicKey := key.PublicKey
+		n := base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes())
 
-		return
+		keys = append(keys, gin.H{
+			"kty": "RSA",
+			"alg": "RS256",
+			"use": "sig",
+			"kid": kid,
+			"n":   n,
+			"e":   e,
+		})
 	}
-
-	publicKey := key.PublicKey
-	n := base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes())
-	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes())
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"keys": []gin.H{
-			{
-				"kty": "RSA",
-				"alg": "RS256",
-				"use": "sig",
-				"kid": "default",
-				"n":   n,
-				"e":   e,
-			},
-		},
+		"keys": keys,
 	})
 }
 

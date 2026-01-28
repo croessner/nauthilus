@@ -591,6 +591,9 @@ const (
 	// ProtoSAML corresponds to the "saml" protocol
 	ProtoSAML = "saml"
 
+	// ProtoIDP corresponds to the "idp" protocol
+	ProtoIDP = "idp"
+
 	// ProtoDefault corresponds to the default protocol
 	ProtoDefault = "default"
 )

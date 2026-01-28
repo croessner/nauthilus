@@ -3391,11 +3391,13 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 	a.Runtime.Authorized = true     // default allow unless a filter rejects
 
 	if a.Request.Service == definitions.ServBasic {
-		a.Request.Protocol.Set(definitions.ProtoHTTP)
+		a.SetProtocol(config.NewProtocol(definitions.ProtoHTTP))
+	} else if a.Request.Service == definitions.ServIdP {
+		a.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	}
 
 	if a.Request.Protocol.Get() == "" {
-		a.Request.Protocol.Set(definitions.ProtoDefault)
+		a.SetProtocol(config.NewProtocol(definitions.ProtoDefault))
 	}
 
 	return a

@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/idp/oidckeys"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -45,6 +46,7 @@ type NauthilusIdP struct {
 	deps    *deps.Deps
 	storage *RedisTokenStorage
 	tracer  monittrace.Tracer
+	keyMgr  *oidckeys.Manager
 }
 
 // NewNauthilusIdP creates a new instance of NauthilusIdP.
@@ -53,7 +55,13 @@ func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
 		deps:    d,
 		storage: NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
 		tracer:  monittrace.New("nauthilus/idp"),
+		keyMgr:  oidckeys.NewManager(d),
 	}
+}
+
+// GetKeyManager returns the OIDC key manager.
+func (n *NauthilusIdP) GetKeyManager() *oidckeys.Manager {
+	return n.keyMgr
 }
 
 // FilterScopes filters the requested scopes against the allowed scopes for the client.
@@ -165,17 +173,9 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
-	signingKey, err := n.deps.Cfg.GetIdP().OIDC.GetSigningKey()
+	key, kid, err := n.keyMgr.GetActiveKey(ctx)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to get signing key: %w", err)
-	}
-
-	// Load private key
-	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
-	if err != nil {
-		sp.RecordError(err)
-
-		return "", "", "", 0, fmt.Errorf("failed to parse signing key: %w", err)
+		return "", "", "", 0, fmt.Errorf("failed to get active signing key: %w", err)
 	}
 
 	now := time.Now()
@@ -199,6 +199,8 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	idToken := jwt.NewWithClaims(jwt.SigningMethodRS256, idClaims)
+
+	idToken.Header["kid"] = kid
 
 	idTokenString, err := idToken.SignedString(key)
 	if err != nil {
@@ -226,6 +228,8 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodRS256, accessClaims)
+
+	accessToken.Header["kid"] = kid
 
 	accessTokenString, err := accessToken.SignedString(key)
 	if err != nil {
@@ -294,17 +298,12 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 	)
 	defer sp.End()
 
-	signingKey, err := n.deps.Cfg.GetIdP().OIDC.GetSigningKey()
+	key, kid, err := n.keyMgr.GetActiveKey(ctx)
 	if err != nil {
 		return "", err
 	}
 
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
-
-	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
-	if err != nil {
-		return "", err
-	}
 
 	claims := jwt.MapClaims{
 		"iss": issuer,
@@ -319,7 +318,7 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 
-	token.Header["kid"] = "default"
+	token.Header["kid"] = kid
 
 	return token.SignedString(key)
 }
@@ -329,23 +328,29 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 	_, sp := n.tracer.Start(ctx, "idp.validate_token")
 	defer sp.End()
 
-	signingKey, err := n.deps.Cfg.GetIdP().OIDC.GetSigningKey()
-	if err != nil {
-		sp.RecordError(err)
-
-		return nil, fmt.Errorf("failed to get signing key: %w", err)
-	}
-
-	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
-	if err != nil {
-		sp.RecordError(err)
-
-		return nil, fmt.Errorf("failed to parse signing key: %w", err)
-	}
-
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+
+		kid, _ := token.Header["kid"].(string)
+		allKeys, err := n.keyMgr.GetAllKeys(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		if kid != "" {
+			if key, ok := allKeys[kid]; ok {
+				return &key.PublicKey, nil
+			}
+
+			return nil, fmt.Errorf("key with kid %s not found", kid)
+		}
+
+		// Fallback: if no kid, try the active key or all keys
+		key, _, err := n.keyMgr.GetActiveKey(ctx)
+		if err != nil {
+			return nil, err
 		}
 
 		return &key.PublicKey, nil
@@ -393,6 +398,8 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
 	} else if samlEntityID != "" {
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
+	} else {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	}
 
 	auth.FinishSetup(ctx)
@@ -463,6 +470,8 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
 	} else if samlEntityID != "" {
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
+	} else {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	}
 
 	auth.FinishSetup(ctx)

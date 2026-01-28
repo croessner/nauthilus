@@ -2,11 +2,11 @@
 
 This document provides a detailed technical overview of the integrated Identity Provider in Nauthilus, covering OIDC,
 SAML2, and the modern HTMX-based frontend. It is intended for developers who want to understand the internal signal
-flows, component interactions, and the overall design of the native IdP.
+flows, component interactions, and the overall design of the IdP.
 
 ## 1. High-Level Architecture
 
-The Nauthilus IdP is designed as a modular, lightweight, and built-in alternative to external identity providers. It is
+The Nauthilus IdP is designed as a modular, lightweight, and built-in Identity Provider. It is
 fully integrated into the Nauthilus core, leveraging existing authentication and backend logic.
 
 ### Core Philosophy
@@ -23,7 +23,8 @@ fully integrated into the Nauthilus core, leveraging existing authentication and
 - **`server/idp/`**: The "Brain" of the IdP. Defines the `IdentityProvider` interface and implements the `NauthilusIdP`
   which orchestrates authentication and token issuance.
 - **`server/handler/frontend/idp/`**: The "Face" and "Voice".
-    - `oidc.go`: Implements the OpenID Connect 1.0 specification (Discovery, Authorize, Token, UserInfo, JWKS, Logout).
+    - `oidc.go`: Implements the OpenID Connect 1.0 specification (Discovery, Authorize, Token, Introspect, UserInfo,
+      JWKS, Logout).
     - `saml.go`: Implements the SAML 2.0 Identity Provider logic (Metadata, SSO).
     - `frontend.go`: Manages the web-based flows (Login, Consent, 2FA Portal).
 - **`server/idp/redis_storage.go`**: The "Short-term Memory". Handles volatile state like OIDC codes and session data in
@@ -109,6 +110,24 @@ sequenceDiagram
     H -->> B: 200 OK (JSON Tokens)
 ```
 
+### 3.2 OIDC Token Introspection
+
+RFC 7662 allows clients to query the IdP to determine the active state of an OAuth 2.0 token and to determine
+meta-information about this token.
+
+```mermaid
+sequenceDiagram
+    participant B as Client Application
+    participant H as OIDC Handler
+    participant I as IdP Core
+    B ->> H: POST /idp/oidc/introspect (token, client_id, client_secret)
+    H ->> H: Authenticate Client
+    H ->> I: ValidateToken(ctx, token)
+    I -->> H: Claims (if valid)
+    H ->> H: Verify audience / authorization
+    H -->> B: 200 OK {active: true, scope: "...", sub: "...", ...}
+```
+
 ### 3.3 OIDC Logout (Front-channel and Back-channel)
 
 Nauthilus supports both Front-channel and Back-channel logout to ensure that users are logged out from all Relying
@@ -133,11 +152,47 @@ Parties (RPs) when they end their session at the IdP.
 
 Nauthilus supports the Identity Provider initiated and Service Provider initiated SSO.
 
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant H as SAML Handler
+    participant F as Frontend Handler
+    participant I as IdP Core
+    participant A as AuthState
+    Note over B, A: Initial SSO Request
+    B -> H: GET /idp/saml/sso?SAMLRequest=...
+    H -> I: getSAMLIdP(ctx)
+    H -> H: Validate SAML Request
+    H -> B: 302 Redirect to /login?return_to=...
+    Note over B, A: Authentication Phase (Shared with OIDC)
+    B -> F: GET /login
+    F -> B: Render Login UI
+    B -> F: POST /login
+    F -> I: Authenticate(...)
+    I -> A: Verify Credentials
+    Note over B, A: SAML Response Generation
+    B -> H: GET /idp/saml/sso (with session)
+    H -> I: GetUserByUsername(...)
+    H -> H: Create SAML Session & Assertion
+    H -> B: 200 OK (SAMLResponse via POST Binding)
+```
+
 1. **Metadata**: The SP fetches `/saml/metadata` to obtain the IdP's entity ID and public signing certificate.
 2. **SSO Request**: The SP redirects the user to `/saml/sso` with a `SAMLRequest`.
 3. **Authentication**: If not already logged in, the user is sent to the `/login` page (shared with OIDC).
 4. **SAML Response**: After authentication, the IdP generates a signed XML `SAMLResponse` and sends it back to the SP
    via the browser (usually a POST binding).
+
+### 3.5 SAML 2.0 SLO (Single Logout)
+
+Nauthilus provides a basic SAML Single Logout (SLO) endpoint.
+
+1. **Logout Initiation**: The SP or user redirects the browser to `/idp/saml/slo`.
+2. **Local Session Termination**: The IdP clears the local user session cookies.
+3. **Redirection**: The user is redirected to a logout confirmation page (`/logged_out`).
+
+Currently, the SAML SLO implementation focuses on local session termination and does not yet support complex
+asynchronous SLO propagation to other Service Providers.
 
 ## 4. Core Components & Logic
 
@@ -146,7 +201,7 @@ Nauthilus supports the Identity Provider initiated and Service Provider initiate
 The `NauthilusIdP` struct is the central orchestrator. It holds references to:
 
 - **Dependencies**: For accessing configuration and logging.
-- **Signing Key**: An RSA private key used for signing JWTs and SAML assertions.
+- **Key Manager**: Handles OIDC signing keys, supporting both static configuration and automatic rotation.
 - **Token Storage**: The Redis interface for session management.
 
 Key Methods:
@@ -161,7 +216,8 @@ Key Methods:
 The `FrontendHandler` uses **HTMX** to provide a single-page-application (SPA) feel while keeping logic on the server.
 
 - **OIDC Authorization Code Flow**: The handler manages the login redirect, session establishment, and code generation.
-  It now supports **Delayed Response** by hiding authentication failures until after the MFA step.
+  It now supports **Delayed Response** by hiding authentication failures until after the MFA step. If `/login` is called
+  without a protocol-specific context, it redirects to the MFA portal after successful authentication.
 - **Multi-Factor Authentication (MFA)**:
     - **TOTP**: Uses the `otp` package for generation and validation. Secrets are stored in the backend (LDAP or Lua).
       Verification is integrated into the login flow (`/login/totp`).
@@ -250,7 +306,7 @@ client are included.
 
 ### 6.2 Custom Scopes
 
-The native IdP supports custom scopes. These are defined globally and can group one or
+The IdP supports custom scopes. These are defined globally and can group one or
 more custom claims:
 
 ```yaml
@@ -294,6 +350,26 @@ idp:
 - **`access_token_lifetime`**: Duration of validity for access tokens and ID tokens (default: 1h).
 - **`refresh_token_lifetime`**: Duration of validity for refresh tokens (default: 30d). Refresh tokens are only issued
   if the `offline_access` scope is requested.
+
+### 6.4 SAML Attribute Mapping
+
+Unlike OIDC, which uses a per-client mapping configuration, the SAML 2.0 implementation in Nauthilus currently includes
+all attributes retrieved from the user backend directly into the SAML assertion.
+
+The attributes included are determined by the backend configuration (e.g., the `ldap.search.mapping` section). Each
+attribute from the backend becomes a `<saml:Attribute>` in the assertion, with the backend attribute name as the
+`Name` and the first value as the `AttributeValue`.
+
+```mermaid
+sequenceDiagram
+    participant B as Backend (LDAP/Lua)
+    participant I as IdP Core
+    participant S as SAML Handler
+    B -->> I: User Attributes {mail: "user@example.com", groups: ["users"]}
+    I -->> S: User Object
+    S -> S: Iterate over attributes
+    S -->> S: Create saml:Attribute (Name="mail", Value="user@example.com")
+```
 
 ## 7. Backend & LDAP Interaction
 

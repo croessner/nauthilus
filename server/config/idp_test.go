@@ -55,16 +55,18 @@ func TestGetIdP(t *testing.T) {
 }
 
 func TestOIDCConfig_GetSigningKey(t *testing.T) {
-	t.Run("from string", func(t *testing.T) {
+	t.Run("from list", func(t *testing.T) {
 		cfg := OIDCConfig{
-			SigningKey: "test-key",
+			SigningKeys: []OIDCKey{
+				{ID: "test-key", Key: "test-key-content", Active: true},
+			},
 		}
 		key, err := cfg.GetSigningKey()
 		assert.NoError(t, err)
-		assert.Equal(t, "test-key", key)
+		assert.Equal(t, "test-key-content", key)
 	})
 
-	t.Run("from file", func(t *testing.T) {
+	t.Run("from file in list", func(t *testing.T) {
 		tmpFile, err := os.CreateTemp("", "signing_key")
 		assert.NoError(t, err)
 		defer os.Remove(tmpFile.Name())
@@ -75,7 +77,9 @@ func TestOIDCConfig_GetSigningKey(t *testing.T) {
 		tmpFile.Close()
 
 		cfg := OIDCConfig{
-			SigningKeyFile: tmpFile.Name(),
+			SigningKeys: []OIDCKey{
+				{ID: "test-key", KeyFile: tmpFile.Name(), Active: true},
+			},
 		}
 		key, err := cfg.GetSigningKey()
 		assert.NoError(t, err)
@@ -132,9 +136,11 @@ func TestIdPConfig_Validation(t *testing.T) {
 	t.Run("DisabledIdP_EmptySAML", func(t *testing.T) {
 		cfg := IdPSection{
 			OIDC: OIDCConfig{
-				Enabled:    true,
-				Issuer:     "https://auth.example.com",
-				SigningKey: "key",
+				Enabled: true,
+				Issuer:  "https://auth.example.com",
+				SigningKeys: []OIDCKey{
+					{ID: "key", Key: "key-content", Active: true},
+				},
 			},
 			SAML2: SAML2Config{
 				Enabled: false,
