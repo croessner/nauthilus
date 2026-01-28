@@ -53,5 +53,14 @@
   "Please wait while the logout process is completed.": "कृपया प्रतीक्षा करें जब तक लॉगआउट प्रक्रिया पूरी न हो जाए।",
   "Logged Out": "लॉग आउट हो गया",
   "Successfully Logged Out": "सफलतापूर्वक लॉग आउट किया गया",
-  "You have been successfully logged out of your session.": "आप अपने सत्र से सफलतापूर्वक लॉग आउट हो गए हैं।"
+  "You have been successfully logged out of your session.": "आप अपने सत्र से सफलतापूर्वक लॉग आउट हो गए हैं।",
+  "Security Keys (WebAuthn)": "Security Keys (WebAuthn)",
+  "Registered Devices": "Registered Devices",
+  "No registered security keys found.": "No registered security keys found.",
+  "Last used": "Last used",
+  "Never": "Never",
+  "Are you sure you want to delete this security key?": "Are you sure you want to delete this security key?",
+  "Add new security key": "Add new security key",
+  "Back to 2FA Overview": "Back to 2FA Overview",
+  "Device ID": "Device ID"
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
 )
@@ -49,11 +50,15 @@ func TestLuaUpdateWebAuthnCredential(t *testing.T) {
 		deps:        deps,
 	}
 
-	oldCred := &webauthn.Credential{
-		ID: []byte("old-id"),
+	oldCred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("old-id"),
+		},
 	}
-	newCred := &webauthn.Credential{
-		ID: []byte("new-id"),
+	newCred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("new-id"),
+		},
 	}
 
 	auth := &AuthState{

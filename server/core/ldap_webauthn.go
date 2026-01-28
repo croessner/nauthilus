@@ -22,14 +22,14 @@ import (
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 // GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the LDAP backend.
-func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials []webauthn.Credential, err error) {
+func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials []mfa.PersistentCredential, err error) {
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.get_webauthn_credentials",
 		attribute.String("pool_name", lm.poolName),
@@ -44,7 +44,7 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 
 	credentialField := protocol.GetCredentialObject()
 	if credentialField == "" {
-		return []webauthn.Credential{}, nil
+		return []mfa.PersistentCredential{}, nil
 	}
 
 	filter, err := protocol.GetUserFilter()
@@ -101,7 +101,7 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 
 		if values, ok := ldapReply.Result[credentialField]; ok {
 			for _, val := range values {
-				var cred webauthn.Credential
+				var cred mfa.PersistentCredential
 				if err := jsonIter.Unmarshal([]byte(val.(string)), &cred); err == nil {
 					credentials = append(credentials, cred)
 				}
@@ -113,7 +113,7 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 }
 
 // SaveWebAuthnCredential saves a WebAuthn credential for the user in the LDAP backend.
-func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *webauthn.Credential) (err error) {
+func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.save_webauthn_credential",
 		attribute.String("pool_name", lm.poolName),
@@ -185,7 +185,7 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *w
 }
 
 // DeleteWebAuthnCredential removes a WebAuthn credential for the user in the LDAP backend.
-func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *webauthn.Credential) (err error) {
+func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.delete_webauthn_credential",
 		attribute.String("pool_name", lm.poolName),
@@ -257,7 +257,7 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 }
 
 // UpdateWebAuthnCredential updates an existing WebAuthn credential for the user in the LDAP backend.
-func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredential *webauthn.Credential, newCredential *webauthn.Credential) (err error) {
+func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.update_webauthn_credential",
 		attribute.String("pool_name", lm.poolName),

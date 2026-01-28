@@ -16,7 +16,9 @@
 package idp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -28,12 +30,12 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -159,6 +161,9 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.POST("/2fa/v1/webauthn/register/finish", core.FinishRegistration(h.deps.Auth()))
 	authGroup.POST("/2fa/v1/webauthn/register/finish/:languageTag", core.FinishRegistration(h.deps.Auth()))
 	authGroup.DELETE("/2fa/v1/webauthn", h.DeleteWebAuthn)
+	authGroup.GET("/2fa/v1/webauthn/devices", h.WebAuthnDevices)
+	authGroup.GET("/2fa/v1/webauthn/devices/:languageTag", h.WebAuthnDevices)
+	authGroup.DELETE("/2fa/v1/webauthn/device/:id", h.DeleteWebAuthnDevice)
 
 	authGroup.POST("/2fa/v1/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/2fa/v1/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
@@ -769,86 +774,31 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["Deactivate"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deactivate")
 	data["DeactivateTOTPConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to deactivate TOTP?")
 	data["DeactivateWebAuthnConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to deactivate WebAuthn?")
+	data["RecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Codes")
+	data["RecoveryCodesDescription"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup codes can be used to log in if you lose access to your 2FA device.")
+	data["RecoveryCodesLeft"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You have %d recovery codes left.")
+	data["GenerateNewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Generate new recovery codes")
 	data["Home"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Home")
 	data["Logout"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
 
-	data["RecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Codes")
-	data["RecoveryCodesDescription"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup codes can be used to log in if you lose access to your 2FA device.")
-	data["GenerateNewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Generate new recovery codes")
-	data["RecoveryCodesLeft"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You have %d recovery codes left.")
-
-	username, _ := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if username == "" {
-		// Try token from Authorization header if session is missing account
-		authHeader := ctx.GetHeader("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			idpInstance := idp.NewNauthilusIdP(h.deps)
-
-			claims, err := idpInstance.ValidateToken(ctx.Request.Context(), tokenString)
-			if err == nil {
-				if sub, ok := claims["sub"].(string); ok {
-					username = sub
-					data["Username"] = username
-				}
-			}
-		}
-	}
-
-	if username == "" {
-		h.handleTwoFAHomeError(ctx, data, errors.ErrNotLoggedIn, "")
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		h.handleTwoFAHomeError(ctx, data, err, "")
 
 		return
 	}
 
-	authDeps := h.deps.Auth()
-	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+	data["Username"] = userData.Username
+	data["DisplayName"] = userData.DisplayName
+	data["HaveTOTP"] = userData.HaveTOTP
+	data["HaveRecoveryCodes"] = userData.NumRecoveryCodes > 0
+	data["NumRecoveryCodes"] = userData.NumRecoveryCodes
+	data["HaveWebAuthn"] = userData.HaveWebAuthn
 
-	if state == nil {
-		h.handleTwoFAHomeError(ctx, data, nil, username)
-
-		return
-	}
-
-	dummyAuth := state.(*core.AuthState)
-
-	dummyAuth.SetUsername(username)
-	dummyAuth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
-	dummyAuth.SetNoAuth(true)
-
-	// Perform backend lookup using HandlePassword (orchestrates all backends if needed)
-	if authResult := dummyAuth.HandlePassword(ctx); authResult == definitions.AuthResultOK {
-		// Update display name if available
-		if disp, ok := dummyAuth.GetDisplayNameOk(); ok {
-			data["DisplayName"] = disp
-		}
-
-		// TOTP status
-		hasTOTP := false
-		if secret, ok := dummyAuth.GetTOTPSecretOk(); ok && secret != "" {
-			hasTOTP = true
-		}
-
-		data["HaveTOTP"] = hasTOTP
-
-		// Sync session if it exists
-		if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
-			session.Set(definitions.CookieHaveTOTP, hasTOTP)
-			_ = session.Save()
-		}
-
-		// Recovery codes
-		codes := dummyAuth.GetTOTPRecoveryCodes()
-		data["HaveRecoveryCodes"] = len(codes) > 0
-		data["NumRecoveryCodes"] = len(codes)
-
-		// WebAuthn status
-		if uniqueID, ok := dummyAuth.GetUniqueUserIDOk(); ok && uniqueID != "" {
-			user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueID)
-			data["HaveWebAuthn"] = err == nil && user != nil && len(user.WebAuthnCredentials()) > 0
-		}
-	} else {
-		h.deps.Logger.Warn("User not found in backend during TwoFAHome", "username", username)
+	// Sync session if it exists
+	if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
+		session.Set(definitions.CookieHaveTOTP, userData.HaveTOTP)
+		_ = session.Save()
 	}
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
@@ -1192,4 +1142,134 @@ func (h *FrontendHandler) LoggedOut(ctx *gin.Context) {
 	data["BackToLogin"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to Login")
 
 	ctx.HTML(http.StatusOK, "idp_logged_out.html", data)
+}
+
+// WebAuthnDevices renders the WebAuthn devices overview page.
+func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
+	data := h.basePageData(ctx)
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		h.handleTwoFAHomeError(ctx, data, err, "")
+
+		return
+	}
+
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Security Keys (WebAuthn)")
+	data["RegisteredDevices"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Registered Devices")
+	data["DeviceID"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device ID")
+	data["NoDevicesFound"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "No registered security keys found.")
+	data["LastUsed"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Last used")
+	data["Never"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Never")
+	data["Delete"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Delete")
+	data["DeleteConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to delete this security key?")
+	data["AddDevice"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Add new security key")
+	data["BackTo2FA"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to 2FA Overview")
+
+	type device struct {
+		ID       string
+		LastUsed string
+	}
+
+	var devices []device
+	if userData.WebAuthnUser != nil {
+		for _, cred := range userData.WebAuthnUser.Credentials {
+			lastUsed := data["Never"].(string)
+			if !cred.LastUsed.IsZero() {
+				lastUsed = cred.LastUsed.Format("2006-01-02 15:04:05")
+			}
+
+			devices = append(devices, device{
+				ID:       base64.RawURLEncoding.EncodeToString(cred.ID),
+				LastUsed: lastUsed,
+			})
+		}
+	}
+
+	data["Devices"] = devices
+
+	ctx.HTML(http.StatusOK, "idp_2fa_webauthn_devices.html", data)
+}
+
+// DeleteWebAuthnDevice removes a specific WebAuthn credential for the user.
+func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn_device")
+	defer sp.End()
+
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.String(http.StatusBadRequest, "Missing device ID")
+
+		return
+	}
+
+	decodedID, err := base64.RawURLEncoding.DecodeString(id)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "Invalid device ID")
+
+		return
+	}
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		ctx.String(http.StatusUnauthorized, "Not logged in")
+
+		return
+	}
+
+	if userData.WebAuthnUser == nil {
+		ctx.String(http.StatusNotFound, "User not found")
+
+		return
+	}
+
+	// Find the credential
+	var targetCred *mfa.PersistentCredential
+	for _, cred := range userData.WebAuthnUser.Credentials {
+		if bytes.Equal(cred.ID, decodedID) {
+			targetCred = &cred
+			break
+		}
+	}
+
+	if targetCred == nil {
+		ctx.String(http.StatusNotFound, "Credential not found")
+
+		return
+	}
+
+	// Delete from backend via AuthState
+	if err := userData.AuthState.DeleteWebAuthnCredential(targetCred); err != nil {
+		sp.RecordError(err)
+		ctx.String(http.StatusInternalServerError, "Failed to delete credential: "+err.Error())
+
+		return
+	}
+
+	// update Redis cache
+	// Also remove the entire user if no credentials left?
+	// Existing code just Del the key in DeleteWebAuthn.
+	// We'll update it here.
+	if len(userData.WebAuthnUser.Credentials) <= 1 {
+		// If this was the last credential, we can delete the Redis key
+		key := h.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + userData.UniqueUserID
+		_ = h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err()
+	} else {
+		// Remove from Credentials slice
+		newCreds := make([]mfa.PersistentCredential, 0, len(userData.WebAuthnUser.Credentials)-1)
+		for _, c := range userData.WebAuthnUser.Credentials {
+			if !bytes.Equal(c.ID, decodedID) {
+				newCreds = append(newCreds, c)
+			}
+		}
+		userData.WebAuthnUser.Credentials = newCreds
+
+		// Update Redis cache (with original TTL or default)
+		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.WebAuthnUser, h.deps.Cfg.GetServer().GetTimeouts().GetRedisWrite())
+	}
+
+	h.purgeUserCache(ctx, userData.AuthState, userData.Username)
+
+	ctx.Header("HX-Redirect", "/2fa/v1/webauthn/devices")
+	ctx.Status(http.StatusOK)
 }

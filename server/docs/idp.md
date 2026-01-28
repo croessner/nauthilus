@@ -154,6 +154,20 @@ and can be used by external clients.
     - Deletes a specific WebAuthn credential by its ID.
     - Returns 200 OK on success.
 
+### 4.4 WebAuthn Devices Portal
+
+The IdP includes a dedicated view for managing registered WebAuthn devices:
+
+- **`GET /2fa/v1/webauthn/devices`**:
+    - Renders an overview of all registered security keys.
+    - Displays the device ID and the "Last Used" timestamp.
+    - Allows users to add new devices or delete specific ones.
+- **`DELETE /2fa/v1/webauthn/device/:id`**:
+    - Deletes a specific device.
+
+The "Last Used" timestamp is updated automatically upon every successful WebAuthn login and stored in the persistent
+backend (LDAP or Lua).
+
 ## 5. Protocol-Specific Flows
 
 RFC 7662 allows clients to query the IdP to determine the active state of an OAuth 2.0 token and to determine

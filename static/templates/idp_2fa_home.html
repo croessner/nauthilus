@@ -41,6 +41,8 @@
                 <p>{{ .WebAuthnDescription }}</p>
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveWebAuthn }}
+                    <a class="btn btn-secondary btn-outline" href="/2fa/v1/webauthn/devices">{{ .SecurityKeyWebAuthn
+                        }}</a>
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateWebAuthnConfirm }}"
                             hx-delete="/2fa/v1/webauthn" {{ if .BackendError }}disabled{{ end }}>{{ .Deactivate }}
                     </button>

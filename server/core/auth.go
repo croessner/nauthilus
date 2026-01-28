@@ -55,7 +55,6 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
@@ -98,16 +97,16 @@ func NewBackendServer() *BackendServer {
 // State is implemented by AuthState and defines the methods to interact with the authentication process.
 type State interface {
 	// DeleteWebAuthnCredential removes a WebAuthn credential for the user in the backend.
-	DeleteWebAuthnCredential(credential *webauthn.Credential) (err error)
+	DeleteWebAuthnCredential(credential *mfa.PersistentCredential) (err error)
 
 	// SaveWebAuthnCredential saves a WebAuthn credential for the user in the backend.
-	SaveWebAuthnCredential(credential *webauthn.Credential) (err error)
+	SaveWebAuthnCredential(credential *mfa.PersistentCredential) (err error)
 
 	// UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
-	UpdateWebAuthnCredential(oldCredential *webauthn.Credential, newCredential *webauthn.Credential) (err error)
+	UpdateWebAuthnCredential(oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error)
 
 	// GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
-	GetWebAuthnCredentials() (credentials []webauthn.Credential, err error)
+	GetWebAuthnCredentials() (credentials []mfa.PersistentCredential, err error)
 
 	// FinishSetup completes the initialization of the state and logs the incoming request.
 	FinishSetup(ctx *gin.Context)
@@ -627,7 +626,7 @@ func (a *AuthState) GetLogger() *slog.Logger {
 }
 
 // GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
-func (a *AuthState) GetWebAuthnCredentials() (credentials []webauthn.Credential, err error) {
+func (a *AuthState) GetWebAuthnCredentials() (credentials []mfa.PersistentCredential, err error) {
 	var (
 		passDB      definitions.Backend
 		backendName string
@@ -659,11 +658,11 @@ func (a *AuthState) GetWebAuthnCredentials() (credentials []webauthn.Credential,
 		}
 	}
 
-	return []webauthn.Credential{}, nil
+	return []mfa.PersistentCredential{}, nil
 }
 
 // SaveWebAuthnCredential saves a WebAuthn credential for the user in the backend.
-func (a *AuthState) SaveWebAuthnCredential(credential *webauthn.Credential) (err error) {
+func (a *AuthState) SaveWebAuthnCredential(credential *mfa.PersistentCredential) (err error) {
 	var (
 		passDB      definitions.Backend
 		backendName string
@@ -692,7 +691,7 @@ func (a *AuthState) SaveWebAuthnCredential(credential *webauthn.Credential) (err
 }
 
 // DeleteWebAuthnCredential removes a WebAuthn credential for the user in the backend.
-func (a *AuthState) DeleteWebAuthnCredential(credential *webauthn.Credential) (err error) {
+func (a *AuthState) DeleteWebAuthnCredential(credential *mfa.PersistentCredential) (err error) {
 	var (
 		passDB      definitions.Backend
 		backendName string
@@ -726,7 +725,7 @@ func (a *AuthState) DeleteWebAuthnCredential(credential *webauthn.Credential) (e
 }
 
 // UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
-func (a *AuthState) UpdateWebAuthnCredential(oldCredential *webauthn.Credential, newCredential *webauthn.Credential) (err error) {
+func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error) {
 	var (
 		passDB      definitions.Backend
 		backendName string
@@ -905,7 +904,7 @@ type (
 )
 
 // WebAuthnCredentialDBFunc defines a signature for WebAuthn credential object lookups
-type WebAuthnCredentialDBFunc func(uniqueUserID string) ([]webauthn.Credential, error)
+type WebAuthnCredentialDBFunc func(uniqueUserID string) ([]mfa.PersistentCredential, error)
 
 // AddTOTPSecretFunc is a function signature that takes a *AuthState and *TOTPSecret as arguments and returns an error.
 type AddTOTPSecretFunc func(auth *AuthState, totp *mfa.TOTPSecret) (err error)

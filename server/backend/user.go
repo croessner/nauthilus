@@ -17,6 +17,7 @@ package backend
 
 import (
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -26,10 +27,10 @@ type User struct {
 	Name        string `redis:"name"`
 	DisplayName string `redis:"display_name"`
 
-	Credentials       []webauthn.Credential   `redis:"credentials"`
-	Attributes        bktype.AttributeMapping `redis:"-"`
-	TOTPSecretField   string                  `redis:"totp_secret_field"`
-	TOTPRecoveryField string                  `redis:"totp_recovery_field"`
+	Credentials       []mfa.PersistentCredential `redis:"credentials"`
+	Attributes        bktype.AttributeMapping    `redis:"-"`
+	TOTPSecretField   string                     `redis:"totp_secret_field"`
+	TOTPRecoveryField string                     `redis:"totp_recovery_field"`
 }
 
 // NewUser creates and returns a new User
@@ -65,10 +66,16 @@ func (u *User) WebAuthnIcon() string {
 
 // AddCredential associates the credential to the user
 func (u *User) AddCredential(cred webauthn.Credential) {
-	u.Credentials = append(u.Credentials, cred)
+	u.Credentials = append(u.Credentials, mfa.PersistentCredential{Credential: cred})
 }
 
 // WebAuthnCredentials returns credentials owned by the user
 func (u *User) WebAuthnCredentials() []webauthn.Credential {
-	return u.Credentials
+	creds := make([]webauthn.Credential, len(u.Credentials))
+
+	for i, c := range u.Credentials {
+		creds[i] = c.Credential
+	}
+
+	return creds
 }

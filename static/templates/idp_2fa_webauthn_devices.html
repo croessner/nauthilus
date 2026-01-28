@@ -1,0 +1,49 @@
+{{ template "idp_header.html" . }}
+<div class="max-w-4xl mx-auto mt-10">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold">{{ .Title }}</h1>
+        <a class="btn btn-ghost" href="/2fa/v1/register/home">{{ .BackTo2FA }}</a>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl mb-8">
+        <div class="card-body">
+            <h2 class="card-title">{{ .RegisteredDevices }}</h2>
+
+            {{ if .Devices }}
+            <div class="overflow-x-auto">
+                <table class="table w-full">
+                    <thead>
+                    <tr>
+                        <th>{{ .DeviceID }}</th>
+                        <th>{{ .LastUsed }}</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {{ range .Devices }}
+                    <tr>
+                        <td class="font-mono text-sm">{{ .ID }}</td>
+                        <td>{{ .LastUsed }}</td>
+                        <td class="text-right">
+                            <button class="btn btn-error btn-sm btn-outline"
+                                    hx-confirm="{{ $.DeleteConfirm }}"
+                                    hx-delete="/2fa/v1/webauthn/device/{{ .ID }}">
+                                {{ $.Delete }}
+                            </button>
+                        </td>
+                    </tr>
+                    {{ end }}
+                    </tbody>
+                </table>
+            </div>
+            {{ else }}
+            <p>{{ .NoDevicesFound }}</p>
+            {{ end }}
+
+            <div class="card-actions justify-end mt-6">
+                <a class="btn btn-primary" href="/2fa/v1/webauthn/register">{{ .AddDevice }}</a>
+            </div>
+        </div>
+    </div>
+</div>
+{{ template "idp_footer.html" . }}

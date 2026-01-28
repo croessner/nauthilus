@@ -21,6 +21,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pquerna/otp/totp"
@@ -140,7 +141,7 @@ func (s *MFAService) DeleteWebAuthnCredential(ctx *gin.Context, username string,
 		return err
 	}
 
-	return mgr.DeleteWebAuthnCredential(dummyAuth, &webauthn.Credential{ID: []byte(credentialID)})
+	return mgr.DeleteWebAuthnCredential(dummyAuth, &mfa.PersistentCredential{Credential: webauthn.Credential{ID: []byte(credentialID)}})
 }
 
 func (s *MFAService) getAuthState(ctx *gin.Context, username string) (*core.AuthState, error) {

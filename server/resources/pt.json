@@ -53,5 +53,14 @@
   "Please wait while the logout process is completed.": "Por favor, aguarde enquanto o processo de encerramento de sessão é concluído.",
   "Logged Out": "Sessão terminada",
   "Successfully Logged Out": "Sessão terminada com sucesso",
-  "You have been successfully logged out of your session.": "A sua sessão foi terminada com sucesso."
+  "You have been successfully logged out of your session.": "A sua sessão foi terminada com sucesso.",
+  "Security Keys (WebAuthn)": "Security Keys (WebAuthn)",
+  "Registered Devices": "Registered Devices",
+  "No registered security keys found.": "No registered security keys found.",
+  "Last used": "Last used",
+  "Never": "Never",
+  "Are you sure you want to delete this security key?": "Are you sure you want to delete this security key?",
+  "Add new security key": "Add new security key",
+  "Back to 2FA Overview": "Back to 2FA Overview",
+  "Device ID": "Device ID"
 }

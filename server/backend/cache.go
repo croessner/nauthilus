@@ -28,12 +28,12 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
@@ -410,7 +410,7 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 	if credentialsJSON, ok := hashValues["credentials"]; ok && credentialsJSON != "" {
 		decryptedCredentialsJSON, _ := sm.Decrypt(credentialsJSON)
 
-		var credentials []webauthn.Credential
+		var credentials []mfa.PersistentCredential
 		if err = jsoniter.ConfigFastest.Unmarshal([]byte(decryptedCredentialsJSON), &credentials); err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to unmarshal credentials",
@@ -423,7 +423,7 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 		user.Credentials = credentials
 	} else {
 		// Initialize empty credentials slice if not present
-		user.Credentials = []webauthn.Credential{}
+		user.Credentials = []mfa.PersistentCredential{}
 	}
 
 	return user, nil

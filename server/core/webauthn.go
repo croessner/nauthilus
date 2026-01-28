@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -48,7 +50,7 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 		backendName string
 		err         error
 		user        *backend.User
-		credentials []webauthn.Credential
+		credentials []mfa.PersistentCredential
 	)
 
 	_ = userName
@@ -343,7 +345,10 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		// Persist to backend if possible
 		if passDB != definitions.BackendUnknown {
 			if mgr := auth.(*AuthState).GetBackendManager(passDB, backendName); mgr != nil {
-				if err = mgr.SaveWebAuthnCredential(auth.(*AuthState), credential); err != nil {
+				persistentCredential := &mfa.PersistentCredential{
+					Credential: *credential,
+				}
+				if err = mgr.SaveWebAuthnCredential(auth.(*AuthState), persistentCredential); err != nil {
 					level.Error(deps.Logger).Log(
 						definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 						definitions.LogKeyMsg, "Failed to persist WebAuthn credential to backend",
@@ -512,11 +517,10 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		// Update sign count if necessary (the library handles it in the credential object)
-		// We should persist the updated sign count to the backend.
+		// Update sign count and last used if necessary
 		existingCredentials, err := auth.GetWebAuthnCredentials()
 		if err == nil {
-			var oldCredential *webauthn.Credential
+			var oldCredential *mfa.PersistentCredential
 			for _, cred := range existingCredentials {
 				if bytes.Equal(cred.ID, credential.ID) {
 					oldCredential = &cred
@@ -525,13 +529,29 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			}
 
 			if oldCredential != nil {
+				newPersistentCredential := &mfa.PersistentCredential{
+					Credential: *credential,
+					LastUsed:   time.Now(),
+				}
 				// Update the credential in the backend
-				_ = auth.UpdateWebAuthnCredential(oldCredential, credential)
+				_ = auth.UpdateWebAuthnCredential(oldCredential, newPersistentCredential)
+
+				// Also update in user object for cache
+				for i, c := range user.Credentials {
+					if bytes.Equal(c.ID, credential.ID) {
+						user.Credentials[i] = *newPersistentCredential
+						break
+					}
+				}
 			}
 		}
 
 		// Success!
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
+
+		// Persist the updated user to Redis (cache)
+		authState := auth.(*AuthState)
+		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
 
 		// Set AuthResult to OK if it was Fail (delayed response)
 		if authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult); err == nil {
@@ -546,12 +566,12 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		session.Set(definitions.CookieDisplayName, user.DisplayName)
 		session.Set(definitions.CookieSubject, user.Id)
 
-		protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
+		proto, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
 		if err != nil {
-			protocol = definitions.ProtoIDP
+			proto = definitions.ProtoIDP
 		}
 
-		session.Set(definitions.CookieProtocol, protocol)
+		session.Set(definitions.CookieProtocol, proto)
 
 		if ttlVal, err := util.GetSessionValue[int](session, definitions.CookieRememberTTL); err == nil {
 			session.Options(sessions.Options{

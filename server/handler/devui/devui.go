@@ -136,6 +136,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 		{Method: "GET", Path: "/2fa/v1/totp/register", Template: "idp_totp_register.html"},
 		{Method: "POST", Path: "/2fa/v1/totp/register", Template: "idp_totp_register.html"},
 		{Method: "GET", Path: "/2fa/v1/webauthn/register", Template: "idp_webauthn_register.html"},
+		{Method: "GET", Path: "/2fa/v1/webauthn/devices", Template: "idp_2fa_webauthn_devices.html"},
 		{Method: "GET", Path: "/logged_out", Template: "idp_logged_out.html"},
 		{Method: "GET", Path: "/oidc/consent", Template: "idp_consent.html"},
 	}
@@ -295,6 +296,14 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["RegisterTOTP"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register TOTP")
 
 	data["SecurityKeyWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Security Key (WebAuthn)")
+	data["SecurityKeysWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Security Keys (WebAuthn)")
+	data["RegisteredDevices"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Registered Devices")
+	data["NoDevicesFound"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "No registered security keys found.")
+	data["LastUsed"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Last used")
+	data["Never"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Never")
+	data["DeleteConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to delete this security key?")
+	data["AddDevice"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Add new security key")
+	data["BackTo2FA"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to 2FA Overview")
 	data["WebAuthnDescription"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Use a physical key like Yubikey.")
 	data["DeactivateWebAuthnConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to deactivate WebAuthn?")
 	data["RegisterWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register WebAuthn")
@@ -355,6 +364,10 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["WebAuthnAuthenticators"] = []gin.H{
 		{"ID": "1", "Name": "YubiKey 5C", "CreatedAt": time.Now().Add(-24 * time.Hour).Format(time.RFC822)},
 		{"ID": "2", "Name": "Android Phone", "CreatedAt": time.Now().Add(-48 * time.Hour).Format(time.RFC822)},
+	}
+	data["Devices"] = []gin.H{
+		{"ID": "MTIzNDU2Nzg5MA", "LastUsed": time.Now().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")},
+		{"ID": "YWJjZGVmZ2hpams", "LastUsed": "Never"},
 	}
 	data["QRCode"] = "otpauth://totp/Nauthilus:dev-user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Nauthilus"
 	data["Secret"] = "JBSWY3DPEHPK3PXP"

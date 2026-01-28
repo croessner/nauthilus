@@ -53,5 +53,14 @@
   "Please wait while the logout process is completed.": "Пожалуйста, подождите, пока процесс выхода будет завершен.",
   "Logged Out": "Выход выполнен",
   "Successfully Logged Out": "Выход успешно выполнен",
-  "You have been successfully logged out of your session.": "Вы успешно вышли из своей сессии."
+  "You have been successfully logged out of your session.": "Вы успешно вышли из своей сессии.",
+  "Security Keys (WebAuthn)": "Security Keys (WebAuthn)",
+  "Registered Devices": "Registered Devices",
+  "No registered security keys found.": "No registered security keys found.",
+  "Last used": "Last used",
+  "Never": "Never",
+  "Are you sure you want to delete this security key?": "Are you sure you want to delete this security key?",
+  "Add new security key": "Add new security key",
+  "Back to 2FA Overview": "Back to 2FA Overview",
+  "Device ID": "Device ID"
 }

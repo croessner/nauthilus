@@ -17,8 +17,6 @@ package core
 
 import (
 	"github.com/croessner/nauthilus/server/model/mfa"
-
-	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // Done is the value for channels to finish workers
@@ -45,14 +43,14 @@ type BackendManager interface {
 	DeleteTOTPRecoveryCodes(auth *AuthState) (err error)
 
 	// GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
-	GetWebAuthnCredentials(auth *AuthState) (credentials []webauthn.Credential, err error)
+	GetWebAuthnCredentials(auth *AuthState) (credentials []mfa.PersistentCredential, err error)
 
 	// SaveWebAuthnCredential saves a WebAuthn credential for the user in the backend.
-	SaveWebAuthnCredential(auth *AuthState, credential *webauthn.Credential) (err error)
+	SaveWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error)
 
 	// DeleteWebAuthnCredential removes a WebAuthn credential for the user in the backend.
-	DeleteWebAuthnCredential(auth *AuthState, credential *webauthn.Credential) (err error)
+	DeleteWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error)
 
 	// UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
-	UpdateWebAuthnCredential(auth *AuthState, oldCredential *webauthn.Credential, newCredential *webauthn.Credential) (err error)
+	UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error)
 }

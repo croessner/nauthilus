@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -74,8 +75,10 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 
 	priorityqueue.LDAPQueue.AddPoolName("test")
 
-	cred := webauthn.Credential{
-		ID: []byte("test-id"),
+	cred := mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
 	}
 	credJSON, _ := json.Marshal(cred)
 
@@ -130,8 +133,10 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 
 	priorityqueue.LDAPQueue.AddPoolName("test")
 
-	cred := &webauthn.Credential{
-		ID: []byte("test-id"),
+	cred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
 	}
 
 	ctx := context.Background()
@@ -183,8 +188,10 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 
 	priorityqueue.LDAPQueue.AddPoolName("test")
 
-	cred := &webauthn.Credential{
-		ID: []byte("test-id"),
+	cred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
 	}
 
 	ctx := context.Background()
@@ -236,11 +243,15 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 
 	priorityqueue.LDAPQueue.AddPoolName("test")
 
-	oldCred := &webauthn.Credential{
-		ID: []byte("test-id"),
+	oldCred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
 	}
-	newCred := &webauthn.Credential{
-		ID: []byte("test-id"),
+	newCred := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
 	}
 
 	ctx := context.Background()

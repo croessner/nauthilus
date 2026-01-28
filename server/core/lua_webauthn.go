@@ -24,13 +24,13 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 // GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the Lua backend.
-func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials []webauthn.Credential, err error) {
+func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials []mfa.PersistentCredential, err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
 	lctx, lsp := tr.Start(auth.Ctx(), "lua.get_webauthn_credentials",
 		attribute.String("backend_name", lm.backendName),
@@ -82,7 +82,7 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 
 	for _, credStr := range luaBackendResult.Attributes {
 		if str, ok := credStr.(string); ok {
-			var cred webauthn.Credential
+			var cred mfa.PersistentCredential
 			if err = json.Unmarshal([]byte(str), &cred); err == nil {
 				credentials = append(credentials, cred)
 			}
@@ -93,7 +93,7 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 }
 
 // SaveWebAuthnCredential saves a WebAuthn credential for the user in the Lua backend.
-func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *webauthn.Credential) (err error) {
+func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
 	lctx, lsp := tr.Start(auth.Ctx(), "lua.save_webauthn_credential",
 		attribute.String("backend_name", lm.backendName),
@@ -156,7 +156,7 @@ func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *we
 }
 
 // DeleteWebAuthnCredential removes a WebAuthn credential for the user in the Lua backend.
-func (lm *luaManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *webauthn.Credential) (err error) {
+func (lm *luaManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
 	lctx, lsp := tr.Start(auth.Ctx(), "lua.delete_webauthn_credential",
 		attribute.String("backend_name", lm.backendName),
@@ -219,7 +219,7 @@ func (lm *luaManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *
 }
 
 // UpdateWebAuthnCredential updates an existing WebAuthn credential for the user in the Lua backend.
-func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredential *webauthn.Credential, newCredential *webauthn.Credential) (err error) {
+func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
 	lctx, lsp := tr.Start(auth.Ctx(), "lua.update_webauthn_credential",
 		attribute.String("backend_name", lm.backendName),
