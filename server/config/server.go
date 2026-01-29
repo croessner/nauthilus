@@ -482,6 +482,15 @@ func (s *ServerSection) GetDisabledEndpoints() *Endpoint {
 	return &s.DisabledEndpoints
 }
 
+// GetFrontend retrieves the frontend configuration from the ServerSection.
+func (s *ServerSection) GetFrontend() *Frontend {
+	if s == nil {
+		return &Frontend{}
+	}
+
+	return &s.Frontend
+}
+
 // Endpoint defines a structure for configuring various types of authentication and custom hooks.
 type Endpoint struct {
 	AuthHeader    bool `mapstructure:"auth_header"`
@@ -1943,25 +1952,14 @@ func (m *MasterUser) GetDelimiter() string {
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
 	Enabled               bool     `mapstructure:"enabled"`
-	CSRFSecret            string   `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
 	CookieStoreAuthKey    string   `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
 	CookieStoreEncKey     string   `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
 	HTMLStaticContentPath string   `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
-	DefaultLogoImage      string   `mapstructure:"default_logo_image" validate:"omitempty"`
-	ErrorPage             string   `mapstructure:"error_page" validate:"omitempty"`
-	Homepage              string   `mapstructure:"homepage" validate:"omitempty,url"`
 	LanguageResources     string   `mapstructure:"language_resources" validate:"omitempty,dir"`
 	Languages             []string `mapstructure:"languages" validate:"omitempty"`
 	DefaultLanguage       string   `mapstructure:"default_language" validate:"omitempty"`
 	TotpIssuer            string   `mapstructure:"totp_issuer" validate:"omitempty"`
 	TotpSkew              uint     `mapstructure:"totp_skew" validate:"omitempty"`
-	TotpPage              string   `mapstructure:"totp_page" validate:"omitempty"`
-	TotpWelcome           string   `mapstructure:"totp_welcome" validate:"omitempty"`
-	TotpPageLogoImageAlt  string   `mapstructure:"totp_page_logo_image_alt" validate:"omitempty"`
-	WebAuthnPage          string   `mapstructure:"webauthn_page" validate:"omitempty"`
-	Login2FAPage          string   `mapstructure:"login_2fa_page" validate:"omitempty"`
-	Login2FAPageWelcome   string   `mapstructure:"login_2fa_page_welcome" validate:"omitempty"`
-	Login2FAPostPage      string   `mapstructure:"login_2fa_post_page" validate:"omitempty"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -1974,36 +1972,6 @@ func (f *Frontend) IsEnabled() bool {
 	return f.Enabled
 }
 
-// GetCSRFSecret retrieves the CSRF secret from the Frontend configuration.
-// Returns an empty string if the Frontend is nil.
-func (f *Frontend) GetCSRFSecret() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.CSRFSecret
-}
-
-// GetCookieStoreAuthKey retrieves the cookie store authentication key from the Frontend configuration.
-// Returns an empty string if the Frontend is nil.
-func (f *Frontend) GetCookieStoreAuthKey() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.CookieStoreAuthKey
-}
-
-// GetCookieStoreEncKey retrieves the cookie store encryption key from the Frontend configuration.
-// Returns an empty string if the Frontend is nil.
-func (f *Frontend) GetCookieStoreEncKey() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.CookieStoreEncKey
-}
-
 // GetHTMLStaticContentPath retrieves the HTML static content path from the Frontend configuration.
 // Returns an empty string if the Frontend is nil.
 func (f *Frontend) GetHTMLStaticContentPath() string {
@@ -2012,36 +1980,6 @@ func (f *Frontend) GetHTMLStaticContentPath() string {
 	}
 
 	return f.HTMLStaticContentPath
-}
-
-// GetDefaultLogoImage retrieves the default logo image from the Frontend configuration.
-// Returns an empty string if the Frontend is nil.
-func (f *Frontend) GetDefaultLogoImage() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.DefaultLogoImage
-}
-
-// GetErrorPage retrieves the error page from the Frontend configuration.
-// Returns an empty string if the Frontend is nil.
-func (f *Frontend) GetErrorPage() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.ErrorPage
-}
-
-// GetHomepage retrieves the homepage from the Frontend configuration.
-// Returns an empty string if the Frontend is nil.
-func (f *Frontend) GetHomepage() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.Homepage
 }
 
 // GetLanguageResources retrieves the language resources path from the Frontend configuration.
@@ -2090,67 +2028,22 @@ func (f *Frontend) GetTotpSkew() uint {
 	return f.TotpSkew
 }
 
-// GetTotpPage retrieves the TOTP page from the Frontend configuration.
-func (f *Frontend) GetTotpPage() string {
+// GetCookieStoreAuthKey retrieves the cookie store auth key from the Frontend configuration.
+func (f *Frontend) GetCookieStoreAuthKey() string {
 	if f == nil {
 		return ""
 	}
 
-	return f.TotpPage
+	return f.CookieStoreAuthKey
 }
 
-// GetTotpWelcome retrieves the TOTP welcome message from the Frontend configuration.
-func (f *Frontend) GetTotpWelcome() string {
+// GetCookieStoreEncKey retrieves the cookie store encryption key from the Frontend configuration.
+func (f *Frontend) GetCookieStoreEncKey() string {
 	if f == nil {
 		return ""
 	}
 
-	return f.TotpWelcome
-}
-
-// GetTotpPageLogoImageAlt retrieves the TOTP page logo image alt text from the Frontend configuration.
-func (f *Frontend) GetTotpPageLogoImageAlt() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.TotpPageLogoImageAlt
-}
-
-// GetWebAuthnPage retrieves the WebAuthn page from the Frontend configuration.
-func (f *Frontend) GetWebAuthnPage() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.WebAuthnPage
-}
-
-// GetLogin2FAPage retrieves the 2FA login page from the Frontend configuration.
-func (f *Frontend) GetLogin2FAPage() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.Login2FAPage
-}
-
-// GetLogin2FAPageWelcome retrieves the 2FA login page welcome message from the Frontend configuration.
-func (f *Frontend) GetLogin2FAPageWelcome() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.Login2FAPageWelcome
-}
-
-// GetLogin2FAPostPage retrieves the 2FA login post page from the Frontend configuration.
-func (f *Frontend) GetLogin2FAPostPage() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.Login2FAPostPage
+	return f.CookieStoreEncKey
 }
 
 func validateCookieStoreEncKey(fl validator.FieldLevel) bool {

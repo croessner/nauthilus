@@ -80,8 +80,8 @@ func NewDefaultBootstrap(deps HTTPDeps) DefaultBootstrap {
 
 func (b DefaultBootstrap) InitSessionStore() sessions.Store {
 	store := cookie.NewStore(
-		[]byte(b.cfg.GetServer().Frontend.CookieStoreAuthKey),
-		[]byte(b.cfg.GetServer().Frontend.CookieStoreEncKey),
+		[]byte(b.cfg.GetServer().GetFrontend().GetCookieStoreAuthKey()),
+		[]byte(b.cfg.GetServer().GetFrontend().GetCookieStoreEncKey()),
 	)
 
 	secure := true

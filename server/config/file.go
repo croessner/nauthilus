@@ -2032,40 +2032,12 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		return nil
 	}
 
-	if f.Server.Frontend.DefaultLogoImage == "" {
-		f.Server.Frontend.DefaultLogoImage = "/static/img/logo.png"
-	}
-
-	if f.Server.Frontend.Homepage == "" {
-		f.Server.Frontend.Homepage = "https://nauthilus.org"
-	}
-
-	if f.Server.Frontend.WebAuthnPage == "" {
-		f.Server.Frontend.WebAuthnPage = "/webauthn"
-	}
-
-	if f.Server.Frontend.Login2FAPage == "" {
-		f.Server.Frontend.Login2FAPage = "/register"
-	}
-
-	if f.Server.Frontend.Login2FAPostPage == "" {
-		f.Server.Frontend.Login2FAPostPage = f.Server.Frontend.Login2FAPage + "/home"
-	}
-
 	if f.Server.Frontend.TotpSkew == 0 {
 		f.Server.Frontend.TotpSkew = 1
 	}
 
-	if f.Server.Frontend.TotpPage == "" {
-		f.Server.Frontend.TotpPage = "/totp"
-	}
-
 	if f.Server.Frontend.TotpIssuer == "" {
 		f.Server.Frontend.TotpIssuer = "Nauthilus"
-	}
-
-	if f.Server.Frontend.TotpPageLogoImageAlt == "" {
-		f.Server.Frontend.TotpPageLogoImageAlt = definitions.ImageCopyright
 	}
 
 	return nil
