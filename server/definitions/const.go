@@ -588,6 +588,12 @@ const (
 	// ProtoOIDC corresponds to the "oidc" protocol
 	ProtoOIDC = "oidc"
 
+	// OIDCTokenPrefixAccessToken is the prefix for opaque access tokens.
+	OIDCTokenPrefixAccessToken = "na_at_"
+
+	// OIDCTokenPrefixRefreshToken is the prefix for refresh tokens.
+	OIDCTokenPrefixRefreshToken = "na_rt_"
+
 	// ProtoSAML corresponds to the "saml" protocol
 	ProtoSAML = "saml"
 

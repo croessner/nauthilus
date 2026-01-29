@@ -435,6 +435,8 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
+		storage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
+
 		if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
 			setupIdP = func(e *gin.Engine) {
 				deps.Env = env
@@ -451,6 +453,11 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 					mfaAPI := handlerapiv1.NewMFAAPI(deps)
 					mfaAPI.Register(e)
+
+					if cfg.GetIdP().OIDC.Enabled {
+						oidcSessionsAPI := handlerapiv1.NewOIDCSessionsAPI(deps, storage)
+						oidcSessionsAPI.Register(e)
+					}
 				}
 
 				if cfg.GetIdP().OIDC.Enabled {

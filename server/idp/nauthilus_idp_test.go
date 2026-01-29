@@ -48,6 +48,14 @@ type mockIdpConfig struct {
 	oidc config.OIDCConfig
 }
 
+type mockTokenGenerator struct {
+	token string
+}
+
+func (m *mockTokenGenerator) GenerateToken(prefix string) string {
+	return prefix + m.token
+}
+
 func (m *mockIdpConfig) GetIdP() *config.IdPSection {
 	return &config.IdPSection{
 		OIDC: m.oidc,
@@ -89,12 +97,8 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	redisClient := rediscli.NewTestClient(db)
 	d := &deps.Deps{Cfg: cfg, Redis: redisClient}
 	idp := NewNauthilusIdP(d)
+	idp.tokenGen = &mockTokenGenerator{token: "fixed-token"}
 	ctx := context.Background()
-
-	// Mock token generator for predictable tests
-	oldGen := tokenGenerator
-	tokenGenerator = func() string { return "fixed-token" }
-	defer func() { tokenGenerator = oldGen }()
 
 	fixedTime := time.Date(2026, 1, 26, 8, 0, 0, 0, time.UTC)
 
@@ -144,15 +148,15 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		}
 
 		sessionData, _ := json.Marshal(session)
-		mock.ExpectSet("test:nauthilus:oidc:refresh_token:fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "fixed-token").SetVal(1)
+		mock.ExpectSet("test:nauthilus:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
 		mock.ExpectExpire("test:nauthilus:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
 		idToken, accessToken, refreshToken, _, err := idp.IssueTokens(ctx, session)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, idToken)
 		assert.NotEmpty(t, accessToken)
-		assert.Equal(t, "fixed-token", refreshToken)
+		assert.Equal(t, "na_rt_fixed-token", refreshToken)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -173,15 +177,15 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		mock.ExpectSRem("test:nauthilus:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
 		mock.ExpectDel("test:nauthilus:oidc:refresh_token:" + refreshToken).SetVal(1)
 		// Store new RT (fixed-token due to mock)
-		mock.ExpectSet("test:nauthilus:oidc:refresh_token:fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "fixed-token").SetVal(1)
+		mock.ExpectSet("test:nauthilus:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
 		mock.ExpectExpire("test:nauthilus:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
 		idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, idToken)
 		assert.NotEmpty(t, accessToken)
-		assert.Equal(t, "fixed-token", newRefreshToken)
+		assert.Equal(t, "na_rt_fixed-token", newRefreshToken)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -245,5 +249,20 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		requested = []string{"openid", "profile", "email", "groups", "offline_access", "invalid"}
 		filtered = idp.FilterScopes(clientNoScopes, requested)
 		assert.Equal(t, []string{"openid", "profile", "email", "groups", "offline_access"}, filtered)
+	})
+
+	t.Run("ValidateToken_Heuristic", func(t *testing.T) {
+		// JWT-like token (with dots) should NOT hit Redis
+		jwtToken := "header.payload.signature"
+		_, err := idp.ValidateToken(ctx, jwtToken)
+		assert.Error(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet(), "Redis should not have been hit for JWT-like token")
+
+		// Opaque token (without dots) SHOULD hit Redis
+		opaqueToken := "na_at_someopaquevalue"
+		mock.ExpectGet("test:nauthilus:oidc:access_token:" + opaqueToken).RedisNil()
+		_, err = idp.ValidateToken(ctx, opaqueToken)
+		assert.Error(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet(), "Redis should have been hit for opaque token")
 	})
 }

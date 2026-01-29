@@ -182,3 +182,87 @@ func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID 
 
 	return err
 }
+
+// StoreAccessToken stores an opaque access token in Redis and tracks it for the user.
+func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
+	data, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+
+	encryptedData, err := s.redis.GetSecurityManager().Encrypt(string(data))
+	if err != nil {
+		return err
+	}
+
+	key := s.prefix + fmt.Sprintf("nauthilus:oidc:access_token:%s", token)
+	userKey := s.prefix + fmt.Sprintf("nauthilus:oidc:user_access_tokens:%s", session.UserID)
+
+	pipe := s.redis.GetWriteHandle().Pipeline()
+	pipe.Set(ctx, key, encryptedData, ttl)
+	pipe.SAdd(ctx, userKey, token)
+	// Keep the user mapping alive as long as there might be active tokens
+	pipe.Expire(ctx, userKey, 30*24*time.Hour)
+
+	_, err = pipe.Exec(ctx)
+
+	return err
+}
+
+// GetAccessToken retrieves an opaque access token session from Redis.
+func (s *RedisTokenStorage) GetAccessToken(ctx context.Context, token string) (*OIDCSession, error) {
+	key := s.prefix + fmt.Sprintf("nauthilus:oidc:access_token:%s", token)
+	data, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	decryptedData, err := s.redis.GetSecurityManager().Decrypt(data)
+	if err != nil {
+		return nil, err
+	}
+
+	session := &OIDCSession{}
+	if err := json.Unmarshal([]byte(decryptedData), session); err != nil {
+		return nil, err
+	}
+
+	return session, nil
+}
+
+// DeleteAccessToken removes an opaque access token from Redis and its user tracking.
+func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string) error {
+	session, err := s.GetAccessToken(ctx, token)
+	if err == nil && session != nil {
+		userKey := s.prefix + fmt.Sprintf("nauthilus:oidc:user_access_tokens:%s", session.UserID)
+		_ = s.redis.GetWriteHandle().SRem(ctx, userKey, token).Err()
+	}
+
+	key := s.prefix + fmt.Sprintf("nauthilus:oidc:access_token:%s", token)
+
+	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+}
+
+// ListUserSessions returns all active OIDC sessions (via access tokens) for a user.
+func (s *RedisTokenStorage) ListUserSessions(ctx context.Context, userID string) (map[string]*OIDCSession, error) {
+	userKey := s.prefix + fmt.Sprintf("nauthilus:oidc:user_access_tokens:%s", userID)
+
+	tokens, err := s.redis.GetReadHandle().SMembers(ctx, userKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	sessions := make(map[string]*OIDCSession)
+
+	for _, token := range tokens {
+		session, err := s.GetAccessToken(ctx, token)
+		if err == nil {
+			sessions[token] = session
+		} else {
+			// Clean up expired token from set
+			_ = s.redis.GetWriteHandle().SRem(ctx, userKey, token).Err()
+		}
+	}
+
+	return sessions, nil
+}

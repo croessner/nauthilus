@@ -51,9 +51,13 @@ idp:
     auto_key_rotation: true
     key_rotation_interval: 24h
     key_max_age: 168h # 7 days
+    # Default access token type (jwt or opaque):
+    access_token_type: "jwt"
     clients:
       - client_id: "myapp"
         client_secret: "secret"
+        # Overwrite access token type for this client:
+        access_token_type: "opaque"
         redirect_uris:
           - "https://myapp.example.com/callback"
         scopes: [ "openid", "profile", "email", "groups" ]
@@ -75,6 +79,8 @@ idp:
 - **Discovery**: The configuration is provided at `/.well-known/openid-configuration`.
 - **RS256**: Tokens are signed by default with the configured RSA key.
 - **JWKS Support**: Public keys are provided for automatic verification by clients.
+- **Opaque Access Tokens**: Support for opaque access tokens stored in Redis, providing enhanced security and session
+  management capabilities.
 - **Dynamic Mapping**: LDAP attributes or Lua results are mapped to OIDC claims at runtime.
 - **Logout**: Supports RP-initiated logout as well as Front-channel and Back-channel logout.
 
@@ -93,6 +99,24 @@ This is particularly useful for APIs or backend services that want to ensure a t
 Nauthilus publishes its public keys at `/oidc/jwks`. Many modern applications automatically download this list. Using
 these public keys, the application can independently verify if a token was truly signed by Nauthilus without having to
 ask the server every time. This saves time and reduces the load on the IdP.
+
+#### Opaque Access Tokens (Session Management)
+
+By default, Nauthilus issues JWT (JSON Web Token) access tokens, which are stateless and self-contained. While
+convenient, JWTs are hard to revoke before they expire.
+
+Nauthilus now also supports **Opaque Access Tokens**. When enabled:
+
+- Instead of a signed JWT, a high-entropy random string (32 bytes, base64url-encoded) is issued as the access token.
+- Tokens use recognizable prefixes for easier identification:
+    - `na_at_` for Access Tokens
+    - `na_rt_` for Refresh Tokens
+- The session data associated with the token is stored securely (encrypted) in Redis.
+- Validation requires Nauthilus to look up the token in Redis (Introspection).
+- **Session Management**: Admins can list all active sessions for a user and invalidate them immediately by deleting the
+  tokens from Redis via the Backchannel API.
+
+This can be configured globally or per client using the `access_token_type: "opaque"` setting.
 
 #### KID (Signing Key ID)
 

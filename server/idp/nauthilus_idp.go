@@ -31,31 +31,26 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
-)
-
-var (
-	tokenGenerator = func() string {
-		return ksuid.New().String()
-	}
 )
 
 // NauthilusIdP implements the IdentityProvider interface using Nauthilus core.
 type NauthilusIdP struct {
-	deps    *deps.Deps
-	storage *RedisTokenStorage
-	tracer  monittrace.Tracer
-	keyMgr  *oidckeys.Manager
+	deps     *deps.Deps
+	storage  *RedisTokenStorage
+	tracer   monittrace.Tracer
+	keyMgr   *oidckeys.Manager
+	tokenGen TokenGenerator
 }
 
 // NewNauthilusIdP creates a new instance of NauthilusIdP.
 func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
 	return &NauthilusIdP{
-		deps:    d,
-		storage: NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
-		tracer:  monittrace.New("nauthilus/idp"),
-		keyMgr:  oidckeys.NewManager(d),
+		deps:     d,
+		storage:  NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
+		tracer:   monittrace.New("nauthilus/idp"),
+		keyMgr:   oidckeys.NewManager(d),
+		tokenGen: NewDefaultTokenGenerator(),
 	}
 }
 
@@ -209,33 +204,21 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 		return "", "", "", 0, fmt.Errorf("failed to sign ID token: %w", err)
 	}
 
-	// Access Token Claims (simplified)
-	accessClaims := jwt.MapClaims{
-		"iss":   issuer,
-		"sub":   session.UserID,
-		"aud":   session.ClientID,
-		"exp":   now.Add(accessTokenLifetime).Unix(),
-		"iat":   now.Unix(),
-		"scope": strings.Join(session.Scopes, " "),
+	// Access Token
+	tokenIssuer := NewTokenIssuer(issuer, key, kid, session, n.storage, n.tokenGen)
+	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
+
+	var accessTokenString string
+	if accessTokenType == "opaque" {
+		accessTokenString, _, err = tokenIssuer.IssueOpaque(ctx, accessTokenLifetime)
+	} else {
+		accessTokenString, _, err = tokenIssuer.IssueJWT(ctx, accessTokenLifetime)
 	}
 
-	// Add basic info to access token as well
-	if v, ok := session.Claims["name"]; ok {
-		accessClaims["name"] = v
-	}
-	if v, ok := session.Claims["preferred_username"]; ok {
-		accessClaims["preferred_username"] = v
-	}
-
-	accessToken := jwt.NewWithClaims(jwt.SigningMethodRS256, accessClaims)
-
-	accessToken.Header["kid"] = kid
-
-	accessTokenString, err := accessToken.SignedString(key)
 	if err != nil {
 		sp.RecordError(err)
 
-		return "", "", "", 0, fmt.Errorf("failed to sign access token: %w", err)
+		return "", "", "", 0, err
 	}
 
 	refreshTokenString := ""
@@ -250,7 +233,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	if hasOfflineAccess {
-		refreshTokenString = tokenGenerator()
+		refreshTokenString = n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
 		refreshTokenLifetime := client.RefreshTokenLifetime
 
 		if refreshTokenLifetime == 0 {
@@ -310,7 +293,7 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 		"sub": userID,
 		"aud": clientID,
 		"iat": time.Now().Unix(),
-		"jti": ksuid.New().String(),
+		"jti": n.tokenGen.GenerateToken(""),
 		"events": map[string]any{
 			"http://schemas.openid.net/event/backchannel-logout": map[string]any{},
 		},
@@ -323,11 +306,24 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 	return token.SignedString(key)
 }
 
-// ValidateToken parses and validates a signed JWT token.
+// ValidateToken parses and validates an access token (JWT or opaque).
 func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
 	_, sp := n.tracer.Start(ctx, "idp.validate_token")
 	defer sp.End()
 
+	// Heuristic: JWT tokens always contain dots. Opaque tokens (KSUIDs) do not.
+	if !strings.Contains(tokenString, ".") {
+		session, err := n.storage.GetAccessToken(ctx, tokenString)
+		if err == nil && session != nil {
+			token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
+
+			return token.Validate(ctx, tokenString)
+		}
+
+		return nil, fmt.Errorf("invalid or expired opaque token")
+	}
+
+	// Fallback to JWT
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])

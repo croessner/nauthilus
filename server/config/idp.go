@@ -18,6 +18,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -88,6 +89,7 @@ type OIDCConfig struct {
 	FrontChannelLogoutSessionSupported *bool               `mapstructure:"front_channel_logout_session_supported"`
 	BackChannelLogoutSupported         *bool               `mapstructure:"back_channel_logout_supported"`
 	BackChannelLogoutSessionSupported  *bool               `mapstructure:"back_channel_logout_session_supported"`
+	AccessTokenType                    string              `mapstructure:"access_token_type"`
 	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
 }
@@ -234,6 +236,15 @@ func (o *OIDCConfig) GetDefaultRefreshTokenLifetime() time.Duration {
 	return 30 * 24 * time.Hour
 }
 
+// GetAccessTokenType returns the configured access token type (jwt or opaque).
+func (o *OIDCConfig) GetAccessTokenType() string {
+	if o.AccessTokenType == "" {
+		return "jwt"
+	}
+
+	return strings.ToLower(o.AccessTokenType)
+}
+
 // GetAutoKeyRotation returns true if auto key rotation is enabled.
 func (o *OIDCConfig) GetAutoKeyRotation() bool {
 	return o.AutoKeyRotation
@@ -321,6 +332,7 @@ type OIDCClient struct {
 	DelayedResponse                   bool          `mapstructure:"delayed_response"`
 	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
 	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
+	AccessTokenType                   string        `mapstructure:"access_token_type"`
 	RefreshTokenLifetime              time.Duration `mapstructure:"refresh_token_lifetime"`
 	TokenEndpointAuthMethod           string        `mapstructure:"token_endpoint_auth_method"`
 	Claims                            IdTokenClaims `mapstructure:"claims"`
@@ -357,6 +369,15 @@ func (c *OIDCClient) IsDelayedResponse() bool {
 	}
 
 	return c.DelayedResponse
+}
+
+// GetAccessTokenType returns the configured access token type for the client (jwt or opaque).
+func (c *OIDCClient) GetAccessTokenType(defaultType string) string {
+	if c.AccessTokenType == "" {
+		return defaultType
+	}
+
+	return strings.ToLower(c.AccessTokenType)
 }
 
 // SAML2Config represents the configuration for SAML 2.0.
