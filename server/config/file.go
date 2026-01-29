@@ -756,6 +756,27 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
+	reqPoolName := poolName
+	if reqPoolName == "" {
+		reqPoolName = definitions.DefaultBackendName
+	}
+
+	poolNameMatches := func(configPoolName string) bool {
+		if configPoolName == reqPoolName {
+			return true
+		}
+
+		// Historically, the configuration defaulted to `__meta_default__`, while runtime
+		// pooling uses `default`. Accept both as equivalent to keep configs without
+		// explicit `pool_name` working.
+		if (configPoolName == definitions.DefaultBackendName && reqPoolName == "default") ||
+			(configPoolName == "default" && reqPoolName == definitions.DefaultBackendName) {
+			return true
+		}
+
+		return false
+	}
+
 	getProtocols := f.GetProtocols(definitions.BackendLDAP)
 	if getProtocols == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
@@ -767,7 +788,7 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 	}
 
 	for index := range ldapProtocols {
-		if ldapProtocols[index].GetPoolName() != poolName {
+		if !poolNameMatches(ldapProtocols[index].GetPoolName()) {
 			continue
 		}
 
@@ -2165,8 +2186,10 @@ func (f *FileSettings) checkResourceLimits() {
 	// Check LDAP
 	if f.LDAP != nil {
 		if cfg, ok := f.LDAP.GetConfig().(*LDAPConf); ok && cfg != nil {
-			checkPool("ldap.default.lookup", cfg.GetLookupPoolSize())
-			checkPool("ldap.default.auth", cfg.GetAuthPoolSize())
+			defaultLDAPPool := "ldap." + definitions.DefaultBackendName
+
+			checkPool(defaultLDAPPool+".lookup", cfg.GetLookupPoolSize())
+			checkPool(defaultLDAPPool+".auth", cfg.GetAuthPoolSize())
 		}
 
 		for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
@@ -2217,7 +2240,7 @@ func (f *FileSettings) warnDeprecatedConfig() {
 	// LDAP: pool_only (deprecated) → lookup_pool_only
 	if f.LDAP != nil {
 		if cfg, _ := f.LDAP.GetConfig().(*LDAPConf); cfg != nil {
-			warnDeprecatedLDAP("default", cfg)
+			warnDeprecatedLDAP(definitions.DefaultBackendName, cfg)
 		}
 
 		for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
