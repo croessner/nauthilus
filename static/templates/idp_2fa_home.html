@@ -26,7 +26,7 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveTOTP }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
-                            .BackendError end hx-delete="/mfa/totp" hx-target="#modal-container" if {{ }} }}disabled{{>
+                            hx-delete="/mfa/totp" hx-target="#modal-container" {{ if .BackendError }}disabled{{ end }}>
                         {{ .Deactivate }}
                     </button>
                     {{ else }}
@@ -47,8 +47,7 @@
                     <a class="btn btn-secondary btn-outline" href="/mfa/webauthn/devices">{{ .SecurityKeyWebAuthn
                         }}</a>
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateWebAuthnConfirm }}"
-                            .BackendError end hx-delete="/mfa/webauthn" hx-target="#modal-container" if {{ }}
-                            }}disabled{{>
+                            hx-delete="/mfa/webauthn" hx-target="#modal-container" {{ if .BackendError }}disabled{{ end }}>
                         {{ .Deactivate }}
                     </button>
                     {{ else }}
