@@ -79,6 +79,7 @@ func mockNoisy(mock redismock.ClientMock) {
 	for i := 0; i < 20; i++ {
 		mock.Regexp().ExpectHGetAll(".*").SetVal(map[string]string{})
 		mock.Regexp().ExpectGet(".*").RedisNil()
+		mock.Regexp().ExpectHGet(".*", ".*").RedisNil()
 	}
 }
 
@@ -105,7 +106,7 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, hashedPW, ".*", ".*", ".*").SetVal(int64(1))
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"0", int64(0), "4"})
 
 		rule := cfg.GetBruteForceRules()[0]
@@ -138,7 +139,7 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectSAdd(".*affected_accounts", accountName).SetVal(int64(1))
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
 
 		mock.Regexp().ExpectHSet(".*bruteforce:.*", attackerIP+"/32", "testbucket").SetVal(int64(1))
@@ -178,7 +179,7 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
 		mock.Regexp().ExpectHSet(".*", attackerIP+"/32", "testbucket").SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
@@ -214,7 +215,7 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
 		mock.Regexp().ExpectHSet(".*", attackerIP+"/32", "testbucket").SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
@@ -275,8 +276,10 @@ func TestBruteForceLogic(t *testing.T) {
 		_, network, _ := net.ParseCIDR(testIP + "/32")
 		currentKey, prevKey, _ := bm.GetSlidingWindowKeys(rule, network)
 
+		mock.MatchExpectationsInOrder(false)
+		mock.Regexp().ExpectHGet(".*", "positive").RedisNil()
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha1")
-		mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey, ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"15", int64(1), "4"})
 
 		var message string
