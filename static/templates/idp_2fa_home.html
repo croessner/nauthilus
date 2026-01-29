@@ -65,9 +65,9 @@
                 {{ end }}
                 <div class="card-actions justify-end mt-4">
                     <button class="btn btn-secondary"
-                            (not
-                            (or
-                            .BackendError .HaveTOTP .HaveWebAuthn)) end hx-post="/2fa/v1/recovery/generate" hx-target="#modal-container" if or {{ }} }}disabled{{>
+                            hx-post="/2fa/v1/recovery/generate"
+                            hx-target="#modal-container"
+                            {{ if or .BackendError (not (or .HaveTOTP .HaveWebAuthn)) }}disabled{{ end }}>
                         {{ .GenerateNewRecoveryCodes }}
                     </button>
                 </div>
@@ -76,4 +76,3 @@
     </div>
 </div>
 {{ template "idp_footer.html" . }}
-
