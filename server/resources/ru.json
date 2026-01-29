@@ -80,5 +80,8 @@
   "User not found": "Пользователь не найден",
   "Credential not found": "Учетные данные не найдены",
   "Missing device ID": "Отсутствует ID устройства",
-  "Invalid device ID": "Неверный ID устройства"
+  "Invalid device ID": "Неверный ID устройства",
+  "Confirmation": "Подтверждение",
+  "Yes": "Да",
+  "Cancel": "Отмена"
 }

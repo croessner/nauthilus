@@ -80,5 +80,8 @@
   "User not found": "Utilizador não encontrado",
   "Credential not found": "Credencial não encontrada",
   "Missing device ID": "ID do dispositivo em falta",
-  "Invalid device ID": "ID do dispositivo inválido"
+  "Invalid device ID": "ID do dispositivo inválido",
+  "Confirmation": "Confirmação",
+  "Yes": "Sim",
+  "Cancel": "Cancelar"
 }

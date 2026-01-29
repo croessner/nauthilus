@@ -80,5 +80,8 @@
   "User not found": "کاربر یافت نشد",
   "Credential not found": "اطلاعات ورود یافت نشد",
   "Missing device ID": "شناسه دستگاه موجود نیست",
-  "Invalid device ID": "شناسه دستگاه نامعتبر است"
+  "Invalid device ID": "شناسه دستگاه نامعتبر است",
+  "Confirmation": "تأیید",
+  "Yes": "بله",
+  "Cancel": "لغو"
 }

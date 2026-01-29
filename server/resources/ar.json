@@ -80,5 +80,8 @@
   "User not found": "المستخدم غير موجود",
   "Credential not found": "لم يتم العثور على أوراق الاعتماد",
   "Missing device ID": "معرف الجهاز مفقود",
-  "Invalid device ID": "معرف الجهاز غير صالح"
+  "Invalid device ID": "معرف الجهاز غير صالح",
+  "Confirmation": "تأكيد",
+  "Yes": "نعم",
+  "Cancel": "إلغاء"
 }

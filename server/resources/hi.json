@@ -80,5 +80,8 @@
   "User not found": "उपयोगकर्ता नहीं मिला",
   "Credential not found": "प्रमाण-पत्र नहीं मिला",
   "Missing device ID": "डिवाइस आईडी गुम है",
-  "Invalid device ID": "अमान्य डिवाइस आईडी"
+  "Invalid device ID": "अमान्य डिवाइस आईडी",
+  "Confirmation": "पुष्टि",
+  "Yes": "हाँ",
+  "Cancel": "रद्द करें"
 }

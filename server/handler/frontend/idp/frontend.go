@@ -239,6 +239,9 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		"LanguageCurrentName": currentName,
 		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, cfg, path, langManager.GetTags(), currentName),
 		"Username":            username,
+		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
+		"ConfirmYes":          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
+		"ConfirmNo":           frontend.GetLocalized(ctx, cfg, nil, "Cancel"),
 	}
 }
 

@@ -27,6 +27,42 @@
             document.documentElement.setAttribute('data-theme', newTheme);
             localStorage.setItem('theme', newTheme);
         }
+
+        document.addEventListener('htmx:confirm', function (evt) {
+            if (evt.target.hasAttribute('hx-confirm')) {
+                evt.preventDefault();
+
+                const title = "{{ .ConfirmTitle }}";
+                const yesText = "{{ .ConfirmYes }}";
+                const noText = "{{ .ConfirmNo }}";
+                const message = evt.detail.question;
+
+                const modalHtml = `
+                    <div class="modal modal-open" id="confirm-modal">
+                        <div class="modal-box">
+                            <h3 class="font-bold text-lg text-primary">${title}</h3>
+                            <p class="py-4">${message}</p>
+                            <div class="modal-action">
+                                <button class="btn btn-primary" id="confirm-yes">${yesText}</button>
+                                <button class="btn" id="confirm-no">${noText}</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const container = document.getElementById('modal-container') || document.body;
+                container.insertAdjacentHTML('beforeend', modalHtml);
+
+                document.getElementById('confirm-yes').addEventListener('click', function () {
+                    evt.detail.issueRequest(true);
+                    document.getElementById('confirm-modal').remove();
+                });
+
+                document.getElementById('confirm-no').addEventListener('click', function () {
+                    document.getElementById('confirm-modal').remove();
+                });
+            }
+        });
     </script>
     <style>
         [data-theme='dark'] .theme-icon-light {

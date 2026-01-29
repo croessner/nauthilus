@@ -80,5 +80,8 @@
   "User not found": "ユーザーが見つかりません",
   "Credential not found": "クレデンシャルが見つかりません",
   "Missing device ID": "デバイスIDがありません",
-  "Invalid device ID": "無効なデバイスID"
+  "Invalid device ID": "無効なデバイスID",
+  "Confirmation": "確認",
+  "Yes": "はい",
+  "Cancel": "キャンセル"
 }

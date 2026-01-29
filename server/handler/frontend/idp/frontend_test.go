@@ -26,12 +26,17 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/text/language"
 )
 
 type mockLangManager struct {
 	corelang.Manager
+}
+
+func (m *mockLangManager) GetBundle() *i18n.Bundle {
+	return i18n.NewBundle(language.English)
 }
 
 func (m *mockLangManager) GetTags() []language.Tag {
@@ -68,7 +73,11 @@ func TestBasePageData(t *testing.T) {
 			session.Set(definitions.CookieLang, "de")
 			session.Save()
 
-			data := BasePageData(c, cfg, &mockLangManager{})
+			lm := &mockLangManager{}
+			localizer := i18n.NewLocalizer(lm.GetBundle(), "de")
+			c.Set(definitions.CtxLocalizedKey, localizer)
+
+			data := BasePageData(c, cfg, lm)
 			assert.Equal(t, "de", data["LanguageTag"])
 			assert.Equal(t, "testuser", data["Username"])
 			c.Status(http.StatusOK)

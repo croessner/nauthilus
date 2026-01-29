@@ -80,5 +80,8 @@
   "User not found": "未找到用户",
   "Credential not found": "未找到凭据",
   "Missing device ID": "缺少设备 ID",
-  "Invalid device ID": "设备 ID 无效"
+  "Invalid device ID": "设备 ID 无效",
+  "Confirmation": "确认",
+  "Yes": "是",
+  "Cancel": "取消"
 }
