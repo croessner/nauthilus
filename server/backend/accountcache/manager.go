@@ -109,9 +109,5 @@ func (m *Manager) Purge(username string) {
 		return
 	}
 
-	// Since we don't track all protocol/oidcClientId combinations for a username,
-	// and MemoryShardedCache doesn't support pattern deletion easily without iterating
-	// all shards, we might need a better way if we want full purge.
-	// But for now, we just don't have enough info here to purge all combinations.
-	// However, usually we purge by exact username in other parts.
+	m.cache.DeleteByPrefix(username + "|")
 }

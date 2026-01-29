@@ -332,6 +332,12 @@ type State interface {
 
 	// Channel returns the backend channel.
 	Channel() backend.Channel
+
+	// PurgeCache invalidates the user authentication cache.
+	PurgeCache()
+
+	// PurgeCacheFor invalidates the user authentication cache for a specific username.
+	PurgeCacheFor(username string)
 }
 
 // AuthRequest holds data directly extracted from the HTTP request or connection metadata.
@@ -1428,7 +1434,20 @@ func (a *AuthState) GetTOTPRecoveryCodes() []string {
 
 // PurgeCache invalidates the user authentication cache.
 func (a *AuthState) PurgeCache() {
-	a.AccountCache().Purge(a.GetUsername())
+	a.PurgeCacheFor(a.GetUsername())
+}
+
+// PurgeCacheFor invalidates the user authentication cache for a specific username.
+func (a *AuthState) PurgeCacheFor(username string) {
+	if username == "" {
+		return
+	}
+
+	a.AccountCache().Purge(username)
+
+	if cs := getCacheService(); cs != nil {
+		cs.Purge(a, username)
+	}
 }
 
 // GetUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
@@ -2527,6 +2546,7 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 	return &bktype.PositivePasswordCache{
 		AccountField:      a.Runtime.AccountField,
 		TOTPSecretField:   a.Runtime.TOTPSecretField,
+		TOTPRecoveryField: a.Runtime.TOTPRecoveryField,
 		UniqueUserIDField: a.Runtime.UniqueUserIDField,
 		DisplayNameField:  a.Runtime.DisplayNameField,
 		Password: func() string {

@@ -358,6 +358,8 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			}
 		}
 
+		auth.PurgeCacheFor(userName)
+
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
 		ctx.JSON(http.StatusOK, "Registration success")
 	}

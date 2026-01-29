@@ -172,6 +172,9 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 	if totpSecretField, ok := hashValues["totp_secret_field"]; ok {
 		ucp.TOTPSecretField, _ = sm.Decrypt(totpSecretField)
 	}
+	if totpRecoveryField, ok := hashValues["totp_recovery_field"]; ok {
+		ucp.TOTPRecoveryField, _ = sm.Decrypt(totpRecoveryField)
+	}
 
 	if uniqueUserIDField, ok := hashValues["webauth_userid_field"]; ok {
 		ucp.UniqueUserIDField = uniqueUserIDField
@@ -234,6 +237,10 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	if cache.TOTPSecretField != "" {
 		hashFields["totp_secret_field"], _ = sm.Encrypt(cache.TOTPSecretField)
+	}
+
+	if cache.TOTPRecoveryField != "" {
+		hashFields["totp_recovery_field"], _ = sm.Encrypt(cache.TOTPRecoveryField)
 	}
 
 	if cache.UniqueUserIDField != "" {

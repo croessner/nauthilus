@@ -68,9 +68,9 @@
                 <div class="card-actions justify-end mt-4">
                     {{ $disabled := or .BackendError (not (or .HaveTOTP .HaveWebAuthn)) }}
                     <button $disabled
-                            hx-post="/mfa/recovery/generate"
                             hx-target="#modal-container"
-                            class="btn btn-primary {{ if $disabled }}btn-disabled{{ end }}" end if {{ }} }}disabled{{>
+                            class="btn btn-primary {{ if $disabled }}btn-disabled{{ end }}" end hx-post="/mfa/recovery/generate" if {{
+                            }} }}disabled{{>
                         {{ .GenerateNewRecoveryCodes }}
                     </button>
                 </div>

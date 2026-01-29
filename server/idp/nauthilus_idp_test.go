@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )
@@ -207,8 +208,10 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 			},
 		}
 
+		ctx, _ := gin.CreateTestContext(nil)
+
 		// Only openid requested -> no extra claims except defaults (sub, name, preferred_username)
-		claims, err := idp.GetClaims(user, client, []string{"openid"})
+		claims, err := idp.GetClaims(ctx, user, client, []string{"openid"})
 		assert.NoError(t, err)
 		assert.Equal(t, "user123", claims["sub"])
 		assert.Equal(t, "John Doe", claims["name"])
@@ -216,13 +219,13 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.Nil(t, claims["groups"])
 
 		// email requested
-		claims, err = idp.GetClaims(user, client, []string{"openid", "email"})
+		claims, err = idp.GetClaims(ctx, user, client, []string{"openid", "email"})
 		assert.NoError(t, err)
 		assert.Equal(t, "jdoe@example.com", claims["email"])
 		assert.Nil(t, claims["groups"])
 
 		// groups requested
-		claims, err = idp.GetClaims(user, client, []string{"openid", "groups"})
+		claims, err = idp.GetClaims(ctx, user, client, []string{"openid", "groups"})
 		assert.NoError(t, err)
 		assert.Nil(t, claims["email"])
 		assert.Equal(t, []string{"group1"}, claims["groups"])

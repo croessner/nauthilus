@@ -16,6 +16,7 @@
 package localcache
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -193,6 +194,22 @@ func (sc *MemoryShardedCache) Delete(k string) {
 	}
 
 	delete(shard.items, k)
+}
+
+// DeleteByPrefix removes all items from the MemoryShardedCache that have a key starting with the given prefix
+func (sc *MemoryShardedCache) DeleteByPrefix(prefix string) {
+	for _, shard := range sc.shards {
+		shard.mu.Lock()
+
+		for k, item := range shard.items {
+			if strings.HasPrefix(k, prefix) {
+				sc.resetAndReturnToPoolIfPassDBResult(item.Object)
+				delete(shard.items, k)
+			}
+		}
+
+		shard.mu.Unlock()
+	}
 }
 
 // DeleteExpired removes all expired items from the MemoryShardedCache

@@ -739,19 +739,37 @@ func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
 func (h *FrontendHandler) getMFARedirectURL(user *backend.User, returnTo string, protocolParam string) (string, bool) {
 	haveTOTP := h.hasTOTP(user)
 	haveWebAuthn := h.hasWebAuthn(user)
+	haveRecovery := h.hasRecoveryCodes(user)
 
-	// If both are present, we need selection
-	if haveTOTP && haveWebAuthn {
+	count := 0
+
+	if haveTOTP {
+		count++
+	}
+
+	if haveWebAuthn {
+		count++
+	}
+
+	if count != 0 && haveRecovery {
+		count++
+	}
+
+	// If more than one is present, we need selection
+	if count > 1 {
 		return "", false
 	}
 
 	var target string
+
 	if haveTOTP {
 		target = "/login/totp"
 	} else if haveWebAuthn {
 		target = "/login/webauthn"
+	} else if haveRecovery {
+		target = "/login/recovery"
 	} else {
-		// Only recovery codes or nothing (should not happen if this is called correctly)
+		// No MFA methods available
 		return "", false
 	}
 
@@ -1116,21 +1134,14 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
+	auth := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
+	auth.PurgeCacheFor(username)
+
 	// Success!
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "success").Inc()
 	session.Set(definitions.CookieHaveTOTP, true)
 	session.Delete(definitions.CookieTOTPSecret)
 	session.Save()
-
-	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state == nil {
-		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
-
-		return
-	}
-
-	dummyAuth := state.(*core.AuthState)
-	h.purgeUserCache(ctx, dummyAuth, username)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
@@ -1180,16 +1191,9 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "success").Inc()
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state == nil {
-		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
-
-		return
+	if state != nil {
+		state.PurgeCacheFor(username)
 	}
-
-	dummyAuth := state.(*core.AuthState)
-
-	// Purge user from positive redis caches
-	h.purgeUserCache(ctx, dummyAuth, username)
 
 	data := h.basePageData(ctx)
 	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New recovery codes")
@@ -1199,61 +1203,6 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	data["Codes"] = codes
 
 	ctx.HTML(http.StatusOK, "idp_recovery_codes_modal.html", data)
-}
-
-func (h *FrontendHandler) purgeUserCache(ctx *gin.Context, auth *core.AuthState, username string) {
-	h.purgeCache(ctx, auth, username)
-}
-
-func (h *FrontendHandler) purgeCache(ctx *gin.Context, auth *core.AuthState, username string) {
-	authDeps := h.deps.Auth()
-	useCache := false
-
-	for _, backendType := range authDeps.Cfg.GetServer().GetBackends() {
-		if backendType.Get() == definitions.BackendCache {
-			useCache = true
-
-			break
-		}
-	}
-
-	if !useCache {
-		return
-	}
-
-	session := sessions.Default(ctx)
-	protocol, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
-	if err != nil {
-		protocol = definitions.ProtoIDP
-	}
-
-	accountName, err := backend.LookupUserAccountFromRedis(auth.Ctx(), authDeps.Cfg, authDeps.Redis, username, protocol, "")
-	if err != nil {
-		return
-	}
-
-	protocols := authDeps.Cfg.GetAllProtocols()
-	userKeys := config.NewStringSet()
-
-	for index := range protocols {
-		cacheNames := backend.GetCacheNames(authDeps.Cfg, authDeps.Channel, protocols[index], definitions.CacheAll)
-
-		for _, cacheName := range (&cacheNames).GetStringSlice() {
-			var sb strings.Builder
-
-			sb.WriteString(authDeps.Cfg.GetServer().GetRedis().GetPrefix())
-			sb.WriteString(definitions.RedisUserPositiveCachePrefix)
-			sb.WriteString(cacheName)
-			sb.WriteByte(':')
-			sb.WriteString(accountName)
-
-			(&userKeys).Set(sb.String())
-		}
-	}
-
-	for _, userKey := range (&userKeys).GetStringSlice() {
-		_, _ = authDeps.Redis.GetWriteHandle().Del(auth.Ctx(), userKey).Result()
-	}
 }
 
 // DeleteTOTP removes TOTP for the user.
@@ -1293,8 +1242,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 		return
 	}
 
-	dummyAuth := state.(*core.AuthState)
-	h.purgeUserCache(ctx, dummyAuth, username)
+	state.PurgeCacheFor(username)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
@@ -1328,14 +1276,9 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state == nil {
-		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
-
-		return
+	if state != nil {
+		state.PurgeCacheFor(username)
 	}
-
-	dummyAuth := state.(*core.AuthState)
-	h.purgeUserCache(ctx, dummyAuth, username)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
@@ -1517,7 +1460,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.WebAuthnUser, h.deps.Cfg.GetServer().GetTimeouts().GetRedisWrite())
 	}
 
-	h.purgeUserCache(ctx, userData.AuthState, userData.Username)
+	userData.AuthState.PurgeCacheFor(userData.Username)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/webauthn/devices")
 	ctx.Status(http.StatusOK)
