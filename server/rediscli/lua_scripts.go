@@ -180,7 +180,6 @@ return 0
 	// KEYS:
 	//   [1] = current window key
 	//   [2] = previous window key
-	//   [3] = optional reputation hash key (bf:TR:{ip})
 	// ARGV:
 	//   [1] = increment value (e.g. 1 to increase, 0 to only check)
 	//   [2] = weight for previous window (float, 0.0 to 1.0)
@@ -191,12 +190,12 @@ return 0
 	//   [7] = max tolerate percent
 	//   [8] = scale factor
 	//   [9] = static tolerate percent
+	//   [10] = positive reputation counter
 	// Returns:
 	//   {tostring(total), exceeded, tostring(effective_limit)}
 	"SlidingWindowCounter": `
 local current_key = KEYS[1]
 local prev_key = KEYS[2]
-local rep_key = KEYS[3]
 
 local increment = tonumber(ARGV[1])
 local weight = tonumber(ARGV[2])
@@ -208,20 +207,18 @@ local min_percent = tonumber(ARGV[6] or "0")
 local max_percent = tonumber(ARGV[7] or "0")
 local scale_factor = tonumber(ARGV[8] or "1")
 local static_percent = tonumber(ARGV[9] or "0")
+local positive = tonumber(ARGV[10] or "0")
 
 local limit = base_limit
 
-if rep_key and rep_key ~= "" then
-    local positive = tonumber(redis.call("HGET", rep_key, "positive") or "0")
-    if positive > 0 then
-        local percent = static_percent
-        if adaptive_enabled then
-            local factor = math.min(1, math.log(positive + 1) / math.log(100) * scale_factor)
-            percent = math.floor(min_percent + (max_percent - min_percent) * factor)
-            percent = math.max(min_percent, math.min(max_percent, percent))
-        end
-        limit = math.floor(base_limit * (1 + percent / 100))
+if positive > 0 then
+    local percent = static_percent
+    if adaptive_enabled then
+        local factor = math.min(1, math.log(positive + 1) / math.log(100) * scale_factor)
+        percent = math.floor(min_percent + (max_percent - min_percent) * factor)
+        percent = math.max(min_percent, math.min(max_percent, percent))
     end
+    limit = math.floor(base_limit * (1 + percent / 100))
 end
 
 local current_cnt = tonumber(redis.call("GET", current_key) or 0)

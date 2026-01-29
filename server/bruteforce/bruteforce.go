@@ -767,7 +767,7 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		}
 
 		// Reputation key for the client IP and adaptive scaling configuration
-		repKey, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct := bm.getAdaptiveScalingConfig()
+		_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
 		// Redis Cluster: we use a pipeline to execute the script for each candidate.
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -786,9 +786,9 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			// Let's pass (limit - 1) as the limit to the script if we want to block the Nth attempt.
 			limit := int64(rule.FailedRequests) - 1
 
-			cmds = append(cmds, pipe.EvalSha(dCtx, scriptSHA, []string{currentKey, prevKey, repKey},
+			cmds = append(cmds, pipe.EvalSha(dCtx, scriptSHA, []string{currentKey, prevKey},
 				0, weight, ttl, limit,
-				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct))
+				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive))
 		}
 
 		_, errP := pipe.Exec(dCtx)
@@ -1163,7 +1163,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 	defer cancel()
 
 	// Reputation key for the client IP and adaptive scaling configuration
-	repKey, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct := bm.getAdaptiveScalingConfig()
+	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
 	// Only increment if not already triggered by this rule
 	increment := 0
@@ -1177,9 +1177,9 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 	// Limit is not needed for Save in terms of triggering here, but we pass it anyway
 	// to maintain script logic.
 	_, err := rediscli.ExecuteScript(dCtx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"],
-		[]string{currentKey, prevKey, repKey},
+		[]string{currentKey, prevKey},
 		increment, weight, ttl, limit,
-		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct)
+		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 
@@ -1986,15 +1986,15 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	defer cancel()
 
 	// Reputation key for the client IP and adaptive scaling configuration
-	repKey, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct := bm.getAdaptiveScalingConfig()
+	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
 	ttl := int64(math.Round(rule.Period.Seconds() * 2))
 	limit := int64(rule.FailedRequests) - 1
 
 	res, err := rediscli.ExecuteScript(dCtx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"],
-		[]string{currentKey, prevKey, repKey},
+		[]string{currentKey, prevKey},
 		0, weight, ttl, limit,
-		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct)
+		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
 
 	stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -2139,9 +2139,16 @@ func (bm *bucketManagerImpl) loadPasswordHistoryCount(isAccountScoped bool) uint
 	return 0
 }
 
-func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8) {
+func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64) {
 	if bm.tolerate() != nil {
 		repKey = bm.tolerate().GetReputationKey(bm.clientIP)
+
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+		defer cancel()
+
+		if val, err := bm.redis().GetReadHandle().HGet(dCtx, repKey, "positive").Int64(); err == nil {
+			positive = val
+		}
 	}
 
 	bfCfg := bm.cfg().GetBruteForce()
