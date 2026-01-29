@@ -118,7 +118,7 @@
             }
 
             // Success!
-            const returnTo = new URLSearchParams(window.location.search).get('return_to') || '/2fa/v1/register/home';
+            const returnTo = new URLSearchParams(window.location.search).get('return_to') || '/mfa/register/home';
             window.location.href = returnTo;
 
         } catch (err) {

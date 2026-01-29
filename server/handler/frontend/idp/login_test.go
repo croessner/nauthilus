@@ -36,7 +36,7 @@ func TestLoginRedirects(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusFound, w.Code)
-		assert.Equal(t, "/2fa/v1/register/home", w.Header().Get("Location"))
+		assert.Equal(t, "/mfa/register/home", w.Header().Get("Location"))
 	})
 
 	t.Run("Redirect to return_to if already logged in", func(t *testing.T) {

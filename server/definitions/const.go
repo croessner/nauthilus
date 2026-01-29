@@ -729,8 +729,8 @@ const (
 	ServIdP = "idp"
 )
 
-// TwoFAv1Root is the root path for the two-factor authentication (2FA) version 1 endpoints.
-const TwoFAv1Root = "/2fa/v1"
+// MFARoot is the root path for the multi-factor authentication (MFA) endpoints.
+const MFARoot = "/mfa"
 
 // Keys for the encrypted session cookie.
 // SessionName remains available in all builds.

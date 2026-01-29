@@ -2,7 +2,7 @@
 <div class="max-w-4xl mx-auto mt-10">
     <div class="flex justify-between items-center mb-8">
         <h1 class="text-3xl font-bold">{{ .Title }}</h1>
-        <a class="btn btn-ghost" href="/2fa/v1/register/home">{{ .BackTo2FA }}</a>
+        <a class="btn btn-ghost" href="/mfa/register/home">{{ .BackTo2FA }}</a>
     </div>
 
     <div class="card bg-base-100 shadow-xl mb-8">
@@ -27,7 +27,7 @@
                         <td class="text-right">
                             <button class="btn btn-error btn-sm btn-outline"
                                     hx-confirm="{{ $.DeleteConfirm }}"
-                                    hx-delete="/2fa/v1/webauthn/device/{{ .ID }}">
+                                    hx-delete="/mfa/webauthn/device/{{ .ID }}">
                                 {{ $.Delete }}
                             </button>
                         </td>
@@ -41,7 +41,7 @@
             {{ end }}
 
             <div class="card-actions justify-end mt-6">
-                <a class="btn btn-primary" href="/2fa/v1/webauthn/register">{{ .AddDevice }}</a>
+                <a class="btn btn-primary" href="/mfa/webauthn/register">{{ .AddDevice }}</a>
             </div>
         </div>
     </div>

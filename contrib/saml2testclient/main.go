@@ -259,7 +259,7 @@ func main() {
 
 			twoFAHomeURL := ""
 			if u, err := url.Parse(samlIDPMetadataURL); err == nil {
-				u.Path = "/2fa/v1/register/home"
+				u.Path = "/mfa/register/home"
 				u.RawQuery = ""
 				u.Fragment = ""
 				twoFAHomeURL = u.String()

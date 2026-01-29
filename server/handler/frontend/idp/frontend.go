@@ -151,28 +151,28 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	router.POST("/login/recovery/:languageTag", sessionMW, i18nMW, h.PostLoginRecovery)
 
 	// Auth protected routes
-	authGroup := router.Group("/", sessionMW, h.AuthMiddleware(), i18nMW)
-	authGroup.GET("/2fa/v1/register/home", h.TwoFAHome)
-	authGroup.GET("/2fa/v1/register/home/:languageTag", h.TwoFAHome)
-	authGroup.GET("/2fa/v1/totp/register", h.RegisterTOTP)
-	authGroup.GET("/2fa/v1/totp/register/:languageTag", h.RegisterTOTP)
-	authGroup.POST("/2fa/v1/totp/register", h.PostRegisterTOTP)
-	authGroup.POST("/2fa/v1/totp/register/:languageTag", h.PostRegisterTOTP)
-	authGroup.DELETE("/2fa/v1/totp", h.DeleteTOTP)
+	authGroup := router.Group(definitions.MFARoot, sessionMW, h.AuthMiddleware(), i18nMW)
+	authGroup.GET("/register/home", h.TwoFAHome)
+	authGroup.GET("/register/home/:languageTag", h.TwoFAHome)
+	authGroup.GET("/totp/register", h.RegisterTOTP)
+	authGroup.GET("/totp/register/:languageTag", h.RegisterTOTP)
+	authGroup.POST("/totp/register", h.PostRegisterTOTP)
+	authGroup.POST("/totp/register/:languageTag", h.PostRegisterTOTP)
+	authGroup.DELETE("/totp", h.DeleteTOTP)
 
-	authGroup.GET("/2fa/v1/webauthn/register", h.RegisterWebAuthn)
-	authGroup.GET("/2fa/v1/webauthn/register/:languageTag", h.RegisterWebAuthn)
-	authGroup.GET("/2fa/v1/webauthn/register/begin", core.BeginRegistration(h.deps.Auth()))
-	authGroup.GET("/2fa/v1/webauthn/register/begin/:languageTag", core.BeginRegistration(h.deps.Auth()))
-	authGroup.POST("/2fa/v1/webauthn/register/finish", core.FinishRegistration(h.deps.Auth()))
-	authGroup.POST("/2fa/v1/webauthn/register/finish/:languageTag", core.FinishRegistration(h.deps.Auth()))
-	authGroup.DELETE("/2fa/v1/webauthn", h.DeleteWebAuthn)
-	authGroup.GET("/2fa/v1/webauthn/devices", h.WebAuthnDevices)
-	authGroup.GET("/2fa/v1/webauthn/devices/:languageTag", h.WebAuthnDevices)
-	authGroup.DELETE("/2fa/v1/webauthn/device/:id", h.DeleteWebAuthnDevice)
+	authGroup.GET("/webauthn/register", h.RegisterWebAuthn)
+	authGroup.GET("/webauthn/register/:languageTag", h.RegisterWebAuthn)
+	authGroup.GET("/webauthn/register/begin", core.BeginRegistration(h.deps.Auth()))
+	authGroup.GET("/webauthn/register/begin/:languageTag", core.BeginRegistration(h.deps.Auth()))
+	authGroup.POST("/webauthn/register/finish", core.FinishRegistration(h.deps.Auth()))
+	authGroup.POST("/webauthn/register/finish/:languageTag", core.FinishRegistration(h.deps.Auth()))
+	authGroup.DELETE("/webauthn", h.DeleteWebAuthn)
+	authGroup.GET("/webauthn/devices", h.WebAuthnDevices)
+	authGroup.GET("/webauthn/devices/:languageTag", h.WebAuthnDevices)
+	authGroup.DELETE("/webauthn/device/:id", h.DeleteWebAuthnDevice)
 
-	authGroup.POST("/2fa/v1/recovery/generate", h.PostGenerateRecoveryCodes)
-	authGroup.POST("/2fa/v1/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
+	authGroup.POST("/recovery/generate", h.PostGenerateRecoveryCodes)
+	authGroup.POST("/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
 
 	router.GET("/logged_out", sessionMW, i18nMW, h.LoggedOut)
 	router.GET("/logged_out/:languageTag", sessionMW, i18nMW, h.LoggedOut)
@@ -248,7 +248,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
 		returnTo := ctx.Query("return_to")
 		if returnTo == "" {
-			returnTo = "/2fa/v1/register/home"
+			returnTo = definitions.MFARoot + "/register/home"
 		}
 
 		ctx.Redirect(http.StatusFound, returnTo)
@@ -520,7 +520,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, "/2fa/v1/register/home")
+	ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/home")
 }
 
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
@@ -791,7 +791,7 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User,
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, "/2fa/v1/register/home")
+	ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/home")
 }
 
 // LoginWebAuthn renders the WebAuthn verification page during login.
@@ -1053,7 +1053,7 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 
 	haveTOTP, _ := util.GetSessionValue[bool](session, definitions.CookieHaveTOTP)
 	if haveTOTP {
-		ctx.Header("HX-Redirect", "/2fa/v1/register/home")
+		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 		ctx.Status(http.StatusFound)
 
 		return
@@ -1132,7 +1132,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	dummyAuth := state.(*core.AuthState)
 	h.purgeUserCache(ctx, dummyAuth, username)
 
-	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
+	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
 }
 
@@ -1296,7 +1296,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	dummyAuth := state.(*core.AuthState)
 	h.purgeUserCache(ctx, dummyAuth, username)
 
-	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
+	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
 }
 
@@ -1340,7 +1340,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	dummyAuth := state.(*core.AuthState)
 	h.purgeUserCache(ctx, dummyAuth, username)
 
-	ctx.Header("HX-Redirect", "/2fa/v1/register/home")
+	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
 }
 
@@ -1352,7 +1352,7 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 		user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
 
 		if err == nil && user != nil && len(user.WebAuthnCredentials()) > 0 {
-			ctx.Header("HX-Redirect", "/2fa/v1/register/home")
+			ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 			ctx.Status(http.StatusFound)
 
 			return
@@ -1513,6 +1513,6 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 
 	h.purgeUserCache(ctx, userData.AuthState, userData.Username)
 
-	ctx.Header("HX-Redirect", "/2fa/v1/webauthn/devices")
+	ctx.Header("HX-Redirect", definitions.MFARoot+"/webauthn/devices")
 	ctx.Status(http.StatusOK)
 }

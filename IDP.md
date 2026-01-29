@@ -262,7 +262,7 @@ Nauthilus uses [HTMX](https://htmx.org/) to update parts of the page. If you ext
 ### Entry Points:
 
 - **Login**: `/login` (Supports `return_to` parameter)
-- **MFA Portal**: `/2fa/v1/register/home` (User security hub)
+- **MFA Portal**: `/mfa/register/home` (User security hub)
 
 ---
 
@@ -358,19 +358,19 @@ Nauthilus calls specific functions when a user changes their MFA:
 
 ### Frontend & MFA
 
-| Endpoint                    | Method   | Description                        |
-|:----------------------------|:---------|:-----------------------------------|
-| `/login`                    | GET/POST | Central Login Page                 |
-| `/login/totp`               | GET/POST | TOTP Verification during login     |
-| `/login/webauthn`           | GET      | WebAuthn Verification during login |
-| `/login/mfa`                | GET      | MFA Method Selection page          |
-| `/login/recovery`           | GET/POST | Recovery Code login                |
-| `/2fa/v1/register/home`     | GET      | MFA Management Overview            |
-| `/2fa/v1/totp/register`     | GET/POST | TOTP Registration                  |
-| `/2fa/v1/webauthn/register` | GET      | WebAuthn Registration              |
-| `/2fa/v1/totp`              | DELETE   | Deactivate TOTP                    |
-| `/2fa/v1/webauthn`          | DELETE   | Deactivate WebAuthn                |
-| `/2fa/v1/recovery/generate` | POST     | Generate new recovery codes        |
+| Endpoint                 | Method   | Description                        |
+|:-------------------------|:---------|:-----------------------------------|
+| `/login`                 | GET/POST | Central Login Page                 |
+| `/login/totp`            | GET/POST | TOTP Verification during login     |
+| `/login/webauthn`        | GET      | WebAuthn Verification during login |
+| `/login/mfa`             | GET      | MFA Method Selection page          |
+| `/login/recovery`        | GET/POST | Recovery Code login                |
+| `/mfa/register/home`     | GET      | MFA Management Overview            |
+| `/mfa/totp/register`     | GET/POST | TOTP Registration                  |
+| `/mfa/webauthn/register` | GET      | WebAuthn Registration              |
+| `/mfa/totp`              | DELETE   | Deactivate TOTP                    |
+| `/mfa/webauthn`          | DELETE   | Deactivate WebAuthn                |
+| `/mfa/recovery/generate` | POST     | Generate new recovery codes        |
 
 ---
 
@@ -421,7 +421,7 @@ This section provides instructions for end-users on how to set up and manage the
 
 The central hub for managing your security settings is the **MFA Portal**.
 
-- **URL**: `https://<your-domain>/2fa/v1/register/home`
+- **URL**: `https://<your-domain>/mfa/register/home`
 - **Requirement**: You must be logged in with your primary credentials (username and password) to access this page.
 
 ### 12.2 Registering TOTP (Authenticator App)

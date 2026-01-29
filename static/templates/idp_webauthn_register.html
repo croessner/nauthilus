@@ -66,7 +66,7 @@
 
         try {
             // 1. Begin Registration
-            const response = await fetch("/2fa/v1/webauthn/register/begin");
+            const response = await fetch("/mfa/webauthn/register/begin");
             if (!response.ok) {
                 throw new Error(await response.text());
             }
@@ -90,7 +90,7 @@
             // 3. Finish Registration
             statusText.innerText = "{{ .JSCompletingRegistration }}";
 
-            const finishResponse = await fetch("/2fa/v1/webauthn/register/finish", {
+            const finishResponse = await fetch("/mfa/webauthn/register/finish", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -111,7 +111,7 @@
             }
 
             // Success!
-            window.location.href = "/2fa/v1/register/home";
+            window.location.href = "/mfa/register/home";
 
         } catch (err) {
             console.error(err);

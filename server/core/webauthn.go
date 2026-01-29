@@ -114,7 +114,7 @@ func (a *AuthState) updateUser(user *backend.User) {
 	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
 }
 
-// BeginRegistration Page: '/2fa/v1/webauthn/register/begin'
+// BeginRegistration Page: '/mfa/webauthn/register/begin'
 func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
 
@@ -228,7 +228,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	}
 }
 
-// FinishRegistration Page: '/2fa/v1/webauthn/register/finish'
+// FinishRegistration Page: '/mfa/webauthn/register/finish'
 func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
 
