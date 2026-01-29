@@ -46,9 +46,9 @@ func TestOIDCSessionsAPI_ListSessions(t *testing.T) {
 	r := setupOIDCSessionsRouter(d, storage)
 
 	t.Run("Success", func(t *testing.T) {
-		mock.ExpectSMembers("test:nauthilus:oidc:user_access_tokens:user1").SetVal([]string{"token1"})
+		mock.ExpectSMembers("test:oidc:user_access_tokens:user1").SetVal([]string{"token1"})
 		// GetAccessToken will be called for "token1"
-		mock.ExpectGet("test:nauthilus:oidc:access_token:token1").SetVal("some-encrypted-data")
+		mock.ExpectGet("test:oidc:access_token:token1").SetVal("some-encrypted-data")
 		// Since we can't easily mock the decryption/unmarshaling without more setup,
 		// we expect an error in ListUserSessions but let's see.
 		// Actually, RedisTokenStorage uses the security manager which we didn't mock.

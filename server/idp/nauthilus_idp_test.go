@@ -149,9 +149,9 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		}
 
 		sessionData, _ := json.Marshal(session)
-		mock.ExpectSet("test:nauthilus:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
-		mock.ExpectExpire("test:nauthilus:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
 		idToken, accessToken, refreshToken, _, err := idp.IssueTokens(ctx, session)
 		assert.NoError(t, err)
@@ -172,15 +172,15 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		sessionData, _ := json.Marshal(session)
 
 		// Get old RT
-		mock.ExpectGet("test:nauthilus:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
 		// Delete old RT
-		mock.ExpectGet("test:nauthilus:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectSRem("test:nauthilus:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
-		mock.ExpectDel("test:nauthilus:oidc:refresh_token:" + refreshToken).SetVal(1)
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
+		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
 		// Store new RT (fixed-token due to mock)
-		mock.ExpectSet("test:nauthilus:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:nauthilus:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
-		mock.ExpectExpire("test:nauthilus:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
 		idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
 		assert.NoError(t, err)
@@ -263,7 +263,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 		// Opaque token (without dots) SHOULD hit Redis
 		opaqueToken := "na_at_someopaquevalue"
-		mock.ExpectGet("test:nauthilus:oidc:access_token:" + opaqueToken).RedisNil()
+		mock.ExpectGet("test:oidc:access_token:" + opaqueToken).RedisNil()
 		_, err = idp.ValidateToken(ctx, opaqueToken)
 		assert.Error(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet(), "Redis should have been hit for opaque token")

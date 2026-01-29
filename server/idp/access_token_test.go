@@ -62,9 +62,9 @@ func TestAccessToken_OOP(t *testing.T) {
 	})
 
 	t.Run("Opaque Access Token", func(t *testing.T) {
-		mock.Regexp().ExpectSet("test:nauthilus:oidc:access_token:.*", ".*", time.Hour).SetVal("OK")
-		mock.Regexp().ExpectSAdd("test:nauthilus:oidc:user_access_tokens:user1", ".*").SetVal(1)
-		mock.ExpectExpire("test:nauthilus:oidc:user_access_tokens:user1", 30*24*time.Hour).SetVal(true)
+		mock.Regexp().ExpectSet("test:oidc:access_token:.*", ".*", time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSAdd("test:oidc:user_access_tokens:user1", ".*").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_access_tokens:user1", 30*24*time.Hour).SetVal(true)
 
 		tokenGen := NewDefaultTokenGenerator()
 		token := NewOpaqueAccessToken(session, storage, tokenGen, time.Hour)

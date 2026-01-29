@@ -370,7 +370,7 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		})
 
 		// Expectations for DeleteUserRefreshTokens
-		userKey := "test:nauthilus:oidc:user_refresh_tokens:user123"
+		userKey := "test:oidc:user_refresh_tokens:user123"
 		mock.ExpectSMembers(userKey).SetVal([]string{})
 
 		url := "/logout?id_token_hint=" + idToken + "&post_logout_redirect_uri=https://app.com/post-logout"
@@ -610,8 +610,8 @@ func TestOIDCHandler_Token(t *testing.T) {
 		}
 		sessionData, _ := json.Marshal(oidcSession)
 
-		mock.ExpectGet("test:nauthilus:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:nauthilus:oidc:code:" + code).SetVal(1)
+		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
 
 		w := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(w)
@@ -675,8 +675,8 @@ func TestOIDCHandler_Token(t *testing.T) {
 			RedirectURIs: []string{"https://app.com/callback"},
 		})
 
-		mock.ExpectGet("test:nauthilus:oidc:code:" + code).SetVal(string(sessionData))
-		mock.ExpectDel("test:nauthilus:oidc:code:" + code).SetVal(1)
+		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
 
 		w := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(w)

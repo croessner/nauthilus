@@ -39,7 +39,7 @@ func TestRedisTokenStorage(t *testing.T) {
 			UserID:   "user123",
 		}
 		ttl := time.Minute
-		key := prefix + "nauthilus:oidc:code:" + code
+		key := prefix + "oidc:code:" + code
 
 		data, _ := json.Marshal(session)
 		mock.ExpectSet(key, string(data), ttl).SetVal("OK")
@@ -55,7 +55,7 @@ func TestRedisTokenStorage(t *testing.T) {
 			ClientID: "test-client",
 			UserID:   "user123",
 		}
-		key := prefix + "nauthilus:oidc:code:" + code
+		key := prefix + "oidc:code:" + code
 
 		data, _ := json.Marshal(session)
 		mock.ExpectGet(key).SetVal(string(data))
@@ -69,7 +69,7 @@ func TestRedisTokenStorage(t *testing.T) {
 
 	t.Run("DeleteSession", func(t *testing.T) {
 		code := "test-code"
-		key := prefix + "nauthilus:oidc:code:" + code
+		key := prefix + "oidc:code:" + code
 
 		mock.ExpectDel(key).SetVal(1)
 
@@ -80,12 +80,12 @@ func TestRedisTokenStorage(t *testing.T) {
 
 	t.Run("DeleteUserRefreshTokens", func(t *testing.T) {
 		userID := "user123"
-		userKey := prefix + "nauthilus:oidc:user_refresh_tokens:" + userID
+		userKey := prefix + "oidc:user_refresh_tokens:" + userID
 		tokens := []string{"rt1", "rt2"}
 
 		mock.ExpectSMembers(userKey).SetVal(tokens)
-		mock.ExpectDel(prefix + "nauthilus:oidc:refresh_token:rt1").SetVal(1)
-		mock.ExpectDel(prefix + "nauthilus:oidc:refresh_token:rt2").SetVal(1)
+		mock.ExpectDel(prefix + "oidc:refresh_token:rt1").SetVal(1)
+		mock.ExpectDel(prefix + "oidc:refresh_token:rt2").SetVal(1)
 		mock.ExpectDel(userKey).SetVal(1)
 
 		err := storage.DeleteUserRefreshTokens(ctx, userID)

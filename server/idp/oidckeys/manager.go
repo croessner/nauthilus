@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	RedisKeyOIDCKeys   = "nauthilus:oidc:keys"
-	RedisKeyOIDCActive = "nauthilus:oidc:active_kid"
+	RedisKeyOIDCKeys   = "oidc:keys"
+	RedisKeyOIDCActive = "oidc:active_kid"
 )
 
 // KeyMetadata stores metadata about an OIDC signing key.
@@ -43,7 +43,7 @@ func NewManager(d *deps.Deps) *Manager {
 // GetActiveKey returns the current active private key and its ID.
 func (m *Manager) GetActiveKey(ctx context.Context) (*rsa.PrivateKey, string, error) {
 	// 1. Try to get active key from Redis
-	kid, err := m.deps.Redis.GetReadHandle().Get(ctx, RedisKeyOIDCActive).Result()
+	kid, err := m.deps.Redis.GetReadHandle().Get(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCActive).Result()
 	if err == nil && kid != "" {
 		pemData, err := m.getEncryptedKeyFromRedis(ctx, kid)
 		if err == nil {
@@ -99,7 +99,7 @@ func (m *Manager) GetAllKeys(ctx context.Context) (map[string]*rsa.PrivateKey, e
 	}
 
 	// 2. Load from Redis
-	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(ctx, RedisKeyOIDCKeys).Result()
+	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCKeys).Result()
 	if err == nil {
 		sm := m.deps.Redis.GetSecurityManager()
 		now := time.Now()
@@ -168,13 +168,13 @@ func (m *Manager) GenerateNewKey(ctx context.Context) (string, error) {
 	}
 
 	// Store in Redis
-	err = m.deps.Redis.GetWriteHandle().HSet(ctx, RedisKeyOIDCKeys, kid, encryptedData).Err()
+	err = m.deps.Redis.GetWriteHandle().HSet(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCKeys, kid, encryptedData).Err()
 	if err != nil {
 		return "", fmt.Errorf("failed to store key in Redis: %w", err)
 	}
 
 	// Set as active
-	err = m.deps.Redis.GetWriteHandle().Set(ctx, RedisKeyOIDCActive, kid, 0).Err()
+	err = m.deps.Redis.GetWriteHandle().Set(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCActive, kid, 0).Err()
 	if err != nil {
 		return "", fmt.Errorf("failed to set active key in Redis: %w", err)
 	}
@@ -183,7 +183,7 @@ func (m *Manager) GenerateNewKey(ctx context.Context) (string, error) {
 }
 
 func (m *Manager) getEncryptedKeyFromRedis(ctx context.Context, kid string) (string, error) {
-	encryptedData, err := m.deps.Redis.GetReadHandle().HGet(ctx, RedisKeyOIDCKeys, kid).Result()
+	encryptedData, err := m.deps.Redis.GetReadHandle().HGet(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCKeys, kid).Result()
 	if err != nil {
 		return "", err
 	}
@@ -254,7 +254,7 @@ func (m *Manager) RotateKeys(ctx context.Context) {
 	}
 
 	// 1. Get current active kid from Redis
-	activeKID, err := m.deps.Redis.GetReadHandle().Get(ctx, RedisKeyOIDCActive).Result()
+	activeKID, err := m.deps.Redis.GetReadHandle().Get(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCActive).Result()
 	if err != nil && err != redis.Nil {
 		level.Error(m.deps.Logger).Log("msg", "failed to get active kid from Redis", "error", err)
 
@@ -263,7 +263,7 @@ func (m *Manager) RotateKeys(ctx context.Context) {
 
 	if activeKID != "" {
 		sm := m.deps.Redis.GetSecurityManager()
-		encryptedData, _ := m.deps.Redis.GetReadHandle().HGet(ctx, RedisKeyOIDCKeys, activeKID).Result()
+		encryptedData, _ := m.deps.Redis.GetReadHandle().HGet(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCKeys, activeKID).Result()
 		jsonData, err := sm.Decrypt(encryptedData)
 
 		if err == nil {
@@ -294,12 +294,12 @@ func (m *Manager) RotateKeys(ctx context.Context) {
 
 // CleanupOldKeys removes expired keys from Redis.
 func (m *Manager) CleanupOldKeys(ctx context.Context) {
-	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(ctx, RedisKeyOIDCKeys).Result()
+	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCKeys).Result()
 	if err != nil {
 		return
 	}
 
-	activeKID, _ := m.deps.Redis.GetReadHandle().Get(ctx, RedisKeyOIDCActive).Result()
+	activeKID, _ := m.deps.Redis.GetReadHandle().Get(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCActive).Result()
 	sm := m.deps.Redis.GetSecurityManager()
 	now := time.Now()
 
@@ -319,7 +319,7 @@ func (m *Manager) CleanupOldKeys(ctx context.Context) {
 		}
 
 		if !meta.ExpiresAt.IsZero() && now.After(meta.ExpiresAt) {
-			m.deps.Redis.GetWriteHandle().HDel(ctx, RedisKeyOIDCKeys, kid)
+			m.deps.Redis.GetWriteHandle().HDel(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCKeys, kid)
 			level.Info(m.deps.Logger).Log("msg", "cleaned up expired OIDC signing key", "kid", kid)
 		}
 	}
