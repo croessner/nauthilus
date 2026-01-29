@@ -70,5 +70,15 @@
   "Recovery Code": "रिकवरी कोड",
   "Recommended": "अनुशंसित",
   "Please enter one of your recovery codes": "कृपया अपना एक रिकवरी कोड दर्ज करें",
-  "Invalid recovery code": "अमान्य रिकवरी कोड"
+  "Invalid recovery code": "अमान्य रिकवरी कोड",
+  "Error": "त्रुटि",
+  "Invalid request": "अमान्य अनुरोध",
+  "Failed to fetch user data": "उपयोगकर्ता डेटा प्राप्त करने में विफल",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "रिकवरी कोड जेनरेट करने के लिए कम से कम एक MFA विधि (TOTP या WebAuthn) सक्रिय होनी चाहिए",
+  "Failed to initialize auth state": "प्रमाणीकरण स्थिति को प्रारंभ करने में विफल",
+  "Not logged in": "लॉग इन नहीं है",
+  "User not found": "उपयोगकर्ता नहीं मिला",
+  "Credential not found": "प्रमाण-पत्र नहीं मिला",
+  "Missing device ID": "डिवाइस आईडी गुम है",
+  "Invalid device ID": "अमान्य डिवाइस आईडी"
 }

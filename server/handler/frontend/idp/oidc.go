@@ -245,7 +245,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	requestedScopes := strings.Split(scope, " ")
 	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
 
-	claims, err := h.idp.GetClaims(user, client, filteredScopes)
+	claims, err := h.idp.GetClaims(ctx, user, client, filteredScopes)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error mapping claims")
 

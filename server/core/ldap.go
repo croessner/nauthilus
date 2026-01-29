@@ -800,6 +800,10 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 	ldapReply = <-ldapReplyChan
 	wSpan.End()
 
+	if isNoSuchAttributeError(ldapReply.Err) {
+		return nil
+	}
+
 	if ldapReply.Err != nil {
 		msp.RecordError(ldapReply.Err)
 	}
@@ -1048,11 +1052,29 @@ func (lm *ldapManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) 
 	ldapReply = <-ldapReplyChan
 	wSpan.End()
 
+	if isNoSuchAttributeError(ldapReply.Err) {
+		return nil
+	}
+
 	if ldapReply.Err != nil {
 		msp.RecordError(ldapReply.Err)
 	}
 
 	return ldapReply.Err
+}
+
+// isNoSuchAttributeError checks if the error is an LDAP "No Such Attribute" error.
+func isNoSuchAttributeError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var ldapErr *ldap.Error
+	if stderrors.As(err, &ldapErr) {
+		return ldapErr.ResultCode == ldap.LDAPResultNoSuchAttribute
+	}
+
+	return false
 }
 
 var _ BackendManager = (*ldapManagerImpl)(nil)

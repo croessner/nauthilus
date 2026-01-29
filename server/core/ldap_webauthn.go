@@ -268,6 +268,10 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 	case <-ctxModify.Done():
 		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout")
 	case ldapReply := <-ldapReplyChan:
+		if isNoSuchAttributeError(ldapReply.Err) {
+			return nil
+		}
+
 		return ldapReply.Err
 	}
 }

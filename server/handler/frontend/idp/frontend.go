@@ -1098,7 +1098,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
 
 	if errS != nil || errU != nil || code == "" {
-		ctx.String(http.StatusBadRequest, "Invalid request")
+		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
 	}
@@ -1111,7 +1111,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		ctx.String(http.StatusBadRequest, err.Error())
+		h.renderErrorModal(ctx, err.Error(), http.StatusBadRequest)
 
 		return
 	}
@@ -1124,7 +1124,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
 
 		return
 	}
@@ -1145,7 +1145,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
 
 	if errU != nil {
-		ctx.String(http.StatusBadRequest, "Invalid request")
+		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
 	}
@@ -1157,13 +1157,13 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to fetch user data")
+		h.renderErrorModal(ctx, "Failed to fetch user data", http.StatusInternalServerError)
 
 		return
 	}
 
 	if !userData.HaveTOTP && !userData.HaveWebAuthn {
-		ctx.String(http.StatusBadRequest, "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes")
+		h.renderErrorModal(ctx, "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes", http.StatusBadRequest)
 
 		return
 	}
@@ -1171,7 +1171,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	codes, err := h.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
 	if err != nil {
 		sp.RecordError(err)
-		ctx.String(http.StatusInternalServerError, "Failed to generate recovery codes: "+err.Error())
+		h.renderErrorModal(ctx, "Failed to generate recovery codes: "+err.Error(), http.StatusInternalServerError)
 
 		return
 	}
@@ -1181,7 +1181,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
 
 		return
 	}
@@ -1264,7 +1264,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
 	if errU != nil {
-		ctx.String(http.StatusBadRequest, "Invalid request")
+		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
 	}
@@ -1277,7 +1277,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "fail").Inc()
-		ctx.String(http.StatusInternalServerError, "Failed to delete TOTP secret: "+err.Error())
+		h.renderErrorModal(ctx, "Failed to delete TOTP secret: "+err.Error(), http.StatusInternalServerError)
 
 		return
 	}
@@ -1288,7 +1288,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
 
 		return
 	}
@@ -1310,7 +1310,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	username, errA := util.GetSessionValue[string](session, definitions.CookieAccount)
 
 	if errU != nil || errA != nil {
-		ctx.String(http.StatusBadRequest, "Invalid request")
+		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
 	}
@@ -1320,19 +1320,16 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
-	} else {
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
+		h.renderErrorModal(ctx, "Failed to delete WebAuthn from Redis: "+err.Error(), http.StatusInternalServerError)
+
+		return
 	}
 
-	// Then, clear from backend if possible.
-	// We don't have a specific credential ID here because the frontend currently deletes everything.
-	// So we might need to fetch the user first and delete all credentials, or just keep the Redis deletion
-	// if that's what the existing code did (it only did Redis deletion).
-	// However, the issue asks for clean management via API.
+	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
-		ctx.String(http.StatusInternalServerError, "Failed to initialize auth state")
+		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
 
 		return
 	}
@@ -1385,6 +1382,15 @@ func (h *FrontendHandler) LoggedOut(ctx *gin.Context) {
 	data["BackToLogin"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to Login")
 
 	ctx.HTML(http.StatusOK, "idp_logged_out.html", data)
+}
+
+func (h *FrontendHandler) renderErrorModal(ctx *gin.Context, msg string, code int) {
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
+	data["Message"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, msg)
+	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
+
+	ctx.HTML(http.StatusOK, "idp_error_modal.html", data)
 }
 
 // WebAuthnDevices renders the WebAuthn devices overview page.
@@ -1441,27 +1447,27 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 
 	id := ctx.Param("id")
 	if id == "" {
-		ctx.String(http.StatusBadRequest, "Missing device ID")
+		h.renderErrorModal(ctx, "Missing device ID", http.StatusBadRequest)
 
 		return
 	}
 
 	decodedID, err := base64.RawURLEncoding.DecodeString(id)
 	if err != nil {
-		ctx.String(http.StatusBadRequest, "Invalid device ID")
+		h.renderErrorModal(ctx, "Invalid device ID", http.StatusBadRequest)
 
 		return
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		ctx.String(http.StatusUnauthorized, "Not logged in")
+		h.renderErrorModal(ctx, "Not logged in", http.StatusUnauthorized)
 
 		return
 	}
 
 	if userData.WebAuthnUser == nil {
-		ctx.String(http.StatusNotFound, "User not found")
+		h.renderErrorModal(ctx, "User not found", http.StatusNotFound)
 
 		return
 	}
@@ -1476,7 +1482,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	}
 
 	if targetCred == nil {
-		ctx.String(http.StatusNotFound, "Credential not found")
+		h.renderErrorModal(ctx, "Credential not found", http.StatusNotFound)
 
 		return
 	}
@@ -1484,7 +1490,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	// Delete from backend via AuthState
 	if err := userData.AuthState.DeleteWebAuthnCredential(targetCred); err != nil {
 		sp.RecordError(err)
-		ctx.String(http.StatusInternalServerError, "Failed to delete credential: "+err.Error())
+		h.renderErrorModal(ctx, "Failed to delete credential: "+err.Error(), http.StatusInternalServerError)
 
 		return
 	}

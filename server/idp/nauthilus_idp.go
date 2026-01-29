@@ -433,7 +433,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	}
 
 	session := sessions.Default(ctx)
-	session.Set(definitions.CookieUserBackend, uint8(auth.GetUsedPassDBBackend()))
+	session.Set(definitions.CookieUserBackend, uint8(auth.GetSourcePassDBBackend()))
 	session.Set(definitions.CookieUserBackendName, auth.GetUsedPassDBBackendName())
 
 	return n.userFromAuthState(auth)
@@ -486,7 +486,7 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 	}
 
 	session := sessions.Default(ctx)
-	session.Set(definitions.CookieUserBackend, uint8(auth.GetUsedPassDBBackend()))
+	session.Set(definitions.CookieUserBackend, uint8(auth.GetSourcePassDBBackend()))
 	session.Set(definitions.CookieUserBackendName, auth.GetUsedPassDBBackendName())
 
 	return n.userFromAuthState(auth)
@@ -510,7 +510,7 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 }
 
 // GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.
-func (n *NauthilusIdP) GetClaims(user *backend.User, client any, scopes []string) (map[string]any, error) {
+func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client any, scopes []string) (map[string]any, error) {
 	claims := make(map[string]any)
 
 	// Standard fixed claims
@@ -522,10 +522,14 @@ func (n *NauthilusIdP) GetClaims(user *backend.User, client any, scopes []string
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
 		// We need an AuthState to use FillIdTokenClaims
 		// We can create a lightweight AuthState just for mapping
-		authRaw := core.NewAuthStateFromContextWithDeps(nil, n.deps.Auth())
+		authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
 		auth, ok := authRaw.(*core.AuthState)
 		if !ok || auth == nil {
 			return nil, fmt.Errorf("failed to create AuthState for mapping")
+		}
+
+		if auth.Runtime.GUID == "" {
+			auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
 		}
 
 		auth.ReplaceAllAttributes(user.Attributes)

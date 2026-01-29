@@ -70,5 +70,15 @@
   "Recovery Code": "کد بازیابی",
   "Recommended": "پیشنهادی",
   "Please enter one of your recovery codes": "لطفاً یکی von کدهای بازیابی خود را وارد کنید",
-  "Invalid recovery code": "کد بازیابی نامعتبر است"
+  "Invalid recovery code": "کد بازیابی نامعتبر است",
+  "Error": "خطا",
+  "Invalid request": "درخواست نامعتبر",
+  "Failed to fetch user data": "خطا در دریافت داده‌های کاربر",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "حداقل یک روش MFA (TOTP یا WebAuthn) باید فعال باشد تا کدهای بازیابی ایجاد شود",
+  "Failed to initialize auth state": "خطا در مقداردهی اولیه وضعیت احراز هویت",
+  "Not logged in": "وارد سیستم نشده‌اید",
+  "User not found": "کاربر یافت نشد",
+  "Credential not found": "اطلاعات ورود یافت نشد",
+  "Missing device ID": "شناسه دستگاه موجود نیست",
+  "Invalid device ID": "شناسه دستگاه نامعتبر است"
 }

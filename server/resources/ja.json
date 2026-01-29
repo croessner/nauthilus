@@ -70,5 +70,15 @@
   "Recovery Code": "リカバリコード",
   "Recommended": "推奨",
   "Please enter one of your recovery codes": "リカバリコードを1つ入力してください",
-  "Invalid recovery code": "無効なリカバリコードです"
+  "Invalid recovery code": "無効なリカバリコードです",
+  "Error": "エラー",
+  "Invalid request": "無効なリクエスト",
+  "Failed to fetch user data": "ユーザーデータの取得に失敗しました",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "リカバリコードを生成するには、少なくとも1つのMFAメソッド（TOTPまたはWebAuthn）が有効である必要があります",
+  "Failed to initialize auth state": "認証状態の初期化に失敗しました",
+  "Not logged in": "ログインしていません",
+  "User not found": "ユーザーが見つかりません",
+  "Credential not found": "クレデンシャルが見つかりません",
+  "Missing device ID": "デバイスIDがありません",
+  "Invalid device ID": "無効なデバイスID"
 }

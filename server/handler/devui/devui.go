@@ -144,6 +144,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 		{Method: "GET", Path: "/logged_out", Template: "idp_logged_out.html"},
 		{Method: "GET", Path: "/oidc/consent", Template: "idp_consent.html"},
 		{Method: "GET", Path: "/oidc/logout", Template: "idp_logout_frames.html"},
+		{Method: "GET", Path: "/error", Template: "idp_error_modal.html"},
 	}
 
 	// Sort by path, then method
@@ -365,6 +366,7 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["Protocol"] = "oidc"
 	data["LastMFAMethod"] = "totp"
 	data["HaveError"] = true
+	data["Message"] = "This is a sample error message for dev preview."
 	data["ErrorMessage"] = "This is a sample error message for dev preview."
 	data["BackendErrorMessage"] = "This is a sample backend error message for dev preview."
 	data["Success"] = "This is a sample success message for dev preview."

@@ -113,10 +113,6 @@ func (s *MFAService) GenerateRecoveryCodes(ctx *gin.Context, username string, so
 		return nil, err
 	}
 
-	if err := mgr.DeleteTOTPRecoveryCodes(dummyAuth); err != nil {
-		return nil, err
-	}
-
 	recovery, err := core.GenerateBackupCodes()
 	if err != nil {
 		return nil, err

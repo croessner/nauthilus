@@ -70,5 +70,15 @@
   "Recovery Code": "Recovery Code",
   "Recommended": "Recommended",
   "Please enter one of your recovery codes": "Please enter one of your recovery codes",
-  "Invalid recovery code": "Invalid recovery code"
+  "Invalid recovery code": "Invalid recovery code",
+  "Error": "Error",
+  "Invalid request": "Invalid request",
+  "Failed to fetch user data": "Failed to fetch user data",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes",
+  "Failed to initialize auth state": "Failed to initialize auth state",
+  "Not logged in": "Not logged in",
+  "User not found": "User not found",
+  "Credential not found": "Credential not found",
+  "Missing device ID": "Missing device ID",
+  "Invalid device ID": "Invalid device ID"
 }

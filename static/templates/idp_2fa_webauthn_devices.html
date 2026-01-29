@@ -27,7 +27,8 @@
                         <td class="text-right">
                             <button class="btn btn-error btn-sm btn-outline"
                                     hx-confirm="{{ $.DeleteConfirm }}"
-                                    hx-delete="/mfa/webauthn/device/{{ .ID }}">
+                                    hx-delete="/mfa/webauthn/device/{{ .ID }}"
+                                    hx-target="#modal-container">
                                 {{ $.Delete }}
                             </button>
                         </td>

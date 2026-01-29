@@ -102,6 +102,8 @@ func GetLocalized(ctx *gin.Context, cfg config.File, logger *slog.Logger, messag
 			definitions.LogKeyMsg, "Failed to get localized message",
 			definitions.LogKeyError, err,
 		)
+
+		return messageID
 	}
 
 	return localization

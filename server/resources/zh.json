@@ -70,5 +70,15 @@
   "Recovery Code": "恢复代码",
   "Recommended": "推荐",
   "Please enter one of your recovery codes": "请输入您的其中一个恢复代码",
-  "Invalid recovery code": "恢复代码无效"
+  "Invalid recovery code": "恢复代码无效",
+  "Error": "错误",
+  "Invalid request": "无效请求",
+  "Failed to fetch user data": "获取用户数据失败",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "必须激活至少一种 MFA 方法（TOTP 或 WebAuthn）才能生成恢复代码",
+  "Failed to initialize auth state": "初始化身份验证状态失败",
+  "Not logged in": "未登录",
+  "User not found": "未找到用户",
+  "Credential not found": "未找到凭据",
+  "Missing device ID": "缺少设备 ID",
+  "Invalid device ID": "设备 ID 无效"
 }

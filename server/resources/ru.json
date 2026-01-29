@@ -70,5 +70,15 @@
   "Recovery Code": "Код восстановления",
   "Recommended": "Рекомендуется",
   "Please enter one of your recovery codes": "Пожалуйста, введите один из ваших кодов восстановления",
-  "Invalid recovery code": "Неверный код восстановления"
+  "Invalid recovery code": "Неверный код восстановления",
+  "Error": "Ошибка",
+  "Invalid request": "Неверный запрос",
+  "Failed to fetch user data": "Не удалось получить данные пользователя",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "Для создания кодов восстановления должен быть активен хотя бы один метод MFA (TOTP или WebAuthn)",
+  "Failed to initialize auth state": "Не удалось инициализировать состояние аутентификации",
+  "Not logged in": "Вы не вошли в систему",
+  "User not found": "Пользователь не найден",
+  "Credential not found": "Учетные данные не найдены",
+  "Missing device ID": "Отсутствует ID устройства",
+  "Invalid device ID": "Неверный ID устройства"
 }

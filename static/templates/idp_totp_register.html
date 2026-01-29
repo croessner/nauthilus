@@ -14,7 +14,7 @@
                 <p class="font-mono text-sm break-all">{{ .Secret }}</p>
             </div>
 
-            <form class="w-full" hx-post="/mfa/totp/register" hx-swap="none">
+            <form class="w-full" hx-post="/mfa/totp/register" hx-target="#modal-container">
                 <div class="form-control w-full">
                     <label class="label">
                         <span class="label-text">{{ .Code }}</span>

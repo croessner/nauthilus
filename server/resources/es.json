@@ -70,5 +70,15 @@
   "Recovery Code": "Código de recuperación",
   "Recommended": "Recomendado",
   "Please enter one of your recovery codes": "Por favor, introduzca uno de sus códigos de recuperación",
-  "Invalid recovery code": "Código de recuperación no válido"
+  "Invalid recovery code": "Código de recuperación no válido",
+  "Error": "Error",
+  "Invalid request": "Solicitud inválida",
+  "Failed to fetch user data": "Error al obtener los datos del usuario",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "Al menos un método MFA (TOTP o WebAuthn) debe estar activo para generar códigos de recuperación",
+  "Failed to initialize auth state": "Error al inicializar el estado de autenticación",
+  "Not logged in": "Sesión no iniciada",
+  "User not found": "Usuario no encontrado",
+  "Credential not found": "Credencial no encontrada",
+  "Missing device ID": "Falta el ID del dispositivo",
+  "Invalid device ID": "ID de dispositivo inválido"
 }

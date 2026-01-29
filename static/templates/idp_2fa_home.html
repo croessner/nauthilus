@@ -24,7 +24,8 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveTOTP }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
-                            hx-delete="/mfa/totp" {{ if .BackendError }}disabled{{ end }}>{{ .Deactivate }}
+                            .BackendError end hx-delete="/mfa/totp" hx-target="#modal-container" if {{ }} }}disabled{{>
+                        {{ .Deactivate }}
                     </button>
                     {{ else }}
                     <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}" href="/mfa/totp/register">{{
@@ -44,7 +45,8 @@
                     <a class="btn btn-secondary btn-outline" href="/mfa/webauthn/devices">{{ .SecurityKeyWebAuthn
                         }}</a>
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateWebAuthnConfirm }}"
-                            hx-delete="/mfa/webauthn" {{ if .BackendError }}disabled{{ end }}>{{ .Deactivate }}
+                            .BackendError end hx-delete="/mfa/webauthn" hx-target="#modal-container" if {{ }}
+                            }}disabled{{>{{ .Deactivate }}
                     </button>
                     {{ else }}
                     <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}"
@@ -64,10 +66,11 @@
                 <p>{{ .RecoveryCodesDescription }}</p>
                 {{ end }}
                 <div class="card-actions justify-end mt-4">
-                    <button class="btn btn-secondary"
+                    {{ $disabled := or .BackendError (not (or .HaveTOTP .HaveWebAuthn)) }}
+                    <button $disabled
                             hx-post="/mfa/recovery/generate"
                             hx-target="#modal-container"
-                            {{ if or .BackendError (not (or .HaveTOTP .HaveWebAuthn)) }}disabled{{ end }}>
+                            class="btn btn-primary {{ if $disabled }}btn-disabled{{ end }}" end if {{ }} }}disabled{{>
                         {{ .GenerateNewRecoveryCodes }}
                     </button>
                 </div>

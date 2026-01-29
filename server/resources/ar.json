@@ -70,5 +70,15 @@
   "Recovery Code": "رمز الاسترداد",
   "Recommended": "موصى به",
   "Please enter one of your recovery codes": "يرجى إدخال أحد رموز الاسترداد الخاصة بك",
-  "Invalid recovery code": "رمز استرداد غير صالح"
+  "Invalid recovery code": "رمز استرداد غير صالح",
+  "Error": "خطأ",
+  "Invalid request": "طلب غير صالح",
+  "Failed to fetch user data": "فشل في جلب بيانات المستخدم",
+  "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes": "يجب أن تكون طريقة MFA واحدة على الأقل (TOTP أو WebAuthn) نشطة لإنشاء رموز الاسترداد",
+  "Failed to initialize auth state": "فشل في تهيئة حالة المصادقة",
+  "Not logged in": "لم يتم تسجيل الدخول",
+  "User not found": "المستخدم غير موجود",
+  "Credential not found": "لم يتم العثور على أوراق الاعتماد",
+  "Missing device ID": "معرف الجهاز مفقود",
+  "Invalid device ID": "معرف الجهاز غير صالح"
 }

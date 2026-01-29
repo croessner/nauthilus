@@ -1,0 +1,17 @@
+{{ if not .HXRequest }}
+{{ template "idp_header.html" . }}
+{{ end }}
+<div class="modal modal-open" id="error-modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg text-error">{{ .Title }}</h3>
+        <p class="py-4">{{ .Message }}</p>
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn" onclick="document.getElementById('error-modal').remove()">{{ .Close }}</button>
+            </form>
+        </div>
+    </div>
+</div>
+{{ if not .HXRequest }}
+{{ template "idp_footer.html" . }}
+{{ end }}
