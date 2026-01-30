@@ -10,7 +10,7 @@ env:
   MAINTAINER: 'croessner'
   DESC: 'Multi purpose authentication server'
   GOEXPERIMENT: greenteagc
-  DEV_VERSION: 'dev'
+  DEV_VERSION: '0.0.0'
 
 jobs:
   build-linux-packages:
