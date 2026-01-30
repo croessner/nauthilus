@@ -803,6 +803,52 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 	return nil, nil
 }
 
+// ResolveLDAPSearchPoolName returns the pool name for a given LDAP protocol if it is uniquely configured.
+// It returns false if no pool or multiple pools match the protocol.
+func ResolveLDAPSearchPoolName(cfg File, protocol string) (string, bool) {
+	if cfg == nil || protocol == "" {
+		return "", false
+	}
+
+	getter, ok := cfg.(interface {
+		GetProtocols(definitions.Backend) any
+	})
+	if !ok {
+		return "", false
+	}
+
+	getProtocols := getter.GetProtocols(definitions.BackendLDAP)
+	if getProtocols == nil {
+		return "", false
+	}
+
+	ldapProtocols, ok := getProtocols.([]LDAPSearchProtocol)
+	if !ok {
+		return "", false
+	}
+
+	matches := make(map[string]struct{})
+	for index := range ldapProtocols {
+		protocols := ldapProtocols[index].GetProtocols()
+		for protoIndex := range protocols {
+			if protocols[protoIndex] == protocol {
+				matches[ldapProtocols[index].GetPoolName()] = struct{}{}
+				break
+			}
+		}
+	}
+
+	if len(matches) != 1 {
+		return "", false
+	}
+
+	for name := range matches {
+		return name, true
+	}
+
+	return "", false
+}
+
 // GetLDAPOptionalPools retrieves a map of optional LDAP pool configurations from the file settings.
 // Returns an empty map if the file settings or LDAP section is not properly configured.
 func (f *FileSettings) GetLDAPOptionalPools() map[string]*LDAPConf {

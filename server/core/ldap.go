@@ -1081,6 +1081,10 @@ var _ BackendManager = (*ldapManagerImpl)(nil)
 
 // NewLDAPManager creates and returns a BackendManager for managing LDAP authentication backends using the specified pool name.
 func NewLDAPManager(poolName string, deps AuthDeps) BackendManager {
+	if poolName == "" {
+		poolName = definitions.DefaultBackendName
+	}
+
 	return &ldapManagerImpl{
 		poolName: poolName,
 		deps:     deps,

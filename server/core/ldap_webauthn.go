@@ -70,6 +70,35 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 
 	username := handleMasterUserMode(lm.effectiveCfg(), auth)
 
+	if username == "" {
+		util.DebugModuleWithCfg(
+			lctx,
+			lm.effectiveCfg(),
+			lm.effectiveLogger(),
+			definitions.DbgWebAuthn,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "WebAuthn LDAP lookup skipped: empty username",
+			"pool", lm.poolName,
+		)
+
+		return nil, nil
+	}
+
+	util.DebugModuleWithCfg(
+		lctx,
+		lm.effectiveCfg(),
+		lm.effectiveLogger(),
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, auth.Runtime.GUID,
+		definitions.LogKeyMsg, "WebAuthn LDAP lookup",
+		"pool", lm.poolName,
+		"username", username,
+		"filter", filter,
+		"base_dn", baseDN,
+		"scope", *scope,
+		"credential_field", credentialField,
+	)
+
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 	ctxSearch, cancelSearch := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch())
 	defer cancelSearch()

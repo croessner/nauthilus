@@ -771,6 +771,20 @@ func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCreden
 func (a *AuthState) GetBackendManager(backendType definitions.Backend, backendName string) BackendManager {
 	switch backendType {
 	case definitions.BackendLDAP:
+		if backendName == "" {
+			poolName, ok := config.ResolveLDAPSearchPoolName(a.Cfg(), a.Request.Protocol.Get())
+			if ok {
+				backendName = poolName
+			} else {
+				level.Warn(a.Logger()).Log(
+					definitions.LogKeyGUID, a.Runtime.GUID,
+					definitions.LogKeyMsg, "LDAP pool name unresolved; using default",
+					definitions.LogKeyProtocol, a.Request.Protocol.Get(),
+				)
+				backendName = definitions.DefaultBackendName
+			}
+		}
+
 		return NewLDAPManager(backendName, a.deps)
 	case definitions.BackendLua:
 		return NewLuaManager(backendName, a.deps)

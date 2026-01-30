@@ -112,6 +112,76 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 	assert.Equal(t, cred.ID, credentials[0].ID)
 }
 
+func TestLDAPGetWebAuthnCredentialsDefaultsPoolName(t *testing.T) {
+	protocol := &config.LDAPSearchProtocol{
+		LDAPAttributeMapping: config.LDAPAttributeMapping{
+			WebAuthnCredentialField: "nauthilusFido2Credential",
+		},
+		BaseDN: "dc=example,dc=com",
+		LDAPFilter: config.LDAPFilter{
+			User: "(uid={{.Username}})",
+		},
+	}
+	defaultPoolName := definitions.DefaultBackendName
+
+	mcfg := new(mockConfig)
+	mcfg.On("GetLDAPSearchProtocol", mock.Anything, defaultPoolName).Return(protocol, nil)
+
+	deps := AuthDeps{Cfg: mcfg}
+	manager := NewLDAPManager("", deps)
+	lm := manager.(*ldapManagerImpl)
+
+	priorityqueue.LDAPQueue.AddPoolName(defaultPoolName)
+
+	cred := mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
+	}
+	credJSON, _ := json.Marshal(cred)
+
+	ctx := context.Background()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "/", nil)
+
+	auth := &AuthState{
+		deps: deps,
+		Request: AuthRequest{
+			Username:          "jdoe",
+			Protocol:          new(config.Protocol),
+			HTTPClientRequest: req,
+		},
+	}
+	auth.Request.Protocol.Set("oidc")
+
+	poolNameChan := make(chan string, 1)
+	go func() {
+		popCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		ldapReq := priorityqueue.LDAPQueue.PopWithContext(popCtx, defaultPoolName)
+		if ldapReq == nil {
+			poolNameChan <- ""
+
+			return
+		}
+
+		poolNameChan <- ldapReq.PoolName
+
+		if ldapReq.LDAPReplyChan != nil {
+			ldapReq.LDAPReplyChan <- &bktype.LDAPReply{
+				Result: bktype.AttributeMapping{
+					"nauthilusFido2Credential": {string(credJSON)},
+				},
+			}
+		}
+	}()
+
+	credentials, err := lm.GetWebAuthnCredentials(auth)
+	assert.NoError(t, err)
+	assert.Len(t, credentials, 1)
+	assert.Equal(t, defaultPoolName, <-poolNameChan)
+}
+
 func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{

@@ -18,10 +18,13 @@ package priorityqueue
 import (
 	"container/heap"
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 )
 
@@ -31,6 +34,14 @@ const (
 	PriorityMedium = 1
 	PriorityHigh   = 2
 )
+
+func normalizeLogger(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.Default()
+	}
+
+	return logger
+}
 
 // LDAPRequestItem represents an item in the LDAP request priority queue
 type LDAPRequestItem struct {
@@ -197,10 +208,13 @@ type ldapRequestPool struct {
 
 // LDAPRequestQueue manages per-pool priority queues for LDAP requests
 type LDAPRequestQueue struct {
-	mutex     sync.Mutex
-	poolNames map[string]bool
-	pools     map[string]*ldapRequestPool
-	maxLen    map[string]int // per-pool max queue length; 0 means unlimited
+	logger         *slog.Logger
+	mutex          sync.Mutex
+	poolNames      map[string]bool
+	workerPools    map[string]bool
+	warnedNoWorker map[string]bool
+	pools          map[string]*ldapRequestPool
+	maxLen         map[string]int // per-pool max queue length; 0 means unlimited
 }
 
 type ldapAuthRequestPool struct {
@@ -211,10 +225,13 @@ type ldapAuthRequestPool struct {
 
 // LDAPAuthRequestQueue manages per-pool priority queues for LDAP auth requests
 type LDAPAuthRequestQueue struct {
-	mutex     sync.Mutex
-	poolNames map[string]bool
-	pools     map[string]*ldapAuthRequestPool
-	maxLen    map[string]int // per-pool max queue length; 0 means unlimited
+	logger         *slog.Logger
+	mutex          sync.Mutex
+	poolNames      map[string]bool
+	workerPools    map[string]bool
+	warnedNoWorker map[string]bool
+	pools          map[string]*ldapAuthRequestPool
+	maxLen         map[string]int // per-pool max queue length; 0 means unlimited
 }
 
 type luaRequestPool struct {
@@ -225,40 +242,55 @@ type luaRequestPool struct {
 
 // LuaRequestQueue manages per-backend priority queues for Lua requests
 type LuaRequestQueue struct {
-	mutex        sync.Mutex
-	backendNames map[string]bool
-	backends     map[string]*luaRequestPool
-	maxLen       map[string]int // per-backend max queue length; 0 means unlimited
+	logger         *slog.Logger
+	mutex          sync.Mutex
+	backendNames   map[string]bool
+	workerBackends map[string]bool
+	warnedNoWorker map[string]bool
+	backends       map[string]*luaRequestPool
+	maxLen         map[string]int // per-backend max queue length; 0 means unlimited
 }
 
 // NewLDAPRequestQueue creates a new LDAPRequestQueue
-func NewLDAPRequestQueue() *LDAPRequestQueue {
+func NewLDAPRequestQueue(logger *slog.Logger) *LDAPRequestQueue {
+	logger = normalizeLogger(logger)
 	q := &LDAPRequestQueue{
-		poolNames: make(map[string]bool),
-		pools:     make(map[string]*ldapRequestPool),
-		maxLen:    make(map[string]int),
+		logger:         logger,
+		poolNames:      make(map[string]bool),
+		workerPools:    make(map[string]bool),
+		warnedNoWorker: make(map[string]bool),
+		pools:          make(map[string]*ldapRequestPool),
+		maxLen:         make(map[string]int),
 	}
 
 	return q
 }
 
 // NewLDAPAuthRequestQueue creates a new LDAPAuthRequestQueue
-func NewLDAPAuthRequestQueue() *LDAPAuthRequestQueue {
+func NewLDAPAuthRequestQueue(logger *slog.Logger) *LDAPAuthRequestQueue {
+	logger = normalizeLogger(logger)
 	q := &LDAPAuthRequestQueue{
-		poolNames: make(map[string]bool),
-		pools:     make(map[string]*ldapAuthRequestPool),
-		maxLen:    make(map[string]int),
+		logger:         logger,
+		poolNames:      make(map[string]bool),
+		workerPools:    make(map[string]bool),
+		warnedNoWorker: make(map[string]bool),
+		pools:          make(map[string]*ldapAuthRequestPool),
+		maxLen:         make(map[string]int),
 	}
 
 	return q
 }
 
 // NewLuaRequestQueue creates a new LuaRequestQueue
-func NewLuaRequestQueue() *LuaRequestQueue {
+func NewLuaRequestQueue(logger *slog.Logger) *LuaRequestQueue {
+	logger = normalizeLogger(logger)
 	q := &LuaRequestQueue{
-		backendNames: make(map[string]bool),
-		backends:     make(map[string]*luaRequestPool),
-		maxLen:       make(map[string]int),
+		logger:         logger,
+		backendNames:   make(map[string]bool),
+		workerBackends: make(map[string]bool),
+		warnedNoWorker: make(map[string]bool),
+		backends:       make(map[string]*luaRequestPool),
+		maxLen:         make(map[string]int),
 	}
 
 	return q
@@ -270,10 +302,15 @@ func (q *LDAPRequestQueue) AddPoolName(poolName string) {
 	defer q.mutex.Unlock()
 
 	if q.poolNames[poolName] {
+		q.workerPools[poolName] = true
+		delete(q.warnedNoWorker, poolName)
+
 		return
 	}
 
 	q.poolNames[poolName] = true
+	q.workerPools[poolName] = true
+	delete(q.warnedNoWorker, poolName)
 	pq := make(LDAPRequestPriorityQueue, 0)
 
 	heap.Init(&pq)
@@ -304,10 +341,15 @@ func (q *LDAPAuthRequestQueue) AddPoolName(poolName string) {
 	defer q.mutex.Unlock()
 
 	if q.poolNames[poolName] {
+		q.workerPools[poolName] = true
+		delete(q.warnedNoWorker, poolName)
+
 		return
 	}
 
 	q.poolNames[poolName] = true
+	q.workerPools[poolName] = true
+	delete(q.warnedNoWorker, poolName)
 	pq := make(LDAPAuthRequestPriorityQueue, 0)
 
 	heap.Init(&pq)
@@ -338,6 +380,46 @@ func (q *LuaRequestQueue) AddBackendName(backendName string) {
 	defer q.mutex.Unlock()
 
 	q.backendNames[backendName] = true
+	q.workerBackends[backendName] = true
+	delete(q.warnedNoWorker, backendName)
+}
+
+func (q *LDAPRequestQueue) warnMissingWorkerLocked(poolName string) {
+	if q.workerPools[poolName] || q.warnedNoWorker[poolName] {
+		return
+	}
+
+	level.Warn(q.logger).Log(
+		definitions.LogKeyMsg, "LDAP lookup request queued without active worker",
+		definitions.LogKeyLDAPPoolName, poolName,
+		"queue", "lookup",
+	)
+	q.warnedNoWorker[poolName] = true
+}
+
+func (q *LDAPAuthRequestQueue) warnMissingWorkerLocked(poolName string) {
+	if q.workerPools[poolName] || q.warnedNoWorker[poolName] {
+		return
+	}
+
+	level.Warn(q.logger).Log(
+		definitions.LogKeyMsg, "LDAP auth request queued without active worker",
+		definitions.LogKeyLDAPPoolName, poolName,
+		"queue", "auth",
+	)
+	q.warnedNoWorker[poolName] = true
+}
+
+func (q *LuaRequestQueue) warnMissingWorkerLocked(backendName string) {
+	if q.workerBackends[backendName] || q.warnedNoWorker[backendName] {
+		return
+	}
+
+	level.Warn(q.logger).Log(
+		definitions.LogKeyMsg, "Lua request queued without active worker",
+		"backend", backendName,
+	)
+	q.warnedNoWorker[backendName] = true
 }
 
 // GetBackendNames returns the backend names in the LuaRequestQueue
@@ -359,6 +441,7 @@ func (q *LDAPRequestQueue) Push(request *bktype.LDAPRequest, priority int) {
 	defer q.mutex.Unlock()
 
 	poolName := request.PoolName
+	q.warnMissingWorkerLocked(poolName)
 	p, ok := q.pools[poolName]
 	if !ok {
 		// initialize on the fly if not present
@@ -525,6 +608,7 @@ func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority in
 	defer q.mutex.Unlock()
 
 	poolName := request.PoolName
+	q.warnMissingWorkerLocked(poolName)
 	p, ok := q.pools[poolName]
 	if !ok {
 		pq := make(LDAPAuthRequestPriorityQueue, 0)
@@ -690,6 +774,7 @@ func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 	defer q.mutex.Unlock()
 
 	backendName := request.BackendName
+	q.warnMissingWorkerLocked(backendName)
 	b, ok := q.backends[backendName]
 	if !ok {
 		pq := make(LuaRequestPriorityQueue, 0)
@@ -851,10 +936,22 @@ func (q *LuaRequestQueue) PopWithContext(ctx context.Context, backendName string
 
 // Global queue instances
 var (
-	LDAPQueue     = NewLDAPRequestQueue()
-	LDAPAuthQueue = NewLDAPAuthRequestQueue()
-	LuaQueue      = NewLuaRequestQueue()
+	LDAPQueue     *LDAPRequestQueue
+	LDAPAuthQueue *LDAPAuthRequestQueue
+	LuaQueue      *LuaRequestQueue
 )
+
+func init() {
+	InitQueues(slog.Default())
+}
+
+// InitQueues initializes the global queue instances with the provided logger.
+func InitQueues(logger *slog.Logger) {
+	logger = normalizeLogger(logger)
+	LDAPQueue = NewLDAPRequestQueue(logger)
+	LDAPAuthQueue = NewLDAPAuthRequestQueue(logger)
+	LuaQueue = NewLuaRequestQueue(logger)
+}
 
 // SetMaxQueueLength sets the maximum queue length for a given LDAP pool in the lookup queue.
 // A value <= 0 disables the limit (unlimited).

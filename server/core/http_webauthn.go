@@ -16,11 +16,13 @@
 package core
 
 import (
+	"context"
 	"net/url"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -61,6 +63,19 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 			origins = append(origins, "https://localhost:9443", "http://localhost:9094")
 		}
 	}
+
+	util.DebugModuleWithCfg(
+		context.Background(),
+		cfg,
+		b.logger,
+		definitions.DbgWebAuthn,
+		definitions.LogKeyMsg, "WebAuthn config resolved",
+		"rp_id", rpID,
+		"rp_display_name", idpCfg.WebAuthn.RPDisplayName,
+		"rp_origins", origins,
+		"oidc_issuer", idpCfg.OIDC.Issuer,
+		"dev_mode", b.env.GetDevMode(),
+	)
 
 	webAuthn, err = webauthn.New(&webauthn.Config{
 		RPDisplayName: idpCfg.WebAuthn.RPDisplayName,

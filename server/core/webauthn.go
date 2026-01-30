@@ -53,10 +53,26 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 		credentials []mfa.PersistentCredential
 	)
 
-	_ = userName
-	_ = displayName
-
 	session := sessions.Default(a.Request.HTTPClientContext)
+
+	if uniqueUserID != "" {
+		a.Request.Username = uniqueUserID
+	} else if userName != "" {
+		a.Request.Username = userName
+	}
+
+	util.DebugModuleWithCfg(
+		a.Ctx(),
+		a.Cfg(),
+		a.Logger(),
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyMsg, "WebAuthn getUser input",
+		"account", userName,
+		"unique_user_id", uniqueUserID,
+		"display_name", displayName,
+		"request_username", a.Request.Username,
+	)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
@@ -164,6 +180,18 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			deps.Cfg,
+			deps.Logger,
+			definitions.DbgWebAuthn,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "WebAuthn registration begin",
+			"account", userName,
+			"unique_user_id", uniqueUserID,
+			"display_name", displayName,
+		)
+
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
 		auth.WithDefaults(ctx)
 
@@ -241,13 +269,9 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			uniqueUserID string
 			displayName  string
 			sessionData  *webauthn.SessionData
-			passDB       definitions.Backend
-			backendName  string
 		)
 
 		session := sessions.Default(ctx)
-
-		defer SessionCleaner(ctx)
 
 		authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
 		if err != nil || definitions.AuthResult(authResult) != definitions.AuthResultOK {
@@ -257,7 +281,10 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
+		userName, _ = util.GetSessionValue[string](session, definitions.CookieAccount)
+		if userName == "" {
+			userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
+		}
 		if userName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
 
@@ -308,11 +335,17 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			"content", fmt.Sprintf("%#v", sessionData),
 		)
 
-		// We expect the same Database for credentials that was used for authenticating a user!
-		if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
-			passDB = definitions.Backend(cookieValue)
-			backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
-		}
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			deps.Cfg,
+			deps.Logger,
+			definitions.DbgWebAuthn,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "WebAuthn registration finish",
+			"account", userName,
+			"unique_user_id", uniqueUserID,
+			"display_name", displayName,
+		)
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
 		auth.WithDefaults(ctx)
@@ -340,25 +373,30 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		user.AddCredential(*credential)
 
-		auth.(*AuthState).updateUser(user)
+		persistentCredential := &mfa.PersistentCredential{
+			Credential: *credential,
+		}
+		if err = auth.(*AuthState).SaveWebAuthnCredential(persistentCredential); err != nil {
+			level.Error(deps.Logger).Log(
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "Failed to persist WebAuthn credential to backend",
+				definitions.LogKeyError, err,
+			)
+			ctx.JSON(http.StatusInternalServerError, err.Error())
 
-		// Persist to backend if possible
-		if passDB != definitions.BackendUnknown {
-			if mgr := auth.(*AuthState).GetBackendManager(passDB, backendName); mgr != nil {
-				persistentCredential := &mfa.PersistentCredential{
-					Credential: *credential,
-				}
-				if err = mgr.SaveWebAuthnCredential(auth.(*AuthState), persistentCredential); err != nil {
-					level.Error(deps.Logger).Log(
-						definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-						definitions.LogKeyMsg, "Failed to persist WebAuthn credential to backend",
-						definitions.LogKeyError, err,
-					)
-				}
-			}
+			return
 		}
 
+		auth.(*AuthState).updateUser(user)
+
 		auth.PurgeCacheFor(userName)
+
+		session.Delete(definitions.CookieRegistration)
+		if err = session.Save(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, err)
+
+			return
+		}
 
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "success").Inc()
 		ctx.JSON(http.StatusOK, "Registration success")
