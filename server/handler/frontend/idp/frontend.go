@@ -170,6 +170,7 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.GET("/webauthn/devices", h.WebAuthnDevices)
 	authGroup.GET("/webauthn/devices/:languageTag", h.WebAuthnDevices)
 	authGroup.DELETE("/webauthn/device/:id", h.DeleteWebAuthnDevice)
+	authGroup.POST("/webauthn/device/:id/name", h.UpdateWebAuthnDeviceName)
 
 	authGroup.POST("/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
@@ -417,6 +418,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 				if h.hasTOTP(user) || h.hasWebAuthn(user) {
 					session := sessions.Default(ctx)
 					session.Set(definitions.CookieUsername, username)
+					session.Set(definitions.CookieUniqueUserID, user.Id)
 					session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultFail))
 					session.Set(definitions.CookieProtocol, protocol)
 
@@ -471,6 +473,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	if h.hasTOTP(user) || h.hasWebAuthn(user) {
 		session := sessions.Default(ctx)
 		session.Set(definitions.CookieUsername, username)
+		session.Set(definitions.CookieUniqueUserID, user.Id)
 		session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
 		session.Set(definitions.CookieProtocol, protocol)
 
@@ -1309,11 +1312,14 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register WebAuthn")
 	data["WebAuthnMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please connect your security key and follow the instructions")
+	data["DeviceNameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device name")
+	data["DeviceNamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "e.g. Office YubiKey")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
 	// JS Localizations
 	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
 	data["JSCompletingRegistration"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing registration...")
+	data["JSDeviceNameRequired"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter a device name")
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_register.html", data)
@@ -1352,16 +1358,22 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Security Keys (WebAuthn)")
 	data["RegisteredDevices"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Registered Devices")
+	data["DeviceName"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device name")
 	data["DeviceID"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device ID")
 	data["NoDevicesFound"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "No registered security keys found.")
 	data["LastUsed"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Last used")
 	data["Never"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Never")
+	data["Rename"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Rename")
+	data["Save"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Save")
+	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
 	data["Delete"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Delete")
 	data["DeleteConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to delete this security key?")
 	data["AddDevice"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Add new security key")
 	data["BackTo2FA"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back to 2FA Overview")
+	data["UnnamedDevice"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Unnamed device")
 
 	type device struct {
+		Name     string
 		ID       string
 		LastUsed string
 	}
@@ -1369,12 +1381,15 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 	var devices []device
 	if userData.WebAuthnUser != nil {
 		for _, cred := range userData.WebAuthnUser.Credentials {
+			name := strings.TrimSpace(cred.Name)
+
 			lastUsed := data["Never"].(string)
 			if !cred.LastUsed.IsZero() {
 				lastUsed = cred.LastUsed.Format("2006-01-02 15:04:05")
 			}
 
 			devices = append(devices, device{
+				Name:     name,
 				ID:       base64.RawURLEncoding.EncodeToString(cred.ID),
 				LastUsed: lastUsed,
 			})
@@ -1462,6 +1477,81 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 		// Update Redis cache (with original TTL or default)
 		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.WebAuthnUser, h.deps.Cfg.GetServer().GetTimeouts().GetRedisWrite())
 	}
+
+	userData.AuthState.PurgeCacheFor(userData.Username)
+
+	ctx.Header("HX-Redirect", definitions.MFARoot+"/webauthn/devices")
+	ctx.Status(http.StatusOK)
+}
+
+// UpdateWebAuthnDeviceName renames a specific WebAuthn credential for the user.
+func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.update_webauthn_device_name")
+	defer sp.End()
+
+	id := ctx.Param("id")
+	if id == "" {
+		h.renderErrorModal(ctx, "Missing device ID", http.StatusBadRequest)
+
+		return
+	}
+
+	name := strings.TrimSpace(ctx.PostForm("name"))
+	if name == "" {
+		h.renderErrorModal(ctx, "Missing device name", http.StatusBadRequest)
+
+		return
+	}
+
+	decodedID, err := base64.RawURLEncoding.DecodeString(id)
+	if err != nil {
+		h.renderErrorModal(ctx, "Invalid device ID", http.StatusBadRequest)
+
+		return
+	}
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		h.renderErrorModal(ctx, "Not logged in", http.StatusUnauthorized)
+
+		return
+	}
+
+	if userData.WebAuthnUser == nil {
+		h.renderErrorModal(ctx, "User not found", http.StatusNotFound)
+
+		return
+	}
+
+	var targetIndex int
+	found := false
+	for i := range userData.WebAuthnUser.Credentials {
+		if bytes.Equal(userData.WebAuthnUser.Credentials[i].ID, decodedID) {
+			targetIndex = i
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		h.renderErrorModal(ctx, "Credential not found", http.StatusNotFound)
+
+		return
+	}
+
+	oldCredential := userData.WebAuthnUser.Credentials[targetIndex]
+	newCredential := oldCredential
+	newCredential.Name = name
+
+	if err := userData.AuthState.UpdateWebAuthnCredential(&oldCredential, &newCredential); err != nil {
+		sp.RecordError(err)
+		h.renderErrorModal(ctx, "Failed to update credential: "+err.Error(), http.StatusInternalServerError)
+
+		return
+	}
+
+	userData.WebAuthnUser.Credentials[targetIndex].Name = name
+	_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.WebAuthnUser, h.deps.Cfg.GetServer().GetTimeouts().GetRedisWrite())
 
 	userData.AuthState.PurgeCacheFor(userData.Username)
 

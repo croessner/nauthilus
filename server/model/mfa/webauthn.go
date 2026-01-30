@@ -24,5 +24,6 @@ import (
 // PersistentCredential wraps webauthn.Credential to add persistent metadata.
 type PersistentCredential struct {
 	webauthn.Credential
+	Name     string    `json:"name,omitempty"`
 	LastUsed time.Time `json:"lastUsed,omitempty"`
 }

@@ -54,11 +54,13 @@ func TestLuaUpdateWebAuthnCredential(t *testing.T) {
 		Credential: webauthn.Credential{
 			ID: []byte("old-id"),
 		},
+		Name: "Old Key",
 	}
 	newCred := &mfa.PersistentCredential{
 		Credential: webauthn.Credential{
 			ID: []byte("new-id"),
 		},
+		Name: "New Key",
 	}
 
 	auth := &AuthState{

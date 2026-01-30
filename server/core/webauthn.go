@@ -17,12 +17,15 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -54,6 +57,25 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	)
 
 	session := sessions.Default(a.Request.HTTPClientContext)
+	protocolName := ""
+
+	if a.Request.HTTPClientContext != nil {
+		protocolName = a.Request.HTTPClientContext.Query("protocol")
+	}
+
+	if protocolName == "" {
+		protocolName, _ = util.GetSessionValue[string](session, definitions.CookieProtocol)
+	}
+
+	if protocolName == "" {
+		protocolName = definitions.ProtoIDP
+	}
+
+	if a.Request.Protocol == nil {
+		a.Request.Protocol = config.NewProtocol(protocolName)
+	} else if a.Request.Protocol.Get() == "" {
+		a.Request.Protocol.Set(protocolName)
+	}
 
 	if uniqueUserID != "" {
 		a.Request.Username = uniqueUserID
@@ -268,6 +290,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			userName     string
 			uniqueUserID string
 			displayName  string
+			deviceName   string
 			sessionData  *webauthn.SessionData
 		)
 
@@ -357,7 +380,25 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		response, err := protocol.ParseCredentialCreationResponseBody(ctx.Request.Body)
+		requestBody, err := io.ReadAll(ctx.Request.Body)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, err.Error())
+
+			return
+		}
+
+		var finishRequest struct {
+			Name       string          `json:"name"`
+			Credential json.RawMessage `json:"credential"`
+		}
+
+		var response *protocol.ParsedCredentialCreationData
+		if err = jsonIter.Unmarshal(requestBody, &finishRequest); err == nil && len(finishRequest.Credential) > 0 {
+			deviceName = strings.TrimSpace(finishRequest.Name)
+			response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(finishRequest.Credential))
+		} else {
+			response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(requestBody))
+		}
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, fmt.Sprintf("%+v", util.ProtoErrToFields(err)))
 
@@ -371,10 +412,11 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		user.AddCredential(*credential)
+		user.AddCredential(*credential, deviceName)
 
 		persistentCredential := &mfa.PersistentCredential{
 			Credential: *credential,
+			Name:       deviceName,
 		}
 		if err = auth.(*AuthState).SaveWebAuthnCredential(persistentCredential); err != nil {
 			level.Error(deps.Logger).Log(
@@ -412,20 +454,20 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 		defer sp.End()
 
 		var (
-			userName string
+			userName     string
+			uniqueUserID string
 		)
 
 		session := sessions.Default(ctx)
 		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
+		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
 
 		var user *backend.User
 
 		if userName != "" {
 			auth := NewAuthStateFromContextWithDeps(ctx, deps)
-			// For login, we don't have uniqueUserID yet if we just started the MFA flow.
-			// However, getUser tries to find it.
 			var err error
-			user, err = auth.(*AuthState).getUser(userName, "", "")
+			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, "")
 			if err != nil {
 				ctx.JSON(http.StatusInternalServerError, err.Error())
 
@@ -484,12 +526,14 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		defer sp.End()
 
 		var (
-			userName    string
-			sessionData *webauthn.SessionData
+			userName     string
+			uniqueUserID string
+			sessionData  *webauthn.SessionData
 		)
 
 		session := sessions.Default(ctx)
 		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
+		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
 
 		if cookieValue, err := util.GetSessionValue[[]byte](session, definitions.CookieRegistration); err == nil {
 			sessionData = &webauthn.SessionData{}
@@ -511,7 +555,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		if userName != "" {
 			var err error
-			user, err = auth.(*AuthState).getUser(userName, "", "")
+			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, "")
 			if err != nil {
 				ctx.JSON(http.StatusInternalServerError, err.Error())
 
@@ -571,6 +615,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			if oldCredential != nil {
 				newPersistentCredential := &mfa.PersistentCredential{
 					Credential: *credential,
+					Name:       oldCredential.Name,
 					LastUsed:   time.Now(),
 				}
 				// Update the credential in the backend

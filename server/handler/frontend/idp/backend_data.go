@@ -8,6 +8,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,10 @@ type UserBackendData struct {
 	HaveWebAuthn     bool
 	WebAuthnUser     *backend.User
 	AuthState        *core.AuthState
+}
+
+type webAuthnCredentialProvider interface {
+	GetWebAuthnCredentials() ([]mfa.PersistentCredential, error)
 }
 
 // GetUserBackendData performs backend lookups and returns encapsulated user data.
@@ -81,14 +86,61 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 		codes := authState.GetTOTPRecoveryCodes()
 		data.NumRecoveryCodes = len(codes)
 
-		if data.UniqueUserID != "" {
-			user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, data.UniqueUserID)
-			if err == nil && user != nil {
-				data.WebAuthnUser = user
-				data.HaveWebAuthn = len(user.WebAuthnCredentials()) > 0
-			}
-		}
+		h.resolveWebAuthnUser(ctx, session, data, authState)
 	}
 
 	return data, nil
+}
+
+func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, session sessions.Session, data *UserBackendData, provider webAuthnCredentialProvider) {
+	if data == nil || provider == nil {
+		return
+	}
+
+	if data.UniqueUserID == "" && session != nil {
+		uniqueUserID, _ := util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
+		if uniqueUserID != "" {
+			data.UniqueUserID = uniqueUserID
+		}
+	}
+
+	if data.UniqueUserID != "" {
+		user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, data.UniqueUserID)
+		if err == nil && user != nil {
+			data.WebAuthnUser = user
+			data.HaveWebAuthn = len(user.WebAuthnCredentials()) > 0
+		}
+	}
+
+	if data.HaveWebAuthn {
+		return
+	}
+
+	credentials, err := provider.GetWebAuthnCredentials()
+	if err != nil || len(credentials) == 0 {
+		return
+	}
+
+	user := &backend.User{
+		Id:          data.UniqueUserID,
+		Name:        data.Username,
+		DisplayName: data.DisplayName,
+		Credentials: credentials,
+	}
+
+	data.WebAuthnUser = user
+	data.HaveWebAuthn = true
+
+	if data.UniqueUserID == "" {
+		return
+	}
+
+	backend.SaveWebAuthnToRedis(
+		ctx.Request.Context(),
+		h.deps.Logger,
+		h.deps.Cfg,
+		h.deps.Redis,
+		user,
+		h.deps.Cfg.GetServer().GetRedis().GetPosCacheTTL(),
+	)
 }

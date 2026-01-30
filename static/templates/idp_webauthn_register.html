@@ -6,6 +6,14 @@
 
             <p class="mb-8">{{ .WebAuthnMessage }}</p>
 
+            <div class="form-control w-full mb-6">
+                <label class="label" for="device-name">
+                    <span class="label-text">{{ .DeviceNameLabel }}</span>
+                </label>
+                <input class="input input-bordered w-full" id="device-name" maxlength="64"
+                       placeholder="{{ .DeviceNamePlaceholder }}" required type="text"/>
+            </div>
+
             <div class="alert alert-info hidden mb-6" id="webauthn-status">
                 <svg class="stroke-current shrink-0 w-6 h-6" fill="none" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
@@ -59,10 +67,21 @@
         const errorDiv = document.getElementById('webauthn-error');
         const errorText = document.getElementById('error-text');
         const button = document.getElementById('register-button');
+        const deviceNameInput = document.getElementById('device-name');
 
         statusDiv.classList.remove('hidden');
         errorDiv.classList.add('hidden');
         button.disabled = true;
+
+        const deviceName = deviceNameInput.value.trim();
+        if (!deviceName) {
+            errorDiv.classList.remove('hidden');
+            errorText.innerText = "{{ .JSDeviceNameRequired }}";
+            statusDiv.classList.add('hidden');
+            button.disabled = false;
+
+            return;
+        }
 
         try {
             // 1. Begin Registration
@@ -96,12 +115,15 @@
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
-                    id: credential.id,
-                    rawId: ab_to_b64(credential.rawId),
-                    type: credential.type,
-                    response: {
-                        attestationObject: ab_to_b64(credential.response.attestationObject),
-                        clientDataJSON: ab_to_b64(credential.response.clientDataJSON),
+                    name: deviceName,
+                    credential: {
+                        id: credential.id,
+                        rawId: ab_to_b64(credential.rawId),
+                        type: credential.type,
+                        response: {
+                            attestationObject: ab_to_b64(credential.response.attestationObject),
+                            clientDataJSON: ab_to_b64(credential.response.clientDataJSON),
+                        }
                     }
                 })
             });

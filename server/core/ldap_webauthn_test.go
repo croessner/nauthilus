@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/go-ldap/ldap/v3"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -60,6 +61,7 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 			WebAuthnCredentialField: "nauthilusFido2Credential",
 		},
 		BaseDN: "dc=example,dc=com",
+		Scope:  "sub",
 		LDAPFilter: config.LDAPFilter{
 			User: "(uid={{.Username}})",
 		},
@@ -79,6 +81,7 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 		Credential: webauthn.Credential{
 			ID: []byte("test-id"),
 		},
+		Name: "Test Key",
 	}
 	credJSON, _ := json.Marshal(cred)
 
@@ -94,6 +97,121 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 		},
 	}
 	auth.Request.Protocol.Set("oidc")
+
+	go func() {
+		req := priorityqueue.LDAPQueue.Pop("test")
+		if req != nil && req.LDAPReplyChan != nil {
+			req.LDAPReplyChan <- &bktype.LDAPReply{
+				Result: bktype.AttributeMapping{
+					"nauthilusFido2Credential": {string(credJSON)},
+				},
+			}
+		}
+	}()
+
+	credentials, err := lm.GetWebAuthnCredentials(auth)
+	assert.NoError(t, err)
+	assert.Len(t, credentials, 1)
+	assert.Equal(t, cred.ID, credentials[0].ID)
+}
+
+func TestLDAPGetWebAuthnCredentialsDefaultsProtocol(t *testing.T) {
+	protocol := &config.LDAPSearchProtocol{
+		LDAPAttributeMapping: config.LDAPAttributeMapping{
+			WebAuthnCredentialField: "nauthilusFido2Credential",
+		},
+		BaseDN: "dc=example,dc=com",
+		LDAPFilter: config.LDAPFilter{
+			User: "(uid={{.Username}})",
+		},
+	}
+	mcfg := new(mockConfig)
+	mcfg.On("GetLDAPSearchProtocol", definitions.ProtoIDP, "test").Return(protocol, nil)
+
+	deps := AuthDeps{Cfg: mcfg}
+	lm := &ldapManagerImpl{
+		poolName: "test",
+		deps:     deps,
+	}
+
+	priorityqueue.LDAPQueue.AddPoolName("test")
+
+	cred := mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
+		Name: "Test Key",
+	}
+	credJSON, _ := json.Marshal(cred)
+
+	ctx := context.Background()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "/", nil)
+
+	auth := &AuthState{
+		deps: deps,
+		Request: AuthRequest{
+			Username:          "jdoe",
+			Protocol:          new(config.Protocol),
+			HTTPClientRequest: req,
+		},
+	}
+
+	go func() {
+		req := priorityqueue.LDAPQueue.Pop("test")
+		if req != nil && req.LDAPReplyChan != nil {
+			req.LDAPReplyChan <- &bktype.LDAPReply{
+				Result: bktype.AttributeMapping{
+					"nauthilusFido2Credential": {string(credJSON)},
+				},
+			}
+		}
+	}()
+
+	credentials, err := lm.GetWebAuthnCredentials(auth)
+	assert.NoError(t, err)
+	assert.Len(t, credentials, 1)
+	assert.Equal(t, cred.ID, credentials[0].ID)
+}
+
+func TestLDAPGetWebAuthnCredentialsNilProtocolDefaults(t *testing.T) {
+	protocol := &config.LDAPSearchProtocol{
+		LDAPAttributeMapping: config.LDAPAttributeMapping{
+			WebAuthnCredentialField: "nauthilusFido2Credential",
+		},
+		BaseDN: "dc=example,dc=com",
+		LDAPFilter: config.LDAPFilter{
+			User: "(uid={{.Username}})",
+		},
+	}
+	mcfg := new(mockConfig)
+	mcfg.On("GetLDAPSearchProtocol", definitions.ProtoIDP, "test").Return(protocol, nil)
+
+	deps := AuthDeps{Cfg: mcfg}
+	lm := &ldapManagerImpl{
+		poolName: "test",
+		deps:     deps,
+	}
+
+	priorityqueue.LDAPQueue.AddPoolName("test")
+
+	cred := mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("test-id"),
+		},
+		Name: "Test Key",
+	}
+	credJSON, _ := json.Marshal(cred)
+
+	ctx := context.Background()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "/", nil)
+
+	auth := &AuthState{
+		deps: deps,
+		Request: AuthRequest{
+			Username:          "jdoe",
+			HTTPClientRequest: req,
+		},
+	}
 
 	go func() {
 		req := priorityqueue.LDAPQueue.Pop("test")
@@ -137,6 +255,7 @@ func TestLDAPGetWebAuthnCredentialsDefaultsPoolName(t *testing.T) {
 		Credential: webauthn.Credential{
 			ID: []byte("test-id"),
 		},
+		Name: "Test Key",
 	}
 	credJSON, _ := json.Marshal(cred)
 
@@ -207,6 +326,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 		Credential: webauthn.Credential{
 			ID: []byte("test-id"),
 		},
+		Name: "Test Key",
 	}
 
 	ctx := context.Background()
@@ -227,6 +347,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
+			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -243,6 +364,7 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 			WebAuthnCredentialField: "nauthilusFido2Credential",
 		},
 		BaseDN: "dc=example,dc=com",
+		Scope:  "sub",
 		LDAPFilter: config.LDAPFilter{
 			User: "(uid={{.Username}})",
 		},
@@ -262,6 +384,7 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 		Credential: webauthn.Credential{
 			ID: []byte("test-id"),
 		},
+		Name: "Test Key",
 	}
 
 	ctx := context.Background()
@@ -282,6 +405,7 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
+			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -298,6 +422,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 			WebAuthnCredentialField: "nauthilusFido2Credential",
 		},
 		BaseDN: "dc=example,dc=com",
+		Scope:  "sub",
 		LDAPFilter: config.LDAPFilter{
 			User: "(uid={{.Username}})",
 		},
@@ -317,11 +442,13 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 		Credential: webauthn.Credential{
 			ID: []byte("test-id"),
 		},
+		Name: "Old Key",
 	}
 	newCred := &mfa.PersistentCredential{
 		Credential: webauthn.Credential{
 			ID: []byte("test-id"),
 		},
+		Name: "New Key",
 	}
 
 	ctx := context.Background()
@@ -343,6 +470,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
+			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -353,6 +481,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
+			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}

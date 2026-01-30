@@ -14,6 +14,7 @@
                 <table class="table w-full">
                     <thead>
                     <tr>
+                        <th>{{ .DeviceName }}</th>
                         <th>{{ .DeviceID }}</th>
                         <th>{{ .LastUsed }}</th>
                         <th></th>
@@ -22,6 +23,17 @@
                     <tbody>
                     {{ range .Devices }}
                     <tr>
+                        <td>
+                            <form class="flex items-center gap-2" hx-post="/mfa/webauthn/device/{{ .ID }}/name"
+                                  hx-target="#modal-container">
+                                <input class="input input-bordered input-sm flex-1 min-w-0 max-w-xs" maxlength="64"
+                                       name="name" placeholder="{{ $.UnnamedDevice }}" required type="text"
+                                       value="{{ .Name }}"/>
+                                <button class="btn btn-primary btn-sm" type="submit">
+                                    {{ $.Save }}
+                                </button>
+                            </form>
+                        </td>
                         <td class="font-mono text-sm">{{ .ID }}</td>
                         <td>{{ .LastUsed }}</td>
                         <td class="text-right">

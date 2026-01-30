@@ -148,7 +148,9 @@ and can be used by external clients.
     - Returns `CredentialCreationOptions` as JSON (standard WebAuthn format).
 - **`POST /api/v1/mfa/webauthn/register/finish`**:
     - Finalizes WebAuthn registration.
-    - Request Body: The credential object from `navigator.credentials.create()`.
+  - Request Body: Either the raw credential object from `navigator.credentials.create()` or an object containing a
+    `name` and `credential` payload (e.g. `{"name": "Office YubiKey", "credential": { ... }}`) to store a
+    user-friendly device name.
     - Returns 200 OK on success.
 - **`DELETE /api/v1/mfa/webauthn/:credentialID`**:
     - Deletes a specific WebAuthn credential by its ID.
@@ -160,10 +162,12 @@ The IdP includes a dedicated view for managing registered WebAuthn devices:
 
 - **`GET /mfa/webauthn/devices`**:
     - Renders an overview of all registered security keys.
-    - Displays the device ID and the "Last Used" timestamp.
-    - Allows users to add new devices or delete specific ones.
+  - Displays the device name, device ID, and the "Last Used" timestamp.
+  - Allows users to add new devices, rename, or delete specific ones.
 - **`DELETE /mfa/webauthn/device/:id`**:
     - Deletes a specific device.
+- **`POST /mfa/webauthn/device/:id/name`**:
+    - Updates the device name for a specific device.
 
 The "Last Used" timestamp is updated automatically upon every successful WebAuthn login and stored in the persistent
 backend (LDAP or Lua).

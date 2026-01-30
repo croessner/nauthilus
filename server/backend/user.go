@@ -65,8 +65,11 @@ func (u *User) WebAuthnIcon() string {
 }
 
 // AddCredential associates the credential to the user
-func (u *User) AddCredential(cred webauthn.Credential) {
-	u.Credentials = append(u.Credentials, mfa.PersistentCredential{Credential: cred})
+func (u *User) AddCredential(cred webauthn.Credential, name string) {
+	u.Credentials = append(u.Credentials, mfa.PersistentCredential{
+		Credential: cred,
+		Name:       name,
+	})
 }
 
 // WebAuthnCredentials returns credentials owned by the user

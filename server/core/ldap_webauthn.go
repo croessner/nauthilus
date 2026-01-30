@@ -21,6 +21,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/model/mfa"
@@ -38,11 +39,25 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 	)
 	defer lspan.End()
 
-	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName)
+	protocolName := definitions.ProtoIDP
+
+	if auth.Request.Protocol == nil {
+		auth.Request.Protocol = config.NewProtocol(protocolName)
+	}
+
+	if auth.Request.Protocol != nil {
+		if currentProtocol := auth.Request.Protocol.Get(); currentProtocol != "" {
+			protocolName = currentProtocol
+		} else {
+			auth.Request.Protocol.Set(protocolName)
+		}
+	}
+
+	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(protocolName, lm.poolName)
 	if err != nil || protocol == nil {
 		if err == nil {
 			err = errors.ErrLDAPConfig.WithDetail(
-				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", protocolName))
 		}
 
 		return nil, err
@@ -181,6 +196,11 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 		return err
 	}
 
+	scope, err := protocol.GetScope()
+	if err != nil {
+		return err
+	}
+
 	username := handleMasterUserMode(lm.effectiveCfg(), auth)
 	credBytes, err := jsonIter.Marshal(credential)
 	if err != nil {
@@ -202,6 +222,7 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 		},
 		Filter: filter,
 		BaseDN: baseDN,
+		Scope:  *scope,
 		ModifyAttributes: bktype.LDAPModifyAttributes{
 			credentialField: []string{string(credBytes)},
 		},
@@ -258,6 +279,11 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 		return err
 	}
 
+	scope, err := protocol.GetScope()
+	if err != nil {
+		return err
+	}
+
 	username := handleMasterUserMode(lm.effectiveCfg(), auth)
 	credBytes, err := jsonIter.Marshal(credential)
 	if err != nil {
@@ -279,6 +305,7 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 		},
 		Filter: filter,
 		BaseDN: baseDN,
+		Scope:  *scope,
 		ModifyAttributes: bktype.LDAPModifyAttributes{
 			credentialField: []string{string(credBytes)},
 		},
@@ -339,6 +366,11 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		return err
 	}
 
+	scope, err := protocol.GetScope()
+	if err != nil {
+		return err
+	}
+
 	username := handleMasterUserMode(lm.effectiveCfg(), auth)
 
 	oldCredBytes, err := jsonIter.Marshal(oldCredential)
@@ -368,6 +400,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		},
 		Filter: filter,
 		BaseDN: baseDN,
+		Scope:  *scope,
 		ModifyAttributes: bktype.LDAPModifyAttributes{
 			credentialField: []string{string(oldCredBytes)},
 		},
@@ -406,6 +439,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		},
 		Filter: filter,
 		BaseDN: baseDN,
+		Scope:  *scope,
 		ModifyAttributes: bktype.LDAPModifyAttributes{
 			credentialField: []string{string(newCredBytes)},
 		},
