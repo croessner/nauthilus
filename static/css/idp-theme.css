@@ -1,0 +1,202 @@
+:root[data-theme='light'] {
+    --idp-primary: #516291;
+    --idp-primary-hover: #5d6fa3;
+    --idp-bg: #516291;
+    --idp-card: #ffffff;
+    --idp-text: #0f172a;
+    --idp-text-muted: #334155;
+    --idp-divider: rgba(15, 23, 42, 0.18);
+}
+
+:root[data-theme='dark'] {
+    --idp-primary: #516291;
+    --idp-primary-hover: #5d6fa3;
+    --idp-bg: #516291;
+    --idp-card: #1b2a4a;
+    --idp-text: rgba(255, 255, 255, 0.92);
+    --idp-text-muted: rgba(255, 255, 255, 0.8);
+    --idp-divider: rgba(255, 255, 255, 0.2);
+}
+
+body {
+    background-color: var(--idp-bg);
+    color: var(--idp-text);
+}
+
+.bg-base-200 {
+    background-color: var(--idp-bg);
+}
+
+.bg-base-100 {
+    background-color: var(--idp-card);
+}
+
+.navbar.bg-base-100,
+.card.bg-base-100,
+.menu.bg-base-100,
+.dropdown-content.bg-base-100 {
+    background-color: var(--idp-card);
+    color: var(--idp-text);
+}
+
+
+.text-base-content {
+    color: var(--idp-text);
+}
+
+.text-base-content\/70 {
+    color: var(--idp-text-muted);
+}
+
+.divider {
+    color: var(--idp-divider);
+}
+
+.btn-primary {
+    background-color: var(--idp-primary);
+    border-color: var(--idp-primary);
+    color: #ffffff;
+}
+
+.btn-primary:hover,
+.btn-primary.btn-active,
+.btn-primary:focus-visible {
+    background-color: var(--idp-primary-hover);
+    border-color: var(--idp-primary-hover);
+}
+
+.btn-secondary {
+    background-color: var(--idp-primary);
+    border-color: var(--idp-primary);
+    color: #ffffff;
+}
+
+.btn-secondary:hover,
+.btn-secondary.btn-active,
+.btn-secondary:focus-visible {
+    background-color: var(--idp-primary-hover);
+    border-color: var(--idp-primary-hover);
+    color: #ffffff;
+}
+
+.btn-outline {
+    border-color: var(--idp-primary);
+    color: var(--idp-primary);
+}
+
+.btn-outline:hover,
+.btn-outline.btn-active,
+.btn-outline:focus-visible {
+    background-color: color-mix(in srgb, var(--idp-primary) 15%, transparent);
+    border-color: var(--idp-primary-hover);
+    color: var(--idp-primary-hover);
+}
+
+.btn:not(.btn-primary):not(.btn-secondary):not(.btn-outline):not(.btn-error):not(.btn-success):not(.btn-warning):not(.btn-info):not(.btn-ghost):not(.btn-link) {
+    background-color: transparent;
+    border-color: var(--idp-primary);
+    color: var(--idp-primary);
+}
+
+.btn:not(.btn-primary):not(.btn-secondary):not(.btn-outline):not(.btn-error):not(.btn-success):not(.btn-warning):not(.btn-info):not(.btn-ghost):not(.btn-link):hover,
+.btn:not(.btn-primary):not(.btn-secondary):not(.btn-outline):not(.btn-error):not(.btn-success):not(.btn-warning):not(.btn-info):not(.btn-ghost):not(.btn-link).btn-active,
+.btn:not(.btn-primary):not(.btn-secondary):not(.btn-outline):not(.btn-error):not(.btn-success):not(.btn-warning):not(.btn-info):not(.btn-ghost):not(.btn-link):focus-visible {
+    background-color: color-mix(in srgb, var(--idp-primary) 12%, transparent);
+    border-color: var(--idp-primary-hover);
+    color: var(--idp-primary-hover);
+}
+
+.btn-ghost {
+    color: var(--idp-primary);
+}
+
+.btn-ghost:hover,
+.btn-ghost.btn-active,
+.btn-ghost:focus-visible {
+    background-color: color-mix(in srgb, var(--idp-primary) 12%, transparent);
+    color: var(--idp-primary-hover);
+}
+
+.idp-back-link {
+    color: #ffffff;
+}
+
+.idp-back-link:hover,
+.idp-back-link.btn-active,
+.idp-back-link:focus-visible {
+    background-color: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+
+.link,
+.btn-link {
+    color: var(--idp-primary);
+}
+
+.link:hover,
+.btn-link:hover {
+    color: var(--idp-primary-hover);
+}
+
+.alert-info {
+    background-color: color-mix(in srgb, var(--idp-primary) 18%, transparent);
+    border-color: color-mix(in srgb, var(--idp-primary) 55%, transparent);
+    color: var(--idp-text);
+}
+
+.alert-info .stroke-current {
+    color: var(--idp-primary);
+}
+
+.alert-info span {
+    color: inherit;
+}
+
+:root[data-theme='light'] .idp-2fa-title {
+    color: #ffffff;
+}
+
+::root[data-theme='dark'] .idp-webauthn-title {
+    color: #ffffff;
+}
+
+::root[data-theme='dark'] .idp-header-title,
+::root[data-theme='dark'] .navbar .btn-ghost {
+    color: rgba(255, 255, 255, 0.92);
+}
+
+::root[data-theme='dark'] .navbar .btn-ghost:hover,
+::root[data-theme='dark'] .navbar .btn-ghost.btn-active,
+::root[data-theme='dark'] .navbar .btn-ghost:focus-visible {
+    color: #ffffff;
+}
+
+.idp-login-logo {
+    width: 230px;
+    filter: drop-shadow(0 10px 20px rgba(127, 127, 127, 0.5)) drop-shadow(0 0 35px rgba(255, 255, 255, 0.7));
+    transition: filter 0.3s ease-in-out, transform 0.3s ease-in-out;
+    padding-bottom: 0.5rem;
+}
+
+.idp-login-logo:hover {
+    filter: drop-shadow(0 15px 25px rgba(127, 127, 127, 0.8)) drop-shadow(0 0 50px rgba(255, 255, 255, 1));
+    transform: scale(1.1);
+}
+
+.idp-header-logo {
+    width: 34px;
+    height: 34px;
+    margin-right: 0.5rem;
+    filter: grayscale(1) brightness(0) drop-shadow(0 4px 8px rgba(127, 127, 127, 0.4));
+}
+
+:root[data-theme='dark'] .idp-header-logo {
+    filter: grayscale(1) brightness(0) invert(1) drop-shadow(0 4px 8px rgba(127, 127, 127, 0.4));
+}
+
+
+@media (max-width: 640px) {
+    .idp-login-logo {
+        width: 175px;
+    }
+}

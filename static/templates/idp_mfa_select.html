@@ -9,7 +9,7 @@
                 {{ if .RecommendedMethod }}
                 {{ if eq .RecommendedMethod "webauthn" }}
                 <form action="/login/webauthn{{ .QueryString }}" method="get">
-                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-between items-center"
+                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <div class="flex items-center gap-4">
                             <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
@@ -20,14 +20,13 @@
                             </svg>
                             <span>{{ .SecurityKey }}</span>
                         </div>
-                        <div class="badge badge-outline">{{ .Recommended }}</div>
                     </button>
                 </form>
                 {{ end }}
 
                 {{ if eq .RecommendedMethod "totp" }}
                 <form action="/login/totp{{ .QueryString }}" method="get">
-                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-between items-center"
+                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <div class="flex items-center gap-4">
                             <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
@@ -38,17 +37,15 @@
                             </svg>
                             <span>{{ .AuthenticatorApp }}</span>
                         </div>
-                        <div class="badge badge-outline">{{ .Recommended }}</div>
                     </button>
                 </form>
                 {{ end }}
 
                 {{ if eq .RecommendedMethod "recovery" }}
                 <form action="/login/recovery{{ .QueryString }}" method="get">
-                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-between items-center"
+                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <span>{{ .RecoveryCode }}</span>
-                        <div class="badge badge-outline">{{ .Recommended }}</div>
                     </button>
                 </form>
                 {{ end }}

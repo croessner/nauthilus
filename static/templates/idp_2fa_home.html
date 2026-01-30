@@ -2,7 +2,7 @@
 {{ template "idp_header.html" . }}
 {{ end }}
 <div class="max-w-4xl mx-auto mt-10">
-    <h1 class="text-3xl font-bold mb-8">{{ .Title }}</h1>
+    <h1 class="text-3xl font-bold mb-8 idp-2fa-title">{{ .Title }}</h1>
 
     {{ if .BackendError }}
     <div class="alert alert-error shadow-lg mb-8">
@@ -44,8 +44,7 @@
                 <p>{{ .WebAuthnDescription }}</p>
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveWebAuthn }}
-                    <a class="btn btn-secondary btn-outline" href="/mfa/webauthn/devices">{{ .SecurityKeyWebAuthn
-                        }}</a>
+                    <a class="btn btn-secondary" href="/mfa/webauthn/devices">{{ .SecurityKeyWebAuthn }}</a>
                     {{ else }}
                     <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}"
                        href="/mfa/webauthn/register">{{ .RegisterWebAuthn }}</a>

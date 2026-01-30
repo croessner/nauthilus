@@ -5,6 +5,7 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title>{{ .Title }} - Nauthilus</title>
     <link href="/static/css/daisyui.min.css" rel="stylesheet" type="text/css"/>
+    <link href="/static/css/idp-theme.css" rel="stylesheet" type="text/css"/>
     <script src="/static/js/tailwind.min.js"></script>
     <script src="/static/js/htmx.min.js"></script>
     <script>
@@ -95,7 +96,10 @@
 {{ end }}
 <div class="navbar bg-base-100 shadow-lg">
     <div class="flex-1">
-        <a class="btn btn-ghost normal-case text-xl" href="https://nauthilus.org/" target="_blank">Nauthilus IdP</a>
+        <a class="btn btn-ghost normal-case text-xl idp-header-title" href="https://nauthilus.org/" target="_blank">
+            <img alt="Nauthilus Logo" class="idp-header-logo" src="/static/img/logo.png"/>
+            Nauthilus IdP
+        </a>
     </div>
     <div class="flex-none">
         <button class="btn btn-ghost btn-circle mr-2" onclick="toggleTheme()" title="Toggle Theme">

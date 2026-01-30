@@ -1,8 +1,8 @@
 {{ template "idp_header.html" . }}
 <div class="max-w-4xl mx-auto mt-10">
     <div class="flex justify-between items-center mb-8">
-        <h1 class="text-3xl font-bold">{{ .Title }}</h1>
-        <a class="btn btn-ghost" href="/mfa/register/home">{{ .BackTo2FA }}</a>
+        <h1 class="text-3xl font-bold idp-webauthn-title">{{ .Title }}</h1>
+        <a class="btn btn-ghost idp-back-link" href="/mfa/register/home">{{ .BackTo2FA }}</a>
     </div>
 
     <div class="card bg-base-100 shadow-xl mb-8">
