@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
@@ -147,5 +148,80 @@ func TestResolveWebAuthnUserFallbacksToBackend(t *testing.T) {
 		assert.Len(t, data.WebAuthnUser.Credentials, 1)
 	}
 
+	assert.NoError(t, mockRedis.ExpectationsWereMet())
+}
+
+func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &webAuthnBackendTestConfig{
+		prefix: "test:",
+		ttl:    time.Minute,
+	}
+
+	db, mockRedis := redismock.NewClientMock()
+	if db == nil || mockRedis == nil {
+		t.Fatalf("failed to create Redis mock client")
+	}
+
+	redisClient := rediscli.NewTestClient(db)
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:    cfg,
+			Logger: slog.Default(),
+			Redis:  redisClient,
+		},
+	}
+
+	uniqueUserID := "uid-123"
+	redisKey := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID
+
+	mockRedis.ExpectHGetAll(redisKey).SetVal(map[string]string{})
+
+	provider := &mockWebAuthnProvider{
+		credentials: []mfa.PersistentCredential{
+			{
+				Credential: webauthn.Credential{ID: []byte("cred-1")},
+				Name:       "Test Key",
+			},
+		},
+	}
+
+	credentialsJSON, err := jsoniter.ConfigFastest.Marshal(provider.credentials)
+	if err != nil {
+		t.Fatalf("failed to marshal credentials: %v", err)
+	}
+
+	credentialsValue := string(credentialsJSON)
+	if encrypted, err := redisClient.GetSecurityManager().Encrypt(credentialsValue); err == nil {
+		credentialsValue = encrypted
+	}
+
+	expected := map[string]any{
+		"id":           uniqueUserID,
+		"name":         "test1",
+		"display_name": "Test User",
+		"credentials":  credentialsValue,
+	}
+
+	mockRedis.ExpectHSet(redisKey, expected).SetVal(4)
+	mockRedis.ExpectExpire(redisKey, cfg.GetServer().GetRedis().GetPosCacheTTL()).SetVal(true)
+
+	store := cookie.NewStore([]byte("secret"))
+	r := gin.New()
+	r.Use(sessions.Sessions("test-session", store))
+
+	r.GET("/test", func(c *gin.Context) {
+		user := &backend.User{Id: uniqueUserID, Name: "test1", DisplayName: "Test User"}
+		haveWebAuthn := h.hasWebAuthnWithProvider(c, user, "", provider)
+		assert.True(t, haveWebAuthn)
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 	assert.NoError(t, mockRedis.ExpectationsWereMet())
 }

@@ -17,7 +17,6 @@ package idp
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"net/http"
 	"net/url"
@@ -412,7 +411,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		// Check for Delayed Response
 		if idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
 			if user, _ := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID); user != nil {
-				if h.hasTOTP(user) || h.hasWebAuthn(user) {
+				if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
 					session := sessions.Default(ctx)
 					session.Set(definitions.CookieUsername, username)
 					session.Set(definitions.CookieUniqueUserID, user.Id)
@@ -426,7 +425,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 					session.Save()
 
 					// If user has only one MFA option, redirect directly to it
-					if redirectURL, ok := h.getMFARedirectURL(user, returnTo, protocolParam); ok {
+					if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocolParam); ok {
 						ctx.Redirect(http.StatusFound, redirectURL)
 
 						return
@@ -467,7 +466,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	}
 
 	// Check if user has MFA
-	if h.hasTOTP(user) || h.hasWebAuthn(user) {
+	if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
 		session := sessions.Default(ctx)
 		session.Set(definitions.CookieUsername, username)
 		session.Set(definitions.CookieUniqueUserID, user.Id)
@@ -481,7 +480,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		session.Save()
 
 		// If user has only one MFA option, redirect directly to it
-		if redirectURL, ok := h.getMFARedirectURL(user, returnTo, protocolParam); ok {
+		if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocolParam); ok {
 			ctx.Redirect(http.StatusFound, redirectURL)
 
 			return
@@ -546,12 +545,49 @@ func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
 	return false
 }
 
-func (h *FrontendHandler) hasWebAuthn(user *backend.User) bool {
-	uniqueUserID := user.Id
-	ctx := context.Background()
-	userWA, err := backend.GetWebAuthnFromRedis(ctx, h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
+func (h *FrontendHandler) hasWebAuthn(ctx *gin.Context, user *backend.User, protocolName string) bool {
+	return h.hasWebAuthnWithProvider(ctx, user, protocolName, nil)
+}
 
-	return err == nil && userWA != nil && len(userWA.WebAuthnCredentials()) > 0
+func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backend.User, protocolName string, provider webAuthnCredentialProvider) bool {
+	if ctx == nil || user == nil {
+		return false
+	}
+
+	session := sessions.Default(ctx)
+
+	if provider == nil {
+		authDeps := h.deps.Auth()
+		state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+		if state == nil {
+			return false
+		}
+
+		resolvedProtocol := protocolName
+		if resolvedProtocol == "" && session != nil {
+			resolvedProtocol, _ = util.GetSessionValue[string](session, definitions.CookieProtocol)
+		}
+		if resolvedProtocol == "" {
+			resolvedProtocol = definitions.ProtoIDP
+		}
+
+		authState := state.(*core.AuthState)
+		authState.SetUsername(user.Name)
+		authState.SetProtocol(config.NewProtocol(resolvedProtocol))
+		authState.SetNoAuth(true)
+
+		provider = authState
+	}
+
+	data := &UserBackendData{
+		Username:     user.Name,
+		DisplayName:  user.DisplayName,
+		UniqueUserID: user.Id,
+	}
+
+	h.resolveWebAuthnUser(ctx, session, data, provider)
+
+	return data.HaveWebAuthn
 }
 
 func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
@@ -596,7 +632,7 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	}
 
 	// If user has only one MFA option, redirect directly to it
-	if redirectURL, ok := h.getMFARedirectURL(user, returnTo, protocol); ok {
+	if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocol); ok {
 		ctx.Redirect(http.StatusFound, redirectURL)
 
 		return
@@ -615,7 +651,7 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
 	data["HaveTOTP"] = h.hasTOTP(user)
-	data["HaveWebAuthn"] = h.hasWebAuthn(user)
+	data["HaveWebAuthn"] = h.hasWebAuthn(ctx, user, protocol)
 	data["HaveRecoveryCodes"] = h.hasRecoveryCodes(user)
 
 	data["QueryString"] = h.appendQueryString("", ctx.Request.URL.RawQuery)
@@ -739,9 +775,9 @@ func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
 	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", true, true)
 }
 
-func (h *FrontendHandler) getMFARedirectURL(user *backend.User, returnTo string, protocolParam string) (string, bool) {
+func (h *FrontendHandler) getMFARedirectURL(ctx *gin.Context, user *backend.User, returnTo string, protocolParam string) (string, bool) {
 	haveTOTP := h.hasTOTP(user)
-	haveWebAuthn := h.hasWebAuthn(user)
+	haveWebAuthn := h.hasWebAuthn(ctx, user, protocolParam)
 	haveRecovery := h.hasRecoveryCodes(user)
 
 	count := 0

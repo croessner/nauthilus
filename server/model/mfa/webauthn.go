@@ -16,6 +16,7 @@
 package mfa
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -26,4 +27,41 @@ type PersistentCredential struct {
 	webauthn.Credential
 	Name     string    `json:"name,omitempty"`
 	LastUsed time.Time `json:"lastUsed,omitempty"`
+}
+
+type persistentCredentialJSON struct {
+	webauthn.Credential
+	Name      string    `json:"name,omitempty"`
+	LastUsed  time.Time `json:"lastUsed,omitempty"`
+	SignCount *uint32   `json:"signCount,omitempty"`
+}
+
+// MarshalJSON ensures the legacy top-level signCount field is present for compatibility.
+func (p PersistentCredential) MarshalJSON() ([]byte, error) {
+	signCount := p.Credential.Authenticator.SignCount
+	aux := persistentCredentialJSON{
+		Credential: p.Credential,
+		Name:       p.Name,
+		LastUsed:   p.LastUsed,
+		SignCount:  &signCount,
+	}
+
+	return json.Marshal(aux)
+}
+
+// UnmarshalJSON maps a legacy top-level signCount field into Authenticator.SignCount when present.
+func (p *PersistentCredential) UnmarshalJSON(data []byte) error {
+	var aux persistentCredentialJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	p.Credential = aux.Credential
+	p.Name = aux.Name
+	p.LastUsed = aux.LastUsed
+	if aux.SignCount != nil {
+		p.Credential.Authenticator.SignCount = *aux.SignCount
+	}
+
+	return nil
 }
