@@ -129,5 +129,18 @@
             button.disabled = false;
         }
     });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') {
+            return;
+        }
+
+        const button = document.getElementById('login-button');
+        if (button.disabled) {
+            return;
+        }
+
+        button.click();
+    });
 </script>
 {{ template "idp_footer.html" . }}

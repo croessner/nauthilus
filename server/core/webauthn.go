@@ -152,6 +152,32 @@ func (a *AuthState) updateUser(user *backend.User) {
 	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
 }
 
+func isWebAuthnRegistrationAuthenticated(session sessions.Session) bool {
+	authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
+	if err == nil {
+		return definitions.AuthResult(authResult) == definitions.AuthResultOK
+	}
+
+	_, err = util.GetSessionValue[string](session, definitions.CookieAccount)
+
+	return err == nil
+}
+
+func resolveWebAuthnDisplayName(session sessions.Session, userName string) (string, bool) {
+	displayName, _ := util.GetSessionValue[string](session, definitions.CookieDisplayName)
+	if displayName != "" {
+		return displayName, false
+	}
+
+	if userName == "" {
+		return "", false
+	}
+
+	session.Set(definitions.CookieDisplayName, userName)
+
+	return userName, true
+}
+
 // BeginRegistration Page: '/mfa/webauthn/register/begin'
 func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
@@ -168,8 +194,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		session := sessions.Default(ctx)
 
-		authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
-		if err != nil || definitions.AuthResult(authResult) != definitions.AuthResultOK {
+		if !isWebAuthnRegistrationAuthenticated(session) {
 			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -194,7 +219,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		displayName, _ = util.GetSessionValue[string](session, definitions.CookieDisplayName)
+		displayName, _ = resolveWebAuthnDisplayName(session, userName)
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
 			SessionCleaner(ctx)
@@ -296,8 +321,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		session := sessions.Default(ctx)
 
-		authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
-		if err != nil || definitions.AuthResult(authResult) != definitions.AuthResultOK {
+		if !isWebAuthnRegistrationAuthenticated(session) {
 			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 
@@ -322,12 +346,21 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		displayName, _ = util.GetSessionValue[string](session, definitions.CookieDisplayName)
+		displayName, updated := resolveWebAuthnDisplayName(session, userName)
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
 			SessionCleaner(ctx)
 
 			return
+		}
+
+		if updated {
+			if err := session.Save(); err != nil {
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+				SessionCleaner(ctx)
+
+				return
+			}
 		}
 
 		if cookieValue, err := util.GetSessionValue[[]byte](session, definitions.CookieRegistration); err == nil {
@@ -604,20 +637,12 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		// Update sign count and last used if necessary
 		existingCredentials, err := auth.GetWebAuthnCredentials()
 		if err == nil {
-			var oldCredential *mfa.PersistentCredential
-			for _, cred := range existingCredentials {
-				if bytes.Equal(cred.ID, credential.ID) {
-					oldCredential = &cred
-					break
-				}
-			}
-
+			oldCredential, newPersistentCredential := updateWebAuthnCredentialAfterLogin(
+				existingCredentials,
+				credential,
+				time.Now(),
+			)
 			if oldCredential != nil {
-				newPersistentCredential := &mfa.PersistentCredential{
-					Credential: *credential,
-					Name:       oldCredential.Name,
-					LastUsed:   time.Now(),
-				}
 				// Update the credential in the backend
 				_ = auth.UpdateWebAuthnCredential(oldCredential, newPersistentCredential)
 
@@ -681,4 +706,30 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		ctx.JSON(http.StatusOK, "Login success")
 	}
+}
+
+func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, credential *webauthn.Credential, now time.Time) (*mfa.PersistentCredential, *mfa.PersistentCredential) {
+	if credential == nil {
+		return nil, nil
+	}
+
+	var oldCredential *mfa.PersistentCredential
+	for i := range credentials {
+		if bytes.Equal(credentials[i].ID, credential.ID) {
+			oldCredential = &credentials[i]
+			break
+		}
+	}
+
+	if oldCredential == nil {
+		return nil, nil
+	}
+
+	newCredential := &mfa.PersistentCredential{
+		Credential: *credential,
+		Name:       oldCredential.Name,
+		LastUsed:   now,
+	}
+
+	return oldCredential, newCredential
 }

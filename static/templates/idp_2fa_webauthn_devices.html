@@ -11,7 +11,7 @@
 
             {{ if .Devices }}
             <div class="overflow-x-auto">
-                <table class="table w-full">
+                <table class="table w-full table-fixed">
                     <thead>
                     <tr>
                         <th>{{ .DeviceName }}</th>
@@ -34,7 +34,7 @@
                                 </button>
                             </form>
                         </td>
-                        <td class="font-mono text-sm">{{ .ID }}</td>
+                        <td class="font-mono text-sm break-all whitespace-normal max-w-xs">{{ .ID }}</td>
                         <td>{{ .LastUsed }}</td>
                         <td class="text-right">
                             <button class="btn btn-error btn-sm btn-outline"

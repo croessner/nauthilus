@@ -650,9 +650,13 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
-	data["HaveTOTP"] = h.hasTOTP(user)
-	data["HaveWebAuthn"] = h.hasWebAuthn(ctx, user, protocol)
-	data["HaveRecoveryCodes"] = h.hasRecoveryCodes(user)
+	haveTOTP := h.hasTOTP(user)
+	haveWebAuthn := h.hasWebAuthn(ctx, user, protocol)
+	haveRecoveryCodes := h.hasRecoveryCodes(user)
+
+	data["HaveTOTP"] = haveTOTP
+	data["HaveWebAuthn"] = haveWebAuthn
+	data["HaveRecoveryCodes"] = haveRecoveryCodes
 
 	data["QueryString"] = h.appendQueryString("", ctx.Request.URL.RawQuery)
 	data["ReturnTo"] = returnTo
@@ -660,7 +664,30 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 
 	// Check for last used MFA method
 	lastMFA, _ := ctx.Cookie("last_mfa_method")
+	recommendedMethod := ""
+
+	switch lastMFA {
+	case "totp":
+		if haveTOTP {
+			recommendedMethod = "totp"
+		}
+	case "webauthn":
+		if haveWebAuthn {
+			recommendedMethod = "webauthn"
+		}
+	case "recovery":
+		if haveRecoveryCodes {
+			recommendedMethod = "recovery"
+		}
+	}
+
+	hasOtherMethods := recommendedMethod != "" && ((haveTOTP && recommendedMethod != "totp") ||
+		(haveWebAuthn && recommendedMethod != "webauthn") || (haveRecoveryCodes && recommendedMethod != "recovery"))
+
 	data["LastMFAMethod"] = lastMFA
+	data["RecommendedMethod"] = recommendedMethod
+	data["HasOtherMethods"] = hasOtherMethods
+	data["OtherMethods"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Other methods")
 
 	ctx.HTML(http.StatusOK, "idp_mfa_select.html", data)
 }
@@ -1327,16 +1354,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 
-	if uniqueUserID, err := util.GetSessionValue[string](session, definitions.CookieUniqueUserID); err == nil {
-		user, err := backend.GetWebAuthnFromRedis(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, h.deps.Redis, uniqueUserID)
-
-		if err == nil && user != nil && len(user.WebAuthnCredentials()) > 0 {
-			ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
-			ctx.Status(http.StatusFound)
-
-			return
-		}
-	} else {
+	if _, err := util.GetSessionValue[string](session, definitions.CookieUniqueUserID); err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return

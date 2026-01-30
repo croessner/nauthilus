@@ -16,13 +16,19 @@
 package idp
 
 import (
+	"bytes"
+	"html/template"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -133,4 +139,160 @@ func TestURLParamsPreservation(t *testing.T) {
 		assert.Equal(t, "/path?a=b&q=v", h.appendQueryString("/path?a=b", "q=v"))
 		assert.Equal(t, "/path", h.appendQueryString("/path", ""))
 	})
+}
+
+func TestMFASelectTemplateRecommended(t *testing.T) {
+	tmpl := loadMFASelectTemplate(t)
+
+	data := map[string]any{
+		"SelectMFA":            "Select",
+		"ChooseMFADescription": "Choose",
+		"SecurityKey":          "Security Key",
+		"AuthenticatorApp":     "Authenticator App",
+		"RecoveryCode":         "Recovery Code",
+		"Recommended":          "Recommended",
+		"OtherMethods":         "Other methods",
+		"Or":                   "or",
+		"Back":                 "Back",
+		"QueryString":          "?return_to=foo",
+		"HaveTOTP":             true,
+		"HaveWebAuthn":         true,
+		"HaveRecoveryCodes":    true,
+		"RecommendedMethod":    "totp",
+		"HasOtherMethods":      true,
+	}
+
+	var buf bytes.Buffer
+	err := tmpl.Execute(&buf, data)
+	assert.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "autofocus")
+	assert.Contains(t, output, "Other methods")
+	assert.Contains(t, output, "/login/totp?return_to=foo")
+	assert.Contains(t, output, "/login/webauthn?return_to=foo")
+}
+
+func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
+	tmpl := loadMFASelectTemplate(t)
+
+	data := map[string]any{
+		"SelectMFA":            "Select",
+		"ChooseMFADescription": "Choose",
+		"SecurityKey":          "Security Key",
+		"AuthenticatorApp":     "Authenticator App",
+		"RecoveryCode":         "Recovery Code",
+		"Recommended":          "Recommended",
+		"OtherMethods":         "Other methods",
+		"Or":                   "or",
+		"Back":                 "Back",
+		"QueryString":          "?return_to=foo",
+		"HaveTOTP":             true,
+		"HaveWebAuthn":         true,
+		"HaveRecoveryCodes":    false,
+		"RecommendedMethod":    "",
+		"HasOtherMethods":      false,
+	}
+
+	var buf bytes.Buffer
+	err := tmpl.Execute(&buf, data)
+	assert.NoError(t, err)
+
+	output := buf.String()
+	assert.NotContains(t, output, "<details")
+	assert.NotContains(t, output, "autofocus")
+	assert.Contains(t, output, "/login/totp?return_to=foo")
+	assert.Contains(t, output, "/login/webauthn?return_to=foo")
+}
+
+func loadMFASelectTemplate(t *testing.T) *template.Template {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_mfa_select.html")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read template: %v", err)
+	}
+
+	tmpl := template.New("idp_mfa_select.html")
+	_, err = tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
+	if err != nil {
+		t.Fatalf("failed to parse base templates: %v", err)
+	}
+
+	_, err = tmpl.Parse(string(content))
+	if err != nil {
+		t.Fatalf("failed to parse select template: %v", err)
+	}
+
+	return tmpl
+}
+
+func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := cookie.NewStore([]byte("secret"))
+
+	r := gin.New()
+	r.Use(sessions.Sessions("test-session", store))
+	r.SetHTMLTemplate(template.Must(template.New("idp_webauthn_register.html").Parse("ok")))
+
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:         &mockFrontendCfg{},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	r.GET("/mfa/webauthn/register", func(c *gin.Context) {
+		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
+		c.Set(definitions.CtxLocalizedKey, localizer)
+
+		session := sessions.Default(c)
+		session.Set(definitions.CookieUniqueUserID, "uid-123")
+		session.Set(definitions.CookieAccount, "testuser")
+		session.Set(definitions.CookieLang, "en")
+		_ = session.Save()
+
+		h.RegisterWebAuthn(c)
+	})
+
+	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/mfa/webauthn/register", nil)
+	r.ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code)
+}
+
+func TestRegisterWebAuthnRedirectsWithoutSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := cookie.NewStore([]byte("secret"))
+
+	r := gin.New()
+	r.Use(sessions.Sessions("test-session", store))
+	r.SetHTMLTemplate(template.Must(template.New("idp_webauthn_register.html").Parse("ok")))
+
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:         &mockFrontendCfg{},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	r.GET("/mfa/webauthn/register", func(c *gin.Context) {
+		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
+		c.Set(definitions.CtxLocalizedKey, localizer)
+
+		h.RegisterWebAuthn(c)
+	})
+
+	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/mfa/webauthn/register", nil)
+	r.ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusFound, resp.Code)
+	assert.Equal(t, "/login", resp.Header().Get("Location"))
 }

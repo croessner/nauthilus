@@ -24,11 +24,13 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -96,4 +98,48 @@ func TestLoginWebAuthnBeginUsesSessionUniqueUserID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateWebAuthnCredentialAfterLoginKeepsDeviceData(t *testing.T) {
+	now := time.Date(2026, time.January, 30, 12, 0, 0, 0, time.UTC)
+
+	credentials := []mfa.PersistentCredential{
+		{
+			Credential: webauthn.Credential{
+				ID: []byte("device-a"),
+				Authenticator: webauthn.Authenticator{
+					SignCount: 3,
+				},
+			},
+			Name:     "TouchID",
+			LastUsed: time.Date(2026, time.January, 29, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			Credential: webauthn.Credential{
+				ID: []byte("device-b"),
+				Authenticator: webauthn.Authenticator{
+					SignCount: 0,
+				},
+			},
+			Name:     "YubiKey",
+			LastUsed: time.Date(2026, time.January, 28, 11, 0, 0, 0, time.UTC),
+		},
+	}
+
+	loginCredential := &webauthn.Credential{
+		ID: []byte("device-b"),
+		Authenticator: webauthn.Authenticator{
+			SignCount: 6,
+		},
+	}
+
+	oldCredential, updatedCredential := updateWebAuthnCredentialAfterLogin(credentials, loginCredential, now)
+
+	if assert.NotNil(t, oldCredential) && assert.NotNil(t, updatedCredential) {
+		assert.Equal(t, "YubiKey", oldCredential.Name)
+		assert.Equal(t, "YubiKey", updatedCredential.Name)
+		assert.Equal(t, uint32(6), updatedCredential.Authenticator.SignCount)
+		assert.Equal(t, now, updatedCredential.LastUsed)
+		assert.Equal(t, []byte("device-b"), updatedCredential.ID)
+	}
 }

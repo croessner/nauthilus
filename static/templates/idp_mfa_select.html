@@ -6,6 +6,108 @@
             <p class="text-center mb-8 text-base-content/70">{{ .ChooseMFADescription }}</p>
 
             <div class="flex flex-col gap-4">
+                {{ if .RecommendedMethod }}
+                {{ if eq .RecommendedMethod "webauthn" }}
+                <form action="/login/webauthn{{ .QueryString }}" method="get">
+                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-between items-center"
+                            type="submit">
+                        <div class="flex items-center gap-4">
+                            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                 xmlns="http://www.w3.org/2000/svg">
+                                <path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                                      stroke-linecap="round" stroke-linejoin="round"
+                                      stroke-width="2"/>
+                            </svg>
+                            <span>{{ .SecurityKey }}</span>
+                        </div>
+                        <div class="badge badge-outline">{{ .Recommended }}</div>
+                    </button>
+                </form>
+                {{ end }}
+
+                {{ if eq .RecommendedMethod "totp" }}
+                <form action="/login/totp{{ .QueryString }}" method="get">
+                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-between items-center"
+                            type="submit">
+                        <div class="flex items-center gap-4">
+                            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                 xmlns="http://www.w3.org/2000/svg">
+                                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                      stroke-width="2"/>
+                            </svg>
+                            <span>{{ .AuthenticatorApp }}</span>
+                        </div>
+                        <div class="badge badge-outline">{{ .Recommended }}</div>
+                    </button>
+                </form>
+                {{ end }}
+
+                {{ if eq .RecommendedMethod "recovery" }}
+                <form action="/login/recovery{{ .QueryString }}" method="get">
+                    <button autofocus class="btn btn-primary btn-lg w-full flex justify-between items-center"
+                            type="submit">
+                        <span>{{ .RecoveryCode }}</span>
+                        <div class="badge badge-outline">{{ .Recommended }}</div>
+                    </button>
+                </form>
+                {{ end }}
+
+                {{ if .HasOtherMethods }}
+                <details class="mt-2">
+                    <summary class="flex items-center justify-center gap-2 text-sm text-base-content/70 cursor-pointer">
+                        <span>{{ .OtherMethods }}</span>
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                             xmlns="http://www.w3.org/2000/svg">
+                            <path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"
+                                  stroke-width="2"/>
+                        </svg>
+                    </summary>
+                    <div class="mt-4 flex flex-col gap-4">
+                        {{ if and .HaveWebAuthn (ne .RecommendedMethod "webauthn") }}
+                        <a class="btn btn-outline btn-lg flex justify-between items-center group relative overflow-hidden"
+                           href="/login/webauthn{{ .QueryString }}">
+                            <div class="flex items-center gap-4">
+                                <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                     xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                                          stroke-linecap="round" stroke-linejoin="round"
+                                          stroke-width="2"/>
+                                </svg>
+                                <span>{{ .SecurityKey }}</span>
+                            </div>
+                        </a>
+                        {{ end }}
+
+                        {{ if and .HaveTOTP (ne .RecommendedMethod "totp") }}
+                        <a class="btn btn-outline btn-lg flex justify-between items-center group relative overflow-hidden"
+                           href="/login/totp{{ .QueryString }}">
+                            <div class="flex items-center gap-4">
+                                <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                     xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round"
+                                          stroke-linejoin="round"
+                                          stroke-width="2"/>
+                                </svg>
+                                <span>{{ .AuthenticatorApp }}</span>
+                            </div>
+                        </a>
+                        {{ end }}
+
+                        {{ $hasPrimaryOther := or (and .HaveWebAuthn (ne .RecommendedMethod "webauthn")) (and .HaveTOTP
+                        (ne .RecommendedMethod "totp")) }}
+                        {{ if and .HaveRecoveryCodes (ne .RecommendedMethod "recovery") }}
+                        {{ if $hasPrimaryOther }}
+                        <div class="divider text-xs opacity-50">{{ .Or }}</div>
+                        {{ end }}
+                        <a class="btn btn-ghost btn-sm" href="/login/recovery{{ .QueryString }}">
+                            {{ .RecoveryCode }}
+                        </a>
+                        {{ end }}
+                    </div>
+                </details>
+                {{ end }}
+                {{ else }}
                 {{ if .HaveWebAuthn }}
                 <a class="btn btn-outline btn-lg flex justify-between items-center group relative overflow-hidden"
                    href="/login/webauthn{{ .QueryString }}">
@@ -17,9 +119,6 @@
                         </svg>
                         <span>{{ .SecurityKey }}</span>
                     </div>
-                    {{ if eq .LastMFAMethod "webauthn" }}
-                    <div class="badge badge-primary">{{ .Recommended }}</div>
-                    {{ end }}
                 </a>
                 {{ end }}
 
@@ -34,9 +133,6 @@
                         </svg>
                         <span>{{ .AuthenticatorApp }}</span>
                     </div>
-                    {{ if eq .LastMFAMethod "totp" }}
-                    <div class="badge badge-primary">{{ .Recommended }}</div>
-                    {{ end }}
                 </a>
                 {{ end }}
 
@@ -45,6 +141,7 @@
                 <a class="btn btn-ghost btn-sm" href="/login/recovery{{ .QueryString }}">
                     {{ .RecoveryCode }}
                 </a>
+                {{ end }}
                 {{ end }}
             </div>
 
