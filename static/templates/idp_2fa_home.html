@@ -46,10 +46,6 @@
                     {{ if .HaveWebAuthn }}
                     <a class="btn btn-secondary btn-outline" href="/mfa/webauthn/devices">{{ .SecurityKeyWebAuthn
                         }}</a>
-                    <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateWebAuthnConfirm }}"
-                            hx-delete="/mfa/webauthn" hx-target="#modal-container" {{ if .BackendError }}disabled{{ end }}>
-                        {{ .Deactivate }}
-                    </button>
                     {{ else }}
                     <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}"
                        href="/mfa/webauthn/register">{{ .RegisterWebAuthn }}</a>
