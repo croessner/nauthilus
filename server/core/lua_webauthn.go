@@ -80,12 +80,10 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 		return
 	}
 
-	for _, credStr := range luaBackendResult.Attributes {
-		if str, ok := credStr.(string); ok {
-			var cred mfa.PersistentCredential
-			if err = json.Unmarshal([]byte(str), &cred); err == nil {
-				credentials = append(credentials, cred)
-			}
+	for _, credStr := range luaBackendResult.WebAuthnCredentials {
+		var cred mfa.PersistentCredential
+		if err = json.Unmarshal([]byte(credStr), &cred); err == nil {
+			credentials = append(credentials, cred)
 		}
 	}
 

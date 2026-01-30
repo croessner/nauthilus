@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Christian Rößner
+// Copyright (C) 2026 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,8 +16,6 @@
 package core
 
 import (
-	"bytes"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -26,98 +24,63 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/mfa"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
-func TestLuaGetWebAuthnCredentials(t *testing.T) {
-	mcfg := new(mockConfig)
-	var verbosity config.Verbosity
-	_ = verbosity.Set("debug")
-
-	mcfg.On("GetServer").Return(&config.ServerSection{
-		Timeouts: config.Timeouts{
-			LuaBackend: 2 * time.Second,
-		},
-		Log: config.Log{
-			Level: verbosity,
-		},
-	})
-
-	deps := AuthDeps{Cfg: mcfg}
-	lm := &luaManagerImpl{
-		backendName: "test",
-		deps:        deps,
-	}
-
-	cred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("test-id"),
-		},
-		Name: "Test Key",
-	}
-	credBytes, err := json.Marshal(cred)
-	assert.NoError(t, err)
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username: "jdoe",
-			Protocol: new(config.Protocol),
-		},
-		Runtime: AuthRuntime{
-			GUID: "test-guid",
-		},
-	}
-	auth.Request.Protocol.Set("oidc")
-
-	priorityqueue.LuaQueue.AddBackendName("test")
-
-	go func() {
-		req := priorityqueue.LuaQueue.Pop("test")
-		if req != nil {
-			assert.Equal(t, definitions.LuaCommandGetWebAuthnCredentials, req.Command)
-
-			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{
-					WebAuthnCredentials: []string{string(credBytes)},
-				}
-			}
-		}
-	}()
-
-	credentials, err := lm.GetWebAuthnCredentials(auth)
-	assert.NoError(t, err)
-	assert.Len(t, credentials, 1)
-	assert.True(t, bytes.Equal(cred.Credential.ID, credentials[0].Credential.ID))
-	assert.Equal(t, cred.Name, credentials[0].Name)
+type mockLuaConfig struct {
+	mock.Mock
+	config.File
+	server *config.ServerSection
 }
 
-func TestLuaSaveWebAuthnCredential(t *testing.T) {
-	mcfg := new(mockConfig)
+func (m *mockLuaConfig) GetLuaSearchProtocol(protocol string, backendName string) (*config.LuaSearchProtocol, error) {
+	args := m.Called(protocol, backendName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*config.LuaSearchProtocol), args.Error(1)
+}
+
+func (m *mockLuaConfig) GetServer() *config.ServerSection {
+	if m.server != nil {
+		return m.server
+	}
+
+	return &config.ServerSection{
+		Timeouts: config.Timeouts{
+			LuaBackend: 2 * time.Second,
+		},
+	}
+}
+
+func TestLuaAddTOTPSecret(t *testing.T) {
 	var verbosity config.Verbosity
 	_ = verbosity.Set("debug")
 
-	mcfg.On("GetServer").Return(&config.ServerSection{
+	protocol := &config.LuaSearchProtocol{
+		BackendName: "test",
+		CacheName:   "test",
+		Protocols:   []string{"oidc"},
+	}
+
+	serverCfg := &config.ServerSection{
 		Timeouts: config.Timeouts{
 			LuaBackend: 2 * time.Second,
 		},
 		Log: config.Log{
 			Level: verbosity,
 		},
-	})
+	}
+
+	mcfg := &mockLuaConfig{server: serverCfg}
+	mcfg.On("GetLuaSearchProtocol", mock.Anything, "test").Return(protocol, nil)
 
 	deps := AuthDeps{Cfg: mcfg}
 	lm := &luaManagerImpl{
 		backendName: "test",
 		deps:        deps,
-	}
-
-	cred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("test-id"),
-		},
-		Name: "Test Key",
 	}
 
 	auth := &AuthState{
@@ -137,48 +100,45 @@ func TestLuaSaveWebAuthnCredential(t *testing.T) {
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
 		if req != nil {
-			assert.Equal(t, definitions.LuaCommandSaveWebAuthnCredential, req.Command)
-			assert.NotEmpty(t, req.WebAuthnCredential)
-
-			var credPopped webauthn.Credential
-			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
-			assert.True(t, bytes.Equal(cred.Credential.ID, credPopped.ID))
+			assert.Equal(t, definitions.LuaCommandAddMFAValue, req.Command)
+			assert.Equal(t, "secret", req.TOTPSecret)
 
 			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}
+				req.LuaReplyChan <- &lualib.LuaBackendResult{}
 			}
 		}
 	}()
 
-	err := lm.SaveWebAuthnCredential(auth, cred)
+	err := lm.AddTOTPSecret(auth, mfa.NewTOTPSecret("secret"))
 	assert.NoError(t, err)
 }
 
-func TestLuaDeleteWebAuthnCredential(t *testing.T) {
-	mcfg := new(mockConfig)
+func TestLuaDeleteTOTPSecret(t *testing.T) {
 	var verbosity config.Verbosity
 	_ = verbosity.Set("debug")
 
-	mcfg.On("GetServer").Return(&config.ServerSection{
+	protocol := &config.LuaSearchProtocol{
+		BackendName: "test",
+		CacheName:   "test",
+		Protocols:   []string{"oidc"},
+	}
+
+	serverCfg := &config.ServerSection{
 		Timeouts: config.Timeouts{
 			LuaBackend: 2 * time.Second,
 		},
 		Log: config.Log{
 			Level: verbosity,
 		},
-	})
+	}
+
+	mcfg := &mockLuaConfig{server: serverCfg}
+	mcfg.On("GetLuaSearchProtocol", mock.Anything, "test").Return(protocol, nil)
 
 	deps := AuthDeps{Cfg: mcfg}
 	lm := &luaManagerImpl{
 		backendName: "test",
 		deps:        deps,
-	}
-
-	cred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("test-id"),
-		},
-		Name: "Test Key",
 	}
 
 	auth := &AuthState{
@@ -198,54 +158,44 @@ func TestLuaDeleteWebAuthnCredential(t *testing.T) {
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
 		if req != nil {
-			assert.Equal(t, definitions.LuaCommandDeleteWebAuthnCredential, req.Command)
-			assert.NotEmpty(t, req.WebAuthnCredential)
-
-			var credPopped webauthn.Credential
-			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
-			assert.True(t, bytes.Equal(cred.Credential.ID, credPopped.ID))
+			assert.Equal(t, definitions.LuaCommandDeleteMFAValue, req.Command)
 
 			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}
+				req.LuaReplyChan <- &lualib.LuaBackendResult{}
 			}
 		}
 	}()
 
-	err := lm.DeleteWebAuthnCredential(auth, cred)
+	err := lm.DeleteTOTPSecret(auth)
 	assert.NoError(t, err)
 }
 
-func TestLuaUpdateWebAuthnCredential(t *testing.T) {
-	mcfg := new(mockConfig)
+func TestLuaAddTOTPRecoveryCodes(t *testing.T) {
 	var verbosity config.Verbosity
 	_ = verbosity.Set("debug")
 
-	mcfg.On("GetServer").Return(&config.ServerSection{
+	protocol := &config.LuaSearchProtocol{
+		BackendName: "test",
+		CacheName:   "test",
+		Protocols:   []string{"oidc"},
+	}
+
+	serverCfg := &config.ServerSection{
 		Timeouts: config.Timeouts{
 			LuaBackend: 2 * time.Second,
 		},
 		Log: config.Log{
 			Level: verbosity,
 		},
-	})
+	}
+
+	mcfg := &mockLuaConfig{server: serverCfg}
+	mcfg.On("GetLuaSearchProtocol", mock.Anything, "test").Return(protocol, nil)
 
 	deps := AuthDeps{Cfg: mcfg}
 	lm := &luaManagerImpl{
 		backendName: "test",
 		deps:        deps,
-	}
-
-	oldCred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("old-id"),
-		},
-		Name: "Old Key",
-	}
-	newCred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("new-id"),
-		},
-		Name: "New Key",
 	}
 
 	auth := &AuthState{
@@ -258,29 +208,82 @@ func TestLuaUpdateWebAuthnCredential(t *testing.T) {
 			GUID: "test-guid",
 		},
 	}
+	auth.Request.Protocol.Set("oidc")
+
+	recovery := mfa.NewTOTPRecovery([]string{"code1", "code2"})
 
 	priorityqueue.LuaQueue.AddBackendName("test")
 
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
 		if req != nil {
-			assert.Equal(t, definitions.LuaCommandUpdateWebAuthnCredential, req.Command)
-			assert.NotEmpty(t, req.WebAuthnCredential)
-			assert.NotEmpty(t, req.WebAuthnOldCredential)
-
-			var oldCredPopped webauthn.Credential
-			var newCredPopped webauthn.Credential
-			_ = json.Unmarshal([]byte(req.WebAuthnOldCredential), &oldCredPopped)
-			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &newCredPopped)
-			assert.True(t, bytes.Equal(oldCred.ID, oldCredPopped.ID))
-			assert.True(t, bytes.Equal(newCred.ID, newCredPopped.ID))
+			assert.Equal(t, definitions.LuaCommandAddTOTPRecoveryCodes, req.Command)
+			assert.NotNil(t, req.CommonRequest)
+			assert.Equal(t, []string{"code1", "code2"}, req.CommonRequest.TOTPRecoveryCodes)
 
 			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}
+				req.LuaReplyChan <- &lualib.LuaBackendResult{}
 			}
 		}
 	}()
 
-	err := lm.UpdateWebAuthnCredential(auth, oldCred, newCred)
+	err := lm.AddTOTPRecoveryCodes(auth, recovery)
+	assert.NoError(t, err)
+}
+
+func TestLuaDeleteTOTPRecoveryCodes(t *testing.T) {
+	var verbosity config.Verbosity
+	_ = verbosity.Set("debug")
+
+	protocol := &config.LuaSearchProtocol{
+		BackendName: "test",
+		CacheName:   "test",
+		Protocols:   []string{"oidc"},
+	}
+
+	serverCfg := &config.ServerSection{
+		Timeouts: config.Timeouts{
+			LuaBackend: 2 * time.Second,
+		},
+		Log: config.Log{
+			Level: verbosity,
+		},
+	}
+
+	mcfg := &mockLuaConfig{server: serverCfg}
+	mcfg.On("GetLuaSearchProtocol", mock.Anything, "test").Return(protocol, nil)
+
+	deps := AuthDeps{Cfg: mcfg}
+	lm := &luaManagerImpl{
+		backendName: "test",
+		deps:        deps,
+	}
+
+	auth := &AuthState{
+		deps: deps,
+		Request: AuthRequest{
+			Username: "jdoe",
+			Protocol: new(config.Protocol),
+		},
+		Runtime: AuthRuntime{
+			GUID: "test-guid",
+		},
+	}
+	auth.Request.Protocol.Set("oidc")
+
+	priorityqueue.LuaQueue.AddBackendName("test")
+
+	go func() {
+		req := priorityqueue.LuaQueue.Pop("test")
+		if req != nil {
+			assert.Equal(t, definitions.LuaCommandDeleteTOTPRecoveryCodes, req.Command)
+
+			if req.LuaReplyChan != nil {
+				req.LuaReplyChan <- &lualib.LuaBackendResult{}
+			}
+		}
+	}()
+
+	err := lm.DeleteTOTPRecoveryCodes(auth)
 	assert.NoError(t, err)
 }

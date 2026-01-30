@@ -276,9 +276,6 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
 	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-	data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
-	data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
-	data["WebAuthnLoginURL"] = h.getMFAURL(ctx, "webauthn")
 
 	data["CSRFToken"] = "TODO_CSRF"
 	data["PostLoginEndpoint"] = ctx.Request.URL.Path

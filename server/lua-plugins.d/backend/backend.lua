@@ -22,6 +22,7 @@
       `password` varchar(255) NOT NULL,
       `account` varchar(255) NOT NULL,
       `totp_secret` varchar(255) DEFAULT NULL,
+      `totp_recovery_codes` text DEFAULT NULL,
       `uniqueid` varchar(255) NOT NULL,
       `display_name` varchar(255) DEFAULT NULL,
       PRIMARY KEY (`id`),
@@ -156,6 +157,34 @@ function nauthilus_backend_delete_totp(request)
     nauthilus_util.if_error_raise(err_open)
 
     local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=NULL WHERE username=\"" .. request.username .. "\";")
+    nauthilus_util.if_error_raise(err_exec)
+
+    return nauthilus_builtin.BACKEND_RESULT_OK
+end
+
+function nauthilus_backend_add_totp_recovery_codes(request)
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    nauthilus_util.if_error_raise(err_open)
+
+    local codes = request.totp_recovery_codes or {}
+    local codes_value = table.concat(codes, ",")
+    local err_exec
+
+    if codes_value == "" then
+        _, err_exec = mysql:exec("UPDATE nauthilus SET totp_recovery_codes=NULL WHERE username=\"" .. request.username .. "\";")
+    else
+        _, err_exec = mysql:exec("UPDATE nauthilus SET totp_recovery_codes=\"" .. codes_value .. "\" WHERE username=\"" .. request.username .. "\";")
+    end
+    nauthilus_util.if_error_raise(err_exec)
+
+    return nauthilus_builtin.BACKEND_RESULT_OK
+end
+
+function nauthilus_backend_delete_totp_recovery_codes(request)
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    nauthilus_util.if_error_raise(err_open)
+
+    local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_recovery_codes=NULL WHERE username=\"" .. request.username .. "\";")
     nauthilus_util.if_error_raise(err_exec)
 
     return nauthilus_builtin.BACKEND_RESULT_OK

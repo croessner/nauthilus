@@ -51,12 +51,6 @@
                 </div>
             </form>
 
-            <div class="divider">{{ .Or }}</div>
-
-            <a class="btn btn-outline mb-4" href="{{ .WebAuthnLoginURL }}">
-                {{ .LoginWithWebAuthn }}
-            </a>
-
             {{ if or .TermsOfServiceURL .PrivacyPolicyURL }}
             <div class="flex justify-center gap-4 text-xs opacity-70">
                 {{ if .TermsOfServiceURL }}
