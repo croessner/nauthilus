@@ -63,8 +63,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [ linux ]
-        goarch: [ amd64, arm64 ]
+        include:
+          - goos: linux
+            goarch: amd64
+            rpm_arch: x86_64
+          - goos: linux
+            goarch: arm64
+            rpm_arch: aarch64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -120,7 +125,7 @@ jobs:
           package_root: .rpmpkg
           maintainer: ${{ env.MAINTAINER }}
           version: ${{ github.ref }}
-          arch: '${{ matrix.goarch }}'
+          arch: '${{ matrix.rpm_arch }}'
           desc: '${{ env.DESC }}'
           summary: '${{ env.DESC }}'
 
