@@ -373,9 +373,12 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 
 	username := handleMasterUserMode(lm.effectiveCfg(), auth)
 
-	oldCredBytes, err := jsonIter.Marshal(oldCredential)
-	if err != nil {
-		return err
+	oldCredBytes := []byte(oldCredential.RawJSON)
+	if len(oldCredBytes) == 0 {
+		oldCredBytes, err = jsonIter.Marshal(oldCredential)
+		if err != nil {
+			return err
+		}
 	}
 
 	newCredBytes, err := jsonIter.Marshal(newCredential)

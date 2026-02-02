@@ -17,6 +17,8 @@ package core
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,6 +40,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var webAuthn *webauthn.WebAuthn
@@ -584,6 +587,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		auth := NewAuthStateFromContextWithDeps(ctx, deps)
+		authState := auth.(*AuthState)
 		var user *backend.User
 
 		if userName != "" {
@@ -634,24 +638,116 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		// Update sign count and last used if necessary
-		existingCredentials, err := auth.GetWebAuthnCredentials()
-		if err == nil {
-			oldCredential, newPersistentCredential := updateWebAuthnCredentialAfterLogin(
-				existingCredentials,
-				credential,
-				time.Now(),
-			)
-			if oldCredential != nil {
-				// Update the credential in the backend
-				_ = auth.UpdateWebAuthnCredential(oldCredential, newPersistentCredential)
+		credentialIDHash := hashCredentialID(credential.ID)
+		aaguid := hex.EncodeToString(credential.Authenticator.AAGUID)
+		isResidentKey := len(sessionData.AllowedCredentialIDs) == 0
+		newSignCount := credential.Authenticator.SignCount
 
-				// Also update in user object for cache
-				for i, c := range user.Credentials {
-					if bytes.Equal(c.ID, credential.ID) {
-						user.Credentials[i] = *newPersistentCredential
-						break
-					}
+		// Update sign count and last used if necessary
+		existingCredentials := user.Credentials
+		var oldSignCount *uint32
+		for i := range existingCredentials {
+			if bytes.Equal(existingCredentials[i].ID, credential.ID) {
+				oldValue := existingCredentials[i].Authenticator.SignCount
+				oldSignCount = &oldValue
+
+				break
+			}
+		}
+
+		signCountZero := newSignCount == 0
+		signCountMonotonic := true
+		if oldSignCount != nil {
+			oldValue := *oldSignCount
+			if newSignCount <= oldValue && (newSignCount != 0 || oldValue != 0) {
+				signCountMonotonic = false
+			}
+		}
+
+		sp.SetAttributes(
+			attribute.Int64("webauthn.sign_count", int64(newSignCount)),
+			attribute.Bool("webauthn.flags.up", credential.Flags.UserPresent),
+			attribute.Bool("webauthn.flags.uv", credential.Flags.UserVerified),
+			attribute.Bool("webauthn.is_resident_key", isResidentKey),
+			attribute.String("webauthn.credential_id_hash", credentialIDHash),
+			attribute.String("webauthn.aaguid", aaguid),
+			attribute.Bool("webauthn.sign_count_zero", signCountZero),
+		)
+
+		if oldSignCount != nil {
+			sp.SetAttributes(
+				attribute.Int64("webauthn.sign_count_previous", int64(*oldSignCount)),
+				attribute.Bool("webauthn.sign_count_monotonic", signCountMonotonic),
+			)
+		}
+
+		debugKeyvals := []any{
+			definitions.LogKeyGUID, authState.Runtime.GUID,
+			definitions.LogKeyMsg, "WebAuthn login assertion details",
+			"sign_count", newSignCount,
+			"flags_up", credential.Flags.UserPresent,
+			"flags_uv", credential.Flags.UserVerified,
+			"credential_id_hash", credentialIDHash,
+			"is_resident_key", isResidentKey,
+			"aaguid", aaguid,
+			"sign_count_zero", signCountZero,
+		}
+
+		if oldSignCount != nil {
+			debugKeyvals = append(
+				debugKeyvals,
+				"sign_count_previous", *oldSignCount,
+				"sign_count_monotonic", signCountMonotonic,
+			)
+		}
+
+		util.DebugModuleWithCfg(
+			authState.Ctx(),
+			authState.Cfg(),
+			authState.Logger(),
+			definitions.DbgWebAuthn,
+			debugKeyvals...,
+		)
+
+		if signCountZero || (oldSignCount != nil && !signCountMonotonic) {
+			warnKeyvals := []any{
+				definitions.LogKeyGUID, authState.Runtime.GUID,
+				definitions.LogKeyMsg, "WebAuthn sign count anomaly",
+				"sign_count", newSignCount,
+				"flags_up", credential.Flags.UserPresent,
+				"flags_uv", credential.Flags.UserVerified,
+				"credential_id_hash", credentialIDHash,
+				"is_resident_key", isResidentKey,
+				"aaguid", aaguid,
+				"sign_count_zero", signCountZero,
+			}
+
+			if oldSignCount != nil {
+				warnKeyvals = append(
+					warnKeyvals,
+					"sign_count_previous", *oldSignCount,
+					"sign_count_monotonic", signCountMonotonic,
+				)
+			}
+
+			level.Warn(authState.Logger()).Log(warnKeyvals...)
+		}
+
+		oldCredential, newPersistentCredential := updateWebAuthnCredentialAfterLogin(
+			existingCredentials,
+			credential,
+			time.Now(),
+		)
+
+		if oldCredential != nil {
+			// Update the credential in the backend
+			_ = auth.UpdateWebAuthnCredential(oldCredential, newPersistentCredential)
+
+			// Also update in user object for cache
+			for i, c := range user.Credentials {
+				if bytes.Equal(c.ID, credential.ID) {
+					user.Credentials[i] = *newPersistentCredential
+					break
 				}
 			}
 		}
@@ -663,7 +759,6 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", true, true)
 
 		// Persist the updated user to Redis (cache)
-		authState := auth.(*AuthState)
 		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
 
 		// Set AuthResult to OK if it was Fail (delayed response)
@@ -732,4 +827,14 @@ func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, 
 	}
 
 	return oldCredential, newCredential
+}
+
+func hashCredentialID(credentialID []byte) string {
+	if len(credentialID) == 0 {
+		return ""
+	}
+
+	sum := sha256.Sum256(credentialID)
+
+	return hex.EncodeToString(sum[:])
 }

@@ -26,6 +26,7 @@ import (
 type PersistentCredential struct {
 	webauthn.Credential
 	Name     string    `json:"name,omitempty"`
+	RawJSON  string    `json:"-"`
 	LastUsed time.Time `json:"lastUsed,omitempty"`
 }
 
@@ -62,6 +63,8 @@ func (p *PersistentCredential) UnmarshalJSON(data []byte) error {
 	if aux.SignCount != nil {
 		p.Credential.Authenticator.SignCount = *aux.SignCount
 	}
+
+	p.RawJSON = string(data)
 
 	return nil
 }

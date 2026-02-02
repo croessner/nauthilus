@@ -236,9 +236,12 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 		return
 	}
 
-	if oldCredBytes, err = json.Marshal(oldCredential); err != nil {
-		lsp.RecordError(err)
-		return
+	oldCredBytes = []byte(oldCredential.RawJSON)
+	if len(oldCredBytes) == 0 {
+		if oldCredBytes, err = json.Marshal(oldCredential); err != nil {
+			lsp.RecordError(err)
+			return
+		}
 	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
