@@ -186,6 +186,8 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 		return errors.ErrLDAPConfig.WithDetail("Missing LDAP webauthn_credential_field mapping")
 	}
 
+	objectClass := protocol.GetWebAuthnObjectClass()
+
 	filter, err := protocol.GetUserFilter()
 	if err != nil {
 		return err
@@ -211,6 +213,14 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 	ctxModify, cancelModify := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
 	defer cancelModify()
 
+	modifyAttributes := bktype.LDAPModifyAttributes{
+		credentialField: []string{string(credBytes)},
+	}
+
+	if objectClass != "" {
+		modifyAttributes["objectClass"] = []string{objectClass}
+	}
+
 	ldapRequest := &bktype.LDAPRequest{
 		GUID:       auth.Runtime.GUID,
 		Command:    definitions.LDAPModify,
@@ -220,12 +230,10 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 			Username: username,
 			Protocol: *auth.Request.Protocol,
 		},
-		Filter: filter,
-		BaseDN: baseDN,
-		Scope:  *scope,
-		ModifyAttributes: bktype.LDAPModifyAttributes{
-			credentialField: []string{string(credBytes)},
-		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		Scope:             *scope,
+		ModifyAttributes:  modifyAttributes,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctxModify,
 	}
@@ -241,6 +249,10 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 	case <-ctxModify.Done():
 		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout")
 	case ldapReply := <-ldapReplyChan:
+		if isAttributeOrValueExistsError(ldapReply.Err) && objectClass != "" {
+			return nil
+		}
+
 		return ldapReply.Err
 	}
 }
@@ -356,6 +368,8 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		return errors.ErrLDAPConfig.WithDetail("Missing LDAP webauthn_credential_field mapping")
 	}
 
+	objectClass := protocol.GetWebAuthnObjectClass()
+
 	filter, err := protocol.GetUserFilter()
 	if err != nil {
 		return err
@@ -392,6 +406,10 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 	ctxDelete, cancelDelete := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
 	defer cancelDelete()
 
+	deleteModifyAttributes := bktype.LDAPModifyAttributes{
+		credentialField: []string{string(oldCredBytes)},
+	}
+
 	deleteRequest := &bktype.LDAPRequest{
 		GUID:       auth.Runtime.GUID,
 		Command:    definitions.LDAPModify,
@@ -401,12 +419,10 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 			Username: username,
 			Protocol: *auth.Request.Protocol,
 		},
-		Filter: filter,
-		BaseDN: baseDN,
-		Scope:  *scope,
-		ModifyAttributes: bktype.LDAPModifyAttributes{
-			credentialField: []string{string(oldCredBytes)},
-		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		Scope:             *scope,
+		ModifyAttributes:  deleteModifyAttributes,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctxDelete,
 	}
@@ -431,6 +447,14 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 	ctxAdd, cancelAdd := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
 	defer cancelAdd()
 
+	addModifyAttributes := bktype.LDAPModifyAttributes{
+		credentialField: []string{string(newCredBytes)},
+	}
+
+	if objectClass != "" {
+		addModifyAttributes["objectClass"] = []string{objectClass}
+	}
+
 	addRequest := &bktype.LDAPRequest{
 		GUID:       auth.Runtime.GUID,
 		Command:    definitions.LDAPModify,
@@ -440,12 +464,10 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 			Username: username,
 			Protocol: *auth.Request.Protocol,
 		},
-		Filter: filter,
-		BaseDN: baseDN,
-		Scope:  *scope,
-		ModifyAttributes: bktype.LDAPModifyAttributes{
-			credentialField: []string{string(newCredBytes)},
-		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		Scope:             *scope,
+		ModifyAttributes:  addModifyAttributes,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctxAdd,
 	}

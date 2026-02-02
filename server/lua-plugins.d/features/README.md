@@ -99,7 +99,8 @@ Other related metrics are updated in companion plugins:
   - Float 0.0–1.0. Deterministic sampling by username hash. For example, 0.01 ≈ 1% of users. Set to `0` to disable per-user emission except for users currently in protection mode.
   - Users currently in protection mode are always emitted regardless of the sample rate.
 
-Protected users are tracked in Redis set `ntc:acct:protection_active` (maintained by filters/account_protection_mode.lua).
+Protected users are tracked in Redis set `ntc:acct:protection_active:proto:<protocol>` (maintained by
+filters/account_protection_mode.lua) and are protocol-scoped.
 
 **Requirements:**
 - Global windows (24h/7d) provided by features/global_pattern_monitoring.lua

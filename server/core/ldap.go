@@ -175,6 +175,7 @@ func decryptLDAPAttributeValue(manager *security.Manager, value any) (any, error
 				decrypted[index] = entry
 			}
 		}
+
 		return decrypted, nil
 	case []string:
 		decrypted := make([]string, len(typedValue))
@@ -185,6 +186,7 @@ func decryptLDAPAttributeValue(manager *security.Manager, value any) (any, error
 			}
 			decrypted[index] = plaintext
 		}
+
 		return decrypted, nil
 	case string:
 		return manager.Decrypt(typedValue)
@@ -204,6 +206,7 @@ func normalizeLDAPAttributeValues(value any) ([]any, error) {
 		for index, entry := range typedValue {
 			normalized[index] = entry
 		}
+
 		return normalized, nil
 	case string:
 		return []any{typedValue}, nil
@@ -435,6 +438,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 			return passDBResult, errors.ErrLDAPConfig.WithDetail(
 				fmt.Sprintf("Failed to decrypt LDAP master TOTP secret: %v", decryptErr))
 		}
+
 		switch typedSecret := decryptedSecret.(type) {
 		case []any:
 			totpSecretPre = typedSecret
@@ -757,6 +761,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	encryptedSecret, encryptErr := securityManager.Encrypt(totp.GetValue())
 	if encryptErr != nil {
 		pSpan.End()
+
 		return errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Failed to encrypt LDAP TOTP secret: %v", encryptErr))
 	}
@@ -789,11 +794,17 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
 	ldapRequest.ModifyAttributes[configField] = []string{encryptedSecret}
 
+	totpObjectClass := protocol.GetTotpObjectClass()
+	if totpObjectClass != "" {
+		ldapRequest.ModifyAttributes["objectClass"] = []string{totpObjectClass}
+	}
+
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
 	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
+
 	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}
@@ -808,6 +819,10 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	wSpan.End()
 
 	if stderrors.As(ldapReply.Err, &ldapError) {
+		if ldapError.ResultCode == uint16(ldap.LDAPResultAttributeOrValueExists) && totpObjectClass != "" {
+			return nil
+		}
+
 		msp.RecordError(ldapError)
 
 		return ldapError.Err
@@ -1026,9 +1041,11 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 		encryptedCode, encryptErr := securityManager.Encrypt(code)
 		if encryptErr != nil {
 			pSpan.End()
+
 			return errors.ErrLDAPConfig.WithDetail(
 				fmt.Sprintf("Failed to encrypt LDAP TOTP recovery code: %v", encryptErr))
 		}
+
 		encryptedCodes[index] = encryptedCode
 	}
 
@@ -1059,6 +1076,8 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
 	ldapRequest.ModifyAttributes[configField] = encryptedCodes
 
+	totpRecoveryObjectClass := protocol.GetTotpRecoveryObjectClass()
+
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
 	if !auth.Request.NoAuth {
@@ -1067,6 +1086,43 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 
 	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
+	}
+
+	if totpRecoveryObjectClass != "" {
+		objectClassReplyChan := make(chan *bktype.LDAPReply, 1)
+		ctxAddObjectClass, cancelAddObjectClass := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
+		defer cancelAddObjectClass()
+
+		objectClassRequest := &bktype.LDAPRequest{
+			GUID:       auth.Runtime.GUID,
+			Command:    definitions.LDAPModify,
+			PoolName:   lm.poolName,
+			SubCommand: definitions.LDAPModifyAdd,
+			MacroSource: &util.MacroSource{
+				Username:    auth.Request.Username,
+				XLocalIP:    auth.Request.XLocalIP,
+				XPort:       auth.Request.XPort,
+				ClientIP:    auth.Request.ClientIP,
+				XClientPort: auth.Request.XClientPort,
+				Protocol:    *auth.Request.Protocol,
+			},
+			Filter: filter,
+			BaseDN: baseDN,
+			Scope:  *scope,
+			ModifyAttributes: bktype.LDAPModifyAttributes{
+				"objectClass": []string{totpRecoveryObjectClass},
+			},
+			LDAPReplyChan:     objectClassReplyChan,
+			HTTPClientContext: ctxAddObjectClass,
+		}
+
+		priorityqueue.LDAPQueue.Push(objectClassRequest, priority)
+		objectClassReply := <-objectClassReplyChan
+		if objectClassReply.Err != nil && !isAttributeOrValueExistsError(objectClassReply.Err) {
+			msp.RecordError(objectClassReply.Err)
+
+			return objectClassReply.Err
+		}
 	}
 
 	pSpan.End()
@@ -1222,6 +1278,19 @@ func isNoSuchAttributeError(err error) bool {
 	var ldapErr *ldap.Error
 	if stderrors.As(err, &ldapErr) {
 		return ldapErr.ResultCode == ldap.LDAPResultNoSuchAttribute
+	}
+
+	return false
+}
+
+func isAttributeOrValueExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var ldapErr *ldap.Error
+	if stderrors.As(err, &ldapErr) {
+		return ldapErr.ResultCode == ldap.LDAPResultAttributeOrValueExists
 	}
 
 	return false

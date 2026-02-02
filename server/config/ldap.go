@@ -413,8 +413,11 @@ type LDAPAttributeMapping struct {
 	AccountField            string `mapstructure:"account_field" validate:"required"` // Webauthn is not implemented, yet.
 	TOTPSecretField         string `mapstructure:"totp_secret_field" validate:"omitempty"`
 	TOTPRecoveryField       string `mapstructure:"totp_recovery_field" validate:"omitempty"`
+	TOTPObjectClass         string `mapstructure:"totp_object_class" validate:"omitempty"`
+	TOTPRecoveryObjectClass string `mapstructure:"totp_recovery_object_class" validate:"omitempty"`
 	DisplayNameField        string `mapstructure:"display_name_field" validate:"omitempty"`
 	WebAuthnCredentialField string `mapstructure:"webauthn_credential_field" validate:"omitempty"`
+	WebAuthnObjectClass     string `mapstructure:"webauthn_object_class" validate:"omitempty"`
 	UniqueUserIDField       string `mapstructure:"unique_user_id_field" validate:"omitempty"`
 }
 
@@ -438,6 +441,24 @@ func (m *LDAPAttributeMapping) GetTOTPRecoveryField() string {
 	return m.TOTPRecoveryField
 }
 
+// GetTOTPObjectClass returns the objectClass for TOTP usage.
+func (m *LDAPAttributeMapping) GetTOTPObjectClass() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.TOTPObjectClass
+}
+
+// GetTOTPRecoveryObjectClass returns the objectClass for TOTP recovery codes.
+func (m *LDAPAttributeMapping) GetTOTPRecoveryObjectClass() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.TOTPRecoveryObjectClass
+}
+
 // GetDisplayNameField retrieves the display name field from the LDAPAttributeMapping.
 // Returns an empty string if the LDAPAttributeMapping is nil.
 func (m *LDAPAttributeMapping) GetDisplayNameField() string {
@@ -456,6 +477,15 @@ func (m *LDAPAttributeMapping) GetWebAuthnCredentialField() string {
 	}
 
 	return m.WebAuthnCredentialField
+}
+
+// GetWebAuthnObjectClass returns the objectClass for WebAuthn usage.
+func (m *LDAPAttributeMapping) GetWebAuthnObjectClass() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.WebAuthnObjectClass
 }
 
 // GetUniqueUserIDField retrieves the unique user ID field name from the LDAPAttributeMapping.
@@ -644,9 +674,24 @@ func (p *LDAPSearchProtocol) GetTotpRecoveryField() string {
 	return p.LDAPAttributeMapping.GetTOTPRecoveryField()
 }
 
+// GetTotpObjectClass returns the objectClass for TOTP usage.
+func (p *LDAPSearchProtocol) GetTotpObjectClass() string {
+	return p.LDAPAttributeMapping.GetTOTPObjectClass()
+}
+
+// GetTotpRecoveryObjectClass returns the objectClass for TOTP recovery codes.
+func (p *LDAPSearchProtocol) GetTotpRecoveryObjectClass() string {
+	return p.LDAPAttributeMapping.GetTOTPRecoveryObjectClass()
+}
+
 // GetWebAuthnCredentialField returns the LDAP attribute for the WebAuthn credentials.
 func (p *LDAPSearchProtocol) GetWebAuthnCredentialField() string {
 	return p.LDAPAttributeMapping.GetWebAuthnCredentialField()
+}
+
+// GetWebAuthnObjectClass returns the objectClass for WebAuthn usage.
+func (p *LDAPSearchProtocol) GetWebAuthnObjectClass() string {
+	return p.LDAPAttributeMapping.GetWebAuthnObjectClass()
 }
 
 // GetUniqueUserIDField returns the LDAP attribute for the unique user ID.

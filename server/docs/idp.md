@@ -489,7 +489,9 @@ sequenceDiagram
 ### 7.4 Configuration Example (LDAP)
 
 To enable full IdP support with LDAP, ensure your `nauthilus.yaml` includes the relevant mappings. Below is an example
-using the recommended JSON mode for WebAuthn:
+using the recommended JSON mode for WebAuthn. Optional `*_object_class` settings tell Nauthilus which `objectClass` to
+auto-add for MFA/WebAuthn writes. If these settings are omitted, the object classes must already exist on the user
+entries.
 
 ```yaml
 ldap:
@@ -502,8 +504,10 @@ ldap:
         account_field: "uid"
         display_name_field: "cn"
         totp_secret_field: "nauthilusTotpSecret"
+        totp_object_class: "nauthilusMfaAccount"
         # JSON mode: Use the field that stores all credentials
         webauthn_credential_field: "nauthilusFido2Credential"
+        webauthn_object_class: "nauthilusFido2Account"
 ```
 
 ### 7.5 FIDO2 LDAP Schema & LDIF Examples
@@ -579,4 +583,5 @@ ldap:
     - protocol: [ "oidc", "saml" ]
       mapping:
         totp_recovery_field: "nauthilusTotpRecoveryCode"
+        totp_recovery_object_class: "nauthilusMfaAccount"
 ```

@@ -33,6 +33,14 @@ local time = require("time")
 
 local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
+local function protocol_segment(request)
+    local protocol = request.protocol
+    if protocol == nil or protocol == "" then
+        return "unknown"
+    end
+    return protocol
+end
+
 function nauthilus_call_feature(request)
     -- This feature should run regardless of success/failure, but respect no_auth
     if request.no_auth then
@@ -46,6 +54,7 @@ function nauthilus_call_feature(request)
     local now = time.unix()
     -- Use request.session directly for per-request identifier
     local req_id = tostring(request.session or "")
+    local protocol = protocol_segment(request)
 
     -- Get Redis connection
     local client = "default"
@@ -74,10 +83,10 @@ function nauthilus_call_feature(request)
         end
 
         local keys = {
-            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":ips:86400"),
-            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":ips:604800"),
-            nauthilus_util.get_redis_key(request, "z:acct:" .. tag .. username .. ":fails"),
-            nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":longwindow"),
+            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":proto:" .. protocol .. ":ips:86400"),
+            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":proto:" .. protocol .. ":ips:604800"),
+            nauthilus_util.get_redis_key(request, "z:acct:" .. tag .. username .. ":proto:" .. protocol .. ":fails"),
+            nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":longwindow"),
             nauthilus_util.get_redis_key(request, "z:spray:pw:86400"),
             nauthilus_util.get_redis_key(request, "z:spray:pw:604800"),
         }

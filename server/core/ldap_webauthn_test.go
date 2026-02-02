@@ -59,6 +59,7 @@ func TestLDAPGetWebAuthnCredentials(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
 			WebAuthnCredentialField: "nauthilusFido2Credential",
+			WebAuthnObjectClass:     "nauthilusFido2Account",
 		},
 		BaseDN: "dc=example,dc=com",
 		Scope:  "sub",
@@ -119,6 +120,7 @@ func TestLDAPGetWebAuthnCredentialsDefaultsProtocol(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
 			WebAuthnCredentialField: "nauthilusFido2Credential",
+			WebAuthnObjectClass:     "nauthilusFido2Account",
 		},
 		BaseDN: "dc=example,dc=com",
 		LDAPFilter: config.LDAPFilter{
@@ -177,6 +179,7 @@ func TestLDAPGetWebAuthnCredentialsNilProtocolDefaults(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
 			WebAuthnCredentialField: "nauthilusFido2Credential",
+			WebAuthnObjectClass:     "nauthilusFido2Account",
 		},
 		BaseDN: "dc=example,dc=com",
 		LDAPFilter: config.LDAPFilter{
@@ -305,6 +308,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
 			WebAuthnCredentialField: "nauthilusFido2Credential",
+			WebAuthnObjectClass:     "nauthilusFido2Account",
 		},
 		BaseDN: "dc=example,dc=com",
 		LDAPFilter: config.LDAPFilter{
@@ -348,6 +352,7 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
+			assert.Equal(t, []string{"nauthilusFido2Account"}, req.ModifyAttributes["objectClass"])
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -362,6 +367,7 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
 			WebAuthnCredentialField: "nauthilusFido2Credential",
+			WebAuthnObjectClass:     "nauthilusFido2Account",
 		},
 		BaseDN: "dc=example,dc=com",
 		Scope:  "sub",
@@ -406,6 +412,8 @@ func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
+			_, hasObjectClass := req.ModifyAttributes["objectClass"]
+			assert.False(t, hasObjectClass)
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -420,6 +428,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 	protocol := &config.LDAPSearchProtocol{
 		LDAPAttributeMapping: config.LDAPAttributeMapping{
 			WebAuthnCredentialField: "nauthilusFido2Credential",
+			WebAuthnObjectClass:     "nauthilusFido2Account",
 		},
 		BaseDN: "dc=example,dc=com",
 		Scope:  "sub",
@@ -471,6 +480,8 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
+			_, hasObjectClass := req.ModifyAttributes["objectClass"]
+			assert.False(t, hasObjectClass)
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -482,6 +493,7 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
+			assert.Equal(t, []string{"nauthilusFido2Account"}, req.ModifyAttributes["objectClass"])
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
