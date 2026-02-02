@@ -54,6 +54,13 @@ type FrontendHandler struct {
 	tracer monittrace.Tracer
 }
 
+type mfaAvailability struct {
+	haveTOTP          bool
+	haveWebAuthn      bool
+	haveRecoveryCodes bool
+	count             int
+}
+
 // NewFrontendHandler creates a new FrontendHandler.
 func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler {
 	return &FrontendHandler{
@@ -65,6 +72,10 @@ func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler
 }
 
 func (h *FrontendHandler) getLoginURL(ctx *gin.Context) string {
+	return h.appendQueryString(h.getLoginPath(ctx), ctx.Request.URL.RawQuery)
+}
+
+func (h *FrontendHandler) getLoginPath(ctx *gin.Context) string {
 	lang := ctx.Param("languageTag")
 	var path string
 
@@ -74,7 +85,18 @@ func (h *FrontendHandler) getLoginURL(ctx *gin.Context) string {
 		path = "/login"
 	}
 
-	return h.appendQueryString(path, ctx.Request.URL.RawQuery)
+	return path
+}
+
+func (h *FrontendHandler) getMFASelectPath(ctx *gin.Context) string {
+	path := "/login/mfa"
+	lang := ctx.Param("languageTag")
+
+	if lang != "" {
+		path += "/" + lang
+	}
+
+	return path
 }
 
 func (h *FrontendHandler) getMFAURL(ctx *gin.Context, mfaType string) string {
@@ -99,6 +121,35 @@ func (h *FrontendHandler) appendQueryString(path string, query string) string {
 	}
 
 	return path + separator + query
+}
+
+func (h *FrontendHandler) buildReturnQuery(returnTo string, protocolParam string) string {
+	query := ""
+
+	if returnTo != "" {
+		query = "return_to=" + url.QueryEscape(returnTo)
+	}
+
+	if protocolParam != "" {
+		if query == "" {
+			query = "protocol=" + url.QueryEscape(protocolParam)
+		} else {
+			query += "&protocol=" + url.QueryEscape(protocolParam)
+		}
+	}
+
+	return query
+}
+
+func (h *FrontendHandler) getLoginMFABackURL(ctx *gin.Context) string {
+	session := sessions.Default(ctx)
+	multi, err := util.GetSessionValue[bool](session, definitions.CookieMFAMulti)
+
+	if err != nil || !multi {
+		return h.appendQueryString(h.getLoginPath(ctx), ctx.Request.URL.RawQuery)
+	}
+
+	return h.appendQueryString(h.getMFASelectPath(ctx), ctx.Request.URL.RawQuery)
 }
 
 func (h *FrontendHandler) redirectWithQuery(ctx *gin.Context, target string) {
@@ -258,6 +309,9 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 
 		return
 	}
+
+	session.Delete(definitions.CookieMFAMulti)
+	_ = session.Save()
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -631,8 +685,14 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 		return
 	}
 
+	availability := h.getMFAAvailability(ctx, user, protocol)
+	multi := availability.count > 1
+
+	session.Set(definitions.CookieMFAMulti, multi)
+	_ = session.Save()
+
 	// If user has only one MFA option, redirect directly to it
-	if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocol); ok {
+	if redirectURL, ok := h.getMFARedirectURLWithAvailability(availability, returnTo, protocol); ok {
 		ctx.Redirect(http.StatusFound, redirectURL)
 
 		return
@@ -650,13 +710,9 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
-	haveTOTP := h.hasTOTP(user)
-	haveWebAuthn := h.hasWebAuthn(ctx, user, protocol)
-	haveRecoveryCodes := h.hasRecoveryCodes(user)
-
-	data["HaveTOTP"] = haveTOTP
-	data["HaveWebAuthn"] = haveWebAuthn
-	data["HaveRecoveryCodes"] = haveRecoveryCodes
+	data["HaveTOTP"] = availability.haveTOTP
+	data["HaveWebAuthn"] = availability.haveWebAuthn
+	data["HaveRecoveryCodes"] = availability.haveRecoveryCodes
 
 	data["QueryString"] = h.appendQueryString("", ctx.Request.URL.RawQuery)
 	data["ReturnTo"] = returnTo
@@ -668,21 +724,21 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 
 	switch lastMFA {
 	case "totp":
-		if haveTOTP {
+		if availability.haveTOTP {
 			recommendedMethod = "totp"
 		}
 	case "webauthn":
-		if haveWebAuthn {
+		if availability.haveWebAuthn {
 			recommendedMethod = "webauthn"
 		}
 	case "recovery":
-		if haveRecoveryCodes {
+		if availability.haveRecoveryCodes {
 			recommendedMethod = "recovery"
 		}
 	}
 
-	hasOtherMethods := recommendedMethod != "" && ((haveTOTP && recommendedMethod != "totp") ||
-		(haveWebAuthn && recommendedMethod != "webauthn") || (haveRecoveryCodes && recommendedMethod != "recovery"))
+	hasOtherMethods := recommendedMethod != "" && ((availability.haveTOTP && recommendedMethod != "totp") ||
+		(availability.haveWebAuthn && recommendedMethod != "webauthn") || (availability.haveRecoveryCodes && recommendedMethod != "recovery"))
 
 	data["LastMFAMethod"] = lastMFA
 	data["RecommendedMethod"] = recommendedMethod
@@ -803,9 +859,38 @@ func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
 }
 
 func (h *FrontendHandler) getMFARedirectURL(ctx *gin.Context, user *backend.User, returnTo string, protocolParam string) (string, bool) {
+	availability := h.getMFAAvailability(ctx, user, protocolParam)
+
+	return h.getMFARedirectURLWithAvailability(availability, returnTo, protocolParam)
+}
+
+func (h *FrontendHandler) getMFARedirectURLWithAvailability(availability mfaAvailability, returnTo string, protocolParam string) (string, bool) {
+	if availability.count > 1 {
+		return "", false
+	}
+
+	var target string
+
+	if availability.haveTOTP {
+		target = "/login/totp"
+	} else if availability.haveWebAuthn {
+		target = "/login/webauthn"
+	} else if availability.haveRecoveryCodes {
+		target = "/login/recovery"
+	} else {
+		// No MFA methods available
+		return "", false
+	}
+
+	redirectURL := h.appendQueryString(target, h.buildReturnQuery(returnTo, protocolParam))
+
+	return redirectURL, true
+}
+
+func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string) mfaAvailability {
 	haveTOTP := h.hasTOTP(user)
 	haveWebAuthn := h.hasWebAuthn(ctx, user, protocolParam)
-	haveRecovery := h.hasRecoveryCodes(user)
+	haveRecoveryCodes := h.hasRecoveryCodes(user)
 
 	count := 0
 
@@ -817,34 +902,16 @@ func (h *FrontendHandler) getMFARedirectURL(ctx *gin.Context, user *backend.User
 		count++
 	}
 
-	if count != 0 && haveRecovery {
+	if count != 0 && haveRecoveryCodes {
 		count++
 	}
 
-	// If more than one is present, we need selection
-	if count > 1 {
-		return "", false
+	return mfaAvailability{
+		haveTOTP:          haveTOTP,
+		haveWebAuthn:      haveWebAuthn,
+		haveRecoveryCodes: haveRecoveryCodes,
+		count:             count,
 	}
-
-	var target string
-
-	if haveTOTP {
-		target = "/login/totp"
-	} else if haveWebAuthn {
-		target = "/login/webauthn"
-	} else if haveRecovery {
-		target = "/login/recovery"
-	} else {
-		// No MFA methods available
-		return "", false
-	}
-
-	redirectURL := h.appendQueryString(target, "return_to="+url.QueryEscape(returnTo))
-	if protocolParam != "" {
-		redirectURL = h.appendQueryString(redirectURL, "protocol="+url.QueryEscape(protocolParam))
-	}
-
-	return redirectURL, true
 }
 
 func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User, returnTo string) {
@@ -899,7 +966,7 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	data["ReturnTo"] = ctx.Query("return_to")
 	data["WebAuthnBeginEndpoint"] = h.getMFAURL(ctx, "webauthn/begin")
 	data["WebAuthnFinishEndpoint"] = h.getMFAURL(ctx, "webauthn/finish")
-	data["BackURL"] = h.getLoginURL(ctx)
+	data["BackURL"] = h.getLoginMFABackURL(ctx)
 
 	// JS Localizations
 	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
@@ -930,7 +997,7 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 	data["ReturnTo"] = ctx.Query("return_to")
 	data["Protocol"] = ctx.Query("protocol")
-	data["BackURL"] = h.getLoginURL(ctx)
+	data["BackURL"] = h.getLoginMFABackURL(ctx)
 	data["HaveError"] = false
 
 	ctx.HTML(http.StatusOK, "idp_totp_verify.html", data)

@@ -58,6 +58,9 @@ const (
 	// CookieRememberTTL stores the TTL for the "remember me" option.
 	CookieRememberTTL = "remember_ttl"
 
+	// CookieMFAMulti indicates whether multiple MFA methods are available for selection.
+	CookieMFAMulti = "mfa_multi"
+
 	// CookieRegistration is used during WebAuthn device registration.
 	CookieRegistration = "webauthn_registration"
 
