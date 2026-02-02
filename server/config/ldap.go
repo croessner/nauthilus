@@ -122,11 +122,12 @@ type LDAPConf struct {
 	LookupQueueLength  int `mapstructure:"lookup_queue_length" validate:"omitempty,min=0"`
 	AuthQueueLength    int `mapstructure:"auth_queue_length" validate:"omitempty,min=0"`
 
-	BindDN        string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
-	BindPW        string `mapstructure:"bind_pw" validate:"omitempty"`
-	TLSCAFile     string `mapstructure:"tls_ca_cert" validate:"omitempty,file"`
-	TLSClientCert string `mapstructure:"tls_client_cert" validate:"omitempty,file"`
-	TLSClientKey  string `mapstructure:"tls_client_key" validate:"omitempty,file"`
+	BindDN           string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
+	BindPW           string `mapstructure:"bind_pw" validate:"omitempty"`
+	EncryptionSecret string `mapstructure:"encryption_secret" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
+	TLSCAFile        string `mapstructure:"tls_ca_cert" validate:"omitempty,file"`
+	TLSClientCert    string `mapstructure:"tls_client_cert" validate:"omitempty,file"`
+	TLSClientKey     string `mapstructure:"tls_client_key" validate:"omitempty,file"`
 
 	ConnectAbortTimeout time.Duration `mapstructure:"connect_abort_timeout" validate:"omitempty,max=10m"`
 	// Operation-specific timeouts (0 = library default)
@@ -199,6 +200,8 @@ func (l *LDAPConf) String() string {
 			} else {
 				fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
 			}
+		case "EncryptionSecret":
+			fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
 		case "LookupPoolSize", "LookupIdlePoolSize", "AuthPoolSize", "AuthIdlePoolSize":
 			continue
 		default:
@@ -328,6 +331,16 @@ func (l *LDAPConf) GetBindPW() string {
 	}
 
 	return l.BindPW
+}
+
+// GetEncryptionSecret retrieves the LDAP encryption secret from the LDAPConf.
+// Returns an empty string if the LDAPConf is nil.
+func (l *LDAPConf) GetEncryptionSecret() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.EncryptionSecret
 }
 
 // GetTLSCAFile retrieves the TLS CA certificate file path from the LDAPConf.

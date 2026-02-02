@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/security"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -120,6 +121,96 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 	} else {
 		// Ignore the user TOTP secret if it exists.
 		delete(passDBResult.Attributes, totpSecretField)
+	}
+}
+
+func decryptLDAPAttributeValues(manager *security.Manager, attributes bktype.AttributeMapping, fieldName string) error {
+	if manager == nil || attributes == nil || fieldName == "" {
+		return nil
+	}
+
+	value, ok := attributes[fieldName]
+	if !ok {
+		return nil
+	}
+
+	decrypted, err := decryptLDAPAttributeValue(manager, value)
+	if err != nil {
+		return err
+	}
+
+	normalized, err := normalizeLDAPAttributeValues(decrypted)
+	if err != nil {
+		return err
+	}
+
+	attributes[fieldName] = normalized
+
+	return nil
+}
+
+func decryptLDAPAttributeValue(manager *security.Manager, value any) (any, error) {
+	if manager == nil {
+		return value, nil
+	}
+
+	switch typedValue := value.(type) {
+	case []any:
+		decrypted := make([]any, len(typedValue))
+		for index, entry := range typedValue {
+			switch entryValue := entry.(type) {
+			case string:
+				plaintext, err := manager.Decrypt(entryValue)
+				if err != nil {
+					return nil, err
+				}
+				decrypted[index] = plaintext
+			case []byte:
+				plaintext, err := manager.Decrypt(string(entryValue))
+				if err != nil {
+					return nil, err
+				}
+				decrypted[index] = plaintext
+			default:
+				decrypted[index] = entry
+			}
+		}
+		return decrypted, nil
+	case []string:
+		decrypted := make([]string, len(typedValue))
+		for index, entry := range typedValue {
+			plaintext, err := manager.Decrypt(entry)
+			if err != nil {
+				return nil, err
+			}
+			decrypted[index] = plaintext
+		}
+		return decrypted, nil
+	case string:
+		return manager.Decrypt(typedValue)
+	case []byte:
+		return manager.Decrypt(string(typedValue))
+	default:
+		return value, nil
+	}
+}
+
+func normalizeLDAPAttributeValues(value any) ([]any, error) {
+	switch typedValue := value.(type) {
+	case []any:
+		return typedValue, nil
+	case []string:
+		normalized := make([]any, len(typedValue))
+		for index, entry := range typedValue {
+			normalized[index] = entry
+		}
+		return normalized, nil
+	case string:
+		return []any{typedValue}, nil
+	case []byte:
+		return []any{string(typedValue)}, nil
+	default:
+		return nil, fmt.Errorf("unsupported LDAP attribute type: %T", value)
 	}
 }
 
@@ -311,11 +402,49 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		passDBResult.DisplayNameField = accountField
 	}
 
+	var securityManager *security.Manager
+	if protocol.TOTPSecretField != "" || protocol.GetTotpRecoveryField() != "" {
+		securityManager = security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
+	}
+
 	if len(ldapReply.Result) > 0 {
 		passDBResult.Attributes = ldapReply.Result
 	}
 
 	totpSecretPre := saveMasterUserTOTPSecret(auth.Runtime.MasterUserMode, ldapReply, protocol.TOTPSecretField)
+
+	if passDBResult.Attributes != nil {
+		if protocol.TOTPSecretField != "" {
+			if decryptErr := decryptLDAPAttributeValues(securityManager, passDBResult.Attributes, protocol.TOTPSecretField); decryptErr != nil {
+				return passDBResult, errors.ErrLDAPConfig.WithDetail(
+					fmt.Sprintf("Failed to decrypt LDAP TOTP secret: %v", decryptErr))
+			}
+		}
+
+		if protocol.GetTotpRecoveryField() != "" {
+			if decryptErr := decryptLDAPAttributeValues(securityManager, passDBResult.Attributes, protocol.GetTotpRecoveryField()); decryptErr != nil {
+				return passDBResult, errors.ErrLDAPConfig.WithDetail(
+					fmt.Sprintf("Failed to decrypt LDAP TOTP recovery codes: %v", decryptErr))
+			}
+		}
+	}
+
+	if securityManager != nil && totpSecretPre != nil {
+		decryptedSecret, decryptErr := decryptLDAPAttributeValue(securityManager, totpSecretPre)
+		if decryptErr != nil {
+			return passDBResult, errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Failed to decrypt LDAP master TOTP secret: %v", decryptErr))
+		}
+		switch typedSecret := decryptedSecret.(type) {
+		case []any:
+			totpSecretPre = typedSecret
+		case []string:
+			totpSecretPre = make([]any, len(typedSecret))
+			for index, entry := range typedSecret {
+				totpSecretPre[index] = entry
+			}
+		}
+	}
 
 	if !auth.Request.NoAuth {
 		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
@@ -624,6 +753,14 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		return
 	}
 
+	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
+	encryptedSecret, encryptErr := securityManager.Encrypt(totp.GetValue())
+	if encryptErr != nil {
+		pSpan.End()
+		return errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("Failed to encrypt LDAP TOTP secret: %v", encryptErr))
+	}
+
 	// Derive a timeout context for LDAP modify using service-scoped context
 	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
 	defer cancelModify()
@@ -650,7 +787,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	}
 
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
-	ldapRequest.ModifyAttributes[configField] = []string{totp.GetValue()}
+	ldapRequest.ModifyAttributes[configField] = []string{encryptedSecret}
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow
@@ -882,6 +1019,19 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 		return
 	}
 
+	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
+	codes := recovery.GetCodes()
+	encryptedCodes := make([]string, len(codes))
+	for index, code := range codes {
+		encryptedCode, encryptErr := securityManager.Encrypt(code)
+		if encryptErr != nil {
+			pSpan.End()
+			return errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Failed to encrypt LDAP TOTP recovery code: %v", encryptErr))
+		}
+		encryptedCodes[index] = encryptedCode
+	}
+
 	// Derive a timeout context for LDAP modify using service-scoped context
 	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
 	defer cancelModify()
@@ -907,7 +1057,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 	}
 
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
-	ldapRequest.ModifyAttributes[configField] = recovery.GetCodes()
+	ldapRequest.ModifyAttributes[configField] = encryptedCodes
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow

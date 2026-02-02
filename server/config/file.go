@@ -197,6 +197,9 @@ type File interface {
 	// GetLDAPConfigBindPW retrieves the password for the LDAP bind.
 	GetLDAPConfigBindPW() string
 
+	// GetLDAPConfigEncryptionSecret retrieves the encryption secret for LDAP.
+	GetLDAPConfigEncryptionSecret() string
+
 	// GetLDAPConfigTLSCAFile returns the TLS CA file for LDAP.
 	GetLDAPConfigTLSCAFile() string
 
@@ -669,6 +672,24 @@ func (f *FileSettings) GetLDAPConfigBindPW() string {
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.GetBindPW()
+	}
+
+	return ""
+}
+
+// GetLDAPConfigEncryptionSecret retrieves the encryption secret from the LDAP configuration if available, or returns an empty string.
+func (f *FileSettings) GetLDAPConfigEncryptionSecret() string {
+	if f == nil {
+		return ""
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLDAP)
+	if getConfig == nil {
+		return ""
+	}
+
+	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
+		return ldapConf.GetEncryptionSecret()
 	}
 
 	return ""
@@ -1795,6 +1816,18 @@ func (f *FileSettings) validatePassDBBackends() error {
 
 			if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
 				f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
+			}
+
+			requiresEncryptionSecret := false
+			for _, protocol := range f.GetLDAP().GetSearch() {
+				if protocol.GetTotpSecretField() != "" || protocol.GetTotpRecoveryField() != "" {
+					requiresEncryptionSecret = true
+					break
+				}
+			}
+
+			if requiresEncryptionSecret && f.GetLDAPConfigEncryptionSecret() == "" {
+				return errors.ErrLDAPConfig.WithDetail("Missing LDAP encryption secret for TOTP data in LDAP")
 			}
 		case definitions.BackendLua:
 		case definitions.BackendUnknown:

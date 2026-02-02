@@ -15,59 +15,12 @@
 
 package rediscli
 
-import (
-	"encoding/base64"
-
-	"github.com/croessner/nauthilus/server/util/crypto"
-)
+import "github.com/croessner/nauthilus/server/security"
 
 // SecurityManager handles encryption and decryption of sensitive data stored in Redis.
-type SecurityManager struct {
-	secret string
-}
+type SecurityManager = security.Manager
 
 // NewSecurityManager creates a new SecurityManager with the given secret.
 func NewSecurityManager(secret string) *SecurityManager {
-	return &SecurityManager{secret: secret}
-}
-
-// Encrypt encrypts the given plaintext using the configured secret.
-// It returns a base64-encoded string of the ciphertext.
-func (m *SecurityManager) Encrypt(plaintext string) (string, error) {
-	if m.secret == "" || plaintext == "" {
-		return plaintext, nil
-	}
-
-	ciphertext, err := crypto.EncryptString(plaintext, m.secret)
-	if err != nil {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
-// Decrypt decrypts the given base64-encoded ciphertext using the configured secret.
-func (m *SecurityManager) Decrypt(encodedCiphertext string) (string, error) {
-	if m.secret == "" || encodedCiphertext == "" {
-		return encodedCiphertext, nil
-	}
-
-	ciphertext, err := base64.StdEncoding.DecodeString(encodedCiphertext)
-	if err != nil {
-		// If it's not valid base64, it might be unencrypted data from before
-		return encodedCiphertext, nil
-	}
-
-	plaintext, err := crypto.DecryptString(ciphertext, m.secret)
-	if err != nil {
-		// If decryption fails, it might be unencrypted data
-		return encodedCiphertext, nil
-	}
-
-	return plaintext, nil
-}
-
-// IsEncryptionEnabled returns true if an encryption secret is configured.
-func (m *SecurityManager) IsEncryptionEnabled() bool {
-	return m.secret != ""
+	return security.NewManager(secret, security.WithAllowEmptySecret(), security.WithAllowPlaintext())
 }
