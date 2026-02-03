@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
@@ -145,6 +146,17 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 	case <-ctxSearch.Done():
 		return nil, errors.ErrLDAPSearchTimeout
 	case ldapReply := <-ldapReplyChan:
+		util.DebugModuleWithCfg(
+			lctx,
+			lm.effectiveCfg(),
+			lm.effectiveLogger(),
+			definitions.DbgWebAuthn,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "WebAuthn LDAP lookup result",
+			definitions.LogKeyError, ldapReply.Err,
+			"num_results", len(ldapReply.Result),
+		)
+
 		if ldapReply.Err != nil {
 			return nil, ldapReply.Err
 		}
@@ -204,24 +216,141 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 	}
 
 	username := handleMasterUserMode(lm.effectiveCfg(), auth)
+	if username == "" {
+		util.DebugModuleWithCfg(
+			lctx,
+			lm.effectiveCfg(),
+			lm.effectiveLogger(),
+			definitions.DbgWebAuthn,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "WebAuthn LDAP save skipped: empty username",
+			"pool", lm.poolName,
+		)
+
+		return nil
+	}
+
+	// Step 1: Search for user to check current objectClasses
+	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
+	ctxSearch, cancelSearch := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch())
+	defer cancelSearch()
+
+	ldapSearchRequest := &bktype.LDAPRequest{
+		GUID:     auth.Runtime.GUID,
+		Command:  definitions.LDAPSearch,
+		PoolName: lm.poolName,
+		MacroSource: &util.MacroSource{
+			Username: username,
+			Protocol: *auth.Request.Protocol,
+		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		SearchAttributes:  []string{"objectClass"},
+		Scope:             *scope,
+		LDAPReplyChan:     ldapReplyChan,
+		HTTPClientContext: ctxSearch,
+	}
+
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	priorityqueue.LDAPQueue.Push(ldapSearchRequest, priority)
+
+	var currentObjectClasses []string
+	select {
+	case <-ctxSearch.Done():
+		return errors.ErrLDAPSearchTimeout
+	case ldapReply := <-ldapReplyChan:
+		if ldapReply.Err != nil {
+			return ldapReply.Err
+		}
+
+		if values, ok := ldapReply.Result["objectClass"]; ok {
+			for _, val := range values {
+				if strVal, ok := val.(string); ok {
+					currentObjectClasses = append(currentObjectClasses, strVal)
+				}
+			}
+		}
+	}
+
+	hasRequiredObjectClass := false
+	if objectClass == "" {
+		hasRequiredObjectClass = true
+	} else {
+		for _, oc := range currentObjectClasses {
+			if strings.EqualFold(oc, objectClass) {
+				hasRequiredObjectClass = true
+				break
+			}
+		}
+	}
+
 	credBytes, err := jsonIter.Marshal(credential)
 	if err != nil {
 		return err
 	}
 
-	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
-	ctxModify, cancelModify := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
-	defer cancelModify()
+	util.DebugModuleWithCfg(
+		lctx,
+		lm.effectiveCfg(),
+		lm.effectiveLogger(),
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, auth.Runtime.GUID,
+		definitions.LogKeyMsg, "WebAuthn LDAP save",
+		"pool", lm.poolName,
+		"username", username,
+		"filter", filter,
+		"base_dn", baseDN,
+		"scope", *scope,
+		"credential_field", credentialField,
+		"object_class", objectClass,
+		"has_object_class", hasRequiredObjectClass,
+	)
 
-	modifyAttributes := bktype.LDAPModifyAttributes{
-		credentialField: []string{string(credBytes)},
+	// Step 2: Add objectClass if missing
+	if !hasRequiredObjectClass {
+		ctxModifyOC, cancelModifyOC := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
+		defer cancelModifyOC()
+
+		ocRequest := &bktype.LDAPRequest{
+			GUID:       auth.Runtime.GUID,
+			Command:    definitions.LDAPModify,
+			PoolName:   lm.poolName,
+			SubCommand: definitions.LDAPModifyAdd,
+			MacroSource: &util.MacroSource{
+				Username: username,
+				Protocol: *auth.Request.Protocol,
+			},
+			Filter: filter,
+			BaseDN: baseDN,
+			Scope:  *scope,
+			ModifyAttributes: bktype.LDAPModifyAttributes{
+				"objectClass": []string{objectClass},
+			},
+			LDAPReplyChan:     ldapReplyChan,
+			HTTPClientContext: ctxModifyOC,
+		}
+
+		priorityqueue.LDAPQueue.Push(ocRequest, priority)
+
+		select {
+		case <-ctxModifyOC.Done():
+			return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (objectClass phase)")
+		case ldapReply := <-ldapReplyChan:
+			if ldapReply.Err != nil && !isAttributeOrValueExistsError(ldapReply.Err) {
+				return ldapReply.Err
+			}
+		}
 	}
 
-	if objectClass != "" {
-		modifyAttributes["objectClass"] = []string{objectClass}
-	}
+	// Step 3: Add the credential
+	ctxModifyCred, cancelModifyCred := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
+	defer cancelModifyCred()
 
-	ldapRequest := &bktype.LDAPRequest{
+	credRequest := &bktype.LDAPRequest{
 		GUID:       auth.Runtime.GUID,
 		Command:    definitions.LDAPModify,
 		PoolName:   lm.poolName,
@@ -230,28 +359,33 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 			Username: username,
 			Protocol: *auth.Request.Protocol,
 		},
-		Filter:            filter,
-		BaseDN:            baseDN,
-		Scope:             *scope,
-		ModifyAttributes:  modifyAttributes,
+		Filter: baseDN, // Use BaseDN if it's uniquely identified or the same filter
+		BaseDN: baseDN,
+		Scope:  *scope,
+		ModifyAttributes: bktype.LDAPModifyAttributes{
+			credentialField: []string{string(credBytes)},
+		},
 		LDAPReplyChan:     ldapReplyChan,
-		HTTPClientContext: ctxModify,
+		HTTPClientContext: ctxModifyCred,
 	}
+	// Re-using same Filter and BaseDN/Scope as search
+	credRequest.Filter = filter
 
-	priority := priorityqueue.PriorityLow
-	if !auth.Request.NoAuth {
-		priority = priorityqueue.PriorityMedium
-	}
-
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	priorityqueue.LDAPQueue.Push(credRequest, priority)
 
 	select {
-	case <-ctxModify.Done():
-		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout")
+	case <-ctxModifyCred.Done():
+		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (credential phase)")
 	case ldapReply := <-ldapReplyChan:
-		if isAttributeOrValueExistsError(ldapReply.Err) && objectClass != "" {
-			return nil
-		}
+		util.DebugModuleWithCfg(
+			lctx,
+			lm.effectiveCfg(),
+			lm.effectiveLogger(),
+			definitions.DbgWebAuthn,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "WebAuthn LDAP save result",
+			definitions.LogKeyError, ldapReply.Err,
+		)
 
 		return ldapReply.Err
 	}
@@ -368,8 +502,6 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		return errors.ErrLDAPConfig.WithDetail("Missing LDAP webauthn_credential_field mapping")
 	}
 
-	objectClass := protocol.GetWebAuthnObjectClass()
-
 	filter, err := protocol.GetUserFilter()
 	if err != nil {
 		return err
@@ -385,7 +517,80 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		return err
 	}
 
+	objectClass := protocol.GetWebAuthnObjectClass()
+
 	username := handleMasterUserMode(lm.effectiveCfg(), auth)
+	if username == "" {
+		util.DebugModuleWithCfg(
+			lctx,
+			lm.effectiveCfg(),
+			lm.effectiveLogger(),
+			definitions.DbgWebAuthn,
+			definitions.LogKeyGUID, auth.Runtime.GUID,
+			definitions.LogKeyMsg, "WebAuthn LDAP update skipped: empty username",
+			"pool", lm.poolName,
+		)
+
+		return nil
+	}
+
+	// Step 1: Search for user to check current objectClasses
+	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
+	ctxSearch, cancelSearch := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch())
+	defer cancelSearch()
+
+	ldapSearchRequest := &bktype.LDAPRequest{
+		GUID:     auth.Runtime.GUID,
+		Command:  definitions.LDAPSearch,
+		PoolName: lm.poolName,
+		MacroSource: &util.MacroSource{
+			Username: username,
+			Protocol: *auth.Request.Protocol,
+		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		SearchAttributes:  []string{"objectClass"},
+		Scope:             *scope,
+		LDAPReplyChan:     ldapReplyChan,
+		HTTPClientContext: ctxSearch,
+	}
+
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	priorityqueue.LDAPQueue.Push(ldapSearchRequest, priority)
+
+	var currentObjectClasses []string
+	select {
+	case <-ctxSearch.Done():
+		return errors.ErrLDAPSearchTimeout
+	case ldapReply := <-ldapReplyChan:
+		if ldapReply.Err != nil {
+			return ldapReply.Err
+		}
+
+		if values, ok := ldapReply.Result["objectClass"]; ok {
+			for _, val := range values {
+				if strVal, ok := val.(string); ok {
+					currentObjectClasses = append(currentObjectClasses, strVal)
+				}
+			}
+		}
+	}
+
+	hasRequiredObjectClass := false
+	if objectClass == "" {
+		hasRequiredObjectClass = true
+	} else {
+		for _, oc := range currentObjectClasses {
+			if strings.EqualFold(oc, objectClass) {
+				hasRequiredObjectClass = true
+				break
+			}
+		}
+	}
 
 	oldCredBytes := []byte(oldCredential.RawJSON)
 	if len(oldCredBytes) == 0 {
@@ -400,59 +605,48 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		return err
 	}
 
-	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
+	// Step 2: Add objectClass if missing
+	if !hasRequiredObjectClass {
+		ctxModifyOC, cancelModifyOC := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
+		defer cancelModifyOC()
 
-	// Step 1: Delete old credential
-	ctxDelete, cancelDelete := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
-	defer cancelDelete()
+		ocRequest := &bktype.LDAPRequest{
+			GUID:       auth.Runtime.GUID,
+			Command:    definitions.LDAPModify,
+			PoolName:   lm.poolName,
+			SubCommand: definitions.LDAPModifyAdd,
+			MacroSource: &util.MacroSource{
+				Username: username,
+				Protocol: *auth.Request.Protocol,
+			},
+			Filter: filter,
+			BaseDN: baseDN,
+			Scope:  *scope,
+			ModifyAttributes: bktype.LDAPModifyAttributes{
+				"objectClass": []string{objectClass},
+			},
+			LDAPReplyChan:     ldapReplyChan,
+			HTTPClientContext: ctxModifyOC,
+		}
 
-	deleteModifyAttributes := bktype.LDAPModifyAttributes{
-		credentialField: []string{string(oldCredBytes)},
-	}
+		priorityqueue.LDAPQueue.Push(ocRequest, priority)
 
-	deleteRequest := &bktype.LDAPRequest{
-		GUID:       auth.Runtime.GUID,
-		Command:    definitions.LDAPModify,
-		PoolName:   lm.poolName,
-		SubCommand: definitions.LDAPModifyDelete,
-		MacroSource: &util.MacroSource{
-			Username: username,
-			Protocol: *auth.Request.Protocol,
-		},
-		Filter:            filter,
-		BaseDN:            baseDN,
-		Scope:             *scope,
-		ModifyAttributes:  deleteModifyAttributes,
-		LDAPReplyChan:     ldapReplyChan,
-		HTTPClientContext: ctxDelete,
-	}
-
-	priority := priorityqueue.PriorityLow
-	if !auth.Request.NoAuth {
-		priority = priorityqueue.PriorityMedium
-	}
-
-	priorityqueue.LDAPQueue.Push(deleteRequest, priority)
-
-	select {
-	case <-ctxDelete.Done():
-		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (delete phase)")
-	case ldapReply := <-ldapReplyChan:
-		if ldapReply.Err != nil {
-			return ldapReply.Err
+		select {
+		case <-ctxModifyOC.Done():
+			return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (objectClass phase)")
+		case ldapReply := <-ldapReplyChan:
+			if ldapReply.Err != nil && !isAttributeOrValueExistsError(ldapReply.Err) {
+				return ldapReply.Err
+			}
 		}
 	}
 
-	// Step 2: Add new credential
+	// Step 3: Add new credential
 	ctxAdd, cancelAdd := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
 	defer cancelAdd()
 
 	addModifyAttributes := bktype.LDAPModifyAttributes{
 		credentialField: []string{string(newCredBytes)},
-	}
-
-	if objectClass != "" {
-		addModifyAttributes["objectClass"] = []string{objectClass}
 	}
 
 	addRequest := &bktype.LDAPRequest{
@@ -478,6 +672,46 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 	case <-ctxAdd.Done():
 		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (add phase)")
 	case ldapReply := <-ldapReplyChan:
+		if ldapReply.Err != nil {
+			return ldapReply.Err
+		}
+	}
+
+	// Step 4: Delete old credential
+	ctxDelete, cancelDelete := context.WithTimeout(lctx, lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPModify())
+	defer cancelDelete()
+
+	deleteModifyAttributes := bktype.LDAPModifyAttributes{
+		credentialField: []string{string(oldCredBytes)},
+	}
+
+	deleteRequest := &bktype.LDAPRequest{
+		GUID:       auth.Runtime.GUID,
+		Command:    definitions.LDAPModify,
+		PoolName:   lm.poolName,
+		SubCommand: definitions.LDAPModifyDelete,
+		MacroSource: &util.MacroSource{
+			Username: username,
+			Protocol: *auth.Request.Protocol,
+		},
+		Filter:            filter,
+		BaseDN:            baseDN,
+		Scope:             *scope,
+		ModifyAttributes:  deleteModifyAttributes,
+		LDAPReplyChan:     ldapReplyChan,
+		HTTPClientContext: ctxDelete,
+	}
+
+	priorityqueue.LDAPQueue.Push(deleteRequest, priority)
+
+	select {
+	case <-ctxDelete.Done():
+		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (delete phase)")
+	case ldapReply := <-ldapReplyChan:
+		if isNoSuchAttributeError(ldapReply.Err) {
+			return nil
+		}
+
 		return ldapReply.Err
 	}
 }

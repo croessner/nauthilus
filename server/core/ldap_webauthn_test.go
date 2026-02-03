@@ -347,12 +347,37 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 	auth.Request.Protocol.Set("oidc")
 
 	go func() {
+		// First: Search for objectClass
 		req := priorityqueue.LDAPQueue.Pop("test")
+		if req != nil {
+			assert.Equal(t, definitions.LDAPSearch, req.Command)
+			assert.Equal(t, []string{"objectClass"}, req.SearchAttributes)
+			if req.LDAPReplyChan != nil {
+				req.LDAPReplyChan <- &bktype.LDAPReply{
+					Result: bktype.AttributeMapping{
+						"objectClass": {"inetOrgPerson"},
+					},
+				}
+			}
+		}
+
+		// Second: Add objectClass
+		req = priorityqueue.LDAPQueue.Pop("test")
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
 			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
-			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			assert.Equal(t, []string{"nauthilusFido2Account"}, req.ModifyAttributes["objectClass"])
+			if req.LDAPReplyChan != nil {
+				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
+			}
+		}
+
+		// Third: Add credential
+		req = priorityqueue.LDAPQueue.Pop("test")
+		if req != nil {
+			assert.Equal(t, definitions.LDAPModify, req.Command)
+			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
+			assert.Contains(t, req.ModifyAttributes, "nauthilusFido2Credential")
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
@@ -474,11 +499,35 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 	auth.Request.Protocol.Set("oidc")
 
 	go func() {
-		// First: Delete old credential
+		// First: Search for objectClass
 		req := priorityqueue.LDAPQueue.Pop("test")
 		if req != nil {
+			assert.Equal(t, definitions.LDAPSearch, req.Command)
+			if req.LDAPReplyChan != nil {
+				req.LDAPReplyChan <- &bktype.LDAPReply{
+					Result: bktype.AttributeMapping{
+						"objectClass": {"inetOrgPerson"},
+					},
+				}
+			}
+		}
+
+		// Second: Add objectClass
+		req = priorityqueue.LDAPQueue.Pop("test")
+		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
+			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
+			assert.Equal(t, []string{"nauthilusFido2Account"}, req.ModifyAttributes["objectClass"])
+			if req.LDAPReplyChan != nil {
+				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
+			}
+		}
+
+		// Third: Add new credential
+		req = priorityqueue.LDAPQueue.Pop("test")
+		if req != nil {
+			assert.Equal(t, definitions.LDAPModify, req.Command)
+			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
 			_, hasObjectClass := req.ModifyAttributes["objectClass"]
 			assert.False(t, hasObjectClass)
@@ -487,13 +536,14 @@ func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
 			}
 		}
 
-		// Second: Add new credential
+		// Fourth: Delete old credential
 		req = priorityqueue.LDAPQueue.Pop("test")
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
+			assert.Equal(t, definitions.LDAPModifyDelete, req.SubCommand)
 			assert.Equal(t, ldap.ScopeWholeSubtree, req.Scope.Get())
-			assert.Equal(t, []string{"nauthilusFido2Account"}, req.ModifyAttributes["objectClass"])
+			_, hasObjectClass := req.ModifyAttributes["objectClass"]
+			assert.False(t, hasObjectClass)
 			if req.LDAPReplyChan != nil {
 				req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 			}
