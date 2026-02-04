@@ -5,10 +5,15 @@ SAML2TESTCLIENT_OUTPUT := nauthilus/bin/saml2testclient
 PKG_LIST := $(shell go list ./... | grep -v /vendor/)
 GIT_TAG=$(shell git describe --tags --abbrev=0)
 GIT_COMMIT=$(shell git rev-parse --short HEAD)
+SBOM_OUTPUT_DIR ?= sbom
+SBOM_OUTPUT_PREFIX ?= nauthilus
+SBOM_DOCKER_IMAGE ?= ghcr.io/croessner/nauthilus:latest
+SBOM_DOCKER_PULL ?= true
+SBOM_SYFT_VERSION ?= v1.16.0
 
 export GOEXPERIMENT := greenteagc
 
-.PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient clean install uninstall
+.PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient clean install uninstall sbom
 
 all: build build-client build-oidctestclient build-saml2testclient
 
@@ -35,6 +40,15 @@ build-oidctestclient: $(OIDCTESTCLIENT_OUTPUT)
 
 build-saml2testclient: $(SAML2TESTCLIENT_OUTPUT)
 	go build -mod=vendor -trimpath -v -o $(SAML2TESTCLIENT_OUTPUT) ./contrib/saml2testclient
+
+sbom: ## Generate SBOMs (source and Docker image)
+	./scripts/sbom.sh \
+		--output-dir $(SBOM_OUTPUT_DIR) \
+		--output-prefix $(SBOM_OUTPUT_PREFIX) \
+		--source-dir . \
+		--docker-image $(SBOM_DOCKER_IMAGE) \
+		--docker-pull $(SBOM_DOCKER_PULL) \
+		--syft-version $(SBOM_SYFT_VERSION)
 
 clean: ## Remove previous build
 	[ -x $(OUTPUT) ] && rm -f $(OUTPUT) || true

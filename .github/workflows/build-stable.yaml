@@ -11,6 +11,7 @@ env:
   DESC: 'Multi purpose authentication server'
   CHGELOG_VERSION: '0.15.4'
   GOEXPERIMENT: greenteagc
+  SYFT_VERSION: 'v1.16.0'
 
 jobs:
   build-artifact:
@@ -52,12 +53,23 @@ jobs:
           )
         shell: bash
 
+      - name: Generate SBOMs
+        run: |
+          assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          ./scripts/sbom.sh \
+            --source-dir "dist/$assets" \
+            --output-dir "dist/$assets" \
+            --output-prefix "$assets" \
+            --skip-docker \
+            --syft-version "${{ env.SYFT_VERSION }}"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             dist/*.tar.gz
+            dist/*/*.spdx.json
 
   build-linux-packages:
     runs-on: ubuntu-latest
@@ -129,6 +141,20 @@ jobs:
           desc: '${{ env.DESC }}'
           summary: '${{ env.DESC }}'
 
+      - name: Generate package SBOMs
+        run: |
+          mkdir -p dist/sbom
+          for pkg in ./*.deb ./*.rpm; do
+            if [ -f "$pkg" ]; then
+              ./scripts/sbom.sh \
+                --file "$pkg" \
+                --output-dir dist/sbom \
+                --skip-source \
+                --skip-docker \
+                --syft-version "${{ env.SYFT_VERSION }}"
+            fi
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -136,6 +162,7 @@ jobs:
           path: |
             ./*.deb
             ./*.rpm
+            dist/sbom/*.spdx.json
 
   create-release:
     runs-on: ubuntu-latest
@@ -188,7 +215,9 @@ jobs:
       - name: Upload Asset
         env:
           GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh release upload ${{ github.ref_name }} ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.asset_suffix }}
+        run: |
+          assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          gh release upload ${{ github.ref_name }} "dist/${assets}${{ matrix.asset_suffix }}" "dist/${assets}/${assets}-source.spdx.json"
 
   upload-linux-packages:
     runs-on: ubuntu-latest
@@ -216,4 +245,5 @@ jobs:
       - name: Upload Asset
         env:
           GITHUB_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh release upload ${{ github.ref_name }} $ASSET_NAME
+        run: |
+          gh release upload ${{ github.ref_name }} "$ASSET_NAME" "dist/sbom/${ASSET_NAME}.spdx.json"

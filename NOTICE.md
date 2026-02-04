@@ -36,4 +36,12 @@ The following libraries are used in this project:
 | [golang.org/x/oauth2](http://golang.org/x/oauth2)                                 | BSD-3-Clause |
 | [golang.org/x/text](http://golang.org/x/text)                                     | BSD-3-Clause |
 
+SBOM (Software Bill of Materials):
+
+- Generate SBOMs via `make sbom` (source and Docker image).
+- Output files are written to `sbom/` as pretty-printed SPDX JSON:
+    - `nauthilus-source.spdx.json`
+    - `nauthilus-image.spdx.json`
+- The script `scripts/sbom.sh` uses `syft` and can be customized via Makefile variables.
+
 Many thanks to all these projects!
