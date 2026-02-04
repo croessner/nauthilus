@@ -16,7 +16,10 @@
 package priorityqueue
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +27,7 @@ import (
 )
 
 func TestLDAPQueueRouting(t *testing.T) {
-	q := NewLDAPRequestQueue()
+	q := NewLDAPRequestQueue(nil)
 	q.AddPoolName("default")
 	q.AddPoolName("mail")
 
@@ -65,7 +68,7 @@ func TestLDAPQueueRouting(t *testing.T) {
 }
 
 func TestLDAPAuthQueueRouting(t *testing.T) {
-	q := NewLDAPAuthRequestQueue()
+	q := NewLDAPAuthRequestQueue(nil)
 	q.AddPoolName("default")
 	q.AddPoolName("mail")
 
@@ -103,7 +106,7 @@ func TestLDAPAuthQueueRouting(t *testing.T) {
 }
 
 func TestLuaQueueRouting(t *testing.T) {
-	q := NewLuaRequestQueue()
+	q := NewLuaRequestQueue(nil)
 	q.AddBackendName("default")
 	q.AddBackendName("custom")
 
@@ -138,8 +141,45 @@ func TestLuaQueueRouting(t *testing.T) {
 	}
 }
 
+func TestLDAPQueueWarnsWithoutWorker(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	q := NewLDAPRequestQueue(logger)
+	ctx := context.Background()
+	request := &bktype.LDAPRequest{
+		PoolName:          "missing",
+		LDAPReplyChan:     make(chan *bktype.LDAPReply, 1),
+		HTTPClientContext: ctx,
+	}
+
+	q.Push(request, PriorityLow)
+	q.Push(request, PriorityLow)
+
+	output := buf.String()
+	if count := strings.Count(output, "LDAP lookup request queued without active worker"); count != 1 {
+		t.Fatalf("expected single warning, got %d in output: %s", count, output)
+	}
+}
+
+func TestLuaQueueWarnsWithoutWorker(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	q := NewLuaRequestQueue(logger)
+	request := &bktype.LuaRequest{BackendName: "missing"}
+
+	q.Push(request, PriorityLow)
+	q.Push(request, PriorityLow)
+
+	output := buf.String()
+	if count := strings.Count(output, "Lua request queued without active worker"); count != 1 {
+		t.Fatalf("expected single warning, got %d in output: %s", count, output)
+	}
+}
+
 func TestLDAPQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
-	q := NewLDAPRequestQueue()
+	q := NewLDAPRequestQueue(nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -150,7 +190,7 @@ func TestLDAPQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
 }
 
 func TestLDAPAuthQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
-	q := NewLDAPAuthRequestQueue()
+	q := NewLDAPAuthRequestQueue(nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -161,7 +201,7 @@ func TestLDAPAuthQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
 }
 
 func TestLuaQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
-	q := NewLuaRequestQueue()
+	q := NewLuaRequestQueue(nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

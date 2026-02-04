@@ -1,0 +1,62 @@
+{{ template "idp_header.html" . }}
+<div class="max-w-4xl mx-auto mt-10">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold idp-webauthn-title">{{ .Title }}</h1>
+        <a class="btn btn-ghost idp-back-link" href="/mfa/register/home">{{ .BackTo2FA }}</a>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl mb-8">
+        <div class="card-body">
+            <h2 class="card-title">{{ .RegisteredDevices }}</h2>
+
+            {{ if .Devices }}
+            <div class="overflow-x-auto">
+                <table class="table w-full table-fixed">
+                    <thead>
+                    <tr>
+                        <th>{{ .DeviceName }}</th>
+                        <th>{{ .DeviceID }}</th>
+                        <th>{{ .LastUsed }}</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {{ range .Devices }}
+                    <tr>
+                        <td>
+                            <form class="flex items-center gap-2" hx-post="/mfa/webauthn/device/{{ .ID }}/name"
+                                  hx-target="#modal-container">
+                                <input class="input input-bordered input-sm flex-1 min-w-0 max-w-xs" maxlength="64"
+                                       name="name" placeholder="{{ $.UnnamedDevice }}" required type="text"
+                                       value="{{ .Name }}"/>
+                                <button class="btn btn-primary btn-sm" type="submit">
+                                    {{ $.Save }}
+                                </button>
+                            </form>
+                        </td>
+                        <td class="font-mono text-sm break-all whitespace-normal max-w-xs">{{ .ID }}</td>
+                        <td>{{ .LastUsed }}</td>
+                        <td class="text-right">
+                            <button class="btn btn-error btn-sm btn-outline"
+                                    hx-confirm="{{ $.DeleteConfirm }}"
+                                    hx-delete="/mfa/webauthn/device/{{ .ID }}"
+                                    hx-target="#modal-container">
+                                {{ $.Delete }}
+                            </button>
+                        </td>
+                    </tr>
+                    {{ end }}
+                    </tbody>
+                </table>
+            </div>
+            {{ else }}
+            <p>{{ .NoDevicesFound }}</p>
+            {{ end }}
+
+            <div class="card-actions justify-end mt-6">
+                <a class="btn btn-primary" href="/mfa/webauthn/register">{{ .AddDevice }}</a>
+            </div>
+        </div>
+    </div>
+</div>
+{{ template "idp_footer.html" . }}

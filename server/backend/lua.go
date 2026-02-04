@@ -289,7 +289,7 @@ func setupGlobals(ctx context.Context, cfg config.File, logger *slog.Logger, lua
 
 // setLuaRequestParameters determines the Lua command and number of return values for a LuaRequest and modifies the request.
 func setLuaRequestParameters(cfg config.File, L *lua.LState, luaRequest *bktype.LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
-	switch luaRequest.Function {
+	switch luaRequest.Command {
 	case definitions.LuaCommandPassDB:
 		luaCommand = definitions.LuaFnBackendVerifyPassword
 		nret = 2
@@ -299,15 +299,47 @@ func setLuaRequestParameters(cfg config.File, L *lua.LState, luaRequest *bktype.
 		luaCommand = definitions.LuaFnBackendListAccounts
 		nret = 2
 
-		request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(luaRequest.Debug))
-		request.RawSetString(definitions.LuaRequestSession, lua.LString(luaRequest.Session))
+		luaRequest.SetupRequest(L, cfg, request)
 	case definitions.LuaCommandAddMFAValue:
 		luaCommand = definitions.LuaFnBackendAddTOTPSecret
 		nret = 1
 
-		request.RawSetString(definitions.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
-		request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(luaRequest.Debug))
-		request.RawSetString(definitions.LuaRequestSession, lua.LString(luaRequest.Session))
+		luaRequest.SetupRequest(L, cfg, request)
+	case definitions.LuaCommandDeleteMFAValue:
+		luaCommand = definitions.LuaFnBackendDeleteTOTPSecret
+		nret = 1
+
+		luaRequest.SetupRequest(L, cfg, request)
+	case definitions.LuaCommandGetWebAuthnCredentials:
+		luaCommand = definitions.LuaFnBackendGetWebAuthnCredentials
+		nret = 2
+
+		luaRequest.SetupRequest(L, cfg, request)
+	case definitions.LuaCommandSaveWebAuthnCredential:
+		luaCommand = definitions.LuaFnBackendSaveWebAuthnCredential
+		nret = 1
+
+		luaRequest.SetupRequest(L, cfg, request)
+	case definitions.LuaCommandDeleteWebAuthnCredential:
+		luaCommand = definitions.LuaFnBackendDeleteWebAuthnCredential
+		nret = 1
+
+		luaRequest.SetupRequest(L, cfg, request)
+	case definitions.LuaCommandAddTOTPRecoveryCodes:
+		luaCommand = definitions.LuaFnBackendAddTOTPRecoveryCodes
+		nret = 1
+
+		luaRequest.SetupRequest(L, cfg, request)
+	case definitions.LuaCommandDeleteTOTPRecoveryCodes:
+		luaCommand = definitions.LuaFnBackendDeleteTOTPRecoveryCodes
+		nret = 1
+
+		luaRequest.SetupRequest(L, cfg, request)
+	case definitions.LuaCommandUpdateWebAuthnCredential:
+		luaCommand = definitions.LuaFnBackendUpdateWebAuthnCredential
+		nret = 1
+
+		luaRequest.SetupRequest(L, cfg, request)
 	}
 
 	return luaCommand, nret
@@ -375,7 +407,7 @@ func handleReturnTypes(ctx context.Context, cfg config.File, logger *slog.Logger
 		return
 	}
 
-	switch luaRequest.Function {
+	switch luaRequest.Command {
 	case definitions.LuaCommandPassDB:
 		userData := L.ToUserData(-1)
 
@@ -419,6 +451,24 @@ func handleReturnTypes(ctx context.Context, cfg config.File, logger *slog.Logger
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 			Attributes: attributes,
 			Logs:       logs,
+		}
+
+	case definitions.LuaCommandGetWebAuthnCredentials:
+		var credentials []string
+
+		table := L.ToTable(-1)
+		if table != nil {
+			result := convert.LuaValueToGo(table).([]any)
+			for _, v := range result {
+				if str, ok := v.(string); ok {
+					credentials = append(credentials, str)
+				}
+			}
+		}
+
+		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
+			WebAuthnCredentials: credentials,
+			Logs:                logs,
 		}
 
 	default:

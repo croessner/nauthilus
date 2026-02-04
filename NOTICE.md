@@ -18,7 +18,6 @@ The following libraries are used in this project:
 | [github.com/mackerelio/go-osstat](http://github.com/mackerelio/go-osstat)         | Apache-2.0   |
 | [github.com/mitchellh/mapstructure](http://github.com/mitchellh/mapstructure)     | MIT          |
 | [github.com/nicksnyder/go-i18n](http://github.com/nicksnyder/go-i18n)/v2          | MIT          |
-| [github.com/ory/hydra-client-go](http://github.com/ory/hydra-client-go)/v2        | Apache-2.0   |
 | [github.com/patrickmn/go-cache](http://github.com/patrickmn/go-cache)             | MIT          |
 | [github.com/pires/go-proxyproto](http://github.com/pires/go-proxyproto)           | Apache-2.0   |
 | [github.com/pquerna/otp](http://github.com/pquerna/otp)                           | Apache-2.0   |
@@ -36,5 +35,13 @@ The following libraries are used in this project:
 | [golang.org/x/net](http://golang.org/x/net)                                       | BSD-3-Clause |
 | [golang.org/x/oauth2](http://golang.org/x/oauth2)                                 | BSD-3-Clause |
 | [golang.org/x/text](http://golang.org/x/text)                                     | BSD-3-Clause |
+
+SBOM (Software Bill of Materials):
+
+- Generate SBOMs via `make sbom` (source and Docker image).
+- Output files are written to `sbom/` as pretty-printed SPDX JSON:
+    - `nauthilus-source.spdx.json`
+    - `nauthilus-image.spdx.json`
+- The script `scripts/sbom.sh` uses `syft` and can be customized via Makefile variables.
 
 Many thanks to all these projects!

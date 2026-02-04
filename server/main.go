@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/envfx"
+	"github.com/croessner/nauthilus/server/app/languagefx"
 	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/opsfx"
@@ -43,14 +44,10 @@ var (
 
 type bootstrapped struct{}
 
-// newBootstrapped runs the legacy configuration bootstrap and returns a token
-// that enforces ordering for fx providers that depend on configuration being loaded.
-func newBootstrapped() (*bootstrapped, error) {
-	if err := bootfx.SetupConfiguration(); err != nil {
-		return nil, err
-	}
-
-	return &bootstrapped{}, nil
+// newBootstrapped returns a token that enforces ordering for fx providers
+// that depend on configuration being loaded.
+func newBootstrapped() *bootstrapped {
+	return &bootstrapped{}
 }
 
 // rootContextOption provides the root context and cancellation function as interface types.
@@ -72,6 +69,10 @@ func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option
 func main() {
 	bootfx.ParseFlagsAndPrintVersion(version)
 
+	if err := bootfx.SetupConfiguration(); err != nil {
+		stdlog.Fatalln("unable to load config file:", err)
+	}
+
 	ctx, cancel := svcctx.GetCtxWithCancel()
 	stopTimeout := definitions.FxStopTimeout
 
@@ -92,6 +93,7 @@ func main() {
 		fx.Provide(newAccountCache),
 		fx.Provide(newBackendChannel),
 		envfx.Module(),
+		languagefx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),
 		reloadfx.Module(),

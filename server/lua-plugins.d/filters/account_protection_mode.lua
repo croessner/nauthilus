@@ -13,17 +13,18 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
--- Phase 3: Automated per-account protection mode and protocol-agnostic backoff
+-- Phase 3: Automated per-account protection mode and protocol-aware backoff
 -- Implements protection mode decisions based on long-window account metrics and
 -- account-centric attack flags. Applies progressive backoff (sleep) and, for
 -- failing authentications, can return a temporary rejection via filter semantics.
 -- For HTTP/OIDC, we set a Redis flag to allow a frontend to enforce Step-Up/PoW.
 --
 -- Keys used:
---  - ntc:acct:<username>:longwindow (HSET by account_longwindow_metrics.lua)
---  - ntc:multilayer:distributed_attack:accounts (ZSET by account_centric_monitoring.lua)
---  - ntc:acct:<username>:protection (HASH: active, reason, backoff_level, until_ts)
---  - ntc:acct:<username>:stepup (HASH: required=true, reason, until_ts)
+--  - ntc:acct:<username>:proto:<protocol>:longwindow (HSET by account_longwindow_metrics.lua)
+--  - ntc:multilayer:distributed_attack:accounts:proto:<protocol> (ZSET by account_centric_monitoring.lua)
+--  - ntc:acct:<username>:proto:<protocol>:protection (HASH: active, reason, backoff_level, until_ts)
+--  - ntc:acct:<username>:proto:<protocol>:stepup (HASH: required=true, reason, until_ts)
+--  - ntc:acct:protection_active:proto:<protocol> (SET: active usernames)
 --
 -- Env thresholds (defaults conservative):
 --  - PROTECT_THRESH_UNIQ24 default 12
@@ -57,6 +58,14 @@ local function getenv_num(name, def)
     return v
 end
 
+local function protocol_segment(request)
+    local protocol = request.protocol
+    if protocol == nil or protocol == "" then
+        return "unknown"
+    end
+    return protocol
+end
+
 local THRESH_UNIQ24 = getenv_num("PROTECT_THRESH_UNIQ24", 12)
 local THRESH_UNIQ7D = getenv_num("PROTECT_THRESH_UNIQ7D", 30)
 local THRESH_FAIL24 = getenv_num("PROTECT_THRESH_FAIL24", 7)
@@ -76,15 +85,17 @@ end
 
 local function compute_under_protection(pool, username, request)
     -- Check short-lived in-process cache first
-    local ckey = "prot:" .. (username or "")
+    local protocol = protocol_segment(request)
+
+    local ckey = "prot:" .. (username or "") .. ":proto:" .. protocol
     local cached = nauthilus_cache.cache_get(ckey)
     if cached and type(cached) == "table" then
         return cached.under, cached.metrics, cached.backoff_level, true
     end
 
     local tag = nauthilus_keys.account_tag(username)
-    local lw_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":longwindow")
-    local prot_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":protection")
+    local lw_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":longwindow")
+    local prot_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":protection")
 
     -- Pipeline the related user-specific reads (same slot)
     local cmds = {
@@ -113,7 +124,7 @@ local function compute_under_protection(pool, username, request)
     local backoff_level = tonumber(val(5) or "0") or 0
 
     -- Separate call for the global attack set to avoid cross-slot pipeline issues
-    local attacked_val, err_a = nauthilus_redis.redis_zscore(pool, nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts"), username)
+    local attacked_val, err_a = nauthilus_redis.redis_zscore(pool, nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts:proto:" .. protocol), username)
     nauthilus_util.if_error_raise(err_a)
     local attacked = (attacked_val ~= nil and attacked_val ~= false and attacked_val ~= "")
 
@@ -153,6 +164,7 @@ function nauthilus_call_filter(request)
 
     local ip = request.client_ip
     local now = time.unix()
+    local protocol = protocol_segment(request)
 
     -- Evaluate protection state
     local under, m, current_backoff, from_cache = compute_under_protection(CUSTOM_REDIS_POOL, username, request)
@@ -188,7 +200,7 @@ function nauthilus_call_filter(request)
             local until_ts = now + MODE_TTL
             local pipe_cmds = {
                 {
-                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":protection") },
+                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":protection") },
                     {
                         MODE_TTL,
                         "active", "true",
@@ -199,11 +211,11 @@ function nauthilus_call_filter(request)
                     }
                 },
                 {
-                    "run_script", "", "SAddMultiExpire", { nauthilus_util.get_redis_key(request, "acct:protection_active") },
+                    "run_script", "", "SAddMultiExpire", { nauthilus_util.get_redis_key(request, "acct:protection_active:proto:" .. protocol) },
                     { MODE_TTL, username }
                 },
                 {
-                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":stepup") },
+                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":stepup") },
                     {
                         MODE_TTL,
                         "required", "true",
@@ -232,6 +244,7 @@ function nauthilus_call_filter(request)
             caller = N .. ".lua",
             message = "Protection mode active",
             username = username,
+            protocol = protocol,
             client_ip = ip,
             uniq_ips_24h = m.uniq24,
             uniq_ips_7d = m.uniq7d,

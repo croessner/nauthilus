@@ -21,11 +21,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/accountcache"
@@ -78,13 +80,19 @@ func NewDefaultBootstrap(deps HTTPDeps) DefaultBootstrap {
 
 func (b DefaultBootstrap) InitSessionStore() sessions.Store {
 	store := cookie.NewStore(
-		[]byte(b.cfg.GetServer().Frontend.CookieStoreAuthKey),
-		[]byte(b.cfg.GetServer().Frontend.CookieStoreEncKey),
+		[]byte(b.cfg.GetServer().GetFrontend().GetCookieStoreAuthKey()),
+		[]byte(b.cfg.GetServer().GetFrontend().GetCookieStoreEncKey()),
 	)
+
+	secure := true
+	if b.env.GetDevMode() {
+		secure = false
+	}
+
 	store.Options(sessions.Options{
 		Path:     "/",
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	return store
@@ -221,15 +229,12 @@ func (c DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
 }
 
 // RegisterRoutes wires health and metrics routes, then (if enabled) the frontend
-// routes (Hydra, 2FA, WebAuthn, Notify) and finally the backchannel routes. The
+// routes (IdP) and finally the backchannel routes. The
 // order is kept to preserve exact behavior of the legacy implementation.
 func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
-	setupHydra func(*gin.Engine),
-	setup2FA func(*gin.Engine),
-	setupWebAuthn func(*gin.Engine),
-	setupNotify func(*gin.Engine),
+	setupIdP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 ) {
 	if setupHealth != nil {
@@ -241,12 +246,34 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	}
 
 	if c.cfg.GetServer().Frontend.Enabled {
+		r.SetFuncMap(template.FuncMap{
+			"int": func(v any) int {
+				switch x := v.(type) {
+				case int:
+					return x
+				case int32:
+					return int(x)
+				case int64:
+					return int(x)
+				case float32:
+					return int(x)
+				case float64:
+					return int(x)
+				default:
+					return 0
+				}
+			},
+			"upper": func(s string) string {
+				return strings.ToUpper(s)
+			},
+		})
+
 		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
 		rb := approuter.NewRouter(c.cfg)
 		rb.Engine = r
 
-		rb.WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify)
+		rb.WithFrontend(setupIdP)
 	}
 
 	rb := approuter.NewRouter(c.cfg)
@@ -612,10 +639,7 @@ func NewDefaultHTTPApp(deps HTTPDeps) *DefaultHTTPApp {
 func (a *DefaultHTTPApp) Start(ctx context.Context,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
-	setupHydra func(*gin.Engine),
-	setup2FA func(*gin.Engine),
-	setupWebAuthn func(*gin.Engine),
-	setupNotify func(*gin.Engine),
+	setupIdP func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 	signals ServerSignals,
 ) {
@@ -641,7 +665,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	srv := a.HTTPServerFactory.New(router)
 
 	a.RouterComposer.ApplyCoreMiddlewares(router)
-	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel)
+	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupIdP, setupBackchannel)
 
 	proxy := a.ProxyProvider.Get()
 	if proxy != nil {

@@ -51,6 +51,10 @@ func (globalTestClient) GetReadPipeline() redis.Pipeliner {
 
 func (globalTestClient) Close() {}
 
+func (globalTestClient) GetSecurityManager() *rediscli.SecurityManager {
+	return rediscli.GetClient().GetSecurityManager()
+}
+
 func init() {
 	SetDefaultClient(globalTestClient{})
 }

@@ -211,7 +211,7 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 
 	switch a.Request.Service {
 	case definitions.ServNginx:
-		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Env, w.deps.Logger, ctx, a)
+		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Logger, ctx, a)
 	case definitions.ServHeader:
 		setHeaderHeaders(ctx, a)
 	case definitions.ServJSON:

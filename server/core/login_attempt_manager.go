@@ -127,7 +127,7 @@ func (a *AuthState) ensureLAM() *defaultLoginAttemptManager {
 	}
 
 	if a.Security.attempts == nil {
-		a.Security.attempts = newLoginAttemptManager(uint(getDefaultEnvironment().GetMaxLoginAttempts()))
+		a.Security.attempts = newLoginAttemptManager(uint(a.Cfg().GetServer().GetMaxLoginAttempts()))
 	}
 
 	// keep legacy mirror in sync (FailCount semantics)

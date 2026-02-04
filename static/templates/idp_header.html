@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="{{ .LanguageTag }}">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>{{ .Title }} - Nauthilus</title>
+    <link href="/static/css/daisyui.min.css" rel="stylesheet" type="text/css"/>
+    <link href="/static/css/idp-theme.css" rel="stylesheet" type="text/css"/>
+    <script src="/static/js/tailwind.min.js"></script>
+    <script src="/static/js/htmx.min.js"></script>
+    <script>
+        (function () {
+            const getPreferredTheme = () => localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            const setTheme = (theme) => document.documentElement.setAttribute('data-theme', theme);
+
+            setTheme(getPreferredTheme());
+
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+                if (!localStorage.getItem('theme')) {
+                    setTheme(e.matches ? 'dark' : 'light');
+                }
+            });
+        })();
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+        }
+
+        document.addEventListener('htmx:confirm', function (evt) {
+            if (evt.target.hasAttribute('hx-confirm')) {
+                evt.preventDefault();
+
+                const title = "{{ .ConfirmTitle }}";
+                const yesText = "{{ .ConfirmYes }}";
+                const noText = "{{ .ConfirmNo }}";
+                const message = evt.detail.question;
+
+                const modalHtml = `
+                    <div class="modal modal-open" id="confirm-modal">
+                        <div class="modal-box">
+                            <h3 class="font-bold text-lg text-primary">${title}</h3>
+                            <p class="py-4">${message}</p>
+                            <div class="modal-action">
+                                <button class="btn btn-primary" id="confirm-yes">${yesText}</button>
+                                <button class="btn" id="confirm-no">${noText}</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const container = document.getElementById('modal-container') || document.body;
+                container.insertAdjacentHTML('beforeend', modalHtml);
+
+                document.getElementById('confirm-yes').addEventListener('click', function () {
+                    evt.detail.issueRequest(true);
+                    document.getElementById('confirm-modal').remove();
+                });
+
+                document.getElementById('confirm-no').addEventListener('click', function () {
+                    document.getElementById('confirm-modal').remove();
+                });
+            }
+        });
+    </script>
+    <style>
+        [data-theme='dark'] .theme-icon-light {
+            display: block;
+        }
+
+        [data-theme='dark'] .theme-icon-dark {
+            display: none;
+        }
+
+        [data-theme='light'] .theme-icon-light {
+            display: none;
+        }
+
+        [data-theme='light'] .theme-icon-dark {
+            display: block;
+        }
+    </style>
+    {{ if .DevMode }}
+    <script>
+        htmx.logAll();
+    </script>
+    {{ end }}
+</head>
+<body class="min-h-screen bg-base-200">
+{{ if .DevMode }}
+<div class="bg-warning text-warning-content text-center py-1 text-xs font-bold">
+    DEVELOPER MODE ACTIVE - SESSION COOKIES ARE NOT SECURE
+</div>
+{{ end }}
+<div class="navbar bg-base-100 shadow-lg">
+    <div class="flex-1">
+        <a class="btn btn-ghost normal-case text-xl idp-header-title" href="https://nauthilus.org/" target="_blank">
+            <img alt="Nauthilus Logo" class="idp-header-logo" src="/static/img/logo.png"/>
+            Nauthilus IdP
+        </a>
+    </div>
+    <div class="flex-none">
+        <button class="btn btn-ghost btn-circle mr-2" onclick="toggleTheme()" title="Toggle Theme">
+            <svg class="theme-icon-dark h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
+                      stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+            </svg>
+            <svg class="theme-icon-light h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 3v1m0 16v1m9-9h-1M4 9H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+                      stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+            </svg>
+        </button>
+        <div class="dropdown dropdown-end mr-4">
+            <label class="btn btn-ghost" tabindex="0">
+                {{ .LanguageCurrentName }}
+                <svg class="fill-current" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
+                </svg>
+            </label>
+            <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52" tabindex="0">
+                {{ range .LanguagePassive }}
+                <li><a href="{{ .LanguageLink }}">{{ .LanguageName }}</a></li>
+                {{ end }}
+            </ul>
+        </div>
+        {{ if .Username }}
+        <div class="dropdown dropdown-end">
+            <label class="btn btn-ghost btn-circle avatar" tabindex="0">
+                <div class="w-10 rounded-full bg-primary text-primary-content flex items-center justify-center">
+                    <span class="text-xl font-bold">{{ slice .Username 0 1 | upper }}</span>
+                </div>
+            </label>
+            <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52" tabindex="0">
+                <li><a href="/mfa/register/home">2FA Verwaltung</a></li>
+                <li><a href="/oidc/logout">Logout</a></li>
+            </ul>
+        </div>
+        {{ end }}
+    </div>
+</div>
+
+<main class="container mx-auto p-4 md:p-8">

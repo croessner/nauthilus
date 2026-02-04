@@ -17,6 +17,7 @@ package util
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
@@ -28,6 +29,7 @@ import (
 	"hash"
 	stdlog "log"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -441,6 +443,25 @@ func WithNotAvailable(value string) string {
 	return value
 }
 
+// RequestResource derives a Prometheus resource label from HTTP context/request data.
+// It prefers the Gin route FullPath when available, then falls back to URL path
+// or a stable fallback label.
+func RequestResource(httpCtx *gin.Context, httpReq *http.Request, fallback string) string {
+	if httpCtx != nil {
+		return httpCtx.FullPath()
+	}
+
+	if httpReq != nil && httpReq.URL != nil {
+		return httpReq.URL.Path
+	}
+
+	if fallback != "" {
+		return fallback
+	}
+
+	return "unknown_resource"
+}
+
 // logNetworkError logs a network error message.
 // a.logNetworkError(ipOrNet, err)
 func logNetworkError(logger *slog.Logger, guid, ipOrNet string, err error) {
@@ -826,4 +847,21 @@ func ApplyStringField(src string, dest *string) {
 	if src != "" && dest != nil {
 		*dest = src
 	}
+}
+
+// GenerateRandomString generates a cryptographically secure random string of a given length.
+func GenerateRandomString(n int) (string, error) {
+	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+	ret := make([]byte, n)
+	for i := 0; i < n; i++ {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		if err != nil {
+			return "", err
+		}
+
+		ret[i] = letters[num.Int64()]
+	}
+
+	return string(ret), nil
 }

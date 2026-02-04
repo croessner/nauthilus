@@ -30,6 +30,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
+	"github.com/croessner/nauthilus/server/util"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -67,7 +68,8 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "lua_backend_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "lua_backend_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -141,7 +143,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	defer cancelLua()
 
 	luaRequest := &bktype.LuaRequest{
-		Function:          definitions.LuaCommandPassDB,
+		Command:           definitions.LuaCommandPassDB,
 		BackendName:       lm.backendName,
 		Service:           auth.Request.Service,
 		Protocol:          auth.Request.Protocol,
@@ -271,7 +273,8 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "lua_account_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "lua_account_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -308,9 +311,10 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	defer cancelLua()
 
 	luaRequest := &bktype.LuaRequest{
-		Function:          definitions.LuaCommandListAccounts,
+		Command:           definitions.LuaCommandListAccounts,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
 		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
@@ -377,7 +381,8 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "lua_store_totp_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "lua_store_totp_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -411,10 +416,103 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	defer cancelLua()
 
 	luaRequest := &bktype.LuaRequest{
-		Function:          definitions.LuaCommandAddMFAValue,
+		Command:           definitions.LuaCommandAddMFAValue,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
 		TOTPSecret:        totp.GetValue(),
+		HTTPClientRequest: auth.Request.HTTPClientRequest,
+		HTTPClientContext: ctxLua,
+		LuaReplyChan:      luaReplyChan,
+		CommonRequest:     commonRequest,
+	}
+
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	// Use priority queue instead of channel
+	priorityqueue.LuaQueue.Push(luaRequest, priority)
+
+	luaBackendResult = <-luaReplyChan
+	if luaBackendResult.Err != nil {
+		err = luaBackendResult.Err
+
+		return
+	}
+
+	return
+}
+
+// DeleteTOTPSecret removes the TOTP secret from a Lua backend logic.
+func (lm *luaManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
+	// Tracing: Lua backend delete TOTP
+	tr := monittrace.New("nauthilus/lua_backend")
+	mctx, msp := tr.Start(auth.Ctx(), "lua.delete_totp",
+		attribute.String("backend_name", lm.backendName),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
+	)
+
+	_ = mctx
+
+	defer func() {
+		if err != nil {
+			msp.RecordError(err)
+		}
+
+		msp.End()
+	}()
+
+	var (
+		luaBackendResult *lualib.LuaBackendResult
+		protocol         *config.LuaSearchProtocol
+	)
+
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTP, "lua_delete_totp_request_total", resource)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
+	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Request.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+		return
+	}
+
+	luaReplyChan := make(chan *lualib.LuaBackendResult)
+
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(commonRequest)
+
+	// Set the fields
+	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Service = auth.Request.Service
+	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.Username = auth.Request.Username
+	commonRequest.ClientIP = auth.Request.ClientIP
+	commonRequest.ClientPort = auth.Request.XClientPort
+	commonRequest.LocalIP = auth.Request.XLocalIP
+	commonRequest.LocalPort = auth.Request.XPort
+	commonRequest.OIDCCID = auth.Request.OIDCCID
+
+	// Derive a timeout context for Lua backend work (delete TOTP)
+	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
+	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
+	defer cancelLua()
+
+	luaRequest := &bktype.LuaRequest{
+		Command:           definitions.LuaCommandDeleteMFAValue,
+		BackendName:       lm.backendName,
+		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
 		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
@@ -442,6 +540,161 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	}
 
 	return
+}
+
+// AddTOTPRecoveryCodes adds the specified TOTP recovery codes to the user's authentication state in the Lua backend.
+func (lm *luaManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.TOTPRecovery) (err error) {
+	tr := monittrace.New("nauthilus/lua_backend")
+	lctx, lsp := tr.Start(auth.Ctx(), "lua.add_totp_recovery",
+		attribute.String("backend_name", lm.backendName),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
+	)
+
+	_ = lctx
+
+	defer lsp.End()
+
+	var luaBackendResult *lualib.LuaBackendResult
+
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTPRecovery, "lua_store_totp_recovery_request_total", resource)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
+	luaReplyChan := make(chan *lualib.LuaBackendResult)
+
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(commonRequest)
+
+	// Set the fields
+	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.UserFound = true
+	commonRequest.Authenticated = true
+	commonRequest.NoAuth = auth.Request.NoAuth
+	commonRequest.Service = auth.Request.Service
+	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ClientIP = auth.Request.ClientIP
+	commonRequest.ClientPort = auth.Request.XClientPort
+	commonRequest.ClientHost = auth.Request.ClientHost
+	commonRequest.ClientID = auth.Request.XClientID
+	commonRequest.UserAgent = auth.Request.UserAgent
+	commonRequest.LocalIP = auth.Request.XLocalIP
+	commonRequest.LocalPort = auth.Request.XPort
+	commonRequest.Username = auth.Request.Username
+	commonRequest.Account = auth.GetAccount()
+	commonRequest.TOTPRecoveryCodes = recovery.GetCodes()
+
+	luaRequest := &bktype.LuaRequest{
+		Command:       definitions.LuaCommandAddTOTPRecoveryCodes,
+		BackendName:   lm.backendName,
+		Context:       auth.Runtime.Context,
+		LuaReplyChan:  luaReplyChan,
+		CommonRequest: commonRequest,
+	}
+
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	priorityqueue.LuaQueue.Push(luaRequest, priority)
+
+	_, wSpan := tr.Start(lctx, "lua.add_totp_recovery.wait")
+	luaBackendResult = <-luaReplyChan
+	wSpan.End()
+
+	if luaBackendResult.Err != nil {
+		lsp.RecordError(luaBackendResult.Err)
+	}
+
+	return luaBackendResult.Err
+}
+
+// DeleteTOTPRecoveryCodes removes all TOTP recovery codes for the user in the Lua backend.
+func (lm *luaManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) {
+	tr := monittrace.New("nauthilus/lua_backend")
+	lctx, lsp := tr.Start(auth.Ctx(), "lua.delete_totp_recovery",
+		attribute.String("backend_name", lm.backendName),
+		attribute.String("service", auth.Request.Service),
+		attribute.String("username", auth.Request.Username),
+		attribute.String("protocol", auth.Request.Protocol.Get()),
+	)
+
+	_ = lctx
+
+	defer lsp.End()
+
+	var luaBackendResult *lualib.LuaBackendResult
+
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTPRecovery, "lua_delete_totp_recovery_request_total", resource)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
+	luaReplyChan := make(chan *lualib.LuaBackendResult)
+
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+
+	defer lualib.PutCommonRequest(commonRequest)
+
+	// Set the fields
+	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.UserFound = true
+	commonRequest.Authenticated = true
+	commonRequest.NoAuth = auth.Request.NoAuth
+	commonRequest.Service = auth.Request.Service
+	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ClientIP = auth.Request.ClientIP
+	commonRequest.ClientPort = auth.Request.XClientPort
+	commonRequest.ClientHost = auth.Request.ClientHost
+	commonRequest.ClientID = auth.Request.XClientID
+	commonRequest.UserAgent = auth.Request.UserAgent
+	commonRequest.LocalIP = auth.Request.XLocalIP
+	commonRequest.LocalPort = auth.Request.XPort
+	commonRequest.Username = auth.Request.Username
+	commonRequest.Account = auth.GetAccount()
+
+	luaRequest := &bktype.LuaRequest{
+		Command:       definitions.LuaCommandDeleteTOTPRecoveryCodes,
+		BackendName:   lm.backendName,
+		Context:       auth.Runtime.Context,
+		LuaReplyChan:  luaReplyChan,
+		CommonRequest: commonRequest,
+	}
+
+	priority := priorityqueue.PriorityLow
+	if !auth.Request.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	priorityqueue.LuaQueue.Push(luaRequest, priority)
+
+	_, wSpan := tr.Start(lctx, "lua.delete_totp_recovery.wait")
+	luaBackendResult = <-luaReplyChan
+	wSpan.End()
+
+	if luaBackendResult.Err != nil {
+		lsp.RecordError(luaBackendResult.Err)
+	}
+
+	return luaBackendResult.Err
 }
 
 var _ BackendManager = &luaManagerImpl{}

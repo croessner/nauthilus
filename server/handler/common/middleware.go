@@ -18,14 +18,14 @@ package common
 import (
 	"log/slog"
 
-	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
+	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 
 	"github.com/gin-contrib/sessions"
@@ -36,20 +36,12 @@ import (
 
 // CreateMiddlewareChain constructs the standard middleware chain for frontend routes
 // including sessions, CSRF, Lua context, language handling and endpoint protection.
-func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, sessionStore sessions.Store) []gin.HandlerFunc {
-	deps := core.AuthDeps{
-		Cfg:          cfg,
-		Logger:       logger,
-		Redis:        redisClient,
-		AccountCache: accountCache,
-		Channel:      backend.NewChannel(cfg),
-	}
-
+func CreateMiddlewareChain(cfg config.File, logger *slog.Logger, _ rediscli.Client, _ *accountcache.Manager, langManager corelang.Manager, sessionStore sessions.Store) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
 		sessions.Sessions(definitions.SessionName, sessionStore),
 		adapter.Wrap(nosurf.NewPure),
 		mdlua.LuaContextMiddleware(),
-		core.WithLanguageMiddleware(deps),
+		i18n.WithLanguage(cfg, logger, langManager),
 		mdauth.ProtectEndpointMiddleware(cfg, logger),
 	}
 }

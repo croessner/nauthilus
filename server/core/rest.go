@@ -199,7 +199,7 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 		}
 	}
 
-	if a.Request.Service == definitions.ServOryHydra {
+	if a.Request.Service == definitions.ServIdP {
 		a.handleMasterUserMode()
 	}
 
@@ -266,7 +266,7 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 		return
 	}
 
-	if a.Request.Service == definitions.ServOryHydra {
+	if a.Request.Service == definitions.ServIdP {
 		a.handleMasterUserMode()
 	}
 
@@ -1430,6 +1430,12 @@ func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
 	userCmd := &admin.FlushUserCmd{}
 	logger := deps.effectiveLogger()
 
+	if err := ctx.ShouldBindJSON(userCmd); err != nil {
+		HandleJSONError(ctx, err)
+
+		return
+	}
+
 	jobDeps := asyncJobDeps{Cfg: deps.Cfg, Logger: deps.Logger, Redis: deps.Redis}
 	jobID, err := createAsyncJob(ctx.Request.Context(), "CACHE_FLUSH", jobDeps)
 	if err != nil {
@@ -1445,12 +1451,6 @@ func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
 
 		return len(removedKeys), removedKeys, nil
 	})
-
-	if err := ctx.ShouldBindJSON(userCmd); err != nil {
-		HandleJSONError(ctx, err)
-
-		return
-	}
 
 	level.Debug(logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "async cache flush enqueued", "jobId", jobID)
 

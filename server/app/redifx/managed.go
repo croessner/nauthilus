@@ -109,6 +109,14 @@ func (m *ManagedClient) Close() {
 	}
 }
 
+func (m *ManagedClient) GetSecurityManager() *rediscli.SecurityManager {
+	if c := m.get(); c != nil {
+		return c.GetSecurityManager()
+	}
+
+	return nil
+}
+
 func (m *ManagedClient) Rebuild(cfg config.File, logger *slog.Logger) error {
 	if cfg == nil {
 		return errors.New("config is nil")

@@ -53,6 +53,14 @@ local time = require("time")
 
 local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
+local function protocol_segment(request)
+    local protocol = request.protocol
+    if protocol == nil or protocol == "" then
+        return "unknown"
+    end
+    return protocol
+end
+
 function nauthilus_call_filter(request)
     if request.no_auth then
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
@@ -66,6 +74,8 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
+    local protocol = protocol_segment(request)
+
     -- Hold per-window metrics explicitly
     local uniq_1h, uniq_24h, uniq_7d = 0, 0, 0
     local fails_1h, fails_24h, fails_7d = 0, 0, 0
@@ -75,16 +85,16 @@ function nauthilus_call_filter(request)
     local w1, w2, w3 = windows[1], windows[2], windows[3]
 
     local keys = {
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":ips:" .. w1),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":ips:" .. w2),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":ips:" .. w3),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":fails:" .. w1),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":fails:" .. w2),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":fails:" .. w3),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":metrics:" .. w1),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":metrics:" .. w2),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":metrics:" .. w3),
-        nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts"),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:" .. w1),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:" .. w2),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:" .. w3),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:" .. w1),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:" .. w2),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:" .. w3),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":metrics:" .. w1),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":metrics:" .. w2),
+        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":metrics:" .. w3),
+        nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts:proto:" .. protocol),
     }
 
     local fail_id = ""

@@ -1,0 +1,46 @@
+{{ template "idp_header.html" . }}
+<div class="flex justify-center items-center mt-10">
+    <div class="card w-full max-w-lg bg-base-100 shadow-xl">
+        <div class="card-body items-center text-center">
+            <h2 class="card-title text-2xl mb-4">{{ .Title }}</h2>
+
+            <p class="mb-6">{{ .TOTPMessage }}</p>
+
+            <div class="bg-white p-4 rounded-lg mb-6 shadow-inner" id="qrcode">
+                <!-- QR Code will be rendered here by JavaScript -->
+            </div>
+
+            <div class="bg-base-200 p-4 rounded-lg mb-6 w-full">
+                <p class="font-mono text-sm break-all">{{ .Secret }}</p>
+            </div>
+
+            <form class="w-full" hx-post="/mfa/totp/register" hx-target="#modal-container">
+                <div class="form-control w-full">
+                    <label class="label">
+                        <span class="label-text">{{ .Code }}</span>
+                    </label>
+                    <input autofocus class="input input-bordered w-full text-center text-2xl tracking-widest" maxlength="6"
+                           name="code" placeholder="123456"
+                           required type="text"/>
+                </div>
+
+                <div class="form-control mt-6">
+                    <button class="btn btn-primary" type="submit">{{ .Submit }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/qrcode.min.js"></script>
+<script>
+    new QRCode(document.getElementById("qrcode"), {
+        text: "{{ .QRCode }}",
+        width: 200,
+        height: 200,
+        colorDark: "#000000",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.H
+    });
+</script>
+{{ template "idp_footer.html" . }}

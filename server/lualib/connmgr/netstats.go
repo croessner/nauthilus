@@ -154,6 +154,12 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context, cfg config.Fi
 	defer m.mu.Unlock()
 
 	for target := range m.targets {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		host, _, err := net.SplitHostPort(target)
 		if err != nil {
 			continue
@@ -274,7 +280,7 @@ func (m *ConnectionManager) GetCount(target string) (int, bool) {
 }
 
 // UpdateCounts refreshes the connection counts for all registered targets based on the current network connections.
-func (m *ConnectionManager) UpdateCounts() {
+func (m *ConnectionManager) UpdateCounts(ctx context.Context) {
 	connections, err := psnet.Connections("tcp")
 	if err != nil {
 		logError("Error when retrieving the connections", err)
@@ -327,7 +333,11 @@ func (m *ConnectionManager) UpdateCounts() {
 		info.Count = count
 		m.targets[target] = info
 
-		GenericConnectionChan <- GenericConnection{Target: target, TargetInfo: &info}
+		select {
+		case <-ctx.Done():
+			return
+		case GenericConnectionChan <- GenericConnection{Target: target, TargetInfo: &info}:
+		}
 	}
 }
 
@@ -338,7 +348,7 @@ func (m *ConnectionManager) StartTicker(interval time.Duration) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		m.UpdateCounts()
+		m.UpdateCounts(context.Background())
 	}
 }
 
@@ -353,7 +363,7 @@ func (m *ConnectionManager) StartTickerWithContext(ctx context.Context, interval
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.UpdateCounts()
+			m.UpdateCounts(ctx)
 		}
 	}
 }

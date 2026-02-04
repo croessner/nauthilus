@@ -76,7 +76,7 @@ var defaultAuthenticator = Authenticator{
 // Behavior mirrors the legacy HandlePassword implementation exactly.
 func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authResult definitions.AuthResult) {
 	// Overall auth orchestration timer
-	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_overall_total"); stop != nil {
+	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_overall_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
@@ -105,7 +105,7 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 	}
 
 	// Measure backend type resolution
-	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_handle_backend_types_total"); stop != nil {
+	if stop := stats.PrometheusTimer(auth.Cfg(), definitions.PromAuth, "auth_handle_backend_types_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 

@@ -30,20 +30,19 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
+	handlerapiv1 "github.com/croessner/nauthilus/server/handler/api/v1"
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
-	handlerhydra "github.com/croessner/nauthilus/server/handler/frontend/hydra"
-	handlernotify "github.com/croessner/nauthilus/server/handler/frontend/notify"
-	handlertwofa "github.com/croessner/nauthilus/server/handler/frontend/twofa"
-	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
+	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
 	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
+	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -85,6 +84,9 @@ type contextStore struct {
 
 	// signals holds server lifecycle channels via the interface (no globals)
 	signals core.ServerSignals
+
+	// langManager is the injected language manager.
+	langManager language.Manager
 }
 
 // newContextStore creates and initializes a new instance of the contextStore structure and returns a pointer to it.
@@ -149,10 +151,10 @@ func startLDAPWorkers(store *contextStore, cfg config.File, logger *slog.Logger,
 			channel.GetLdapChannel().AddChannel(poolName)
 		}
 
-		backend.LDAPMainWorker(store.ldapLookup.ctx, cfg, logger, channel, poolName)
+		backend.LDAPMainWorker(store.ldapLookup.ctx, cfg, logger, channel, poolName, backend.LDAPWorkerDeps{})
 
 		if !cfg.LDAPHavePoolOnly(poolName) {
-			backend.LDAPAuthWorker(store.ldapAuth.ctx, cfg, logger, channel, poolName)
+			backend.LDAPAuthWorker(store.ldapAuth.ctx, cfg, logger, channel, poolName, backend.LDAPWorkerDeps{})
 		}
 	})
 }
@@ -400,7 +402,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	// Build frontend/backchannel setup callbacks to avoid core->handler import cycles
 	var setupHealth func(*gin.Engine)
 	var setupMetrics func(*gin.Engine)
-	var setupHydra, setup2FA, setupWebAuthn, setupNotify func(*gin.Engine)
+	var setupIdP func(*gin.Engine)
 	var setupBackchannel func(*gin.Engine)
 
 	// Health endpoint (always register)
@@ -415,49 +417,91 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Frontend handlers only if enabled (keeps logic parity)
 	if cfg.GetServer().Frontend.Enabled {
-		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{Cfg: cfg, Logger: logger}).InitSessionStore()
-		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Logger: logger}
+		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{
+			Cfg:          cfg,
+			Logger:       logger,
+			Env:          env,
+			Redis:        store.redisClient,
+			AccountCache: store.accountCache,
+		}).InitSessionStore()
+
+		deps := &handlerdeps.Deps{
+			Cfg:          cfg,
+			CfgProvider:  store.cfgProvider,
+			Logger:       logger,
+			Channel:      store.channel,
+			AccountCache: store.accountCache,
+			LangManager:  store.langManager,
+		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
-		if tags.HydraEnabled {
-			setupHydra = func(e *gin.Engine) {
+		storage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
+
+		if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
+			setupIdP = func(e *gin.Engine) {
 				deps.Env = env
 				deps.Redis = store.redisClient
-				handlerhydra.New(sessStore, deps).Register(e)
-			}
-			setup2FA = func(e *gin.Engine) {
-				deps.Env = env
-				deps.Redis = store.redisClient
-				handlertwofa.New(sessStore, deps).Register(e)
-			}
-			setupWebAuthn = func(e *gin.Engine) {
-				deps.Env = env
-				deps.Redis = store.redisClient
-				handlerwebauthn.New(sessStore, deps).Register(e)
+				nauthilusIdP := idp.NewNauthilusIdP(deps)
+
+				if cfg.GetIdP().OIDC.Enabled {
+					nauthilusIdP.GetKeyManager().StartRotationJob(store.server.ctx)
+				}
+
+				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
+					frontendHandler := handleridp.NewFrontendHandler(sessStore, deps)
+					frontendHandler.Register(e)
+
+					mfaAPI := handlerapiv1.NewMFAAPI(deps)
+					mfaAPI.Register(e)
+
+					if cfg.GetIdP().OIDC.Enabled {
+						oidcSessionsAPI := handlerapiv1.NewOIDCSessionsAPI(deps, storage)
+						oidcSessionsAPI.Register(e)
+					}
+				}
+
+				if cfg.GetIdP().OIDC.Enabled {
+					oidcHandler := handleridp.NewOIDCHandler(sessStore, deps, nauthilusIdP)
+					oidcHandler.Register(e)
+				}
+
+				if cfg.GetIdP().SAML2.Enabled {
+					samlHandler := handleridp.NewSAMLHandler(sessStore, deps, nauthilusIdP)
+					samlHandler.Register(e)
+				}
 			}
 		}
-		setupNotify = func(e *gin.Engine) {
-			deps.Env = env
-			deps.Redis = store.redisClient
-			handlernotify.New(sessStore, deps).Register(e)
+
+		if env.GetDevMode() {
+			if setupIdP == nil {
+				level.Warn(logger).Log(definitions.LogKeyMsg, "Frontend is enabled, but internal IdP (OIDC/SAML2) is not enabled. Login routes will not be registered")
+			}
 		}
 	}
 
 	// Backchannel API
 	setupBackchannel = func(e *gin.Engine) {
-		deps := &handlerdeps.Deps{Cfg: cfg, CfgProvider: store.cfgProvider, Env: env, Logger: logger, Redis: store.redisClient}
+		deps := &handlerdeps.Deps{
+			Cfg:         cfg,
+			CfgProvider: store.cfgProvider,
+			Env:         env,
+			Logger:      logger,
+			Redis:       store.redisClient,
+			LangManager: store.langManager,
+		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		handlerbackchannel.SetupWithDeps(e, deps)
 	}
 
 	app := core.NewDefaultHTTPApp(core.HTTPDeps{
-		Cfg:    cfg,
-		Logger: logger,
-		Env:    env,
-		Redis:  store.redisClient,
+		Cfg:          cfg,
+		Logger:       logger,
+		Env:          env,
+		Redis:        store.redisClient,
+		AccountCache: store.accountCache,
 	})
 
-	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel, signals)
+	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupIdP, setupBackchannel, signals)
 
 	return nil
 }

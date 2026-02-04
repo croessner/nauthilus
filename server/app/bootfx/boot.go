@@ -27,7 +27,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -36,12 +35,11 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util/keygen"
 
 	jsoniter "github.com/json-iterator/go"
-	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
-	"golang.org/x/text/language"
 )
 
 var json = jsoniter.ConfigFastest
@@ -61,11 +59,40 @@ func ParseFlagsAndPrintVersion(version string) {
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	configFlag := flag.String("config", "", "path to configuration file")
 	configFormatFlag := flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
+	genOIDCKey := flag.Bool("gen-oidc-key", false, "generate a new RSA key for OIDC signing")
+	genSAMLCert := flag.String("gen-saml-cert", "", "generate a self-signed certificate for SAML (provide common name)")
+	keyBits := flag.Int("key-bits", 4096, "bits for the generated RSA key")
+	certYears := flag.Int("cert-years", 10, "validity in years for the generated certificate")
 
 	flag.Parse()
 
 	if *versionFlag {
 		fmt.Println("Version: ", version)
+		os.Exit(0)
+	}
+
+	if *genOIDCKey {
+		key, err := keygen.GenerateRSAKey(*keyBits)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to generate OIDC key: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println(key)
+		os.Exit(0)
+	}
+
+	if *genSAMLCert != "" {
+		cert, key, err := keygen.GenerateSelfSignedCert(*genSAMLCert, *keyBits, *certYears)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to generate SAML certificate: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("Certificate:")
+		fmt.Println(cert)
+		fmt.Println("Key:")
+		fmt.Println(key)
 		os.Exit(0)
 	}
 
@@ -101,10 +128,6 @@ func SetupConfiguration() error {
 	file, err := config.NewFile()
 	if err != nil {
 		return fmt.Errorf("unable to load config file: %w", err)
-	}
-
-	if file.GetServer().Frontend.Enabled {
-		loadLanguageBundles(file)
 	}
 
 	log.SetupLogging(
@@ -212,7 +235,7 @@ func DebugLoadableConfig(cfg config.File, logger *slog.Logger) {
 	debugIfNotNil(definitions.FeatureRelayDomains, file.GetRelayDomains())
 	debugIfNotNil(definitions.FeatureBackendServersMonitoring, file.GetBackendServerMonitoring())
 	debugIfNotNil(definitions.LogKeyBruteForce, file.GetBruteForce())
-	debugIfNotNil("oauth2", file.GetOauth2())
+	debugIfNotNil("idp", file.GetIdP())
 
 	ldap := file.GetLDAP()
 	if ldap != nil {
@@ -230,12 +253,6 @@ func InitializeInstanceInfo(cfg config.File, version string) {
 	infoMetric.Set(1)
 }
 
-func InitializeHTTPClients(cfg config.File) {
-	if cfg.GetServer().Frontend.Enabled {
-		core.InitHTTPClient(cfg)
-	}
-}
-
 // RunLuaInitScript executes Lua init scripts (if configured).
 func RunLuaInitScript(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) {
 	if cfg.HaveLuaInit() {
@@ -251,22 +268,6 @@ func InitializeBruteForceTolerate(ctx context.Context, cfg config.File, logger *
 	tolerate.SetTolerate(t)
 
 	go t.StartHouseKeeping(ctx)
-}
-
-func loadLanguageBundles(cfg config.File) {
-	core.LangBundle = i18n.NewBundle(language.English)
-
-	core.LangBundle.RegisterUnmarshalFunc("json", json.Unmarshal)
-
-	loadLanguageBundle(cfg, "en")
-	loadLanguageBundle(cfg, "de")
-	loadLanguageBundle(cfg, "fr")
-}
-
-func loadLanguageBundle(cfg config.File, lang string) {
-	if _, err := core.LangBundle.LoadMessageFile(cfg.GetServer().Frontend.GetLanguageResources() + "/" + lang + ".json"); err != nil {
-		panic(err.Error())
-	}
 }
 
 // setTimeZone configures the process time zone based on the TZ environment variable.

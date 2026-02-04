@@ -243,6 +243,7 @@ The distributed brute force detection and mitigation system has been implemented
    - Tracks IPs attempting to access specific accounts
    - Detects when many unique IPs target a single account
    - Identifies accounts under distributed brute force attack
+   - Keys are scoped by `request.protocol` to avoid cross-protocol impact
    - Uses atomic Redis operations to prevent race conditions
 
 3. **Dynamic Response Mechanisms** (`server/lua-plugins.d/actions/dynamic_response.lua`)

@@ -15,7 +15,9 @@
 
 package core
 
-import "github.com/croessner/nauthilus/server/model/mfa"
+import (
+	"github.com/croessner/nauthilus/server/model/mfa"
+)
 
 // Done is the value for channels to finish workers
 type Done struct{}
@@ -30,4 +32,25 @@ type BackendManager interface {
 
 	// AddTOTPSecret adds the specified TOTP secret to the user's authentication state in the backend.
 	AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (err error)
+
+	// DeleteTOTPSecret removes the TOTP secret for the user in the backend.
+	DeleteTOTPSecret(auth *AuthState) (err error)
+
+	// AddTOTPRecoveryCodes adds the specified TOTP recovery codes to the user's authentication state in the backend.
+	AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.TOTPRecovery) (err error)
+
+	// DeleteTOTPRecoveryCodes removes all TOTP recovery codes for the user in the backend.
+	DeleteTOTPRecoveryCodes(auth *AuthState) (err error)
+
+	// GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
+	GetWebAuthnCredentials(auth *AuthState) (credentials []mfa.PersistentCredential, err error)
+
+	// SaveWebAuthnCredential saves a WebAuthn credential for the user in the backend.
+	SaveWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error)
+
+	// DeleteWebAuthnCredential removes a WebAuthn credential for the user in the backend.
+	DeleteWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error)
+
+	// UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
+	UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error)
 }

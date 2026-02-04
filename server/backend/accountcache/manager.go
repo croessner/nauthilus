@@ -102,3 +102,12 @@ func (m *Manager) Set(cfg config.File, username, protocol, oidcClientID, account
 
 	m.cache.Set(key, account, m.ttl)
 }
+
+// Purge removes all cached account mappings for the given username.
+func (m *Manager) Purge(username string) {
+	if m == nil || m.cache == nil {
+		return
+	}
+
+	m.cache.DeleteByPrefix(username + "|")
+}

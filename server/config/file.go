@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -196,6 +197,9 @@ type File interface {
 	// GetLDAPConfigBindPW retrieves the password for the LDAP bind.
 	GetLDAPConfigBindPW() string
 
+	// GetLDAPConfigEncryptionSecret retrieves the encryption secret for LDAP.
+	GetLDAPConfigEncryptionSecret() string
+
 	// GetLDAPConfigTLSCAFile returns the TLS CA file for LDAP.
 	GetLDAPConfigTLSCAFile() string
 
@@ -280,12 +284,6 @@ type File interface {
 	// GetAuthMethod provides the authentication method used.
 	GetAuthMethod() string
 
-	// GetSkipTOTP checks if TOTP (Two-Factor Authentication) is skipped.
-	GetSkipTOTP(string) bool
-
-	// GetSkipConsent checks if consent is skipped.
-	GetSkipConsent(string) bool
-
 	/*
 		Network-related methods
 	*/
@@ -331,11 +329,11 @@ type File interface {
 	// GetLua retrieves the LuaSection from the configuration, containing actions, features, filters, hooks, and related config.
 	GetLua() *LuaSection
 
-	// GetOauth2 retrieves the Oauth2Section configuration, containing custom scopes and clients for OAuth2 authentication.
-	GetOauth2() *Oauth2Section
-
 	// GetLDAP returns the LDAPSection object containing configuration and search definitions for LDAP operations.
 	GetLDAP() *LDAPSection
+
+	// GetIdP returns the IdPSection object containing configuration for the internal Identity Provider.
+	GetIdP() *IdPSection
 }
 
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
@@ -349,7 +347,7 @@ type FileSettings struct {
 	BruteForce              *BruteForceSection       `mapstructure:"brute_force" validate:"omitempty"`
 	Lua                     *LuaSection              `mapstructure:"lua" validate:"omitempty"`
 	LDAP                    *LDAPSection             `mapstructure:"ldap" validate:"omitempty"`
-	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" validate:"omitempty"`
+	IdP                     *IdPSection              `mapstructure:"idp" validate:"omitempty"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex
 }
@@ -414,15 +412,6 @@ func (f *FileSettings) GetLua() *LuaSection {
 	}
 
 	return f.Lua
-}
-
-// GetOauth2 returns the Oauth2Section of the FileSettings instance. Returns nil if the FileSettings instance is nil.
-func (f *FileSettings) GetOauth2() *Oauth2Section {
-	if f == nil {
-		return &Oauth2Section{}
-	}
-
-	return f.Oauth2
 }
 
 // GetLDAP retrieves the LDAPSection from the FileSettings instance. Returns nil if the FileSettings is nil.
@@ -688,6 +677,24 @@ func (f *FileSettings) GetLDAPConfigBindPW() string {
 	return ""
 }
 
+// GetLDAPConfigEncryptionSecret retrieves the encryption secret from the LDAP configuration if available, or returns an empty string.
+func (f *FileSettings) GetLDAPConfigEncryptionSecret() string {
+	if f == nil {
+		return ""
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLDAP)
+	if getConfig == nil {
+		return ""
+	}
+
+	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
+		return ldapConf.GetEncryptionSecret()
+	}
+
+	return ""
+}
+
 // GetLDAPConfigTLSCAFile retrieves the TLS CA file for the LDAP configuration if available, returning an empty string if not.
 func (f *FileSettings) GetLDAPConfigTLSCAFile() string {
 	if f == nil {
@@ -770,6 +777,27 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
+	reqPoolName := poolName
+	if reqPoolName == "" {
+		reqPoolName = definitions.DefaultBackendName
+	}
+
+	poolNameMatches := func(configPoolName string) bool {
+		if configPoolName == reqPoolName {
+			return true
+		}
+
+		// Historically, the configuration defaulted to `__meta_default__`, while runtime
+		// pooling uses `default`. Accept both as equivalent to keep configs without
+		// explicit `pool_name` working.
+		if (configPoolName == definitions.DefaultBackendName && reqPoolName == "default") ||
+			(configPoolName == "default" && reqPoolName == definitions.DefaultBackendName) {
+			return true
+		}
+
+		return false
+	}
+
 	getProtocols := f.GetProtocols(definitions.BackendLDAP)
 	if getProtocols == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
@@ -781,7 +809,7 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 	}
 
 	for index := range ldapProtocols {
-		if ldapProtocols[index].GetPoolName() != poolName {
+		if !poolNameMatches(ldapProtocols[index].GetPoolName()) {
 			continue
 		}
 
@@ -794,6 +822,52 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 	}
 
 	return nil, nil
+}
+
+// ResolveLDAPSearchPoolName returns the pool name for a given LDAP protocol if it is uniquely configured.
+// It returns false if no pool or multiple pools match the protocol.
+func ResolveLDAPSearchPoolName(cfg File, protocol string) (string, bool) {
+	if cfg == nil || protocol == "" {
+		return "", false
+	}
+
+	getter, ok := cfg.(interface {
+		GetProtocols(definitions.Backend) any
+	})
+	if !ok {
+		return "", false
+	}
+
+	getProtocols := getter.GetProtocols(definitions.BackendLDAP)
+	if getProtocols == nil {
+		return "", false
+	}
+
+	ldapProtocols, ok := getProtocols.([]LDAPSearchProtocol)
+	if !ok {
+		return "", false
+	}
+
+	matches := make(map[string]struct{})
+	for index := range ldapProtocols {
+		protocols := ldapProtocols[index].GetProtocols()
+		for protoIndex := range protocols {
+			if protocols[protoIndex] == protocol {
+				matches[ldapProtocols[index].GetPoolName()] = struct{}{}
+				break
+			}
+		}
+	}
+
+	if len(matches) != 1 {
+		return "", false
+	}
+
+	for name := range matches {
+		return name, true
+	}
+
+	return "", false
 }
 
 // GetLDAPOptionalPools retrieves a map of optional LDAP pool configurations from the file settings.
@@ -1369,47 +1443,6 @@ func (f *FileSettings) GetAllProtocols() []string {
 	return protocols.GetStringSlice()
 }
 
-// getOAuth2ClientIndex returns the index and found status of an OAuth-2 client with the given client ID in the LoadableConfig.Oauth2.Clients slice. If the client is found, the index
-func (f *FileSettings) getOAuth2ClientIndex(clientId string) (index int, found bool) {
-	oauth2 := f.GetOauth2()
-	if oauth2 != nil {
-		clients := oauth2.GetClients()
-		for index = range clients {
-			if clients[index].GetClientId() != clientId {
-				continue
-			}
-
-			found = true
-
-			break
-		}
-	}
-
-	return
-}
-
-// GetSkipTOTP returns a boolean true, if TOTP two-factor authentication shall be skipped for an OAuth-2 client.
-func (f *FileSettings) GetSkipTOTP(clientId string) (skip bool) {
-	if index, found := f.getOAuth2ClientIndex(clientId); found {
-		clients := f.GetOauth2().GetClients()
-
-		return clients[index].IsSkipTOTP()
-	}
-
-	return
-}
-
-// GetSkipConsent returns a boolean true, if the consent dialog shall be skipped for an OAuth-2 client.
-func (f *FileSettings) GetSkipConsent(clientId string) (skip bool) {
-	if index, found := f.getOAuth2ClientIndex(clientId); found {
-		clients := f.GetOauth2().GetClients()
-
-		return clients[index].IsSkipConsent()
-	}
-
-	return
-}
-
 // GetUsername returns the HTTP request header for the username
 func (f *FileSettings) GetUsername() string {
 	if f == nil {
@@ -1784,40 +1817,22 @@ func (f *FileSettings) validatePassDBBackends() error {
 			if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
 				f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
 			}
+
+			requiresEncryptionSecret := false
+			for _, protocol := range f.GetLDAP().GetSearch() {
+				if protocol.GetTotpSecretField() != "" || protocol.GetTotpRecoveryField() != "" {
+					requiresEncryptionSecret = true
+					break
+				}
+			}
+
+			if requiresEncryptionSecret && f.GetLDAPConfigEncryptionSecret() == "" {
+				return errors.ErrLDAPConfig.WithDetail("Missing LDAP encryption secret for TOTP data in LDAP")
+			}
 		case definitions.BackendLua:
 		case definitions.BackendUnknown:
 		case definitions.BackendCache:
 		case definitions.BackendLocalCache:
-		}
-	}
-
-	return nil
-}
-
-// validateOAuth2 validates and processes the OAuth2 configuration in the FileSettings struct, ensuring valid custom scope descriptions.
-func (f *FileSettings) validateOAuth2() error {
-	if f.GetOauth2() != nil {
-		var descriptions map[string]any
-
-		for customScopeIndex := range f.Oauth2.CustomScopes {
-			descriptions = make(map[string]any)
-
-			for key, value := range f.Oauth2.CustomScopes[customScopeIndex].Other {
-				if !strings.HasPrefix(key, "description_") {
-					continue
-				}
-
-				for _, languageTag := range DefaultLanguageTags {
-					baseName, _ := languageTag.Base()
-					if key == "description_"+baseName.String() {
-						if description, assertOk := value.(string); assertOk {
-							descriptions[key] = description
-						}
-					}
-				}
-			}
-
-			f.Oauth2.CustomScopes[customScopeIndex].Other = descriptions
 		}
 	}
 
@@ -1846,19 +1861,6 @@ func (f *FileSettings) validateAddress() error {
 	}
 
 	return checkAddress(f.Server.Address)
-}
-
-// setDefaultHydraAdminUrl sets the Hydra admin URL to a default value if it is not already configured.
-func (f *FileSettings) setDefaultHydraAdminUrl() error {
-	if f == nil || f.Server == nil {
-		return nil
-	}
-
-	if f.GetServer().HydraAdminUrl == "" {
-		f.Server.HydraAdminUrl = "http://127.0.0.1:4445"
-	}
-
-	return nil
 }
 
 // setDefaultInstanceName ensures the Server.InstanceName field is set to a default value if it is currently empty.
@@ -2027,17 +2029,190 @@ func (f *FileSettings) setDefaultPasswordHistory() error {
 	return nil
 }
 
+// setDefaultLanguageResources sets the path to the language resources to a default value if it is not already configured.
+func (f *FileSettings) setDefaultLanguageResources() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.LanguageResources == "" {
+		f.Server.Frontend.LanguageResources = definitions.LanguageResourcesPath
+	}
+
+	return nil
+}
+
+// setDefaultHTMLStaticContentPath sets the path to the HTML static content to a default value if it is not already configured.
+func (f *FileSettings) setDefaultHTMLStaticContentPath() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.HTMLStaticContentPath == "" {
+		f.Server.Frontend.HTMLStaticContentPath = definitions.HTMLStaticContentPath
+	}
+
+	return nil
+}
+
+// setDefaultDefaultLanguage sets the default language to a default value if it is not already configured.
+func (f *FileSettings) setDefaultDefaultLanguage() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.DefaultLanguage == "" {
+		f.Server.Frontend.DefaultLanguage = definitions.DefaultLanguage
+	}
+
+	return nil
+}
+
+// setDefaultBackendServerSettings sets the default backend server settings if they are not already configured.
+func (f *FileSettings) setDefaultBackendServerSettings() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.SMTPBackendAddress == "" {
+		f.Server.SMTPBackendAddress = definitions.SMTPBackendAddress
+	}
+
+	if f.Server.SMTPBackendPort == 0 {
+		f.Server.SMTPBackendPort = definitions.SMTPBackendPort
+	}
+
+	if f.Server.IMAPBackendAddress == "" {
+		f.Server.IMAPBackendAddress = definitions.IMAPBackendAddress
+	}
+
+	if f.Server.IMAPBackendPort == 0 {
+		f.Server.IMAPBackendPort = definitions.IMAPBackendPort
+	}
+
+	if f.Server.POP3BackendAddress == "" {
+		f.Server.POP3BackendAddress = definitions.POP3BackendAddress
+	}
+
+	if f.Server.POP3BackendPort == 0 {
+		f.Server.POP3BackendPort = definitions.POP3BackendPort
+	}
+
+	return nil
+}
+
+// setDefaultSecuritySettings sets the default security-related settings if they are not already configured.
+func (f *FileSettings) setDefaultSecuritySettings() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.NginxWaitDelay == 0 {
+		f.Server.NginxWaitDelay = definitions.WaitDelay
+	}
+
+	if f.Server.MaxLoginAttempts == 0 {
+		f.Server.MaxLoginAttempts = definitions.MaxLoginAttempts
+	}
+
+	if f.Server.LuaScriptTimeout == 0 {
+		f.Server.LuaScriptTimeout = definitions.LuaMaxExecutionTime
+	}
+
+	if f.Server.LocalCacheAuthTTL == 0 {
+		f.Server.LocalCacheAuthTTL = 30 * time.Second
+	}
+
+	return nil
+}
+
+// setDefaultFrontendSettings sets the default frontend settings if they are not already configured.
+func (f *FileSettings) setDefaultFrontendSettings() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.Frontend.TotpSkew == 0 {
+		f.Server.Frontend.TotpSkew = 1
+	}
+
+	if f.Server.Frontend.TotpIssuer == "" {
+		f.Server.Frontend.TotpIssuer = "Nauthilus"
+	}
+
+	return nil
+}
+
+// setDefaultIdPSettings sets the default IdP settings if they are not already configured.
+func (f *FileSettings) setDefaultIdPSettings() error {
+	if f == nil || f.IdP == nil {
+		return nil
+	}
+
+	if f.IdP.WebAuthn.RPDisplayName == "" {
+		f.IdP.WebAuthn.RPDisplayName = "Nauthilus"
+	}
+
+	if f.IdP.WebAuthn.RPID == "" {
+		f.IdP.WebAuthn.RPID = "localhost"
+	}
+
+	if len(f.IdP.WebAuthn.RPOrigins) == 0 {
+		f.IdP.WebAuthn.RPOrigins = []string{"https://localhost"}
+	}
+
+	return nil
+}
+
+// setDefaultTrustedProxies sets the default trusted proxies if they are not already configured.
+func (f *FileSettings) setDefaultTrustedProxies() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if len(f.Server.TrustedProxies) == 0 {
+		f.Server.TrustedProxies = []string{"127.0.0.1", "::1"}
+	}
+
+	return nil
+}
+
+// validateFrontend checks if the frontend-related directories exist.
+func (f *FileSettings) validateFrontend() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if !f.Server.Frontend.Enabled {
+		return nil
+	}
+
+	// Check LanguageResources directory
+	if f.Server.Frontend.LanguageResources != "" {
+		if _, err := os.Stat(f.Server.Frontend.LanguageResources); os.IsNotExist(err) {
+			return fmt.Errorf("frontend language resources directory does not exist: %s", f.Server.Frontend.LanguageResources)
+		}
+	}
+
+	// Check HTMLStaticContentPath directory
+	if f.Server.Frontend.HTMLStaticContentPath != "" {
+		if _, err := os.Stat(f.Server.Frontend.HTMLStaticContentPath); os.IsNotExist(err) {
+			return fmt.Errorf("frontend HTML static content directory does not exist: %s", f.Server.Frontend.HTMLStaticContentPath)
+		}
+	}
+
+	return nil
+}
+
 // validate ensures that the FileSettings object is correctly configured by running a series of validation and default-setting functions.
 // Returns an error if any validation function fails, otherwise returns nil.
 func (f *FileSettings) validate() (err error) {
 	validators := []func() error{
 		f.validateBruteForce,
 		f.validatePassDBBackends,
-		f.validateOAuth2,
 		f.validateAddress,
 
 		// Without errors, but fixing things
-		f.setDefaultHydraAdminUrl,
 		f.setDefaultInstanceName,
 		f.setDefaultDnsTimeout,
 		f.setDefaultPosCacheTTL,
@@ -2046,6 +2221,15 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultHeaders,
 		f.setDefaultMaxConcurrentRequests,
 		f.setDefaultPasswordHistory,
+		f.setDefaultLanguageResources,
+		f.setDefaultHTMLStaticContentPath,
+		f.setDefaultDefaultLanguage,
+		f.setDefaultBackendServerSettings,
+		f.setDefaultSecuritySettings,
+		f.setDefaultFrontendSettings,
+		f.setDefaultIdPSettings,
+		f.setDefaultTrustedProxies,
+		f.validateFrontend,
 	}
 
 	for _, validatorFunc := range validators {
@@ -2081,8 +2265,10 @@ func (f *FileSettings) checkResourceLimits() {
 	// Check LDAP
 	if f.LDAP != nil {
 		if cfg, ok := f.LDAP.GetConfig().(*LDAPConf); ok && cfg != nil {
-			checkPool("ldap.default.lookup", cfg.GetLookupPoolSize())
-			checkPool("ldap.default.auth", cfg.GetAuthPoolSize())
+			defaultLDAPPool := "ldap." + definitions.DefaultBackendName
+
+			checkPool(defaultLDAPPool+".lookup", cfg.GetLookupPoolSize())
+			checkPool(defaultLDAPPool+".auth", cfg.GetAuthPoolSize())
 		}
 
 		for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
@@ -2133,7 +2319,7 @@ func (f *FileSettings) warnDeprecatedConfig() {
 	// LDAP: pool_only (deprecated) → lookup_pool_only
 	if f.LDAP != nil {
 		if cfg, _ := f.LDAP.GetConfig().(*LDAPConf); cfg != nil {
-			warnDeprecatedLDAP("default", cfg)
+			warnDeprecatedLDAP(definitions.DefaultBackendName, cfg)
 		}
 
 		for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
@@ -2169,6 +2355,17 @@ func (f *FileSettings) warnDeprecatedConfig() {
 		for i := range rbl.Lists {
 			warnDeprecatedRBL(i, &rbl.Lists[i])
 		}
+	}
+}
+
+// warnUnsupportedConfig logs warnings for unsupported configuration parameters.
+func (f *FileSettings) warnUnsupportedConfig() {
+	if f == nil {
+		return
+	}
+
+	for _, warning := range f.GetIdP().warnUnsupported() {
+		safeWarn("msg", "unsupported configuration parameter", "warning", warning)
 	}
 }
 
@@ -2701,6 +2898,9 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	// Emit deprecation warnings once after successful load/validation
 	f.warnDeprecatedConfig()
+
+	// Emit unsupported configuration warnings
+	f.warnUnsupportedConfig()
 
 	// Throw away unsupported keys
 	f.Other = nil

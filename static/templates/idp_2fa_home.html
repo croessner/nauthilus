@@ -1,0 +1,80 @@
+{{ if not .HXRequest }}
+{{ template "idp_header.html" . }}
+{{ end }}
+<div class="max-w-4xl mx-auto mt-10">
+    <h1 class="text-3xl font-bold mb-8 idp-2fa-title">{{ .Title }}</h1>
+
+    {{ if .BackendError }}
+    <div class="alert alert-error shadow-lg mb-8">
+        <div>
+            <svg class="stroke-current flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"
+                      stroke-width="2"/>
+            </svg>
+            <span>{{ .BackendErrorMessage }}</span>
+        </div>
+    </div>
+    {{ end }}
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- TOTP Card -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">{{ .AuthenticatorAppTOTP }}</h2>
+                <p>{{ .TOTPDescription }}</p>
+                <div class="card-actions justify-end mt-4">
+                    {{ if .HaveTOTP }}
+                    <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
+                            hx-delete="/mfa/totp" hx-target="#modal-container" {{ if .BackendError }}disabled{{ end }}>
+                        {{ .Deactivate }}
+                    </button>
+                    {{ else }}
+                    <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}" href="/mfa/totp/register">{{
+                        .RegisterTOTP }}</a>
+                    {{ end }}
+                </div>
+            </div>
+        </div>
+
+        <!-- WebAuthn Card -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">{{ .SecurityKeyWebAuthn }}</h2>
+                <p>{{ .WebAuthnDescription }}</p>
+                <div class="card-actions justify-end mt-4">
+                    {{ if .HaveWebAuthn }}
+                    <a class="btn btn-secondary" href="/mfa/webauthn/devices">{{ .SecurityKeyWebAuthn }}</a>
+                    {{ else }}
+                    <a class="btn btn-primary {{ if .BackendError }}btn-disabled{{ end }}"
+                       href="/mfa/webauthn/register">{{ .RegisterWebAuthn }}</a>
+                    {{ end }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Recovery Codes Card -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">{{ .RecoveryCodes }}</h2>
+                {{ if .HaveRecoveryCodes }}
+                <p>{{ printf .RecoveryCodesLeft (int .NumRecoveryCodes) }}</p>
+                {{ else }}
+                <p>{{ .RecoveryCodesDescription }}</p>
+                {{ end }}
+                <div class="card-actions justify-end mt-4">
+                    <button class="btn btn-secondary"
+                            hx-post="/mfa/recovery/generate"
+                            hx-target="#modal-container"
+                            {{ if or .BackendError (not (or .HaveTOTP .HaveWebAuthn)) }}disabled{{ end }}>
+                        {{ .GenerateNewRecoveryCodes }}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ if not .HXRequest }}
+{{ template "idp_footer.html" . }}
+{{ end }}
+

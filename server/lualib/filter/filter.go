@@ -691,7 +691,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			}
 
 			// Timing and context
-			stopTimer := stats.PrometheusTimer(cfg, definitions.PromFilter, sc.Name)
+			stopTimer := stats.PrometheusTimer(cfg, definitions.PromFilter, sc.Name, ctx.FullPath())
 
 			luaCtx, luaCancel := context.WithTimeout(egCtx, cfg.GetServer().GetTimeouts().GetLuaScript())
 			defer luaCancel()

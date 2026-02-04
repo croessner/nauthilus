@@ -28,12 +28,12 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
@@ -159,8 +159,10 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 	}
 
 	// Parse simple string fields
+	sm := redisClient.GetSecurityManager()
+
 	if password, ok := hashValues["password"]; ok {
-		ucp.Password = password
+		ucp.Password, _ = sm.Decrypt(password)
 	}
 
 	if accountField, ok := hashValues["account_field"]; ok {
@@ -168,7 +170,10 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 	}
 
 	if totpSecretField, ok := hashValues["totp_secret_field"]; ok {
-		ucp.TOTPSecretField = totpSecretField
+		ucp.TOTPSecretField, _ = sm.Decrypt(totpSecretField)
+	}
+	if totpRecoveryField, ok := hashValues["totp_recovery_field"]; ok {
+		ucp.TOTPRecoveryField, _ = sm.Decrypt(totpRecoveryField)
 	}
 
 	if uniqueUserIDField, ok := hashValues["webauth_userid_field"]; ok {
@@ -181,8 +186,10 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 
 	// Parse attributes JSON
 	if attributesJSON, ok := hashValues["attributes"]; ok && attributesJSON != "" {
+		decryptedAttributesJSON, _ := sm.Decrypt(attributesJSON)
+
 		var attributes bktype.AttributeMapping
-		if err = jsoniter.ConfigFastest.Unmarshal([]byte(attributesJSON), &attributes); err != nil {
+		if err = jsoniter.ConfigFastest.Unmarshal([]byte(decryptedAttributesJSON), &attributes); err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to unmarshal attributes",
 				definitions.LogKeyError, err,
@@ -218,9 +225,10 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	// Add simple fields
 	hashFields["backend"] = int(cache.Backend)
+	sm := redisClient.GetSecurityManager()
 
 	if cache.Password != "" {
-		hashFields["password"] = cache.Password
+		hashFields["password"], _ = sm.Encrypt(cache.Password)
 	}
 
 	if cache.AccountField != "" {
@@ -228,7 +236,11 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 	}
 
 	if cache.TOTPSecretField != "" {
-		hashFields["totp_secret_field"] = cache.TOTPSecretField
+		hashFields["totp_secret_field"], _ = sm.Encrypt(cache.TOTPSecretField)
+	}
+
+	if cache.TOTPRecoveryField != "" {
+		hashFields["totp_recovery_field"], _ = sm.Encrypt(cache.TOTPRecoveryField)
 	}
 
 	if cache.UniqueUserIDField != "" {
@@ -253,6 +265,10 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 		}
 
 		hashFields["attributes"] = string(attributesJSON)
+
+		if encryptedAttributesJSON, err := sm.Encrypt(hashFields["attributes"].(string)); err == nil {
+			hashFields["attributes"] = encryptedAttributesJSON
+		}
 	}
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -372,10 +388,6 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 	// If the hash is empty, treat it as a Redis nil error
 	if len(hashValues) == 0 {
 		err = redis.Nil
-		level.Error(logger).Log(
-			definitions.LogKeyMsg, "WebAuthn user not found in redis",
-			definitions.LogKeyError, err,
-		)
 
 		return nil, err
 	}
@@ -399,10 +411,14 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 		user.DisplayName = displayName
 	}
 
+	sm := redisClient.GetSecurityManager()
+
 	// Parse credentials JSON
 	if credentialsJSON, ok := hashValues["credentials"]; ok && credentialsJSON != "" {
-		var credentials []webauthn.Credential
-		if err = jsoniter.ConfigFastest.Unmarshal([]byte(credentialsJSON), &credentials); err != nil {
+		decryptedCredentialsJSON, _ := sm.Decrypt(credentialsJSON)
+
+		var credentials []mfa.PersistentCredential
+		if err = jsoniter.ConfigFastest.Unmarshal([]byte(decryptedCredentialsJSON), &credentials); err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to unmarshal credentials",
 				definitions.LogKeyError, err,
@@ -414,7 +430,7 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 		user.Credentials = credentials
 	} else {
 		// Initialize empty credentials slice if not present
-		user.Credentials = []webauthn.Credential{}
+		user.Credentials = []mfa.PersistentCredential{}
 	}
 
 	return user, nil
@@ -445,7 +461,12 @@ func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.Fi
 			return err
 		}
 
+		sm := redisClient.GetSecurityManager()
 		hashFields["credentials"] = string(credentialsJSON)
+
+		if encryptedCredentialsJSON, err := sm.Encrypt(hashFields["credentials"].(string)); err == nil {
+			hashFields["credentials"] = encryptedCredentialsJSON
+		}
 	}
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()

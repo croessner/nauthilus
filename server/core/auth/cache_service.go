@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -78,4 +79,62 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 // No negative cache is written here (historic behavior); brute-force metrics are handled by other parts of the pipeline.
 func (DefaultCacheService) OnFailure(_ *core.AuthState, _ string) {
 	// Intentionally no-op
+}
+
+// Purge removes all cached entries for the specified username.
+func (DefaultCacheService) Purge(auth *core.AuthState, username string) {
+	if auth == nil || username == "" {
+		return
+	}
+
+	useCache := false
+
+	for _, backendType := range auth.Cfg().GetServer().GetBackends() {
+		if backendType.Get() == definitions.BackendCache {
+			useCache = true
+
+			break
+		}
+	}
+
+	if !useCache {
+		return
+	}
+
+	// We try to purge for the username itself and for any mapped account name
+	namesToPurge := config.NewStringSet()
+	(&namesToPurge).Set(username)
+
+	protocols := auth.Cfg().GetAllProtocols()
+
+	for _, protocol := range protocols {
+		accountName, err := backend.LookupUserAccountFromRedis(auth.Ctx(), auth.Cfg(), auth.Redis(), username, protocol, "")
+		if err == nil && accountName != "" {
+			(&namesToPurge).Set(accountName)
+		}
+	}
+
+	userKeys := config.NewStringSet()
+
+	for _, protocol := range protocols {
+		cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Channel(), protocol, definitions.CacheAll)
+
+		for _, cacheName := range (&cacheNames).GetStringSlice() {
+			for _, name := range (&namesToPurge).GetStringSlice() {
+				var sb strings.Builder
+
+				sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())
+				sb.WriteString(definitions.RedisUserPositiveCachePrefix)
+				sb.WriteString(cacheName)
+				sb.WriteByte(':')
+				sb.WriteString(name)
+
+				(&userKeys).Set(sb.String())
+			}
+		}
+	}
+
+	for _, userKey := range (&userKeys).GetStringSlice() {
+		_, _ = auth.Redis().GetWriteHandle().Del(auth.Ctx(), userKey).Result()
+	}
 }

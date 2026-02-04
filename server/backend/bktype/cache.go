@@ -26,6 +26,7 @@ type PositivePasswordCache struct {
 	Password          string              `json:"password,omitempty"`
 	AccountField      string              `json:"account_field"`
 	TOTPSecretField   string              `json:"totp_secret_field"`
+	TOTPRecoveryField string              `json:"totp_recovery_field"`
 	UniqueUserIDField string              `json:"webauth_userid_field"`
 	DisplayNameField  string              `json:"display_name_field"`
 	Attributes        AttributeMapping    `json:"attributes"`

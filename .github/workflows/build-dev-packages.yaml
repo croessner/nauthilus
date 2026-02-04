@@ -1,0 +1,92 @@
+name: Development Packages Build
+
+on:
+  push:
+    branches:
+      - features
+
+env:
+  APP_NAME: 'nauthilus'
+  MAINTAINER: 'croessner'
+  DESC: 'Multi purpose authentication server'
+  GOEXPERIMENT: greenteagc
+  DEV_VERSION: '0.0.0'
+
+jobs:
+  build-linux-packages:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            rpm_arch: x86_64
+            build_rpm: true
+          - goos: linux
+            goarch: arm64
+            build_rpm: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+      - run: |
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-s -w -X main.buildTime=${BUILD_TIME} -X main.version=${{ env.DEV_VERSION }}"
+
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -tags="netgo" -trimpath -ldflags="$LDFLAGS" -o nauthilus ./server
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client ./client
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient ./contrib/oidctestclient
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient ./contrib/saml2testclient
+
+      - name: Copy binaries and resources
+        run: |
+          for pkg in .debpkg .rpmpkg; do
+            mkdir -p $pkg/usr/local/sbin
+            mkdir -p $pkg/usr/lib/systemd/system
+            mkdir -p $pkg/usr/share/nauthilus/resources
+            mkdir -p $pkg/usr/share/nauthilus/static
+            mkdir -p $pkg/usr/share/nauthilus/lua-plugins.d
+            mkdir -p $pkg/usr/share/doc/nauthilus/oidctestclient
+            mkdir -p $pkg/usr/share/doc/nauthilus/saml2testclient
+
+            cp nauthilus nauthilus-client oidctestclient saml2testclient $pkg/usr/local/sbin/
+            cp systemd/${{ env.APP_NAME }}.service $pkg/usr/lib/systemd/system/
+            cp -r server/resources/* $pkg/usr/share/nauthilus/resources/
+            cp -r static/* $pkg/usr/share/nauthilus/static/
+            cp -r server/lua-plugins.d/* $pkg/usr/share/nauthilus/lua-plugins.d/
+
+            cp LICENSE README.md NOTICE.md $pkg/usr/share/doc/nauthilus/
+            cp contrib/oidctestclient/README.md $pkg/usr/share/doc/nauthilus/oidctestclient/
+            cp contrib/saml2testclient/README.md $pkg/usr/share/doc/nauthilus/saml2testclient/
+          done
+
+      - name: Build DEB
+        uses: jiro4989/build-deb-action@v3
+        with:
+          package: ${{ env.APP_NAME }}
+          package_root: .debpkg
+          maintainer: ${{ env.MAINTAINER }}
+          version: ${{ env.DEV_VERSION }}
+          arch: '${{ matrix.goarch }}'
+          desc: '${{ env.DESC }}'
+
+      - name: Build RPM
+        uses: jiro4989/build-rpm-action@v2
+        if: ${{ matrix.build_rpm }}
+        with:
+          package: ${{ env.APP_NAME }}
+          package_root: .rpmpkg
+          maintainer: ${{ env.MAINTAINER }}
+          version: ${{ env.DEV_VERSION }}
+          arch: '${{ matrix.rpm_arch }}'
+          desc: '${{ env.DESC }}'
+          summary: '${{ env.DESC }}'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
+          path: |
+            ./*.deb
+            ./*.rpm

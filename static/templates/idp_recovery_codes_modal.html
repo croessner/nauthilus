@@ -1,0 +1,23 @@
+{{ if not .HXRequest }}
+{{ template "idp_header.html" . }}
+{{ end }}
+<div class="modal modal-open" id="recovery-modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">{{ .NewRecoveryCodes }}</h3>
+        <p class="py-4 text-error font-bold">{{ .BackupTheseCodes }}</p>
+        <p class="mb-4">{{ .ShownOnlyOnce }}</p>
+        <div class="bg-base-200 p-4 rounded-lg grid grid-cols-2 gap-2 font-mono text-center">
+            {{ range .Codes }}
+            <div class="p-2 bg-base-100 rounded shadow-sm select-all">{{ . }}</div>
+            {{ end }}
+        </div>
+        <div class="modal-action">
+            <button class="btn" hx-get="/mfa/register/home"
+                    hx-target="body" onclick="document.getElementById('recovery-modal').remove()">{{ .Close }}
+            </button>
+        </div>
+    </div>
+</div>
+{{ if not .HXRequest }}
+{{ template "idp_footer.html" . }}
+{{ end }}

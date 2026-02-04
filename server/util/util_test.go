@@ -245,3 +245,21 @@ func TestComparePasswords(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateRandomString(t *testing.T) {
+	lengths := []int{8, 16, 32, 64}
+	for _, l := range lengths {
+		s, err := GenerateRandomString(l)
+		if err != nil {
+			t.Errorf("GenerateRandomString(%d) failed: %v", l, err)
+		}
+		if len(s) != l {
+			t.Errorf("GenerateRandomString(%d) returned string of length %d, expected %d", l, len(s), l)
+		}
+
+		s2, _ := GenerateRandomString(l)
+		if s == s2 {
+			t.Errorf("GenerateRandomString(%d) returned identical strings: %s", l, s)
+		}
+	}
+}

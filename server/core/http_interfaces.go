@@ -31,10 +31,7 @@ type HTTPApplication interface {
 	Start(ctx context.Context,
 		setupHealth func(*gin.Engine),
 		setupMetrics func(*gin.Engine),
-		setupHydra func(*gin.Engine),
-		setup2FA func(*gin.Engine),
-		setupWebAuthn func(*gin.Engine),
-		setupNotify func(*gin.Engine),
+		setupIdP func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 		signals ServerSignals,
 	)
@@ -48,10 +45,7 @@ type RouterComposer interface {
 	RegisterRoutes(r *gin.Engine,
 		setupHealth func(*gin.Engine),
 		setupMetrics func(*gin.Engine),
-		setupHydra func(*gin.Engine),
-		setup2FA func(*gin.Engine),
-		setupWebAuthn func(*gin.Engine),
-		setupNotify func(*gin.Engine),
+		setupIdP func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 	)
 }

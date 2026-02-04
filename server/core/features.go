@@ -72,7 +72,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureLua)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureLua, ctx.FullPath())
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -114,6 +114,10 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 
 // FeatureTLSEncryption checks, if the remote client connection was secured.
 func (a *AuthState) FeatureTLSEncryption(ctx *gin.Context) (triggered bool) {
+	if config.GetEnvironment().GetDevMode() {
+		return
+	}
+
 	if isLocalOrEmptyIP(a.Request.ClientIP) {
 		a.logAddLocalhost(definitions.FeatureTLSEncryption)
 
@@ -124,7 +128,7 @@ func (a *AuthState) FeatureTLSEncryption(ctx *gin.Context) (triggered bool) {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureTLSEncryption)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureTLSEncryption, ctx.FullPath())
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -162,7 +166,8 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureRelayDomains)
+	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromFeature, definitions.FeatureRelayDomains, resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -235,7 +240,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(rctx)
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.FeatureRBL)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.FeatureRBL, ctx.FullPath())
 	if stopTimer != nil {
 		defer stopTimer()
 	}
@@ -454,7 +459,8 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromAction, luaActionName)
+	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromAction, luaActionName, resource)
 	if stopTimer != nil {
 		defer stopTimer()
 	}

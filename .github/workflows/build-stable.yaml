@@ -11,6 +11,7 @@ env:
   DESC: 'Multi purpose authentication server'
   CHGELOG_VERSION: '0.15.4'
   GOEXPERIMENT: greenteagc
+  SYFT_VERSION: 'v1.16.0'
 
 jobs:
   build-artifact:
@@ -25,17 +26,26 @@ jobs:
         with:
           go-version: 1.25.x
       - run: |
-          cd server && \
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -mod=vendor -trimpath -ldflags="-s -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GITHUB_REF#refs/tags/}-${GITHUB_SHA:0:8}" -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} .
+          VERSION=${GITHUB_REF#refs/tags/}
+          COMMIT=${GITHUB_SHA:0:8}
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-s -w -X main.buildTime=${BUILD_TIME} -X main.version=${VERSION}-${COMMIT}"
+
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -tags="netgo" -trimpath -ldflags="$LDFLAGS" -o nauthilus ./server
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client ./client
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient ./contrib/oidctestclient
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient ./contrib/saml2testclient
       - name: Create artifact
         run: |
           os="${{ runner.os }}"
           assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
           echo "$assets"
           mkdir -p "dist/$assets"
-          cp server/${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} LICENSE README.md NOTICE.md "dist/$assets/"
+          cp nauthilus nauthilus-client oidctestclient saml2testclient LICENSE README.md NOTICE.md "dist/$assets/"
           cp systemd/${{ env.APP_NAME }}.service "dist/$assets/"
+          cp -r server/resources server/lua-plugins.d static "dist/$assets/"
+          cp contrib/oidctestclient/README.md "dist/$assets/README-oidctestclient.md"
+          cp contrib/saml2testclient/README.md "dist/$assets/README-saml2testclient.md"
           (
             cd dist
             tar czf "$assets.tar.gz" "$assets"
@@ -43,39 +53,76 @@ jobs:
           )
         shell: bash
 
+      - name: Generate SBOMs
+        run: |
+          assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          ./scripts/sbom.sh \
+            --source-dir "dist/$assets" \
+            --output-dir "dist/$assets" \
+            --output-prefix "$assets" \
+            --skip-docker \
+            --syft-version "${{ env.SYFT_VERSION }}"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             dist/*.tar.gz
+            dist/*/*.spdx.json
 
   build-linux-packages:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [ linux ]
-        goarch: [ amd64, arm64 ]
+        include:
+          - goos: linux
+            goarch: amd64
+            rpm_arch: x86_64
+            build_rpm: true
+          - goos: linux
+            goarch: arm64
+            build_rpm: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: 1.25.x
       - run: |
-          cd server && \
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -mod=vendor -tags="netgo" -trimpath -ldflags="-s -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GITHUB_REF#refs/tags/}-${GITHUB_SHA:0:8}" -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          VERSION=${GITHUB_REF#refs/tags/}
+          COMMIT=${GITHUB_SHA:0:8}
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-s -w -X main.buildTime=${BUILD_TIME} -X main.version=${VERSION}-${COMMIT}"
 
-      - name: Copy binaries
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -tags="netgo" -trimpath -ldflags="$LDFLAGS" -o nauthilus ./server
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client ./client
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient ./contrib/oidctestclient
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient ./contrib/saml2testclient
+
+      - name: Copy binaries and resources
         run: |
-          mkdir -p .debpkg/usr/local/sbin
-          mkdir -p .debpkg/usr/lib/systemd/system
-          mkdir -p .debpkg/usr/share/doc/${{ env.APP_NAME }}
-          cp server/${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} .debpkg/usr/local/sbin/${{ env.APP_NAME }}
-          cp systemd/${{ env.APP_NAME }}.service .debpkg/usr/lib/systemd/system/
-          cp LICENSE README.md NOTICE.md .debpkg/usr/share/doc/${{ env.APP_NAME }}/
+          for pkg in .debpkg .rpmpkg; do
+            mkdir -p $pkg/usr/local/sbin
+            mkdir -p $pkg/usr/lib/systemd/system
+            mkdir -p $pkg/usr/share/nauthilus/resources
+            mkdir -p $pkg/usr/share/nauthilus/static
+            mkdir -p $pkg/usr/share/nauthilus/lua-plugins.d
+            mkdir -p $pkg/usr/share/doc/nauthilus/oidctestclient
+            mkdir -p $pkg/usr/share/doc/nauthilus/saml2testclient
 
-      - uses: jiro4989/build-deb-action@v3
+            cp nauthilus nauthilus-client oidctestclient saml2testclient $pkg/usr/local/sbin/
+            cp systemd/${{ env.APP_NAME }}.service $pkg/usr/lib/systemd/system/
+            cp -r server/resources/* $pkg/usr/share/nauthilus/resources/
+            cp -r static/* $pkg/usr/share/nauthilus/static/
+            cp -r server/lua-plugins.d/* $pkg/usr/share/nauthilus/lua-plugins.d/
+
+            cp LICENSE README.md NOTICE.md $pkg/usr/share/doc/nauthilus/
+            cp contrib/oidctestclient/README.md $pkg/usr/share/doc/nauthilus/oidctestclient/
+            cp contrib/saml2testclient/README.md $pkg/usr/share/doc/nauthilus/saml2testclient/
+          done
+
+      - name: Build DEB
+        uses: jiro4989/build-deb-action@v3
         with:
           package: ${{ env.APP_NAME }}
           package_root: .debpkg
@@ -84,11 +131,40 @@ jobs:
           arch: '${{ matrix.goarch }}'
           desc: '${{ env.DESC }}'
 
-      - uses: actions/upload-artifact@v4
+      - name: Build RPM
+        uses: jiro4989/build-rpm-action@v2
+        if: ${{ matrix.build_rpm }}
         with:
-          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-deb
+          package: ${{ env.APP_NAME }}
+          package_root: .rpmpkg
+          maintainer: ${{ env.MAINTAINER }}
+          version: ${{ github.ref }}
+          arch: '${{ matrix.rpm_arch }}'
+          desc: '${{ env.DESC }}'
+          summary: '${{ env.DESC }}'
+
+      - name: Generate package SBOMs
+        run: |
+          mkdir -p dist/sbom
+          for pkg in ./*.deb ./*.rpm; do
+            if [ -f "$pkg" ]; then
+              ./scripts/sbom.sh \
+                --file "$pkg" \
+                --output-dir dist/sbom \
+                --skip-source \
+                --skip-docker \
+                --syft-version "${{ env.SYFT_VERSION }}"
+            fi
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
           path: |
             ./*.deb
+            ./*.rpm
+            dist/sbom/*.spdx.json
 
   create-release:
     runs-on: ubuntu-latest
@@ -141,7 +217,9 @@ jobs:
       - name: Upload Asset
         env:
           GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh release upload ${{ github.ref_name }} ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.asset_suffix }}
+        run: |
+          assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          gh release upload ${{ github.ref_name }} "dist/${assets}${{ matrix.asset_suffix }}" "dist/${assets}/${assets}-source.spdx.json"
 
   upload-linux-packages:
     runs-on: ubuntu-latest
@@ -150,8 +228,7 @@ jobs:
       matrix:
         goos: [ linux ]
         goarch: [ amd64, arm64 ]
-        include:
-          - pkg: deb
+        pkg: [ deb, rpm ]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -163,11 +240,12 @@ jobs:
       - name: Download Artifact
         env:
           GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh run download --name artifact-${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.pkg }}
+        run: gh run download --name artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
 
       - run: echo "ASSET_NAME=$(ls *.${{ matrix.pkg }} | head -n 1)" >> "$GITHUB_ENV"
 
       - name: Upload Asset
         env:
           GITHUB_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh release upload ${{ github.ref_name }} $ASSET_NAME
+        run: |
+          gh release upload ${{ github.ref_name }} "$ASSET_NAME" "dist/sbom/${ASSET_NAME}.spdx.json"

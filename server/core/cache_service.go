@@ -22,4 +22,7 @@ type CacheService interface {
 
 	// OnFailure handles the actions required in case of an unsuccessful authentication attempt for the given account name.
 	OnFailure(auth *AuthState, accountName string)
+
+	// Purge removes all cached entries for the specified username.
+	Purge(auth *AuthState, username string)
 }

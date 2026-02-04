@@ -43,6 +43,10 @@ func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client
 			definitions.LuaFnRedisExpire: rm.RedisExpire,
 			definitions.LuaFnRedisExists: rm.RedisExists,
 
+			definitions.LuaFnRedisEncrypt:             rm.RedisEncrypt,
+			definitions.LuaFnRedisDecrypt:             rm.RedisDecrypt,
+			definitions.LuaFnRedisIsEncryptionEnabled: rm.RedisIsEncryptionEnabled,
+
 			definitions.LuaFnRedisRunScript:    rm.RedisRunScript,
 			definitions.LuaFnRedisUploadScript: rm.RedisUploadScript,
 			definitions.LuaFnRedisPipeline:     rm.RedisPipeline,

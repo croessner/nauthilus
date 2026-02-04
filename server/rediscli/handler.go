@@ -81,6 +81,9 @@ type Client interface {
 
 	// Close releases all resources associated with the client, including write and read handles, and closes any open connections.
 	Close()
+
+	// GetSecurityManager returns the security manager for Redis.
+	GetSecurityManager() *SecurityManager
 }
 
 // redisClient represents a Redis client with separate handles for write and read operations.
@@ -94,6 +97,9 @@ type redisClient struct {
 
 	// readHandle is a map that associates Redis server addresses with their corresponding read-only Redis client instances.
 	readHandle map[string]redis.UniversalClient
+
+	// securityManager handles encryption and decryption of sensitive data.
+	securityManager *SecurityManager
 }
 
 var _ Client = (*redisClient)(nil)
@@ -123,6 +129,7 @@ func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
 	}
 
 	redisCfg := cfg.GetServer().GetRedis()
+	newClient.securityManager = NewSecurityManager(redisCfg.GetEncryptionSecret())
 	newClient.newRedisClient(redisCfg)
 	newClient.newRedisReplicaClient(redisCfg)
 
@@ -283,9 +290,15 @@ func (clt *redisClient) Close() {
 	}
 }
 
+// GetSecurityManager returns the security manager for the redisClient.
+func (clt *redisClient) GetSecurityManager() *SecurityManager {
+	return clt.securityManager
+}
+
 // testClient is a concrete implementation of the Client interface using a Redis UniversalClient.
 type testClient struct {
-	client redis.UniversalClient
+	client          redis.UniversalClient
+	securityManager *SecurityManager
 }
 
 // GetWriteHandle returns the Redis UniversalClient used for write operations.
@@ -321,12 +334,29 @@ func (tc *testClient) Close() {
 	tc.client.Close()
 }
 
+// GetSecurityManager returns the security manager for the testClient.
+func (tc *testClient) GetSecurityManager() *SecurityManager {
+	if tc.securityManager == nil {
+		tc.securityManager = NewSecurityManager("")
+	}
+
+	return tc.securityManager
+}
+
 var _ Client = (*testClient)(nil)
 
 // NewTestClient initializes and returns a new testClient instance, implementing the Client interface using the provided Redis client.
 func NewTestClient(db *redis.Client) Client {
+	return NewTestClientWithSecurity(db, nil)
+}
+
+// NewTestClientWithSecurity initializes and returns a new testClient instance with a custom security manager.
+func NewTestClientWithSecurity(db *redis.Client, sm *SecurityManager) Client {
 	clientMu.Lock()
-	client = &testClient{client: db}
+	client = &testClient{
+		client:          db,
+		securityManager: sm,
+	}
 	clientMu.Unlock()
 
 	return client

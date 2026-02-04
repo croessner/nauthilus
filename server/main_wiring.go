@@ -30,10 +30,12 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/backend/ldappool"
+	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -143,6 +145,7 @@ func newContextStoreForRuntime(
 	redisClient redifx.Client,
 	channel backend.Channel,
 	accountCache *accountcache.Manager,
+	langManager language.Manager,
 ) *contextStore {
 	store := newContextStore()
 	store.cfgProvider = cfgProvider
@@ -151,6 +154,7 @@ func newContextStoreForRuntime(
 	store.redisClient = redisClient
 	store.channel = channel
 	store.accountCache = accountCache
+	store.langManager = langManager
 	store.action = newContextTuple(ctx)
 
 	return store
@@ -177,6 +181,7 @@ type runtimeLifecycleParams struct {
 	BFSyncSvc     *loopsfx.BruteForceSyncService
 	Env           config.Environment
 	Channel       backend.Channel
+	LangManager   language.Manager
 }
 
 // registerRuntimeLifecycle wires the legacy startup/shutdown sequence into fx.Lifecycle.
@@ -202,7 +207,6 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			bootfx.EnableBlockProfile(snap.File)
 			bootfx.InitializeBruteForceTolerate(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
-			bootfx.InitializeHTTPClients(snap.File)
 			core.InitPassDBResultPool()
 
 			if snap.File == nil {
@@ -226,6 +230,8 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			// Provide action defaults.
 			action.SetDefaultEnvironment(p.Env)
+
+			priorityqueue.InitQueues(p.Store.logger)
 
 			p.ActionWorkers = initializeActionWorkers(snap.File, p.Store.logger, p.Store.redisClient, p.Env)
 			setupWorkers(p.Ctx, p.Store, p.ActionWorkers, snap.File, p.Store.logger, p.Store.redisClient, p.Channel)

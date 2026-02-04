@@ -1372,7 +1372,7 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 	)
 	defer span.End()
 
-	stopTimer := stats.PrometheusTimer(l.cfg, definitions.PromBackend, "ldap_backend_lookup_request_total")
+	stopTimer := stats.PrometheusTimer(l.cfg, definitions.PromBackend, "ldap_backend_lookup_request_total", l.name)
 
 	defer func() {
 		if stopTimer != nil {
@@ -1467,7 +1467,7 @@ func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *bktype.LDA
 	)
 	defer span.End()
 
-	stopTimer := stats.PrometheusTimer(l.cfg, definitions.PromBackend, "ldap_backend_auth_request_total")
+	stopTimer := stats.PrometheusTimer(l.cfg, definitions.PromBackend, "ldap_backend_auth_request_total", l.name)
 
 	defer func() {
 		if stopTimer != nil {

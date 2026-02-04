@@ -122,11 +122,12 @@ type LDAPConf struct {
 	LookupQueueLength  int `mapstructure:"lookup_queue_length" validate:"omitempty,min=0"`
 	AuthQueueLength    int `mapstructure:"auth_queue_length" validate:"omitempty,min=0"`
 
-	BindDN        string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
-	BindPW        string `mapstructure:"bind_pw" validate:"omitempty"`
-	TLSCAFile     string `mapstructure:"tls_ca_cert" validate:"omitempty,file"`
-	TLSClientCert string `mapstructure:"tls_client_cert" validate:"omitempty,file"`
-	TLSClientKey  string `mapstructure:"tls_client_key" validate:"omitempty,file"`
+	BindDN           string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
+	BindPW           string `mapstructure:"bind_pw" validate:"omitempty"`
+	EncryptionSecret string `mapstructure:"encryption_secret" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
+	TLSCAFile        string `mapstructure:"tls_ca_cert" validate:"omitempty,file"`
+	TLSClientCert    string `mapstructure:"tls_client_cert" validate:"omitempty,file"`
+	TLSClientKey     string `mapstructure:"tls_client_key" validate:"omitempty,file"`
 
 	ConnectAbortTimeout time.Duration `mapstructure:"connect_abort_timeout" validate:"omitempty,max=10m"`
 	// Operation-specific timeouts (0 = library default)
@@ -199,6 +200,8 @@ func (l *LDAPConf) String() string {
 			} else {
 				fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
 			}
+		case "EncryptionSecret":
+			fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
 		case "LookupPoolSize", "LookupIdlePoolSize", "AuthPoolSize", "AuthIdlePoolSize":
 			continue
 		default:
@@ -330,6 +333,16 @@ func (l *LDAPConf) GetBindPW() string {
 	return l.BindPW
 }
 
+// GetEncryptionSecret retrieves the LDAP encryption secret from the LDAPConf.
+// Returns an empty string if the LDAPConf is nil.
+func (l *LDAPConf) GetEncryptionSecret() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.EncryptionSecret
+}
+
 // GetTLSCAFile retrieves the TLS CA certificate file path from the LDAPConf.
 // Returns an empty string if the LDAPConf is nil.
 func (l *LDAPConf) GetTLSCAFile() string {
@@ -397,16 +410,15 @@ func (f *LDAPFilter) GetWebAuthnCredentialsFilter() string {
 }
 
 type LDAPAttributeMapping struct {
-	AccountField      string `mapstructure:"account_field" validate:"required"` // Webauthn is not implemented, yet.
-	TOTPSecretField   string `mapstructure:"totp_secret_field" validate:"omitempty"`
-	TOTPRecoveryField string `mapstructure:"totp_recovery_field" validate:"omitempty"`
-	DisplayNameField  string `mapstructure:"display_name_field" validate:"omitempty"`
-	CredentialObject  string `mapstructure:"credential_object" validate:"omitempty"`
-	CredentialIDField string `mapstructure:"credential_id_field" validate:"omitempty"`
-	PublicKeyField    string `mapstructure:"public_key_field" validate:"omitempty"`
-	UniqueUserIDField string `mapstructure:"unique_user_id_field" validate:"omitempty"`
-	AAGUIDField       string `mapstructure:"aaguid_field" validate:"omitempty"`
-	SignCountField    string `mapstructure:"sign_count_field" validate:"omitempty"`
+	AccountField            string `mapstructure:"account_field" validate:"required"` // Webauthn is not implemented, yet.
+	TOTPSecretField         string `mapstructure:"totp_secret_field" validate:"omitempty"`
+	TOTPRecoveryField       string `mapstructure:"totp_recovery_field" validate:"omitempty"`
+	TOTPObjectClass         string `mapstructure:"totp_object_class" validate:"omitempty"`
+	TOTPRecoveryObjectClass string `mapstructure:"totp_recovery_object_class" validate:"omitempty"`
+	DisplayNameField        string `mapstructure:"display_name_field" validate:"omitempty"`
+	WebAuthnCredentialField string `mapstructure:"webauthn_credential_field" validate:"omitempty"`
+	WebAuthnObjectClass     string `mapstructure:"webauthn_object_class" validate:"omitempty"`
+	UniqueUserIDField       string `mapstructure:"unique_user_id_field" validate:"omitempty"`
 }
 
 // GetTOTPSecretField retrieves the TOTP secret field name from the LDAPAttributeMapping.
@@ -429,6 +441,24 @@ func (m *LDAPAttributeMapping) GetTOTPRecoveryField() string {
 	return m.TOTPRecoveryField
 }
 
+// GetTOTPObjectClass returns the objectClass for TOTP usage.
+func (m *LDAPAttributeMapping) GetTOTPObjectClass() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.TOTPObjectClass
+}
+
+// GetTOTPRecoveryObjectClass returns the objectClass for TOTP recovery codes.
+func (m *LDAPAttributeMapping) GetTOTPRecoveryObjectClass() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.TOTPRecoveryObjectClass
+}
+
 // GetDisplayNameField retrieves the display name field from the LDAPAttributeMapping.
 // Returns an empty string if the LDAPAttributeMapping is nil.
 func (m *LDAPAttributeMapping) GetDisplayNameField() string {
@@ -439,34 +469,23 @@ func (m *LDAPAttributeMapping) GetDisplayNameField() string {
 	return m.DisplayNameField
 }
 
-// GetCredentialObject retrieves the credential object field name from the LDAPAttributeMapping.
+// GetWebAuthnCredentialField retrieves the WebAuthn credential field name from the LDAPAttributeMapping.
 // Returns an empty string if the LDAPAttributeMapping is nil.
-func (m *LDAPAttributeMapping) GetCredentialObject() string {
+func (m *LDAPAttributeMapping) GetWebAuthnCredentialField() string {
 	if m == nil {
 		return ""
 	}
 
-	return m.CredentialObject
+	return m.WebAuthnCredentialField
 }
 
-// GetCredentialIDField retrieves the credential ID field name from the LDAPAttributeMapping.
-// Returns an empty string if the LDAPAttributeMapping is nil.
-func (m *LDAPAttributeMapping) GetCredentialIDField() string {
+// GetWebAuthnObjectClass returns the objectClass for WebAuthn usage.
+func (m *LDAPAttributeMapping) GetWebAuthnObjectClass() string {
 	if m == nil {
 		return ""
 	}
 
-	return m.CredentialIDField
-}
-
-// GetPublicKeyField retrieves the public key field name from the LDAPAttributeMapping.
-// Returns an empty string if the LDAPAttributeMapping is nil.
-func (m *LDAPAttributeMapping) GetPublicKeyField() string {
-	if m == nil {
-		return ""
-	}
-
-	return m.PublicKeyField
+	return m.WebAuthnObjectClass
 }
 
 // GetUniqueUserIDField retrieves the unique user ID field name from the LDAPAttributeMapping.
@@ -479,24 +498,39 @@ func (m *LDAPAttributeMapping) GetUniqueUserIDField() string {
 	return m.UniqueUserIDField
 }
 
-// GetAAGUIDField retrieves the AAGUID field name from the LDAPAttributeMapping.
-// Returns an empty string if the LDAPAttributeMapping is nil.
-func (m *LDAPAttributeMapping) GetAAGUIDField() string {
+// GetAllMappedFields returns all attribute names that are part of the mapping.
+func (m *LDAPAttributeMapping) GetAllMappedFields() []string {
 	if m == nil {
-		return ""
+		return nil
 	}
 
-	return m.AAGUIDField
-}
+	fields := make([]string, 0, 6)
 
-// GetSignCountField retrieves the sign count field name from the LDAPAttributeMapping.
-// Returns an empty string if the LDAPAttributeMapping is nil.
-func (m *LDAPAttributeMapping) GetSignCountField() string {
-	if m == nil {
-		return ""
+	if m.AccountField != "" {
+		fields = append(fields, m.AccountField)
 	}
 
-	return m.SignCountField
+	if m.TOTPSecretField != "" {
+		fields = append(fields, m.TOTPSecretField)
+	}
+
+	if m.TOTPRecoveryField != "" {
+		fields = append(fields, m.TOTPRecoveryField)
+	}
+
+	if m.DisplayNameField != "" {
+		fields = append(fields, m.DisplayNameField)
+	}
+
+	if m.WebAuthnCredentialField != "" {
+		fields = append(fields, m.WebAuthnCredentialField)
+	}
+
+	if m.UniqueUserIDField != "" {
+		fields = append(fields, m.UniqueUserIDField)
+	}
+
+	return fields
 }
 
 type LDAPSearchProtocol struct {
@@ -524,15 +558,40 @@ func (p *LDAPSearchProtocol) GetAccountField() (string, error) {
 	return p.AccountField, nil
 }
 
-// GetAttributes returns a list of attributes that are requested from the LDAP server.  It returns a DetailedError, if
+// GetAttributes returns a list of attributes that are requested from the LDAP server. It returns a DetailedError, if
 // no value has been configured.
 func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
-	if p == nil || len(p.Attributes) == 0 {
+	if p == nil {
+		return nil, errors.ErrLDAPConfig.WithDetail("LDAPSearchProtocol is nil")
+	}
+
+	uniqueAttributes := make(map[string]struct{})
+
+	// Add configured attributes
+	for _, attr := range p.Attributes {
+		if attr != "" {
+			uniqueAttributes[attr] = struct{}{}
+		}
+	}
+
+	// Add mapped fields
+	for _, field := range p.LDAPAttributeMapping.GetAllMappedFields() {
+		if field != "" {
+			uniqueAttributes[field] = struct{}{}
+		}
+	}
+
+	if len(uniqueAttributes) == 0 {
 		return nil, errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP result attribute; protocols=%v", p.Protocols))
 	}
 
-	return p.Attributes, nil
+	result := make([]string, 0, len(uniqueAttributes))
+	for attr := range uniqueAttributes {
+		result = append(result, attr)
+	}
+
+	return result, nil
 }
 
 // GetUserFilter returns an LDAP search filter to find a user.  It returns a DetailedError, if no value has
@@ -603,6 +662,46 @@ func (p *LDAPSearchProtocol) GetCacheName() (string, error) {
 	}
 
 	return p.CacheName, nil
+}
+
+// GetTotpSecretField returns the LDAP attribute for the TOTP secret.
+func (p *LDAPSearchProtocol) GetTotpSecretField() string {
+	return p.LDAPAttributeMapping.GetTOTPSecretField()
+}
+
+// GetTotpRecoveryField returns the LDAP attribute for the TOTP recovery codes.
+func (p *LDAPSearchProtocol) GetTotpRecoveryField() string {
+	return p.LDAPAttributeMapping.GetTOTPRecoveryField()
+}
+
+// GetTotpObjectClass returns the objectClass for TOTP usage.
+func (p *LDAPSearchProtocol) GetTotpObjectClass() string {
+	return p.LDAPAttributeMapping.GetTOTPObjectClass()
+}
+
+// GetTotpRecoveryObjectClass returns the objectClass for TOTP recovery codes.
+func (p *LDAPSearchProtocol) GetTotpRecoveryObjectClass() string {
+	return p.LDAPAttributeMapping.GetTOTPRecoveryObjectClass()
+}
+
+// GetWebAuthnCredentialField returns the LDAP attribute for the WebAuthn credentials.
+func (p *LDAPSearchProtocol) GetWebAuthnCredentialField() string {
+	return p.LDAPAttributeMapping.GetWebAuthnCredentialField()
+}
+
+// GetWebAuthnObjectClass returns the objectClass for WebAuthn usage.
+func (p *LDAPSearchProtocol) GetWebAuthnObjectClass() string {
+	return p.LDAPAttributeMapping.GetWebAuthnObjectClass()
+}
+
+// GetUniqueUserIDField returns the LDAP attribute for the unique user ID.
+func (p *LDAPSearchProtocol) GetUniqueUserIDField() string {
+	return p.LDAPAttributeMapping.GetUniqueUserIDField()
+}
+
+// GetDisplayNameField returns the LDAP attribute for the display name.
+func (p *LDAPSearchProtocol) GetDisplayNameField() string {
+	return p.LDAPAttributeMapping.GetDisplayNameField()
 }
 
 // GetProtocols retrieves the list of protocols from the LDAPSearchProtocol.
