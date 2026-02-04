@@ -98,6 +98,10 @@ func (m *mockOIDCCfg) GetServer() *config.ServerSection {
 	}
 }
 
+func (m *mockOIDCCfg) GetLDAPConfigEncryptionSecret() string {
+	return ""
+}
+
 func (m *mockOIDCCfg) GetOIDCCID() string    { return "X-Nauthilus-OIDC-ClientID" }
 func (m *mockOIDCCfg) GetClientIP() string   { return "X-Real-IP" }
 func (m *mockOIDCCfg) GetClientPort() string { return "X-Real-Port" }

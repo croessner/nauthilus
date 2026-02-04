@@ -280,7 +280,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// Overall BF check timer
 	var stopOverall func()
-	if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total"); s != nil {
+	if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total", ctx.FullPath()); s != nil {
 		stopOverall = s
 
 		defer stopOverall()
@@ -367,7 +367,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	// Existing generic timer
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total")
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total", ctx.FullPath())
 
 	// E2E histogram for BF path
 	bfStart := time.Now()
@@ -517,7 +517,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 		// Time the Lua action execution
 		var stopLua func()
-		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_lua_action_total"); s != nil {
+		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_lua_action_total", ctx.FullPath()); s != nil {
 			stopLua = s
 		}
 
@@ -550,7 +550,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	defer uspan.End()
 
 	// Overall timer for updating BF buckets after an auth failure
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_overall_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_overall_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
@@ -678,7 +678,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	for _, rule := range a.cfg().GetBruteForceRules() {
 		// Per-rule iteration timer
 		var stopIter func()
-		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total"); s != nil {
+		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total", ctx.FullPath()); s != nil {
 			stopIter = s
 		}
 

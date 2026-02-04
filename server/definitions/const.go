@@ -1966,6 +1966,12 @@ const (
 	// PromDeleteTOTP is a constant representing the label used for deleting TOTP secrets in the Prometheus metrics.
 	PromDeleteTOTP = "delete_totp"
 
+	// PromStoreTOTPRecovery is a constant representing the label used for storing TOTP recovery codes in the Prometheus metrics.
+	PromStoreTOTPRecovery = "store_totp_recovery"
+
+	// PromDeleteTOTPRecovery is a constant representing the label used for deleting TOTP recovery codes in the Prometheus metrics.
+	PromDeleteTOTPRecovery = "delete_totp_recovery"
+
 	// PromPostAction represents the constant value "post_action".
 	PromPostAction = "post_action"
 

@@ -443,6 +443,25 @@ func WithNotAvailable(value string) string {
 	return value
 }
 
+// RequestResource derives a Prometheus resource label from HTTP context/request data.
+// It prefers the Gin route FullPath when available, then falls back to URL path
+// or a stable fallback label.
+func RequestResource(httpCtx *gin.Context, httpReq *http.Request, fallback string) string {
+	if httpCtx != nil {
+		return httpCtx.FullPath()
+	}
+
+	if httpReq != nil && httpReq.URL != nil {
+		return httpReq.URL.Path
+	}
+
+	if fallback != "" {
+		return fallback
+	}
+
+	return "unknown_resource"
+}
+
 // logNetworkError logs a network error message.
 // a.logNetworkError(ipOrNet, err)
 func logNetworkError(logger *slog.Logger, guid, ipOrNet string, err error) {

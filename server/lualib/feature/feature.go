@@ -300,7 +300,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				request.RawSetString(definitions.LuaRequestAccount, lua.LString(r.AccountName))
 			}
 
-			stopTimer := stats.PrometheusTimer(cfg, definitions.PromFeature, feature.Name)
+			stopTimer := stats.PrometheusTimer(cfg, definitions.PromFeature, feature.Name, ctx.FullPath())
 
 			luaCtx, luaCancel := context.WithTimeout(egCtx, cfg.GetServer().GetTimeouts().GetLuaScript())
 			defer luaCancel()

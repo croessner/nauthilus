@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/security"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
@@ -71,12 +72,16 @@ func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 
 	backend := &config.Backend{}
 	_ = backend.Set("ldap")
+	encryptionSecret := "testsecret12345678"
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
 			Backends: []*config.Backend{backend},
 		},
 		LDAP: &config.LDAPSection{
+			Config: &config.LDAPConf{
+				EncryptionSecret: encryptionSecret,
+			},
 			Search: []config.LDAPSearchProtocol{
 				{
 					Protocols: []string{"idp"},
@@ -120,7 +125,13 @@ func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 		req := priorityqueue.LDAPQueue.Pop(definitions.DefaultBackendName)
 		if req != nil {
 			assert.Equal(t, definitions.LDAPModify, req.Command)
-			assert.Equal(t, secret, req.ModifyAttributes["nauthilusTotpSecret"][0])
+
+			encryptedSecret := req.ModifyAttributes["nauthilusTotpSecret"][0]
+			securityManager := security.NewManager(encryptionSecret)
+			decryptedSecret, decryptErr := securityManager.Decrypt(encryptedSecret)
+			assert.NoError(t, decryptErr)
+			assert.Equal(t, secret, decryptedSecret)
+
 			req.LDAPReplyChan <- &bktype.LDAPReply{Err: nil}
 		}
 	}()
@@ -134,12 +145,16 @@ func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 
 	backend := &config.Backend{}
 	_ = backend.Set("ldap")
+	encryptionSecret := "testsecret12345678"
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
 			Backends: []*config.Backend{backend},
 		},
 		LDAP: &config.LDAPSection{
+			Config: &config.LDAPConf{
+				EncryptionSecret: encryptionSecret,
+			},
 			Search: []config.LDAPSearchProtocol{
 				{
 					Protocols: []string{"idp"},

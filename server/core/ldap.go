@@ -257,6 +257,13 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		protocol           *config.LDAPSearchProtocol
 	)
 
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "ldap_passdb_request_total", resource)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
 	passDBResult = GetPassDBResultFromPool()
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
@@ -560,7 +567,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "ldap_account_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "ldap_account_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -707,7 +715,8 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		ldapError   *ldap.Error
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "ldap_store_totp_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "ldap_store_totp_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -857,7 +866,8 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 		protocol    *config.LDAPSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTP, "ldap_delete_totp_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTP, "ldap_delete_totp_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -985,10 +995,12 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 		protocol    *config.LDAPSearchProtocol
 	)
 
-	// stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTPRecovery, "ldap_store_totp_recovery_request_total")
-	// if stopTimer != nil {
-	// 	defer stopTimer()
-	// }
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTPRecovery, "ldap_store_totp_recovery_request_total", resource)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
@@ -1163,10 +1175,12 @@ func (lm *ldapManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) 
 		protocol    *config.LDAPSearchProtocol
 	)
 
-	// stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTPRecovery, "ldap_delete_totp_recovery_request_total")
-	// if stopTimer != nil {
-	// 	defer stopTimer()
-	// }
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTPRecovery, "ldap_delete_totp_recovery_request_total", resource)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 

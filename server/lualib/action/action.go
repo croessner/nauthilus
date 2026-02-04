@@ -445,7 +445,12 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 		ssp.End()
 	}()
 
-	stopTimer := stats.PrometheusTimer(aw.cfg, definitions.PromAction, getTaskName(aw.actionScripts[index]))
+	resource := "action_worker"
+	if aw.luaActionRequest != nil && aw.luaActionRequest.HTTPContext != nil {
+		resource = aw.luaActionRequest.HTTPContext.FullPath()
+	}
+
+	stopTimer := stats.PrometheusTimer(aw.cfg, definitions.PromAction, getTaskName(aw.actionScripts[index]), resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
