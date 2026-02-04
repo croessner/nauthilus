@@ -46,6 +46,22 @@ type ldapManagerImpl struct {
 	deps     AuthDeps
 }
 
+func (lm *ldapManagerImpl) ldapQueue() LDAPRequestQueue {
+	if lm.deps.LDAPQueue != nil {
+		return lm.deps.LDAPQueue
+	}
+
+	return priorityqueue.LDAPQueue
+}
+
+func (lm *ldapManagerImpl) ldapAuthQueue() LDAPAuthRequestQueue {
+	if lm.deps.LDAPAuthQueue != nil {
+		return lm.deps.LDAPAuthQueue
+	}
+
+	return priorityqueue.LDAPAuthQueue
+}
+
 // handleMasterUserMode handles the master user mode functionality for authentication.
 // If master user mode is enabled and the username contains only one occurrence of the delimiter,
 // it splits the username based on the delimiter and returns the appropriate part of the username
@@ -359,7 +375,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	pSpan.End()
 
 	// Use priority queue instead of channel
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, priority)
 
 	_, wSpan := tr.Start(lctx, "ldap.passdb.search.wait")
 	ldapReply = <-ldapReplyChan
@@ -490,7 +506,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		apSpan.End()
 
 		// Use priority queue instead of channel
-		priorityqueue.LDAPAuthQueue.Push(ldapUserBindRequest, priority)
+		lm.ldapAuthQueue().Push(ldapUserBindRequest, priority)
 
 		_, awSpan := tr.Start(lctx, "ldap.passdb.auth.wait")
 		ldapReply = <-ldapReplyChan
@@ -652,7 +668,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	pSpan.End()
 
-	priorityqueue.LDAPQueue.Push(ldapRequest, priorityqueue.PriorityMedium)
+	lm.ldapQueue().Push(ldapRequest, priorityqueue.PriorityMedium)
 
 	_, wSpan := tr.Start(actx, "ldap.accountdb.wait")
 	ldapReply = <-ldapReplyChan
@@ -821,7 +837,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	pSpan.End()
 
 	// Use priority queue instead of channel
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, priority)
 
 	_, wSpan := tr.Start(mctx, "ldap.add_totp.wait")
 	ldapReply = <-ldapReplyChan
@@ -956,7 +972,7 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 	pSpan.End()
 
 	// Use priority queue instead of channel
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, priority)
 
 	_, wSpan := tr.Start(mctx, "ldap.delete_totp.wait")
 	ldapReply = <-ldapReplyChan
@@ -1128,7 +1144,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 			HTTPClientContext: ctxAddObjectClass,
 		}
 
-		priorityqueue.LDAPQueue.Push(objectClassRequest, priority)
+		lm.ldapQueue().Push(objectClassRequest, priority)
 		objectClassReply := <-objectClassReplyChan
 		if objectClassReply.Err != nil && !isAttributeOrValueExistsError(objectClassReply.Err) {
 			msp.RecordError(objectClassReply.Err)
@@ -1140,7 +1156,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 	pSpan.End()
 
 	// Use priority queue instead of channel
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, priority)
 
 	_, wSpan := tr.Start(mctx, "ldap.add_totp_recovery.wait")
 	ldapReply = <-ldapReplyChan
@@ -1266,7 +1282,7 @@ func (lm *ldapManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) 
 	pSpan.End()
 
 	// Use priority queue instead of channel
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, priority)
 
 	_, wSpan := tr.Start(mctx, "ldap.delete_totp_recovery.wait")
 	ldapReply = <-ldapReplyChan

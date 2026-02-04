@@ -40,13 +40,15 @@ var (
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string) {
+func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string, deps LDAPWorkerDeps) {
+	queue := deps.ldapQueue()
+	poolFactory := deps.poolFactory()
 	// Ensure the LDAP-scoped shared TTL cache is initialized and its janitor is
 	// bound to this worker's lifecycle. This avoids running the TTL janitor when
 	// no LDAP backend is active.
 	ldappool.StartSharedTTLCache(ctx)
 
-	ldapPool := ldappool.NewPool(ctx, cfg, logger, definitions.LDAPPoolLookup, poolName)
+	ldapPool := poolFactory.NewPool(ctx, cfg, logger, definitions.LDAPPoolLookup, poolName)
 
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
@@ -54,7 +56,7 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 	ldapPool.SetIdleConnections(true)
 
 	// Add the pool name to the queue
-	priorityqueue.LDAPQueue.AddPoolName(poolName)
+	queue.AddPoolName(poolName)
 
 	// Configure queue length limit from config (0 = unlimited)
 	lookupLimit := 0
@@ -73,7 +75,7 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 		}
 	}
 
-	priorityqueue.LDAPQueue.SetMaxQueueLength(poolName, lookupLimit)
+	queue.SetMaxQueueLength(poolName, lookupLimit)
 
 	var wg sync.WaitGroup
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
@@ -91,7 +93,7 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 				}
 
 				// Get the next request from the priority queue.
-				ldapRequest := priorityqueue.LDAPQueue.PopWithContext(ctx, poolName)
+				ldapRequest := queue.PopWithContext(ctx, poolName)
 				if ldapRequest == nil {
 					ldapPool.Close()
 
@@ -129,9 +131,11 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
 // It initializes the authentication connection pool, starts a resource management process, and handles requests or exits gracefully.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string) {
+func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, channel Channel, poolName string, deps LDAPWorkerDeps) {
+	authQueue := deps.ldapAuthQueue()
+	poolFactory := deps.poolFactory()
 
-	ldapPool := ldappool.NewPool(ctx, cfg, logger, definitions.LDAPPoolAuth, poolName)
+	ldapPool := poolFactory.NewPool(ctx, cfg, logger, definitions.LDAPPoolAuth, poolName)
 
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
@@ -139,7 +143,7 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 	ldapPool.SetIdleConnections(false)
 
 	// Add the pool name to the queue
-	priorityqueue.LDAPAuthQueue.AddPoolName(poolName)
+	authQueue.AddPoolName(poolName)
 
 	// Configure auth queue length limit from config (0 = unlimited)
 	authLimit := 0
@@ -158,7 +162,7 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 		}
 	}
 
-	priorityqueue.LDAPAuthQueue.SetMaxQueueLength(poolName, authLimit)
+	authQueue.SetMaxQueueLength(poolName, authLimit)
 
 	var wg sync.WaitGroup
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
@@ -176,7 +180,7 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 				}
 
 				// Get the next request from the priority queue.
-				ldapAuthRequest := priorityqueue.LDAPAuthQueue.PopWithContext(ctx, poolName)
+				ldapAuthRequest := authQueue.PopWithContext(ctx, poolName)
 				if ldapAuthRequest == nil {
 					ldapPool.Close()
 
@@ -265,7 +269,7 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 
 		// Use priority queue instead of channel
 		_, qSpan := trLua.Start(trCtx, "ldap.lua.search.enqueue")
-		priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+		luaLDAPQueue.Push(ldapRequest, priority)
 		qSpan.End()
 
 		return processReply(trCtx, L, ldapRequest.GetLDAPReplyChan())
@@ -311,7 +315,7 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 
 		// Use priority queue instead of channel
 		_, qSpan := trLua.Start(trCtx, "ldap.lua.modify.enqueue")
-		priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+		luaLDAPQueue.Push(ldapRequest, priority)
 		qSpan.End()
 
 		var ldapReply *bktype.LDAPReply

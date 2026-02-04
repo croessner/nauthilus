@@ -151,10 +151,10 @@ func startLDAPWorkers(store *contextStore, cfg config.File, logger *slog.Logger,
 			channel.GetLdapChannel().AddChannel(poolName)
 		}
 
-		backend.LDAPMainWorker(store.ldapLookup.ctx, cfg, logger, channel, poolName)
+		backend.LDAPMainWorker(store.ldapLookup.ctx, cfg, logger, channel, poolName, backend.LDAPWorkerDeps{})
 
 		if !cfg.LDAPHavePoolOnly(poolName) {
-			backend.LDAPAuthWorker(store.ldapAuth.ctx, cfg, logger, channel, poolName)
+			backend.LDAPAuthWorker(store.ldapAuth.ctx, cfg, logger, channel, poolName, backend.LDAPWorkerDeps{})
 		}
 	})
 }

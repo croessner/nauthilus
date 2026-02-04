@@ -140,7 +140,7 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 		priority = priorityqueue.PriorityMedium
 	}
 
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, priority)
 
 	select {
 	case <-ctxSearch.Done():
@@ -289,7 +289,7 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 	// Re-using same Filter and BaseDN/Scope as search
 	credRequest.Filter = filter
 
-	priorityqueue.LDAPQueue.Push(credRequest, priority)
+	lm.ldapQueue().Push(credRequest, priority)
 
 	select {
 	case <-ctxModifyCred.Done():
@@ -372,7 +372,7 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 		priority = priorityqueue.PriorityMedium
 	}
 
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	lm.ldapQueue().Push(ldapRequest, priority)
 
 	select {
 	case <-ctxModify.Done():
@@ -492,7 +492,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		HTTPClientContext: ctxAdd,
 	}
 
-	priorityqueue.LDAPQueue.Push(addRequest, priority)
+	lm.ldapQueue().Push(addRequest, priority)
 
 	select {
 	case <-ctxAdd.Done():
@@ -528,7 +528,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		HTTPClientContext: ctxDelete,
 	}
 
-	priorityqueue.LDAPQueue.Push(deleteRequest, priority)
+	lm.ldapQueue().Push(deleteRequest, priority)
 
 	select {
 	case <-ctxDelete.Done():
@@ -562,7 +562,7 @@ func (lm *ldapManagerImpl) fetchObjectClasses(ctx context.Context, auth *AuthSta
 		HTTPClientContext: ctxSearch,
 	}
 
-	priorityqueue.LDAPQueue.Push(ldapSearchRequest, priority)
+	lm.ldapQueue().Push(ldapSearchRequest, priority)
 
 	var currentObjectClasses []string
 	select {
@@ -642,7 +642,7 @@ func (lm *ldapManagerImpl) addObjectClass(ctx context.Context, auth *AuthState, 
 		HTTPClientContext: ctxModifyOC,
 	}
 
-	priorityqueue.LDAPQueue.Push(ocRequest, priority)
+	lm.ldapQueue().Push(ocRequest, priority)
 
 	select {
 	case <-ctxModifyOC.Done():

@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/accountcache"
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -27,12 +28,22 @@ import (
 
 // AuthDeps bundles dependencies required by authentication request paths.
 type AuthDeps struct {
-	Cfg          config.File
-	Logger       *slog.Logger
-	Env          config.Environment
-	Redis        rediscli.Client
-	Tolerate     tolerate.Tolerate
-	AccountCache *accountcache.Manager
-	Channel      backend.Channel
-	Backend      BackendManager
+	Cfg           config.File
+	Logger        *slog.Logger
+	Env           config.Environment
+	Redis         rediscli.Client
+	Tolerate      tolerate.Tolerate
+	AccountCache  *accountcache.Manager
+	Channel       backend.Channel
+	Backend       BackendManager
+	LDAPQueue     LDAPRequestQueue
+	LDAPAuthQueue LDAPAuthRequestQueue
+}
+
+type LDAPRequestQueue interface {
+	Push(request *bktype.LDAPRequest, priority int)
+}
+
+type LDAPAuthRequestQueue interface {
+	Push(request *bktype.LDAPAuthRequest, priority int)
 }
