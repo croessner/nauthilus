@@ -79,9 +79,10 @@ jobs:
           - goos: linux
             goarch: amd64
             rpm_arch: x86_64
+            build_rpm: true
           - goos: linux
             goarch: arm64
-            rpm_arch: aarch64
+            build_rpm: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -132,6 +133,7 @@ jobs:
 
       - name: Build RPM
         uses: jiro4989/build-rpm-action@v2
+        if: ${{ matrix.build_rpm }}
         with:
           package: ${{ env.APP_NAME }}
           package_root: .rpmpkg
