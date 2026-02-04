@@ -33,6 +33,15 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 	var err error
 	cfg := b.cfg
 	idpCfg := cfg.GetIdP()
+	serverCfg := cfg.GetServer()
+
+	hasFrontend := serverCfg.Frontend.Enabled
+	hasIDP := idpCfg.OIDC.Enabled || idpCfg.SAML2.Enabled
+	hasWebAuthnConfig := idpCfg.WebAuthn.RPDisplayName != "" || idpCfg.WebAuthn.RPID != "" || len(idpCfg.WebAuthn.RPOrigins) > 0
+
+	if !hasFrontend && !hasIDP && !hasWebAuthnConfig {
+		return nil
+	}
 
 	rpID := idpCfg.WebAuthn.RPID
 	origins := idpCfg.WebAuthn.RPOrigins
