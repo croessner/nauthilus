@@ -66,9 +66,7 @@ func newConfigDeps(_ *bootstrapped) (configDeps, error) {
 }
 
 // newLogger provides the process logger for fx.
-//
-// It depends on the bootstrap token to ensure logging has been initialized.
-func newLogger(_ *bootstrapped) *slog.Logger {
+func newLogger() *slog.Logger {
 	return logfx.NewLogger()
 }
 

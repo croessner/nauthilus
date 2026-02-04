@@ -163,6 +163,13 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		protocol           *config.LDAPSearchProtocol
 	)
 
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "ldap_passdb_request_total", resource)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
 	passDBResult = GetPassDBResultFromPool()
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
@@ -172,6 +179,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		pSpan.End()
+
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
 
 		return
 	}
@@ -418,7 +430,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "ldap_account_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "ldap_account_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -431,6 +444,11 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		pSpan.End()
+
+		if err == nil {
+			err = errors.ErrLDAPConfig.WithDetail(
+				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
+		}
 
 		return
 	}
@@ -560,7 +578,8 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		ldapError   *ldap.Error
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "ldap_store_totp_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "ldap_store_totp_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -643,6 +662,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	if !auth.Request.NoAuth {
 		priority = priorityqueue.PriorityMedium
 	}
+
 	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
 		priority = priorityqueue.PriorityHigh
 	}

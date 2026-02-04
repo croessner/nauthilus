@@ -61,7 +61,8 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total")
+	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total", resource)
 	if stopTimer != nil {
 		defer stopTimer()
 	}

@@ -77,7 +77,7 @@ func main() {
 
 	fApp := fx.New(
 		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
-			if logger.Enabled(context.Background(), slog.LevelDebug) {
+			if logger != nil && logger.Enabled(context.Background(), slog.LevelDebug) {
 				return logfx.NewFxEventLogger(logger)
 			}
 

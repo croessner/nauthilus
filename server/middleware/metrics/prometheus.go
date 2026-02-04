@@ -43,13 +43,15 @@ func PrometheusMiddlewareWithCfg(cfg config.File) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var timer *prometheus.Timer
 
+		path := ctx.FullPath()
 		mode := ctx.Query("mode")
+		uScore := "_"
+
 		if mode == "" {
-			mode = "auth"
+			uScore = ""
 		}
 
-		stopTimer := stats.PrometheusTimer(cfg, definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
-		path := ctx.FullPath()
+		stopTimer := stats.PrometheusTimer(cfg, definitions.PromRequest, fmt.Sprintf("request%s%s_total", uScore, strings.ReplaceAll(mode, "-", "_")), path)
 
 		if enableTimer {
 			timer = prometheus.NewTimer(stats.GetMetrics().GetHttpResponseTimeSeconds().WithLabelValues(path))

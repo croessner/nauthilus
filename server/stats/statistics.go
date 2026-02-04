@@ -645,7 +645,7 @@ func NewMetrics() Metrics {
 				Name:    "function_duration_seconds",
 				Help:    "Time spent in function",
 				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-			}, []string{"service", "task"},
+			}, []string{"service", "task", "resource"},
 		),
 		rblDuration: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -1053,9 +1053,9 @@ func HavePrometheusLabelEnabled(cfg config.File, prometheusLabel string) bool {
 
 // PrometheusTimer returns a closure that, when executed, stops a Prometheus timer for a given service and task.
 // If the Prometheus Timer is disabled or the specified task is not enabled in the configuration, it returns nil.
-func PrometheusTimer(cfg config.File, serviceName string, taskName string) func() {
+func PrometheusTimer(cfg config.File, serviceName string, taskName string, resource string) func() {
 	if HavePrometheusLabelEnabled(cfg, serviceName) {
-		timer := prometheus.NewTimer(GetMetrics().GetFunctionDuration().WithLabelValues(serviceName, taskName))
+		timer := prometheus.NewTimer(GetMetrics().GetFunctionDuration().WithLabelValues(serviceName, taskName, resource))
 
 		return func() {
 			timer.ObserveDuration()

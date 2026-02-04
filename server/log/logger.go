@@ -35,6 +35,10 @@ var (
 	Logger *slog.Logger
 )
 
+func init() {
+	SetupLogging(definitions.LogLevelInfo, false, true, false, "")
+}
+
 // GetLogger returns the global logger instance.
 func GetLogger() *slog.Logger {
 	return Logger

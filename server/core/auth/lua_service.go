@@ -61,7 +61,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		return definitions.AuthResultFail
 	}
 
-	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromFilter, "lua_filter_request_total")
+	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromFilter, "lua_filter_request_total", ctx.FullPath())
 	if stopTimer != nil {
 		defer stopTimer()
 	}

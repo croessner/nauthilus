@@ -1990,7 +1990,8 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 // After that, the PostLuaAction is executed on the passDBResult.
 // Finally, it returns the authResult of type definitions.AuthResult.
 func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_local_cache_path_total"); stop != nil {
+	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_local_cache_path_total", resource); stop != nil {
 		defer stop()
 	}
 
@@ -2105,7 +2106,7 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 	}
 	defer vspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_verify_password_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_verify_password_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
@@ -2178,7 +2179,8 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 // processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
 // It returns the account name and any error encountered during the process.
 func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName string, err error) {
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_user_found_total"); stop != nil {
+	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_user_found_total", resource); stop != nil {
 		defer stop()
 	}
 
@@ -2304,7 +2306,7 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 
 	defer cspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_process_cache_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_process_cache_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
@@ -2349,7 +2351,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	defer aspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_authenticate_user_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_authenticate_user_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
@@ -2427,7 +2429,7 @@ func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) defi
 
 	defer lspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_filter_lua_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_filter_lua_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
@@ -2616,7 +2618,7 @@ func (a *AuthState) HasJWTRole(ctx *gin.Context, role string) bool {
 //	  auth.setOperationMode(ctx)
 //	}
 func (a *AuthState) SetOperationMode(ctx *gin.Context) {
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_set_operation_mode_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_set_operation_mode_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
@@ -2691,7 +2693,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
 		cfg = a.cfg()
 
-		if stop := stats.PrometheusTimer(cfg, definitions.PromRequest, "request_headers_parse_total"); stop != nil {
+		if stop := stats.PrometheusTimer(cfg, definitions.PromRequest, "request_headers_parse_total", ctx.FullPath()); stop != nil {
 			defer stop()
 		}
 	}
@@ -2756,7 +2758,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 // It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the AuthState object.
 func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_form_decode_total"); stop != nil {
+		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_form_decode_total", ctx.FullPath()); stop != nil {
 			defer stop()
 		}
 	}
@@ -2800,7 +2802,7 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 // and sets additional fields in the AuthState object using the XSSL method.
 func processApplicationJSON(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_json_decode_total"); stop != nil {
+		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_json_decode_total", ctx.FullPath()); stop != nil {
 			defer stop()
 		}
 	}
@@ -2971,7 +2973,7 @@ func (a *AuthState) InitMethodAndUserAgent() State {
 //	setupAuth(&ctx, auth)
 func setupAuth(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_setup_total"); stop != nil {
+		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_setup_total", ctx.FullPath()); stop != nil {
 			defer stop()
 		}
 	}
@@ -3186,7 +3188,8 @@ func (a *AuthState) WithLocalInfo(ctx *gin.Context) State {
 // postResolvDNS resolves the client IP to a host name if DNS client IP resolution is enabled in the configuration.
 func (a *AuthState) postResolvDNS(ctx context.Context) {
 	if a.cfg().GetServer().GetDNS().GetResolveClientIP() {
-		stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.DNSResolvePTR)
+		resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
+		stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.DNSResolvePTR, resource)
 
 		a.Request.ClientHost = util.ResolveIPAddress(ctx, a.Cfg(), a.Request.ClientIP)
 

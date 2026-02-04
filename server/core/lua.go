@@ -30,6 +30,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
+	"github.com/croessner/nauthilus/server/util"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -67,7 +68,8 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "lua_backend_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "lua_backend_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -271,7 +273,8 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "lua_account_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "lua_account_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -377,7 +380,8 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "lua_store_totp_request_total")
+	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.backendName)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "lua_store_totp_request_total", resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
