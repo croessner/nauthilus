@@ -225,10 +225,6 @@ github.com/gin-contrib/gzip
 # github.com/gin-contrib/pprof v1.5.3
 ## explicit; go 1.23.0
 github.com/gin-contrib/pprof
-# github.com/gin-contrib/sessions v1.0.4
-## explicit; go 1.23.0
-github.com/gin-contrib/sessions
-github.com/gin-contrib/sessions/cookie
 # github.com/gin-contrib/sse v1.1.0
 ## explicit; go 1.23
 github.com/gin-contrib/sse
@@ -328,15 +324,6 @@ github.com/google/go-tpm/tpmutil/tbs
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
-# github.com/gorilla/context v1.1.2
-## explicit; go 1.20
-github.com/gorilla/context
-# github.com/gorilla/securecookie v1.1.2
-## explicit; go 1.20
-github.com/gorilla/securecookie
-# github.com/gorilla/sessions v1.4.0
-## explicit; go 1.23
-github.com/gorilla/sessions
 # github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.4
 ## explicit; go 1.24.0
 github.com/grpc-ecosystem/grpc-gateway/v2/internal/httprule
