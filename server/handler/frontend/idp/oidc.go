@@ -38,6 +38,8 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
+	"github.com/gwatts/gin-adapter"
+	"github.com/justinas/nosurf"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -69,6 +71,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 
 	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
+	csrfMW := adapter.Wrap(nosurf.NewPure)
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
 	router.GET("/oidc/authorize", secureMW, i18nMW, h.Authorize)
@@ -79,10 +82,10 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.GET("/oidc/jwks", h.JWKS)
 	router.GET("/oidc/logout", secureMW, h.Logout)
 	router.GET("/logout", secureMW, h.Logout)
-	router.GET("/oidc/consent", secureMW, i18nMW, h.ConsentGET)
-	router.GET("/oidc/consent/:languageTag", secureMW, i18nMW, h.ConsentGET)
-	router.POST("/oidc/consent", secureMW, i18nMW, h.ConsentPOST)
-	router.POST("/oidc/consent/:languageTag", secureMW, i18nMW, h.ConsentPOST)
+	router.GET("/oidc/consent", csrfMW, secureMW, i18nMW, h.ConsentGET)
+	router.GET("/oidc/consent/:languageTag", csrfMW, secureMW, i18nMW, h.ConsentGET)
+	router.POST("/oidc/consent", csrfMW, secureMW, i18nMW, h.ConsentPOST)
+	router.POST("/oidc/consent/:languageTag", csrfMW, secureMW, i18nMW, h.ConsentPOST)
 }
 
 // Discovery returns the OIDC discovery document.
@@ -222,16 +225,37 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 			if state != "" {
 				target += "&state=" + url.QueryEscape(state)
 			}
+
 			ctx.Redirect(http.StatusFound, target)
 
 			return
 		}
 
-		// User not logged in, redirect to login page
-		loginURL := "/login"
-		// Append original request to return_to
-		originalURL := ctx.Request.URL.String()
-		ctx.Redirect(http.StatusFound, loginURL+"?return_to="+url.QueryEscape(originalURL))
+		// User not logged in - store OIDC flow state in secure cookie and redirect to login.
+		// This prevents open redirect vulnerabilities by not passing return_to in URL.
+		if mgr != nil {
+			mgr.Set(definitions.SessionKeyIdPFlowActive, true)
+			mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoOIDC)
+			mgr.Set(definitions.SessionKeyIdPClientID, clientID)
+			mgr.Set(definitions.SessionKeyIdPRedirectURI, redirectURI)
+			mgr.Set(definitions.SessionKeyIdPScope, scope)
+			mgr.Set(definitions.SessionKeyIdPState, state)
+			mgr.Set(definitions.SessionKeyIdPNonce, nonce)
+			mgr.Set(definitions.SessionKeyIdPResponseType, responseType)
+			mgr.Set(definitions.SessionKeyIdPPrompt, prompt)
+			mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoOIDC)
+
+			// Explicitly save cookie before redirect to ensure it's written to the response
+			if err := mgr.Save(ctx); err != nil {
+				ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+				return
+			}
+
+			mgr.Debug(ctx, h.deps.Logger, "OIDC flow state stored in cookie - redirecting to login")
+		}
+
+		ctx.Redirect(http.StatusFound, "/login")
 
 		return
 	}
@@ -697,7 +721,7 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	data["ConsentChallenge"] = consentChallenge
 	data["State"] = state
 	data["PostConsentEndpoint"] = ctx.Request.URL.Path + "?state=" + url.QueryEscape(state)
-	data["CSRFToken"] = "TODO_CSRF"
+	data["CSRFToken"] = nosurf.Token(ctx.Request)
 
 	ctx.HTML(http.StatusOK, "idp_consent.html", data)
 }

@@ -20,8 +20,6 @@
 
             <form action="{{ .PostRecoveryVerifyEndpoint }}" method="POST">
                 <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}">
-                <input name="return_to" type="hidden" value="{{ .ReturnTo }}">
-                <input name="protocol" type="hidden" value="{{ .Protocol }}">
 
                 <div class="form-control w-full">
                     <label class="label">
@@ -38,7 +36,7 @@
             </form>
 
             <div class="card-actions justify-center mt-6">
-                <a class="btn btn-link btn-sm" href="/login/mfa{{ .QueryString }}">{{ .Back }}</a>
+                <a class="btn btn-link btn-sm" href="{{ .BackURL }}">{{ .Back }}</a>
             </div>
         </div>
     </div>

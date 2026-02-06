@@ -59,17 +59,21 @@ func (m *defaultLoginAttemptManager) InitFromHeader(headerVal string) {
 		return
 	}
 
-	if n, err := strconv.Atoi(headerVal); err == nil && n > 0 {
-		// Header is 1-based attempt ordinal; convert to 0-based fail count.
-		fc := n - 1
-		if fc < 0 {
-			fc = 0
-		}
+	// Use ParseInt with bitSize 32 to avoid potential integer overflow on 64-bit platforms
+	n, err := strconv.ParseInt(headerVal, 10, 32)
+	if err != nil || n <= 0 {
+		return
+	}
 
-		if uint(fc) > m.failCount {
-			m.failCount = uint(fc)
-			m.from = srcHeader
-		}
+	// Header is 1-based attempt ordinal; convert to 0-based fail count.
+	fc := n - 1
+	if fc < 0 {
+		fc = 0
+	}
+
+	if uint(fc) > m.failCount {
+		m.failCount = uint(fc)
+		m.from = srcHeader
 	}
 }
 

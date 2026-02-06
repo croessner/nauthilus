@@ -112,7 +112,8 @@
             const finishResponse = await fetch("/mfa/webauthn/register/finish", {
                 method: "POST",
                 headers: {
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": "{{ .CSRFToken }}"
                 },
                 body: JSON.stringify({
                     name: deviceName,

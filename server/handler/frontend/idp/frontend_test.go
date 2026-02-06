@@ -113,24 +113,6 @@ func TestURLParamsPreservation(t *testing.T) {
 		assert.Equal(t, "/login?client_id=foo", url)
 	})
 
-	t.Run("getMFAURL with params", func(t *testing.T) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request, _ = http.NewRequest("GET", "/login/en?client_id=foo", nil)
-		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-		url := h.getMFAURL(ctx, "webauthn")
-		assert.Equal(t, "/login/webauthn/en?client_id=foo", url)
-	})
-
-	t.Run("getMFAURL for begin with params", func(t *testing.T) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request, _ = http.NewRequest("GET", "/login/webauthn/en?client_id=foo", nil)
-		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-		url := h.getMFAURL(ctx, "webauthn/begin")
-		assert.Equal(t, "/login/webauthn/begin/en?client_id=foo", url)
-	})
-
 	t.Run("appendQueryString helper", func(t *testing.T) {
 		assert.Equal(t, "/path?q=v", h.appendQueryString("/path", "q=v"))
 		assert.Equal(t, "/path?a=b&q=v", h.appendQueryString("/path?a=b", "q=v"))
@@ -151,7 +133,6 @@ func TestMFASelectTemplateRecommended(t *testing.T) {
 		"OtherMethods":         "Other methods",
 		"Or":                   "or",
 		"Back":                 "Back",
-		"QueryString":          "?return_to=foo",
 		"HaveTOTP":             true,
 		"HaveWebAuthn":         true,
 		"HaveRecoveryCodes":    true,
@@ -166,8 +147,8 @@ func TestMFASelectTemplateRecommended(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "autofocus")
 	assert.Contains(t, output, "Other methods")
-	assert.Contains(t, output, "/login/totp?return_to=foo")
-	assert.Contains(t, output, "/login/webauthn?return_to=foo")
+	assert.Contains(t, output, "/login/totp")
+	assert.Contains(t, output, "/login/webauthn")
 }
 
 func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
@@ -183,7 +164,6 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 		"OtherMethods":         "Other methods",
 		"Or":                   "or",
 		"Back":                 "Back",
-		"QueryString":          "?return_to=foo",
 		"HaveTOTP":             true,
 		"HaveWebAuthn":         true,
 		"HaveRecoveryCodes":    false,
@@ -198,8 +178,8 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 	output := buf.String()
 	assert.NotContains(t, output, "<details")
 	assert.NotContains(t, output, "autofocus")
-	assert.Contains(t, output, "/login/totp?return_to=foo")
-	assert.Contains(t, output, "/login/webauthn?return_to=foo")
+	assert.Contains(t, output, "/login/totp")
+	assert.Contains(t, output, "/login/webauthn")
 }
 
 func loadMFASelectTemplate(t *testing.T) *template.Template {

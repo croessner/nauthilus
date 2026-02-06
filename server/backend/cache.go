@@ -145,7 +145,8 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 
 	// Parse backend field
 	if backendStr, ok := hashValues["backend"]; ok {
-		backendInt, err := strconv.Atoi(backendStr)
+		// Use ParseInt with bitSize 8 to avoid integer overflow; Backend is uint8
+		backendInt, err := strconv.ParseInt(backendStr, 10, 8)
 		if err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to parse backend value",

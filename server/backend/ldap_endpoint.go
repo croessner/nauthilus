@@ -103,9 +103,9 @@ func LuaLDAPEndpoint(cfg config.File) lua.LGFunction {
 		port := 0
 
 		if p := u.Port(); p != "" {
-			// parse int; ignore error since Port should be numeric
-			if v, perr := strconv.Atoi(p); perr == nil {
-				port = v
+			// Use ParseInt with bitSize 16 to avoid integer overflow; ports are 0-65535
+			if v, perr := strconv.ParseInt(p, 10, 16); perr == nil && v >= 0 && v <= 65535 {
+				port = int(v)
 			}
 		}
 

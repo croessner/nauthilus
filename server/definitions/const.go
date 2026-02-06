@@ -90,6 +90,46 @@ const (
 
 	// SessionKeyOIDCClients stores a list of OIDC client IDs the user is logged into.
 	SessionKeyOIDCClients = "oidc_clients"
+
+	// SessionKeyIdPFlowActive indicates that an IdP flow (OIDC or SAML2) is currently active.
+	// This prevents direct access to /login without a valid IdP flow.
+	SessionKeyIdPFlowActive = "idp_flow_active"
+
+	// SessionKeyIdPFlowType stores the type of IdP flow (oidc or saml).
+	SessionKeyIdPFlowType = "idp_flow_type"
+
+	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
+	SessionKeyIdPClientID = "idp_client_id"
+
+	// SessionKeyIdPRedirectURI stores the validated redirect_uri for OIDC flows.
+	SessionKeyIdPRedirectURI = "idp_redirect_uri"
+
+	// SessionKeyIdPScope stores the requested OIDC scopes.
+	SessionKeyIdPScope = "idp_scope"
+
+	// SessionKeyIdPState stores the OIDC state parameter.
+	SessionKeyIdPState = "idp_state"
+
+	// SessionKeyIdPNonce stores the OIDC nonce parameter.
+	SessionKeyIdPNonce = "idp_nonce"
+
+	// SessionKeyIdPResponseType stores the OIDC response_type parameter.
+	SessionKeyIdPResponseType = "idp_response_type"
+
+	// SessionKeyIdPPrompt stores the OIDC prompt parameter.
+	SessionKeyIdPPrompt = "idp_prompt"
+
+	// SessionKeyIdPSAMLRequest stores the serialized SAML AuthnRequest for SAML flows.
+	SessionKeyIdPSAMLRequest = "idp_saml_request"
+
+	// SessionKeyIdPSAMLRelayState stores the SAML RelayState parameter.
+	SessionKeyIdPSAMLRelayState = "idp_saml_relay_state"
+
+	// SessionKeyIdPSAMLEntityID stores the SAML SP EntityID.
+	SessionKeyIdPSAMLEntityID = "idp_saml_entity_id"
+
+	// SessionKeyIdPOriginalURL stores the original request URL for resuming the flow after login.
+	SessionKeyIdPOriginalURL = "idp_original_url"
 )
 
 // SingleflightWaitCap defines the maximum time a follower waits for an in-process

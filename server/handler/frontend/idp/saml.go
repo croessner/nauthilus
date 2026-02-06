@@ -326,12 +326,35 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	}
 
 	if account == "" {
-		// User not logged in, redirect to login page
-		loginURL := "/login"
-		// Append original request to return_to
-		originalURL := ctx.Request.URL.String()
+		// User not logged in - store SAML flow state in secure cookie and redirect to login.
+		// This prevents open redirect vulnerabilities by not passing return_to in URL.
+		if mgr != nil {
+			mgr.Set(definitions.SessionKeyIdPFlowActive, true)
+			mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoSAML)
+			mgr.Set(definitions.SessionKeyIdPSAMLEntityID, issuer)
+			// Store the original SAML request URL so we can resume the flow after login
+			mgr.Set(definitions.SessionKeyIdPOriginalURL, ctx.Request.URL.String())
+			mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoSAML)
 
-		ctx.Redirect(http.StatusFound, loginURL+"?return_to="+url.QueryEscape(originalURL)+"&protocol=saml")
+			// Explicitly save cookie before redirect to ensure it's written to the response
+			if err := mgr.Save(ctx); err != nil {
+				ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+				return
+			}
+
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "SAML flow state stored in cookie - redirecting to login",
+				"issuer", util.WithNotAvailable(issuer),
+			)
+		}
+
+		ctx.Redirect(http.StatusFound, "/login")
 
 		return
 	}
