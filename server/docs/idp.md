@@ -130,16 +130,17 @@ sequenceDiagram
 The IdP stores all flow state in the encrypted `nauthilus_secure_data` cookie to prevent Open Redirect attacks.
 
 **Session Keys for IdP Flow:**
-| Key | Description |
-|-----|-------------|
-| `idp_flow_active` | Boolean indicating an active IdP flow |
-| `idp_flow_type` | Flow type: `oidc` or `saml` |
-| `idp_client_id` | OIDC client_id |
-| `idp_redirect_uri` | Validated OIDC redirect_uri |
-| `idp_scope` | Requested OIDC scopes |
-| `idp_state` | OIDC state parameter |
-| `idp_nonce` | OIDC nonce parameter |
-| `idp_original_url` | SAML original request URL |
+
+| Key                | Description                           |
+|--------------------|---------------------------------------|
+| `idp_flow_active`  | Boolean indicating an active IdP flow |
+| `idp_flow_type`    | Flow type: `oidc` or `saml`           |
+| `idp_client_id`    | OIDC client_id                        |
+| `idp_redirect_uri` | Validated OIDC redirect_uri           |
+| `idp_scope`        | Requested OIDC scopes                 |
+| `idp_state`        | OIDC state parameter                  |
+| `idp_nonce`        | OIDC nonce parameter                  |
+| `idp_original_url` | SAML original request URL             |
 
 **How it works:**
 
