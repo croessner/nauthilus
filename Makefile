@@ -13,7 +13,7 @@ SBOM_SYFT_VERSION ?= v1.16.0
 
 export GOEXPERIMENT := greenteagc
 
-.PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient clean install uninstall sbom
+.PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient clean install uninstall sbom validate-templates install-hooks
 
 all: build build-client build-oidctestclient build-saml2testclient
 
@@ -69,3 +69,9 @@ uninstall: ## Uninstall nauthilus binary and systemd service
 	@echo "Removed nauthilus binary from /usr/local/sbin/nauthilus"
 	@echo "Removed systemd service from /etc/systemd/system/nauthilus.service"
 	@echo "You may need to run 'systemctl daemon-reload' to apply changes"
+
+validate-templates: ## Validate Go HTML templates for syntax errors
+	go run scripts/validate-templates.go
+
+install-hooks: ## Install Git hooks for development
+	./scripts/install-hooks.sh

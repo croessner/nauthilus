@@ -26,9 +26,10 @@
                 <div class="card-actions justify-end mt-4">
                     {{ if .HaveTOTP }}
                     <button class="btn btn-error btn-outline" hx-confirm="{{ .DeactivateTOTPConfirm }}"
-                            .BackendError end
                             hx-delete="/mfa/totp"
-                            hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}' hx-target="#modal-container" if {{ }} }}disabled{{>
+                            hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}'
+                            hx-target="#modal-container"
+                            {{ if .BackendError }}disabled{{ end }}>
                         {{ .Deactivate }}
                     </button>
                     {{ else }}
