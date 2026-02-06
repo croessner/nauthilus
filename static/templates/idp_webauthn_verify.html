@@ -115,6 +115,22 @@
             });
 
             if (!finishResponse.ok) {
+                // Check for redirect response (Fall B Punkt 1: wrong initial credentials)
+                if (finishResponse.status === 401) {
+                    try {
+                        const errorData = await finishResponse.json();
+
+                        if (errorData.redirect) {
+                            // Redirect to login page where error will be displayed
+                            window.location.href = errorData.redirect;
+
+                            return;
+                        }
+                    } catch {
+                        // If JSON parsing fails, fall through to error display
+                    }
+                }
+
                 throw new Error(await finishResponse.text());
             }
 

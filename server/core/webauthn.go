@@ -796,10 +796,31 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
 
 		if mgr != nil {
-			// Set AuthResult to OK if it was Fail (delayed response)
-			authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, 0)
-			if definitions.AuthResult(authResult) == definitions.AuthResultFail {
-				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
+			// Check if the original password authentication was successful (delayed response case).
+			// If the initial credentials were wrong, we must reject the login even if MFA succeeded.
+			// This implements "Fall B Punkt 1" from the IdP login flow specification:
+			// User is redirected back to /login/:languageTag with error message, session is reset.
+			if !isMFAAuthResultValid(mgr) {
+				stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
+
+				// Store error message in session for display on login page
+				mgr.Set(definitions.SessionKeyLoginError, "Invalid login or password")
+
+				// Clear MFA-related session data but keep flow and error
+				mgr.Delete(definitions.SessionKeyRegistration)
+				mgr.Delete(definitions.SessionKeyUsername)
+				mgr.Delete(definitions.SessionKeyAuthResult)
+
+				if saveErr := mgr.Save(ctx); saveErr != nil {
+					ctx.JSON(http.StatusInternalServerError, saveErr.Error())
+
+					return
+				}
+
+				// Return JSON with redirect signal - JavaScript will redirect to /login
+				ctx.JSON(http.StatusUnauthorized, gin.H{"redirect": "/login"})
+
+				return
 			}
 
 			// Important: store user info for next steps
@@ -812,6 +833,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			mgr.Set(definitions.SessionKeyProtocol, proto)
 
 			ttlVal := mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
+
 			if ttlVal > 0 {
 				mgr.SetMaxAge(ttlVal)
 				mgr.Delete(definitions.SessionKeyRememberTTL)
@@ -866,4 +888,20 @@ func hashCredentialID(credentialID []byte) string {
 	sum := sha256.Sum256(credentialID)
 
 	return hex.EncodeToString(sum[:])
+}
+
+// isMFAAuthResultValid checks if the authentication result stored in the cookie indicates
+// successful first-factor authentication. This is used to implement "Fall B Punkt 1" from
+// the IdP login flow specification: if the initial credentials were wrong (delayed response),
+// the user must be rejected after successful MFA verification.
+//
+// Returns false if AuthResult is AuthResultFail, true otherwise (including if no AuthResult is set).
+func isMFAAuthResultValid(mgr cookie.Manager) bool {
+	if mgr == nil {
+		return true
+	}
+
+	authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, 0)
+
+	return definitions.AuthResult(authResult) != definitions.AuthResultFail
 }

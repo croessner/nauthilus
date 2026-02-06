@@ -418,7 +418,26 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 
 	data["CSRFToken"] = csrf.Token(ctx)
 	data["PostLoginEndpoint"] = ctx.Request.URL.Path
-	data["HaveError"] = false
+
+	// Check for error message from previous MFA attempt (Fall B Punkt 1)
+	// This occurs when user had wrong initial credentials but completed MFA,
+	// and is redirected back to login with error message.
+	haveError := false
+	errorMessage := ""
+
+	if mgr != nil {
+		if loginError := mgr.GetString(definitions.SessionKeyLoginError, ""); loginError != "" {
+			haveError = true
+			errorMessage = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, loginError)
+
+			// Clear the error after reading it
+			mgr.Delete(definitions.SessionKeyLoginError)
+			_ = mgr.Save(ctx)
+		}
+	}
+
+	data["HaveError"] = haveError
+	data["ErrorMessage"] = errorMessage
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 	showRememberMe := false

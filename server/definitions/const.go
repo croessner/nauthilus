@@ -64,6 +64,10 @@ const (
 	// SessionKeyAuthResult stores the authentication outcome (uint8 AuthResult).
 	SessionKeyAuthResult = "auth_result"
 
+	// SessionKeyLoginError stores a login error message to be displayed on the login page.
+	// Used when redirecting back to /login after MFA verification fails due to wrong initial credentials.
+	SessionKeyLoginError = "login_error"
+
 	// SessionKeySubject stores the OIDC subject if computed in-session.
 	SessionKeySubject = "subject"
 
