@@ -32,6 +32,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/crewjam/saml/samlsp"
 )
 
@@ -127,6 +130,8 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 }
 
 func main() {
+	util.SetDefaultEnvironment(config.NewEnvironmentConfig())
+
 	if samlIDPMetadataURL == "" {
 		samlIDPMetadataURL = "https://localhost:9443/saml/metadata"
 	}
@@ -226,6 +231,7 @@ func main() {
 		// Clear the session cookies. "token" is the default for samlsp.
 		// "Nauthilus_session" is the default for Nauthilus IdP.
 		cookies := []string{"token", "Nauthilus_session"}
+		secure := util.ShouldSetSecureCookie()
 
 		for _, name := range cookies {
 			http.SetCookie(w, &http.Cookie{
@@ -234,6 +240,7 @@ func main() {
 				Path:     "/",
 				Expires:  time.Unix(0, 0),
 				MaxAge:   -1,
+				Secure:   secure,
 				HttpOnly: true,
 			})
 		}

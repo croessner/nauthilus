@@ -6,11 +6,10 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/model/mfa"
-	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,8 +31,12 @@ type webAuthnCredentialProvider interface {
 
 // GetUserBackendData performs backend lookups and returns encapsulated user data.
 func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData, error) {
-	session := sessions.Default(ctx)
-	username, _ := util.GetSessionValue[string](session, definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	username := ""
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
 
 	if username == "" {
 		authHeader := ctx.GetHeader("Authorization")
@@ -86,19 +89,19 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 		codes := authState.GetTOTPRecoveryCodes()
 		data.NumRecoveryCodes = len(codes)
 
-		h.resolveWebAuthnUser(ctx, session, data, authState)
+		h.resolveWebAuthnUser(ctx, mgr, data, authState)
 	}
 
 	return data, nil
 }
 
-func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, session sessions.Session, data *UserBackendData, provider webAuthnCredentialProvider) {
+func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manager, data *UserBackendData, provider webAuthnCredentialProvider) {
 	if data == nil || provider == nil {
 		return
 	}
 
-	if data.UniqueUserID == "" && session != nil {
-		uniqueUserID, _ := util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
+	if data.UniqueUserID == "" && mgr != nil {
+		uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, "")
 		if uniqueUserID != "" {
 			data.UniqueUserID = uniqueUserID
 		}

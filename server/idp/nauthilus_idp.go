@@ -24,11 +24,11 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp/oidckeys"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel/attribute"
@@ -432,9 +432,10 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 		return nil, err
 	}
 
-	session := sessions.Default(ctx)
-	session.Set(definitions.CookieUserBackend, uint8(auth.GetSourcePassDBBackend()))
-	session.Set(definitions.CookieUserBackendName, auth.GetUsedPassDBBackendName())
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
+		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
+	}
 
 	return n.userFromAuthState(auth)
 }
@@ -485,9 +486,10 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 		return nil, err
 	}
 
-	session := sessions.Default(ctx)
-	session.Set(definitions.CookieUserBackend, uint8(auth.GetSourcePassDBBackend()))
-	session.Set(definitions.CookieUserBackendName, auth.GetUsedPassDBBackendName())
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
+		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
+	}
 
 	return n.userFromAuthState(auth)
 }

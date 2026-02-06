@@ -19,11 +19,10 @@ import (
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
-	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -65,24 +64,36 @@ func (a *MFAAPI) Register(router gin.IRouter) {
 
 // SetupTOTP initializes TOTP registration.
 func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if err != nil {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
+		return
+	}
+
+	username := mgr.GetString(definitions.SessionKeyAccount, "")
+	if username == "" {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
 		return
 	}
 
 	secret, qrCodeURL, err := a.mfa.GenerateTOTPSecret(ctx, username)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
 		return
 	}
 
-	session.Set(definitions.CookieTOTPSecret, secret)
-	if err := session.Save(); err != nil {
+	mgr.Set(definitions.SessionKeyTOTPSecret, secret)
+
+	if err := mgr.Save(ctx); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save session"})
+
 		return
 	}
+
+	mgr.Debug(ctx, a.deps.Logger, "TOTP setup - secret stored in session")
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"secret":      secret,
@@ -92,9 +103,15 @@ func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
 
 // RegisterTOTP completes TOTP registration.
 func (a *MFAAPI) RegisterTOTP(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
-	secret, errS := util.GetSessionValue[string](session, definitions.CookieTOTPSecret)
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
+		return
+	}
+
+	username := mgr.GetString(definitions.SessionKeyAccount, "")
+	secret := mgr.GetString(definitions.SessionKeyTOTPSecret, "")
 
 	var input struct {
 		Code string `json:"code" binding:"required"`
@@ -102,73 +119,87 @@ func (a *MFAAPI) RegisterTOTP(ctx *gin.Context) {
 
 	if err := ctx.ShouldBindJSON(&input); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+
 		return
 	}
 
-	if errU != nil || errS != nil {
+	if username == "" || secret == "" {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
 		return
 	}
 
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
-	}
+	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	if err := a.mfa.VerifyAndSaveTOTP(ctx, username, secret, input.Code, sourceBackend); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+
 		return
 	}
 
-	session.Set(definitions.CookieHaveTOTP, true)
-	session.Delete(definitions.CookieTOTPSecret)
-	session.Save()
+	mgr.Set(definitions.SessionKeyHaveTOTP, true)
+	mgr.Delete(definitions.SessionKeyTOTPSecret)
+	_ = mgr.Save(ctx)
+
+	mgr.Debug(ctx, a.deps.Logger, "TOTP registered - session updated")
 
 	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "TOTP registered successfully"})
 }
 
 // DeleteTOTP removes TOTP.
 func (a *MFAAPI) DeleteTOTP(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if err != nil {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
 		return
 	}
 
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
+	username := mgr.GetString(definitions.SessionKeyAccount, "")
+	if username == "" {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
+		return
 	}
+
+	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	if err := a.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
 		return
 	}
 
-	session.Delete(definitions.CookieHaveTOTP)
-	session.Save()
+	mgr.Delete(definitions.SessionKeyHaveTOTP)
+	_ = mgr.Save(ctx)
+
+	mgr.Debug(ctx, a.deps.Logger, "TOTP deleted - session updated")
 
 	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "TOTP deleted successfully"})
 }
 
 // GenerateRecoveryCodes generates new recovery codes.
 func (a *MFAAPI) GenerateRecoveryCodes(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if err != nil {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
 		return
 	}
 
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
+	username := mgr.GetString(definitions.SessionKeyAccount, "")
+	if username == "" {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
+		return
 	}
+
+	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	codes, err := a.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
 		return
 	}
 
@@ -177,26 +208,32 @@ func (a *MFAAPI) GenerateRecoveryCodes(ctx *gin.Context) {
 
 // DeleteWebAuthn removes a WebAuthn credential.
 func (a *MFAAPI) DeleteWebAuthn(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if err != nil {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
+		return
+	}
+
+	username := mgr.GetString(definitions.SessionKeyAccount, "")
+	if username == "" {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+
 		return
 	}
 
 	credentialID := ctx.Param("credentialID")
 	if credentialID == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing credential ID"})
+
 		return
 	}
 
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
-	}
+	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	if err := a.mfa.DeleteWebAuthnCredential(ctx, username, credentialID, sourceBackend); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
 		return
 	}
 

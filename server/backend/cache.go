@@ -184,6 +184,10 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 		ucp.DisplayNameField = displayNameField
 	}
 
+	if backendName, ok := hashValues["backend_name"]; ok {
+		ucp.BackendName = backendName
+	}
+
 	// Parse attributes JSON
 	if attributesJSON, ok := hashValues["attributes"]; ok && attributesJSON != "" {
 		decryptedAttributesJSON, _ := sm.Decrypt(attributesJSON)
@@ -249,6 +253,10 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	if cache.DisplayNameField != "" {
 		hashFields["display_name_field"] = cache.DisplayNameField
+	}
+
+	if cache.BackendName != "" {
+		hashFields["backend_name"] = cache.BackendName
 	}
 
 	// Serialize the attributes map as JSON since it's complex

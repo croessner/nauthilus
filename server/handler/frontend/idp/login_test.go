@@ -6,23 +6,20 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestLoginRedirects(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	store := cookie.NewStore([]byte("secret"))
 
 	t.Run("Redirect to home if already logged in", func(t *testing.T) {
 		r := gin.New()
-		r.Use(sessions.Sessions("test-session", store))
 		r.Use(func(ctx *gin.Context) {
-			session := sessions.Default(ctx)
-			session.Set(definitions.CookieAccount, "testuser")
-			session.Save()
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyAccount: "testuser",
+			}}
+			ctx.Set(definitions.CtxSecureDataKey, mgr)
 			ctx.Next()
 		})
 
@@ -41,11 +38,11 @@ func TestLoginRedirects(t *testing.T) {
 
 	t.Run("Redirect to return_to if already logged in", func(t *testing.T) {
 		r := gin.New()
-		r.Use(sessions.Sessions("test-session", store))
 		r.Use(func(ctx *gin.Context) {
-			session := sessions.Default(ctx)
-			session.Set(definitions.CookieAccount, "testuser")
-			session.Save()
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyAccount: "testuser",
+			}}
+			ctx.Set(definitions.CtxSecureDataKey, mgr)
 			ctx.Next()
 		})
 

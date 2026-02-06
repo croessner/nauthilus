@@ -37,8 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
@@ -246,7 +245,7 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 		Redis: rClient,
 	}
 
-	h := NewOIDCHandler(nil, d, nil)
+	h := NewOIDCHandler(d, nil)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -275,7 +274,7 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 	db, _ := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
 	d := &deps.Deps{Cfg: cfg, Redis: rClient}
-	h := NewOIDCHandler(nil, d, idp.NewNauthilusIdP(d))
+	h := NewOIDCHandler(d, idp.NewNauthilusIdP(d))
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -301,7 +300,7 @@ func TestOIDCHandler_JWKS_CustomKid(t *testing.T) {
 	db, _ := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
 	d := &deps.Deps{Cfg: cfg, Redis: rClient}
-	h := NewOIDCHandler(nil, d, idp.NewNauthilusIdP(d))
+	h := NewOIDCHandler(d, idp.NewNauthilusIdP(d))
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -346,13 +345,19 @@ func TestOIDCHandler_Logout(t *testing.T) {
 	}
 
 	idpInstance := idp.NewNauthilusIdP(d)
-	store := cookie.NewStore([]byte("secret"))
-	h := NewOIDCHandler(store, d, idpInstance)
+	h := NewOIDCHandler(d, idpInstance)
+
+	// Set up default environment for util.ShouldSetSecureCookie
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	t.Run("Logout without session redirects to logged_out", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := gin.New()
-		r.GET("/logout", sessions.Sessions("test-session", store), h.Logout)
+		r.GET("/logout", func(c *gin.Context) {
+			mgr := &mockCookieManager{data: make(map[string]any)}
+			c.Set(definitions.CtxSecureDataKey, mgr)
+			h.Logout(c)
+		})
 
 		req, _ := http.NewRequest(http.MethodGet, "/logout", nil)
 		r.ServeHTTP(w, req)
@@ -364,7 +369,11 @@ func TestOIDCHandler_Logout(t *testing.T) {
 	t.Run("Logout with valid post_logout_redirect_uri", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := gin.New()
-		r.GET("/logout", sessions.Sessions("test-session", store), h.Logout)
+		r.GET("/logout", func(c *gin.Context) {
+			mgr := &mockCookieManager{data: make(map[string]any)}
+			c.Set(definitions.CtxSecureDataKey, mgr)
+			h.Logout(c)
+		})
 
 		// Create a mock ID token hint
 		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
@@ -395,10 +404,11 @@ func TestOIDCHandler_Logout(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		r := gin.New()
-		r.GET("/logout", sessions.Sessions("test-session", store), func(c *gin.Context) {
-			session := sessions.Default(c)
-			session.Set(definitions.CookieOIDCClients, "logout-client")
-			_ = session.Save()
+		r.GET("/logout", func(c *gin.Context) {
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyOIDCClients: "logout-client",
+			}}
+			c.Set(definitions.CtxSecureDataKey, mgr)
 			h.Logout(c)
 		})
 
@@ -411,61 +421,155 @@ func TestOIDCHandler_Logout(t *testing.T) {
 }
 
 func Test_hasClientConsent(t *testing.T) {
-	t.Run("returns false when no clients in session", func(t *testing.T) {
-		session := &mockSession{values: make(map[any]any)}
-		assert.False(t, hasClientConsent(session, "client1"))
+	t.Run("returns false when no clients in cookie", func(t *testing.T) {
+		mgr := &mockCookieManager{data: make(map[string]any)}
+		assert.False(t, hasClientConsent(mgr, "client1"))
 	})
 
-	t.Run("returns true when client is in session", func(t *testing.T) {
-		session := &mockSession{values: map[any]any{
-			definitions.CookieOIDCClients: "client1,client2",
+	t.Run("returns true when client is in cookie", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyOIDCClients: "client1,client2",
 		}}
-		assert.True(t, hasClientConsent(session, "client1"))
-		assert.True(t, hasClientConsent(session, "client2"))
-		assert.False(t, hasClientConsent(session, "client3"))
+		assert.True(t, hasClientConsent(mgr, "client1"))
+		assert.True(t, hasClientConsent(mgr, "client2"))
+		assert.False(t, hasClientConsent(mgr, "client3"))
 	})
 }
 
-func Test_addClientToSession(t *testing.T) {
-	t.Run("adds client to empty session", func(t *testing.T) {
-		session := &mockSession{values: make(map[any]any)}
-		addClientToSession(session, "client1")
-		assert.Equal(t, "client1", session.values[definitions.CookieOIDCClients])
+func Test_addClientToCookie(t *testing.T) {
+	t.Run("adds client to empty cookie", func(t *testing.T) {
+		mgr := &mockCookieManager{data: make(map[string]any)}
+		addClientToCookie(mgr, "client1")
+		assert.Equal(t, "client1", mgr.data[definitions.SessionKeyOIDCClients])
 	})
 
-	t.Run("appends client to existing session", func(t *testing.T) {
-		session := &mockSession{values: map[any]any{
-			definitions.CookieOIDCClients: "client1",
+	t.Run("appends client to existing cookie", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyOIDCClients: "client1",
 		}}
-		addClientToSession(session, "client2")
-		assert.Equal(t, "client1,client2", session.values[definitions.CookieOIDCClients])
+		addClientToCookie(mgr, "client2")
+		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
 	})
 
-	t.Run("does not duplicate client in session", func(t *testing.T) {
-		session := &mockSession{values: map[any]any{
-			definitions.CookieOIDCClients: "client1,client2",
+	t.Run("does not duplicate client in cookie", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyOIDCClients: "client1,client2",
 		}}
-		addClientToSession(session, "client1")
-		assert.Equal(t, "client1,client2", session.values[definitions.CookieOIDCClients])
+		addClientToCookie(mgr, "client1")
+		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
 	})
 }
 
-type mockSession struct {
-	sessions.Session
-	values map[any]any
+// mockCookieManager implements cookie.Manager for testing.
+type mockCookieManager struct {
+	data map[string]any
 }
 
-func (m *mockSession) Get(key any) any {
-	return m.values[key]
+func (m *mockCookieManager) Set(key string, value any) {
+	m.data[key] = value
 }
 
-func (m *mockSession) Set(key any, val any) {
-	m.values[key] = val
+func (m *mockCookieManager) Get(key string) (any, bool) {
+	val, ok := m.data[key]
+	return val, ok
 }
 
-func (m *mockSession) Save() error {
+func (m *mockCookieManager) Delete(key string) {
+	delete(m.data, key)
+}
+
+func (m *mockCookieManager) Clear() {
+	m.data = make(map[string]any)
+}
+
+func (m *mockCookieManager) Save(_ *gin.Context) error {
 	return nil
 }
+
+func (m *mockCookieManager) Load(_ *gin.Context) error {
+	return nil
+}
+
+func (m *mockCookieManager) GetString(key string, defaultValue string) string {
+	if val, ok := m.data[key]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) GetInt(key string, defaultValue int) int {
+	if val, ok := m.data[key]; ok {
+		if i, ok := val.(int); ok {
+			return i
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) GetInt64(key string, defaultValue int64) int64 {
+	if val, ok := m.data[key]; ok {
+		if i, ok := val.(int64); ok {
+			return i
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) GetUint8(key string, defaultValue uint8) uint8 {
+	if val, ok := m.data[key]; ok {
+		if i, ok := val.(uint8); ok {
+			return i
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) GetBool(key string, defaultValue bool) bool {
+	if val, ok := m.data[key]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) GetStringSlice(key string, defaultValue []string) []string {
+	if val, ok := m.data[key]; ok {
+		if s, ok := val.([]string); ok {
+			return s
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) GetDuration(key string, defaultValue time.Duration) time.Duration {
+	if val, ok := m.data[key]; ok {
+		if d, ok := val.(time.Duration); ok {
+			return d
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) Debug(_ *gin.Context, _ *slog.Logger, _ string) {}
+
+func (m *mockCookieManager) HasKey(key string) bool {
+	_, ok := m.data[key]
+	return ok
+}
+
+func (m *mockCookieManager) GetBytes(key string, defaultValue []byte) []byte {
+	if val, ok := m.data[key]; ok {
+		if b, ok := val.([]byte); ok {
+			return b
+		}
+	}
+	return defaultValue
+}
+
+func (m *mockCookieManager) SetMaxAge(_ int) {}
 
 func TestOIDCHandler_Consent(t *testing.T) {
 	t.Run("Authorize redirects to consent when not authorized", func(t *testing.T) {
@@ -510,7 +614,7 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 	}
 
 	idpInstance := idp.NewNauthilusIdP(d)
-	h := NewOIDCHandler(nil, d, idpInstance)
+	h := NewOIDCHandler(d, idpInstance)
 
 	// Issue a token first
 	accessToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
@@ -602,7 +706,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 	}
 
 	idpInstance := idp.NewNauthilusIdP(d)
-	h := NewOIDCHandler(nil, d, idpInstance)
+	h := NewOIDCHandler(d, idpInstance)
 
 	t.Run("Token request with Basic Auth", func(t *testing.T) {
 		code := "code123"

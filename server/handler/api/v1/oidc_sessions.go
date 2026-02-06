@@ -39,7 +39,7 @@ func NewOIDCSessionsAPI(d *deps.Deps, storage *idp.RedisTokenStorage) *OIDCSessi
 
 // Register registers the API routes.
 func (a *OIDCSessionsAPI) Register(router gin.IRouter) {
-	v1 := router.Group("/v1/oidc")
+	v1 := router.Group("/api/v1/oidc")
 	{
 		v1.GET("/sessions/:user_id", a.ListSessions)
 		v1.DELETE("/sessions/:user_id", a.DeleteAllSessions)

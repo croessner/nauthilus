@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
@@ -38,7 +39,6 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/text/cases"
@@ -49,7 +49,6 @@ import (
 // FrontendHandler handles general IdP frontend pages like login and consent.
 type FrontendHandler struct {
 	deps   *deps.Deps
-	store  sessions.Store
 	mfa    idp.MFAProvider
 	tracer monittrace.Tracer
 }
@@ -62,10 +61,9 @@ type mfaAvailability struct {
 }
 
 // NewFrontendHandler creates a new FrontendHandler.
-func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler {
+func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
 	return &FrontendHandler{
 		deps:   d,
-		store:  sessStore,
 		mfa:    idp.NewMFAService(d),
 		tracer: monittrace.New("nauthilus/idp/frontend"),
 	}
@@ -142,10 +140,14 @@ func (h *FrontendHandler) buildReturnQuery(returnTo string, protocolParam string
 }
 
 func (h *FrontendHandler) getLoginMFABackURL(ctx *gin.Context) string {
-	session := sessions.Default(ctx)
-	multi, err := util.GetSessionValue[bool](session, definitions.CookieMFAMulti)
+	mgr := cookie.GetManager(ctx)
+	multi := false
 
-	if err != nil || !multi {
+	if mgr != nil {
+		multi = mgr.GetBool(definitions.SessionKeyMFAMulti, false)
+	}
+
+	if !multi {
 		return h.appendQueryString(h.getLoginPath(ctx), ctx.Request.URL.RawQuery)
 	}
 
@@ -176,32 +178,32 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
+	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 
-	router.GET("/login", sessionMW, i18nMW, h.Login)
-	router.GET("/login/:languageTag", sessionMW, i18nMW, h.Login)
-	router.POST("/login", sessionMW, i18nMW, h.PostLogin)
-	router.POST("/login/:languageTag", sessionMW, i18nMW, h.PostLogin)
-	router.GET("/login/totp", sessionMW, i18nMW, h.LoginTOTP)
-	router.GET("/login/totp/:languageTag", sessionMW, i18nMW, h.LoginTOTP)
-	router.POST("/login/totp", sessionMW, i18nMW, h.PostLoginTOTP)
-	router.POST("/login/totp/:languageTag", sessionMW, i18nMW, h.PostLoginTOTP)
-	router.GET("/login/webauthn", sessionMW, i18nMW, h.LoginWebAuthn)
-	router.GET("/login/webauthn/:languageTag", sessionMW, i18nMW, h.LoginWebAuthn)
-	router.GET("/login/webauthn/begin", sessionMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
-	router.GET("/login/webauthn/begin/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
-	router.POST("/login/webauthn/finish", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
-	router.POST("/login/webauthn/finish/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
-	router.GET("/login/mfa", sessionMW, i18nMW, h.LoginMFASelect)
-	router.GET("/login/mfa/:languageTag", sessionMW, i18nMW, h.LoginMFASelect)
-	router.GET("/login/recovery", sessionMW, i18nMW, h.LoginRecovery)
-	router.GET("/login/recovery/:languageTag", sessionMW, i18nMW, h.LoginRecovery)
-	router.POST("/login/recovery", sessionMW, i18nMW, h.PostLoginRecovery)
-	router.POST("/login/recovery/:languageTag", sessionMW, i18nMW, h.PostLoginRecovery)
+	router.GET("/login", secureMW, i18nMW, h.Login)
+	router.GET("/login/:languageTag", secureMW, i18nMW, h.Login)
+	router.POST("/login", secureMW, i18nMW, h.PostLogin)
+	router.POST("/login/:languageTag", secureMW, i18nMW, h.PostLogin)
+	router.GET("/login/totp", secureMW, i18nMW, h.LoginTOTP)
+	router.GET("/login/totp/:languageTag", secureMW, i18nMW, h.LoginTOTP)
+	router.POST("/login/totp", secureMW, i18nMW, h.PostLoginTOTP)
+	router.POST("/login/totp/:languageTag", secureMW, i18nMW, h.PostLoginTOTP)
+	router.GET("/login/webauthn", secureMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/:languageTag", secureMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/begin", secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.GET("/login/webauthn/begin/:languageTag", secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.POST("/login/webauthn/finish", secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.POST("/login/webauthn/finish/:languageTag", secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.GET("/login/mfa", secureMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/mfa/:languageTag", secureMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/recovery", secureMW, i18nMW, h.LoginRecovery)
+	router.GET("/login/recovery/:languageTag", secureMW, i18nMW, h.LoginRecovery)
+	router.POST("/login/recovery", secureMW, i18nMW, h.PostLoginRecovery)
+	router.POST("/login/recovery/:languageTag", secureMW, i18nMW, h.PostLoginRecovery)
 
 	// Auth protected routes
-	authGroup := router.Group(definitions.MFARoot, sessionMW, h.AuthMiddleware(), i18nMW)
+	authGroup := router.Group(definitions.MFARoot, secureMW, h.AuthMiddleware(), i18nMW)
 	authGroup.GET("/register/home", h.TwoFAHome)
 	authGroup.GET("/register/home/:languageTag", h.TwoFAHome)
 	authGroup.GET("/totp/register", h.RegisterTOTP)
@@ -225,17 +227,21 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.POST("/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
 
-	router.GET("/logged_out", sessionMW, i18nMW, h.LoggedOut)
-	router.GET("/logged_out/:languageTag", sessionMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out", secureMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out/:languageTag", secureMW, i18nMW, h.LoggedOut)
 }
 
 // AuthMiddleware ensures the user is logged in.
 func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		session := sessions.Default(ctx)
-		_, err := util.GetSessionValue[string](session, definitions.CookieAccount)
+		mgr := cookie.GetManager(ctx)
+		account := ""
 
-		if err != nil {
+		if mgr != nil {
+			account = mgr.GetString(definitions.SessionKeyAccount, "")
+		}
+
+		if account == "" {
 			ctx.Redirect(http.StatusFound, h.getLoginURL(ctx)+"?return_to="+ctx.Request.URL.Path)
 			ctx.Abort()
 
@@ -257,11 +263,13 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 
 // BasePageData returns the common data for all IdP frontend pages.
 func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manager) gin.H {
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 	lang := "en"
+	username := ""
 
-	if l, err := util.GetSessionValue[string](session, definitions.CookieLang); err == nil {
-		lang = l
+	if mgr != nil {
+		lang = mgr.GetString(definitions.SessionKeyLang, "en")
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
 	}
 
 	tag := language.Make(lang)
@@ -283,8 +291,6 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		}
 	}
 
-	username, _ := util.GetSessionValue[string](session, definitions.CookieAccount)
-
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
@@ -298,8 +304,9 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 
 // Login renders the modern login page.
 func (h *FrontendHandler) Login(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
+	mgr := cookie.GetManager(ctx)
+
+	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
 		returnTo := ctx.Query("return_to")
 		if returnTo == "" {
 			returnTo = definitions.MFARoot + "/register/home"
@@ -310,8 +317,9 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		return
 	}
 
-	session.Delete(definitions.CookieMFAMulti)
-	_ = session.Save()
+	if mgr != nil {
+		mgr.Delete(definitions.SessionKeyMFAMulti)
+	}
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -466,17 +474,19 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		if idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
 			if user, _ := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID); user != nil {
 				if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
-					session := sessions.Default(ctx)
-					session.Set(definitions.CookieUsername, username)
-					session.Set(definitions.CookieUniqueUserID, user.Id)
-					session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultFail))
-					session.Set(definitions.CookieProtocol, protocol)
+					mgr := cookie.GetManager(ctx)
+					if mgr != nil {
+						mgr.Set(definitions.SessionKeyUsername, username)
+						mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+						mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+						mgr.Set(definitions.SessionKeyProtocol, protocol)
 
-					if rememberMeTTL > 0 {
-						session.Set(definitions.CookieRememberTTL, rememberMeTTL)
+						if rememberMeTTL > 0 {
+							mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+						}
+
+						mgr.Debug(ctx, h.deps.Logger, "MFA required - pre-auth session data stored (delayed response)")
 					}
-
-					session.Save()
 
 					// If user has only one MFA option, redirect directly to it
 					if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocolParam); ok {
@@ -521,17 +531,19 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	// Check if user has MFA
 	if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
-		session := sessions.Default(ctx)
-		session.Set(definitions.CookieUsername, username)
-		session.Set(definitions.CookieUniqueUserID, user.Id)
-		session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
-		session.Set(definitions.CookieProtocol, protocol)
+		mgr := cookie.GetManager(ctx)
+		if mgr != nil {
+			mgr.Set(definitions.SessionKeyUsername, username)
+			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+			mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
+			mgr.Set(definitions.SessionKeyProtocol, protocol)
 
-		if rememberMeTTL > 0 {
-			session.Set(definitions.CookieRememberTTL, rememberMeTTL)
+			if rememberMeTTL > 0 {
+				mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+			}
+
+			mgr.Debug(ctx, h.deps.Logger, "MFA required - pre-auth session data stored")
 		}
-
-		session.Save()
 
 		// If user has only one MFA option, redirect directly to it
 		if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocolParam); ok {
@@ -552,21 +564,20 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		return
 	}
 
-	session := sessions.Default(ctx)
-	session.Set(definitions.CookieAccount, user.Name)
-	session.Set(definitions.CookieUniqueUserID, user.Id)
-	session.Set(definitions.CookieDisplayName, user.DisplayName)
-	session.Set(definitions.CookieSubject, user.Id)
-	session.Set(definitions.CookieProtocol, protocol)
+	mgr := cookie.GetManager(ctx)
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyAccount, user.Name)
+		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
+		mgr.Set(definitions.SessionKeySubject, user.Id)
+		mgr.Set(definitions.SessionKeyProtocol, protocol)
 
-	if rememberMeTTL > 0 {
-		session.Options(sessions.Options{
-			MaxAge: rememberMeTTL,
-			Path:   "/",
-		})
+		if rememberMeTTL > 0 {
+			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+		}
+
+		mgr.Debug(ctx, h.deps.Logger, "Login successful - session data stored")
 	}
-
-	session.Save()
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
@@ -608,7 +619,7 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 		return false
 	}
 
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 
 	if provider == nil {
 		authDeps := h.deps.Auth()
@@ -618,9 +629,10 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 		}
 
 		resolvedProtocol := protocolName
-		if resolvedProtocol == "" && session != nil {
-			resolvedProtocol, _ = util.GetSessionValue[string](session, definitions.CookieProtocol)
+		if resolvedProtocol == "" && mgr != nil {
+			resolvedProtocol = mgr.GetString(definitions.SessionKeyProtocol, "")
 		}
+
 		if resolvedProtocol == "" {
 			resolvedProtocol = definitions.ProtoIDP
 		}
@@ -639,7 +651,7 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 		UniqueUserID: user.Id,
 	}
 
-	h.resolveWebAuthnUser(ctx, session, data, provider)
+	h.resolveWebAuthnUser(ctx, nil, data, provider)
 
 	return data.HaveWebAuthn
 }
@@ -664,10 +676,14 @@ func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
 
 // LoginMFASelect renders the MFA selection page.
 func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieUsername)
+	mgr := cookie.GetManager(ctx)
+	username := ""
 
-	if err != nil {
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+	}
+
+	if username == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -688,8 +704,9 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	availability := h.getMFAAvailability(ctx, user, protocol)
 	multi := availability.count > 1
 
-	session.Set(definitions.CookieMFAMulti, multi)
-	_ = session.Save()
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyMFAMulti, multi)
+	}
 
 	// If user has only one MFA option, redirect directly to it
 	if redirectURL, ok := h.getMFARedirectURLWithAvailability(availability, returnTo, protocol); ok {
@@ -744,14 +761,16 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	data["RecommendedMethod"] = recommendedMethod
 	data["HasOtherMethods"] = hasOtherMethods
 	data["OtherMethods"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Other methods")
+	data["BackURL"] = h.appendQueryString(h.getLoginPath(ctx), ctx.Request.URL.RawQuery)
 
 	ctx.HTML(http.StatusOK, "idp_mfa_select.html", data)
 }
 
 // LoginRecovery renders the recovery code verification page during login.
 func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	if _, err := util.GetSessionValue[string](session, definitions.CookieUsername); err != nil {
+	mgr := cookie.GetManager(ctx)
+
+	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -779,14 +798,20 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieUsername)
-	_, errA := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	hasAuthResult := false
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
+	}
+
 	code := ctx.PostForm("code")
 	returnTo := ctx.PostForm("return_to")
 	protocolParam := ctx.PostForm("protocol")
 
-	if errU != nil || errA != nil || code == "" {
+	if username == "" || !hasAuthResult || code == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -818,9 +843,9 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	}
 
 	// Verify Recovery Code
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
+	sourceBackend := uint8(definitions.BackendLDAP)
+	if mgr != nil {
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
 	success, err := h.mfa.UseRecoveryCode(ctx, username, code, sourceBackend)
@@ -855,7 +880,9 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 }
 
 func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
-	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", true, true)
+	secure := util.ShouldSetSecureCookie()
+
+	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", secure, true)
 }
 
 func (h *FrontendHandler) getMFARedirectURL(ctx *gin.Context, user *backend.User, returnTo string, protocolParam string) (string, bool) {
@@ -915,24 +942,26 @@ func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.Use
 }
 
 func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User, returnTo string) {
-	session := sessions.Default(ctx)
-	protocol, _ := util.GetSessionValue[string](session, definitions.CookieProtocol)
-	rememberMeTTL, _ := util.GetSessionValue[int](session, definitions.CookieRememberTTL)
+	mgr := cookie.GetManager(ctx)
+	protocol := ""
+	rememberMeTTL := 0
 
-	session.Set(definitions.CookieAccount, user.Name)
-	session.Set(definitions.CookieUniqueUserID, user.Id)
-	session.Set(definitions.CookieDisplayName, user.DisplayName)
-	session.Set(definitions.CookieSubject, user.Id)
-	session.Set(definitions.CookieProtocol, protocol)
+	if mgr != nil {
+		protocol = mgr.GetString(definitions.SessionKeyProtocol, "")
+		rememberMeTTL = mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
 
-	if rememberMeTTL > 0 {
-		session.Options(sessions.Options{
-			MaxAge: rememberMeTTL,
-			Path:   "/",
-		})
+		mgr.Set(definitions.SessionKeyAccount, user.Name)
+		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
+		mgr.Set(definitions.SessionKeySubject, user.Id)
+		mgr.Set(definitions.SessionKeyProtocol, protocol)
+
+		if rememberMeTTL > 0 {
+			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+		}
+
+		mgr.Debug(ctx, h.deps.Logger, "MFA login finalized - session data stored")
 	}
-
-	session.Save()
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
@@ -947,10 +976,14 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User,
 
 // LoginWebAuthn renders the WebAuthn verification page during login.
 func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieUsername)
+	mgr := cookie.GetManager(ctx)
+	username := ""
 
-	if err != nil {
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+	}
+
+	if username == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -979,8 +1012,9 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 
 // LoginTOTP renders the TOTP verification page during login.
 func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	if _, err := util.GetSessionValue[string](session, definitions.CookieUsername); err != nil {
+	mgr := cookie.GetManager(ctx)
+
+	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -1008,14 +1042,22 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_totp")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieUsername)
-	authResult, errA := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	authResult := uint8(definitions.AuthResultFail)
+	hasAuthResult := false
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+		authResult = mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
+	}
+
 	code := ctx.PostForm("code")
 	returnTo := ctx.PostForm("return_to")
 	protocolParam := ctx.PostForm("protocol")
 
-	if errU != nil || errA != nil || code == "" {
+	if username == "" || !hasAuthResult || code == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -1116,10 +1158,11 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-		// Important: clean up session so they start over
-		session.Delete(definitions.CookieUsername)
-		session.Delete(definitions.CookieAuthResult)
-		session.Save()
+		// Important: clean up cookie so they start over
+		if mgr != nil {
+			mgr.Delete(definitions.SessionKeyUsername)
+			mgr.Delete(definitions.SessionKeyAuthResult)
+		}
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 
@@ -1142,7 +1185,7 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		definitions.LogKeyMsg, "IdP 2FA Self-Service home request",
 	)
 
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 	data := h.basePageData(ctx)
 
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Self-Service")
@@ -1176,10 +1219,9 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["NumRecoveryCodes"] = userData.NumRecoveryCodes
 	data["HaveWebAuthn"] = userData.HaveWebAuthn
 
-	// Sync session if it exists
-	if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
-		session.Set(definitions.CookieHaveTOTP, userData.HaveTOTP)
-		_ = session.Save()
+	// Sync cookie if account exists
+	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
+		mgr.Set(definitions.SessionKeyHaveTOTP, userData.HaveTOTP)
 	}
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
@@ -1200,9 +1242,16 @@ func (h *FrontendHandler) handleTwoFAHomeError(ctx *gin.Context, data gin.H, err
 
 // RegisterTOTP renders the TOTP registration page.
 func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 
-	haveTOTP, _ := util.GetSessionValue[bool](session, definitions.CookieHaveTOTP)
+	haveTOTP := false
+	account := ""
+
+	if mgr != nil {
+		haveTOTP = mgr.GetBool(definitions.SessionKeyHaveTOTP, false)
+		account = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
+
 	if haveTOTP {
 		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 		ctx.Status(http.StatusFound)
@@ -1210,8 +1259,7 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	account, err := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if err != nil {
+	if account == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -1224,8 +1272,9 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	session.Set(definitions.CookieTOTPSecret, secret)
-	session.Save()
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyTOTPSecret, secret)
+	}
 
 	data := h.basePageData(ctx)
 	data["QRCode"] = qrCodeURL
@@ -1243,20 +1292,23 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_totp")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	secret, errS := util.GetSessionValue[string](session, definitions.CookieTOTPSecret)
-	code := ctx.PostForm("code")
-	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	secret := ""
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
 
-	if errS != nil || errU != nil || code == "" {
+	if mgr != nil {
+		secret = mgr.GetString(definitions.SessionKeyTOTPSecret, "")
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	}
+
+	code := ctx.PostForm("code")
+
+	if secret == "" || username == "" || code == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
-	}
-
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
 	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
@@ -1272,9 +1324,11 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 
 	// Success!
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "success").Inc()
-	session.Set(definitions.CookieHaveTOTP, true)
-	session.Delete(definitions.CookieTOTPSecret)
-	session.Save()
+
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyHaveTOTP, true)
+		mgr.Delete(definitions.SessionKeyTOTPSecret)
+	}
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
@@ -1285,18 +1339,19 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_generate_recovery_codes")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
 
-	if errU != nil {
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	}
+
+	if username == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
-	}
-
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
@@ -1343,17 +1398,19 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_totp")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if errU != nil {
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	}
+
+	if username == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
-	}
-
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
 	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
@@ -1365,8 +1422,10 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	}
 
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "success").Inc()
-	session.Set(definitions.CookieHaveTOTP, false)
-	session.Save()
+
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyHaveTOTP, false)
+	}
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
@@ -1386,11 +1445,16 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	userID, errU := util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
-	username, errA := util.GetSessionValue[string](session, definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	userID := ""
+	username := ""
 
-	if errU != nil || errA != nil {
+	if mgr != nil {
+		userID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
+
+	if userID == "" || username == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
@@ -1419,9 +1483,9 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 
 // RegisterWebAuthn renders the WebAuthn registration page.
 func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 
-	if _, err := util.GetSessionValue[string](session, definitions.CookieUniqueUserID); err != nil {
+	if mgr == nil || mgr.GetString(definitions.SessionKeyUniqueUserID, "") == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return

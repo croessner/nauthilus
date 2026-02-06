@@ -54,7 +54,7 @@ func TestOIDCSessionsAPI_ListSessions(t *testing.T) {
 		// Actually, RedisTokenStorage uses the security manager which we didn't mock.
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/v1/oidc/sessions/user1", nil)
+		req, _ := http.NewRequest("GET", "/api/v1/oidc/sessions/user1", nil)
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)

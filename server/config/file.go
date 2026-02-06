@@ -2875,7 +2875,6 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
-	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
 	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
 	validate.RegisterValidation("validateAuthPoolRequired", validateAuthPoolRequired)
 	validate.RegisterValidation("validatDefaultBackendName", validatDefaultBackendName)

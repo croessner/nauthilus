@@ -1952,8 +1952,7 @@ func (m *MasterUser) GetDelimiter() string {
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
 	Enabled               bool     `mapstructure:"enabled"`
-	CookieStoreAuthKey    string   `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
-	CookieStoreEncKey     string   `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
+	EncryptionSecret      string   `mapstructure:"encryption_secret" validate:"required_if=Enabled true,min=16,alphanumsymbol,excludesall= "`
 	HTMLStaticContentPath string   `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
 	LanguageResources     string   `mapstructure:"language_resources" validate:"omitempty,dir"`
 	Languages             []string `mapstructure:"languages" validate:"omitempty"`
@@ -2028,28 +2027,14 @@ func (f *Frontend) GetTotpSkew() uint {
 	return f.TotpSkew
 }
 
-// GetCookieStoreAuthKey retrieves the cookie store auth key from the Frontend configuration.
-func (f *Frontend) GetCookieStoreAuthKey() string {
+// GetEncryptionSecret retrieves the encryption secret from the Frontend configuration.
+// This secret is used to derive keys for secure cookie encryption.
+func (f *Frontend) GetEncryptionSecret() string {
 	if f == nil {
 		return ""
 	}
 
-	return f.CookieStoreAuthKey
-}
-
-// GetCookieStoreEncKey retrieves the cookie store encryption key from the Frontend configuration.
-func (f *Frontend) GetCookieStoreEncKey() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.CookieStoreEncKey
-}
-
-func validateCookieStoreEncKey(fl validator.FieldLevel) bool {
-	length := len(fl.Field().String())
-
-	return length == 16 || length == 24 || length == 32
+	return f.EncryptionSecret
 }
 
 // isAlphanumSymbol is a validation function for validating if the current field's value

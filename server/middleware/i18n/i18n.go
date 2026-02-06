@@ -21,12 +21,11 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"
@@ -36,8 +35,9 @@ import (
 func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Manager) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
-			langFromURL    string
-			langFromCookie string
+			langFromURL     string
+			langFromCookie  string
+			langFromBrowser string
 		)
 
 		guid := ctx.GetString(definitions.CtxGUIDKey)
@@ -45,22 +45,24 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 		// Try to get language tag from URL
 		langFromURL = ctx.Param("languageTag")
 
-		// Try to get language tag from cookie
-		session := sessions.Default(ctx)
-
-		if cookieValue, err := util.GetSessionValue[string](session, definitions.CookieLang); err == nil {
-			langFromCookie = cookieValue
+		// Try to get language tag from secure cookie
+		mgr := cookie.GetManager(ctx)
+		if mgr != nil {
+			langFromCookie = mgr.GetString(definitions.SessionKeyLang, "")
 		}
 
-		lang, needCookie, needRedirect := setLanguageDetails(cfg, langFromURL, langFromCookie, "")
+		// Get Accept-Language header for browser language detection
 		accept := ctx.GetHeader("Accept-Language")
 
-		if lang == "" {
+		// If no URL or cookie language is set, detect language from browser
+		if langFromURL == "" && langFromCookie == "" && accept != "" {
 			tag, _ := language.MatchStrings(langManager.GetMatcher(), accept)
 			baseName, _ := tag.Base()
-			langFromBrowser := baseName.String()
-			lang, needCookie, needRedirect = setLanguageDetails(cfg, langFromURL, langFromCookie, langFromBrowser)
+			langFromBrowser = baseName.String()
 		}
+
+		// Determine language with all available sources
+		lang, needCookie, needRedirect := setLanguageDetails(cfg, langFromURL, langFromCookie, langFromBrowser)
 
 		tag, _ := language.MatchStrings(langManager.GetMatcher(), lang, accept)
 		baseName, _ := tag.Base()
@@ -74,16 +76,14 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 
 		localizer := i18n.NewLocalizer(langManager.GetBundle(), lang, accept)
 
-		if needCookie {
-			session.Set(definitions.CookieLang, baseName.String())
-			err := session.Save()
-			if err != nil {
-				level.Error(logger).Log(
-					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, "Failed to save session",
-					definitions.LogKeyError, err,
-				)
-			}
+		if needCookie && mgr != nil {
+			mgr.Set(definitions.SessionKeyLang, baseName.String())
+			// Cookie is automatically saved by the cookie.Middleware after the handler chain.
+			level.Debug(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Language preference saved to secure cookie",
+				"lang", baseName.String(),
+			)
 		}
 
 		ctx.Set(definitions.CtxLocalizedKey, localizer)

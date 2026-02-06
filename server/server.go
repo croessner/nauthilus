@@ -417,14 +417,6 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Frontend handlers only if enabled (keeps logic parity)
 	if cfg.GetServer().Frontend.Enabled {
-		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{
-			Cfg:          cfg,
-			Logger:       logger,
-			Env:          env,
-			Redis:        store.redisClient,
-			AccountCache: store.accountCache,
-		}).InitSessionStore()
-
 		deps := &handlerdeps.Deps{
 			Cfg:          cfg,
 			CfgProvider:  store.cfgProvider,
@@ -448,7 +440,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 				}
 
 				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
-					frontendHandler := handleridp.NewFrontendHandler(sessStore, deps)
+					frontendHandler := handleridp.NewFrontendHandler(deps)
 					frontendHandler.Register(e)
 
 					mfaAPI := handlerapiv1.NewMFAAPI(deps)
@@ -461,12 +453,12 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 				}
 
 				if cfg.GetIdP().OIDC.Enabled {
-					oidcHandler := handleridp.NewOIDCHandler(sessStore, deps, nauthilusIdP)
+					oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIdP)
 					oidcHandler.Register(e)
 				}
 
 				if cfg.GetIdP().SAML2.Enabled {
-					samlHandler := handleridp.NewSAMLHandler(sessStore, deps, nauthilusIdP)
+					samlHandler := handleridp.NewSAMLHandler(deps, nauthilusIdP)
 					samlHandler.Register(e)
 				}
 			}

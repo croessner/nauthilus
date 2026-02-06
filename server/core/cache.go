@@ -110,6 +110,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			passDBResult.UniqueUserIDField = ppc.UniqueUserIDField
 			passDBResult.DisplayNameField = ppc.DisplayNameField
 			passDBResult.Backend = ppc.Backend
+			passDBResult.BackendName = ppc.BackendName
 			passDBResult.Attributes = ppc.Attributes
 
 			if auth.Request.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(auth.Request.Password)) {

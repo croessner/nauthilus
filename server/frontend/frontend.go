@@ -22,7 +22,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/cases"
@@ -137,19 +136,6 @@ func CreateLanguagePassive(ctx *gin.Context, cfg config.File, destPage string, l
 	}
 
 	return languagePassive
-}
-
-// CreateUserdata creates a map containing user data from a session based on the given keys.
-func CreateUserdata(session sessions.Session, keys ...string) map[string]any {
-	userData := make(map[string]any)
-
-	for _, key := range keys {
-		if value := session.Get(key); value != nil {
-			userData[key] = value
-		}
-	}
-
-	return userData
 }
 
 type LoginPageData struct {

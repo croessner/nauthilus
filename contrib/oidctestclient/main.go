@@ -30,6 +30,8 @@ import (
 	"html/template"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/util"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 )
@@ -152,12 +154,14 @@ func randString(nByte int) (string, error) {
 }
 
 func setCallbackCookie(w http.ResponseWriter, r *http.Request, name, value string) {
+	secure := util.ShouldSetSecureCookie()
+
 	c := &http.Cookie{
 		Name:     name,
 		Value:    value,
 		Path:     "/",
 		MaxAge:   int(time.Hour.Seconds()),
-		Secure:   r.TLS != nil,
+		Secure:   secure,
 		HttpOnly: true,
 	}
 
@@ -165,11 +169,14 @@ func setCallbackCookie(w http.ResponseWriter, r *http.Request, name, value strin
 }
 
 func deleteCallbackCookie(w http.ResponseWriter, name string) {
+	secure := util.ShouldSetSecureCookie()
+
 	c := &http.Cookie{
 		Name:     name,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
+		Secure:   secure,
 		HttpOnly: true,
 	}
 
@@ -177,6 +184,8 @@ func deleteCallbackCookie(w http.ResponseWriter, name string) {
 }
 
 func main() {
+	util.SetDefaultEnvironment(config.NewEnvironmentConfig())
+
 	ctx := context.Background()
 
 	log.Printf("Initializing OIDC provider: %s", openIDProvider)
@@ -453,6 +462,7 @@ func main() {
 
 		// Also clear typical session cookies if on the same domain
 		cookies := []string{"token", "Nauthilus_session"}
+		secure := util.ShouldSetSecureCookie()
 		for _, name := range cookies {
 			http.SetCookie(w, &http.Cookie{
 				Name:     name,
@@ -460,6 +470,7 @@ func main() {
 				Path:     "/",
 				Expires:  time.Unix(0, 0),
 				MaxAge:   -1,
+				Secure:   secure,
 				HttpOnly: true,
 			})
 		}
@@ -526,6 +537,7 @@ func main() {
 		// Clear the session cookies. "Nauthilus_session" is the default for Nauthilus IdP.
 		// "token" might be set if SAML was used on the same domain.
 		cookies := []string{"token", "Nauthilus_session"}
+		secure := util.ShouldSetSecureCookie()
 
 		for _, name := range cookies {
 			http.SetCookie(w, &http.Cookie{
@@ -534,6 +546,7 @@ func main() {
 				Path:     "/",
 				Expires:  time.Unix(0, 0),
 				MaxAge:   -1,
+				Secure:   secure,
 				HttpOnly: true,
 			})
 		}

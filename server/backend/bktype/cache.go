@@ -23,6 +23,7 @@ import "github.com/croessner/nauthilus/server/definitions"
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
 	Backend           definitions.Backend `json:"passdb_backend"`
+	BackendName       string              `json:"backend_name"`
 	Password          string              `json:"password,omitempty"`
 	AccountField      string              `json:"account_field"`
 	TOTPSecretField   string              `json:"totp_secret_field"`

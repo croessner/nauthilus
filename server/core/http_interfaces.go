@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"net/http"
 
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/pires/go-proxyproto"
 )
@@ -89,14 +88,12 @@ type TransportRunner interface {
 	Serve(ctx context.Context, srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener, signals ServerSignals)
 }
 
-// Bootstrap initializes cross-cutting HTTP dependencies such as WebAuthn,
-// the session store, and Gin logging, before the router is built.
+// Bootstrap initializes cross-cutting HTTP dependencies such as WebAuthn
+// and Gin logging, before the router is built.
 type Bootstrap interface {
 	// InitWebAuthn initializes the global WebAuthn configuration from environment/config.
 	// Returns an error if the configuration is invalid.
 	InitWebAuthn() error
-	// InitSessionStore constructs and returns the Gin session store with secure defaults.
-	InitSessionStore() sessions.Store
 	// InitGinLogging wires Gin log writers and sets Gin mode based on configuration.
 	InitGinLogging()
 }

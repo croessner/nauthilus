@@ -27,6 +27,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
@@ -36,7 +37,6 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -46,17 +46,15 @@ import (
 type OIDCHandler struct {
 	deps    *deps.Deps
 	idp     *idp.NauthilusIdP
-	store   sessions.Store
 	storage *idp.RedisTokenStorage
 	tracer  monittrace.Tracer
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
-func NewOIDCHandler(sessStore sessions.Store, d *deps.Deps, idpInstance *idp.NauthilusIdP) *OIDCHandler {
+func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIdP) *OIDCHandler {
 	return &OIDCHandler{
 		deps:    d,
 		idp:     idpInstance,
-		store:   sessStore,
 		storage: idp.NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
 		tracer:  monittrace.New("nauthilus/idp/oidc"),
 	}
@@ -69,22 +67,22 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
+	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
-	router.GET("/oidc/authorize", sessionMW, i18nMW, h.Authorize)
-	router.GET("/oidc/authorize/:languageTag", sessionMW, i18nMW, h.Authorize)
+	router.GET("/oidc/authorize", secureMW, i18nMW, h.Authorize)
+	router.GET("/oidc/authorize/:languageTag", secureMW, i18nMW, h.Authorize)
 	router.POST("/oidc/token", h.Token)
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.POST("/oidc/introspect", h.Introspect)
 	router.GET("/oidc/jwks", h.JWKS)
-	router.GET("/oidc/logout", sessionMW, h.Logout)
-	router.GET("/logout", sessionMW, h.Logout)
-	router.GET("/oidc/consent", sessionMW, i18nMW, h.ConsentGET)
-	router.GET("/oidc/consent/:languageTag", sessionMW, i18nMW, h.ConsentGET)
-	router.POST("/oidc/consent", sessionMW, i18nMW, h.ConsentPOST)
-	router.POST("/oidc/consent/:languageTag", sessionMW, i18nMW, h.ConsentPOST)
+	router.GET("/oidc/logout", secureMW, h.Logout)
+	router.GET("/logout", secureMW, h.Logout)
+	router.GET("/oidc/consent", secureMW, i18nMW, h.ConsentGET)
+	router.GET("/oidc/consent/:languageTag", secureMW, i18nMW, h.ConsentGET)
+	router.POST("/oidc/consent", secureMW, i18nMW, h.ConsentPOST)
+	router.POST("/oidc/consent/:languageTag", secureMW, i18nMW, h.ConsentPOST)
 }
 
 // Discovery returns the OIDC discovery document.
@@ -120,14 +118,13 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	})
 }
 
-func hasClientConsent(session sessions.Session, clientID string) bool {
-	oidcClientsRaw := session.Get(definitions.CookieOIDCClients)
-	if oidcClientsRaw == nil {
+func hasClientConsent(mgr cookie.Manager, clientID string) bool {
+	if mgr == nil {
 		return false
 	}
 
-	oidcClients, ok := oidcClientsRaw.(string)
-	if !ok {
+	oidcClients := mgr.GetString(definitions.SessionKeyOIDCClients, "")
+	if oidcClients == "" {
 		return false
 	}
 
@@ -140,12 +137,14 @@ func hasClientConsent(session sessions.Session, clientID string) bool {
 	return false
 }
 
-func addClientToSession(session sessions.Session, clientID string) {
-	oidcClientsRaw := session.Get(definitions.CookieOIDCClients)
-	var oidcClients string
+func addClientToCookie(mgr cookie.Manager, clientID string) {
+	if mgr == nil {
+		return
+	}
 
-	if oidcClientsRaw != nil {
-		oidcClients = oidcClientsRaw.(string)
+	oidcClients := mgr.GetString(definitions.SessionKeyOIDCClients, "")
+
+	if oidcClients != "" {
 		for _, id := range strings.Split(oidcClients, ",") {
 			if id == clientID {
 				return
@@ -157,8 +156,7 @@ func addClientToSession(session sessions.Session, clientID string) {
 		oidcClients = clientID
 	}
 
-	session.Set(definitions.CookieOIDCClients, oidcClients)
-	_ = session.Save()
+	mgr.Set(definitions.SessionKeyOIDCClients, oidcClients)
 }
 
 // Authorize handles the OIDC authorization request.
@@ -178,8 +176,12 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		"scope", ctx.Query("scope"),
 	)
 
-	session := sessions.Default(ctx)
-	account := session.Get(definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	account := ""
+
+	if mgr != nil {
+		account = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
 
 	clientID := ctx.Query("client_id")
 	redirectURI := ctx.Query("redirect_uri")
@@ -214,7 +216,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
-	if account == nil {
+	if account == "" {
 		if prompt == "none" {
 			target := fmt.Sprintf("%s?error=login_required", redirectURI)
 			if state != "" {
@@ -235,7 +237,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	// User is logged in.
-	user, err := h.idp.GetUserByUsername(ctx, account.(string), clientID, "")
+	user, err := h.idp.GetUserByUsername(ctx, account, clientID, "")
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error loading user details")
 
@@ -265,7 +267,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	// Check if consent is needed
-	needsConsent := !client.SkipConsent && !hasClientConsent(session, clientID)
+	needsConsent := !client.SkipConsent && !hasClientConsent(mgr, clientID)
 	if !client.SkipConsent && prompt == "consent" {
 		needsConsent = true
 	}
@@ -308,7 +310,11 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
 
-	addClientToSession(session, clientID)
+	addClientToCookie(mgr, clientID)
+
+	if mgr != nil {
+		mgr.Debug(ctx, h.deps.Logger, "OIDC authorization successful - client added to session")
+	}
 
 	// Redirect back to client
 	target := fmt.Sprintf("%s?code=%s", redirectURI, code)
@@ -747,7 +753,10 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	// Redirect back to client
 	target := fmt.Sprintf("%s?code=%s&state=%s", session.RedirectURI, code, state)
 
-	addClientToSession(sessions.Default(ctx), session.ClientID)
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		addClientToCookie(mgr, session.ClientID)
+		mgr.Debug(ctx, h.deps.Logger, "OIDC consent granted - client added to session")
+	}
 
 	ctx.Redirect(http.StatusFound, target)
 }
@@ -775,15 +784,20 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	postLogoutRedirectURI := ctx.Query("post_logout_redirect_uri")
 	state := ctx.Query("state")
 
-	session := sessions.Default(ctx)
-	account := session.Get(definitions.CookieAccount)
-	uniqueUserIDRaw := session.Get(definitions.CookieUniqueUserID)
+	mgr := cookie.GetManager(ctx)
+	account := ""
+	uniqueUserID := ""
+
+	if mgr != nil {
+		account = mgr.GetString(definitions.SessionKeyAccount, "")
+		uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	}
 
 	userID := ""
-	if uniqueUserIDRaw != nil {
-		userID = uniqueUserIDRaw.(string)
-	} else if account != nil {
-		userID = account.(string)
+	if uniqueUserID != "" {
+		userID = uniqueUserID
+	} else if account != "" {
+		userID = account
 	}
 
 	// Validate id_token_hint if provided
@@ -809,12 +823,16 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	}
 
 	// Get clients to logout from
-	clientsRaw := session.Get(definitions.CookieOIDCClients)
+	oidcClients := ""
+	if mgr != nil {
+		oidcClients = mgr.GetString(definitions.SessionKeyOIDCClients, "")
+		mgr.Debug(ctx, h.deps.Logger, "OIDC logout initiated - session data before cleanup")
+	}
 
 	var clientIDs []string
 
-	if clientsRaw != nil {
-		clientIDs = strings.Split(clientsRaw.(string), ",")
+	if oidcClients != "" {
+		clientIDs = strings.Split(oidcClients, ",")
 	}
 
 	var frontChannelURIs []string
