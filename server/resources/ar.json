@@ -90,5 +90,7 @@
   "Invalid device ID": "معرف الجهاز غير صالح",
   "Confirmation": "تأكيد",
   "Yes": "نعم",
-  "Cancel": "إلغاء"
+  "Cancel": "إلغاء",
+  "Invalid Request": "طلب غير صالح",
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "لا يمكن الوصول إلى صفحة تسجيل الدخول هذه إلا من خلال تدفق مصادقة OIDC أو SAML2 صالح. يرجى استخدام تطبيقك لبدء عملية تسجيل الدخول."
 }

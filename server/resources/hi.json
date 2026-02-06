@@ -90,5 +90,7 @@
   "Invalid device ID": "अमान्य डिवाइस आईडी",
   "Confirmation": "पुष्टि",
   "Yes": "हाँ",
-  "Cancel": "रद्द करें"
+  "Cancel": "रद्द करें",
+  "Invalid Request": "अमान्य अनुरोध",
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "यह लॉगिन पृष्ठ केवल एक वैध OIDC या SAML2 प्रमाणीकरण प्रवाह के माध्यम से एक्सेस किया जा सकता है। कृपया लॉगिन प्रक्रिया शुरू करने के लिए अपने एप्लिकेशन का उपयोग करें।"
 }

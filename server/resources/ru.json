@@ -90,5 +90,7 @@
   "Invalid device ID": "Неверный ID устройства",
   "Confirmation": "Подтверждение",
   "Yes": "Да",
-  "Cancel": "Отмена"
+  "Cancel": "Отмена",
+  "Invalid Request": "Неверный запрос",
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Эта страница входа доступна только через действительный процесс аутентификации OIDC или SAML2. Пожалуйста, используйте ваше приложение для начала процесса входа."
 }

@@ -90,5 +90,7 @@
   "Invalid device ID": "Ungültige Geräte-ID",
   "Confirmation": "Bestätigung",
   "Yes": "Ja",
-  "Cancel": "Abbrechen"
+  "Cancel": "Abbrechen",
+  "Invalid Request": "Ungültige Anfrage",
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Diese Anmeldeseite kann nur über einen gültigen OIDC- oder SAML2-Authentifizierungsfluss aufgerufen werden. Bitte verwenden Sie Ihre Anwendung, um den Anmeldevorgang zu starten."
 }

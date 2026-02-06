@@ -90,5 +90,7 @@
   "Invalid device ID": "شناسه دستگاه نامعتبر است",
   "Confirmation": "تأیید",
   "Yes": "بله",
-  "Cancel": "لغو"
+  "Cancel": "لغو",
+  "Invalid Request": "درخواست نامعتبر",
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "این صفحه ورود فقط از طریق یک جریان احراز هویت OIDC یا SAML2 معتبر قابل دسترسی است. لطفاً از اپلیکیشن خود برای شروع فرآیند ورود استفاده کنید."
 }

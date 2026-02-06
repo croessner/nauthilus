@@ -90,5 +90,7 @@
   "Invalid device ID": "Invalid device ID",
   "Confirmation": "Confirmation",
   "Yes": "Yes",
-  "Cancel": "Cancel"
+  "Cancel": "Cancel",
+  "Invalid Request": "Invalid Request",
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process."
 }

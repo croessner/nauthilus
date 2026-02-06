@@ -90,5 +90,7 @@
   "Invalid device ID": "無効なデバイスID",
   "Confirmation": "確認",
   "Yes": "はい",
-  "Cancel": "キャンセル"
+  "Cancel": "キャンセル",
+  "Invalid Request": "無効なリクエスト",
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "このログインページは、有効なOIDCまたはSAML2認証フローを通じてのみアクセスできます。アプリケーションを使用してログインプロセスを開始してください。"
 }
