@@ -5,6 +5,9 @@ on:
     branches:
       - features
 
+permissions:
+  contents: read
+
 env:
   APP_NAME: 'nauthilus'
   MAINTAINER: 'croessner'

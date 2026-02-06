@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 env:
   APP_NAME: 'nauthilus'
   MAINTAINER: 'croessner'
