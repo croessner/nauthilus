@@ -771,8 +771,9 @@ func (l *ldapPoolImpl) serverAddrPort(index int) (string, int) {
 					srvAddr = h
 
 					if p != "" {
-						if v, convErr := strconv.Atoi(p); convErr == nil {
-							srvPort = v
+						// Use ParseInt with bitSize 16 to avoid integer overflow; ports are 0-65535
+						if v, convErr := strconv.ParseInt(p, 10, 16); convErr == nil && v >= 0 && v <= 65535 {
+							srvPort = int(v)
 						}
 					}
 				} else {

@@ -27,18 +27,19 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/text/cases"
@@ -49,7 +50,6 @@ import (
 // FrontendHandler handles general IdP frontend pages like login and consent.
 type FrontendHandler struct {
 	deps   *deps.Deps
-	store  sessions.Store
 	mfa    idp.MFAProvider
 	tracer monittrace.Tracer
 }
@@ -62,10 +62,9 @@ type mfaAvailability struct {
 }
 
 // NewFrontendHandler creates a new FrontendHandler.
-func NewFrontendHandler(sessStore sessions.Store, d *deps.Deps) *FrontendHandler {
+func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
 	return &FrontendHandler{
 		deps:   d,
-		store:  sessStore,
 		mfa:    idp.NewMFAService(d),
 		tracer: monittrace.New("nauthilus/idp/frontend"),
 	}
@@ -99,17 +98,6 @@ func (h *FrontendHandler) getMFASelectPath(ctx *gin.Context) string {
 	return path
 }
 
-func (h *FrontendHandler) getMFAURL(ctx *gin.Context, mfaType string) string {
-	path := "/login/" + mfaType
-	lang := ctx.Param("languageTag")
-
-	if lang != "" {
-		path += "/" + lang
-	}
-
-	return h.appendQueryString(path, ctx.Request.URL.RawQuery)
-}
-
 func (h *FrontendHandler) appendQueryString(path string, query string) string {
 	if query == "" {
 		return path
@@ -123,37 +111,100 @@ func (h *FrontendHandler) appendQueryString(path string, query string) string {
 	return path + separator + query
 }
 
-func (h *FrontendHandler) buildReturnQuery(returnTo string, protocolParam string) string {
-	query := ""
-
-	if returnTo != "" {
-		query = "return_to=" + url.QueryEscape(returnTo)
+// isValidIdPFlow checks if an active IdP flow exists in the secure session cookie.
+// A valid IdP flow is either an OIDC authorization request or a SAML2 SSO request.
+// The /login endpoint MUST NOT be accessed directly without a proper IdP flow.
+// All flow state is stored in the encrypted cookie - no URL parameters are used for security.
+func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		return false
 	}
 
-	if protocolParam != "" {
-		if query == "" {
-			query = "protocol=" + url.QueryEscape(protocolParam)
-		} else {
-			query += "&protocol=" + url.QueryEscape(protocolParam)
+	// Check if an IdP flow is active in the cookie
+	flowActive := mgr.GetBool(definitions.SessionKeyIdPFlowActive, false)
+	if !flowActive {
+		return false
+	}
+
+	// Verify the flow type is valid (OIDC or SAML)
+	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+	if flowType != definitions.ProtoOIDC && flowType != definitions.ProtoSAML {
+		return false
+	}
+
+	// For OIDC, verify we have required parameters
+	if flowType == definitions.ProtoOIDC {
+		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		redirectURI := mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+
+		if clientID == "" || redirectURI == "" {
+			return false
 		}
 	}
 
-	return query
-}
+	// For SAML, verify we have the original URL to resume
+	if flowType == definitions.ProtoSAML {
+		originalURL := mgr.GetString(definitions.SessionKeyIdPOriginalURL, "")
 
-func (h *FrontendHandler) getLoginMFABackURL(ctx *gin.Context) string {
-	session := sessions.Default(ctx)
-	multi, err := util.GetSessionValue[bool](session, definitions.CookieMFAMulti)
-
-	if err != nil || !multi {
-		return h.appendQueryString(h.getLoginPath(ctx), ctx.Request.URL.RawQuery)
+		if originalURL == "" {
+			return false
+		}
 	}
 
-	return h.appendQueryString(h.getMFASelectPath(ctx), ctx.Request.URL.RawQuery)
+	return true
 }
 
-func (h *FrontendHandler) redirectWithQuery(ctx *gin.Context, target string) {
-	ctx.Redirect(http.StatusFound, h.appendQueryString(target, ctx.Request.URL.RawQuery))
+// getIdPFlowType returns the current IdP flow type from the session cookie.
+func (h *FrontendHandler) getIdPFlowType(ctx *gin.Context) string {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		return ""
+	}
+
+	return mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+}
+
+// clearIdPFlow removes all IdP flow state from the session cookie.
+func (h *FrontendHandler) clearIdPFlow(ctx *gin.Context) {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		return
+	}
+
+	mgr.Delete(definitions.SessionKeyIdPFlowActive)
+	mgr.Delete(definitions.SessionKeyIdPFlowType)
+	mgr.Delete(definitions.SessionKeyIdPClientID)
+	mgr.Delete(definitions.SessionKeyIdPRedirectURI)
+	mgr.Delete(definitions.SessionKeyIdPScope)
+	mgr.Delete(definitions.SessionKeyIdPState)
+	mgr.Delete(definitions.SessionKeyIdPNonce)
+	mgr.Delete(definitions.SessionKeyIdPResponseType)
+	mgr.Delete(definitions.SessionKeyIdPPrompt)
+	mgr.Delete(definitions.SessionKeyIdPSAMLRequest)
+	mgr.Delete(definitions.SessionKeyIdPSAMLRelayState)
+	mgr.Delete(definitions.SessionKeyIdPSAMLEntityID)
+	mgr.Delete(definitions.SessionKeyIdPOriginalURL)
+}
+
+// renderNoFlowError renders an error page when the /login endpoint is accessed without a valid IdP flow.
+func (h *FrontendHandler) renderNoFlowError(ctx *gin.Context) {
+	// Check if deps is available (may not be in tests)
+	if h.deps == nil || h.deps.Cfg == nil {
+		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid_request",
+			"message": "This login page can only be accessed through a valid OIDC or SAML2 authentication flow.",
+		})
+
+		return
+	}
+
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
+	data["ErrorTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid Request")
+	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.")
+
+	ctx.HTML(http.StatusBadRequest, "idp_error.html", data)
 }
 
 // Register adds frontend routes to the router.
@@ -176,32 +227,33 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
+	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
+	csrfMW := csrf.New()
 
-	router.GET("/login", sessionMW, i18nMW, h.Login)
-	router.GET("/login/:languageTag", sessionMW, i18nMW, h.Login)
-	router.POST("/login", sessionMW, i18nMW, h.PostLogin)
-	router.POST("/login/:languageTag", sessionMW, i18nMW, h.PostLogin)
-	router.GET("/login/totp", sessionMW, i18nMW, h.LoginTOTP)
-	router.GET("/login/totp/:languageTag", sessionMW, i18nMW, h.LoginTOTP)
-	router.POST("/login/totp", sessionMW, i18nMW, h.PostLoginTOTP)
-	router.POST("/login/totp/:languageTag", sessionMW, i18nMW, h.PostLoginTOTP)
-	router.GET("/login/webauthn", sessionMW, i18nMW, h.LoginWebAuthn)
-	router.GET("/login/webauthn/:languageTag", sessionMW, i18nMW, h.LoginWebAuthn)
-	router.GET("/login/webauthn/begin", sessionMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
-	router.GET("/login/webauthn/begin/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
-	router.POST("/login/webauthn/finish", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
-	router.POST("/login/webauthn/finish/:languageTag", sessionMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
-	router.GET("/login/mfa", sessionMW, i18nMW, h.LoginMFASelect)
-	router.GET("/login/mfa/:languageTag", sessionMW, i18nMW, h.LoginMFASelect)
-	router.GET("/login/recovery", sessionMW, i18nMW, h.LoginRecovery)
-	router.GET("/login/recovery/:languageTag", sessionMW, i18nMW, h.LoginRecovery)
-	router.POST("/login/recovery", sessionMW, i18nMW, h.PostLoginRecovery)
-	router.POST("/login/recovery/:languageTag", sessionMW, i18nMW, h.PostLoginRecovery)
+	router.GET("/login", csrfMW, secureMW, i18nMW, h.Login)
+	router.GET("/login/:languageTag", csrfMW, secureMW, i18nMW, h.Login)
+	router.POST("/login", csrfMW, secureMW, i18nMW, h.PostLogin)
+	router.POST("/login/:languageTag", csrfMW, secureMW, i18nMW, h.PostLogin)
+	router.GET("/login/totp", csrfMW, secureMW, i18nMW, h.LoginTOTP)
+	router.GET("/login/totp/:languageTag", csrfMW, secureMW, i18nMW, h.LoginTOTP)
+	router.POST("/login/totp", csrfMW, secureMW, i18nMW, h.PostLoginTOTP)
+	router.POST("/login/totp/:languageTag", csrfMW, secureMW, i18nMW, h.PostLoginTOTP)
+	router.GET("/login/webauthn", csrfMW, secureMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/:languageTag", csrfMW, secureMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/begin", csrfMW, secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.GET("/login/webauthn/begin/:languageTag", csrfMW, secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.POST("/login/webauthn/finish", csrfMW, secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.POST("/login/webauthn/finish/:languageTag", csrfMW, secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.GET("/login/mfa", csrfMW, secureMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/mfa/:languageTag", csrfMW, secureMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/recovery", csrfMW, secureMW, i18nMW, h.LoginRecovery)
+	router.GET("/login/recovery/:languageTag", csrfMW, secureMW, i18nMW, h.LoginRecovery)
+	router.POST("/login/recovery", csrfMW, secureMW, i18nMW, h.PostLoginRecovery)
+	router.POST("/login/recovery/:languageTag", csrfMW, secureMW, i18nMW, h.PostLoginRecovery)
 
 	// Auth protected routes
-	authGroup := router.Group(definitions.MFARoot, sessionMW, h.AuthMiddleware(), i18nMW)
+	authGroup := router.Group(definitions.MFARoot, csrfMW, secureMW, h.AuthMiddleware(), i18nMW)
 	authGroup.GET("/register/home", h.TwoFAHome)
 	authGroup.GET("/register/home/:languageTag", h.TwoFAHome)
 	authGroup.GET("/totp/register", h.RegisterTOTP)
@@ -225,18 +277,26 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.POST("/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
 
-	router.GET("/logged_out", sessionMW, i18nMW, h.LoggedOut)
-	router.GET("/logged_out/:languageTag", sessionMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out", csrfMW, secureMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out/:languageTag", csrfMW, secureMW, i18nMW, h.LoggedOut)
 }
 
-// AuthMiddleware ensures the user is logged in.
+// AuthMiddleware ensures the user is logged in for protected pages like 2FA Self-Service.
+// Users must already have a valid session from a completed IdP flow.
+// Direct access without a prior login redirects to an error page.
 func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		session := sessions.Default(ctx)
-		_, err := util.GetSessionValue[string](session, definitions.CookieAccount)
+		mgr := cookie.GetManager(ctx)
+		account := ""
 
-		if err != nil {
-			ctx.Redirect(http.StatusFound, h.getLoginURL(ctx)+"?return_to="+ctx.Request.URL.Path)
+		if mgr != nil {
+			account = mgr.GetString(definitions.SessionKeyAccount, "")
+		}
+
+		if account == "" {
+			// User is not logged in - show error page instead of redirect to login.
+			// The 2FA Self-Service pages are only accessible after a completed IdP flow.
+			h.renderNoFlowError(ctx)
 			ctx.Abort()
 
 			return
@@ -257,11 +317,13 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 
 // BasePageData returns the common data for all IdP frontend pages.
 func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manager) gin.H {
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 	lang := "en"
+	username := ""
 
-	if l, err := util.GetSessionValue[string](session, definitions.CookieLang); err == nil {
-		lang = l
+	if mgr != nil {
+		lang = mgr.GetString(definitions.SessionKeyLang, "en")
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
 	}
 
 	tag := language.Make(lang)
@@ -283,8 +345,6 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		}
 	}
 
-	username, _ := util.GetSessionValue[string](session, definitions.CookieAccount)
-
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
@@ -297,21 +357,46 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 }
 
 // Login renders the modern login page.
+// This endpoint is ONLY for IdP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
+// All flow state is read from the secure encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) Login(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
-		returnTo := ctx.Query("return_to")
-		if returnTo == "" {
-			returnTo = definitions.MFARoot + "/register/home"
-		}
-
-		ctx.Redirect(http.StatusFound, returnTo)
+	// Validate that this is a proper IdP flow (checks cookie for active flow)
+	if !h.isValidIdPFlow(ctx) {
+		h.renderNoFlowError(ctx)
 
 		return
 	}
 
-	session.Delete(definitions.CookieMFAMulti)
-	_ = session.Save()
+	mgr := cookie.GetManager(ctx)
+
+	// Read flow state from cookie
+	flowType := ""
+	oidcCID := ""
+	samlEntityID := ""
+
+	if mgr != nil {
+		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+
+		if flowType == definitions.ProtoOIDC {
+			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		} else if flowType == definitions.ProtoSAML {
+			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			if samlEntityID == "" {
+				samlEntityID = definitions.ProtoSAML
+			}
+		}
+	}
+
+	// If user is already logged in with a valid session, redirect back to the IdP endpoint
+	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
+		h.redirectToIdPEndpoint(ctx, mgr)
+
+		return
+	}
+
+	if mgr != nil {
+		mgr.Delete(definitions.SessionKeyMFAMulti)
+	}
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -320,6 +405,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "IdP Login page request",
+		"flow_type", flowType,
 	)
 
 	data := h.basePageData(ctx)
@@ -330,29 +416,9 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
-	data["CSRFToken"] = "TODO_CSRF"
+	data["CSRFToken"] = csrf.Token(ctx)
 	data["PostLoginEndpoint"] = ctx.Request.URL.Path
-	returnTo := ctx.Query("return_to")
-	data["ReturnTo"] = returnTo
-	protocol := ctx.Query("protocol")
-	data["Protocol"] = protocol
 	data["HaveError"] = false
-
-	var oidcCID, samlEntityID string
-	if returnTo != "" {
-		if u, err := url.Parse(returnTo); err == nil {
-			oidcCID = u.Query().Get("client_id")
-			samlEntityID = u.Query().Get("entity_id")
-
-			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
-				samlEntityID = definitions.ProtoSAML
-			}
-		}
-	}
-
-	if protocol == definitions.ProtoSAML && samlEntityID == "" {
-		samlEntityID = definitions.ProtoSAML
-	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 	showRememberMe := false
@@ -377,10 +443,96 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 }
 
+// redirectToIdPEndpoint redirects the user back to the appropriate IdP endpoint based on the flow type.
+// For OIDC flows, it reconstructs the /oidc/authorize URL from cookie data.
+// For SAML flows, it redirects back to the original /saml/sso URL stored in the cookie.
+func (h *FrontendHandler) redirectToIdPEndpoint(ctx *gin.Context, mgr cookie.Manager) {
+	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+
+	if flowType == definitions.ProtoOIDC {
+		// Reconstruct the OIDC authorize URL from cookie parameters
+		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		redirectURI := mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+		scope := mgr.GetString(definitions.SessionKeyIdPScope, "")
+		state := mgr.GetString(definitions.SessionKeyIdPState, "")
+		nonce := mgr.GetString(definitions.SessionKeyIdPNonce, "")
+		responseType := mgr.GetString(definitions.SessionKeyIdPResponseType, "")
+
+		authorizeURL := "/oidc/authorize?client_id=" + url.QueryEscape(clientID)
+		authorizeURL += "&redirect_uri=" + url.QueryEscape(redirectURI)
+
+		if scope != "" {
+			authorizeURL += "&scope=" + url.QueryEscape(scope)
+		}
+
+		if state != "" {
+			authorizeURL += "&state=" + url.QueryEscape(state)
+		}
+
+		if nonce != "" {
+			authorizeURL += "&nonce=" + url.QueryEscape(nonce)
+		}
+
+		if responseType != "" {
+			authorizeURL += "&response_type=" + url.QueryEscape(responseType)
+		}
+
+		ctx.Redirect(http.StatusFound, authorizeURL)
+
+		return
+	}
+
+	if flowType == definitions.ProtoSAML {
+		// Redirect back to the original SAML SSO URL
+		originalURL := mgr.GetString(definitions.SessionKeyIdPOriginalURL, "")
+		if originalURL != "" {
+			ctx.Redirect(http.StatusFound, originalURL)
+
+			return
+		}
+	}
+
+	// Fallback: redirect to root (should not happen if flow is valid)
+	ctx.Redirect(http.StatusFound, "/")
+}
+
 // PostLogin handles the login submission.
+// This endpoint is ONLY for IdP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
+// All flow state is read from the secure encrypted cookie - no form parameters for flow state.
 func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login")
 	defer sp.End()
+
+	// Validate that this is a proper IdP flow (checks cookie for active flow)
+	if !h.isValidIdPFlow(ctx) {
+		h.renderNoFlowError(ctx)
+
+		return
+	}
+
+	mgr := cookie.GetManager(ctx)
+
+	// Read flow state from cookie
+	flowType := ""
+	oidcCID := ""
+	samlEntityID := ""
+
+	if mgr != nil {
+		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+
+		if flowType == definitions.ProtoOIDC {
+			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		} else if flowType == definitions.ProtoSAML {
+			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			if samlEntityID == "" {
+				samlEntityID = definitions.ProtoSAML
+			}
+		}
+	}
+
+	username := ctx.PostForm("username")
+	password := ctx.PostForm("password")
+	rememberMe := ctx.PostForm("remember_me") == "on"
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -389,38 +541,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "IdP Login attempt",
-		"username", ctx.PostForm("username"),
+		"username", username,
+		"flow_type", flowType,
 	)
-
-	username := ctx.PostForm("username")
-	password := ctx.PostForm("password")
-	returnTo := ctx.PostForm("return_to")
-	protocolParam := ctx.PostForm("protocol")
-	rememberMe := ctx.PostForm("remember_me") == "on"
-
-	// Try to extract client_id or saml_entity_id from returnTo
-	var oidcCID, samlEntityID string
-	if returnTo != "" {
-		if u, err := url.Parse(returnTo); err == nil {
-			oidcCID = u.Query().Get("client_id")
-			samlEntityID = u.Query().Get("entity_id") // Assuming entity_id for SAML
-
-			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
-				// It's a SAML request, even if we don't have the entity_id yet
-				if protocolParam == "" {
-					protocolParam = definitions.ProtoSAML
-				}
-			}
-		}
-	}
-
-	// If we have an explicit protocol parameter, respect it
-	if protocolParam == definitions.ProtoSAML && samlEntityID == "" {
-		// We need some non-empty string to trigger ProtoSAML in Authenticate for now,
-		// or we modify Authenticate to take protocol as well.
-		// Let's use a special marker if we don't know the entity ID yet.
-		samlEntityID = "urn:nauthilus:saml:unknown"
-	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 
@@ -434,8 +557,8 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 				ttl = client.RememberMeTTL
 			}
 		} else if samlEntityID != "" {
-			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
-				ttl = sp.RememberMeTTL
+			if spConfig, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+				ttl = spConfig.RememberMeTTL
 			}
 		}
 
@@ -452,6 +575,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	user, err := idpInstance.Authenticate(ctx, username, password, oidcCID, samlEntityID)
 
 	protocol := definitions.ProtoIDP
+
 	if oidcCID != "" {
 		protocol = definitions.ProtoOIDC
 	} else if samlEntityID != "" {
@@ -466,31 +590,28 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		if idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
 			if user, _ := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID); user != nil {
 				if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
-					session := sessions.Default(ctx)
-					session.Set(definitions.CookieUsername, username)
-					session.Set(definitions.CookieUniqueUserID, user.Id)
-					session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultFail))
-					session.Set(definitions.CookieProtocol, protocol)
+					if mgr != nil {
+						mgr.Set(definitions.SessionKeyUsername, username)
+						mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+						mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+						mgr.Set(definitions.SessionKeyProtocol, protocol)
 
-					if rememberMeTTL > 0 {
-						session.Set(definitions.CookieRememberTTL, rememberMeTTL)
+						if rememberMeTTL > 0 {
+							mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+						}
+
+						mgr.Debug(ctx, h.deps.Logger, "MFA required - pre-auth session data stored (delayed response)")
 					}
 
-					session.Save()
-
 					// If user has only one MFA option, redirect directly to it
-					if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocolParam); ok {
+					if redirectURL, ok := h.getMFARedirectURLFromCookie(ctx, user); ok {
 						ctx.Redirect(http.StatusFound, redirectURL)
 
 						return
 					}
 
-					redirectURL := h.appendQueryString("/login/mfa", "return_to="+url.QueryEscape(returnTo))
-					if protocolParam != "" {
-						redirectURL = h.appendQueryString(redirectURL, "protocol="+url.QueryEscape(protocolParam))
-					}
-
-					ctx.Redirect(http.StatusFound, redirectURL)
+					// Multiple MFA options - redirect to selection page (no query params needed)
+					ctx.Redirect(http.StatusFound, "/login/mfa")
 
 					return
 				}
@@ -506,13 +627,33 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
-		data["WebAuthnLoginURL"] = h.getMFAURL(ctx, "webauthn")
+		data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
 
-		data["CSRFToken"] = "TODO_CSRF"
+		data["CSRFToken"] = csrf.Token(ctx)
 		data["PostLoginEndpoint"] = ctx.Request.URL.Path
-		data["ReturnTo"] = returnTo
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+
+		// Calculate ShowRememberMe based on flow state.
+		showRememberMe := false
+		idpInstance := idp.NewNauthilusIdP(h.deps)
+
+		if oidcCID != "" {
+			if client, ok := idpInstance.FindClient(oidcCID); ok {
+				showRememberMe = client.RememberMeTTL > 0
+			}
+		} else if samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+				showRememberMe = sp.RememberMeTTL > 0
+			}
+		}
+
+		data["ShowRememberMe"] = showRememberMe
+		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
+		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 
@@ -521,62 +662,50 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	// Check if user has MFA
 	if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
-		session := sessions.Default(ctx)
-		session.Set(definitions.CookieUsername, username)
-		session.Set(definitions.CookieUniqueUserID, user.Id)
-		session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
-		session.Set(definitions.CookieProtocol, protocol)
+		if mgr != nil {
+			mgr.Set(definitions.SessionKeyUsername, username)
+			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+			mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
+			mgr.Set(definitions.SessionKeyProtocol, protocol)
 
-		if rememberMeTTL > 0 {
-			session.Set(definitions.CookieRememberTTL, rememberMeTTL)
+			if rememberMeTTL > 0 {
+				mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+			}
+
+			mgr.Debug(ctx, h.deps.Logger, "MFA required - pre-auth session data stored")
 		}
 
-		session.Save()
-
 		// If user has only one MFA option, redirect directly to it
-		if redirectURL, ok := h.getMFARedirectURL(ctx, user, returnTo, protocolParam); ok {
+		if redirectURL, ok := h.getMFARedirectURLFromCookie(ctx, user); ok {
 			ctx.Redirect(http.StatusFound, redirectURL)
 
 			return
 		}
 
-		// If user has multiple MFA options OR if we want to show the selection page anyway
-		// Requirement says: "If a person has configured one or more MFA options, there should be an intermediate page..."
-		redirectURL := h.appendQueryString("/login/mfa", "return_to="+url.QueryEscape(returnTo))
-		if protocolParam != "" {
-			redirectURL = h.appendQueryString(redirectURL, "protocol="+url.QueryEscape(protocolParam))
-		}
-
-		ctx.Redirect(http.StatusFound, redirectURL)
+		// Multiple MFA options - redirect to selection page (no query params needed)
+		ctx.Redirect(http.StatusFound, "/login/mfa")
 
 		return
 	}
 
-	session := sessions.Default(ctx)
-	session.Set(definitions.CookieAccount, user.Name)
-	session.Set(definitions.CookieUniqueUserID, user.Id)
-	session.Set(definitions.CookieDisplayName, user.DisplayName)
-	session.Set(definitions.CookieSubject, user.Id)
-	session.Set(definitions.CookieProtocol, protocol)
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyAccount, user.Name)
+		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
+		mgr.Set(definitions.SessionKeySubject, user.Id)
+		mgr.Set(definitions.SessionKeyProtocol, protocol)
 
-	if rememberMeTTL > 0 {
-		session.Options(sessions.Options{
-			MaxAge: rememberMeTTL,
-			Path:   "/",
-		})
+		if rememberMeTTL > 0 {
+			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+		}
+
+		mgr.Debug(ctx, h.deps.Logger, "Login successful - session data stored")
 	}
-
-	session.Save()
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
-	if returnTo != "" {
-		ctx.Redirect(http.StatusFound, returnTo)
-
-		return
-	}
-
-	ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/home")
+	// Redirect back to IdP endpoint to complete the flow
+	h.redirectToIdPEndpoint(ctx, mgr)
 }
 
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
@@ -608,7 +737,7 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 		return false
 	}
 
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 
 	if provider == nil {
 		authDeps := h.deps.Auth()
@@ -618,9 +747,10 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 		}
 
 		resolvedProtocol := protocolName
-		if resolvedProtocol == "" && session != nil {
-			resolvedProtocol, _ = util.GetSessionValue[string](session, definitions.CookieProtocol)
+		if resolvedProtocol == "" && mgr != nil {
+			resolvedProtocol = mgr.GetString(definitions.SessionKeyProtocol, "")
 		}
+
 		if resolvedProtocol == "" {
 			resolvedProtocol = definitions.ProtoIDP
 		}
@@ -639,7 +769,7 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 		UniqueUserID: user.Id,
 	}
 
-	h.resolveWebAuthnUser(ctx, session, data, provider)
+	h.resolveWebAuthnUser(ctx, nil, data, provider)
 
 	return data.HaveWebAuthn
 }
@@ -663,24 +793,29 @@ func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
 }
 
 // LoginMFASelect renders the MFA selection page.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieUsername)
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	protocol := ""
 
-	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+		protocol = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+	}
+
+	if username == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
 
-	returnTo := ctx.Query("return_to")
-	protocol := ctx.Query("protocol")
-
 	// Get user to check available MFA methods
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 	user, err := idpInstance.GetUserByUsername(ctx, username, "", "")
+
 	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
@@ -688,11 +823,12 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	availability := h.getMFAAvailability(ctx, user, protocol)
 	multi := availability.count > 1
 
-	session.Set(definitions.CookieMFAMulti, multi)
-	_ = session.Save()
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyMFAMulti, multi)
+	}
 
 	// If user has only one MFA option, redirect directly to it
-	if redirectURL, ok := h.getMFARedirectURLWithAvailability(availability, returnTo, protocol); ok {
+	if redirectURL, ok := h.getMFARedirectURLFromCookie(ctx, user); ok {
 		ctx.Redirect(http.StatusFound, redirectURL)
 
 		return
@@ -713,10 +849,6 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	data["HaveTOTP"] = availability.haveTOTP
 	data["HaveWebAuthn"] = availability.haveWebAuthn
 	data["HaveRecoveryCodes"] = availability.haveRecoveryCodes
-
-	data["QueryString"] = h.appendQueryString("", ctx.Request.URL.RawQuery)
-	data["ReturnTo"] = returnTo
-	data["Protocol"] = protocol
 
 	// Check for last used MFA method
 	lastMFA, _ := ctx.Cookie("last_mfa_method")
@@ -744,15 +876,18 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	data["RecommendedMethod"] = recommendedMethod
 	data["HasOtherMethods"] = hasOtherMethods
 	data["OtherMethods"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Other methods")
+	data["BackURL"] = h.getLoginPath(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_mfa_select.html", data)
 }
 
 // LoginRecovery renders the recovery code verification page during login.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	if _, err := util.GetSessionValue[string](session, definitions.CookieUsername); err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+	mgr := cookie.GetManager(ctx)
+
+	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
@@ -764,66 +899,68 @@ func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-	data["CSRFToken"] = "TODO_CSRF"
+	data["CSRFToken"] = csrf.Token(ctx)
 	data["PostRecoveryVerifyEndpoint"] = ctx.Request.URL.Path
-	data["ReturnTo"] = ctx.Query("return_to")
-	data["Protocol"] = ctx.Query("protocol")
-	data["QueryString"] = h.appendQueryString("", ctx.Request.URL.RawQuery)
+	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 	data["HaveError"] = false
 
 	ctx.HTML(http.StatusOK, "idp_recovery_login.html", data)
 }
 
 // PostLoginRecovery handles the recovery code verification during login.
+// All flow state is read from the encrypted cookie - no form parameters for flow state.
 func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieUsername)
-	_, errA := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
-	code := ctx.PostForm("code")
-	returnTo := ctx.PostForm("return_to")
-	protocolParam := ctx.PostForm("protocol")
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	hasAuthResult := false
+	oidcCID := ""
+	samlEntityID := ""
 
-	if errU != nil || errA != nil || code == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
 
-		return
-	}
+		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-	var oidcCID, samlEntityID string
-	if returnTo != "" {
-		if u, err := url.Parse(returnTo); err == nil {
-			oidcCID = u.Query().Get("client_id")
-			samlEntityID = u.Query().Get("entity_id")
-
-			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
+		if flowType == definitions.ProtoOIDC {
+			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		} else if flowType == definitions.ProtoSAML {
+			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
 			}
 		}
 	}
 
-	if protocolParam == definitions.ProtoSAML && samlEntityID == "" {
-		samlEntityID = definitions.ProtoSAML
+	code := ctx.PostForm("code")
+
+	if username == "" || !hasAuthResult || code == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+
+		return
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 
 	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
 
 	// Verify Recovery Code
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
+	sourceBackend := uint8(definitions.BackendLDAP)
+
+	if mgr != nil {
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
 	success, err := h.mfa.UseRecoveryCode(ctx, username, code, sourceBackend)
+
 	if err != nil {
 		h.deps.Logger.Error("Failed to use recovery code", "error", err)
 	}
@@ -836,11 +973,9 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-		data["CSRFToken"] = "TODO_CSRF"
+		data["CSRFToken"] = csrf.Token(ctx)
 		data["PostRecoveryVerifyEndpoint"] = ctx.Request.URL.Path
-		data["ReturnTo"] = returnTo
-		data["Protocol"] = protocolParam
-		data["QueryString"] = h.appendQueryString("", "return_to="+url.QueryEscape(returnTo)+"&protocol="+url.QueryEscape(protocolParam))
+		data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid recovery code")
 
@@ -851,40 +986,13 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 
 	// MFA Success
 	h.setLastMFAMethod(ctx, "recovery")
-	h.finalizeMFALogin(ctx, user, returnTo)
+	h.finalizeMFALogin(ctx, user)
 }
 
 func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
-	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", true, true)
-}
+	secure := util.ShouldSetSecureCookie()
 
-func (h *FrontendHandler) getMFARedirectURL(ctx *gin.Context, user *backend.User, returnTo string, protocolParam string) (string, bool) {
-	availability := h.getMFAAvailability(ctx, user, protocolParam)
-
-	return h.getMFARedirectURLWithAvailability(availability, returnTo, protocolParam)
-}
-
-func (h *FrontendHandler) getMFARedirectURLWithAvailability(availability mfaAvailability, returnTo string, protocolParam string) (string, bool) {
-	if availability.count > 1 {
-		return "", false
-	}
-
-	var target string
-
-	if availability.haveTOTP {
-		target = "/login/totp"
-	} else if availability.haveWebAuthn {
-		target = "/login/webauthn"
-	} else if availability.haveRecoveryCodes {
-		target = "/login/recovery"
-	} else {
-		// No MFA methods available
-		return "", false
-	}
-
-	redirectURL := h.appendQueryString(target, h.buildReturnQuery(returnTo, protocolParam))
-
-	return redirectURL, true
+	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", secure, true)
 }
 
 func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string) mfaAvailability {
@@ -914,44 +1022,104 @@ func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.Use
 	}
 }
 
-func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User, returnTo string) {
-	session := sessions.Default(ctx)
-	protocol, _ := util.GetSessionValue[string](session, definitions.CookieProtocol)
-	rememberMeTTL, _ := util.GetSessionValue[int](session, definitions.CookieRememberTTL)
+// getMFARedirectURLFromCookie returns the MFA redirect URL based on user's available MFA methods.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
+func (h *FrontendHandler) getMFARedirectURLFromCookie(ctx *gin.Context, user *backend.User) (string, bool) {
+	mgr := cookie.GetManager(ctx)
+	protocolParam := ""
 
-	session.Set(definitions.CookieAccount, user.Name)
-	session.Set(definitions.CookieUniqueUserID, user.Id)
-	session.Set(definitions.CookieDisplayName, user.DisplayName)
-	session.Set(definitions.CookieSubject, user.Id)
-	session.Set(definitions.CookieProtocol, protocol)
-
-	if rememberMeTTL > 0 {
-		session.Options(sessions.Options{
-			MaxAge: rememberMeTTL,
-			Path:   "/",
-		})
+	if mgr != nil {
+		protocolParam = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 	}
 
-	session.Save()
+	availability := h.getMFAAvailability(ctx, user, protocolParam)
+
+	if availability.count > 1 {
+		return "", false
+	}
+
+	var target string
+
+	if availability.haveTOTP {
+		target = "/login/totp"
+	} else if availability.haveWebAuthn {
+		target = "/login/webauthn"
+	} else if availability.haveRecoveryCodes {
+		target = "/login/recovery"
+	} else {
+		// No MFA methods available
+		return "", false
+	}
+
+	// No query parameters needed - all flow state is in the cookie
+	return target, true
+}
+
+// getMFAURLFromCookie returns the URL for a specific MFA method.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
+func (h *FrontendHandler) getMFAURLFromCookie(_ *gin.Context, mfaType string) string {
+	return "/login/" + mfaType
+}
+
+// getLoginMFABackURLFromCookie returns the URL to go back from MFA verification.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
+func (h *FrontendHandler) getLoginMFABackURLFromCookie(ctx *gin.Context) string {
+	mgr := cookie.GetManager(ctx)
+	multi := false
+
+	if mgr != nil {
+		multi = mgr.GetBool(definitions.SessionKeyMFAMulti, false)
+	}
+
+	if !multi {
+		return h.getLoginPath(ctx)
+	}
+
+	return h.getMFASelectPath(ctx)
+}
+
+// finalizeMFALogin completes the MFA login process and redirects to the IdP endpoint.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
+func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User) {
+	mgr := cookie.GetManager(ctx)
+	protocol := ""
+	rememberMeTTL := 0
+
+	if mgr != nil {
+		protocol = mgr.GetString(definitions.SessionKeyProtocol, "")
+		rememberMeTTL = mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
+
+		mgr.Set(definitions.SessionKeyAccount, user.Name)
+		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
+		mgr.Set(definitions.SessionKeySubject, user.Id)
+		mgr.Set(definitions.SessionKeyProtocol, protocol)
+
+		if rememberMeTTL > 0 {
+			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+		}
+
+		mgr.Debug(ctx, h.deps.Logger, "MFA login finalized - session data stored")
+	}
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
-	if returnTo != "" {
-		ctx.Redirect(http.StatusFound, returnTo)
-
-		return
-	}
-
-	ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/home")
+	// Redirect back to IdP endpoint to complete the flow
+	h.redirectToIdPEndpoint(ctx, mgr)
 }
 
 // LoginWebAuthn renders the WebAuthn verification page during login.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	username, err := util.GetSessionValue[string](session, definitions.CookieUsername)
+	mgr := cookie.GetManager(ctx)
+	username := ""
 
-	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+	}
+
+	if username == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
@@ -962,11 +1130,10 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-	data["CSRFToken"] = "TODO_CSRF"
-	data["ReturnTo"] = ctx.Query("return_to")
-	data["WebAuthnBeginEndpoint"] = h.getMFAURL(ctx, "webauthn/begin")
-	data["WebAuthnFinishEndpoint"] = h.getMFAURL(ctx, "webauthn/finish")
-	data["BackURL"] = h.getLoginMFABackURL(ctx)
+	data["CSRFToken"] = csrf.Token(ctx)
+	data["WebAuthnBeginEndpoint"] = h.getMFAURLFromCookie(ctx, "webauthn/begin")
+	data["WebAuthnFinishEndpoint"] = h.getMFAURLFromCookie(ctx, "webauthn/finish")
+	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 
 	// JS Localizations
 	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
@@ -978,10 +1145,12 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 }
 
 // LoginTOTP renders the TOTP verification page during login.
+// All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
-	session := sessions.Default(ctx)
-	if _, err := util.GetSessionValue[string](session, definitions.CookieUsername); err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+	mgr := cookie.GetManager(ctx)
+
+	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
@@ -993,55 +1162,57 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-	data["CSRFToken"] = "TODO_CSRF"
+	data["CSRFToken"] = csrf.Token(ctx)
 	data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
-	data["ReturnTo"] = ctx.Query("return_to")
-	data["Protocol"] = ctx.Query("protocol")
-	data["BackURL"] = h.getLoginMFABackURL(ctx)
+	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 	data["HaveError"] = false
 
 	ctx.HTML(http.StatusOK, "idp_totp_verify.html", data)
 }
 
 // PostLoginTOTP handles the TOTP verification during login.
+// All flow state is read from the encrypted cookie - no form parameters for flow state.
 func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_totp")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieUsername)
-	authResult, errA := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
-	code := ctx.PostForm("code")
-	returnTo := ctx.PostForm("return_to")
-	protocolParam := ctx.PostForm("protocol")
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	authResult := uint8(definitions.AuthResultFail)
+	hasAuthResult := false
+	oidcCID := ""
+	samlEntityID := ""
 
-	if errU != nil || errA != nil || code == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyUsername, "")
+		authResult = mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
 
-		return
-	}
+		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-	var oidcCID, samlEntityID string
-	if returnTo != "" {
-		if u, err := url.Parse(returnTo); err == nil {
-			oidcCID = u.Query().Get("client_id")
-			samlEntityID = u.Query().Get("entity_id")
-
-			if samlEntityID == "" && strings.HasPrefix(u.Path, "/saml/sso") {
+		if flowType == definitions.ProtoOIDC {
+			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		} else if flowType == definitions.ProtoSAML {
+			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
 			}
 		}
 	}
 
-	if protocolParam == definitions.ProtoSAML && samlEntityID == "" {
-		samlEntityID = definitions.ProtoSAML
+	code := ctx.PostForm("code")
+
+	if username == "" || !hasAuthResult || code == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+
+		return
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 
 	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
@@ -1049,8 +1220,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	// Verify TOTP
 	authDeps := h.deps.Auth()
 	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
+
 	if state == nil {
-		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
 		return
 	}
@@ -1078,10 +1250,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
-		data["CSRFToken"] = "TODO_CSRF"
+		data["CSRFToken"] = csrf.Token(ctx)
 		data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
-		data["ReturnTo"] = returnTo
-		data["Protocol"] = protocolParam
+		data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid OTP code")
 
@@ -1103,23 +1274,45 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
-		data["WebAuthnLoginURL"] = h.getMFAURL(ctx, "webauthn")
+		data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
 
-		data["CSRFToken"] = "TODO_CSRF"
+		data["CSRFToken"] = csrf.Token(ctx)
 		lang := ctx.Param("languageTag")
+
 		if lang != "" {
 			data["PostLoginEndpoint"] = "/login/" + lang
 		} else {
 			data["PostLoginEndpoint"] = "/login"
 		}
-		data["ReturnTo"] = returnTo
+
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-		// Important: clean up session so they start over
-		session.Delete(definitions.CookieUsername)
-		session.Delete(definitions.CookieAuthResult)
-		session.Save()
+		// Calculate ShowRememberMe based on flow state.
+		showRememberMe := false
+
+		if oidcCID != "" {
+			if client, ok := idpInstance.FindClient(oidcCID); ok {
+				showRememberMe = client.RememberMeTTL > 0
+			}
+		} else if samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+				showRememberMe = sp.RememberMeTTL > 0
+			}
+		}
+
+		data["ShowRememberMe"] = showRememberMe
+		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
+		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+
+		// Important: clean up cookie so they start over
+		if mgr != nil {
+			mgr.Delete(definitions.SessionKeyUsername)
+			mgr.Delete(definitions.SessionKeyAuthResult)
+		}
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 
@@ -1128,7 +1321,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 	// All OK!
 	h.setLastMFAMethod(ctx, "totp")
-	h.finalizeMFALogin(ctx, user, returnTo)
+	h.finalizeMFALogin(ctx, user)
 }
 
 // TwoFAHome renders the 2FA management overview.
@@ -1142,7 +1335,7 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		definitions.LogKeyMsg, "IdP 2FA Self-Service home request",
 	)
 
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 	data := h.basePageData(ctx)
 
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Self-Service")
@@ -1176,11 +1369,12 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["NumRecoveryCodes"] = userData.NumRecoveryCodes
 	data["HaveWebAuthn"] = userData.HaveWebAuthn
 
-	// Sync session if it exists
-	if _, err := util.GetSessionValue[string](session, definitions.CookieAccount); err == nil {
-		session.Set(definitions.CookieHaveTOTP, userData.HaveTOTP)
-		_ = session.Save()
+	// Sync cookie if account exists
+	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
+		mgr.Set(definitions.SessionKeyHaveTOTP, userData.HaveTOTP)
 	}
+
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
 }
@@ -1194,15 +1388,23 @@ func (h *FrontendHandler) handleTwoFAHomeError(ctx *gin.Context, data gin.H, err
 
 	data["BackendError"] = true
 	data["BackendErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An internal error occurred. Please contact your administrator.")
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
 }
 
 // RegisterTOTP renders the TOTP registration page.
 func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 
-	haveTOTP, _ := util.GetSessionValue[bool](session, definitions.CookieHaveTOTP)
+	haveTOTP := false
+	account := ""
+
+	if mgr != nil {
+		haveTOTP = mgr.GetBool(definitions.SessionKeyHaveTOTP, false)
+		account = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
+
 	if haveTOTP {
 		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 		ctx.Status(http.StatusFound)
@@ -1210,8 +1412,7 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	account, err := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if err != nil {
+	if account == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -1224,8 +1425,9 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	session.Set(definitions.CookieTOTPSecret, secret)
-	session.Save()
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyTOTPSecret, secret)
+	}
 
 	data := h.basePageData(ctx)
 	data["QRCode"] = qrCodeURL
@@ -1234,6 +1436,7 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 	data["TOTPMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please scan and verify the following QR code")
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_totp_register.html", data)
 }
@@ -1243,20 +1446,23 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_totp")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	secret, errS := util.GetSessionValue[string](session, definitions.CookieTOTPSecret)
-	code := ctx.PostForm("code")
-	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	secret := ""
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
 
-	if errS != nil || errU != nil || code == "" {
+	if mgr != nil {
+		secret = mgr.GetString(definitions.SessionKeyTOTPSecret, "")
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	}
+
+	code := ctx.PostForm("code")
+
+	if secret == "" || username == "" || code == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
-	}
-
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
 	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
@@ -1272,9 +1478,11 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 
 	// Success!
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "success").Inc()
-	session.Set(definitions.CookieHaveTOTP, true)
-	session.Delete(definitions.CookieTOTPSecret)
-	session.Save()
+
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyHaveTOTP, true)
+		mgr.Delete(definitions.SessionKeyTOTPSecret)
+	}
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
@@ -1285,18 +1493,19 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_generate_recovery_codes")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
 
-	if errU != nil {
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	}
+
+	if username == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
-	}
-
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
@@ -1343,17 +1552,19 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_totp")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	username, errU := util.GetSessionValue[string](session, definitions.CookieAccount)
-	if errU != nil {
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	}
+
+	if username == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
-	}
-
-	sourceBackend, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend)
-	if err != nil {
-		sourceBackend = uint8(definitions.BackendLDAP)
 	}
 
 	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
@@ -1365,8 +1576,10 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	}
 
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "success").Inc()
-	session.Set(definitions.CookieHaveTOTP, false)
-	session.Save()
+
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyHaveTOTP, false)
+	}
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
@@ -1386,11 +1599,16 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.delete_webauthn")
 	defer sp.End()
 
-	session := sessions.Default(ctx)
-	userID, errU := util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
-	username, errA := util.GetSessionValue[string](session, definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	userID := ""
+	username := ""
 
-	if errU != nil || errA != nil {
+	if mgr != nil {
+		userID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
+
+	if userID == "" || username == "" {
 		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
 
 		return
@@ -1419,9 +1637,9 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 
 // RegisterWebAuthn renders the WebAuthn registration page.
 func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
 
-	if _, err := util.GetSessionValue[string](session, definitions.CookieUniqueUserID); err != nil {
+	if mgr == nil || mgr.GetString(definitions.SessionKeyUniqueUserID, "") == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
@@ -1439,6 +1657,7 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	data["JSCompletingRegistration"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing registration...")
 	data["JSDeviceNameRequired"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter a device name")
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_register.html", data)
 }
@@ -1515,6 +1734,7 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 	}
 
 	data["Devices"] = devices
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_2fa_webauthn_devices.html", data)
 }

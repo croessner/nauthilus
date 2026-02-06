@@ -26,13 +26,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/core/cookie"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	"github.com/fsnotify/fsnotify"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 )
 
@@ -105,8 +105,16 @@ type Endpoint struct {
 
 // Register adds the dev UI routes to the router.
 func (h *DevUIHandler) Register(router gin.IRouter) {
-	store := cookie.NewStore([]byte("dev-secret"))
-	group := router.Group("/dev/ui", sessions.Sessions("nauthilus_dev", store))
+	// DevUI uses its own cookie (nauthilus_dev) for development purposes
+	devCookieMW := func(ctx *gin.Context) {
+		mgr := cookie.NewSecureManager(definitions.DevCookieSecret, definitions.DevCookieName, h.deps.Cfg, h.deps.Env)
+		_ = mgr.Load(ctx)
+		ctx.Set(definitions.CtxSecureDataKey, mgr)
+		ctx.Next()
+		_ = mgr.Save(ctx)
+	}
+
+	group := router.Group("/dev/ui", devCookieMW)
 
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 

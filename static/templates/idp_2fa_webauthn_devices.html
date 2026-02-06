@@ -25,6 +25,7 @@
                     <tr>
                         <td>
                             <form class="flex items-center gap-2" hx-post="/mfa/webauthn/device/{{ .ID }}/name"
+                                  hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
                                   hx-target="#modal-container">
                                 <input class="input input-bordered input-sm flex-1 min-w-0 max-w-xs" maxlength="64"
                                        name="name" placeholder="{{ $.UnnamedDevice }}" required type="text"
@@ -40,6 +41,7 @@
                             <button class="btn btn-error btn-sm btn-outline"
                                     hx-confirm="{{ $.DeleteConfirm }}"
                                     hx-delete="/mfa/webauthn/device/{{ .ID }}"
+                                    hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
                                     hx-target="#modal-container">
                                 {{ $.Delete }}
                             </button>

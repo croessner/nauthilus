@@ -67,3 +67,9 @@ func getDefaultEnvironment() config.Environment {
 
 	panic("util: default Environment not configured")
 }
+
+// ShouldSetSecureCookie reports whether cookies should be marked as Secure.
+// It returns false in developer mode to allow HTTP callbacks.
+func ShouldSetSecureCookie() bool {
+	return !getDefaultEnvironment().GetDevMode()
+}

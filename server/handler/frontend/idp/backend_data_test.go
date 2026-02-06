@@ -28,8 +28,6 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -117,22 +115,20 @@ func TestResolveWebAuthnUserFallbacksToBackend(t *testing.T) {
 	mockRedis.ExpectHSet(redisKey, expected).SetVal(4)
 	mockRedis.ExpectExpire(redisKey, cfg.GetServer().GetRedis().GetPosCacheTTL()).SetVal(true)
 
-	store := cookie.NewStore([]byte("secret"))
 	r := gin.New()
-	r.Use(sessions.Sessions("test-session", store))
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUniqueUserID: uniqueUserID,
+	}}
 
 	var data *UserBackendData
-	r.GET("/test", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set(definitions.CookieUniqueUserID, uniqueUserID)
-		session.Save()
 
+	r.GET("/test", func(c *gin.Context) {
 		data = &UserBackendData{
 			Username:    "test1",
 			DisplayName: "Test User",
 		}
 
-		h.resolveWebAuthnUser(c, session, data, provider)
+		h.resolveWebAuthnUser(c, mgr, data, provider)
 		c.Status(http.StatusOK)
 	})
 
@@ -207,9 +203,7 @@ func TestHasWebAuthnWithProviderFallbacksToBackend(t *testing.T) {
 	mockRedis.ExpectHSet(redisKey, expected).SetVal(4)
 	mockRedis.ExpectExpire(redisKey, cfg.GetServer().GetRedis().GetPosCacheTTL()).SetVal(true)
 
-	store := cookie.NewStore([]byte("secret"))
 	r := gin.New()
-	r.Use(sessions.Sessions("test-session", store))
 
 	r.GET("/test", func(c *gin.Context) {
 		user := &backend.User{Id: uniqueUserID, Name: "test1", DisplayName: "Test User"}

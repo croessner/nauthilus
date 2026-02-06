@@ -58,6 +58,10 @@ graph TD
 
 This is the primary flow for modern applications. It ensures that user credentials never touch the client application.
 
+**Security Note:** All IdP flow state is stored in an encrypted cookie (`nauthilus_secure_data`) using
+ChaCha20-Poly1305.
+No flow state (like `return_to`) is passed via URL parameters to prevent Open Redirect vulnerabilities.
+
 ```mermaid
 sequenceDiagram
     participant B as Browser
@@ -71,24 +75,30 @@ sequenceDiagram
     H ->> I: FindClient(clientID)
     I -->> H: Client Config
     H ->> H: Validate Redirect URI
-    H ->> B: 302 Redirect to /login?return_to=...
+    H ->> H: Store OIDC params in encrypted cookie
+    H ->> B: 302 Redirect to /login (no query params)
     Note over B, A: Authentication Phase
     B ->> F: GET /login
+    F ->> F: Read flow state from cookie
     F -->> B: Render idp_login.html (HTMX)
     B ->> F: POST /login (username, password)
+    F ->> F: Read flow state from cookie
     F ->> I: Authenticate(ctx, username, password, ...)
     I ->> A: NewAuthState(ctx, ...)
     A ->> A: Evaluate MFA requirements
     A -->> I: Success or Failure
     Note right of I: Delayed Response logic: always proceed to MFA if enabled and user exists
     I -->> F: User (even if password incorrect, if Delayed Response enabled)
-    F ->> F: Create Partial Session
-    F ->> B: 302 Redirect to /login/totp
+    F ->> F: Create Partial Session (in cookie)
+    F ->> B: 302 Redirect to /login/totp (no query params)
     B ->> F: POST /login/totp (code)
     F ->> F: Verify TOTP and check original password result
     F ->> F: Final Session Creation or Error
-    F ->> B: 302 Redirect to return_to (Consent) or Login Error
+    F ->> B: 302 Redirect to /oidc/authorize (reconstructed from cookie)
     Note over B, A: Consent & Code Issuance
+    B ->> H: GET /idp/oidc/authorize (user now logged in)
+    H ->> H: Read consent state
+    H ->> B: 302 Redirect to /oidc/consent
     B ->> F: GET /idp/oidc/consent
     F -->> B: Render idp_consent.html
     B ->> F: POST /idp/oidc/consent (Accept)
@@ -113,6 +123,67 @@ sequenceDiagram
     I ->> R: StoreRefreshToken(new_rt, sessionData)
     I -->> H: {access_token, id_token, refresh_token, expires_in}
     H -->> B: 200 OK (JSON Tokens)
+```
+
+### 3.1.1 Cookie-based Flow State (Security Enhancement)
+
+The IdP stores all flow state in the encrypted `nauthilus_secure_data` cookie to prevent Open Redirect attacks.
+
+**Session Keys for IdP Flow:**
+| Key | Description |
+|-----|-------------|
+| `idp_flow_active` | Boolean indicating an active IdP flow |
+| `idp_flow_type` | Flow type: `oidc` or `saml` |
+| `idp_client_id` | OIDC client_id |
+| `idp_redirect_uri` | Validated OIDC redirect_uri |
+| `idp_scope` | Requested OIDC scopes |
+| `idp_state` | OIDC state parameter |
+| `idp_nonce` | OIDC nonce parameter |
+| `idp_original_url` | SAML original request URL |
+
+**How it works:**
+
+1. `/oidc/authorize` validates all parameters and stores them in the encrypted cookie
+2. Redirects to `/login` without any query parameters
+3. `/login` reads flow state from cookie and validates it
+4. After successful authentication, redirects back to `/oidc/authorize` by reconstructing the URL from cookie
+5. `/oidc/authorize` finds user logged in and proceeds with consent/code issuance
+
+### 3.1.2 CSRF Protection
+
+All IdP frontend pages use CSRF protection via `nosurf`. The CSRF token is:
+
+- Generated server-side via `nosurf.Token(ctx.Request)`
+- Passed to templates as `{{ .CSRFToken }}`
+- Sent as `X-CSRF-Token` header for HTMX and fetch() requests
+
+**Protected endpoints:**
+
+- Login pages (`/login`, `/login/:languageTag`)
+- MFA pages (`/login/totp`, `/login/webauthn`, `/login/mfa`, `/login/recovery`)
+- Consent pages (`/oidc/consent`, `/oidc/consent/:languageTag`)
+- Registration pages (`/mfa/totp/register`, `/mfa/webauthn/register`)
+- 2FA Home (`/mfa/register/home`)
+- Device management (`/mfa/webauthn/devices`)
+
+**HTMX requests:**
+
+```html
+<button hx-delete="/mfa/totp" 
+        hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}'>
+```
+
+**JavaScript fetch() requests:**
+
+```javascript
+const response = await fetch("/mfa/webauthn/register/finish", {
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": "{{ .CSRFToken }}"
+    },
+    body: JSON.stringify(data)
+});
 ```
 
 ## 4. MFA Management API (/api/v1/mfa)

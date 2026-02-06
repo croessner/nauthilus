@@ -42,8 +42,6 @@ import (
 	approuter "github.com/croessner/nauthilus/server/router"
 
 	"github.com/gin-contrib/pprof"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/pires/go-proxyproto"
 	"github.com/quic-go/quic-go"
@@ -72,30 +70,6 @@ type DefaultBootstrap struct {
 
 func NewDefaultBootstrap(deps HTTPDeps) DefaultBootstrap {
 	return DefaultBootstrap{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
-}
-
-// InitSessionStore creates and returns the secure cookie-backed Gin session store
-// with secure defaults (Secure, SameSite=Strict). The caller is responsible for
-// registering the sessions middleware with Gin.
-
-func (b DefaultBootstrap) InitSessionStore() sessions.Store {
-	store := cookie.NewStore(
-		[]byte(b.cfg.GetServer().GetFrontend().GetCookieStoreAuthKey()),
-		[]byte(b.cfg.GetServer().GetFrontend().GetCookieStoreEncKey()),
-	)
-
-	secure := true
-	if b.env.GetDevMode() {
-		secure = false
-	}
-
-	store.Options(sessions.Options{
-		Path:     "/",
-		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	return store
 }
 
 // InitGinLogging configures Gin's writers to use the project's logger and sets
@@ -656,7 +630,6 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	}
 
 	a.Bootstrap.InitGinLogging()
-	_ = a.Bootstrap.InitSessionStore()
 
 	router := a.RouterComposer.ComposeEngine()
 	a.RouterComposer.ApplyEarlyMiddlewares(router)

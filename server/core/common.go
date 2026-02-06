@@ -18,8 +18,9 @@ package core
 import (
 	"net/http"
 
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/gin-contrib/sessions"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -34,42 +35,37 @@ func HandleErrWithDeps(ctx *gin.Context, err error, _ AuthDeps) {
 	ctx.String(http.StatusBadRequest, err.Error())
 }
 
-// SessionCleaner removes all user information from the current session.
+// SessionCleaner removes all user information from the secure cookie.
+// After migration to the CookieManager, session data is stored in the encrypted
+// nauthilus_secure_data cookie. This function clears all sensitive session keys.
 func SessionCleaner(ctx *gin.Context) {
-	session := sessions.Default(ctx)
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		return
+	}
 
-	// Cleanup
-	session.Delete(definitions.CookieAuthResult)
-	session.Delete(definitions.CookieUsername)
-	session.Delete(definitions.CookieAccount)
-	session.Delete(definitions.CookieHaveTOTP)
-	session.Delete(definitions.CookieTOTPURL)
-	session.Delete(definitions.CookieUserBackend)
-	session.Delete(definitions.CookieUniqueUserID)
-	session.Delete(definitions.CookieDisplayName)
-	session.Delete(definitions.CookieRegistration)
-	session.Delete(definitions.CookieOIDCClients)
-	session.Delete(definitions.CookieTOTPSecret)
-	session.Delete(definitions.CookieSubject)
-	session.Delete(definitions.CookieUserBackendName)
-
-	session.Save()
+	// Cleanup all sensitive session keys.
+	mgr.Delete(definitions.SessionKeyAuthResult)
+	mgr.Delete(definitions.SessionKeyUsername)
+	mgr.Delete(definitions.SessionKeyAccount)
+	mgr.Delete(definitions.SessionKeyHaveTOTP)
+	mgr.Delete(definitions.SessionKeyTOTPURL)
+	mgr.Delete(definitions.SessionKeyUserBackend)
+	mgr.Delete(definitions.SessionKeyUniqueUserID)
+	mgr.Delete(definitions.SessionKeyDisplayName)
+	mgr.Delete(definitions.SessionKeyRegistration)
+	mgr.Delete(definitions.SessionKeyOIDCClients)
+	mgr.Delete(definitions.SessionKeyTOTPSecret)
+	mgr.Delete(definitions.SessionKeySubject)
+	mgr.Delete(definitions.SessionKeyUserBackendName)
+	// Note: SessionKeyLang is intentionally preserved for UX.
+	// Cookie is automatically saved by the cookie.Middleware after the handler chain.
 }
 
 // ClearBrowserCookies explicitly overwrites security-relevant cookies in the browser with an expired state.
+// After the CookieManager migration, only SecureDataCookieName exists as the encrypted secure data cookie.
 func ClearBrowserCookies(ctx *gin.Context) {
-	ctx.SetCookie(definitions.SessionName, "", -1, "/", "", false, true)
-	ctx.SetCookie("token", "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieAccount, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieAuthResult, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieUsername, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieSubject, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieDisplayName, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieUniqueUserID, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieOIDCClients, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieUserBackend, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieUserBackendName, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieTOTPSecret, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieTOTPURL, "", -1, "/", "", false, true)
-	ctx.SetCookie(definitions.CookieRegistration, "", -1, "/", "", false, true)
+	secure := util.ShouldSetSecureCookie()
+
+	ctx.SetCookie(definitions.SecureDataCookieName, "", -1, "/", "", secure, true)
 }

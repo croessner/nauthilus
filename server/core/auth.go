@@ -39,6 +39,7 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/jwtutil"
@@ -53,7 +54,6 @@ import (
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -641,15 +641,19 @@ func (a *AuthState) GetWebAuthnCredentials() (credentials []mfa.PersistentCreden
 		backendName string
 	)
 
-	session := sessions.Default(a.Request.HTTPClientContext)
+	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
-		passDB = definitions.Backend(cookieValue)
-		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
+	if mgr != nil {
+		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
 
-		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-			return mgr.GetWebAuthnCredentials(a)
+		if cookieValue != 0 {
+			passDB = definitions.Backend(cookieValue)
+			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
+
+			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
+				return backendMgr.GetWebAuthnCredentials(a)
+			}
 		}
 	}
 
@@ -677,15 +681,19 @@ func (a *AuthState) SaveWebAuthnCredential(credential *mfa.PersistentCredential)
 		backendName string
 	)
 
-	session := sessions.Default(a.Request.HTTPClientContext)
+	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
-		passDB = definitions.Backend(cookieValue)
-		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
+	if mgr != nil {
+		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
 
-		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-			return mgr.SaveWebAuthnCredential(a, credential)
+		if cookieValue != 0 {
+			passDB = definitions.Backend(cookieValue)
+			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
+
+			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
+				return backendMgr.SaveWebAuthnCredential(a, credential)
+			}
 		}
 	}
 
@@ -706,15 +714,19 @@ func (a *AuthState) DeleteWebAuthnCredential(credential *mfa.PersistentCredentia
 		backendName string
 	)
 
-	session := sessions.Default(a.Request.HTTPClientContext)
+	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
-		passDB = definitions.Backend(cookieValue)
-		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
+	if mgr != nil {
+		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
 
-		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-			return mgr.DeleteWebAuthnCredential(a, credential)
+		if cookieValue != 0 {
+			passDB = definitions.Backend(cookieValue)
+			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
+
+			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
+				return backendMgr.DeleteWebAuthnCredential(a, credential)
+			}
 		}
 	}
 
@@ -740,15 +752,19 @@ func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCreden
 		backendName string
 	)
 
-	session := sessions.Default(a.Request.HTTPClientContext)
+	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
-		passDB = definitions.Backend(cookieValue)
-		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
+	if mgr != nil {
+		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
 
-		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-			return mgr.UpdateWebAuthnCredential(a, oldCredential, newCredential)
+		if cookieValue != 0 {
+			passDB = definitions.Backend(cookieValue)
+			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
+
+			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
+				return backendMgr.UpdateWebAuthnCredential(a, oldCredential, newCredential)
+			}
 		}
 	}
 
@@ -2574,8 +2590,9 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 
 			return ""
 		}(),
-		Backend:    a.Runtime.SourcePassDBBackend,
-		Attributes: a.Attributes.Attributes,
+		Backend:     a.Runtime.SourcePassDBBackend,
+		BackendName: a.Runtime.BackendName,
+		Attributes:  a.Attributes.Attributes,
 	}
 }
 

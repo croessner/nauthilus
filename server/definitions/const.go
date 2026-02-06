@@ -17,64 +17,119 @@ package definitions
 
 import "time"
 
-// Cookie keys used by registration/login flows.
+// Cookie names for HTTP cookies stored in the browser.
 const (
-	// CookieAccount refers to the user's account identifier.
-	CookieAccount = "account"
+	// SecureDataCookieName is the name of the encrypted secure data cookie.
+	// This is the primary cookie used for all session data storage.
+	SecureDataCookieName = "nauthilus_secure_data"
 
-	// CookieHaveTOTP indicates whether the user already has a TOTP secret.
-	CookieHaveTOTP = "already_have_totp"
+	// DevCookieName is the name of the cookie used by the DevUI for development purposes.
+	DevCookieName = "nauthilus_dev"
 
-	// CookieTOTPURL holds the otpauth:// URL during TOTP registration.
-	CookieTOTPURL = "totp_url"
+	// DevCookieSecret is the static secret used for the DevUI cookie.
+	// This is intentionally a simple static value as DevUI is only for development.
+	DevCookieSecret = "nauthilus-dev-secret-key-32bytes!"
+)
 
-	// CookieUserBackend records which backend authenticated the user (e.g. LDAP/Lua).
-	CookieUserBackend = "user_backend"
+// Session keys used within the encrypted session/cookie storage.
+// These keys identify values stored in the session, not separate browser cookies.
+const (
+	// SessionKeyAccount refers to the user's account identifier.
+	SessionKeyAccount = "account"
 
-	// CookieUserBackendName is the name of the cookie that stores the logical name of the user backend.
-	CookieUserBackendName = "user_backend_name"
+	// SessionKeyHaveTOTP indicates whether the user already has a TOTP secret.
+	SessionKeyHaveTOTP = "already_have_totp"
 
-	// CookieUniqueUserID stores a backend-specific unique user identifier.
-	CookieUniqueUserID = "unique_userid"
+	// SessionKeyTOTPURL holds the otpauth:// URL during TOTP registration.
+	SessionKeyTOTPURL = "totp_url"
 
-	// CookieDisplayName stores a human-friendly display name for the user.
-	CookieDisplayName = "display_name"
+	// SessionKeyUserBackend records which backend authenticated the user (e.g. LDAP/Lua).
+	SessionKeyUserBackend = "user_backend"
 
-	// CookieLang stores the UI language preference selected during login/consent.
-	CookieLang = "lang"
+	// SessionKeyUserBackendName is the logical name of the user backend.
+	SessionKeyUserBackendName = "user_backend_name"
 
-	// CookieUsername stores the supplied username during the login flow.
-	CookieUsername = "username"
+	// SessionKeyUniqueUserID stores a backend-specific unique user identifier.
+	SessionKeyUniqueUserID = "unique_userid"
 
-	// CookieAuthResult stores the authentication outcome (uint8 AuthResult).
-	CookieAuthResult = "auth_result"
+	// SessionKeyDisplayName stores a human-friendly display name for the user.
+	SessionKeyDisplayName = "display_name"
 
-	// CookieSubject stores the OIDC subject if computed in-session.
-	CookieSubject = "subject"
+	// SessionKeyLang stores the UI language preference selected during login/consent.
+	SessionKeyLang = "lang"
 
-	// CookieRemember signals a "remember me" option for the session.
-	CookieRemember = "remember"
+	// SessionKeyUsername stores the supplied username during the login flow.
+	SessionKeyUsername = "username"
 
-	// CookieRememberTTL stores the TTL for the "remember me" option.
-	CookieRememberTTL = "remember_ttl"
+	// SessionKeyAuthResult stores the authentication outcome (uint8 AuthResult).
+	SessionKeyAuthResult = "auth_result"
 
-	// CookieMFAMulti indicates whether multiple MFA methods are available for selection.
-	CookieMFAMulti = "mfa_multi"
+	// SessionKeySubject stores the OIDC subject if computed in-session.
+	SessionKeySubject = "subject"
 
-	// CookieRegistration is used during WebAuthn device registration.
-	CookieRegistration = "webauthn_registration"
+	// SessionKeyRemember signals a "remember me" option for the session.
+	SessionKeyRemember = "remember"
 
-	// CookieTOTPSecret temporarily holds a generated TOTP secret during flow.
-	CookieTOTPSecret = "totp_secret"
+	// SessionKeyRememberTTL stores the TTL for the "remember me" option.
+	SessionKeyRememberTTL = "remember_ttl"
 
-	// CookieHome marks that the user reached the 2FA home page in the flow.
-	CookieHome = "home"
+	// SessionKeyMFAMulti indicates whether multiple MFA methods are available for selection.
+	SessionKeyMFAMulti = "mfa_multi"
 
-	// CookieProtocol stores the network protocol used during authentication.
-	CookieProtocol = "protocol"
+	// SessionKeyRegistration is used during WebAuthn device registration.
+	SessionKeyRegistration = "webauthn_registration"
 
-	// CookieOIDCClients stores a list of OIDC client IDs the user is logged into.
-	CookieOIDCClients = "oidc_clients"
+	// SessionKeyTOTPSecret temporarily holds a generated TOTP secret during flow.
+	SessionKeyTOTPSecret = "totp_secret"
+
+	// SessionKeyHome marks that the user reached the 2FA home page in the flow.
+	SessionKeyHome = "home"
+
+	// SessionKeyProtocol stores the network protocol used during authentication.
+	SessionKeyProtocol = "protocol"
+
+	// SessionKeyOIDCClients stores a list of OIDC client IDs the user is logged into.
+	SessionKeyOIDCClients = "oidc_clients"
+
+	// SessionKeyIdPFlowActive indicates that an IdP flow (OIDC or SAML2) is currently active.
+	// This prevents direct access to /login without a valid IdP flow.
+	SessionKeyIdPFlowActive = "idp_flow_active"
+
+	// SessionKeyIdPFlowType stores the type of IdP flow (oidc or saml).
+	SessionKeyIdPFlowType = "idp_flow_type"
+
+	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
+	SessionKeyIdPClientID = "idp_client_id"
+
+	// SessionKeyIdPRedirectURI stores the validated redirect_uri for OIDC flows.
+	SessionKeyIdPRedirectURI = "idp_redirect_uri"
+
+	// SessionKeyIdPScope stores the requested OIDC scopes.
+	SessionKeyIdPScope = "idp_scope"
+
+	// SessionKeyIdPState stores the OIDC state parameter.
+	SessionKeyIdPState = "idp_state"
+
+	// SessionKeyIdPNonce stores the OIDC nonce parameter.
+	SessionKeyIdPNonce = "idp_nonce"
+
+	// SessionKeyIdPResponseType stores the OIDC response_type parameter.
+	SessionKeyIdPResponseType = "idp_response_type"
+
+	// SessionKeyIdPPrompt stores the OIDC prompt parameter.
+	SessionKeyIdPPrompt = "idp_prompt"
+
+	// SessionKeyIdPSAMLRequest stores the serialized SAML AuthnRequest for SAML flows.
+	SessionKeyIdPSAMLRequest = "idp_saml_request"
+
+	// SessionKeyIdPSAMLRelayState stores the SAML RelayState parameter.
+	SessionKeyIdPSAMLRelayState = "idp_saml_relay_state"
+
+	// SessionKeyIdPSAMLEntityID stores the SAML SP EntityID.
+	SessionKeyIdPSAMLEntityID = "idp_saml_entity_id"
+
+	// SessionKeyIdPOriginalURL stores the original request URL for resuming the flow after login.
+	SessionKeyIdPOriginalURL = "idp_original_url"
 )
 
 // SingleflightWaitCap defines the maximum time a follower waits for an in-process
@@ -735,13 +790,6 @@ const (
 // MFARoot is the root path for the multi-factor authentication (MFA) endpoints.
 const MFARoot = "/mfa"
 
-// Keys for the encrypted session cookie.
-// SessionName remains available in all builds.
-const (
-	// SessionName constant is for the name of the session
-	SessionName = "Nauthilus_session"
-)
-
 const (
 	// CtxGUIDKey is used as a key to store the session's unique identifier in session.Store
 	CtxGUIDKey = "guid"
@@ -794,6 +842,9 @@ const (
 
 	// CtxRateLimitReasonKey is used as a key to store the reason for a 429 Too Many Requests response in the context.
 	CtxRateLimitReasonKey = "ratelimit_reason"
+
+	// CtxSecureDataKey is used as a key to store the CookieManager instance for secure IDP data in the context.
+	CtxSecureDataKey = "secure_data"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.
@@ -938,6 +989,9 @@ const (
 
 	// DbgAccount represents the debug module for tracing how/where the
 	DbgAccount
+
+	// DbgCookie represents the debug module for cookie-related operations.
+	DbgCookie
 )
 
 const (
@@ -1000,6 +1054,9 @@ const (
 
 	// DbgAccountName is the debug identifier for account tracing
 	DbgAccountName = "account"
+
+	// DbgCookieName is the debug identifier for cookie
+	DbgCookieName = "cookie"
 )
 
 const (

@@ -8,7 +8,7 @@
             <div class="flex flex-col gap-4">
                 {{ if .RecommendedMethod }}
                 {{ if eq .RecommendedMethod "webauthn" }}
-                <form action="/login/webauthn{{ .QueryString }}" method="get">
+                <form action="/login/webauthn" method="get">
                     <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <div class="flex items-center gap-4">
@@ -25,7 +25,7 @@
                 {{ end }}
 
                 {{ if eq .RecommendedMethod "totp" }}
-                <form action="/login/totp{{ .QueryString }}" method="get">
+                <form action="/login/totp" method="get">
                     <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <div class="flex items-center gap-4">
@@ -42,7 +42,7 @@
                 {{ end }}
 
                 {{ if eq .RecommendedMethod "recovery" }}
-                <form action="/login/recovery{{ .QueryString }}" method="get">
+                <form action="/login/recovery" method="get">
                     <button autofocus class="btn btn-primary btn-lg w-full flex justify-center items-center"
                             type="submit">
                         <span>{{ .RecoveryCode }}</span>
@@ -63,7 +63,7 @@
                     <div class="mt-4 flex flex-col gap-4">
                         {{ if and .HaveWebAuthn (ne .RecommendedMethod "webauthn") }}
                         <a class="btn btn-outline btn-lg flex justify-between items-center group relative overflow-hidden"
-                           href="/login/webauthn{{ .QueryString }}">
+                           href="/login/webauthn">
                             <div class="flex items-center gap-4">
                                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                                      xmlns="http://www.w3.org/2000/svg">
@@ -78,7 +78,7 @@
 
                         {{ if and .HaveTOTP (ne .RecommendedMethod "totp") }}
                         <a class="btn btn-outline btn-lg flex justify-between items-center group relative overflow-hidden"
-                           href="/login/totp{{ .QueryString }}">
+                           href="/login/totp">
                             <div class="flex items-center gap-4">
                                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                                      xmlns="http://www.w3.org/2000/svg">
@@ -97,7 +97,7 @@
                         {{ if $hasPrimaryOther }}
                         <div class="divider text-xs opacity-50">{{ .Or }}</div>
                         {{ end }}
-                        <a class="btn btn-ghost btn-sm" href="/login/recovery{{ .QueryString }}">
+                        <a class="btn btn-ghost btn-sm" href="/login/recovery">
                             {{ .RecoveryCode }}
                         </a>
                         {{ end }}
@@ -107,7 +107,7 @@
                 {{ else }}
                 {{ if .HaveWebAuthn }}
                 <a class="btn btn-outline btn-lg flex justify-between items-center group relative overflow-hidden"
-                   href="/login/webauthn{{ .QueryString }}">
+                   href="/login/webauthn">
                     <div class="flex items-center gap-4">
                         <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                              xmlns="http://www.w3.org/2000/svg">
@@ -121,7 +121,7 @@
 
                 {{ if .HaveTOTP }}
                 <a class="btn btn-outline btn-lg flex justify-between items-center group relative overflow-hidden"
-                   href="/login/totp{{ .QueryString }}">
+                   href="/login/totp">
                     <div class="flex items-center gap-4">
                         <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                              xmlns="http://www.w3.org/2000/svg">
@@ -135,7 +135,7 @@
 
                 {{ if .HaveRecoveryCodes }}
                 <div class="divider text-xs opacity-50">{{ .Or }}</div>
-                <a class="btn btn-ghost btn-sm" href="/login/recovery{{ .QueryString }}">
+                <a class="btn btn-ghost btn-sm" href="/login/recovery">
                     {{ .RecoveryCode }}
                 </a>
                 {{ end }}
@@ -143,7 +143,7 @@
             </div>
 
             <div class="card-actions justify-center mt-8">
-                <a class="btn btn-link btn-sm" href="/oidc/login{{ .QueryString }}">{{ .Back }}</a>
+                <a class="btn btn-link btn-sm" href="{{ .BackURL }}">{{ .Back }}</a>
             </div>
         </div>
     </div>

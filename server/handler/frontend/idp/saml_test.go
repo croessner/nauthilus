@@ -31,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -96,8 +95,7 @@ func TestSAMLHandler_Metadata(t *testing.T) {
 		Cfg:    cfg,
 		Logger: slog.Default(),
 	}
-	store := cookie.NewStore([]byte("secret"))
-	h := NewSAMLHandler(store, d, nil)
+	h := NewSAMLHandler(d, nil)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -114,8 +112,7 @@ func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &mockSAMLCfg{entityID: "test", certificate: "test"}
 	d := &deps.Deps{Cfg: cfg}
-	store := cookie.NewStore([]byte("secret"))
-	h := NewSAMLHandler(store, d, nil)
+	h := NewSAMLHandler(d, nil)
 
 	r := gin.New()
 	h.Register(r)

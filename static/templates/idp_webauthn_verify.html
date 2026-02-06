@@ -98,7 +98,8 @@
             const finishResponse = await fetch("{{ .WebAuthnFinishEndpoint }}", {
                 method: "POST",
                 headers: {
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": "{{ .CSRFToken }}"
                 },
                 body: JSON.stringify({
                     id: assertion.id,
@@ -117,9 +118,9 @@
                 throw new Error(await finishResponse.text());
             }
 
-            // Success!
-            const returnTo = new URLSearchParams(window.location.search).get('return_to') || '/mfa/register/home';
-            window.location.href = returnTo;
+            // Success! Redirect to /login which will read the flow state from cookie
+            // and redirect to the appropriate IdP endpoint
+            window.location.href = '/login';
 
         } catch (err) {
             console.error(err);

@@ -28,6 +28,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -35,7 +36,6 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -59,15 +59,15 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 		credentials []mfa.PersistentCredential
 	)
 
-	session := sessions.Default(a.Request.HTTPClientContext)
+	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 	protocolName := ""
 
 	if a.Request.HTTPClientContext != nil {
 		protocolName = a.Request.HTTPClientContext.Query("protocol")
 	}
 
-	if protocolName == "" {
-		protocolName, _ = util.GetSessionValue[string](session, definitions.CookieProtocol)
+	if protocolName == "" && mgr != nil {
+		protocolName = mgr.GetString(definitions.SessionKeyProtocol, "")
 	}
 
 	if protocolName == "" {
@@ -100,14 +100,18 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue, err := util.GetSessionValue[uint8](session, definitions.CookieUserBackend); err == nil {
-		passDB = definitions.Backend(cookieValue)
-		backendName, _ = util.GetSessionValue[string](session, definitions.CookieUserBackendName)
+	if mgr != nil {
+		cookieValue := mgr.GetUint8(definitions.SessionKeyUserBackend, 0)
 
-		if mgr := a.GetBackendManager(passDB, backendName); mgr != nil {
-			credentials, err = mgr.GetWebAuthnCredentials(a)
-			if err != nil {
-				return nil, err
+		if cookieValue != 0 {
+			passDB = definitions.Backend(cookieValue)
+			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, "")
+
+			if backendMgr := a.GetBackendManager(passDB, backendName); backendMgr != nil {
+				credentials, err = backendMgr.GetWebAuthnCredentials(a)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -155,19 +159,19 @@ func (a *AuthState) updateUser(user *backend.User) {
 	backend.SaveWebAuthnToRedis(a.Ctx(), a.Logger(), a.Cfg(), a.Redis(), user, a.Cfg().GetServer().Redis.PosCacheTTL)
 }
 
-func isWebAuthnRegistrationAuthenticated(session sessions.Session) bool {
-	authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult)
-	if err == nil {
+func isWebAuthnRegistrationAuthenticated(mgr cookie.Manager) bool {
+	authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, 0)
+	if authResult != 0 {
 		return definitions.AuthResult(authResult) == definitions.AuthResultOK
 	}
 
-	_, err = util.GetSessionValue[string](session, definitions.CookieAccount)
+	account := mgr.GetString(definitions.SessionKeyAccount, "")
 
-	return err == nil
+	return account != ""
 }
 
-func resolveWebAuthnDisplayName(session sessions.Session, userName string) (string, bool) {
-	displayName, _ := util.GetSessionValue[string](session, definitions.CookieDisplayName)
+func resolveWebAuthnDisplayName(mgr cookie.Manager, userName string) (string, bool) {
+	displayName := mgr.GetString(definitions.SessionKeyDisplayName, "")
 	if displayName != "" {
 		return displayName, false
 	}
@@ -176,7 +180,7 @@ func resolveWebAuthnDisplayName(session sessions.Session, userName string) (stri
 		return "", false
 	}
 
-	session.Set(definitions.CookieDisplayName, userName)
+	mgr.Set(definitions.SessionKeyDisplayName, userName)
 
 	return userName, true
 }
@@ -195,9 +199,16 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			uniqueUserID string
 		)
 
-		session := sessions.Default(ctx)
+		mgr := cookie.GetManager(ctx)
+		if mgr == nil {
+			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
+			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
+			SessionCleaner(ctx)
 
-		if !isWebAuthnRegistrationAuthenticated(session) {
+			return
+		}
+
+		if !isWebAuthnRegistrationAuthenticated(mgr) {
 			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -206,7 +217,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		// We use the account name as username!
-		userName, _ = util.GetSessionValue[string](session, definitions.CookieAccount)
+		userName = mgr.GetString(definitions.SessionKeyAccount, "")
 		if userName == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -214,7 +225,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
+		uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
 		if uniqueUserID == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -222,7 +233,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		displayName, _ = resolveWebAuthnDisplayName(session, userName)
+		displayName, _ = resolveWebAuthnDisplayName(mgr, userName)
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
 			SessionCleaner(ctx)
@@ -291,9 +302,9 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			"content", fmt.Sprintf("%#v", sessionData),
 		)
 
-		session.Set(definitions.CookieRegistration, sessionDataJSON)
+		mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
 
-		if err = session.Save(); err != nil {
+		if err = mgr.Save(ctx); err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
 			SessionCleaner(ctx)
 
@@ -322,26 +333,33 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			sessionData  *webauthn.SessionData
 		)
 
-		session := sessions.Default(ctx)
-
-		if !isWebAuthnRegistrationAuthenticated(session) {
+		mgr := cookie.GetManager(ctx)
+		if mgr == nil {
 			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
 			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 
 			return
 		}
 
-		userName, _ = util.GetSessionValue[string](session, definitions.CookieAccount)
-		if userName == "" {
-			userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
+		if !isWebAuthnRegistrationAuthenticated(mgr) {
+			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "webauthn", "fail").Inc()
+			ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
+
+			return
 		}
+
+		userName = mgr.GetString(definitions.SessionKeyAccount, "")
+		if userName == "" {
+			userName = mgr.GetString(definitions.SessionKeyUsername, "")
+		}
+
 		if userName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
 
 			return
 		}
 
-		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
+		uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
 		if uniqueUserID == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -349,7 +367,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		displayName, updated := resolveWebAuthnDisplayName(session, userName)
+		displayName, updated := resolveWebAuthnDisplayName(mgr, userName)
 		if displayName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
 			SessionCleaner(ctx)
@@ -358,7 +376,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		if updated {
-			if err := session.Save(); err != nil {
+			if err := mgr.Save(ctx); err != nil {
 				ctx.JSON(http.StatusInternalServerError, err.Error())
 				SessionCleaner(ctx)
 
@@ -366,7 +384,8 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			}
 		}
 
-		if cookieValue, err := util.GetSessionValue[[]byte](session, definitions.CookieRegistration); err == nil {
+		cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
+		if cookieValue != nil {
 			sessionData = &webauthn.SessionData{}
 
 			if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
@@ -469,8 +488,9 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		auth.PurgeCacheFor(userName)
 
-		session.Delete(definitions.CookieRegistration)
-		if err = session.Save(); err != nil {
+		mgr.Delete(definitions.SessionKeyRegistration)
+
+		if err = mgr.Save(ctx); err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
 
 			return
@@ -494,15 +514,19 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 			uniqueUserID string
 		)
 
-		session := sessions.Default(ctx)
-		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
-		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
+		mgr := cookie.GetManager(ctx)
+
+		if mgr != nil {
+			userName = mgr.GetString(definitions.SessionKeyUsername, "")
+			uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+		}
 
 		var user *backend.User
 
 		if userName != "" {
 			auth := NewAuthStateFromContextWithDeps(ctx, deps)
 			var err error
+
 			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, "")
 			if err != nil {
 				ctx.JSON(http.StatusInternalServerError, err.Error())
@@ -542,11 +566,14 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		session.Set(definitions.CookieRegistration, sessionDataJSON)
-		if err = session.Save(); err != nil {
-			ctx.JSON(http.StatusInternalServerError, err.Error())
+		if mgr != nil {
+			mgr.Set(definitions.SessionKeyRegistration, sessionDataJSON)
 
-			return
+			if err = mgr.Save(ctx); err != nil {
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+
+				return
+			}
 		}
 
 		ctx.JSON(http.StatusOK, options)
@@ -567,16 +594,21 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			sessionData  *webauthn.SessionData
 		)
 
-		session := sessions.Default(ctx)
-		userName, _ = util.GetSessionValue[string](session, definitions.CookieUsername)
-		uniqueUserID, _ = util.GetSessionValue[string](session, definitions.CookieUniqueUserID)
+		mgr := cookie.GetManager(ctx)
 
-		if cookieValue, err := util.GetSessionValue[[]byte](session, definitions.CookieRegistration); err == nil {
-			sessionData = &webauthn.SessionData{}
-			if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
-				ctx.JSON(http.StatusInternalServerError, err.Error())
+		if mgr != nil {
+			userName = mgr.GetString(definitions.SessionKeyUsername, "")
+			uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
 
-				return
+			cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
+			if cookieValue != nil {
+				sessionData = &webauthn.SessionData{}
+
+				if err := jsonIter.Unmarshal(cookieValue, sessionData); err != nil {
+					ctx.JSON(http.StatusInternalServerError, err.Error())
+
+					return
+				}
 			}
 		}
 
@@ -756,47 +788,44 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
 
 		// Set last MFA method cookie
-		ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", true, true)
+		secure := util.ShouldSetSecureCookie()
+
+		ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", secure, true)
 
 		// Persist the updated user to Redis (cache)
 		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
 
-		// Set AuthResult to OK if it was Fail (delayed response)
-		if authResult, err := util.GetSessionValue[uint8](session, definitions.CookieAuthResult); err == nil {
+		if mgr != nil {
+			// Set AuthResult to OK if it was Fail (delayed response)
+			authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, 0)
 			if definitions.AuthResult(authResult) == definitions.AuthResultFail {
-				session.Set(definitions.CookieAuthResult, uint8(definitions.AuthResultOK))
+				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
 			}
-		}
 
-		// Important: store user info for next steps
-		session.Set(definitions.CookieAccount, user.Name)
-		session.Set(definitions.CookieUniqueUserID, user.Id)
-		session.Set(definitions.CookieDisplayName, user.DisplayName)
-		session.Set(definitions.CookieSubject, user.Id)
+			// Important: store user info for next steps
+			mgr.Set(definitions.SessionKeyAccount, user.Name)
+			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+			mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
+			mgr.Set(definitions.SessionKeySubject, user.Id)
 
-		proto, err := util.GetSessionValue[string](session, definitions.CookieProtocol)
-		if err != nil {
-			proto = definitions.ProtoIDP
-		}
+			proto := mgr.GetString(definitions.SessionKeyProtocol, definitions.ProtoIDP)
+			mgr.Set(definitions.SessionKeyProtocol, proto)
 
-		session.Set(definitions.CookieProtocol, proto)
+			ttlVal := mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
+			if ttlVal > 0 {
+				mgr.SetMaxAge(ttlVal)
+				mgr.Delete(definitions.SessionKeyRememberTTL)
+			}
 
-		if ttlVal, err := util.GetSessionValue[int](session, definitions.CookieRememberTTL); err == nil {
-			session.Options(sessions.Options{
-				MaxAge: ttlVal,
-				Path:   "/",
-			})
-			session.Delete(definitions.CookieRememberTTL)
-		}
+			mgr.Delete(definitions.SessionKeyRegistration)
+			mgr.Delete(definitions.SessionKeyUsername)
+			mgr.Delete(definitions.SessionKeyAuthResult)
 
-		session.Delete(definitions.CookieRegistration)
-		session.Delete(definitions.CookieUsername)
-		session.Delete(definitions.CookieAuthResult)
+			if err = mgr.Save(ctx); err != nil {
+				ctx.JSON(http.StatusInternalServerError, err.Error())
 
-		if err = session.Save(); err != nil {
-			ctx.JSON(http.StatusInternalServerError, err.Error())
-
-			return
+				return
+			}
 		}
 
 		ctx.JSON(http.StatusOK, "Login success")

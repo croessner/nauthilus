@@ -16,77 +16,98 @@
 package core
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
 )
 
-func TestHandleErrWithDeps(t *testing.T) {
+func TestClearBrowserCookies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	t.Run("NoError", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		HandleErrWithDeps(ctx, nil, AuthDeps{})
-		assert.Equal(t, http.StatusBadRequest, ctx.Writer.Status())
+	t.Run("sets only secure data cookie", func(t *testing.T) {
+		util.SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: false})
+
+		writer := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(writer)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+		ClearBrowserCookies(ctx)
+
+		cookies := writer.Result().Cookies()
+
+		if len(cookies) != 1 {
+			t.Fatalf("expected exactly 1 cookie, got %d", len(cookies))
+		}
+
+		expectedNames := map[string]bool{
+			definitions.SecureDataCookieName: false,
+		}
+
+		for _, cookie := range cookies {
+			if _, ok := expectedNames[cookie.Name]; !ok {
+				t.Errorf("unexpected cookie %q", cookie.Name)
+			}
+
+			expectedNames[cookie.Name] = true
+
+			// Verify cookie is being deleted (MaxAge=-1)
+			if cookie.MaxAge != -1 {
+				t.Errorf("cookie %q MaxAge=%d, want -1", cookie.Name, cookie.MaxAge)
+			}
+		}
+
+		for name, found := range expectedNames {
+			if !found {
+				t.Errorf("expected cookie %q not found", name)
+			}
+		}
 	})
 
-	t.Run("WithError", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-		err := errors.New("test error")
-		HandleErrWithDeps(ctx, err, AuthDeps{})
-		assert.Equal(t, http.StatusBadRequest, ctx.Writer.Status())
-		assert.Equal(t, "test error", w.Body.String())
+	t.Run("secure flag based on dev mode", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			devMode    bool
+			wantSecure bool
+		}{
+			{
+				name:       "secure cookies in non-dev mode",
+				devMode:    false,
+				wantSecure: true,
+			},
+			{
+				name:       "insecure cookies in dev mode",
+				devMode:    true,
+				wantSecure: false,
+			},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				util.SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: test.devMode})
+
+				writer := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(writer)
+				ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+				ClearBrowserCookies(ctx)
+
+				cookies := writer.Result().Cookies()
+
+				if len(cookies) == 0 {
+					t.Fatalf("expected cookies to be set")
+				}
+
+				for _, cookie := range cookies {
+					if cookie.Secure != test.wantSecure {
+						t.Errorf("cookie %q secure=%v, want %v", cookie.Name, cookie.Secure, test.wantSecure)
+					}
+				}
+			})
+		}
 	})
-}
-
-func TestSessionCleaner(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	store := cookie.NewStore([]byte("secret"))
-	r.Use(sessions.Sessions("test-session", store))
-
-	r.GET("/set", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set(definitions.CookieUsername, "testuser")
-		session.Set(definitions.CookieAccount, "testaccount")
-		session.Save()
-		c.Status(http.StatusOK)
-	})
-
-	r.GET("/clean", func(c *gin.Context) {
-		SessionCleaner(c)
-		c.Status(http.StatusOK)
-	})
-
-	r.GET("/check", func(c *gin.Context) {
-		session := sessions.Default(c)
-		assert.Nil(t, session.Get(definitions.CookieUsername))
-		assert.Nil(t, session.Get(definitions.CookieAccount))
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/set", nil)
-	r.ServeHTTP(w, req)
-	sessionCookie := w.Header().Get("Set-Cookie")
-
-	w = httptest.NewRecorder()
-	req, _ = http.NewRequest(http.MethodGet, "/clean", nil)
-	req.Header.Set("Cookie", sessionCookie)
-	r.ServeHTTP(w, req)
-	sessionCookie = w.Header().Get("Set-Cookie")
-
-	w = httptest.NewRecorder()
-	req, _ = http.NewRequest(http.MethodGet, "/check", nil)
-	req.Header.Set("Cookie", sessionCookie)
-	r.ServeHTTP(w, req)
 }

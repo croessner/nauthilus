@@ -35,11 +35,14 @@ func DNSResolverPeerFromAddress(addr string) (host string, port int, ok bool) {
 
 	host = addr
 	port = 53
+
 	if h, p, err := net.SplitHostPort(addr); err == nil {
 		host = h
+
 		if p != "" {
-			if pn, convErr := strconv.Atoi(p); convErr == nil {
-				port = pn
+			// Use ParseInt with bitSize 16 to avoid integer overflow; ports are 0-65535
+			if pn, convErr := strconv.ParseInt(p, 10, 16); convErr == nil && pn >= 0 && pn <= 65535 {
+				port = int(pn)
 			}
 		}
 	}

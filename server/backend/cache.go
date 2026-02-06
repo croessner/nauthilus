@@ -145,7 +145,8 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 
 	// Parse backend field
 	if backendStr, ok := hashValues["backend"]; ok {
-		backendInt, err := strconv.Atoi(backendStr)
+		// Use ParseInt with bitSize 8 to avoid integer overflow; Backend is uint8
+		backendInt, err := strconv.ParseInt(backendStr, 10, 8)
 		if err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to parse backend value",
@@ -182,6 +183,10 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 
 	if displayNameField, ok := hashValues["display_name_field"]; ok {
 		ucp.DisplayNameField = displayNameField
+	}
+
+	if backendName, ok := hashValues["backend_name"]; ok {
+		ucp.BackendName = backendName
 	}
 
 	// Parse attributes JSON
@@ -249,6 +254,10 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	if cache.DisplayNameField != "" {
 		hashFields["display_name_field"] = cache.DisplayNameField
+	}
+
+	if cache.BackendName != "" {
+		hashFields["backend_name"] = cache.BackendName
 	}
 
 	// Serialize the attributes map as JSON since it's complex

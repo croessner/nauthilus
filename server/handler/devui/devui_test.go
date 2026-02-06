@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
@@ -48,12 +49,15 @@ func (m *mockLangManager) GetBundle() *i18n.Bundle {
 
 func TestDevUIHandler_GetVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	r := gin.New()
 
+	env := config.NewTestEnvironmentConfig()
 	h := &DevUIHandler{
 		deps: &deps.Deps{
 			Cfg:         &config.FileSettings{},
+			Env:         env,
 			LangManager: &mockLangManager{},
 		},
 		version: 12345,
@@ -78,12 +82,15 @@ func TestDevUIHandler_GetVersion(t *testing.T) {
 
 func TestDevUIHandler_Index(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	r := gin.New()
 
+	env := config.NewTestEnvironmentConfig()
 	h := &DevUIHandler{
 		deps: &deps.Deps{
 			Cfg:         &config.FileSettings{},
+			Env:         env,
 			LangManager: &mockLangManager{},
 		},
 		version: 12345,

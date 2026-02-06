@@ -29,8 +29,6 @@ import (
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
@@ -67,17 +65,16 @@ func (m *mockFrontendCfg) GetServer() *config.ServerSection {
 
 func TestBasePageData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	store := cookie.NewStore([]byte("secret"))
 	cfg := &mockFrontendCfg{}
 
 	t.Run("Basic Session Data", func(t *testing.T) {
 		r := gin.New()
-		r.Use(sessions.Sessions("test-session", store))
 		r.GET("/test", func(c *gin.Context) {
-			session := sessions.Default(c)
-			session.Set(definitions.CookieAccount, "testuser")
-			session.Set(definitions.CookieLang, "de")
-			session.Save()
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyAccount: "testuser",
+				definitions.SessionKeyLang:    "de",
+			}}
+			c.Set(definitions.CtxSecureDataKey, mgr)
 
 			lm := &mockLangManager{}
 			localizer := i18n.NewLocalizer(lm.GetBundle(), "de")
@@ -116,24 +113,6 @@ func TestURLParamsPreservation(t *testing.T) {
 		assert.Equal(t, "/login?client_id=foo", url)
 	})
 
-	t.Run("getMFAURL with params", func(t *testing.T) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request, _ = http.NewRequest("GET", "/login/en?client_id=foo", nil)
-		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-		url := h.getMFAURL(ctx, "webauthn")
-		assert.Equal(t, "/login/webauthn/en?client_id=foo", url)
-	})
-
-	t.Run("getMFAURL for begin with params", func(t *testing.T) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request, _ = http.NewRequest("GET", "/login/webauthn/en?client_id=foo", nil)
-		ctx.Params = gin.Params{{Key: "languageTag", Value: "en"}}
-
-		url := h.getMFAURL(ctx, "webauthn/begin")
-		assert.Equal(t, "/login/webauthn/begin/en?client_id=foo", url)
-	})
-
 	t.Run("appendQueryString helper", func(t *testing.T) {
 		assert.Equal(t, "/path?q=v", h.appendQueryString("/path", "q=v"))
 		assert.Equal(t, "/path?a=b&q=v", h.appendQueryString("/path?a=b", "q=v"))
@@ -154,7 +133,6 @@ func TestMFASelectTemplateRecommended(t *testing.T) {
 		"OtherMethods":         "Other methods",
 		"Or":                   "or",
 		"Back":                 "Back",
-		"QueryString":          "?return_to=foo",
 		"HaveTOTP":             true,
 		"HaveWebAuthn":         true,
 		"HaveRecoveryCodes":    true,
@@ -169,8 +147,8 @@ func TestMFASelectTemplateRecommended(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "autofocus")
 	assert.Contains(t, output, "Other methods")
-	assert.Contains(t, output, "/login/totp?return_to=foo")
-	assert.Contains(t, output, "/login/webauthn?return_to=foo")
+	assert.Contains(t, output, "/login/totp")
+	assert.Contains(t, output, "/login/webauthn")
 }
 
 func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
@@ -186,7 +164,6 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 		"OtherMethods":         "Other methods",
 		"Or":                   "or",
 		"Back":                 "Back",
-		"QueryString":          "?return_to=foo",
 		"HaveTOTP":             true,
 		"HaveWebAuthn":         true,
 		"HaveRecoveryCodes":    false,
@@ -201,8 +178,8 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 	output := buf.String()
 	assert.NotContains(t, output, "<details")
 	assert.NotContains(t, output, "autofocus")
-	assert.Contains(t, output, "/login/totp?return_to=foo")
-	assert.Contains(t, output, "/login/webauthn?return_to=foo")
+	assert.Contains(t, output, "/login/totp")
+	assert.Contains(t, output, "/login/webauthn")
 }
 
 func loadMFASelectTemplate(t *testing.T) *template.Template {
@@ -230,10 +207,8 @@ func loadMFASelectTemplate(t *testing.T) *template.Template {
 
 func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	store := cookie.NewStore([]byte("secret"))
 
 	r := gin.New()
-	r.Use(sessions.Sessions("test-session", store))
 	r.SetHTMLTemplate(template.Must(template.New("idp_webauthn_register.html").Parse("ok")))
 
 	h := &FrontendHandler{
@@ -249,11 +224,12 @@ func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
 		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
 		c.Set(definitions.CtxLocalizedKey, localizer)
 
-		session := sessions.Default(c)
-		session.Set(definitions.CookieUniqueUserID, "uid-123")
-		session.Set(definitions.CookieAccount, "testuser")
-		session.Set(definitions.CookieLang, "en")
-		_ = session.Save()
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyUniqueUserID: "uid-123",
+			definitions.SessionKeyAccount:      "testuser",
+			definitions.SessionKeyLang:         "en",
+		}}
+		c.Set(definitions.CtxSecureDataKey, mgr)
 
 		h.RegisterWebAuthn(c)
 	})
@@ -267,10 +243,8 @@ func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
 
 func TestRegisterWebAuthnRedirectsWithoutSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	store := cookie.NewStore([]byte("secret"))
 
 	r := gin.New()
-	r.Use(sessions.Sessions("test-session", store))
 	r.SetHTMLTemplate(template.Must(template.New("idp_webauthn_register.html").Parse("ok")))
 
 	h := &FrontendHandler{
@@ -286,6 +260,7 @@ func TestRegisterWebAuthnRedirectsWithoutSession(t *testing.T) {
 		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
 		c.Set(definitions.CtxLocalizedKey, localizer)
 
+		// No cookie manager set - simulates no session
 		h.RegisterWebAuthn(c)
 	})
 

@@ -30,13 +30,13 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -44,7 +44,6 @@ import (
 type SAMLHandler struct {
 	deps   *deps.Deps
 	idp    *idp.NauthilusIdP
-	store  sessions.Store
 	tracer monittrace.Tracer
 }
 
@@ -107,11 +106,10 @@ func (l *samlLogger) Panicln(v ...interface{}) {
 }
 
 // NewSAMLHandler creates a new SAMLHandler.
-func NewSAMLHandler(sessStore sessions.Store, d *deps.Deps, idp *idp.NauthilusIdP) *SAMLHandler {
+func NewSAMLHandler(d *deps.Deps, idp *idp.NauthilusIdP) *SAMLHandler {
 	return &SAMLHandler{
 		deps:   d,
 		idp:    idp,
-		store:  sessStore,
 		tracer: monittrace.New("nauthilus/idp/saml"),
 	}
 }
@@ -223,12 +221,12 @@ func (h *SAMLHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	sessionMW := sessions.Sessions(definitions.SessionName, h.store)
+	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
 
 	router.GET("/saml/metadata", h.Metadata)
-	router.GET("/saml/sso", sessionMW, h.SSO)
-	router.GET("/saml/slo", sessionMW, h.SLO)
-	router.POST("/saml/slo", sessionMW, h.SLO)
+	router.GET("/saml/sso", secureMW, h.SSO)
+	router.GET("/saml/slo", secureMW, h.SLO)
+	router.POST("/saml/slo", secureMW, h.SLO)
 }
 
 // Metadata returns the SAML IdP metadata.
@@ -320,22 +318,49 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
-	session := sessions.Default(ctx)
-	account := session.Get(definitions.CookieAccount)
+	mgr := cookie.GetManager(ctx)
+	account := ""
 
-	if account == nil {
-		// User not logged in, redirect to login page
-		loginURL := "/login"
-		// Append original request to return_to
-		originalURL := ctx.Request.URL.String()
+	if mgr != nil {
+		account = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
 
-		ctx.Redirect(http.StatusFound, loginURL+"?return_to="+url.QueryEscape(originalURL)+"&protocol=saml")
+	if account == "" {
+		// User not logged in - store SAML flow state in secure cookie and redirect to login.
+		// This prevents open redirect vulnerabilities by not passing return_to in URL.
+		if mgr != nil {
+			mgr.Set(definitions.SessionKeyIdPFlowActive, true)
+			mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoSAML)
+			mgr.Set(definitions.SessionKeyIdPSAMLEntityID, issuer)
+			// Store the original SAML request URL so we can resume the flow after login
+			mgr.Set(definitions.SessionKeyIdPOriginalURL, ctx.Request.URL.String())
+			mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoSAML)
+
+			// Explicitly save cookie before redirect to ensure it's written to the response
+			if err := mgr.Save(ctx); err != nil {
+				ctx.String(http.StatusInternalServerError, "Failed to save session")
+
+				return
+			}
+
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "SAML flow state stored in cookie - redirecting to login",
+				"issuer", util.WithNotAvailable(issuer),
+			)
+		}
+
+		ctx.Redirect(http.StatusFound, "/login")
 
 		return
 	}
 
 	// User is logged in
-	username := account.(string)
+	username := account
 
 	// We need user details for the assertion
 	issuerValue := ""
