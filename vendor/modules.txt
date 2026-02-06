@@ -329,9 +329,6 @@ github.com/google/uuid
 github.com/grpc-ecosystem/grpc-gateway/v2/internal/httprule
 github.com/grpc-ecosystem/grpc-gateway/v2/runtime
 github.com/grpc-ecosystem/grpc-gateway/v2/utilities
-# github.com/gwatts/gin-adapter v1.0.0
-## explicit; go 1.18
-github.com/gwatts/gin-adapter
 # github.com/jmespath/go-jmespath v0.4.0
 ## explicit; go 1.14
 github.com/jmespath/go-jmespath
@@ -341,9 +338,6 @@ github.com/jonboulle/clockwork
 # github.com/json-iterator/go v1.1.12
 ## explicit; go 1.12
 github.com/json-iterator/go
-# github.com/justinas/nosurf v1.2.0
-## explicit; go 1.12
-github.com/justinas/nosurf
 # github.com/klauspost/compress v1.18.3
 ## explicit; go 1.23
 github.com/klauspost/compress
