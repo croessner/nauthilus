@@ -24,9 +24,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/go-webauthn/webauthn v0.15.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/gwatts/gin-adapter v1.0.0
 	github.com/json-iterator/go v1.1.12
-	github.com/justinas/nosurf v1.2.0
 	github.com/klauspost/compress v1.18.3
 	github.com/mackerelio/go-osstat v0.2.6
 	github.com/mattn/go-isatty v0.0.20

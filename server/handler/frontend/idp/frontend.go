@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	"github.com/croessner/nauthilus/server/model/mfa"
@@ -40,8 +41,6 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
-	"github.com/gwatts/gin-adapter"
-	"github.com/justinas/nosurf"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -230,7 +229,7 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 
 	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
-	csrfMW := adapter.Wrap(nosurf.NewPure)
+	csrfMW := csrf.New()
 
 	router.GET("/login", csrfMW, secureMW, i18nMW, h.Login)
 	router.GET("/login/:languageTag", csrfMW, secureMW, i18nMW, h.Login)
@@ -417,7 +416,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 	data["PostLoginEndpoint"] = ctx.Request.URL.Path
 	data["HaveError"] = false
 
@@ -630,10 +629,31 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
 		data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
 
-		data["CSRFToken"] = nosurf.Token(ctx.Request)
+		data["CSRFToken"] = csrf.Token(ctx)
 		data["PostLoginEndpoint"] = ctx.Request.URL.Path
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+
+		// Calculate ShowRememberMe based on flow state.
+		showRememberMe := false
+		idpInstance := idp.NewNauthilusIdP(h.deps)
+
+		if oidcCID != "" {
+			if client, ok := idpInstance.FindClient(oidcCID); ok {
+				showRememberMe = client.RememberMeTTL > 0
+			}
+		} else if samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+				showRememberMe = sp.RememberMeTTL > 0
+			}
+		}
+
+		data["ShowRememberMe"] = showRememberMe
+		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
+		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 
@@ -879,7 +899,7 @@ func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 	data["PostRecoveryVerifyEndpoint"] = ctx.Request.URL.Path
 	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 	data["HaveError"] = false
@@ -953,7 +973,7 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 		data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-		data["CSRFToken"] = nosurf.Token(ctx.Request)
+		data["CSRFToken"] = csrf.Token(ctx)
 		data["PostRecoveryVerifyEndpoint"] = ctx.Request.URL.Path
 		data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 		data["HaveError"] = true
@@ -1110,7 +1130,7 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 	data["WebAuthnBeginEndpoint"] = h.getMFAURLFromCookie(ctx, "webauthn/begin")
 	data["WebAuthnFinishEndpoint"] = h.getMFAURLFromCookie(ctx, "webauthn/finish")
 	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
@@ -1142,7 +1162,7 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
 
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 	data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 	data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 	data["HaveError"] = false
@@ -1230,7 +1250,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 
-		data["CSRFToken"] = nosurf.Token(ctx.Request)
+		data["CSRFToken"] = csrf.Token(ctx)
 		data["PostTOTPVerifyEndpoint"] = ctx.Request.URL.Path
 		data["BackURL"] = h.getLoginMFABackURLFromCookie(ctx)
 		data["HaveError"] = true
@@ -1256,7 +1276,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
 		data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
 
-		data["CSRFToken"] = nosurf.Token(ctx.Request)
+		data["CSRFToken"] = csrf.Token(ctx)
 		lang := ctx.Param("languageTag")
 
 		if lang != "" {
@@ -1267,6 +1287,26 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+
+		// Calculate ShowRememberMe based on flow state.
+		showRememberMe := false
+
+		if oidcCID != "" {
+			if client, ok := idpInstance.FindClient(oidcCID); ok {
+				showRememberMe = client.RememberMeTTL > 0
+			}
+		} else if samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+				showRememberMe = sp.RememberMeTTL > 0
+			}
+		}
+
+		data["ShowRememberMe"] = showRememberMe
+		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
+		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
 
 		// Important: clean up cookie so they start over
 		if mgr != nil {
@@ -1334,7 +1374,7 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 		mgr.Set(definitions.SessionKeyHaveTOTP, userData.HaveTOTP)
 	}
 
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
 }
@@ -1348,7 +1388,7 @@ func (h *FrontendHandler) handleTwoFAHomeError(ctx *gin.Context, data gin.H, err
 
 	data["BackendError"] = true
 	data["BackendErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An internal error occurred. Please contact your administrator.")
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_2fa_home.html", data)
 }
@@ -1396,7 +1436,7 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 	data["TOTPMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please scan and verify the following QR code")
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_totp_register.html", data)
 }
@@ -1617,7 +1657,7 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	data["JSCompletingRegistration"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing registration...")
 	data["JSDeviceNameRequired"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter a device name")
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_register.html", data)
 }
@@ -1694,7 +1734,7 @@ func (h *FrontendHandler) WebAuthnDevices(ctx *gin.Context) {
 	}
 
 	data["Devices"] = devices
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_2fa_webauthn_devices.html", data)
 }

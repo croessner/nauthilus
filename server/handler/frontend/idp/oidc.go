@@ -32,14 +32,13 @@ import (
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
-	"github.com/gwatts/gin-adapter"
-	"github.com/justinas/nosurf"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -71,7 +70,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 
 	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
-	csrfMW := adapter.Wrap(nosurf.NewPure)
+	csrfMW := csrf.New()
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
 	router.GET("/oidc/authorize", secureMW, i18nMW, h.Authorize)
@@ -721,7 +720,7 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	data["ConsentChallenge"] = consentChallenge
 	data["State"] = state
 	data["PostConsentEndpoint"] = ctx.Request.URL.Path + "?state=" + url.QueryEscape(state)
-	data["CSRFToken"] = nosurf.Token(ctx.Request)
+	data["CSRFToken"] = csrf.Token(ctx)
 
 	ctx.HTML(http.StatusOK, "idp_consent.html", data)
 }
