@@ -22,7 +22,12 @@
                 // Redirect after a short delay to allow iFrames to load
                 setTimeout(function () {
                     const config = document.getElementById('logout-config');
-                    const target = config ? config.dataset.logoutTarget : "/logged_out";
+                    let target = config ? config.dataset.logoutTarget : "/logged_out";
+
+                    // Defense-in-depth: Only allow safe relative paths to prevent open redirects
+                    if (typeof target !== 'string' || !target.startsWith('/') || target.startsWith('//')) {
+                        target = "/logged_out";
+                    }
 
                     window.location.href = target;
                 }, 2000);
