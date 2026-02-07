@@ -324,6 +324,7 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 // OIDCClient represents an OIDC client configuration.
 type OIDCClient struct {
+	Name                              string        `mapstructure:"name"`
 	ClientID                          string        `mapstructure:"client_id" validate:"required"`
 	ClientSecret                      string        `mapstructure:"client_secret" validate:"required"`
 	RedirectURIs                      []string      `mapstructure:"redirect_uris" validate:"required,gt=0"`
@@ -474,6 +475,7 @@ func GetContent(raw, path string) (string, error) {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
+	Name              string        `mapstructure:"name"`
 	EntityID          string        `mapstructure:"entity_id" validate:"required"`
 	ACSURL            string        `mapstructure:"acs_url" validate:"required"`
 	SLOURL            string        `mapstructure:"slo_url"`

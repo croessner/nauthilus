@@ -320,10 +320,20 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 	mgr := cookie.GetManager(ctx)
 	lang := "en"
 	username := ""
+	flowType := ""
+	oidcClientID := ""
+	samlEntityID := ""
 
 	if mgr != nil {
 		lang = mgr.GetString(definitions.SessionKeyLang, "en")
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+
+		if flowType == definitions.ProtoOIDC {
+			oidcClientID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		} else if flowType == definitions.ProtoSAML {
+			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+		}
 	}
 
 	tag := language.Make(lang)
@@ -345,6 +355,8 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		}
 	}
 
+	idpClientName := resolveIdPClientName(cfg, flowType, oidcClientID, samlEntityID)
+
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
@@ -353,7 +365,29 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
 		"ConfirmYes":          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
 		"ConfirmNo":           frontend.GetLocalized(ctx, cfg, nil, "Cancel"),
+		"IdPClientName":       idpClientName,
 	}
+}
+
+func resolveIdPClientName(cfg config.File, flowType string, oidcClientID string, samlEntityID string) string {
+	if flowType == definitions.ProtoOIDC && oidcClientID != "" {
+		clients := cfg.GetIdP().OIDC.Clients
+		for i := range clients {
+			if clients[i].ClientID == oidcClientID {
+				return clients[i].Name
+			}
+		}
+	}
+
+	if flowType == definitions.ProtoSAML && samlEntityID != "" {
+		for _, sp := range cfg.GetIdP().SAML2.ServiceProviders {
+			if sp.EntityID == samlEntityID {
+				return sp.Name
+			}
+		}
+	}
+
+	return ""
 }
 
 // Login renders the modern login page.
