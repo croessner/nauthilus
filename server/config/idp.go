@@ -92,6 +92,9 @@ type OIDCConfig struct {
 	AccessTokenType                    string              `mapstructure:"access_token_type"`
 	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
+	DeviceCodeExpiry                   time.Duration       `mapstructure:"device_code_expiry"`
+	DeviceCodePollingInterval          int                 `mapstructure:"device_code_polling_interval"`
+	DeviceCodeUserCodeLength           int                 `mapstructure:"device_code_user_code_length"`
 }
 
 // OIDCKey represents a single OIDC signing key.
@@ -248,6 +251,36 @@ func (o *OIDCConfig) GetAccessTokenType() string {
 // GetAutoKeyRotation returns true if auto key rotation is enabled.
 func (o *OIDCConfig) GetAutoKeyRotation() bool {
 	return o.AutoKeyRotation
+}
+
+// GetDeviceCodeExpiry returns the device code expiry duration.
+// Defaults to OIDCDeviceCodeDefaultExpiry if not configured.
+func (o *OIDCConfig) GetDeviceCodeExpiry() time.Duration {
+	if o.DeviceCodeExpiry > 0 {
+		return o.DeviceCodeExpiry
+	}
+
+	return definitions.OIDCDeviceCodeDefaultExpiry
+}
+
+// GetDeviceCodePollingInterval returns the polling interval in seconds.
+// Defaults to OIDCDeviceCodeDefaultInterval if not configured.
+func (o *OIDCConfig) GetDeviceCodePollingInterval() int {
+	if o.DeviceCodePollingInterval > 0 {
+		return o.DeviceCodePollingInterval
+	}
+
+	return definitions.OIDCDeviceCodeDefaultInterval
+}
+
+// GetDeviceCodeUserCodeLength returns the user code length.
+// Defaults to OIDCDeviceCodeDefaultUserCodeLength if not configured.
+func (o *OIDCConfig) GetDeviceCodeUserCodeLength() int {
+	if o.DeviceCodeUserCodeLength > 0 {
+		return o.DeviceCodeUserCodeLength
+	}
+
+	return definitions.OIDCDeviceCodeDefaultUserCodeLength
 }
 
 // GetKeyRotationInterval returns the interval for auto key rotation.

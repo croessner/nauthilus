@@ -153,6 +153,9 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 		{Method: "GET", Path: "/oidc/consent", Template: "idp_consent.html"},
 		{Method: "GET", Path: "/oidc/logout", Template: "idp_logout_frames.html"},
 		{Method: "GET", Path: "/error", Template: "idp_error_modal.html"},
+		{Method: "GET", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
+		{Method: "POST", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
+		{Method: "GET", Path: "/oidc/device/verify/success", Template: "idp_device_verify_success.html"},
 	}
 
 	// Sort by path, then method
@@ -356,6 +359,15 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 
 	data["WebAuthnMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please connect your security key and follow the instructions")
 	data["JSCompletingRegistration"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing registration...")
+
+	// Device code verification
+	data["DeviceVerifyDescription"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Enter the code displayed on your device and sign in to authorize it.")
+	data["UserCodeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device Code")
+	data["UserCodePlaceholder"] = "ABCD-EFGH"
+	data["PostDeviceVerifyEndpoint"] = "#"
+	data["UserCode"] = "ABCD-EFGH"
+	data["DeviceVerifySuccessMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your device has been successfully authorized.")
+	data["DeviceVerifySuccessHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You can close this window and return to your device.")
 
 	data["Application"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Application")
 	data["WantsToAccessYourAccount"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "wants to access your account")

@@ -92,5 +92,19 @@
   "Yes": "Oui",
   "Cancel": "Annuler",
   "Invalid Request": "Requête invalide",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Cette page de connexion ne peut être accédée qu'à travers un flux d'authentification OIDC ou SAML2 valide. Veuillez utiliser votre application pour démarrer le processus de connexion."
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Cette page de connexion ne peut être accédée qu'à travers un flux d'authentification OIDC ou SAML2 valide. Veuillez utiliser votre application pour démarrer le processus de connexion.",
+  "Device Authorization": "Autorisation de l'appareil",
+  "Enter the code displayed on your device and sign in to authorize it.": "Saisissez le code affiché sur votre appareil et connectez-vous pour l'autoriser.",
+  "Device Code": "Code de l'appareil",
+  "Authorize Device": "Autoriser l'appareil",
+  "User code is required": "Le code utilisateur est requis",
+  "Username and password are required": "Le nom d'utilisateur et le mot de passe sont requis",
+  "Invalid or expired user code": "Code utilisateur invalide ou expiré",
+  "Device code has expired": "Le code de l'appareil a expiré",
+  "Device code has already been processed": "Le code de l'appareil a déjà été traité",
+  "Authentication failed": "Échec de l'authentification",
+  "Internal server error": "Erreur interne du serveur",
+  "Device Authorized": "Appareil autorisé",
+  "Your device has been successfully authorized.": "Votre appareil a été autorisé avec succès.",
+  "You can close this window and return to your device.": "Vous pouvez fermer cette fenêtre et retourner à votre appareil."
 }

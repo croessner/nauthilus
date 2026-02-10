@@ -92,5 +92,19 @@
   "Yes": "Sim",
   "Cancel": "Cancelar",
   "Invalid Request": "Pedido inválido",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Esta página de início de sessão só pode ser acedida através de um fluxo de autenticação OIDC ou SAML2 válido. Por favor, utilize a sua aplicação para iniciar o processo de início de sessão."
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Esta página de início de sessão só pode ser acedida através de um fluxo de autenticação OIDC ou SAML2 válido. Por favor, utilize a sua aplicação para iniciar o processo de início de sessão.",
+  "Device Authorization": "Autorização do dispositivo",
+  "Enter the code displayed on your device and sign in to authorize it.": "Introduza o código apresentado no seu dispositivo e inicie sessão para o autorizar.",
+  "Device Code": "Código do dispositivo",
+  "Authorize Device": "Autorizar dispositivo",
+  "User code is required": "O código de utilizador é obrigatório",
+  "Username and password are required": "O nome de utilizador e a palavra-passe são obrigatórios",
+  "Invalid or expired user code": "Código de utilizador inválido ou expirado",
+  "Device code has expired": "O código do dispositivo expirou",
+  "Device code has already been processed": "O código do dispositivo já foi processado",
+  "Authentication failed": "Falha na autenticação",
+  "Internal server error": "Erro interno do servidor",
+  "Device Authorized": "Dispositivo autorizado",
+  "Your device has been successfully authorized.": "O seu dispositivo foi autorizado com sucesso.",
+  "You can close this window and return to your device.": "Pode fechar esta janela e voltar ao seu dispositivo."
 }

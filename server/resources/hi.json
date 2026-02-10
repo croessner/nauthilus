@@ -92,5 +92,19 @@
   "Yes": "हाँ",
   "Cancel": "रद्द करें",
   "Invalid Request": "अमान्य अनुरोध",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "यह लॉगिन पृष्ठ केवल एक वैध OIDC या SAML2 प्रमाणीकरण प्रवाह के माध्यम से एक्सेस किया जा सकता है। कृपया लॉगिन प्रक्रिया शुरू करने के लिए अपने एप्लिकेशन का उपयोग करें।"
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "यह लॉगिन पृष्ठ केवल एक वैध OIDC या SAML2 प्रमाणीकरण प्रवाह के माध्यम से एक्सेस किया जा सकता है। कृपया लॉगिन प्रक्रिया शुरू करने के लिए अपने एप्लिकेशन का उपयोग करें।",
+  "Device Authorization": "डिवाइस प्राधिकरण",
+  "Enter the code displayed on your device and sign in to authorize it.": "अपने डिवाइस पर प्रदर्शित कोड दर्ज करें और इसे अधिकृत करने के लिए साइन इन करें।",
+  "Device Code": "डिवाइस कोड",
+  "Authorize Device": "डिवाइस अधिकृत करें",
+  "User code is required": "उपयोगकर्ता कोड आवश्यक है",
+  "Username and password are required": "उपयोगकर्ता नाम और पासवर्ड आवश्यक हैं",
+  "Invalid or expired user code": "अमान्य या समाप्त उपयोगकर्ता कोड",
+  "Device code has expired": "डिवाइस कोड की समय सीमा समाप्त हो गई है",
+  "Device code has already been processed": "डिवाइस कोड पहले से संसाधित किया जा चुका है",
+  "Authentication failed": "प्रमाणीकरण विफल",
+  "Internal server error": "आंतरिक सर्वर त्रुटि",
+  "Device Authorized": "डिवाइस अधिकृत",
+  "Your device has been successfully authorized.": "आपका डिवाइस सफलतापूर्वक अधिकृत किया गया है।",
+  "You can close this window and return to your device.": "आप इस विंडो को बंद कर सकते हैं और अपने डिवाइस पर वापस जा सकते हैं।"
 }

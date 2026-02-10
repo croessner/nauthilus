@@ -662,6 +662,18 @@ const (
 	// OIDCTokenPrefixRefreshToken is the prefix for refresh tokens.
 	OIDCTokenPrefixRefreshToken = "na_rt_"
 
+	// OIDCGrantTypeDeviceCode is the grant_type value for the Device Authorization Grant (RFC 8628).
+	OIDCGrantTypeDeviceCode = "urn:ietf:params:oauth:grant-type:device_code"
+
+	// OIDCDeviceCodeDefaultInterval is the default polling interval in seconds for the device code flow.
+	OIDCDeviceCodeDefaultInterval = 5
+
+	// OIDCDeviceCodeDefaultExpiry is the default expiry time for device codes.
+	OIDCDeviceCodeDefaultExpiry = 10 * time.Minute
+
+	// OIDCDeviceCodeDefaultUserCodeLength is the default length for user codes (number of characters).
+	OIDCDeviceCodeDefaultUserCodeLength = 8
+
 	// ProtoSAML corresponds to the "saml" protocol
 	ProtoSAML = "saml"
 

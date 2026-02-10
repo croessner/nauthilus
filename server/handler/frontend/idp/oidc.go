@@ -48,19 +48,25 @@ import (
 
 // OIDCHandler handles OIDC protocol requests.
 type OIDCHandler struct {
-	deps    *deps.Deps
-	idp     *idp.NauthilusIdP
-	storage *idp.RedisTokenStorage
-	tracer  monittrace.Tracer
+	deps        *deps.Deps
+	idp         *idp.NauthilusIdP
+	storage     *idp.RedisTokenStorage
+	deviceStore idp.DeviceCodeStore
+	userCodeGen idp.UserCodeGenerator
+	tracer      monittrace.Tracer
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
 func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIdP) *OIDCHandler {
+	prefix := d.Cfg.GetServer().GetRedis().GetPrefix()
+
 	return &OIDCHandler{
-		deps:    d,
-		idp:     idpInstance,
-		storage: idp.NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
-		tracer:  monittrace.New("nauthilus/idp/oidc"),
+		deps:        d,
+		idp:         idpInstance,
+		storage:     idp.NewRedisTokenStorage(d.Redis, prefix),
+		deviceStore: idp.NewRedisDeviceCodeStore(d.Redis, prefix),
+		userCodeGen: &idp.DefaultUserCodeGenerator{},
+		tracer:      monittrace.New("nauthilus/idp/oidc"),
 	}
 }
 
@@ -82,6 +88,9 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.POST("/oidc/introspect", h.Introspect)
 	router.GET("/oidc/jwks", h.JWKS)
+	router.POST("/oidc/device", h.DeviceAuthorization)
+	router.GET("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
+	router.POST("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerify)
 	router.GET("/oidc/logout", secureMW, h.Logout)
 	router.GET("/logout", secureMW, h.Logout)
 	router.GET("/oidc/consent", csrfMW, secureMW, i18nMW, h.ConsentGET)
@@ -109,6 +118,7 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 		"userinfo_endpoint":                             issuer + "/oidc/userinfo",
 		"jwks_uri":                                      issuer + "/oidc/jwks",
 		"end_session_endpoint":                          issuer + "/oidc/logout",
+		"device_authorization_endpoint":                 issuer + "/oidc/device",
 		"frontchannel_logout_supported":                 oidcCfg.GetFrontChannelLogoutSupported(),
 		"frontchannel_logout_session_supported":         oidcCfg.GetFrontChannelLogoutSessionSupported(),
 		"backchannel_logout_supported":                  oidcCfg.GetBackChannelLogoutSupported(),
@@ -719,6 +729,17 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		filteredScopes := h.idp.FilterScopes(client, requestedScopes)
 
 		accessToken, expiresIn, err = h.idp.IssueClientCredentialsToken(ctx.Request.Context(), clientID, filteredScopes)
+
+	case definitions.OIDCGrantTypeDeviceCode:
+		if !client.SupportsGrantType(definitions.OIDCGrantTypeDeviceCode) {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "unauthorized_client"})
+
+			return
+		}
+
+		h.handleDeviceCodeTokenExchange(ctx, client)
+
+		return
 
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_grant_type"})

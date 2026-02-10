@@ -92,5 +92,19 @@
   "Yes": "Да",
   "Cancel": "Отмена",
   "Invalid Request": "Неверный запрос",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Эта страница входа доступна только через действительный процесс аутентификации OIDC или SAML2. Пожалуйста, используйте ваше приложение для начала процесса входа."
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "Эта страница входа доступна только через действительный процесс аутентификации OIDC или SAML2. Пожалуйста, используйте ваше приложение для начала процесса входа.",
+  "Device Authorization": "Авторизация устройства",
+  "Enter the code displayed on your device and sign in to authorize it.": "Введите код, отображённый на вашем устройстве, и войдите для его авторизации.",
+  "Device Code": "Код устройства",
+  "Authorize Device": "Авторизовать устройство",
+  "User code is required": "Требуется код пользователя",
+  "Username and password are required": "Требуются имя пользователя и пароль",
+  "Invalid or expired user code": "Недействительный или просроченный код пользователя",
+  "Device code has expired": "Код устройства истёк",
+  "Device code has already been processed": "Код устройства уже обработан",
+  "Authentication failed": "Ошибка аутентификации",
+  "Internal server error": "Внутренняя ошибка сервера",
+  "Device Authorized": "Устройство авторизовано",
+  "Your device has been successfully authorized.": "Ваше устройство было успешно авторизовано.",
+  "You can close this window and return to your device.": "Вы можете закрыть это окно и вернуться к вашему устройству."
 }

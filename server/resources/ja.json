@@ -92,5 +92,19 @@
   "Yes": "はい",
   "Cancel": "キャンセル",
   "Invalid Request": "無効なリクエスト",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "このログインページは、有効なOIDCまたはSAML2認証フローを通じてのみアクセスできます。アプリケーションを使用してログインプロセスを開始してください。"
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "このロ グインページは、有効なOIDCまたはSAML2認証フローを通じてのみアクセスできます。ア プリケーションを使用してログインプロセスを開始してください。",
+  "Device Authorization": "デバイス認可",
+  "Enter the code displayed on your device and sign in to authorize it.": "デバイスに表示されたコードを入力し、サインインして認可してください。",
+  "Device Code": "デバイスコード",
+  "Authorize Device": "デバイスを認可",
+  "User code is required": "ユーザーコードが必要です",
+  "Username and password are required": "ユーザー名とパスワードが必要です",
+  "Invalid or expired user code": "無効または期限切れのユーザーコード",
+  "Device code has expired": "デバイスコードの有効期限が切れました",
+  "Device code has already been processed": "デバイスコードは既に処理されています",
+  "Authentication failed": "認証に失敗しました",
+  "Internal server error": "サーバー内部エラー",
+  "Device Authorized": "デバイス認可完了",
+  "Your device has been successfully authorized.": "デバイスが正常に認可されました。",
+  "You can close this window and return to your device.": "このウィンドウを閉じてデバイスに戻ることができます。"
 }

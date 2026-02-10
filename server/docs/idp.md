@@ -876,3 +876,225 @@ server/idp/
 │   └── authenticator_test.go # Unit tests for all authentication methods
 └── nauthilus_idp.go         # IssueClientCredentialsToken method
 ```
+
+## 9. Device Authorization Grant (RFC 8628)
+
+The Device Authorization Grant (also known as "Device Code Flow") enables OAuth 2.0 authorization on input-constrained
+devices that cannot use a browser directly — such as CLI tools, smart TVs, IoT devices, or headless servers.
+
+### 9.1 Overview
+
+The flow delegates user authentication to a separate device with a full browser. The input-constrained device displays a
+short user code and a verification URL. The user opens that URL on another device (e.g., smartphone or laptop), enters
+the code, and authenticates. Meanwhile, the original device polls the token endpoint until authorization is complete.
+
+**Key benefits:**
+
+- No credential entry on the constrained device itself
+- MFA-compatible (authentication happens in a full browser)
+- Ideal for CLI-based OAuth2 authentication (e.g., `nauthilus-client`)
+- Enables XOAUTH2/OAUTHBEARER for mail clients without embedded browsers
+
+### 9.2 Signal Flow
+
+```mermaid
+sequenceDiagram
+    participant D as Device / CLI
+    participant AS as Authorization Server
+    participant U as User (Browser)
+    Note over D, U: Phase 1: Device Authorization Request
+    D ->> AS: POST /oidc/device (client_id, scope)
+    AS -->> D: device_code, user_code, verification_uri, expires_in, interval
+    Note over D, U: Phase 2: User Verification
+    D ->> D: Display user_code and verification_uri to user
+    U ->> AS: POST /oidc/device/verify (user_code, username, password)
+    AS ->> AS: Authenticate user
+    AS ->> AS: Update device code status → authorized
+    AS -->> U: { "status": "authorized" }
+    Note over D, U: Phase 3: Token Polling
+    D ->> AS: POST /oidc/token (grant_type=device_code, device_code, client_id)
+    AS -->> D: { "error": "authorization_pending" }
+    Note right of D: Wait interval seconds...
+    D ->> AS: POST /oidc/token (grant_type=device_code, device_code, client_id)
+    AS -->> D: { access_token, id_token, token_type, expires_in }
+```
+
+### 9.3 Endpoints
+
+#### 9.3.1 Device Authorization Endpoint
+
+**`POST /oidc/device`**
+
+The device initiates the flow by requesting a device code and user code.
+
+**Request parameters:**
+
+| Parameter   | Required | Description                    |
+|-------------|----------|--------------------------------|
+| `client_id` | Yes      | The registered client ID       |
+| `scope`     | No       | Space-separated list of scopes |
+
+**Response (200 OK):**
+
+```json
+{
+    "device_code": "2jGkLr1YKz8mN4pQwXvB...",
+    "user_code": "ABCD-EFGH",
+    "verification_uri": "https://issuer.example.com/oidc/device/verify",
+    "expires_in": 600,
+    "interval": 5
+}
+```
+
+**Error responses:**
+
+| HTTP Status | Error Code            | Condition                                     |
+|-------------|-----------------------|-----------------------------------------------|
+| 400         | `invalid_request`     | Missing `client_id`                           |
+| 401         | `invalid_client`      | Unknown client                                |
+| 400         | `unauthorized_client` | Client does not have `device_code` grant type |
+
+#### 9.3.2 Device Verification Endpoint
+
+**`POST /oidc/device/verify`**
+
+The user submits the user code along with their credentials to authorize the device.
+
+**Request parameters:**
+
+| Parameter   | Required | Description                           |
+|-------------|----------|---------------------------------------|
+| `user_code` | Yes      | The user code displayed by the device |
+| `username`  | Yes      | The user's login name                 |
+| `password`  | Yes      | The user's password                   |
+
+**Response (200 OK):**
+
+```json
+{
+    "status": "authorized"
+}
+```
+
+**Error responses:**
+
+| HTTP Status | Error Code        | Condition                    |
+|-------------|-------------------|------------------------------|
+| 400         | `invalid_request` | Missing required parameters  |
+| 400         | `invalid_grant`   | Invalid or expired user code |
+| 400         | `expired_token`   | Device code has expired      |
+| 403         | `access_denied`   | Authentication failed        |
+
+**Security note:** The user code is normalized (uppercased, hyphens/spaces removed) before lookup, so users can enter
+it in any format (e.g., `abcd-efgh`, `ABCDEFGH`, or `ABCD EFGH`).
+
+#### 9.3.3 Token Endpoint (Device Code Grant)
+
+**`POST /oidc/token`**
+
+The device polls this endpoint until the user completes authorization.
+
+**Request parameters:**
+
+| Parameter     | Required | Description                                            |
+|---------------|----------|--------------------------------------------------------|
+| `grant_type`  | Yes      | Must be `urn:ietf:params:oauth:grant-type:device_code` |
+| `device_code` | Yes      | The device code from the authorization response        |
+| `client_id`   | Yes      | The registered client ID                               |
+
+**Polling responses (per RFC 8628 §3.5):**
+
+| HTTP Status | Error Code              | Meaning                                  |
+|-------------|-------------------------|------------------------------------------|
+| 400         | `authorization_pending` | User has not yet completed authorization |
+| 400         | `slow_down`             | Client is polling too frequently         |
+| 400         | `expired_token`         | Device code has expired                  |
+| 400         | `access_denied`         | User denied the authorization request    |
+
+**Success response (200 OK):**
+
+```json
+{
+    "access_token": "eyJhbGciOiJSUzI1NiIs...",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "id_token": "eyJhbGciOiJSUzI1NiIs...",
+    "refresh_token": "na_rt_..."
+}
+```
+
+The `id_token` is included when `openid` is in the requested scopes. The `refresh_token` is included when
+`offline_access` is in the requested scopes.
+
+### 9.4 Configuration
+
+#### Client configuration for device code flow
+
+```yaml
+oidc:
+    clients:
+        -   client_id: "cli-tool"
+            client_secret: "cli-secret"
+            grant_types:
+                - urn:ietf:params:oauth:grant-type:device_code
+            scopes:
+                - openid
+                - email
+                - offline_access
+            redirect_uris: [ ]
+            access_token_lifetime: 1h
+```
+
+#### Global device code settings
+
+```yaml
+oidc:
+    device_code_expiry: 10m              # How long a device code remains valid (default: 10m)
+    device_code_polling_interval: 5      # Minimum polling interval in seconds (default: 5)
+    device_code_user_code_length: 8      # Length of the user code characters (default: 8)
+```
+
+#### Configuration fields reference
+
+| Field                          | Type       | Default | Description                                     |
+|--------------------------------|------------|---------|-------------------------------------------------|
+| `device_code_expiry`           | `duration` | `10m`   | TTL for device codes in Redis                   |
+| `device_code_polling_interval` | `int`      | `5`     | Minimum seconds between client polling attempts |
+| `device_code_user_code_length` | `int`      | `8`     | Number of characters in the generated user code |
+
+### 9.5 Discovery
+
+The device authorization endpoint is advertised in the OpenID Connect Discovery document:
+
+```json
+{
+    "device_authorization_endpoint": "https://issuer.example.com/oidc/device"
+}
+```
+
+### 9.6 Security Considerations
+
+- **User code charset:** Uses uppercase letters excluding visually ambiguous characters (O, I, L) and digits (0, 1) to
+  reduce user input errors.
+- **Polling rate limiting:** The `slow_down` error is returned when a client polls faster than the configured interval,
+  per RFC 8628 §3.5.
+- **One-time use:** Device codes are deleted from Redis after successful token issuance or denial.
+- **Encryption at rest:** Device code data in Redis is encrypted using the configured Redis security manager
+  (ChaCha20-Poly1305 when an encryption secret is set).
+- **Expiration:** Device codes automatically expire in Redis after the configured TTL.
+- **Authentication on verification:** The user must provide valid credentials during the verification step. Failed
+  authentication immediately marks the device code as denied.
+
+### 9.7 Package Structure
+
+```
+server/idp/
+├── device_code.go              # DeviceCodeStore interface, RedisDeviceCodeStore, UserCodeGenerator
+├── device_code_test.go         # Unit tests for storage and code generation
+server/handler/frontend/idp/
+├── device.go                   # DeviceAuthorization, DeviceVerify, handleDeviceCodeTokenExchange handlers
+server/definitions/
+├── const.go                    # OIDCGrantTypeDeviceCode, default interval/expiry/length constants
+server/config/
+├── idp.go                      # DeviceCodeExpiry, DeviceCodePollingInterval, DeviceCodeUserCodeLength fields
+```
