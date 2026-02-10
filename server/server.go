@@ -407,7 +407,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Health endpoint (always register)
 	setupHealth = func(e *gin.Engine) {
-		handlerhealth.New().Register(e)
+		handlerhealth.NewWithDeps(cfg, logger, store.redisClient).Register(e)
 	}
 
 	// Metrics endpoint (always register)

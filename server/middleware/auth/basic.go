@@ -156,7 +156,7 @@ func noteAuthFailureForIP(ip string) {
 // MaybeThrottleAuthByIP checks if the client IP is temporarily blocked and, if so, responds with 429 and a Retry-After header.
 // It only enforces throttling if the brute-force feature is enabled in the configuration.
 func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
-	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
+	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
 		return false
 	}
 
@@ -187,7 +187,7 @@ func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
 
 // ApplyAuthBackoffOnFailure notes a failure for this IP and sleeps a short duration.
 func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
-	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
+	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
 		time.Sleep(bfSleepOnFail)
 
 		return

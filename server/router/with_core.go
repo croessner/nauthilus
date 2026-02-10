@@ -72,6 +72,13 @@ func (r *Router) WithHealth(handler gin.HandlerFunc) *Router {
 	return r
 }
 
+// WithHealthz registers the readiness endpoint using the given handler.
+func (r *Router) WithHealthz(handler gin.HandlerFunc) *Router {
+	r.Engine.GET("/healthz", handler)
+
+	return r
+}
+
 // WithStatic runs the provided setup function to add static routes.
 func (r *Router) WithStatic(setup func(*gin.Engine)) *Router {
 	if setup != nil {

@@ -2,6 +2,7 @@ OUTPUT := nauthilus/bin/nauthilus
 CLIENT_OUTPUT := nauthilus/bin/nauthilus-client
 OIDCTESTCLIENT_OUTPUT := nauthilus/bin/oidctestclient
 SAML2TESTCLIENT_OUTPUT := nauthilus/bin/saml2testclient
+HEALTHCHECK_OUTPUT := nauthilus/bin/nauthilus-healthcheck
 PKG_LIST := $(shell go list ./... | grep -v /vendor/)
 GIT_TAG=$(shell git describe --tags --abbrev=0)
 GIT_COMMIT=$(shell git rev-parse --short HEAD)
@@ -13,11 +14,11 @@ SBOM_SYFT_VERSION ?= v1.16.0
 
 export GOEXPERIMENT := greenteagc
 
-.PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient clean install uninstall sbom validate-templates install-hooks
+.PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks
 
-all: build build-client build-oidctestclient build-saml2testclient
+all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
 
-$(OUTPUT) $(CLIENT_OUTPUT) $(OIDCTESTCLIENT_OUTPUT) $(SAML2TESTCLIENT_OUTPUT):
+$(OUTPUT) $(CLIENT_OUTPUT) $(OIDCTESTCLIENT_OUTPUT) $(SAML2TESTCLIENT_OUTPUT) $(HEALTHCHECK_OUTPUT):
 	mkdir -p $(dir $@)
 
 test:
@@ -41,6 +42,9 @@ build-oidctestclient: $(OIDCTESTCLIENT_OUTPUT)
 build-saml2testclient: $(SAML2TESTCLIENT_OUTPUT)
 	go build -mod=vendor -trimpath -v -o $(SAML2TESTCLIENT_OUTPUT) ./contrib/saml2testclient
 
+build-healthcheck: $(HEALTHCHECK_OUTPUT)
+	go build -mod=vendor -trimpath -v -o $(HEALTHCHECK_OUTPUT) ./docker-healthcheck
+
 sbom: ## Generate SBOMs (source and Docker image)
 	./scripts/sbom.sh \
 		--output-dir $(SBOM_OUTPUT_DIR) \
@@ -55,6 +59,7 @@ clean: ## Remove previous build
 	[ -x $(CLIENT_OUTPUT) ] && rm -f $(CLIENT_OUTPUT) || true
 	[ -x $(OIDCTESTCLIENT_OUTPUT) ] && rm -f $(OIDCTESTCLIENT_OUTPUT) || true
 	[ -x $(SAML2TESTCLIENT_OUTPUT) ] && rm -f $(SAML2TESTCLIENT_OUTPUT) || true
+	[ -x $(HEALTHCHECK_OUTPUT) ] && rm -f $(HEALTHCHECK_OUTPUT) || true
 
 install: build ## Install nauthilus binary and systemd service
 	install -D -m 755 $(OUTPUT) /usr/local/sbin/nauthilus

@@ -16,18 +16,35 @@
 package health
 
 import (
+	"log/slog"
+
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
 
 	approuter "github.com/croessner/nauthilus/server/router"
 )
 
 // Handler registers the health endpoints.
-type Handler struct{}
+type Handler struct {
+	cfg    config.File
+	logger *slog.Logger
+	redis  rediscli.Client
+}
 
 func New() *Handler {
 	return &Handler{}
 }
 
+func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
+	return &Handler{cfg: cfg, logger: logger, redis: redis}
+}
+
 func (h *Handler) Register(router gin.IRouter) {
+	deps := HealthzDeps{Cfg: h.cfg, Logger: h.logger, Redis: h.redis}
+
 	router.GET("/ping", approuter.HealthCheck)
+	router.GET("/healthz", func(ctx *gin.Context) {
+		ReadinessCheckWithDeps(ctx, deps)
+	})
 }
