@@ -18,6 +18,7 @@ package config
 import (
 	"testing"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,12 +27,13 @@ func TestOauth2CustomScope_NameValidation_AllowsScopeToken(t *testing.T) {
 	validate := validator.New(validator.WithRequiredStructEnabled())
 	validate.RegisterValidation("scope_token", isScopeToken)
 	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
 
 	scope := Oauth2CustomScope{
 		Name:        "custom:scope-v1",
 		Description: "Custom scope description",
 		Claims: []OIDCCustomClaim{
-			{Name: "custom.claim", Type: "string"},
+			{Name: "custom.claim", Type: definitions.ClaimTypeString},
 		},
 	}
 
@@ -43,12 +45,13 @@ func TestOauth2CustomScope_NameValidation_RejectsInvalidScopeToken(t *testing.T)
 	validate := validator.New(validator.WithRequiredStructEnabled())
 	validate.RegisterValidation("scope_token", isScopeToken)
 	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
 
 	scope := Oauth2CustomScope{
 		Name:        "bad scope",
 		Description: "Custom scope description",
 		Claims: []OIDCCustomClaim{
-			{Name: "custom.claim", Type: "string"},
+			{Name: "custom.claim", Type: definitions.ClaimTypeString},
 		},
 	}
 
@@ -59,12 +62,42 @@ func TestOauth2CustomScope_NameValidation_RejectsInvalidScopeToken(t *testing.T)
 func TestOIDCCustomClaim_NameValidation_AllowsUnicode(t *testing.T) {
 	validate := validator.New(validator.WithRequiredStructEnabled())
 	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
 
 	claim := OIDCCustomClaim{
 		Name: "größe",
-		Type: "string",
+		Type: definitions.ClaimTypeString,
 	}
 
 	err := validate.Struct(claim)
 	assert.NoError(t, err)
+}
+
+func TestOIDCClaimType_RejectsInvalidType(t *testing.T) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+
+	claim := OIDCCustomClaim{
+		Name: "custom.claim",
+		Type: "wat",
+	}
+
+	err := validate.Struct(claim)
+	assert.Error(t, err)
+}
+
+func TestOIDCClaimMapping_TypeValidation(t *testing.T) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+
+	mapping := OIDCClaimMapping{
+		Claim:     "custom.claim",
+		Attribute: "uid",
+		Type:      "nope",
+	}
+
+	err := validate.Struct(mapping)
+	assert.Error(t, err)
 }

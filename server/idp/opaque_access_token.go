@@ -68,8 +68,7 @@ func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (j
 		"scope": strings.Join(session.Scopes, " "),
 	}
 
-	// Add basic info from session
-	for k, v := range session.Claims {
+	for k, v := range session.AccessTokenClaims {
 		claims[k] = v
 	}
 

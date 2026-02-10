@@ -2076,6 +2076,30 @@ func isOIDCClaimName(fl validator.FieldLevel) bool {
 	return !strings.ContainsFunc(value, unicode.IsControl)
 }
 
+// isOIDCClaimType validates an OIDC claim type against the supported set.
+func isOIDCClaimType(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return false
+	}
+
+	switch value {
+	case definitions.ClaimTypeString,
+		definitions.ClaimTypeBoolean,
+		definitions.ClaimTypeFloat,
+		definitions.ClaimTypeInteger,
+		definitions.ClaimTypeStringArray,
+		definitions.ClaimTypeBooleanArray,
+		definitions.ClaimTypeFloatArray,
+		definitions.ClaimTypeIntegerArray,
+		definitions.ClaimTypeObject,
+		definitions.ClaimTypeAddress:
+		return true
+	default:
+		return false
+	}
+}
+
 // hostnameRFC1123WithOptionalTrailingDot validates that the field value is a valid RFC1123 hostname
 // and additionally allows an optional trailing dot (FQDN form).
 // Implementation detail: If the value ends with a dot, the dot is stripped before validating

@@ -401,7 +401,8 @@ server:
 
 ## 6. Implementation Details: Claim Mapping
 
-Nauthilus supports dynamic claim mapping. When an OIDC token is issued, the IdP looks at the client configuration:
+Nauthilus supports dynamic claim mapping. ID token and access token claims are configured separately per client, using
+the same mapping schema:
 
 ```yaml
 # nauthilus.yaml example
@@ -409,19 +410,28 @@ idp:
   oidc:
     clients:
       - client_id: my-app
-        claims:
-          email: "mail"         # Map LDAP 'mail' to OIDC 'email'
-          groups: "memberOf"    # Map LDAP 'memberOf' to OIDC 'groups'
-          my_custom_claim: "someAttribute" # Custom claim mapping
+        id_token_claims:
+            mappings:
+                -   claim: "email"
+                    attribute: "mail"         # Map LDAP 'mail' to OIDC 'email'
+                    type: "string"
+                -   claim: "groups"
+                    attribute: "memberOf"    # Map LDAP 'memberOf' to OIDC 'groups'
+                    type: "string_array"
+        access_token_claims:
+            mappings:
+                -   claim: "billing.roles"
+                    attribute: "billing_roles"
+                    type: "string_array"
 ```
 
 The mapping logic handles:
 
 - **Direct mapping**: String attributes (e.g., `email`, `name`, `preferred_username`).
-- **Slices**: Multi-valued attributes like `groups`.
-- **Custom Claims**: Any additional fields in the `claims` section are treated as custom claims and mapped from the
-  specified backend attribute.
+- **Arrays**: Multi-valued attributes like `groups`.
+- **Custom Claims**: Any claim name can be mapped from a backend attribute.
 - **Complex Types**: Booleans (e.g., `email_verified`) and structured objects (e.g., `address`).
+- **Default types**: If `type` is omitted, the claim's default type (standard or custom scope) is used when available.
 
 ### 6.1 Scope-based Claim Filtering
 
@@ -435,8 +445,8 @@ The IdP automatically filters claims based on the scopes requested by the client
 - **`groups`**: Includes `groups`.
 
 If a client requests specific scopes, only the claims associated with those scopes (and any requested custom scopes)
-will be included in the ID token. If no specific scopes are requested (legacy behavior), all configured claims for the
-client are included.
+will be included in the ID token and access token claim sets. If no specific scopes are requested (legacy behavior),
+all configured mappings for the client are included.
 
 ### 6.2 Custom Scopes
 
@@ -456,16 +466,21 @@ idp:
             type: "string"
 ```
 
-To use these, the client must have a mapping for the claim names:
+To use these, the client must have a mapping for the claim names (in `id_token_claims` and/or `access_token_claims`):
 
 ```yaml
 idp:
   oidc:
     clients:
       - client_id: "my-client"
-        claims:
-          custom_claim_1: "someBackendAttribute"
-          custom_claim_2: "anotherBackendAttribute"
+        id_token_claims:
+            mappings:
+                -   claim: "custom_claim_1"
+                    attribute: "someBackendAttribute"
+                    type: "string"
+                -   claim: "custom_claim_2"
+                    attribute: "anotherBackendAttribute"
+                    type: "string"
 ```
 
 ### 6.3 Token Lifetime Configuration

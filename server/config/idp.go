@@ -324,24 +324,25 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 // OIDCClient represents an OIDC client configuration.
 type OIDCClient struct {
-	Name                              string        `mapstructure:"name"`
-	ClientID                          string        `mapstructure:"client_id" validate:"required"`
-	ClientSecret                      string        `mapstructure:"client_secret" validate:"required"`
-	RedirectURIs                      []string      `mapstructure:"redirect_uris" validate:"required,gt=0"`
-	Scopes                            []string      `mapstructure:"scopes"`
-	SkipConsent                       bool          `mapstructure:"skip_consent"`
-	DelayedResponse                   bool          `mapstructure:"delayed_response"`
-	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
-	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
-	AccessTokenType                   string        `mapstructure:"access_token_type"`
-	RefreshTokenLifetime              time.Duration `mapstructure:"refresh_token_lifetime"`
-	TokenEndpointAuthMethod           string        `mapstructure:"token_endpoint_auth_method"`
-	Claims                            IdTokenClaims `mapstructure:"claims"`
-	PostLogoutRedirectURIs            []string      `mapstructure:"post_logout_redirect_uris"`
-	BackChannelLogoutURI              string        `mapstructure:"backchannel_logout_uri"`
-	FrontChannelLogoutURI             string        `mapstructure:"frontchannel_logout_uri"`
-	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
-	LogoutRedirectURI                 string        `mapstructure:"logout_redirect_uri"`
+	Name                              string            `mapstructure:"name"`
+	ClientID                          string            `mapstructure:"client_id" validate:"required"`
+	ClientSecret                      string            `mapstructure:"client_secret" validate:"required"`
+	RedirectURIs                      []string          `mapstructure:"redirect_uris" validate:"required,gt=0"`
+	Scopes                            []string          `mapstructure:"scopes"`
+	SkipConsent                       bool              `mapstructure:"skip_consent"`
+	DelayedResponse                   bool              `mapstructure:"delayed_response"`
+	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
+	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
+	AccessTokenType                   string            `mapstructure:"access_token_type"`
+	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
+	TokenEndpointAuthMethod           string            `mapstructure:"token_endpoint_auth_method"`
+	IdTokenClaims                     IdTokenClaims     `mapstructure:"id_token_claims"`
+	AccessTokenClaims                 AccessTokenClaims `mapstructure:"access_token_claims"`
+	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
+	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
+	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
+	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
+	LogoutRedirectURI                 string            `mapstructure:"logout_redirect_uri"`
 }
 
 // GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.

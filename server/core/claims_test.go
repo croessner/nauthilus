@@ -42,14 +42,14 @@ func TestFillIdTokenClaims(t *testing.T) {
 	})
 
 	cfgClaims := &config.IdTokenClaims{
-		Name:                "cn",
-		Email:               "mail",
-		Groups:              "memberOf",
-		EmailVerified:       "email_verified",
-		PhoneNumberVerified: "phone_verified",
-		Address:             "address",
-		CustomClaims: map[string]any{
-			"my_custom_claim": "custom_attr",
+		Mappings: []config.OIDCClaimMapping{
+			{Claim: definitions.ClaimName, Attribute: "cn", Type: definitions.ClaimTypeString},
+			{Claim: definitions.ClaimEmail, Attribute: "mail", Type: definitions.ClaimTypeString},
+			{Claim: definitions.ClaimGroups, Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
+			{Claim: definitions.ClaimEmailVerified, Attribute: "email_verified", Type: definitions.ClaimTypeBoolean},
+			{Claim: definitions.ClaimPhoneNumberVerified, Attribute: "phone_verified", Type: definitions.ClaimTypeBoolean},
+			{Claim: definitions.ClaimAddress, Attribute: "address", Type: definitions.ClaimTypeAddress},
+			{Claim: "my_custom_claim", Attribute: "custom_attr", Type: definitions.ClaimTypeString},
 		},
 	}
 
@@ -73,11 +73,9 @@ func TestFillIdTokenClaims(t *testing.T) {
 	assert.Equal(t, true, claims[definitions.ClaimPhoneNumberVerified])
 	assert.Equal(t, "custom_value", claims["my_custom_claim"])
 
-	address, ok := claims[definitions.ClaimAddress].(struct {
-		Formatted string `json:"formatted"`
-	})
+	address, ok := claims[definitions.ClaimAddress].(map[string]any)
 	assert.True(t, ok)
-	assert.Equal(t, "Musterstraße 1", address.Formatted)
+	assert.Equal(t, "Musterstraße 1", address["formatted"])
 }
 
 func TestFillIdTokenClaims_WithCustomScopes(t *testing.T) {
@@ -92,7 +90,7 @@ func TestFillIdTokenClaims_WithCustomScopes(t *testing.T) {
 							{
 								Name: "my_scope",
 								Claims: []config.OIDCCustomClaim{
-									{Name: "my_claim", Type: "string"},
+									{Name: "my_claim", Type: definitions.ClaimTypeString},
 								},
 							},
 						},
@@ -106,8 +104,8 @@ func TestFillIdTokenClaims_WithCustomScopes(t *testing.T) {
 	})
 
 	cfgClaims := &config.IdTokenClaims{
-		CustomClaims: map[string]any{
-			"my_claim": "custom_attr",
+		Mappings: []config.OIDCClaimMapping{
+			{Claim: "my_claim", Attribute: "custom_attr", Type: definitions.ClaimTypeString},
 		},
 	}
 

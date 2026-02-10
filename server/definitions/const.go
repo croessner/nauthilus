@@ -1893,6 +1893,24 @@ const (
 
 	// ClaimTypeInteger is the OIDC custom-claim type for integers.
 	ClaimTypeInteger = "integer"
+
+	// ClaimTypeStringArray is the OIDC custom-claim type for string arrays.
+	ClaimTypeStringArray = "string_array"
+
+	// ClaimTypeBooleanArray is the OIDC custom-claim type for boolean arrays.
+	ClaimTypeBooleanArray = "boolean_array"
+
+	// ClaimTypeFloatArray is the OIDC custom-claim type for float arrays.
+	ClaimTypeFloatArray = "float_array"
+
+	// ClaimTypeIntegerArray is the OIDC custom-claim type for integer arrays.
+	ClaimTypeIntegerArray = "integer_array"
+
+	// ClaimTypeObject is the OIDC custom-claim type for JSON objects.
+	ClaimTypeObject = "object"
+
+	// ClaimTypeAddress is the OIDC custom-claim type for address objects.
+	ClaimTypeAddress = "address"
 )
 
 // Standard OIDC claim names.

@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
@@ -202,33 +203,43 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		}
 		client := &config.OIDCClient{
 			ClientID: "client1",
-			Claims: config.IdTokenClaims{
-				Email:  "mail",
-				Groups: "memberOf",
+			IdTokenClaims: config.IdTokenClaims{
+				Mappings: []config.OIDCClaimMapping{
+					{Claim: definitions.ClaimEmail, Attribute: "mail", Type: definitions.ClaimTypeString},
+					{Claim: definitions.ClaimGroups, Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
+				},
+			},
+			AccessTokenClaims: config.AccessTokenClaims{
+				Mappings: []config.OIDCClaimMapping{
+					{Claim: "resource.role", Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
+				},
 			},
 		}
 
 		ctx, _ := gin.CreateTestContext(nil)
 
 		// Only openid requested -> no extra claims except defaults (sub, name, preferred_username)
-		claims, err := idp.GetClaims(ctx, user, client, []string{"openid"})
+		idClaims, accessClaims, err := idp.GetClaims(ctx, user, client, []string{"openid"})
 		assert.NoError(t, err)
-		assert.Equal(t, "user123", claims["sub"])
-		assert.Equal(t, "John Doe", claims["name"])
-		assert.Nil(t, claims["email"])
-		assert.Nil(t, claims["groups"])
+		assert.Equal(t, "user123", idClaims["sub"])
+		assert.Equal(t, "John Doe", idClaims["name"])
+		assert.Nil(t, idClaims["email"])
+		assert.Nil(t, idClaims["groups"])
+		assert.Nil(t, accessClaims["resource.role"])
 
 		// email requested
-		claims, err = idp.GetClaims(ctx, user, client, []string{"openid", "email"})
+		idClaims, accessClaims, err = idp.GetClaims(ctx, user, client, []string{"openid", "email"})
 		assert.NoError(t, err)
-		assert.Equal(t, "jdoe@example.com", claims["email"])
-		assert.Nil(t, claims["groups"])
+		assert.Equal(t, "jdoe@example.com", idClaims["email"])
+		assert.Nil(t, idClaims["groups"])
+		assert.Nil(t, accessClaims["resource.role"])
 
 		// groups requested
-		claims, err = idp.GetClaims(ctx, user, client, []string{"openid", "groups"})
+		idClaims, accessClaims, err = idp.GetClaims(ctx, user, client, []string{"openid", "groups"})
 		assert.NoError(t, err)
-		assert.Nil(t, claims["email"])
-		assert.Equal(t, []string{"group1"}, claims["groups"])
+		assert.Nil(t, idClaims["email"])
+		assert.Equal(t, []string{"group1"}, idClaims["groups"])
+		assert.Equal(t, []string{"group1"}, accessClaims["resource.role"])
 	})
 
 	t.Run("FilterScopes", func(t *testing.T) {

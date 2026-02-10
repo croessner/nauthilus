@@ -189,7 +189,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	// Add mapped claims from session
-	for k, v := range session.Claims {
+	for k, v := range session.IdTokenClaims {
 		idClaims[k] = v
 	}
 
@@ -512,22 +512,23 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 }
 
 // GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.
-func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client any, scopes []string) (map[string]any, error) {
-	claims := make(map[string]any)
 
-	// Standard fixed claims
-	claims["sub"] = user.Id
-	claims["name"] = user.DisplayName
-	claims["preferred_username"] = user.Name
+func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client any, scopes []string) (map[string]any, map[string]any, error) {
+	idTokenClaims := map[string]any{
+		"sub":                user.Id,
+		"name":               user.DisplayName,
+		"preferred_username": user.Name,
+	}
+	accessTokenClaims := make(map[string]any)
 
-	// Map attributes from backend using FillIdTokenClaims if client is OIDCClient
+	// Map attributes from backend using claim mappings when client is OIDCClient.
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
 		// We need an AuthState to use FillIdTokenClaims
 		// We can create a lightweight AuthState just for mapping
 		authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
 		auth, ok := authRaw.(*core.AuthState)
 		if !ok || auth == nil {
-			return nil, fmt.Errorf("failed to create AuthState for mapping")
+			return nil, nil, fmt.Errorf("failed to create AuthState for mapping")
 		}
 
 		if auth.Runtime.GUID == "" {
@@ -536,8 +537,9 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 
 		auth.ReplaceAllAttributes(user.Attributes)
 
-		auth.FillIdTokenClaims(&oidcClient.Claims, claims, scopes)
+		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes)
+		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes)
 	}
 
-	return claims, nil
+	return idTokenClaims, accessTokenClaims, nil
 }
