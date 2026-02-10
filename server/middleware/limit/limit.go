@@ -61,7 +61,7 @@ func (lc *LimitCounter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFun
 
 	return func(ctx *gin.Context) {
 		// Always allow health check and metrics endpoints regardless of connection limits
-		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
+		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
 			ctx.Next()
 
 			return

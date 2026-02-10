@@ -13,38 +13,38 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package health
+package core
 
 import (
-	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-gonic/gin"
-
-	approuter "github.com/croessner/nauthilus/server/router"
+	"github.com/stretchr/testify/assert"
 )
 
-// Handler registers the health endpoints.
-type Handler struct {
-	cfg    config.File
-	logger *slog.Logger
-	redis  rediscli.Client
-}
+func TestSetOperationMode_ListAccountsSetsProtocol(t *testing.T) {
+	setupMinimalTestConfig(t)
+	gin.SetMode(gin.TestMode)
+	deps := setupAuthDeps(t)
 
-func New() *Handler {
-	return &Handler{}
-}
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/?mode=list-accounts", nil)
+	ctx.Set(definitions.CtxGUIDKey, "test-guid")
 
-func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
-	return &Handler{cfg: cfg, logger: logger, redis: redis}
-}
+	auth := &AuthState{
+		deps: deps,
+		Request: AuthRequest{
+			Protocol: new(config.Protocol),
+		},
+	}
 
-func (h *Handler) Register(router gin.IRouter) {
-	deps := HealthzDeps{Cfg: h.cfg, Logger: h.logger, Redis: h.redis}
+	auth.SetOperationMode(ctx)
 
-	router.GET("/ping", approuter.HealthCheck)
-	router.GET("/healthz", func(ctx *gin.Context) {
-		ReadinessCheckWithDeps(ctx, deps)
-	})
+	assert.True(t, auth.Request.ListAccounts)
+	assert.Equal(t, definitions.ProtoAccountProvider, auth.Request.Protocol.Get())
 }

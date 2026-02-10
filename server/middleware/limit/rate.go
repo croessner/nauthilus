@@ -61,7 +61,7 @@ func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
 func (i *IPRateLimiter) Middleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// Skip rate limiting for health check and metrics
-		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
+		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
 			ctx.Next()
 
 			return

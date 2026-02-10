@@ -55,3 +55,65 @@ This plugin can be used as a template for creating custom backend integrations. 
 - The example code uses string concatenation for SQL queries, which is vulnerable to SQL injection. In a production environment, you should use prepared statements or parameterized queries.
 - Passwords should be stored using strong hashing algorithms (the example assumes this is already handled).
 - Database connection credentials should be stored securely and not hardcoded in the plugin.
+
+### proxy_backend.lua
+
+Implements a full Lua proxy backend that forwards all backend operations to an upstream Nauthilus instance via HTTP,
+including WebAuthn CRUD calls.
+
+**Features:**
+
+- Proxies `verify_password` and `list_accounts` to `/api/v1/auth/json` (mode `list-accounts`)
+- Proxies TOTP secret and recovery code operations to the backchannel MFA API
+- Proxies WebAuthn credential CRUD to the backchannel MFA API
+- Adds OpenTelemetry spans and Prometheus metrics for upstream HTTP calls
+- Supports auth to upstream via bearer token or HTTP Basic auth
+
+**Usage:**
+
+1. Enable the proxy backend in your Nauthilus config and point it to this script.
+2. Configure the upstream URL and credentials via environment variables or `nauthilus_proxy_backend` table (see below).
+3. Ensure the upstream instance exposes the required backchannel endpoints and is protected by Basic auth or JWT.
+
+**Configuration (environment variables):**
+
+- `PROXY_BACKEND_UPSTREAM_URL` (default: `http://127.0.0.1:9080`)
+- `PROXY_BACKEND_AUTH_PATH` (default: `/api/v1/auth/json`)
+- `PROXY_BACKEND_MFA_PATH` (default: `/api/v1/mfa-backchannel`)
+- `PROXY_BACKEND_TIMEOUT` (default: `5s`)
+- `PROXY_BACKEND_LIST_ACCOUNTS_USERNAME` (default: `list-accounts`)
+- `PROXY_BACKEND_TYPE` (default: `lua`)
+- `PROXY_BACKEND_NAME` (default: `default`)
+- `PROXY_BACKEND_AUTH_TOKEN` (default: empty)
+- `PROXY_BACKEND_BASIC_USER` (default: empty)
+- `PROXY_BACKEND_BASIC_PASS` (default: empty)
+
+**Configuration (Lua table override):**
+If you set a global table named `nauthilus_proxy_backend`, its fields override the environment defaults:
+
+```lua
+nauthilus_proxy_backend = {
+  base_url = "http://upstream:9080",
+  auth_path = "/api/v1/auth/json",
+  mfa_path = "/api/v1/mfa-backchannel",
+  timeout = "5s",
+  list_accounts_username = "list-accounts",
+  backend = "lua",
+  backend_name = "default",
+  auth_token = "",
+  basic_user = "",
+  basic_pass = "",
+}
+```
+
+**Upstream API expectations:**
+
+- `POST {base_url}{auth_path}` with JSON credentials for authentication
+- `GET {base_url}{auth_path}?mode=list-accounts` for account listing
+- Backchannel MFA endpoints must be available for TOTP, recovery codes, and WebAuthn operations
+
+**Security Considerations:**
+
+- Use TLS for upstream connections in production.
+- Protect backchannel endpoints with Basic auth or JWT.
+- Avoid sending secrets to untrusted upstreams.

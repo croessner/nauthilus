@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/custom"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/handler/devui"
+	"github.com/croessner/nauthilus/server/handler/mfa_backchannel"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
@@ -83,6 +84,7 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	custom.NewWithDeps(deps.CfgProvider, deps.Logger, deps.Redis).Register(group)
 	cache.NewWithDeps(deps).Register(group)
 	asyncjobs.NewWithDeps(deps).Register(group)
+	mfa_backchannel.NewWithDeps(deps).Register(group)
 
 	if deps.Env != nil && deps.Env.GetDevMode() {
 		devui.New(deps).Register(group)

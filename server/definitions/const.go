@@ -548,6 +548,9 @@ const (
 	// BackendLua represents a Lua backend
 	BackendLua
 
+	// BackendTest represents a test backend
+	BackendTest
+
 	// BackendLocalCache represents the local in-memory cache localcache.LocalCache
 	BackendLocalCache
 )
@@ -564,6 +567,9 @@ const (
 
 	// BackendLuaName refers to a Lua backend
 	BackendLuaName = "lua"
+
+	// BackendTestName refers to the in-memory test backend
+	BackendTestName = "test"
 
 	// BackendLocalCacheName refers to th elocal in memory localcache.LocalCache.
 	BackendLocalCacheName = "memory"
@@ -661,6 +667,9 @@ const (
 
 	// ProtoIDP corresponds to the "idp" protocol
 	ProtoIDP = "idp"
+
+	// ProtoAccountProvider corresponds to the "account-provider" protocol
+	ProtoAccountProvider = "account-provider"
 
 	// ProtoDefault corresponds to the default protocol
 	ProtoDefault = "default"

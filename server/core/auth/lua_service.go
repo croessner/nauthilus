@@ -76,6 +76,10 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 
 	auth.FillCommonRequest(commonRequest)
 
+	if commonRequest.AccountField != "" {
+		commonRequest.AccountField = definitions.MetaUserAccount
+	}
+
 	// UserFound and Authenticated are special because they might have been
 	// updated by the passDB result after FillCommonRequest was called.
 	commonRequest.UserFound = passDBResult.UserFound

@@ -804,6 +804,8 @@ func (a *AuthState) GetBackendManager(backendType definitions.Backend, backendNa
 		return NewLDAPManager(backendName, a.deps)
 	case definitions.BackendLua:
 		return NewLuaManager(backendName, a.deps)
+	case definitions.BackendTest:
+		return NewTestBackendManager(backendName, a.deps)
 	default:
 		return nil
 	}
@@ -2368,6 +2370,9 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 		case definitions.BackendLua:
 			mgr := NewLuaManager(backendType.GetName(), a.deps)
 			passDBs = a.appendBackend(passDBs, definitions.BackendLua, mgr.PassDB)
+		case definitions.BackendTest:
+			mgr := NewTestBackendManager(backendType.GetName(), a.deps)
+			passDBs = a.appendBackend(passDBs, definitions.BackendTest, mgr.PassDB)
 		case definitions.BackendUnknown:
 		case definitions.BackendLocalCache:
 		}
@@ -2755,7 +2760,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	// This is a conservative estimate, we'll allocate based on the number of backends
 	accountList = make(AccountList, 0, 100)
 
-	a.Request.Protocol.Set("account-provider")
+	a.Request.Protocol.Set(definitions.ProtoAccountProvider)
 
 	for _, backendType := range a.cfg().GetServer().GetBackends() {
 		switch backendType.Get() {
@@ -2769,6 +2774,12 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 			mgr := NewLuaManager(backendType.GetName(), a.deps)
 			accounts = append(accounts, &AccountListMap{
 				definitions.BackendLua,
+				mgr.AccountDB,
+			})
+		case definitions.BackendTest:
+			mgr := NewTestBackendManager(backendType.GetName(), a.deps)
+			accounts = append(accounts, &AccountListMap{
+				definitions.BackendTest,
 				mgr.AccountDB,
 			})
 		case definitions.BackendUnknown:
@@ -2952,6 +2963,8 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 		}
 	case "list-accounts":
 		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
+
+		a.Request.Protocol.Set(definitions.ProtoAccountProvider)
 
 		// Check if JWT is enabled and user has the required role
 		if cfg.GetServer().GetJWTAuth().IsEnabled() {
