@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -32,6 +33,8 @@ import (
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/idp/clientauth"
+	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
@@ -494,6 +497,149 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	return client, true
 }
 
+// authenticateClientPrivateKeyJWT authenticates a client using the private_key_jwt method (RFC 7523).
+func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config.OIDCClient, bool) {
+	assertionType := ctx.PostForm("client_assertion_type")
+	assertion := ctx.PostForm("client_assertion")
+	clientID := ctx.PostForm("client_id")
+
+	if assertionType == "" || assertion == "" {
+		return nil, false
+	}
+
+	if assertionType != clientauth.AssertionTypeJWTBearer {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client", "error_description": "unsupported client_assertion_type"})
+
+		return nil, false
+	}
+
+	// If client_id not in form, try to extract from the assertion's iss claim
+	if clientID == "" {
+		clientID = extractIssFromJWT(assertion)
+	}
+
+	if clientID == "" {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+		return nil, false
+	}
+
+	client, ok := h.idp.FindClient(clientID)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+		return nil, false
+	}
+
+	if client.TokenEndpointAuthMethod != clientauth.MethodPrivateKeyJWT {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client", "error_description": "client not configured for private_key_jwt"})
+
+		return nil, false
+	}
+
+	verifier, err := h.buildClientVerifier(client)
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Failed to build client verifier",
+			"client_id", clientID,
+			"error", err,
+		)
+
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+		return nil, false
+	}
+
+	tokenEndpoint := h.deps.Cfg.GetIdP().OIDC.Issuer + "/oidc/token"
+	auth := clientauth.NewPrivateKeyJWTAuthenticator(verifier, clientID, tokenEndpoint)
+
+	err = auth.Authenticate(&clientauth.AuthRequest{
+		ClientID:            clientID,
+		ClientAssertionType: assertionType,
+		ClientAssertion:     assertion,
+		TokenEndpointURL:    tokenEndpoint,
+	})
+
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "private_key_jwt authentication failed",
+			"client_id", clientID,
+			"error", err,
+		)
+
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+		return nil, false
+	}
+
+	return client, true
+}
+
+// buildClientVerifier creates a signing.Verifier for the client's public key.
+func (h *OIDCHandler) buildClientVerifier(client *config.OIDCClient) (signing.Verifier, error) {
+	pemData, err := client.GetClientPublicKey()
+	if err != nil || pemData == "" {
+		return nil, fmt.Errorf("no public key configured for client %s", client.ClientID)
+	}
+
+	algorithm := client.GetClientPublicKeyAlgorithm()
+
+	switch algorithm {
+	case signing.AlgorithmRS256:
+		key, err := signing.ParseRSAPublicKeyPEM(pemData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse RSA public key: %w", err)
+		}
+
+		return signing.NewRS256Verifier(key), nil
+
+	case signing.AlgorithmEdDSA:
+		key, err := signing.ParseEd25519PublicKeyPEM(pemData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse Ed25519 public key: %w", err)
+		}
+
+		return signing.NewEdDSAVerifier(key), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported client public key algorithm: %s", algorithm)
+	}
+}
+
+// extractIssFromJWT extracts the iss claim from a JWT without full verification.
+func extractIssFromJWT(tokenString string) string {
+	parts := strings.SplitN(tokenString, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+
+	// Simple JSON extraction without full parse
+	var claims map[string]any
+
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+
+	iss, _ := claims["iss"].(string)
+
+	return iss
+}
+
 // Token handles the OIDC token request.
 func (h *OIDCHandler) Token(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
@@ -501,7 +647,16 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 	grantType := ctx.PostForm("grant_type")
 
-	client, ok := h.authenticateClient(ctx)
+	// Try private_key_jwt first if client_assertion is present
+	var client *config.OIDCClient
+	var ok bool
+
+	if ctx.PostForm("client_assertion") != "" {
+		client, ok = h.authenticateClientPrivateKeyJWT(ctx)
+	} else {
+		client, ok = h.authenticateClient(ctx)
+	}
+
 	if !ok {
 		return
 	}
@@ -553,6 +708,18 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		rt := ctx.PostForm("refresh_token")
 		idToken, accessToken, refreshToken, expiresIn, err = h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
 
+	case "client_credentials":
+		if !client.SupportsGrantType("client_credentials") {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "unauthorized_client"})
+
+			return
+		}
+
+		requestedScopes := strings.Fields(ctx.PostForm("scope"))
+		filteredScopes := h.idp.FilterScopes(client, requestedScopes)
+
+		accessToken, expiresIn, err = h.idp.IssueClientCredentialsToken(ctx.Request.Context(), clientID, filteredScopes)
+
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_grant_type"})
 
@@ -569,9 +736,13 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 
 	resp := gin.H{
 		"access_token": accessToken,
-		"id_token":     idToken,
 		"token_type":   "Bearer",
 		"expires_in":   int(expiresIn.Seconds()),
+	}
+
+	// Client Credentials Grant returns no id_token per RFC 6749 §4.4
+	if idToken != "" {
+		resp["id_token"] = idToken
 	}
 
 	if refreshToken != "" {

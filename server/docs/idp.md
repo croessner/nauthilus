@@ -672,3 +672,207 @@ ldap:
         totp_recovery_field: "nauthilusTotpRecoveryCode"
         totp_recovery_object_class: "nauthilusMfaAccount"
 ```
+
+## 8. Client Credentials Grant (RFC 6749 §4.4)
+
+The Client Credentials Grant allows machine-to-machine (M2M) authentication where the client itself is the resource
+owner. Unlike the Authorization Code Grant, **no user interaction** is involved and **only an access token** is returned
+(no ID token, no refresh token).
+
+Nauthilus supports two authentication methods for the Client Credentials Grant:
+
+1. **`client_secret`** — The client authenticates using a shared secret (via Basic Auth or POST body).
+2. **`private_key_jwt`** (RFC 7523) — The client authenticates using a signed JWT assertion with its private key.
+
+### 8.1 Architecture Overview
+
+```mermaid
+sequenceDiagram
+    participant C as Client (M2M)
+    participant T as Token Endpoint
+    participant I as NauthilusIdP
+
+    C ->> T: POST /oidc/token<br/>grant_type=client_credentials<br/>+ authentication
+    T ->> T: Authenticate client<br/>(client_secret or private_key_jwt)
+    T ->> I: IssueClientCredentialsToken(clientID, scopes)
+    I ->> I: Validate grant_type support
+    I ->> I: Build access token (JWT or opaque)
+    I -->> T: access_token + expires_in
+    T -->> C: {"access_token": "...", "token_type": "Bearer", "expires_in": 3600}
+```
+
+### 8.2 Signing Abstraction
+
+Token signing uses an OOP abstraction (`server/idp/signing`) that supports multiple algorithms via the `Signer` and
+`Verifier` interfaces. Both the Client Credentials Grant and the Authorization Code Grant share this abstraction.
+
+**Supported algorithms:**
+
+| Algorithm | Type    | Status    | Use Case                           |
+|-----------|---------|-----------|------------------------------------|
+| RS256     | RSA     | Mandatory | Server-side token signing, default |
+| EdDSA     | Ed25519 | Optional  | Client assertion verification      |
+
+**Key interfaces:**
+
+```go
+// Signer signs JWT tokens.
+type Signer interface {
+    Sign(claims jwt.MapClaims) (string, error)
+    Algorithm() string
+    KeyID() string
+    PublicKey() crypto.PublicKey
+}
+
+// Verifier verifies JWT tokens.
+type Verifier interface {
+    Verify(tokenString string) (jwt.MapClaims, error)
+    Algorithm() string
+}
+```
+
+The `MultiVerifier` tries multiple verifiers in order, enabling key rotation and multi-algorithm support.
+
+### 8.3 Client Authentication Methods
+
+Client authentication is abstracted via the `ClientAuthenticator` interface (`server/idp/clientauth`):
+
+```go
+type ClientAuthenticator interface {
+    Authenticate(request *AuthRequest) error
+    Method() string
+}
+```
+
+#### 8.3.1 client_secret_basic / client_secret_post
+
+The client sends its `client_id` and `client_secret` either via HTTP Basic Authentication or as POST form parameters.
+
+```bash
+# Basic Auth
+curl -X POST https://issuer.example.com/oidc/token \
+  -u "my-client:my-secret" \
+  -d "grant_type=client_credentials" \
+  -d "scope=api.read api.write"
+
+# POST body
+curl -X POST https://issuer.example.com/oidc/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=my-client" \
+  -d "client_secret=my-secret" \
+  -d "scope=api.read api.write"
+```
+
+#### 8.3.2 private_key_jwt (RFC 7523)
+
+The client signs a JWT assertion with its private key and sends it as `client_assertion`. The server verifies the
+assertion using the client's pre-registered public key. This method does **not** use mTLS.
+
+**JWT assertion requirements (per RFC 7523):**
+
+| Claim | Value                                  |
+|-------|----------------------------------------|
+| `iss` | Must match the `client_id`             |
+| `sub` | Must match the `client_id`             |
+| `aud` | Must be the token endpoint URL         |
+| `exp` | Expiration time (short-lived, e.g. 5m) |
+| `jti` | Unique identifier (replay prevention)  |
+
+```bash
+curl -X POST https://issuer.example.com/oidc/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=my-client" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=eyJhbGciOiJSUzI1NiIs..." \
+  -d "scope=api.read"
+```
+
+### 8.4 Configuration
+
+#### Client with client_secret authentication
+
+```yaml
+oidc:
+  clients:
+    - client_id: "m2m-service"
+      client_secret: "super-secret-value"
+      grant_types:
+        - client_credentials
+      scopes:
+        - api.read
+        - api.write
+      access_token_lifetime: 1h
+      token_endpoint_auth_method: client_secret_basic
+```
+
+#### Client with private_key_jwt authentication (RS256)
+
+```yaml
+oidc:
+  clients:
+    - client_id: "m2m-service-pki"
+      grant_types:
+        - client_credentials
+      scopes:
+        - api.read
+      access_token_lifetime: 1h
+      token_endpoint_auth_method: private_key_jwt
+      client_public_key_algorithm: RS256
+      client_public_key: |
+        -----BEGIN PUBLIC KEY-----
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A...
+        -----END PUBLIC KEY-----
+```
+
+#### Client with private_key_jwt authentication (EdDSA / Ed25519)
+
+```yaml
+oidc:
+  clients:
+    - client_id: "m2m-service-eddsa"
+      grant_types:
+        - client_credentials
+      scopes:
+        - api.read
+      access_token_lifetime: 1h
+      token_endpoint_auth_method: private_key_jwt
+      client_public_key_algorithm: EdDSA
+      client_public_key_file: /etc/nauthilus/keys/client-ed25519.pub
+```
+
+#### Configuration fields reference
+
+| Field                         | Type       | Default                | Description                                                               |
+|-------------------------------|------------|------------------------|---------------------------------------------------------------------------|
+| `grant_types`                 | `[]string` | `[authorization_code]` | Allowed grant types for this client                                       |
+| `token_endpoint_auth_method`  | `string`   | (any secret method)    | `client_secret_basic`, `client_secret_post`, `private_key_jwt`, or `none` |
+| `client_public_key`           | `string`   | —                      | PEM-encoded public key (inline) for `private_key_jwt`                     |
+| `client_public_key_file`      | `string`   | —                      | Path to PEM file containing the public key                                |
+| `client_public_key_algorithm` | `string`   | `RS256`                | Algorithm for the client's public key (`RS256` or `EdDSA`)                |
+
+### 8.5 Token Response
+
+The Client Credentials Grant returns only an access token (per RFC 6749 §4.4.3):
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+```
+
+No `id_token` or `refresh_token` is included in the response.
+
+### 8.6 Package Structure
+
+```
+server/idp/
+├── signing/
+│   ├── signer.go           # Signer/Verifier interfaces, RS256 + EdDSA implementations
+│   └── signer_test.go      # Unit tests for all signing/verification paths
+├── clientauth/
+│   ├── authenticator.go    # ClientAuthenticator interface, ClientSecret + PrivateKeyJWT
+│   └── authenticator_test.go # Unit tests for all authentication methods
+└── nauthilus_idp.go         # IssueClientCredentialsToken method
+```

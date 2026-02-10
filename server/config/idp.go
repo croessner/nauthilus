@@ -326,9 +326,10 @@ func (o *OIDCConfig) warnUnsupported() []string {
 type OIDCClient struct {
 	Name                              string            `mapstructure:"name"`
 	ClientID                          string            `mapstructure:"client_id" validate:"required"`
-	ClientSecret                      string            `mapstructure:"client_secret" validate:"required"`
-	RedirectURIs                      []string          `mapstructure:"redirect_uris" validate:"required,gt=0"`
+	ClientSecret                      string            `mapstructure:"client_secret"`
+	RedirectURIs                      []string          `mapstructure:"redirect_uris"`
 	Scopes                            []string          `mapstructure:"scopes"`
+	GrantTypes                        []string          `mapstructure:"grant_types"`
 	SkipConsent                       bool              `mapstructure:"skip_consent"`
 	DelayedResponse                   bool              `mapstructure:"delayed_response"`
 	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
@@ -336,6 +337,9 @@ type OIDCClient struct {
 	AccessTokenType                   string            `mapstructure:"access_token_type"`
 	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
 	TokenEndpointAuthMethod           string            `mapstructure:"token_endpoint_auth_method"`
+	ClientPublicKey                   string            `mapstructure:"client_public_key"`
+	ClientPublicKeyFile               string            `mapstructure:"client_public_key_file"`
+	ClientPublicKeyAlgorithm          string            `mapstructure:"client_public_key_algorithm"`
 	IdTokenClaims                     IdTokenClaims     `mapstructure:"id_token_claims"`
 	AccessTokenClaims                 AccessTokenClaims `mapstructure:"access_token_claims"`
 	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
@@ -380,6 +384,54 @@ func (c *OIDCClient) GetAccessTokenType(defaultType string) string {
 	}
 
 	return strings.ToLower(c.AccessTokenType)
+}
+
+// GetGrantTypes returns the allowed grant types for this client.
+// If none are configured, defaults to ["authorization_code"].
+func (c *OIDCClient) GetGrantTypes() []string {
+	if c == nil {
+		return nil
+	}
+
+	if len(c.GrantTypes) == 0 {
+		return []string{"authorization_code"}
+	}
+
+	return c.GrantTypes
+}
+
+// SupportsGrantType returns true if the client supports the given grant type.
+func (c *OIDCClient) SupportsGrantType(grantType string) bool {
+	if c == nil {
+		return false
+	}
+
+	for _, gt := range c.GetGrantTypes() {
+		if gt == grantType {
+			return true
+		}
+	}
+
+	return false
+}
+
+// GetClientPublicKey returns the client's public key content (inline or from file).
+func (c *OIDCClient) GetClientPublicKey() (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("client is nil")
+	}
+
+	return GetContent(c.ClientPublicKey, c.ClientPublicKeyFile)
+}
+
+// GetClientPublicKeyAlgorithm returns the algorithm for the client's public key.
+// Defaults to "RS256" if not configured.
+func (c *OIDCClient) GetClientPublicKeyAlgorithm() string {
+	if c == nil || c.ClientPublicKeyAlgorithm == "" {
+		return "RS256"
+	}
+
+	return c.ClientPublicKeyAlgorithm
 }
 
 // SAML2Config represents the configuration for SAML 2.0.

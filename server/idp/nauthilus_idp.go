@@ -251,6 +251,66 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
 }
 
+// IssueClientCredentialsToken generates an access token for the Client Credentials Grant.
+// Per RFC 6749 §4.4, only an access token is returned (no id_token, no refresh_token).
+func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID string, scopes []string) (string, time.Duration, error) {
+	_, sp := n.tracer.Start(ctx, "idp.issue_client_credentials_token",
+		attribute.String("client_id", clientID),
+	)
+	defer sp.End()
+
+	client, ok := n.FindClient(clientID)
+	if !ok {
+		return "", 0, fmt.Errorf("client not found")
+	}
+
+	if !client.SupportsGrantType("client_credentials") {
+		return "", 0, fmt.Errorf("client does not support client_credentials grant type")
+	}
+
+	accessTokenLifetime := client.AccessTokenLifetime
+	if accessTokenLifetime == 0 {
+		accessTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultAccessTokenLifetime()
+	}
+
+	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
+	key, kid, err := n.keyMgr.GetActiveKey(ctx)
+	if err != nil {
+		sp.RecordError(err)
+
+		return "", 0, fmt.Errorf("failed to get active signing key: %w", err)
+	}
+
+	// Build session for client credentials (no user, client is the subject)
+	session := &OIDCSession{
+		ClientID:          clientID,
+		UserID:            clientID,
+		Scopes:            scopes,
+		AuthTime:          time.Now(),
+		AccessTokenClaims: make(map[string]any),
+	}
+
+	// Access Token
+	tokenIssuer := NewTokenIssuer(issuer, key, kid, session, n.storage, n.tokenGen)
+	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
+
+	var accessTokenString string
+
+	if accessTokenType == "opaque" {
+		accessTokenString, _, err = tokenIssuer.IssueOpaque(ctx, accessTokenLifetime)
+	} else {
+		accessTokenString, _, err = tokenIssuer.IssueJWT(ctx, accessTokenLifetime)
+	}
+
+	if err != nil {
+		sp.RecordError(err)
+
+		return "", 0, err
+	}
+
+	return accessTokenString, accessTokenLifetime, nil
+}
+
 // ExchangeRefreshToken exchanges a refresh token for a new set of tokens.
 func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken string, clientID string) (string, string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.exchange_refresh_token",
