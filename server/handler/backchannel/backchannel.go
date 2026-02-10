@@ -16,7 +16,6 @@
 package backchannel
 
 import (
-	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/handler/asyncjobs"
 	"github.com/croessner/nauthilus/server/handler/auth"
 	"github.com/croessner/nauthilus/server/handler/bruteforce"
@@ -26,9 +25,11 @@ import (
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/handler/devui"
 	"github.com/croessner/nauthilus/server/handler/mfa_backchannel"
+	"github.com/croessner/nauthilus/server/idp"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,6 +41,10 @@ func Setup(router *gin.Engine) {
 	panic("backchannel.Setup is deprecated; use backchannel.SetupWithDeps with explicit dependencies")
 }
 
+// SetupWithDeps registers backchannel API endpoints with explicit dependencies.
+// Authentication uses Basic Auth and/or OIDC Bearer tokens (client_credentials flow).
+// The legacy HS256 JWT mechanism (/api/v1/jwt/token, /api/v1/jwt/refresh) has been
+// removed in favor of the standard OIDC /oidc/token endpoint.
 func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	if deps == nil || deps.Cfg == nil || deps.Logger == nil {
 		panic("backchannel.SetupWithDeps requires non-nil deps (Cfg, Logger)")
@@ -50,19 +55,6 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	}
 
 	cfg := deps.Cfg
-	jwtDeps := core.JWTDeps{Cfg: cfg, Logger: deps.Logger, Redis: deps.Redis}
-
-	// Public JWT endpoints first (token and refresh)
-	if cfg.GetServer().GetJWTAuth().IsEnabled() && !cfg.GetServer().GetEndpoint().IsAuthJWTDisabled() {
-		jwtGroup := router.Group("/api/v1/jwt")
-
-		jwtGroup.Use(mdlua.LuaContextMiddleware())
-		jwtGroup.POST("/token", core.HandleJWTTokenGenerationWithDeps(jwtDeps))
-
-		if cfg.GetServer().GetJWTAuth().IsRefreshTokenEnabled() {
-			jwtGroup.POST("/refresh", core.HandleJWTTokenRefreshWithDeps(jwtDeps))
-		}
-	}
 
 	// Main API group with configured authentication
 	group := router.Group("/api/v1")
@@ -71,8 +63,13 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 		group.Use(mdauth.BasicAuthMiddlewareWithDeps(cfg, deps.Logger))
 	}
 
-	if cfg.GetServer().GetJWTAuth().IsEnabled() {
-		group.Use(core.JWTAuthMiddlewareWithDeps(jwtDeps))
+	// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
+	// Uses the IdP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
+	// Controlled by server.oidc_auth.enabled, independent of idp.oidc.enabled.
+	if cfg.GetServer().GetOIDCAuth().IsEnabled() {
+		nauthilusIdP := idp.NewNauthilusIdP(deps)
+
+		group.Use(oidcbearer.Middleware(nauthilusIdP, cfg, deps.Logger))
 	}
 
 	group.Use(mdlua.LuaContextMiddleware())

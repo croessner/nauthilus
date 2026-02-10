@@ -58,13 +58,8 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 		"scope": strings.Join(t.session.Scopes, " "),
 	}
 
-	// Add basic info to access token as well
-	if v, ok := t.session.Claims["name"]; ok {
-		accessClaims["name"] = v
-	}
-
-	if v, ok := t.session.Claims["preferred_username"]; ok {
-		accessClaims["preferred_username"] = v
+	for key, value := range t.session.AccessTokenClaims {
+		accessClaims[key] = value
 	}
 
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodRS256, accessClaims)

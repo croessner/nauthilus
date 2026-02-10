@@ -28,15 +28,16 @@ var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // OIDCSession represents the data stored in Redis for an OIDC authorization flow.
 type OIDCSession struct {
-	ClientID    string         `json:"client_id"`
-	UserID      string         `json:"user_id"`
-	Username    string         `json:"username"`
-	DisplayName string         `json:"display_name"`
-	Scopes      []string       `json:"scopes"`
-	RedirectURI string         `json:"redirect_uri"`
-	AuthTime    time.Time      `json:"auth_time"`
-	Nonce       string         `json:"nonce,omitempty"`
-	Claims      map[string]any `json:"claims"`
+	ClientID          string         `json:"client_id"`
+	UserID            string         `json:"user_id"`
+	Username          string         `json:"username"`
+	DisplayName       string         `json:"display_name"`
+	Scopes            []string       `json:"scopes"`
+	RedirectURI       string         `json:"redirect_uri"`
+	AuthTime          time.Time      `json:"auth_time"`
+	Nonce             string         `json:"nonce,omitempty"`
+	IdTokenClaims     map[string]any `json:"id_token_claims"`
+	AccessTokenClaims map[string]any `json:"access_token_claims"`
 }
 
 // RedisTokenStorage handles OIDC token/session persistence in Redis.

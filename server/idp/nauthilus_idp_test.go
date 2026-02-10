@@ -16,7 +16,6 @@
 package idp
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -27,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
@@ -74,6 +74,15 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		SigningKeys: []config.OIDCKey{
 			{ID: "default", Key: signingKey, Active: true},
 		},
+		CustomScopes: []config.Oauth2CustomScope{
+			{
+				Name:        "resource",
+				Description: "Resource scope for access claims",
+				Claims: []config.OIDCCustomClaim{
+					{Name: "resource.role", Type: definitions.ClaimTypeStringArray},
+				},
+			},
+		},
 		Clients: []config.OIDCClient{
 			{
 				ClientID:             "client1",
@@ -99,7 +108,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	d := &deps.Deps{Cfg: cfg, Redis: redisClient}
 	idp := NewNauthilusIdP(d)
 	idp.tokenGen = &mockTokenGenerator{token: "fixed-token"}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	fixedTime := time.Date(2026, 1, 26, 8, 0, 0, 0, time.UTC)
 
@@ -202,33 +211,43 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		}
 		client := &config.OIDCClient{
 			ClientID: "client1",
-			Claims: config.IdTokenClaims{
-				Email:  "mail",
-				Groups: "memberOf",
+			IdTokenClaims: config.IdTokenClaims{
+				Mappings: []config.OIDCClaimMapping{
+					{Claim: definitions.ClaimEmail, Attribute: "mail", Type: definitions.ClaimTypeString},
+					{Claim: definitions.ClaimGroups, Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
+				},
+			},
+			AccessTokenClaims: config.AccessTokenClaims{
+				Mappings: []config.OIDCClaimMapping{
+					{Claim: "resource.role", Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
+				},
 			},
 		}
 
 		ctx, _ := gin.CreateTestContext(nil)
 
 		// Only openid requested -> no extra claims except defaults (sub, name, preferred_username)
-		claims, err := idp.GetClaims(ctx, user, client, []string{"openid"})
+		idClaims, accessClaims, err := idp.GetClaims(ctx, user, client, []string{"openid"})
 		assert.NoError(t, err)
-		assert.Equal(t, "user123", claims["sub"])
-		assert.Equal(t, "John Doe", claims["name"])
-		assert.Nil(t, claims["email"])
-		assert.Nil(t, claims["groups"])
+		assert.Equal(t, "user123", idClaims["sub"])
+		assert.Equal(t, "John Doe", idClaims["name"])
+		assert.Nil(t, idClaims["email"])
+		assert.Nil(t, idClaims["groups"])
+		assert.Nil(t, accessClaims["resource.role"])
 
 		// email requested
-		claims, err = idp.GetClaims(ctx, user, client, []string{"openid", "email"})
+		idClaims, accessClaims, err = idp.GetClaims(ctx, user, client, []string{"openid", "email"})
 		assert.NoError(t, err)
-		assert.Equal(t, "jdoe@example.com", claims["email"])
-		assert.Nil(t, claims["groups"])
+		assert.Equal(t, "jdoe@example.com", idClaims["email"])
+		assert.Nil(t, idClaims["groups"])
+		assert.Nil(t, accessClaims["resource.role"])
 
 		// groups requested
-		claims, err = idp.GetClaims(ctx, user, client, []string{"openid", "groups"})
+		idClaims, accessClaims, err = idp.GetClaims(ctx, user, client, []string{"openid", "groups", "resource"})
 		assert.NoError(t, err)
-		assert.Nil(t, claims["email"])
-		assert.Equal(t, []string{"group1"}, claims["groups"])
+		assert.Nil(t, idClaims["email"])
+		assert.Equal(t, []string{"group1"}, idClaims["groups"])
+		assert.Equal(t, []string{"group1"}, accessClaims["resource.role"])
 	})
 
 	t.Run("FilterScopes", func(t *testing.T) {
@@ -267,5 +286,87 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		_, err = idp.ValidateToken(ctx, opaqueToken)
 		assert.Error(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet(), "Redis should have been hit for opaque token")
+	})
+}
+
+func TestNauthilusIdP_ClientCredentials(t *testing.T) {
+	signingKey := generateTestKey()
+	oidcCfg := config.OIDCConfig{
+		Issuer: "https://issuer.example.com",
+		SigningKeys: []config.OIDCKey{
+			{ID: "default", Key: signingKey, Active: true},
+		},
+		Clients: []config.OIDCClient{
+			{
+				ClientID:            "cc-client",
+				ClientSecret:        "cc-secret",
+				GrantTypes:          []string{"client_credentials"},
+				Scopes:              []string{"api.read", "api.write"},
+				AccessTokenLifetime: time.Hour,
+			},
+			{
+				ClientID:     "authcode-only",
+				ClientSecret: "secret",
+				RedirectURIs: []string{"http://localhost/cb"},
+			},
+		},
+	}
+
+	cfg := &mockIdpConfig{
+		FileSettings: &config.FileSettings{
+			Server: &config.ServerSection{
+				Redis: config.Redis{
+					Prefix: "test:",
+				},
+			},
+		},
+		oidc: oidcCfg,
+	}
+
+	db, _ := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	d := &deps.Deps{Cfg: cfg, Redis: redisClient}
+	idpInst := NewNauthilusIdP(d)
+	ctx := t.Context()
+
+	t.Run("IssueClientCredentialsToken_Success", func(t *testing.T) {
+		accessToken, expiresIn, err := idpInst.IssueClientCredentialsToken(ctx, "cc-client", []string{"api.read"})
+		assert.NoError(t, err)
+		assert.NotEmpty(t, accessToken)
+		assert.Equal(t, time.Hour, expiresIn)
+
+		// Access token should be a JWT (contains dots)
+		assert.Contains(t, accessToken, ".")
+
+		// Validate the token
+		claims, err := idpInst.ValidateToken(ctx, accessToken)
+		assert.NoError(t, err)
+		assert.Equal(t, "cc-client", claims["sub"])
+		assert.Equal(t, "cc-client", claims["aud"])
+		assert.Equal(t, "https://issuer.example.com", claims["iss"])
+	})
+
+	t.Run("IssueClientCredentialsToken_UnsupportedGrant", func(t *testing.T) {
+		_, _, err := idpInst.IssueClientCredentialsToken(ctx, "authcode-only", []string{"openid"})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "does not support client_credentials")
+	})
+
+	t.Run("IssueClientCredentialsToken_UnknownClient", func(t *testing.T) {
+		_, _, err := idpInst.IssueClientCredentialsToken(ctx, "nonexistent", nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "client not found")
+	})
+
+	t.Run("SupportsGrantType", func(t *testing.T) {
+		ccClient, ok := idpInst.FindClient("cc-client")
+		assert.True(t, ok)
+		assert.True(t, ccClient.SupportsGrantType("client_credentials"))
+		assert.False(t, ccClient.SupportsGrantType("authorization_code"))
+
+		acClient, ok := idpInst.FindClient("authcode-only")
+		assert.True(t, ok)
+		assert.True(t, acClient.SupportsGrantType("authorization_code"))
+		assert.False(t, acClient.SupportsGrantType("client_credentials"))
 	})
 }

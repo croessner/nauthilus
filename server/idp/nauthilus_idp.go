@@ -189,7 +189,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	// Add mapped claims from session
-	for k, v := range session.Claims {
+	for k, v := range session.IdTokenClaims {
 		idClaims[k] = v
 	}
 
@@ -249,6 +249,66 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
+}
+
+// IssueClientCredentialsToken generates an access token for the Client Credentials Grant.
+// Per RFC 6749 §4.4, only an access token is returned (no id_token, no refresh_token).
+func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID string, scopes []string) (string, time.Duration, error) {
+	_, sp := n.tracer.Start(ctx, "idp.issue_client_credentials_token",
+		attribute.String("client_id", clientID),
+	)
+	defer sp.End()
+
+	client, ok := n.FindClient(clientID)
+	if !ok {
+		return "", 0, fmt.Errorf("client not found")
+	}
+
+	if !client.SupportsGrantType("client_credentials") {
+		return "", 0, fmt.Errorf("client does not support client_credentials grant type")
+	}
+
+	accessTokenLifetime := client.AccessTokenLifetime
+	if accessTokenLifetime == 0 {
+		accessTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultAccessTokenLifetime()
+	}
+
+	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
+	key, kid, err := n.keyMgr.GetActiveKey(ctx)
+	if err != nil {
+		sp.RecordError(err)
+
+		return "", 0, fmt.Errorf("failed to get active signing key: %w", err)
+	}
+
+	// Build session for client credentials (no user, client is the subject)
+	session := &OIDCSession{
+		ClientID:          clientID,
+		UserID:            clientID,
+		Scopes:            scopes,
+		AuthTime:          time.Now(),
+		AccessTokenClaims: make(map[string]any),
+	}
+
+	// Access Token
+	tokenIssuer := NewTokenIssuer(issuer, key, kid, session, n.storage, n.tokenGen)
+	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
+
+	var accessTokenString string
+
+	if accessTokenType == "opaque" {
+		accessTokenString, _, err = tokenIssuer.IssueOpaque(ctx, accessTokenLifetime)
+	} else {
+		accessTokenString, _, err = tokenIssuer.IssueJWT(ctx, accessTokenLifetime)
+	}
+
+	if err != nil {
+		sp.RecordError(err)
+
+		return "", 0, err
+	}
+
+	return accessTokenString, accessTokenLifetime, nil
 }
 
 // ExchangeRefreshToken exchanges a refresh token for a new set of tokens.
@@ -512,22 +572,23 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 }
 
 // GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.
-func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client any, scopes []string) (map[string]any, error) {
-	claims := make(map[string]any)
 
-	// Standard fixed claims
-	claims["sub"] = user.Id
-	claims["name"] = user.DisplayName
-	claims["preferred_username"] = user.Name
+func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client any, scopes []string) (map[string]any, map[string]any, error) {
+	idTokenClaims := map[string]any{
+		"sub":                user.Id,
+		"name":               user.DisplayName,
+		"preferred_username": user.Name,
+	}
+	accessTokenClaims := make(map[string]any)
 
-	// Map attributes from backend using FillIdTokenClaims if client is OIDCClient
+	// Map attributes from backend using claim mappings when client is OIDCClient.
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
 		// We need an AuthState to use FillIdTokenClaims
 		// We can create a lightweight AuthState just for mapping
 		authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
 		auth, ok := authRaw.(*core.AuthState)
 		if !ok || auth == nil {
-			return nil, fmt.Errorf("failed to create AuthState for mapping")
+			return nil, nil, fmt.Errorf("failed to create AuthState for mapping")
 		}
 
 		if auth.Runtime.GUID == "" {
@@ -536,8 +597,9 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 
 		auth.ReplaceAllAttributes(user.Attributes)
 
-		auth.FillIdTokenClaims(&oidcClient.Claims, claims, scopes)
+		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes)
+		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes)
 	}
 
-	return claims, nil
+	return idTokenClaims, accessTokenClaims, nil
 }

@@ -92,5 +92,19 @@
   "Yes": "Yes",
   "Cancel": "Cancel",
   "Invalid Request": "Invalid Request",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process."
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.",
+  "Device Authorization": "Device Authorization",
+  "Enter the code displayed on your device and sign in to authorize it.": "Enter the code displayed on your device and sign in to authorize it.",
+  "Device Code": "Device Code",
+  "Authorize Device": "Authorize Device",
+  "User code is required": "User code is required",
+  "Username and password are required": "Username and password are required",
+  "Invalid or expired user code": "Invalid or expired user code",
+  "Device code has expired": "Device code has expired",
+  "Device code has already been processed": "Device code has already been processed",
+  "Authentication failed": "Authentication failed",
+  "Internal server error": "Internal server error",
+  "Device Authorized": "Device Authorized",
+  "Your device has been successfully authorized.": "Your device has been successfully authorized.",
+  "You can close this window and return to your device.": "You can close this window and return to your device."
 }

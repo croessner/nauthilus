@@ -28,13 +28,13 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/luamod"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -205,36 +205,22 @@ func GetHookRoles(location, method string) []string {
 	return roles
 }
 
-// HasRequiredRoles checks if the user has any of the required roles for a hook.
+// HasRequiredRoles checks if the user has any of the required scopes for a hook.
 // If no roles are configured for the hook, it returns true (allowing access).
-// If JWT is not enabled or not properly configured, it returns true (allowing access).
+// If no OIDC claims are present in the context, it returns true (allowing access).
 func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, location, method string) bool {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	// Check if JWT auth is enabled
-	jwtAuth := cfg.GetServer().GetJWTAuth()
-	if !jwtAuth.IsEnabled() {
+	// Check if OIDC claims are present
+	claims := oidcbearer.GetClaimsFromContext(ctx)
+	if claims == nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "JWT authentication is not enabled, allowing access",
-		)
-
-		return true
-	}
-
-	// Check if JWT auth is properly configured
-	if jwtAuth.GetSecretKey() == "" || len(jwtAuth.GetUsers()) == 0 {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			cfg,
-			logger,
-			definitions.DbgLua,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "JWT authentication is not properly configured, allowing access",
+			definitions.LogKeyMsg, "No OIDC claims in context, allowing access",
 		)
 
 		return true
@@ -248,7 +234,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, fmt.Sprintf("Required roles for hook %s %s: %v", location, method, requiredRoles),
+		definitions.LogKeyMsg, fmt.Sprintf("Required scopes for hook %s %s: %v", location, method, requiredRoles),
 	)
 
 	// If no roles are configured, allow access
@@ -263,7 +249,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 				logger,
 				definitions.DbgLua,
 				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Trying with leading slash: %s, required roles: %v", locationWithSlash, requiredRoles),
+				definitions.LogKeyMsg, fmt.Sprintf("Trying with leading slash: %s, required scopes: %v", locationWithSlash, requiredRoles),
 			)
 		}
 
@@ -275,32 +261,32 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 				logger,
 				definitions.DbgLua,
 				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "No roles configured for this hook, allowing access",
+				definitions.LogKeyMsg, "No scopes configured for this hook, allowing access",
 			)
 
 			return true
 		}
 	}
 
-	// Check if the user has any of the required roles
-	for _, role := range requiredRoles {
+	// Check if the user has any of the required scopes
+	for _, scope := range requiredRoles {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Checking if user has role: %s", role),
+			definitions.LogKeyMsg, fmt.Sprintf("Checking if token has scope: %s", scope),
 		)
 
-		if jwtutil.HasRole(ctx, role) {
+		if oidcbearer.HasScope(claims, scope) {
 			util.DebugModuleWithCfg(
 				ctx.Request.Context(),
 				cfg,
 				logger,
 				definitions.DbgLua,
 				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("User has required role: %s, allowing access", role),
+				definitions.LogKeyMsg, fmt.Sprintf("Token has required scope: %s, allowing access", scope),
 			)
 
 			return true
@@ -313,7 +299,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, fmt.Sprintf("User does not have any of the required roles: %v, denying access", requiredRoles),
+		definitions.LogKeyMsg, fmt.Sprintf("Token does not have any of the required scopes: %v, denying access", requiredRoles),
 	)
 
 	return false

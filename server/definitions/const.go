@@ -189,22 +189,23 @@ const MsgClientClosedRequest = "Client Closed Request"
 // LogKeyLeadership is the log attribute name for recording singleflight role (leader/follower) in large logs.
 const LogKeyLeadership = "leadership"
 
-// Role constants for JWT authentication
+// Scope constants for OIDC Bearer token authentication (client_credentials flow).
+// These replace the legacy JWT role constants.
 const (
-	// RoleAdmin represents the admin role with full access to all features
-	RoleAdmin = "admin"
+	// ScopeAdmin grants full administrative access to the backchannel API.
+	ScopeAdmin = "nauthilus:admin"
 
-	// RoleSecurity represents the security role with access to security-related features
-	RoleSecurity = "security"
+	// ScopeSecurity grants access to security-related features (metrics, brute force listing).
+	ScopeSecurity = "nauthilus:security"
 
-	// RoleAuthenticate represents the role required to perform authentication requests
-	RoleAuthenticate = "authenticate"
+	// ScopeAuthenticate is the base scope required for all backchannel API access.
+	ScopeAuthenticate = "nauthilus:authenticate"
 
-	// RoleUserInfo represents the user_info role for accessing user information
-	RoleUserInfo = "user_info"
+	// ScopeUserInfo grants access to user information (no-auth mode).
+	ScopeUserInfo = "nauthilus:user_info"
 
-	// RoleListAccounts represents the list_accounts role for listing user accounts
-	RoleListAccounts = "list_accounts"
+	// ScopeListAccounts grants access to the list-accounts mode.
+	ScopeListAccounts = "nauthilus:list_accounts"
 )
 
 const (
@@ -662,6 +663,18 @@ const (
 	// OIDCTokenPrefixRefreshToken is the prefix for refresh tokens.
 	OIDCTokenPrefixRefreshToken = "na_rt_"
 
+	// OIDCGrantTypeDeviceCode is the grant_type value for the Device Authorization Grant (RFC 8628).
+	OIDCGrantTypeDeviceCode = "urn:ietf:params:oauth:grant-type:device_code"
+
+	// OIDCDeviceCodeDefaultInterval is the default polling interval in seconds for the device code flow.
+	OIDCDeviceCodeDefaultInterval = 5
+
+	// OIDCDeviceCodeDefaultExpiry is the default expiry time for device codes.
+	OIDCDeviceCodeDefaultExpiry = 10 * time.Minute
+
+	// OIDCDeviceCodeDefaultUserCodeLength is the default length for user codes (number of characters).
+	OIDCDeviceCodeDefaultUserCodeLength = 8
+
 	// ProtoSAML corresponds to the "saml" protocol
 	ProtoSAML = "saml"
 
@@ -825,8 +838,8 @@ const (
 	// CtxLocalCacheAuthKey is used as a key to store an Authentication structure for an authenticated user.
 	CtxLocalCacheAuthKey = "local_cache_auth"
 
-	// CtxJWTClaimsKey is used as a key to store JWT claims in the context.
-	CtxJWTClaimsKey = "jwt_claims"
+	// CtxOIDCClaimsKey is used as a key to store OIDC Bearer token claims in the context.
+	CtxOIDCClaimsKey = "oidc_claims"
 
 	// CtxRequestStartTimeKey is used as a key to store the request start time in the context.
 	CtxRequestStartTimeKey = "request_start_time"
@@ -1893,6 +1906,24 @@ const (
 
 	// ClaimTypeInteger is the OIDC custom-claim type for integers.
 	ClaimTypeInteger = "integer"
+
+	// ClaimTypeStringArray is the OIDC custom-claim type for string arrays.
+	ClaimTypeStringArray = "string_array"
+
+	// ClaimTypeBooleanArray is the OIDC custom-claim type for boolean arrays.
+	ClaimTypeBooleanArray = "boolean_array"
+
+	// ClaimTypeFloatArray is the OIDC custom-claim type for float arrays.
+	ClaimTypeFloatArray = "float_array"
+
+	// ClaimTypeIntegerArray is the OIDC custom-claim type for integer arrays.
+	ClaimTypeIntegerArray = "integer_array"
+
+	// ClaimTypeObject is the OIDC custom-claim type for JSON objects.
+	ClaimTypeObject = "object"
+
+	// ClaimTypeAddress is the OIDC custom-claim type for address objects.
+	ClaimTypeAddress = "address"
 )
 
 // Standard OIDC claim names.

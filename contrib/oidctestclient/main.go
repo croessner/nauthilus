@@ -63,23 +63,23 @@ const successPageTmpl = `
         }
         .status-success { background-color: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
         .status-error { background-color: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
-        .logout-btn { 
-            display: inline-block; 
-            padding: 10px 20px; 
-            background-color: #d9534f; 
-            color: white; 
-            text-decoration: none; 
+        .logout-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #d9534f;
+            color: white;
+            text-decoration: none;
             border-radius: 5px;
             margin-top: 20px;
             font-weight: bold;
         }
         .logout-btn:hover { background-color: #c9302c; }
-        .twofa-btn { 
-            display: inline-block; 
-            padding: 10px 20px; 
-            background-color: #5cb85c; 
-            color: white; 
-            text-decoration: none; 
+        .twofa-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #5cb85c;
+            color: white;
+            text-decoration: none;
             border-radius: 5px;
             margin-top: 20px;
             margin-right: 10px;
@@ -104,7 +104,7 @@ const successPageTmpl = `
             Front-channel Logout URI: <code>{{.FrontChannelLogoutURI}}</code><br>
             Back-channel Logout URI: <code>{{.BackChannelLogoutURI}}</code></p>
         </div>
-        
+
         <div class="section">
             <h2>Signature Verification</h2>
             {{if .SignatureVerified}}
@@ -230,7 +230,7 @@ func main() {
 		ClientSecret: clientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  "http://127.0.0.1:9094/oauth2",
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups", "dovecot", "offline", "offline_access"},
+		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access", "mail:account:read"},
 	}
 
 	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, config.RedirectURL, config.Scopes)

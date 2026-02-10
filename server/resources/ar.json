@@ -92,5 +92,19 @@
   "Yes": "نعم",
   "Cancel": "إلغاء",
   "Invalid Request": "طلب غير صالح",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "لا يمكن الوصول إلى صفحة تسجيل الدخول هذه إلا من خلال تدفق مصادقة OIDC أو SAML2 صالح. يرجى استخدام تطبيقك لبدء عملية تسجيل الدخول."
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "لا يمكن الوصول إلى صفحة تسجيل الدخول هذه إلا من خلال تدفق مصادقة OIDC أو SAML2 صالح. يرجى استخدام تطبيقك لبدء عملية تسجيل الدخول.",
+  "Device Authorization": "تفويض الجهاز",
+  "Enter the code displayed on your device and sign in to authorize it.": "أدخل الرمز المعروض على جهازك وسجّل الدخول لتفويضه.",
+  "Device Code": "رمز الجهاز",
+  "Authorize Device": "تفويض الجهاز",
+  "User code is required": "رمز المستخدم مطلوب",
+  "Username and password are required": "اسم المستخدم وكلمة المرور مطلوبان",
+  "Invalid or expired user code": "رمز المستخدم غير صالح أو منتهي الصلاحية",
+  "Device code has expired": "انتهت صلاحية رمز الجهاز",
+  "Device code has already been processed": "تمت معالجة رمز الجهاز بالفعل",
+  "Authentication failed": "فشلت المصادقة",
+  "Internal server error": "خطأ داخلي في الخادم",
+  "Device Authorized": "تم تفويض الجهاز",
+  "Your device has been successfully authorized.": "تم تفويض جهازك بنجاح.",
+  "You can close this window and return to your device.": "يمكنك إغلاق هذه النافذة والعودة إلى جهازك."
 }

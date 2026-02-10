@@ -92,5 +92,19 @@
   "Yes": "是",
   "Cancel": "取消",
   "Invalid Request": "无效请求",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "此登录页面只能通过有效的 OIDC 或 SAML2 身份验证流程访问。请使用您的应用程序启动登录过程。"
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "此登录 页面只能通过有效的 OIDC 或 SAML2 身份验证流程访问。请使用您的应用程序启动登录过 程。",
+  "Device Authorization": "设备授权",
+  "Enter the code displayed on your device and sign in to authorize it.": "输入设备上显示的代码并登录以授权该设备。",
+  "Device Code": "设备代码",
+  "Authorize Device": "授权设备",
+  "User code is required": "需要用户代码",
+  "Username and password are required": "需要用户名和密码",
+  "Invalid or expired user code": "用户代码无效或已过期",
+  "Device code has expired": "设备代码已过期",
+  "Device code has already been processed": "设备代码已被处理",
+  "Authentication failed": "身份验证失败",
+  "Internal server error": "服务器内部错误",
+  "Device Authorized": "设备已授权",
+  "Your device has been successfully authorized.": "您的设备已成功授权。",
+  "You can close this window and return to your device.": "您可以关闭此窗口并返回您的设备。"
 }

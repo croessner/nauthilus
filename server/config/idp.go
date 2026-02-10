@@ -92,6 +92,9 @@ type OIDCConfig struct {
 	AccessTokenType                    string              `mapstructure:"access_token_type"`
 	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
+	DeviceCodeExpiry                   time.Duration       `mapstructure:"device_code_expiry"`
+	DeviceCodePollingInterval          int                 `mapstructure:"device_code_polling_interval"`
+	DeviceCodeUserCodeLength           int                 `mapstructure:"device_code_user_code_length"`
 }
 
 // OIDCKey represents a single OIDC signing key.
@@ -250,6 +253,36 @@ func (o *OIDCConfig) GetAutoKeyRotation() bool {
 	return o.AutoKeyRotation
 }
 
+// GetDeviceCodeExpiry returns the device code expiry duration.
+// Defaults to OIDCDeviceCodeDefaultExpiry if not configured.
+func (o *OIDCConfig) GetDeviceCodeExpiry() time.Duration {
+	if o.DeviceCodeExpiry > 0 {
+		return o.DeviceCodeExpiry
+	}
+
+	return definitions.OIDCDeviceCodeDefaultExpiry
+}
+
+// GetDeviceCodePollingInterval returns the polling interval in seconds.
+// Defaults to OIDCDeviceCodeDefaultInterval if not configured.
+func (o *OIDCConfig) GetDeviceCodePollingInterval() int {
+	if o.DeviceCodePollingInterval > 0 {
+		return o.DeviceCodePollingInterval
+	}
+
+	return definitions.OIDCDeviceCodeDefaultInterval
+}
+
+// GetDeviceCodeUserCodeLength returns the user code length.
+// Defaults to OIDCDeviceCodeDefaultUserCodeLength if not configured.
+func (o *OIDCConfig) GetDeviceCodeUserCodeLength() int {
+	if o.DeviceCodeUserCodeLength > 0 {
+		return o.DeviceCodeUserCodeLength
+	}
+
+	return definitions.OIDCDeviceCodeDefaultUserCodeLength
+}
+
 // GetKeyRotationInterval returns the interval for auto key rotation.
 func (o *OIDCConfig) GetKeyRotationInterval() time.Duration {
 	if o.KeyRotationInterval > 0 {
@@ -324,24 +357,29 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 // OIDCClient represents an OIDC client configuration.
 type OIDCClient struct {
-	Name                              string        `mapstructure:"name"`
-	ClientID                          string        `mapstructure:"client_id" validate:"required"`
-	ClientSecret                      string        `mapstructure:"client_secret" validate:"required"`
-	RedirectURIs                      []string      `mapstructure:"redirect_uris" validate:"required,gt=0"`
-	Scopes                            []string      `mapstructure:"scopes"`
-	SkipConsent                       bool          `mapstructure:"skip_consent"`
-	DelayedResponse                   bool          `mapstructure:"delayed_response"`
-	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
-	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
-	AccessTokenType                   string        `mapstructure:"access_token_type"`
-	RefreshTokenLifetime              time.Duration `mapstructure:"refresh_token_lifetime"`
-	TokenEndpointAuthMethod           string        `mapstructure:"token_endpoint_auth_method"`
-	Claims                            IdTokenClaims `mapstructure:"claims"`
-	PostLogoutRedirectURIs            []string      `mapstructure:"post_logout_redirect_uris"`
-	BackChannelLogoutURI              string        `mapstructure:"backchannel_logout_uri"`
-	FrontChannelLogoutURI             string        `mapstructure:"frontchannel_logout_uri"`
-	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
-	LogoutRedirectURI                 string        `mapstructure:"logout_redirect_uri"`
+	Name                              string            `mapstructure:"name"`
+	ClientID                          string            `mapstructure:"client_id" validate:"required"`
+	ClientSecret                      string            `mapstructure:"client_secret"`
+	RedirectURIs                      []string          `mapstructure:"redirect_uris"`
+	Scopes                            []string          `mapstructure:"scopes"`
+	GrantTypes                        []string          `mapstructure:"grant_types"`
+	SkipConsent                       bool              `mapstructure:"skip_consent"`
+	DelayedResponse                   bool              `mapstructure:"delayed_response"`
+	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
+	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
+	AccessTokenType                   string            `mapstructure:"access_token_type"`
+	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
+	TokenEndpointAuthMethod           string            `mapstructure:"token_endpoint_auth_method"`
+	ClientPublicKey                   string            `mapstructure:"client_public_key"`
+	ClientPublicKeyFile               string            `mapstructure:"client_public_key_file"`
+	ClientPublicKeyAlgorithm          string            `mapstructure:"client_public_key_algorithm"`
+	IdTokenClaims                     IdTokenClaims     `mapstructure:"id_token_claims"`
+	AccessTokenClaims                 AccessTokenClaims `mapstructure:"access_token_claims"`
+	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
+	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
+	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
+	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
+	LogoutRedirectURI                 string            `mapstructure:"logout_redirect_uri"`
 }
 
 // GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.
@@ -379,6 +417,54 @@ func (c *OIDCClient) GetAccessTokenType(defaultType string) string {
 	}
 
 	return strings.ToLower(c.AccessTokenType)
+}
+
+// GetGrantTypes returns the allowed grant types for this client.
+// If none are configured, defaults to ["authorization_code"].
+func (c *OIDCClient) GetGrantTypes() []string {
+	if c == nil {
+		return nil
+	}
+
+	if len(c.GrantTypes) == 0 {
+		return []string{"authorization_code"}
+	}
+
+	return c.GrantTypes
+}
+
+// SupportsGrantType returns true if the client supports the given grant type.
+func (c *OIDCClient) SupportsGrantType(grantType string) bool {
+	if c == nil {
+		return false
+	}
+
+	for _, gt := range c.GetGrantTypes() {
+		if gt == grantType {
+			return true
+		}
+	}
+
+	return false
+}
+
+// GetClientPublicKey returns the client's public key content (inline or from file).
+func (c *OIDCClient) GetClientPublicKey() (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("client is nil")
+	}
+
+	return GetContent(c.ClientPublicKey, c.ClientPublicKeyFile)
+}
+
+// GetClientPublicKeyAlgorithm returns the algorithm for the client's public key.
+// Defaults to "RS256" if not configured.
+func (c *OIDCClient) GetClientPublicKeyAlgorithm() string {
+	if c == nil || c.ClientPublicKeyAlgorithm == "" {
+		return "RS256"
+	}
+
+	return c.ClientPublicKeyAlgorithm
 }
 
 // SAML2Config represents the configuration for SAML 2.0.

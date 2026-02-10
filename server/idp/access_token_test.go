@@ -16,7 +16,6 @@
 package idp
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -29,7 +28,7 @@ import (
 )
 
 func TestAccessToken_OOP(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db, mock := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
 	storage := NewRedisTokenStorage(redisClient, "test:")
@@ -40,11 +39,11 @@ func TestAccessToken_OOP(t *testing.T) {
 	}
 
 	session := &OIDCSession{
-		ClientID: "client1",
-		UserID:   "user1",
-		Scopes:   []string{"openid", "profile"},
-		AuthTime: time.Now(),
-		Claims:   map[string]any{"name": "Test User"},
+		ClientID:          "client1",
+		UserID:            "user1",
+		Scopes:            []string{"openid", "profile"},
+		AuthTime:          time.Now(),
+		AccessTokenClaims: map[string]any{"name": "Test User"},
 	}
 
 	issuer := "https://issuer.local"

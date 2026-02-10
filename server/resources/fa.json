@@ -92,5 +92,19 @@
   "Yes": "بله",
   "Cancel": "لغو",
   "Invalid Request": "درخواست نامعتبر",
-  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "این صفحه ورود فقط از طریق یک جریان احراز هویت OIDC یا SAML2 معتبر قابل دسترسی است. لطفاً از اپلیکیشن خود برای شروع فرآیند ورود استفاده کنید."
+  "This login page can only be accessed through a valid OIDC or SAML2 authentication flow. Please use your application to initiate the login process.": "این صفحه ورود فقط از طریق یک جریان احراز هویت OIDC یا SAML2 معتبر قابل دسترسی است. لطفاً از اپلیکیشن خود برای شروع فرآیند ورود استفاده کنید.",
+  "Device Authorization": "مجوز دستگاه",
+  "Enter the code displayed on your device and sign in to authorize it.": "کد نمایش داده شده روی دستگاه خود را وارد کنید و برای مجوز دادن وارد شوید.",
+  "Device Code": "کد دستگاه",
+  "Authorize Device": "مجوز دستگاه",
+  "User code is required": "کد کاربر الزامی است",
+  "Username and password are required": "نام کاربری و رمز عبور الزامی هستند",
+  "Invalid or expired user code": "کد کاربر نامعتبر یا منقضی شده",
+  "Device code has expired": "کد دستگاه منقضی شده است",
+  "Device code has already been processed": "کد دستگاه قبلاً پردازش شده است",
+  "Authentication failed": "احراز هویت ناموفق",
+  "Internal server error": "خطای داخلی سرور",
+  "Device Authorized": "دستگاه مجاز شد",
+  "Your device has been successfully authorized.": "دستگاه شما با موفقیت مجاز شد.",
+  "You can close this window and return to your device.": "می‌توانید این پنجره را ببندید و به دستگاه خود بازگردید."
 }

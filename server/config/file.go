@@ -2880,6 +2880,9 @@ func (f *FileSettings) HandleFile() (err error) {
 	validate.RegisterValidation("validatDefaultBackendName", validatDefaultBackendName)
 	// Register custom validator for alphanumeric characters and symbols
 	validate.RegisterValidation("alphanumsymbol", isAlphanumSymbol)
+	validate.RegisterValidation("scope_token", isScopeToken)
+	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
 	// Register custom hostname validator that allows optional trailing dot
 	validate.RegisterValidation("hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot)
 
