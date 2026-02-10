@@ -47,7 +47,7 @@ type ServerSection struct {
 	DisabledEndpoints         Endpoint                 `mapstructure:"disabled_endpoints" validate:"omitempty"`
 	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
 	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
-	JWTAuth                   JWTAuth                  `mapstructure:"jwt_auth" validate:"omitempty"`
+	OIDCAuth                  OIDCAuth                 `mapstructure:"oidc_auth" validate:"omitempty"`
 	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
 	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`
@@ -323,14 +323,14 @@ func (s *ServerSection) GetBasicAuth() *BasicAuth {
 	return &s.BasicAuth
 }
 
-// GetJWTAuth retrieves a pointer to the JWTAuth configuration from the ServerSection instance.
-// Returns a new empty JWTAuth struct if the ServerSection is nil.
-func (s *ServerSection) GetJWTAuth() *JWTAuth {
+// GetOIDCAuth retrieves a pointer to the OIDCAuth configuration from the ServerSection instance.
+// Returns a new empty OIDCAuth struct if the ServerSection is nil.
+func (s *ServerSection) GetOIDCAuth() *OIDCAuth {
 	if s == nil {
-		return &JWTAuth{}
+		return &OIDCAuth{}
 	}
 
-	return &s.JWTAuth
+	return &s.OIDCAuth
 }
 
 // GetTLS retrieves the TLS configuration from the ServerSection instance.
@@ -752,24 +752,6 @@ type BasicAuth struct {
 	Password string `mapstructure:"password" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
 }
 
-// JWTAuth represents the configuration for JWT authentication.
-type JWTAuth struct {
-	Enabled            bool          `mapstructure:"enabled"`
-	SecretKey          string        `mapstructure:"secret_key" validate:"omitempty,min=32,alphanumsymbol,excludesall= "`
-	TokenExpiry        time.Duration `mapstructure:"token_expiry" validate:"omitempty,gt=0"`
-	RefreshToken       bool          `mapstructure:"refresh_token"`
-	RefreshTokenExpiry time.Duration `mapstructure:"refresh_token_expiry" validate:"omitempty,gt=0"`
-	Users              []*JWTUser    `mapstructure:"users" validate:"omitempty,dive"`
-	StoreInRedis       bool          `mapstructure:"store_in_redis"`
-}
-
-// JWTUser represents a user configuration for JWT authentication.
-type JWTUser struct {
-	Username string   `mapstructure:"username" validate:"required,excludesall= "`
-	Password string   `mapstructure:"password" validate:"required,min=8,excludesall= "`
-	Roles    []string `mapstructure:"roles" validate:"omitempty,dive"`
-}
-
 // IsEnabled returns true if basic HTTP authentication is enabled, otherwise false.
 // Returns false if the BasicAuth is nil.
 func (b *BasicAuth) IsEnabled() bool {
@@ -778,106 +760,6 @@ func (b *BasicAuth) IsEnabled() bool {
 	}
 
 	return b.Enabled
-}
-
-// IsEnabled returns true if JWT authentication is enabled, otherwise false.
-// Returns false if the JWTAuth is nil.
-func (j *JWTAuth) IsEnabled() bool {
-	if j == nil {
-		return false
-	}
-
-	return j.Enabled
-}
-
-// GetSecretKey returns the secret key used for JWT signing.
-// Returns an empty string if the JWTAuth is nil.
-func (j *JWTAuth) GetSecretKey() string {
-	if j == nil {
-		return ""
-	}
-
-	return j.SecretKey
-}
-
-// GetTokenExpiry returns the token expiry duration.
-// Returns 0 if the JWTAuth is nil.
-func (j *JWTAuth) GetTokenExpiry() time.Duration {
-	if j == nil {
-		return 0
-	}
-
-	return j.TokenExpiry
-}
-
-// IsRefreshTokenEnabled returns true if refresh tokens are enabled.
-// Returns false if the JWTAuth is nil.
-func (j *JWTAuth) IsRefreshTokenEnabled() bool {
-	if j == nil {
-		return false
-	}
-
-	return j.RefreshToken
-}
-
-// GetRefreshTokenExpiry returns the refresh token expiry duration.
-// Returns 0 if the JWTAuth is nil.
-func (j *JWTAuth) GetRefreshTokenExpiry() time.Duration {
-	if j == nil {
-		return 0
-	}
-
-	return j.RefreshTokenExpiry
-}
-
-// GetUsers returns the list of JWT users.
-// Returns an empty slice if the JWTAuth is nil.
-func (j *JWTAuth) GetUsers() []*JWTUser {
-	if j == nil {
-		return []*JWTUser{}
-	}
-
-	return j.Users
-}
-
-// IsStoreInRedisEnabled returns true if tokens should be stored in Redis.
-// Returns false if the JWTAuth is nil.
-func (j *JWTAuth) IsStoreInRedisEnabled() bool {
-	if j == nil {
-		return false
-	}
-
-	return j.StoreInRedis
-}
-
-// GetUsername returns the username of the JWT user.
-// Returns an empty string if the JWTUser is nil.
-func (u *JWTUser) GetUsername() string {
-	if u == nil {
-		return ""
-	}
-
-	return u.Username
-}
-
-// GetPassword returns the password of the JWT user.
-// Returns an empty string if the JWTUser is nil.
-func (u *JWTUser) GetPassword() string {
-	if u == nil {
-		return ""
-	}
-
-	return u.Password
-}
-
-// GetRoles returns the roles of the JWT user.
-// Returns an empty slice if the JWTUser is nil.
-func (u *JWTUser) GetRoles() []string {
-	if u == nil {
-		return []string{}
-	}
-
-	return u.Roles
 }
 
 // GetUsername returns the username configured for basic HTTP authentication.
@@ -898,6 +780,24 @@ func (b *BasicAuth) GetPassword() string {
 	}
 
 	return b.Password
+}
+
+// OIDCAuth represents the configuration for OIDC Bearer token authentication
+// on the backchannel API. When enabled, the OIDC Bearer middleware validates
+// tokens issued by the built-in IdP (client_credentials flow) for /api/v1/* routes.
+// This is independent of idp.oidc.enabled, which controls whether the IdP itself is active.
+type OIDCAuth struct {
+	Enabled bool `mapstructure:"enabled"`
+}
+
+// IsEnabled returns true if OIDC Bearer authentication is enabled for the backchannel API.
+// Returns false if the OIDCAuth is nil.
+func (o *OIDCAuth) IsEnabled() bool {
+	if o == nil {
+		return false
+	}
+
+	return o.Enabled
 }
 
 // Log represents the configuration for logging.

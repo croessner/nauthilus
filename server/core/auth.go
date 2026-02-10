@@ -42,10 +42,10 @@ import (
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
@@ -2910,17 +2910,10 @@ func (a *AuthState) Ctx() context.Context {
 	return svcctx.Get()
 }
 
-// HasJWTRole checks if the user has the specified role in their JWT token.
-// It retrieves the JWT claims from the context and checks if the user has the required role.
-// If JWT authentication is not enabled or no claims are found, it returns false.
-func (a *AuthState) HasJWTRole(ctx *gin.Context, role string) bool {
-	// Check if JWT auth is enabled
-	if !a.cfg().GetServer().GetJWTAuth().IsEnabled() {
-		return false
-	}
-
-	// Use the jwtutil package to check if the user has the required role
-	return jwtutil.HasRole(ctx, role)
+// HasOIDCScope checks if the current request's OIDC Bearer token contains the specified scope.
+// Returns false if no OIDC claims are present in the context.
+func (a *AuthState) HasOIDCScope(ctx *gin.Context, scope string) bool {
+	return oidcbearer.HasScopeFromContext(ctx, scope)
 }
 
 // SetOperationMode sets the operation mode of the AuthState object based on the "mode" query parameter from the provided gin context.
@@ -2955,14 +2948,16 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	case "no-auth":
 		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=no-auth")
 
-		// Check if JWT is enabled and user has the required role
-		if cfg.GetServer().GetJWTAuth().IsEnabled() {
-			if a.HasJWTRole(ctx, "user_info") {
+		// Check if OIDC Bearer token has the required scope
+		claims := oidcbearer.GetClaimsFromContext(ctx)
+
+		if claims != nil {
+			if a.HasOIDCScope(ctx, definitions.ScopeUserInfo) {
 				a.Request.NoAuth = true
 			} else {
 				level.Warn(logger).Log(
 					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, "JWT user does not have the 'user_info' role required for no-auth mode",
+					definitions.LogKeyMsg, "OIDC token missing scope '"+definitions.ScopeUserInfo+"' required for no-auth mode",
 				)
 			}
 		} else {
@@ -2973,14 +2968,16 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 
 		a.Request.Protocol.Set(definitions.ProtoAccountProvider)
 
-		// Check if JWT is enabled and user has the required role
-		if cfg.GetServer().GetJWTAuth().IsEnabled() {
-			if a.HasJWTRole(ctx, "list_accounts") {
+		// Check if OIDC Bearer token has the required scope
+		claims := oidcbearer.GetClaimsFromContext(ctx)
+
+		if claims != nil {
+			if a.HasOIDCScope(ctx, definitions.ScopeListAccounts) {
 				a.Request.ListAccounts = true
 			} else {
 				level.Warn(logger).Log(
 					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, "JWT user does not have the 'list_accounts' role required for list-accounts mode",
+					definitions.LogKeyMsg, "OIDC token missing scope '"+definitions.ScopeListAccounts+"' required for list-accounts mode",
 				)
 			}
 		} else {

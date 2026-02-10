@@ -20,8 +20,8 @@ import (
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
@@ -45,25 +45,18 @@ func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *H
 func (h *Handler) Register(router gin.IRouter) {
 	router.GET("/metrics", func(ctx *gin.Context) {
 		cfg := h.cfg
-		logger := h.logger
-		redisClient := h.redis
 
-		// If JWT is enabled, allow only users with RoleSecurity
-		if cfg.GetServer().GetJWTAuth().IsEnabled() {
-			tokenString, err := core.ExtractJWTTokenWithCfg(ctx, cfg)
-			if err == nil {
-				if claims, err := core.ValidateJWTToken(ctx, tokenString, core.JWTDeps{Cfg: cfg, Logger: logger, Redis: redisClient}); err == nil {
-					for _, role := range claims.Roles {
-						if role == definitions.RoleSecurity {
-							promhttp.HandlerFor(
-								prometheus.DefaultGatherer,
-								promhttp.HandlerOpts{DisableCompression: true},
-							).ServeHTTP(ctx.Writer, ctx.Request)
+		// If OIDC Bearer token is present, allow only tokens with ScopeSecurity
+		claims := oidcbearer.GetClaimsFromContext(ctx)
 
-							return
-						}
-					}
-				}
+		if claims != nil {
+			if oidcbearer.HasScope(claims, definitions.ScopeSecurity) {
+				promhttp.HandlerFor(
+					prometheus.DefaultGatherer,
+					promhttp.HandlerOpts{DisableCompression: true},
+				).ServeHTTP(ctx.Writer, ctx.Request)
+
+				return
 			}
 		}
 

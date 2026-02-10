@@ -36,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/model/admin"
 	bf "github.com/croessner/nauthilus/server/model/bruteforce"
 	restdto "github.com/croessner/nauthilus/server/model/rest"
@@ -539,35 +540,12 @@ func HandleBruteForceList(deps restAdminDeps) gin.HandlerFunc {
 func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 	logger := deps.effectiveLogger()
 
-	// Check if JWT auth is enabled
-	if deps.Cfg.GetServer().GetJWTAuth().IsEnabled() {
-		// Extract token
-		tokenString, err := ExtractJWTTokenWithCfg(ctx, deps.Cfg)
-		if err == nil {
-			// Validate token
-			claims, err := ValidateJWTToken(ctx, tokenString, JWTDeps{Cfg: deps.Cfg, Logger: deps.Logger, Redis: deps.Redis})
-			if err == nil {
-				// Check if user has the security or admin role
-				hasRequiredRole := false
-				for _, role := range claims.Roles {
-					if role == definitions.RoleSecurity || role == definitions.RoleAdmin {
-						hasRequiredRole = true
-						break
-					}
-				}
+	// Check if OIDC Bearer token has the required scope
+	claims := oidcbearer.GetClaimsFromContext(ctx)
 
-				if !hasRequiredRole {
-					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: security or admin"})
-
-					return
-				}
-			} else {
-				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-
-				return
-			}
-		} else {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+	if claims != nil {
+		if !oidcbearer.HasAnyScope(claims, definitions.ScopeSecurity, definitions.ScopeAdmin) {
+			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required scope: " + definitions.ScopeSecurity + " or " + definitions.ScopeAdmin})
 
 			return
 		}
@@ -608,10 +586,9 @@ func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 	})
 }
 
-// HandleConfigLoad handles loading the server configuration and applies necessary JWT authentication checks.
-// This function validates a provided JWT token for required roles when authentication is enabled.
-// If JWT authentication fails, appropriate HTTP error responses are returned, such as Unauthorized or Forbidden.
-// On success, it retrieves the server configuration as JSON and binds it to the request context.
+// HandleConfigLoad handles loading the server configuration with OIDC scope checks.
+// If an OIDC Bearer token is present, it verifies the security or admin scope.
+// On success, it retrieves the server configuration as JSON and returns it.
 func (deps restAdminDeps) HandleConfigLoad(ctx *gin.Context) {
 	if err := deps.validate(); err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
@@ -622,35 +599,12 @@ func (deps restAdminDeps) HandleConfigLoad(ctx *gin.Context) {
 	cfg := deps.effectiveCfg()
 	logger := deps.effectiveLogger()
 
-	// Check if JWT auth is enabled
-	if cfg.GetServer().GetJWTAuth().IsEnabled() {
-		// Extract token
-		tokenString, err := ExtractJWTTokenWithCfg(ctx, cfg)
-		if err == nil {
-			// Validate token
-			claims, err := ValidateJWTToken(ctx, tokenString, JWTDeps{Cfg: cfg, Logger: logger, Redis: deps.Redis})
-			if err == nil {
-				// Check if user has the config role
-				hasRequiredRole := false
-				for _, role := range claims.Roles {
-					if role == definitions.RoleSecurity || role == definitions.RoleAdmin {
-						hasRequiredRole = true
-						break
-					}
-				}
+	// Check if OIDC Bearer token has the required scope
+	claims := oidcbearer.GetClaimsFromContext(ctx)
 
-				if !hasRequiredRole {
-					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: config or admin"})
-
-					return
-				}
-			} else {
-				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-
-				return
-			}
-		} else {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+	if claims != nil {
+		if !oidcbearer.HasAnyScope(claims, definitions.ScopeSecurity, definitions.ScopeAdmin) {
+			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required scope: " + definitions.ScopeSecurity + " or " + definitions.ScopeAdmin})
 
 			return
 		}
