@@ -230,7 +230,7 @@ func main() {
 		ClientSecret: clientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  "http://127.0.0.1:9094/oauth2",
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access", "mail.account.read"},
+		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access", "mail:account:read"},
 	}
 
 	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, config.RedirectURL, config.Scopes)
