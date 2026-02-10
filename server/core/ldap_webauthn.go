@@ -84,7 +84,7 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 		return nil, err
 	}
 
-	username := handleMasterUserMode(lm.effectiveCfg(), auth)
+	username := auth.handleMasterUserMode()
 
 	if username == "" {
 		util.DebugModuleWithCfg(
@@ -205,7 +205,7 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 		return err
 	}
 
-	username := handleMasterUserMode(lm.effectiveCfg(), auth)
+	username := auth.handleMasterUserMode()
 	if username == "" {
 		util.DebugModuleWithCfg(
 			lctx,
@@ -338,7 +338,7 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 		return err
 	}
 
-	username := handleMasterUserMode(lm.effectiveCfg(), auth)
+	username := auth.handleMasterUserMode()
 	credBytes, err := jsonIter.Marshal(credential)
 	if err != nil {
 		return err
@@ -417,7 +417,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 
 	objectClass := protocol.GetWebAuthnObjectClass()
 
-	username := handleMasterUserMode(lm.effectiveCfg(), auth)
+	username := auth.handleMasterUserMode()
 	if username == "" {
 		util.DebugModuleWithCfg(
 			lctx,

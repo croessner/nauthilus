@@ -173,7 +173,7 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 		defer stopTimer()
 	}
 
-	username := handleMasterUserMode(a.cfg(), a)
+	username := a.handleMasterUserMode()
 
 	if strings.Contains(username, "@") {
 		split := strings.Split(username, "@")
