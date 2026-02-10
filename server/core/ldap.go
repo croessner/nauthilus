@@ -108,10 +108,8 @@ func (lm *ldapManagerImpl) loadSearchConfig(endSpan spanEnder, protocolName stri
 			err = errors.ErrLDAPConfig.WithDetail(fmt.Sprintf(opts.missingProtocolDetail, protocolName))
 		}
 
-		if err != nil || protocol == nil {
-			if endSpan != nil {
-				endSpan()
-			}
+		if endSpan != nil {
+			endSpan()
 		}
 
 		return cfg, err
