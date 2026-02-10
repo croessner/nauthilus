@@ -595,13 +595,22 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	pCtx, pSpan := tr.Start(actx, "ldap.accountdb.prepare")
 	_ = pCtx
 
-	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Request.Protocol.Get(), lm.poolName); err != nil {
 		pSpan.End()
 
-		if err == nil {
-			err = errors.ErrLDAPConfig.WithDetail(
-				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", auth.Request.Protocol.Get()))
-		}
+		return
+	}
+
+	if protocol == nil {
+		pSpan.End()
+
+		return
+	}
+
+	if filter, err = protocol.GetListAccountsFilter(); err != nil {
+		pSpan.End()
+
+		err = nil
 
 		return
 	}
@@ -613,12 +622,6 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	}
 
 	if attributes, err = protocol.GetAttributes(); err != nil {
-		pSpan.End()
-
-		return
-	}
-
-	if filter, err = protocol.GetListAccountsFilter(); err != nil {
 		pSpan.End()
 
 		return

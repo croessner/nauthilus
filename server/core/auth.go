@@ -2765,7 +2765,14 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	for _, backendType := range a.cfg().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
-			mgr := NewLDAPManager(backendType.GetName(), a.deps)
+			poolName := backendType.GetName()
+			if poolName == "" || poolName == definitions.DefaultBackendName {
+				if resolvedPoolName, ok := config.ResolveLDAPSearchPoolName(a.Cfg(), definitions.ProtoAccountProvider); ok {
+					poolName = resolvedPoolName
+				}
+			}
+
+			mgr := NewLDAPManager(poolName, a.deps)
 			accounts = append(accounts, &AccountListMap{
 				definitions.BackendLDAP,
 				mgr.AccountDB,
