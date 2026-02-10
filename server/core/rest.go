@@ -117,29 +117,35 @@ func NewConfigLoadHandler(cfg config.File, logger *slog.Logger, redisClient redi
 
 func (a *AuthState) handleMasterUserMode() string {
 	cfg := a.deps.Cfg
-	if cfg.GetServer().GetMasterUser().IsEnabled() {
-		if strings.Count(a.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
-			parts := strings.Split(a.Request.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
-
-			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
-				return a.Request.Username
-			}
-
-			if !a.Runtime.MasterUserMode {
-				a.Runtime.MasterUserMode = true
-
-				// Return master user
-				return parts[1]
-			} else {
-				a.Runtime.MasterUserMode = false
-
-				// Return real user
-				return parts[0]
-			}
-		}
+	if !cfg.GetServer().GetMasterUser().IsEnabled() {
+		return a.Request.Username
 	}
 
-	return a.Request.Username
+	delimiter := cfg.GetServer().GetMasterUser().GetDelimiter()
+	if delimiter == "" {
+		return a.Request.Username
+	}
+
+	left, right, ok := strings.Cut(a.Request.Username, delimiter)
+	if !ok {
+		return a.Request.Username
+	}
+
+	if left == "" || right == "" || strings.Contains(right, delimiter) {
+		return a.Request.Username
+	}
+
+	if a.Runtime.MasterUserMode {
+		a.Runtime.MasterUserMode = false
+
+		// Return real user
+		return left
+	}
+
+	a.Runtime.MasterUserMode = true
+
+	// Return master user
+	return right
 }
 
 // HandleAuthentication handles the authentication logic based on the selected service type.
