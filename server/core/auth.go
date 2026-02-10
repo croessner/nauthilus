@@ -2760,7 +2760,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	// This is a conservative estimate, we'll allocate based on the number of backends
 	accountList = make(AccountList, 0, 100)
 
-	a.Request.Protocol.Set("account-provider")
+	a.Request.Protocol.Set(definitions.ProtoAccountProvider)
 
 	for _, backendType := range a.cfg().GetServer().GetBackends() {
 		switch backendType.Get() {
@@ -2963,6 +2963,8 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 		}
 	case "list-accounts":
 		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
+
+		a.Request.Protocol.Set(definitions.ProtoAccountProvider)
 
 		// Check if JWT is enabled and user has the required role
 		if cfg.GetServer().GetJWTAuth().IsEnabled() {

@@ -668,6 +668,9 @@ const (
 	// ProtoIDP corresponds to the "idp" protocol
 	ProtoIDP = "idp"
 
+	// ProtoAccountProvider corresponds to the "account-provider" protocol
+	ProtoAccountProvider = "account-provider"
+
 	// ProtoDefault corresponds to the default protocol
 	ProtoDefault = "default"
 )
