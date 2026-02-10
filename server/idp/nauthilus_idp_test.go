@@ -16,7 +16,6 @@
 package idp
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -75,6 +74,15 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		SigningKeys: []config.OIDCKey{
 			{ID: "default", Key: signingKey, Active: true},
 		},
+		CustomScopes: []config.Oauth2CustomScope{
+			{
+				Name:        "resource",
+				Description: "Resource scope for access claims",
+				Claims: []config.OIDCCustomClaim{
+					{Name: "resource.role", Type: definitions.ClaimTypeStringArray},
+				},
+			},
+		},
 		Clients: []config.OIDCClient{
 			{
 				ClientID:             "client1",
@@ -100,7 +108,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	d := &deps.Deps{Cfg: cfg, Redis: redisClient}
 	idp := NewNauthilusIdP(d)
 	idp.tokenGen = &mockTokenGenerator{token: "fixed-token"}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	fixedTime := time.Date(2026, 1, 26, 8, 0, 0, 0, time.UTC)
 
@@ -235,7 +243,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.Nil(t, accessClaims["resource.role"])
 
 		// groups requested
-		idClaims, accessClaims, err = idp.GetClaims(ctx, user, client, []string{"openid", "groups"})
+		idClaims, accessClaims, err = idp.GetClaims(ctx, user, client, []string{"openid", "groups", "resource"})
 		assert.NoError(t, err)
 		assert.Nil(t, idClaims["email"])
 		assert.Equal(t, []string{"group1"}, idClaims["groups"])
