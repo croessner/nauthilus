@@ -2048,6 +2048,34 @@ func isAlphanumSymbol(fl validator.FieldLevel) bool {
 	})
 }
 
+// isScopeToken validates a scope-token according to RFC 6749 (OAuth 2.0) ABNF.
+// Allowed: %x21 / %x23-5B / %x5D-7E (no spaces, quotes, or backslashes; ASCII only).
+func isScopeToken(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return false
+	}
+
+	for _, r := range value {
+		if r < 0x21 || r > 0x7E || r == 0x22 || r == 0x5C {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isOIDCClaimName validates an OIDC claim name as a non-empty JSON member name.
+// It allows any Unicode characters except control characters.
+func isOIDCClaimName(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return false
+	}
+
+	return !strings.ContainsFunc(value, unicode.IsControl)
+}
+
 // hostnameRFC1123WithOptionalTrailingDot validates that the field value is a valid RFC1123 hostname
 // and additionally allows an optional trailing dot (FQDN form).
 // Implementation detail: If the value ends with a dot, the dot is stripped before validating

@@ -18,7 +18,7 @@ package config
 import "fmt"
 
 type Oauth2CustomScope struct {
-	Name        string            `mapstructure:"name" validate:"required,alphanumunicode,excludesall= "`
+	Name        string            `mapstructure:"name" validate:"required,scope_token"`
 	Description string            `mapstructure:"description" validate:"required"`
 	Claims      []OIDCCustomClaim `mapstructure:"claims" validate:"required,dive"`
 	Other       map[string]any    `mapstructure:",remain"`
@@ -65,8 +65,8 @@ func (s *Oauth2CustomScope) GetOther() map[string]any {
 }
 
 type OIDCCustomClaim struct {
-	Name string
-	Type string
+	Name string `mapstructure:"name" validate:"required,oidc_claim_name"`
+	Type string `mapstructure:"type"`
 }
 
 // GetName retrieves the name of the custom claim.
