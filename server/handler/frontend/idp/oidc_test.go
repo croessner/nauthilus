@@ -375,10 +375,11 @@ func TestOIDCHandler_Logout(t *testing.T) {
 			h.Logout(c)
 		})
 
-		// Create a mock ID token hint
+		// Create a mock ID token hint (openid scope required per OIDC Core 1.0 §3.1.2.1)
 		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
 			ClientID: "test-client",
 			UserID:   "user123",
+			Scopes:   []string{definitions.ScopeOpenId},
 			AuthTime: time.Now(),
 		})
 
@@ -713,6 +714,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:    "test-client",
 			UserID:      "user123",
+			Scopes:      []string{definitions.ScopeOpenId},
 			RedirectURI: "https://app.com/callback",
 			Nonce:       "test-nonce",
 		}
@@ -772,6 +774,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		oidcSession := &idp.OIDCSession{
 			ClientID:    specialClientID,
 			UserID:      "user123",
+			Scopes:      []string{definitions.ScopeOpenId},
 			RedirectURI: "https://app.com/callback",
 		}
 		sessionData, _ := json.Marshal(oidcSession)

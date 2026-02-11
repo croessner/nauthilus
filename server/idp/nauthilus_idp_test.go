@@ -149,6 +149,24 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.Equal(t, "test-nonce", claims["nonce"])
 	})
 
+	t.Run("IssueWithoutOpenIDScope", func(t *testing.T) {
+		// Per OIDC Core 1.0 §3.1.2.1: without "openid" scope, no id_token should be issued.
+		session := &OIDCSession{
+			ClientID: "client1",
+			UserID:   "user123",
+			Scopes:   []string{"profile"},
+			AuthTime: fixedTime,
+			Nonce:    "test-nonce",
+		}
+
+		idToken, accessToken, refreshToken, expiresIn, err := idp.IssueTokens(ctx, session)
+		assert.NoError(t, err)
+		assert.Empty(t, idToken, "id_token must be empty when openid scope is not requested")
+		assert.NotEmpty(t, accessToken)
+		assert.Empty(t, refreshToken)
+		assert.Equal(t, 2*time.Hour, expiresIn)
+	})
+
 	t.Run("IssueWithOfflineAccess", func(t *testing.T) {
 		session := &OIDCSession{
 			ClientID: "client1",

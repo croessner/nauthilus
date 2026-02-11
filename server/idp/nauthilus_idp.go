@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -149,7 +150,9 @@ func (n *NauthilusIdP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, 
 	return false
 }
 
-// IssueTokens generates an ID token and an access token for the given OIDC session.
+// IssueTokens generates tokens for the given OIDC session.
+// Per OIDC Core 1.0 §3.1.2.1, an ID token is only issued when the "openid" scope is present.
+// Without "openid", this behaves as a pure OAuth 2.0 token response (access_token only).
 func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.issue_tokens",
 		attribute.String("client_id", session.ClientID),
@@ -175,33 +178,37 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 
 	now := time.Now()
 
-	// ID Token Claims
-	idClaims := jwt.MapClaims{
-		"iss":       issuer,
-		"sub":       session.UserID,
-		"aud":       session.ClientID,
-		"exp":       now.Add(accessTokenLifetime).Unix(),
-		"iat":       now.Unix(),
-		"auth_time": session.AuthTime.Unix(),
-	}
-	if session.Nonce != "" {
-		idClaims["nonce"] = session.Nonce
-	}
+	// Per OIDC Core 1.0 §3.1.2.1: ID token is only issued when the "openid" scope is requested.
+	var idTokenString string
 
-	// Add mapped claims from session
-	for k, v := range session.IdTokenClaims {
-		idClaims[k] = v
-	}
+	if slices.Contains(session.Scopes, definitions.ScopeOpenId) {
+		idClaims := jwt.MapClaims{
+			"iss":       issuer,
+			"sub":       session.UserID,
+			"aud":       session.ClientID,
+			"exp":       now.Add(accessTokenLifetime).Unix(),
+			"iat":       now.Unix(),
+			"auth_time": session.AuthTime.Unix(),
+		}
 
-	idToken := jwt.NewWithClaims(jwt.SigningMethodRS256, idClaims)
+		if session.Nonce != "" {
+			idClaims["nonce"] = session.Nonce
+		}
 
-	idToken.Header["kid"] = kid
+		// Add mapped claims from session
+		for k, v := range session.IdTokenClaims {
+			idClaims[k] = v
+		}
 
-	idTokenString, err := idToken.SignedString(key)
-	if err != nil {
-		sp.RecordError(err)
+		idToken := jwt.NewWithClaims(jwt.SigningMethodRS256, idClaims)
+		idToken.Header["kid"] = kid
 
-		return "", "", "", 0, fmt.Errorf("failed to sign ID token: %w", err)
+		idTokenString, err = idToken.SignedString(key)
+		if err != nil {
+			sp.RecordError(err)
+
+			return "", "", "", 0, fmt.Errorf("failed to sign ID token: %w", err)
+		}
 	}
 
 	// Access Token
@@ -209,6 +216,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
 
 	var accessTokenString string
+
 	if accessTokenType == "opaque" {
 		accessTokenString, _, err = tokenIssuer.IssueOpaque(ctx, accessTokenLifetime)
 	} else {
@@ -222,15 +230,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	refreshTokenString := ""
-	hasOfflineAccess := false
-
-	for _, s := range session.Scopes {
-		if s == "offline_access" {
-			hasOfflineAccess = true
-
-			break
-		}
-	}
+	hasOfflineAccess := slices.Contains(session.Scopes, definitions.ScopeOfflineAccess)
 
 	if hasOfflineAccess {
 		refreshTokenString = n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
