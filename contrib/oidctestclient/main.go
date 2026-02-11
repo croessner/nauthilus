@@ -19,15 +19,16 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"strings"
 	"time"
-
-	"fmt"
-	"html/template"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/croessner/nauthilus/server/config"
@@ -35,6 +36,9 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 )
+
+// defaultScopes defines the default OIDC scopes used when the OAUTH2_SCOPES environment variable is not set.
+var defaultScopes = []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access"}
 
 var (
 	openIDProvider = os.Getenv("OPENID_PROVIDER")
@@ -143,6 +147,35 @@ const successPageTmpl = `
 </html>
 `
 
+// parseScopesFromEnv reads the OAUTH2_SCOPES environment variable and returns
+// the configured scopes as a string slice. Scopes are separated by commas or
+// spaces. If the variable is unset or empty, defaultScopes is returned.
+func parseScopesFromEnv() []string {
+	raw := os.Getenv("OAUTH2_SCOPES")
+
+	if raw == "" {
+		return defaultScopes
+	}
+
+	var scopes []string
+
+	// First split on commas, then split each part on whitespace so that
+	// both "openid,profile" and "openid profile" (and mixed forms) work.
+	for part := range strings.SplitSeq(raw, ",") {
+		for field := range strings.FieldsSeq(part) {
+			if field != "" {
+				scopes = append(scopes, field)
+			}
+		}
+	}
+
+	if len(scopes) == 0 {
+		return defaultScopes
+	}
+
+	return scopes
+}
+
 func randString(nByte int) (string, error) {
 	b := make([]byte, nByte)
 
@@ -225,12 +258,14 @@ func main() {
 	}
 	verifier := provider.Verifier(oidcConfig)
 
+	scopes := parseScopesFromEnv()
+
 	config := oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  "http://127.0.0.1:9094/oauth2",
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access", "mail:account:read"},
+		Scopes:       scopes,
 	}
 
 	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, config.RedirectURL, config.Scopes)
@@ -294,60 +329,79 @@ func main() {
 		}
 		log.Println("Token exchange successful")
 
-		rawIDToken, ok := oauth2Token.Extra("id_token").(string)
-		if !ok {
-			log.Println("ID token missing in exchange response")
-			http.Error(w, "No id_token field in oauth2 token.", http.StatusInternalServerError)
-
-			return
-		}
-		log.Printf("Raw ID Token received (length: %d)", len(rawIDToken))
-
-		log.Println("Verifying ID Token...")
+		// Per OIDC Core 1.0 §3.1.2.1: id_token is only present when "openid" scope was requested.
+		// Without "openid", the server returns a pure OAuth 2.0 response (access_token only).
+		hasOpenID := slices.Contains(scopes, oidc.ScopeOpenID)
+		rawIDToken, _ := oauth2Token.Extra("id_token").(string)
 		signatureVerified := false
-		idToken, err := verifier.Verify(ctx, rawIDToken)
-		if err != nil {
-			log.Printf("ID Token verification failed: %v", err)
-			http.Error(w, "Failed to verify ID Token: "+err.Error(), http.StatusInternalServerError)
 
-			return
-		}
-		signatureVerified = true
-		log.Println("ID Token verification successful")
+		resp := struct {
+			OAuth2Token         *oauth2.Token
+			IDTokenClaims       *json.RawMessage `json:",omitzero"`
+			IntrospectionResult *json.RawMessage `json:",omitzero"`
+		}{OAuth2Token: oauth2Token}
 
-		nonceCookie, err := r.Cookie("nonce")
-		if err != nil {
-			log.Printf("Nonce cookie missing: %v", err)
-			http.Error(w, "nonce not found", http.StatusBadRequest)
+		if hasOpenID {
+			if rawIDToken == "" {
+				log.Println("ID token missing in exchange response despite openid scope")
+				http.Error(w, "No id_token field in oauth2 token.", http.StatusInternalServerError)
 
-			return
-		}
-		log.Printf("Cookie nonce=%s, Token nonce=%s", nonceCookie.Value, idToken.Nonce)
+				return
+			}
 
-		if idToken.Nonce != nonceCookie.Value {
-			log.Printf("Nonce mismatch: token=%s, cookie=%s", idToken.Nonce, nonceCookie.Value)
-			http.Error(w, "nonce did not match", http.StatusBadRequest)
+			log.Printf("Raw ID Token received (length: %d)", len(rawIDToken))
 
-			return
+			log.Println("Verifying ID Token...")
+
+			idToken, err := verifier.Verify(ctx, rawIDToken)
+			if err != nil {
+				log.Printf("ID Token verification failed: %v", err)
+				http.Error(w, "Failed to verify ID Token: "+err.Error(), http.StatusInternalServerError)
+
+				return
+			}
+
+			signatureVerified = true
+
+			log.Println("ID Token verification successful")
+
+			nonceCookie, err := r.Cookie("nonce")
+			if err != nil {
+				log.Printf("Nonce cookie missing: %v", err)
+				http.Error(w, "nonce not found", http.StatusBadRequest)
+
+				return
+			}
+
+			log.Printf("Cookie nonce=%s, Token nonce=%s", nonceCookie.Value, idToken.Nonce)
+
+			if idToken.Nonce != nonceCookie.Value {
+				log.Printf("Nonce mismatch: token=%s, cookie=%s", idToken.Nonce, nonceCookie.Value)
+				http.Error(w, "nonce did not match", http.StatusBadRequest)
+
+				return
+			}
+
+			log.Println("Extracting claims from ID Token...")
+
+			idTokenClaims := new(json.RawMessage)
+
+			if err := idToken.Claims(idTokenClaims); err != nil {
+				log.Printf("Failed to extract claims: %v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+
+				return
+			}
+
+			resp.IDTokenClaims = idTokenClaims
+
+			log.Println("Claims extracted successfully")
+		} else {
+			log.Println("Pure OAuth 2.0 flow (no openid scope) - skipping ID token verification")
 		}
 
 		deleteCallbackCookie(w, "state")
 		deleteCallbackCookie(w, "nonce")
-
-		log.Println("Extracting claims from ID Token...")
-		resp := struct {
-			OAuth2Token         *oauth2.Token
-			IDTokenClaims       *json.RawMessage // ID Token payload is just JSON.
-			IntrospectionResult *json.RawMessage `json:",omitempty"`
-		}{oauth2Token, new(json.RawMessage), nil}
-
-		if err := idToken.Claims(&resp.IDTokenClaims); err != nil {
-			log.Printf("Failed to extract claims: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-
-			return
-		}
-		log.Println("Claims extracted successfully")
 
 		if providerClaims.IntrospectionEndpoint != "" {
 			log.Printf("Performing introspection at: %s", providerClaims.IntrospectionEndpoint)
