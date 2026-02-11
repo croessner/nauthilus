@@ -314,7 +314,7 @@ func TestExtractBearerToken(t *testing.T) {
 				ctx.Request.Header.Set("Authorization", tt.header)
 			}
 
-			token, ok := extractBearerToken(ctx)
+			token, ok := ExtractBearerToken(ctx)
 
 			assert.Equal(t, tt.wantOK, ok)
 
@@ -323,6 +323,64 @@ func TestExtractBearerToken(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateAndStoreClaims_ValidToken(t *testing.T) {
+	validator := &mockTokenValidator{
+		claims: jwt.MapClaims{
+			"sub":   "test-client",
+			"scope": "nauthilus:authenticate",
+		},
+	}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	claims := ValidateAndStoreClaims(ctx, validator, nil, nil, "valid-token")
+
+	assert.NotNil(t, claims)
+	assert.Equal(t, "test-client", claims["sub"])
+
+	// Claims should also be stored in context
+	stored := GetClaimsFromContext(ctx)
+
+	assert.NotNil(t, stored)
+	assert.Equal(t, "test-client", stored["sub"])
+}
+
+func TestValidateAndStoreClaims_InvalidToken(t *testing.T) {
+	validator := &mockTokenValidator{
+		err: fmt.Errorf("invalid token"),
+	}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	claims := ValidateAndStoreClaims(ctx, validator, nil, nil, "bad-token")
+
+	assert.Nil(t, claims)
+	assert.True(t, ctx.IsAborted())
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestValidateAndStoreClaims_NoClaims(t *testing.T) {
+	// No claims stored when validation fails
+	validator := &mockTokenValidator{
+		err: fmt.Errorf("expired token"),
+	}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	ValidateAndStoreClaims(ctx, validator, nil, nil, "expired-token")
+
+	assert.Nil(t, GetClaimsFromContext(ctx))
 }
 
 func TestHasScopeFromContext(t *testing.T) {

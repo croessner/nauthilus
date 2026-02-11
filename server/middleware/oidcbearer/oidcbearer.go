@@ -46,7 +46,7 @@ type TokenValidator interface {
 // scope, which is required for all backchannel API access.
 func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		tokenString, ok := extractBearerToken(ctx)
+		tokenString, ok := ExtractBearerToken(ctx)
 		if !ok {
 			if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
 				return
@@ -58,22 +58,12 @@ func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) 
 			return
 		}
 
-		claims, err := validator.ValidateToken(ctx.Request.Context(), tokenString)
-		if err != nil {
-			if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
-				return
-			}
-
-			mdauth.ApplyAuthBackoffOnFailure(ctx)
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-
+		claims := ValidateAndStoreClaims(ctx, validator, cfg, logger, tokenString)
+		if claims == nil {
 			return
 		}
 
-		// Store claims in context for downstream handlers
-		ctx.Set(definitions.CtxOIDCClaimsKey, claims)
-
-		// Verify the authenticate scope is present (required for all backchannel access)
+		// Verify the authenticate scope is present
 		if ctx.Query("mode") != "no-auth" {
 			if !HasScope(claims, definitions.ScopeAuthenticate) {
 				util.DebugModuleWithCfg(
@@ -95,8 +85,34 @@ func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) 
 	}
 }
 
-// extractBearerToken extracts the Bearer token from the Authorization header.
-func extractBearerToken(ctx *gin.Context) (string, bool) {
+// ValidateAndStoreClaims validates the given bearer token, stores the resulting
+// claims in the Gin context under definitions.CtxOIDCClaimsKey, and applies
+// throttling on failure. Returns the claims on success or nil on failure
+// (request is aborted with 401).
+//
+// This is the shared validation core used by both Middleware (for backchannel
+// API endpoints) and HasRequiredScopes in the hook package (for custom hooks).
+func ValidateAndStoreClaims(ctx *gin.Context, validator TokenValidator, cfg config.File, logger *slog.Logger, tokenString string) jwt.MapClaims {
+	claims, err := validator.ValidateToken(ctx.Request.Context(), tokenString)
+	if err != nil {
+		if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
+			return nil
+		}
+
+		mdauth.ApplyAuthBackoffOnFailure(ctx)
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+
+		return nil
+	}
+
+	// Store claims in context for downstream handlers
+	ctx.Set(definitions.CtxOIDCClaimsKey, claims)
+
+	return claims
+}
+
+// ExtractBearerToken extracts the Bearer token from the Authorization header.
+func ExtractBearerToken(ctx *gin.Context) (string, bool) {
 	authHeader := ctx.GetHeader("Authorization")
 
 	if !strings.HasPrefix(authHeader, "Bearer ") {

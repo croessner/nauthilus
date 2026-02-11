@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
 )
@@ -28,16 +29,21 @@ type Handler struct {
 	cfgProvider configfx.Provider
 	logger      *slog.Logger
 	redis       rediscli.Client
+	validator   oidcbearer.TokenValidator
 }
 
+// New creates a Handler with zero dependencies (for testing).
 func New() *Handler {
 	return &Handler{}
 }
 
-func NewWithDeps(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client) *Handler {
-	return &Handler{cfgProvider: cfgProvider, logger: logger, redis: redis}
+// NewWithDeps creates a Handler with explicit dependencies.
+// The validator may be nil when OIDC authentication is not configured.
+func NewWithDeps(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) *Handler {
+	return &Handler{cfgProvider: cfgProvider, logger: logger, redis: redis, validator: validator}
 }
 
+// Register registers the custom hook route on the given router.
 func (h *Handler) Register(r gin.IRouter) {
-	r.Any("/custom/*hook", CustomRequestHandler(h.cfgProvider, h.logger, h.redis))
+	r.Any("/custom/*hook", CustomRequestHandler(h.cfgProvider, h.logger, h.redis, h.validator))
 }
