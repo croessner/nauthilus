@@ -18,6 +18,7 @@ package idp
 import (
 	"crypto"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
@@ -26,9 +27,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -121,20 +124,64 @@ func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID stri
 		return nil, os.ErrNotExist
 	}
 
-	return &saml.EntityDescriptor{
-		EntityID: sp.EntityID,
-		SPSSODescriptors: []saml.SPSSODescriptor{
+	ssoDescriptor := saml.SPSSODescriptor{
+		SSODescriptor: saml.SSODescriptor{
+			RoleDescriptor: saml.RoleDescriptor{
+				ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
+			},
+		},
+		AssertionConsumerServices: []saml.IndexedEndpoint{
 			{
-				SSODescriptor: saml.SSODescriptor{
-					RoleDescriptor: saml.RoleDescriptor{
-						ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-					},
-				},
-				AssertionConsumerServices: []saml.IndexedEndpoint{
-					{
-						Binding:  saml.HTTPPostBinding,
-						Location: sp.ACSURL,
-						Index:    1,
+				Binding:  saml.HTTPPostBinding,
+				Location: sp.ACSURL,
+				Index:    1,
+			},
+		},
+	}
+
+	// If SP certificate is configured, add KeyDescriptor for signature
+	// verification and assertion encryption.
+	keyDescriptors, err := buildSPKeyDescriptors(sp)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(keyDescriptors) > 0 {
+		ssoDescriptor.SSODescriptor.RoleDescriptor.KeyDescriptors = keyDescriptors
+	}
+
+	return &saml.EntityDescriptor{
+		EntityID:         sp.EntityID,
+		SPSSODescriptors: []saml.SPSSODescriptor{ssoDescriptor},
+	}, nil
+}
+
+// buildSPKeyDescriptors parses the SP certificate and returns KeyDescriptors
+// for the EntityDescriptor. Returns nil if no certificate is configured.
+func buildSPKeyDescriptors(sp *config.SAML2ServiceProvider) ([]saml.KeyDescriptor, error) {
+	certStr, err := sp.GetCert()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SP certificate: %w", err)
+	}
+
+	if certStr == "" {
+		return nil, nil
+	}
+
+	block, _ := pem.Decode([]byte(certStr))
+	if block == nil {
+		return nil, fmt.Errorf("failed to parse SP certificate PEM for entity %s", sp.EntityID)
+	}
+
+	certBase64 := base64.StdEncoding.EncodeToString(block.Bytes)
+
+	return []saml.KeyDescriptor{
+		{
+			// Use="" means the key can be used for both signing and encryption.
+			KeyInfo: saml.KeyInfo{
+				X509Data: saml.X509Data{
+					X509Certificates: []saml.X509Certificate{
+						{Data: certBase64},
 					},
 				},
 			},
@@ -394,18 +441,27 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		NameIDFormat: h.deps.Cfg.GetIdP().SAML2.GetNameIDFormat(),
 	}
 
-	// Add attributes
+	// Add attributes (filtered by allowed_attributes if configured)
+	samlSP, _ := h.idp.FindSAMLServiceProvider(issuerValue)
+	allowedAttrs := samlSP.GetAllowedAttributes()
+
 	for k, v := range user.Attributes {
-		if len(v) > 0 {
-			samlSession.CustomAttributes = append(samlSession.CustomAttributes, saml.Attribute{
-				Name: k,
-				Values: []saml.AttributeValue{
-					{
-						Value: fmt.Sprintf("%v", v[0]),
-					},
-				},
-			})
+		if len(v) == 0 {
+			continue
 		}
+
+		if len(allowedAttrs) > 0 && !slices.Contains(allowedAttrs, k) {
+			continue
+		}
+
+		samlSession.CustomAttributes = append(samlSession.CustomAttributes, saml.Attribute{
+			Name: k,
+			Values: []saml.AttributeValue{
+				{
+					Value: fmt.Sprintf("%v", v[0]),
+				},
+			},
+		})
 	}
 
 	req.Now = time.Now().UTC()

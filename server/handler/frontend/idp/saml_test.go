@@ -108,6 +108,67 @@ func TestSAMLHandler_Metadata(t *testing.T) {
 	assert.Contains(t, w.Body.String(), entityID)
 }
 
+func TestBuildSPKeyDescriptors(t *testing.T) {
+	// Generate a self-signed certificate for tests
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.NoError(t, err)
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Test SP"},
+		},
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	assert.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	t.Run("NoCert", func(t *testing.T) {
+		sp := &config.SAML2ServiceProvider{
+			EntityID: "https://sp.example.com",
+			ACSURL:   "https://sp.example.com/acs",
+		}
+
+		kds, err := buildSPKeyDescriptors(sp)
+
+		assert.NoError(t, err)
+		assert.Nil(t, kds)
+	})
+
+	t.Run("WithValidCert", func(t *testing.T) {
+		sp := &config.SAML2ServiceProvider{
+			EntityID: "https://sp.example.com",
+			ACSURL:   "https://sp.example.com/acs",
+			Cert:     string(certPEM),
+		}
+
+		kds, err := buildSPKeyDescriptors(sp)
+
+		assert.NoError(t, err)
+		assert.Len(t, kds, 1)
+		assert.Empty(t, kds[0].Use, "Use should be empty for dual-use (signing + encryption)")
+		assert.NotEmpty(t, kds[0].KeyInfo.X509Data.X509Certificates[0].Data)
+	})
+
+	t.Run("WithInvalidPEM", func(t *testing.T) {
+		sp := &config.SAML2ServiceProvider{
+			EntityID: "https://sp.example.com",
+			ACSURL:   "https://sp.example.com/acs",
+			Cert:     "not-a-valid-pem",
+		}
+
+		_, err := buildSPKeyDescriptors(sp)
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to parse SP certificate PEM")
+	})
+}
+
 func TestSAML_Routes_HaveLuaContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &mockSAMLCfg{entityID: "test", certificate: "test"}

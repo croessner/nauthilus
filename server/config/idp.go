@@ -565,9 +565,31 @@ type SAML2ServiceProvider struct {
 	EntityID          string        `mapstructure:"entity_id" validate:"required"`
 	ACSURL            string        `mapstructure:"acs_url" validate:"required"`
 	SLOURL            string        `mapstructure:"slo_url"`
+	Cert              string        `mapstructure:"cert"`
+	CertFile          string        `mapstructure:"cert_file"`
+	AllowedAttributes []string      `mapstructure:"allowed_attributes"`
 	DelayedResponse   bool          `mapstructure:"delayed_response"`
 	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
 	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
+}
+
+// GetCert returns the SP certificate content (inline or from file).
+func (s *SAML2ServiceProvider) GetCert() (string, error) {
+	if s == nil {
+		return "", nil
+	}
+
+	return GetContent(s.Cert, s.CertFile)
+}
+
+// GetAllowedAttributes returns the allowed attributes for this SP.
+// If empty, all attributes are allowed.
+func (s *SAML2ServiceProvider) GetAllowedAttributes() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.AllowedAttributes
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this service provider.

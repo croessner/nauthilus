@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"html/template"
 	"log"
@@ -51,43 +52,72 @@ const successPageTmpl = `
 <head>
     <title>SAML2 Test Client - Success</title>
     <style>
-        body { font-family: sans-serif; margin: 2em; line-height: 1.5; }
-        pre { background: #f4f4f4; padding: 1em; border-radius: 5px; overflow-x: auto; border: 1px solid #ddd; }
-        .container { max-width: 1000px; margin: 0 auto; }
-        .back-btn { 
-            display: inline-block; 
-            padding: 10px 20px; 
-            background-color: #5bc0de; 
-            color: white; 
-            text-decoration: none; 
-            border-radius: 5px; 
+        body { font-family: sans-serif; margin: 2em; line-height: 1.5; background-color: #f9f9f9; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 2em; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        pre { background: #f4f4f4; padding: 1em; border-radius: 5px; overflow-x: auto; border: 1px solid #ddd; font-size: 0.9em; }
+        h1 { color: #333; }
+        h2 { color: #555; margin-top: 1.5em; border-bottom: 2px solid #eee; padding-bottom: 0.3em; }
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.8em;
+        }
+        .status-success { background-color: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
+        .logout-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #d9534f;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
             margin-top: 20px;
             font-weight: bold;
         }
-        .twofa-btn { 
-            display: inline-block; 
-            padding: 10px 20px; 
-            background-color: #5cb85c; 
-            color: white; 
-            text-decoration: none; 
-            border-radius: 5px; 
+        .logout-btn:hover { background-color: #c9302c; }
+        .twofa-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #5cb85c;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
             margin-top: 20px;
             margin-right: 10px;
             font-weight: bold;
         }
         .twofa-btn:hover { background-color: #4cae4c; }
+        .section { margin-bottom: 2em; }
+        .info-box {
+            background-color: #e7f3fe;
+            border-left: 6px solid #2196F3;
+            margin-bottom: 15px;
+            padding: 4px 12px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>SAML2 Login Successful</h1>
-        <p>The following attributes were received from the IdP:</p>
-        <pre>{{.Attributes}}</pre>
+        <h1>Login Successful</h1>
+
+        <div class="section">
+            <h2>Authentication</h2>
+            <span class="status-badge status-success">✓ SAML2 Authentication Successful</span>
+        </div>
+
+        <div class="section">
+            <h2>SAML Attributes</h2>
+            <p>The following attributes were received from the IdP:</p>
+            <pre>{{.Attributes}}</pre>
+        </div>
+
         <div style="margin-top: 20px;">
             {{if .TwoFAHomeURL}}
                 <a href="{{.TwoFAHomeURL}}" class="twofa-btn">Manage 2FA (TOTP/WebAuthn)</a>
             {{end}}
-            <a href="/logout" class="back-btn" style="background-color: #d9534f;">Clear Session</a>
+            <a href="/logout" class="logout-btn">Logout</a>
         </div>
     </div>
 </body>
@@ -129,6 +159,33 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 	}, nil
 }
 
+// exportSPCertificate writes the SP certificate as PEM to a well-known file
+// so it can be referenced via the IdP's cert_file configuration option.
+func exportSPCertificate(keyPair tls.Certificate) {
+	const certPath = "contrib/saml2testclient/sp-cert.pem"
+
+	if len(keyPair.Certificate) == 0 {
+		log.Printf("Warning: No certificate to export")
+
+		return
+	}
+
+	pemBlock := &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: keyPair.Certificate[0],
+	}
+
+	pemData := pem.EncodeToMemory(pemBlock)
+
+	if err := os.WriteFile(certPath, pemData, 0o644); err != nil {
+		log.Printf("Warning: Could not export SP certificate to %s: %v", certPath, err)
+
+		return
+	}
+
+	log.Printf("SP certificate exported to %s (use this in IdP saml2.service_providers[].cert_file)", certPath)
+}
+
 func main() {
 	util.SetDefaultEnvironment(config.NewEnvironmentConfig())
 
@@ -148,11 +205,16 @@ func main() {
 	keyPair, err = tls.LoadX509KeyPair("contrib/saml2testclient/token.crt", "contrib/saml2testclient/token.key")
 	if err != nil {
 		log.Printf("Warning: Could not load keypair: %v. Generating a self-signed one...", err)
+
 		keyPair, err = generateSelfSignedCert()
 		if err != nil {
 			log.Fatalf("Failed to generate self-signed cert: %v", err)
 		}
 	}
+
+	// Export SP certificate as PEM so it can be used in IdP configuration
+	// (e.g. saml2.service_providers[].cert_file).
+	exportSPCertificate(keyPair)
 
 	idpMetadataURL, err := url.Parse(samlIDPMetadataURL)
 	if err != nil {
@@ -283,9 +345,39 @@ func main() {
 			return
 		}
 
-		// User not logged in, show login link
+		// User not logged in, show login page
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<html><body><h1>SAML2 Test Client</h1><a href="/saml/login">Login via SAML2</a></body></html>`)
+		fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head>
+    <title>SAML2 Test Client</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; line-height: 1.5; background-color: #f9f9f9; }
+        .container { max-width: 600px; margin: 80px auto; background: white; padding: 2em; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
+        h1 { color: #333; }
+        p { color: #666; }
+        .login-btn {
+            display: inline-block;
+            padding: 12px 30px;
+            background-color: #337ab7;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .login-btn:hover { background-color: #286090; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SAML2 Test Client</h1>
+        <p>Click the button below to authenticate via SAML 2.0.</p>
+        <a href="/saml/login" class="login-btn">Login via SAML2</a>
+    </div>
+</body>
+</html>`)
 	})
 
 	isHTTPS := spURL.Scheme == "https"

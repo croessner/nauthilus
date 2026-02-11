@@ -214,6 +214,101 @@ func TestOIDCClient_GetAllowedScopes(t *testing.T) {
 	})
 }
 
+func TestSAML2ServiceProvider_GetAllowedAttributes(t *testing.T) {
+	t.Run("NilServiceProvider", func(t *testing.T) {
+		var sp *SAML2ServiceProvider
+
+		assert.Nil(t, sp.GetAllowedAttributes())
+	})
+
+	t.Run("EmptyAttributes", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{}
+
+		assert.Nil(t, sp.GetAllowedAttributes())
+	})
+
+	t.Run("ConfiguredAttributes", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{
+			AllowedAttributes: []string{"email", "displayName", "groups"},
+		}
+		attrs := sp.GetAllowedAttributes()
+
+		assert.Equal(t, []string{"email", "displayName", "groups"}, attrs)
+	})
+}
+
+func TestSAML2ServiceProvider_GetCert(t *testing.T) {
+	t.Run("NilServiceProvider", func(t *testing.T) {
+		var sp *SAML2ServiceProvider
+
+		cert, err := sp.GetCert()
+
+		assert.NoError(t, err)
+		assert.Empty(t, cert)
+	})
+
+	t.Run("NoCert", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{}
+
+		cert, err := sp.GetCert()
+
+		assert.NoError(t, err)
+		assert.Empty(t, cert)
+	})
+
+	t.Run("InlineCert", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{
+			Cert: "inline-cert-content",
+		}
+
+		cert, err := sp.GetCert()
+
+		assert.NoError(t, err)
+		assert.Equal(t, "inline-cert-content", cert)
+	})
+
+	t.Run("CertFromFile", func(t *testing.T) {
+		tmpFile, err := os.CreateTemp("", "sp-cert")
+		assert.NoError(t, err)
+
+		defer os.Remove(tmpFile.Name())
+
+		_, _ = tmpFile.WriteString("file-cert-content")
+		tmpFile.Close()
+
+		sp := &SAML2ServiceProvider{
+			CertFile: tmpFile.Name(),
+		}
+
+		cert, err := sp.GetCert()
+
+		assert.NoError(t, err)
+		assert.Equal(t, "file-cert-content", cert)
+	})
+
+	t.Run("CertFromMissingFile", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{
+			CertFile: "/nonexistent/path/cert.pem",
+		}
+
+		_, err := sp.GetCert()
+
+		assert.Error(t, err)
+	})
+
+	t.Run("InlineTakesPrecedence", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{
+			Cert:     "inline-cert",
+			CertFile: "/some/file",
+		}
+
+		cert, err := sp.GetCert()
+
+		assert.NoError(t, err)
+		assert.Equal(t, "inline-cert", cert)
+	})
+}
+
 func TestIdPConfig_WarnUnsupported(t *testing.T) {
 	t.Run("OIDC unsupported", func(t *testing.T) {
 		cfg := &OIDCConfig{
