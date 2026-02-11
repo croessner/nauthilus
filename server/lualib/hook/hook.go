@@ -194,8 +194,8 @@ func getHookKey(location, method string) string {
 	return strings.TrimLeft(location, "/") + ":" + method
 }
 
-// GetHookRoles returns the roles required for a specific hook.
-func GetHookRoles(location, method string) []string {
+// GetHookScopes returns the roles required for a specific hook.
+func GetHookScopes(location, method string) []string {
 	hookKey := getHookKey(location, method)
 
 	mu.RLock()
@@ -205,71 +205,79 @@ func GetHookRoles(location, method string) []string {
 	return roles
 }
 
-// HasRequiredRoles checks if the user has any of the required scopes for a hook.
-// If no roles are configured for the hook, it returns true (allowing access).
-// If no OIDC claims are present in the context, it returns true (allowing access).
-func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, location, method string) bool {
+// HasRequiredScopes checks if the user has any of the required scopes for a hook.
+// It performs the full authentication and authorization flow for custom hooks:
+//   - No scopes configured → public hook, access allowed without token.
+//   - Scopes configured → bearer token is extracted, validated via the TokenValidator,
+//     and the resulting claims are checked for the required scopes.
+//
+// On denial the function aborts the request with the appropriate HTTP status
+// (401 for missing/invalid token, 403 for insufficient scopes) and returns false.
+// The caller should return immediately without writing further responses.
+//
+// The validator parameter may be nil when OIDC authentication is not configured;
+// in that case any hook that requires scopes will be denied.
+func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, validator oidcbearer.TokenValidator, location, method string) bool {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	// Check if OIDC claims are present
-	claims := oidcbearer.GetClaimsFromContext(ctx)
-	if claims == nil {
+	// Get the roles required for this hook
+	requiredScopes := resolveRequiredScopes(location, method, cfg, logger, guid, ctx)
+
+	// If no roles are configured, this is a public hook — allow access regardless of token
+	if len(requiredScopes) == 0 {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "No OIDC claims in context, allowing access",
+			definitions.LogKeyMsg, "No scopes configured for this hook, allowing access",
 		)
 
 		return true
 	}
 
-	// Get the roles required for this hook
-	requiredRoles := GetHookRoles(location, method)
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		cfg,
-		logger,
-		definitions.DbgLua,
-		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, fmt.Sprintf("Required scopes for hook %s %s: %v", location, method, requiredRoles),
-	)
+	// Scopes required but OIDC auth not configured — deny access
+	if validator == nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Hook requires scopes %v but OIDC auth is not configured, denying access", requiredScopes),
+		)
 
-	// If no roles are configured, allow access
-	if len(requiredRoles) == 0 {
-		// Try with a leading slash if no roles were found
-		if !strings.HasPrefix(location, "/") {
-			locationWithSlash := "/" + location
-			requiredRoles = GetHookRoles(locationWithSlash, method)
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				cfg,
-				logger,
-				definitions.DbgLua,
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Trying with leading slash: %s, required scopes: %v", locationWithSlash, requiredRoles),
-			)
-		}
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required but not configured"})
 
-		// If still no roles are configured, allow access
-		if len(requiredRoles) == 0 {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				cfg,
-				logger,
-				definitions.DbgLua,
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "No scopes configured for this hook, allowing access",
-			)
-
-			return true
-		}
+		return false
 	}
 
-	// Check if the user has any of the required scopes
-	for _, scope := range requiredRoles {
+	// Extract bearer token from request
+	tokenString, ok := oidcbearer.ExtractBearerToken(ctx)
+	if !ok {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("No bearer token but hook requires scopes %v, denying access", requiredScopes),
+		)
+
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
+
+		return false
+	}
+
+	// Validate token and store claims in context (aborts with 401 on failure)
+	claims := oidcbearer.ValidateAndStoreClaims(ctx, validator, cfg, logger, tokenString)
+	if claims == nil {
+		return false
+	}
+
+	// Check if the token has any of the required scopes
+	for _, scope := range requiredScopes {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
@@ -299,10 +307,43 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, fmt.Sprintf("Token does not have any of the required scopes: %v, denying access", requiredRoles),
+		definitions.LogKeyMsg, fmt.Sprintf("Token does not have any of the required scopes: %v, denying access", requiredScopes),
 	)
 
+	ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+
 	return false
+}
+
+// resolveRequiredScopes looks up the required roles for a hook, trying both with and without a leading slash.
+func resolveRequiredScopes(location, method string, cfg config.File, logger *slog.Logger, guid string, ctx *gin.Context) []string {
+	requiredScopes := GetHookScopes(location, method)
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Required scopes for hook %s %s: %v", location, method, requiredScopes),
+	)
+
+	if len(requiredScopes) == 0 && !strings.HasPrefix(location, "/") {
+		locationWithSlash := "/" + location
+
+		requiredScopes = GetHookScopes(locationWithSlash, method)
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Trying with leading slash: %s, required scopes: %v", locationWithSlash, requiredScopes),
+		)
+	}
+
+	return requiredScopes
 }
 
 // PreCompileLuaScript compiles a Lua script from the specified file path and manages the script in a thread-safe map.
@@ -408,7 +449,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 			hookKey := getHookKey(hook.Location, hook.Method)
 
 			mu.Lock()
-			hookRoles[hookKey] = hook.GetRoles()
+			hookRoles[hookKey] = hook.GetScopes()
 			mu.Unlock()
 		}
 	}

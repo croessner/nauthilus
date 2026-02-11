@@ -56,7 +56,7 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 
 	cfg := deps.Cfg
 
-	// Main API group with configured authentication
+	// Main API group with configured authentication (mandatory token)
 	group := router.Group("/api/v1")
 
 	if cfg.GetServer().GetBasicAuth().IsEnabled() {
@@ -66,22 +66,32 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
 	// Uses the IdP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
 	// Controlled by server.oidc_auth.enabled, independent of idp.oidc.enabled.
+	var nauthilusIdP oidcbearer.TokenValidator
+
 	if cfg.GetServer().GetOIDCAuth().IsEnabled() {
-		nauthilusIdP := idp.NewNauthilusIdP(deps)
+		nauthilusIdP = idp.NewNauthilusIdP(deps)
 
 		group.Use(oidcbearer.Middleware(nauthilusIdP, cfg, deps.Logger))
 	}
 
 	group.Use(mdlua.LuaContextMiddleware())
 
-	// Register modules
+	// Register modules (require mandatory authentication)
 	auth.NewWithDeps(deps).Register(group)
 	bruteforce.New(deps).Register(group)
 	confighandler.NewWithDeps(deps).Register(group)
-	custom.NewWithDeps(deps.CfgProvider, deps.Logger, deps.Redis).Register(group)
 	cache.NewWithDeps(deps).Register(group)
 	asyncjobs.NewWithDeps(deps).Register(group)
 	mfa_backchannel.NewWithDeps(deps).Register(group)
+
+	// Custom hooks use a separate group without authentication middleware.
+	// Authentication and authorization are handled per-hook inside HasRequiredScopes:
+	// hooks that define required scopes perform token extraction, validation, and
+	// scope checking; hooks without scopes are publicly accessible.
+	hookGroup := router.Group("/api/v1")
+	hookGroup.Use(mdlua.LuaContextMiddleware())
+
+	custom.NewWithDeps(deps.CfgProvider, deps.Logger, deps.Redis, nauthilusIdP).Register(hookGroup)
 
 	if deps.Env != nil && deps.Env.GetDevMode() {
 		devui.New(deps).Register(group)

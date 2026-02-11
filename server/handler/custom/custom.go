@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -31,7 +32,8 @@ import (
 )
 
 // CustomRequestHandler mirrors the original logic for executing custom Lua hooks.
-func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client) gin.HandlerFunc {
+// The validator may be nil when OIDC authentication is not configured.
+func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey)
 		snap := cfgProvider.Current()
@@ -64,18 +66,10 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, re
 			definitions.LogKeyMsg, fmt.Sprintf("Processing custom hook: %s %s", hookMethod, hookName),
 		)
 
-		// Check if the user has the required roles for this hook
-		if !hook.HasRequiredRoles(ctx, snap.File, logger, hookName, hookMethod) {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				snap.File,
-				logger,
-				definitions.DbgHTTP,
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("User does not have required roles for hook: %s %s", hookMethod, hookName),
-			)
-			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
-
+		// Check if the user has the required scopes for this hook.
+		// HasRequiredScopes handles the full auth flow (token extraction, validation,
+		// scope checking) and aborts the request with the appropriate status on denial.
+		if !hook.HasRequiredScopes(ctx, snap.File, logger, validator, hookName, hookMethod) {
 			return
 		}
 

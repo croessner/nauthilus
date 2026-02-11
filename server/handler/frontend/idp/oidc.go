@@ -761,7 +761,8 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		"expires_in":   int(expiresIn.Seconds()),
 	}
 
-	// Client Credentials Grant returns no id_token per RFC 6749 §4.4
+	// Per OIDC Core 1.0 §3.1.2.1: id_token is only present when "openid" scope was requested.
+	// Client Credentials Grant also never returns an id_token (RFC 6749 §4.4).
 	if idToken != "" {
 		resp["id_token"] = idToken
 	}

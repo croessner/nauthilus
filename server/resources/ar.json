@@ -106,5 +106,6 @@
   "Internal server error": "خطأ داخلي في الخادم",
   "Device Authorized": "تم تفويض الجهاز",
   "Your device has been successfully authorized.": "تم تفويض جهازك بنجاح.",
-  "You can close this window and return to your device.": "يمكنك إغلاق هذه النافذة والعودة إلى جهازك."
+  "You can close this window and return to your device.": "يمكنك إغلاق هذه النافذة والعودة إلى جهازك.",
+  "Missing required permission for MFA management": "الإذن المطلوب لإدارة MFA مفقود"
 }

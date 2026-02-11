@@ -106,5 +106,6 @@
   "Internal server error": "Внутренняя ошибка сервера",
   "Device Authorized": "Устройство авторизовано",
   "Your device has been successfully authorized.": "Ваше устройство было успешно авторизовано.",
-  "You can close this window and return to your device.": "Вы можете закрыть это окно и вернуться к вашему устройству."
+  "You can close this window and return to your device.": "Вы можете закрыть это окно и вернуться к вашему устройству.",
+  "Missing required permission for MFA management": "Отсутствует необходимое разрешение для управления MFA"
 }

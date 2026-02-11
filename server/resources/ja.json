@@ -106,5 +106,6 @@
   "Internal server error": "サーバー内部エラー",
   "Device Authorized": "デバイス認可完了",
   "Your device has been successfully authorized.": "デバイスが正常に認可されました。",
-  "You can close this window and return to your device.": "このウィンドウを閉じてデバイスに戻ることができます。"
+  "You can close this window and return to your device.": "このウィンドウを閉じてデバイスに戻ることができます。",
+  "Missing required permission for MFA management": "MFA管理に必要な権限がありません"
 }

@@ -445,7 +445,7 @@ type LuaHooks struct {
 	Method      string   `mapstructure:"http_method" validate:"required,oneof=HEAD GET POST PUT DELETE PATCH"`
 	ContentType string   `mapstructure:"content_type" validate:"omitempty,printascii,excludesall= "`
 	ScriptPath  string   `mapstructure:"script_path" validate:"required,file"`
-	Roles       []string `mapstructure:"roles"`
+	Scopes      []string `mapstructure:"scopes"`
 }
 
 func (l *LuaHooks) String() string {
@@ -453,16 +453,16 @@ func (l *LuaHooks) String() string {
 		return "<nil>"
 	}
 
-	return fmt.Sprintf("{Location: %s}, {Method: %s}, {ScriptPath: %s}, {Roles: %v}", l.Location, l.Method, l.ScriptPath, l.Roles)
+	return fmt.Sprintf("{Location: %s}, {Method: %s}, {ScriptPath: %s}, {Scopes: %v}", l.Location, l.Method, l.ScriptPath, l.Scopes)
 }
 
-// GetRoles returns the roles configured for the hook. If no roles are configured, it returns an empty slice.
-func (l *LuaHooks) GetRoles() []string {
+// GetScopes returns the roles configured for the hook. If no roles are configured, it returns an empty slice.
+func (l *LuaHooks) GetScopes() []string {
 	if l == nil {
 		return []string{}
 	}
 
-	return l.Roles
+	return l.Scopes
 }
 
 // GetLocation retrieves the Location from the LuaHooks. Returns an empty string if the LuaHooks is nil.

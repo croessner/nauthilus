@@ -106,5 +106,6 @@
   "Internal server error": "服务器内部错误",
   "Device Authorized": "设备已授权",
   "Your device has been successfully authorized.": "您的设备已成功授权。",
-  "You can close this window and return to your device.": "您可以关闭此窗口并返回您的设备。"
+  "You can close this window and return to your device.": "您可以关闭此窗口并返回您的设备。",
+  "Missing required permission for MFA management": "缺少MFA管理所需的权限"
 }
