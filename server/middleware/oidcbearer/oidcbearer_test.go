@@ -87,7 +87,7 @@ func TestHasScope(t *testing.T) {
 		},
 		{
 			name:   "multiple scopes no match",
-			claims: jwt.MapClaims{"scope": "nauthilus:authenticate nauthilus:user_info"},
+			claims: jwt.MapClaims{"scope": "nauthilus:authenticate nauthilus:security"},
 			scope:  "nauthilus:admin",
 			want:   false,
 		},
@@ -253,7 +253,7 @@ func TestMiddleware_NoAuthMode_SkipsScopeCheck(t *testing.T) {
 	validator := &mockTokenValidator{
 		claims: jwt.MapClaims{
 			"sub":   "test-client",
-			"scope": "nauthilus:user_info",
+			"scope": "nauthilus:list_accounts",
 		},
 	}
 

@@ -18,7 +18,7 @@ server:
     users:                # Optional: Define JWT-specific users
       - username: "admin"
         password: "admin-password"
-        roles: ["authenticate", "user_info", "list_accounts"]
+        roles: ["authenticate", "list_accounts"]
       - username: "user"
         password: "user-password"
         roles: ["authenticate"]
@@ -37,7 +37,6 @@ Configuration options:
   - `password`: The password for the JWT user.
   - `roles`: List of roles assigned to the user. Default roles include:
     - `authenticate`: Role required to perform authentication requests (renamed from "authenticated" in version 1.7.11).
-    - `user_info`: Access to user information.
     - `list_accounts`: Access to list accounts.
 
     You can also define custom roles for your users and use them for custom hooks or other role-based access control mechanisms.
@@ -115,7 +114,6 @@ The following endpoints are public and do not require authentication:
 JWT tokens include roles that determine what actions the user can perform:
 
 - `authenticate`: This role is needed to perform authentication requests (renamed from "authenticated" in version 1.7.11).
-- `user_info`: Users with NoAuth=true have this role. This role is required to access endpoints with `mode=no-auth`.
 - `list_accounts`: Users who can list accounts have this role. This role is required to access endpoints with `mode=list-accounts`.
 - Custom roles: You can define custom roles for your users and use them for custom hooks.
 
