@@ -2948,21 +2948,7 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	case "no-auth":
 		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=no-auth")
 
-		// Check if OIDC Bearer token has the required scope
-		claims := oidcbearer.GetClaimsFromContext(ctx)
-
-		if claims != nil {
-			if a.HasOIDCScope(ctx, definitions.ScopeUserInfo) {
-				a.Request.NoAuth = true
-			} else {
-				level.Warn(logger).Log(
-					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, "OIDC token missing scope '"+definitions.ScopeUserInfo+"' required for no-auth mode",
-				)
-			}
-		} else {
-			a.Request.NoAuth = true
-		}
+		a.Request.NoAuth = true
 	case "list-accounts":
 		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
 

@@ -201,9 +201,6 @@ const (
 	// ScopeAuthenticate is the base scope required for all backchannel API access.
 	ScopeAuthenticate = "nauthilus:authenticate"
 
-	// ScopeUserInfo grants access to user information (no-auth mode).
-	ScopeUserInfo = "nauthilus:user_info"
-
 	// ScopeListAccounts grants access to the list-accounts mode.
 	ScopeListAccounts = "nauthilus:list_accounts"
 
