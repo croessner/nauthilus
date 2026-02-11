@@ -17,6 +17,7 @@ package v1
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/cookie"
@@ -42,7 +43,7 @@ func NewMFAAPI(d *deps.Deps) *MFAAPI {
 
 // Register adds MFA API routes to the router.
 func (a *MFAAPI) Register(router gin.IRouter) {
-	mfaGroup := router.Group("/api/v1/mfa")
+	mfaGroup := router.Group("/api/v1/mfa", a.mfaManageMiddleware())
 	{
 		totpGroup := mfaGroup.Group("/totp")
 		{
@@ -204,6 +205,70 @@ func (a *MFAAPI) GenerateRecoveryCodes(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"codes": codes})
+}
+
+// mfaManageMiddleware verifies that the current session has MFA management permission.
+// For OIDC flows, the nauthilus:mfa:manage scope must be present.
+// For SAML flows, the service provider entity ID must be whitelisted in the configuration.
+func (a *MFAAPI) mfaManageMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		mgr := cookie.GetManager(ctx)
+		if mgr == nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			ctx.Abort()
+
+			return
+		}
+
+		account := mgr.GetString(definitions.SessionKeyAccount, "")
+
+		if account == "" {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			ctx.Abort()
+
+			return
+		}
+
+		if !a.hasMFAManagePermission(mgr) {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "Missing required permission for MFA management"})
+			ctx.Abort()
+
+			return
+		}
+
+		ctx.Next()
+	}
+}
+
+// hasMFAManagePermission checks whether the current session grants MFA management access.
+func (a *MFAAPI) hasMFAManagePermission(mgr cookie.Manager) bool {
+	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+
+	switch flowType {
+	case definitions.ProtoOIDC:
+		scope := mgr.GetString(definitions.SessionKeyIdPScope, "")
+
+		return hasSessionScope(scope, definitions.ScopeMFAManage)
+
+	case definitions.ProtoSAML:
+		entityID := mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+
+		return a.deps.Cfg.GetIdP().SAML2.IsMFAManageAllowed(entityID)
+
+	default:
+		return false
+	}
+}
+
+// hasSessionScope checks whether a space-separated scope string contains the target scope.
+func hasSessionScope(scopeStr, target string) bool {
+	for s := range strings.SplitSeq(scopeStr, " ") {
+		if s == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 // DeleteWebAuthn removes a WebAuthn credential.

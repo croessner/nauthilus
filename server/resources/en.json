@@ -106,5 +106,6 @@
   "Internal server error": "Internal server error",
   "Device Authorized": "Device Authorized",
   "Your device has been successfully authorized.": "Your device has been successfully authorized.",
-  "You can close this window and return to your device.": "You can close this window and return to your device."
+  "You can close this window and return to your device.": "You can close this window and return to your device.",
+  "Missing required permission for MFA management": "Missing required permission for MFA management"
 }

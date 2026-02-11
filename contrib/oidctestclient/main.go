@@ -38,7 +38,7 @@ import (
 )
 
 // defaultScopes defines the default OIDC scopes used when the OAUTH2_SCOPES environment variable is not set.
-var defaultScopes = []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access"}
+var defaultScopes = []string{oidc.ScopeOpenID, "profile", "email", "groups", "offline", "offline_access", "nauthilus:mfa:manage"}
 
 var (
 	openIDProvider = os.Getenv("OPENID_PROVIDER")

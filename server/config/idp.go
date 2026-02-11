@@ -137,6 +137,7 @@ func (o *OIDCConfig) GetScopesSupported() []string {
 		definitions.ScopeEmail,
 		definitions.ScopeGroups,
 		definitions.ScopeOfflineAccess,
+		definitions.ScopeMFAManage,
 	}
 }
 
@@ -527,6 +528,22 @@ func (s *SAML2Config) GetNameIDFormat() string {
 	return "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 }
 
+// IsMFAManageAllowed checks whether the SAML service provider identified by
+// entityID is whitelisted for MFA registration and management.
+func (s *SAML2Config) IsMFAManageAllowed(entityID string) bool {
+	if entityID == "" {
+		return false
+	}
+
+	for idx := range s.ServiceProviders {
+		if s.ServiceProviders[idx].EntityID == entityID {
+			return s.ServiceProviders[idx].AllowMFAManage
+		}
+	}
+
+	return false
+}
+
 // warnUnsupported returns a list of warnings for unsupported SAML2 configuration parameters.
 func (s *SAML2Config) warnUnsupported() []string {
 	if !s.Enabled {
@@ -568,9 +585,10 @@ type SAML2ServiceProvider struct {
 	Cert              string        `mapstructure:"cert"`
 	CertFile          string        `mapstructure:"cert_file"`
 	AllowedAttributes []string      `mapstructure:"allowed_attributes"`
-	DelayedResponse   bool          `mapstructure:"delayed_response"`
-	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
 	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
+	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
+	DelayedResponse   bool          `mapstructure:"delayed_response"`
+	AllowMFAManage    bool          `mapstructure:"allow_mfa_manage"`
 }
 
 // GetCert returns the SP certificate content (inline or from file).

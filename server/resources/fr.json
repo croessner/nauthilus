@@ -106,5 +106,6 @@
   "Internal server error": "Erreur interne du serveur",
   "Device Authorized": "Appareil autorisé",
   "Your device has been successfully authorized.": "Votre appareil a été autorisé avec succès.",
-  "You can close this window and return to your device.": "Vous pouvez fermer cette fenêtre et retourner à votre appareil."
+  "You can close this window and return to your device.": "Vous pouvez fermer cette fenêtre et retourner à votre appareil.",
+  "Missing required permission for MFA management": "Autorisation requise manquante pour la gestion MFA"
 }
