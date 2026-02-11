@@ -449,7 +449,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 			hookKey := getHookKey(hook.Location, hook.Method)
 
 			mu.Lock()
-			hookRoles[hookKey] = hook.GetRoles()
+			hookRoles[hookKey] = hook.GetScopes()
 			mu.Unlock()
 		}
 	}
