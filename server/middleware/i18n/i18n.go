@@ -91,10 +91,7 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 		if needRedirect && ctx.Request.Method == http.MethodGet {
 			var sb strings.Builder
 
-			path := ctx.Request.URL.Path
-			if strings.HasSuffix(path, "/") {
-				path = strings.TrimSuffix(path, "/")
-			}
+			path := strings.TrimSuffix(ctx.Request.URL.Path, "/")
 
 			sb.WriteString(path)
 			sb.WriteByte('/')

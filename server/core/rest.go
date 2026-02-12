@@ -218,7 +218,7 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 		a.handleMasterUserMode()
 	}
 
-	if !(a.Request.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
+	if !a.Request.NoAuth && !ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
 		switch a.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
 			result := GetPassDBResultFromPool()

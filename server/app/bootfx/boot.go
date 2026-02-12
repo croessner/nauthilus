@@ -37,12 +37,9 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util/keygen"
 
-	jsoniter "github.com/json-iterator/go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 )
-
-var json = jsoniter.ConfigFastest
 
 // slogStdWriter adapts the standard library logger to forward to slog via our level wrapper.
 type slogStdWriter struct{ logger *slog.Logger }

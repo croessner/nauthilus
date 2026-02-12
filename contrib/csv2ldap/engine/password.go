@@ -85,7 +85,8 @@ type SSHAEncoder struct {
 }
 
 func (e *SSHAEncoder) Encode(plain string) (string, error) {
-	alg := srvdefs.SSHA512
+	var alg srvdefs.Algorithm
+
 	switch lower(e.Alg) {
 	case "ssha256":
 		alg = srvdefs.SSHA256
@@ -95,8 +96,10 @@ func (e *SSHAEncoder) Encode(plain string) (string, error) {
 		return "", fmt.Errorf("unsupported SSHA alg: %s", e.Alg)
 	}
 
-	opt := srvdefs.ENCB64
+	var opt srvdefs.PasswordOption
+
 	enc := lower(e.Encoding)
+
 	switch enc {
 	case "hex":
 		opt = srvdefs.ENCHEX

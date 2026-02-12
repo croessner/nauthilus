@@ -1722,7 +1722,7 @@ func (f *FileSettings) validateBruteForce() error {
 				return fmt.Errorf("%w: %s", errors.ErrRuleNoIPv4AndIPv6, rule.String())
 			}
 
-			if !(rule.IPv4 || rule.IPv6) {
+			if !rule.IPv4 && !rule.IPv6 {
 				return fmt.Errorf("%w: %s", errors.ErrRuleMissingIPv4AndIPv6, rule.String())
 			}
 

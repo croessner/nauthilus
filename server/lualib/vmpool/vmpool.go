@@ -52,7 +52,6 @@ type Pool struct {
 	key    PoolKey
 	opts   PoolOptions
 	states chan *lua.LState
-	mu     sync.Mutex
 	// httpClient is used by luapool.NewLuaState to preload glua_http once per VM.
 	httpClient *stdhttp.Client
 	// inUse tracks the number of VMs currently checked out from the pool.

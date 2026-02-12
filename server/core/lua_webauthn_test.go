@@ -89,7 +89,7 @@ func TestLuaGetWebAuthnCredentials(t *testing.T) {
 	credentials, err := lm.GetWebAuthnCredentials(auth)
 	assert.NoError(t, err)
 	assert.Len(t, credentials, 1)
-	assert.True(t, bytes.Equal(cred.Credential.ID, credentials[0].Credential.ID))
+	assert.True(t, bytes.Equal(cred.ID, credentials[0].ID))
 	assert.Equal(t, cred.Name, credentials[0].Name)
 }
 
@@ -142,7 +142,7 @@ func TestLuaSaveWebAuthnCredential(t *testing.T) {
 
 			var credPopped webauthn.Credential
 			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
-			assert.True(t, bytes.Equal(cred.Credential.ID, credPopped.ID))
+			assert.True(t, bytes.Equal(cred.ID, credPopped.ID))
 
 			if req.LuaReplyChan != nil {
 				req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}
@@ -203,7 +203,7 @@ func TestLuaDeleteWebAuthnCredential(t *testing.T) {
 
 			var credPopped webauthn.Credential
 			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
-			assert.True(t, bytes.Equal(cred.Credential.ID, credPopped.ID))
+			assert.True(t, bytes.Equal(cred.ID, credPopped.ID))
 
 			if req.LuaReplyChan != nil {
 				req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}

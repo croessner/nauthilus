@@ -145,11 +145,12 @@ func TestOddKeyvalsAreIgnoredGracefully(t *testing.T) {
 	}
 }
 
+type testCtxKey struct{}
+
 func TestWithContextPropagatesToHandler(t *testing.T) {
 	h := newMemHandler(slog.LevelDebug)
 	logger := slog.New(h)
-
-	ctx := context.WithValue(context.Background(), struct{}{}, "val")
+	ctx := context.WithValue(context.Background(), testCtxKey{}, "val")
 	if err := WithContext(ctx, logger).Log("k", "v"); err != nil {
 		t.Fatalf("Log returned error: %v", err)
 	}

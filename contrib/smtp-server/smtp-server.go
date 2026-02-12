@@ -68,7 +68,7 @@ func (s *Session) Auth(mech string) (sasl.Server, error) {
 	saslServer := sasl.NewPlainServer(func(identity, username, password string) error {
 		s.auth = true
 
-		log.Println(fmt.Sprintf("AUTH username=<%s>", username))
+		log.Printf("AUTH username=<%s>", username)
 
 		return nil
 	})

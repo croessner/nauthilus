@@ -41,14 +41,12 @@ func runSendSMTPMail(smtpServer string, heloName string, auth smtp.Auth, from st
 	// Initialize plain connection
 	if !useTLS || useStartTLS {
 		genericClient, err = smtp.Dial(smtpServer)
-		if genericClient != nil {
-			defer genericClient.Quit()
-			defer genericClient.Close()
-		}
-
 		if err != nil {
 			return err
 		}
+
+		defer genericClient.Quit()
+		defer genericClient.Close()
 
 		if err = genericClient.Hello(heloName); err != nil {
 			return err
@@ -71,14 +69,12 @@ func runSendSMTPMail(smtpServer string, heloName string, auth smtp.Auth, from st
 		}
 
 		genericClient, err = smtp.NewClient(conn, smtpServer)
-		if genericClient != nil {
-			defer genericClient.Quit()
-			defer genericClient.Close()
-		}
-
 		if err != nil {
 			return err
 		}
+
+		defer genericClient.Quit()
+		defer genericClient.Close()
 	}
 
 	if err = genericClient.Hello(heloName); err != nil {

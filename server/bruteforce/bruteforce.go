@@ -185,7 +185,6 @@ type bucketManagerImpl struct {
 	protocol             string
 	oidcCID              string
 	bruteForceCounter    map[string]uint
-	additionalFeatures   map[string]any
 	netByCIDR            map[uint]*net.IPNet
 	loginAttempts        uint
 	passwordsAccountSeen uint

@@ -213,7 +213,10 @@ func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64) {
 
 	bucketSpan := (span + usable - 1) / usable
 	cols := (span + bucketSpan - 1) / bucketSpan
-	counts, maxC := computeHistogramCounts(buckets, start, end, bucketSpan, cols)
+
+	var counts []int64
+
+	_, maxC := computeHistogramCounts(buckets, start, end, bucketSpan, cols)
 
 	if maxC == 0 {
 		fmt.Println("[hist] all-zero buckets")

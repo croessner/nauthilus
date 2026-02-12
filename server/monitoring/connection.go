@@ -487,8 +487,7 @@ func checkSieve(logger *slog.Logger, conn net.Conn, hostname, username, password
 	if response, err := isOkResponseSieve(tp); err != nil {
 		return err
 	} else if response != "OK" {
-		//goland:noinspection GoErrorStringFormat
-		return fmt.Errorf("Sieve AUTHENTICATE command failed: %s", response)
+		return fmt.Errorf("sieve AUTHENTICATE command failed: %s", response)
 	}
 
 	return nil

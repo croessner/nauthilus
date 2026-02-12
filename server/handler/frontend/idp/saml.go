@@ -147,7 +147,7 @@ func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID stri
 	}
 
 	if len(keyDescriptors) > 0 {
-		ssoDescriptor.SSODescriptor.RoleDescriptor.KeyDescriptors = keyDescriptors
+		ssoDescriptor.RoleDescriptor.KeyDescriptors = keyDescriptors
 	}
 
 	return &saml.EntityDescriptor{

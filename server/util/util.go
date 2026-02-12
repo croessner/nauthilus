@@ -193,10 +193,10 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	c.Password = subs[3]
 
 	// Decode the password based on the password option
-	if pwOption == definitions.ENCB64 {
+	switch pwOption {
+	case definitions.ENCB64:
 		decodedPwSalt, err = base64.StdEncoding.DecodeString(c.Password)
-	} else if //goland:noinspection GoDfaConstantCondition
-	pwOption == definitions.ENCHEX {
+	case definitions.ENCHEX:
 		decodedPwSalt, err = hex.DecodeString(c.Password)
 	}
 
@@ -205,14 +205,14 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	}
 
 	// Extract the salt based on the algorithm
-	if alg == definitions.SSHA512 {
+	switch alg {
+	case definitions.SSHA512:
 		if len(decodedPwSalt) < 65 {
 			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
 
 		salt = decodedPwSalt[64:]
-	} else if //goland:noinspection GoDfaConstantCondition
-	alg == definitions.SSHA256 {
+	case definitions.SSHA256:
 		if len(decodedPwSalt) < 33 {
 			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
@@ -325,10 +325,7 @@ var (
 	defaultLog atomic.Value
 )
 
-var (
-	warnMissingCfgOnce sync.Once
-	warnMissingLogOnce sync.Once
-)
+var warnMissingCfgOnce sync.Once
 
 func init() {
 	defaultCfg.Store(cfgHolder{cfg: nil})

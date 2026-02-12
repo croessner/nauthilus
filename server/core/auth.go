@@ -609,16 +609,8 @@ func (a *AuthState) cfg() config.File {
 	return a.Cfg()
 }
 
-func (a *AuthState) env() config.Environment {
-	return a.Env()
-}
-
 func (a *AuthState) logger() *slog.Logger {
 	return a.Logger()
-}
-
-func (a *AuthState) redis() rediscli.Client {
-	return a.Redis()
 }
 
 func (a *AuthState) AccountCache() *accountcache.Manager {
@@ -1881,12 +1873,12 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		auth.Runtime.DisplayNameField = passDBResult.DisplayNameField
 	}
 
-	if passDBResult.Attributes != nil && len(passDBResult.Attributes) > 0 {
+	if len(passDBResult.Attributes) > 0 {
 		auth.ReplaceAllAttributes(passDBResult.Attributes)
 	}
 
 	// Handle AdditionalFeatures if they exist in the PassDBResult
-	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
+	if len(passDBResult.AdditionalFeatures) > 0 {
 		// Set AdditionalFeatures in the gin.Context
 		ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
 	}
@@ -1931,7 +1923,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 				// Update Redis mapping with a bounded write deadline.
 				defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-				dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil, auth.Cfg())
+				dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(context.TODO(), auth.Cfg())
 				werr := backend.SetUserAccountMapping(dWriteCtx, auth.Cfg(), auth.deps.Redis, auth.Request.Username, auth.Request.Protocol.Get(), auth.Request.OIDCCID, acc)
 				cancelWrite()
 
@@ -2436,7 +2428,7 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 		db := backendType.Get()
 		switch db {
 		case definitions.BackendCache:
-			if !(a.HaveMonitoringFlag(definitions.MonCache) || a.IsMasterUser()) {
+			if !a.HaveMonitoringFlag(definitions.MonCache) && !a.IsMasterUser() {
 				passDBs = a.appendBackend(passDBs, definitions.BackendCache, CachePassDB)
 				useCache = true
 			}
@@ -2778,17 +2770,15 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	}
 
 	if passDBResult.Authenticated {
-		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
+		if !a.HaveMonitoringFlag(definitions.MonInMemory) && !a.IsMasterUser() {
 			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult.Clone(), a.Cfg().GetServer().GetLocalCacheAuthTTL())
 		}
 
 		a.Runtime.Authenticated = true
-		authResult = definitions.AuthResultOK
 	} else {
 		a.UpdateBruteForceBucketsCounter(ctx)
 
 		a.Runtime.Authenticated = false
-		authResult = definitions.AuthResultFail
 	}
 
 	authResult = a.FilterLua(ctx, passDBResult)
@@ -2941,7 +2931,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 	)
 
 	// Service-scoped read to avoid inheriting a canceled request context
-	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(nil, a.Cfg())
+	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(context.TODO(), a.Cfg())
 	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 	cancelRead()
 
@@ -2960,14 +2950,14 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 			accounts = append(accounts, values[index].(string))
 		}
 
-		sort.Sort(sort.StringSlice(accounts))
+		sort.Strings(accounts)
 
 		accountName = strings.Join(accounts, ":")
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		// Service-scoped write for robust cache update
-		dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil, a.Cfg())
+		dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(context.TODO(), a.Cfg())
 		err = backend.SetUserAccountMapping(dWriteCtx, a.Cfg(), a.deps.Redis, a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, accountName)
 		cancelWrite()
 	}
@@ -3504,9 +3494,10 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 	a.Runtime.Authenticated = false // not decided yet
 	a.Runtime.Authorized = true     // default allow unless a filter rejects
 
-	if a.Request.Service == definitions.ServBasic {
+	switch a.Request.Service {
+	case definitions.ServBasic:
 		a.SetProtocol(config.NewProtocol(definitions.ProtoHTTP))
-	} else if a.Request.Service == definitions.ServIdP {
+	case definitions.ServIdP:
 		a.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	}
 
@@ -3723,7 +3714,7 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 		})
 
 		// Set AdditionalFeatures in the gin.Context if they exist in the cached result
-		if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
+		if len(passDBResult.AdditionalFeatures) > 0 {
 			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
 		}
 

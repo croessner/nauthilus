@@ -696,8 +696,8 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	case "authorization_code":
 		code := ctx.PostForm("code")
 
-		session, err := h.storage.GetSession(ctx.Request.Context(), code)
-		if err != nil {
+		session, getErr := h.storage.GetSession(ctx.Request.Context(), code)
+		if getErr != nil {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 
 			return

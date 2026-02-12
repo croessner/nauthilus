@@ -32,10 +32,7 @@ func main() {
 	}
 
 	// Handle Color
-	useColor := true
-	if strings.ToLower(cfg.ColorMode) == "never" || os.Getenv("NO_COLOR") != "" {
-		useColor = false
-	}
+	useColor := !(strings.ToLower(cfg.ColorMode) == "never" || os.Getenv("NO_COLOR") != "")
 
 	engine.InitColorStyles(useColor)
 

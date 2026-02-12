@@ -180,7 +180,7 @@ func TestRedisSIsMember(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("value", convert.GoToLuaValue(L, tt.value))
 
-			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sismember("default", key, value)`))
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sismember("default", key, value)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -259,7 +259,7 @@ func TestRedisSMembers(t *testing.T) {
 			}
 
 			gotResult := L.GetGlobal("result")
-			if !(gotResult.Type() == tt.expectedValue.Type() && gotResult.String() == "nil") {
+			if gotResult.Type() != tt.expectedValue.Type() || gotResult.String() != "nil" {
 				if !luaTablesAreEqual(gotResult.(*lua.LTable), tt.expectedValue.(*lua.LTable)) {
 					t.Errorf("nautilus.redis_smembers() gotResult = %v, want %v", gotResult, tt.expectedValue)
 				}

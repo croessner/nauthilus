@@ -219,7 +219,7 @@ func TestLuaAddTOTPRecoveryCodes(t *testing.T) {
 		if req != nil {
 			assert.Equal(t, definitions.LuaCommandAddTOTPRecoveryCodes, req.Command)
 			assert.NotNil(t, req.CommonRequest)
-			assert.Equal(t, []string{"code1", "code2"}, req.CommonRequest.TOTPRecoveryCodes)
+			assert.Equal(t, []string{"code1", "code2"}, req.TOTPRecoveryCodes)
 
 			if req.LuaReplyChan != nil {
 				req.LuaReplyChan <- &lualib.LuaBackendResult{}

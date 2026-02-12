@@ -129,10 +129,8 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, re
 	// Configure queue length limit from config (0 = unlimited)
 	queueLen := 0
 	if backendName == definitions.DefaultBackendName {
-		if luaCfg := cfg.GetLua().GetConfig(); luaCfg != nil {
-			if c, ok := luaCfg.(*config.LuaConf); ok {
-				queueLen = c.GetQueueLength()
-			}
+		if c, ok := cfg.GetLua().GetConfig().(*config.LuaConf); ok {
+			queueLen = c.GetQueueLength()
 		}
 	} else {
 		optionalBackends := cfg.GetLua().GetOptionalLuaBackends()

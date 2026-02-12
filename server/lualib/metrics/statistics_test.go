@@ -16,6 +16,7 @@
 package metrics
 
 import (
+	"context"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -34,7 +35,7 @@ func TestCreateAndUseSummaryVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
+	L.PreloadModule("prometheus", LoaderModPrometheus(context.TODO(), nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")
@@ -71,7 +72,7 @@ func TestCreateAndUseCounterVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
+	L.PreloadModule("prometheus", LoaderModPrometheus(context.TODO(), nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")
@@ -102,19 +103,19 @@ func TestCreateAndUseHistogramVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
+	L.PreloadModule("prometheus", LoaderModPrometheus(context.TODO(), nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")
-		
+
 		-- Create a HistogramVec
 		prometheus.create_histogram_vec("test_histogram", "Histogram test", {"label1", "label2"})
-		
+
 		-- Start timer
 		timer = prometheus.start_histogram_timer("test_histogram", {label1 = "value1", label2 = "value2"})
-		
+
 		-- Some operation...
-		
+
 		-- Stop timer
 		prometheus.stop_timer(timer)
 	`)
@@ -139,14 +140,14 @@ func TestCreateAndUseGaugeVec(t *testing.T) {
 	defer L.Close()
 
 	// Register the module
-	L.PreloadModule("prometheus", LoaderModPrometheus(nil, nil, nil))
+	L.PreloadModule("prometheus", LoaderModPrometheus(context.TODO(), nil, nil))
 
 	err := runLuaCode(L, `
 		local prometheus = require("prometheus")
-		
+
 		-- Create a GaugeVec
 		prometheus.create_gauge_vec("test_gauge", "Test Gauge", {"label1", "label2"})
-		
+
 		-- Set gauge value
 		prometheus.set_gauge("test_gauge", 5.5, {label1 = "value1", label2 = "value2"})
 	`)

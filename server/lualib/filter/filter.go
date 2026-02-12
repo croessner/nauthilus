@@ -453,14 +453,14 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 	fctx, fsp := tr.Start(ctx.Request.Context(), "filters.call",
 		attribute.String("service", func() string {
 			if r != nil && r.CommonRequest != nil {
-				return r.CommonRequest.Service
+				return r.Service
 			}
 
 			return ""
 		}()),
 		attribute.String("username", func() string {
 			if r != nil && r.CommonRequest != nil {
-				return r.CommonRequest.Username
+				return r.Username
 			}
 
 			return ""
@@ -516,7 +516,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 	sctx, selSpan := tr.Start(fctx, "filters.select_applicable")
 	_ = sctx
 
-	if r.CommonRequest != nil && r.CommonRequest.NoAuth {
+	if r.CommonRequest != nil && r.NoAuth {
 		mode = "no_auth"
 
 		for _, s := range LuaFilters.LuaScripts {
@@ -524,7 +524,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				scripts = append(scripts, s)
 			}
 		}
-	} else if r.CommonRequest != nil && r.CommonRequest.Authenticated {
+	} else if r.CommonRequest != nil && r.Authenticated {
 		mode = "authenticated"
 
 		for _, s := range LuaFilters.LuaScripts {
@@ -567,7 +567,6 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		name            string
 		action          bool
 		ret             int
-		err             error
 		logs            lualib.CustomLogKeyValue
 		statusText      **string
 		backendResult   *lualib.LuaBackendResult
@@ -667,7 +666,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			// Build request table
 			request := Llocal.NewTable()
 
-			r.CommonRequest.SetupRequest(Llocal, cfg, request)
+			r.SetupRequest(Llocal, cfg, request)
 
 			// Set local override fields from Request struct
 			if r.Session != "" {
@@ -906,13 +905,14 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 			// Emit debug log for this filter
 			logs := []any{definitions.LogKeyGUID, r.Session, "name", sc.Name, definitions.LogKeyMsg, "Lua filter finished", "action", fr.action, "result", func() string {
-				if fr.ret == 0 {
+				switch fr.ret {
+				case 0:
 					return "ok"
-				} else if fr.ret == 1 {
+				case 1:
 					return "fail"
+				default:
+					return fmt.Sprintf("unknown(%d)", fr.ret)
 				}
-
-				return fmt.Sprintf("unknown(%d)", fr.ret)
 			}()}
 
 			if len(fr.logs) > 0 {
@@ -991,7 +991,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			rejectedFilters = append(rejectedFilters, fr.name)
 		}
 
-		status := "unknown("
+		var status string
+
 		switch fr.ret {
 		case 0:
 			status = "ok"

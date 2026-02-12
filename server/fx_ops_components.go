@@ -171,67 +171,6 @@ func (r *reloadOrchestrator) stopLua(ctx context.Context) {
 	}
 }
 
-func (r *reloadOrchestrator) restartActionWorkers(waitCtx context.Context, parentCtx context.Context) {
-	if r.store == nil || r.store.action == nil {
-		return
-	}
-
-	stopContext(r.store.action)
-	for i := 0; i < len(r.actionWorkers); i++ {
-		select {
-		case <-r.actionWorkers[i].DoneChan:
-		case <-waitCtx.Done():
-			return
-		}
-	}
-
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
-
-	r.store.action.ctx, r.store.action.cancel = context.WithCancel(parentCtx)
-
-	for i := 0; i < len(r.actionWorkers); i++ {
-		go r.actionWorkers[i].Work(r.store.action.ctx)
-	}
-}
-
-func (r *reloadOrchestrator) restartRedis(readinessCtx context.Context, runCtx context.Context) {
-	logger := getLogger(r.store)
-	cfg := getConfigFile(r.store)
-
-	if cfg == nil {
-		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to restart Redis without a config snapshot")
-		return
-	}
-
-	if r.redisRebuilder != nil {
-		_ = r.redisRebuilder.Rebuild(cfg, logger)
-	} else {
-		// Legacy fallback for non-migrated wiring.
-		rediscli.RebuildClient()
-	}
-
-	if readinessCtx == nil {
-		return
-	}
-
-	if err := readinessCtx.Err(); err != nil {
-		return
-	}
-
-	// Ensure Redis connections are usable after the rebuild.
-	// This keeps the existing retry logic (and its logs), but avoids leaving the
-	// process with a permanently closed client.
-	if runCtx == nil {
-		runCtx = context.Background()
-	}
-
-	if err := setupRedis(readinessCtx, runCtx, cfg, logger, r.store.redisClient); err != nil {
-		level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during reload", definitions.LogKeyError, err)
-	}
-}
-
 func (r *reloadOrchestrator) reloadLogging(cfg config.File) {
 	if cfg == nil {
 		return

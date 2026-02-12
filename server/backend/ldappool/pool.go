@@ -1257,7 +1257,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		)
 
 		if stderrors.As(err, &ldapError) {
-			if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
+			if ldapError.ResultCode != uint16(ldap.LDAPResultNoSuchObject) {
 				doLog = true
 				if isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
 					ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())

@@ -155,38 +155,6 @@ func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
 	return true
 }
 
-// getIdPFlowType returns the current IdP flow type from the session cookie.
-func (h *FrontendHandler) getIdPFlowType(ctx *gin.Context) string {
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
-		return ""
-	}
-
-	return mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-}
-
-// clearIdPFlow removes all IdP flow state from the session cookie.
-func (h *FrontendHandler) clearIdPFlow(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
-		return
-	}
-
-	mgr.Delete(definitions.SessionKeyIdPFlowActive)
-	mgr.Delete(definitions.SessionKeyIdPFlowType)
-	mgr.Delete(definitions.SessionKeyIdPClientID)
-	mgr.Delete(definitions.SessionKeyIdPRedirectURI)
-	mgr.Delete(definitions.SessionKeyIdPScope)
-	mgr.Delete(definitions.SessionKeyIdPState)
-	mgr.Delete(definitions.SessionKeyIdPNonce)
-	mgr.Delete(definitions.SessionKeyIdPResponseType)
-	mgr.Delete(definitions.SessionKeyIdPPrompt)
-	mgr.Delete(definitions.SessionKeyIdPSAMLRequest)
-	mgr.Delete(definitions.SessionKeyIdPSAMLRelayState)
-	mgr.Delete(definitions.SessionKeyIdPSAMLEntityID)
-	mgr.Delete(definitions.SessionKeyIdPOriginalURL)
-}
-
 // renderNoFlowError renders an error page when the /login endpoint is accessed without a valid IdP flow.
 func (h *FrontendHandler) renderNoFlowError(ctx *gin.Context) {
 	// Check if deps is available (may not be in tests)
@@ -373,9 +341,10 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
 		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcClientID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 		}
 	}
@@ -455,9 +424,10 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	if mgr != nil {
 		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
@@ -617,9 +587,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	if mgr != nil {
 		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
@@ -1022,9 +993,10 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 
 		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
@@ -1287,9 +1259,10 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML

@@ -103,8 +103,6 @@ func MergeStatusAndLogs(statusSet *bool, reqLogs **CustomLogKeyValue, reqStatus 
 		if *reqLogs == nil {
 			*reqLogs = new(CustomLogKeyValue)
 		}
-		for i := range scriptLogs {
-			**reqLogs = append(**reqLogs, scriptLogs[i])
-		}
+		**reqLogs = append(**reqLogs, scriptLogs...)
 	}
 }

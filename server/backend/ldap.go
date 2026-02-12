@@ -17,7 +17,6 @@ package backend
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -225,7 +224,7 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 		scope.Set("sub")
 	} else {
 		if err = scope.Set(toString); err != nil {
-			return nil, stderrors.New(fmt.Sprintf("LDAP scope not detected: %s", toString))
+			return nil, fmt.Errorf("LDAP scope not detected: %s", toString)
 		}
 	}
 
@@ -452,7 +451,8 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 	guid := fieldValues["session"].String()
 	attrTable := fieldValues["attributes"].(*lua.LTable)
 
-	if command == definitions.LDAPSearch {
+	switch command {
+	case definitions.LDAPSearch:
 		basedn = fieldValues["basedn"].String()
 		filter = fieldValues["filter"].String()
 
@@ -465,7 +465,7 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 		}
 
 		searchAttributes = extractAttributes(attrTable)
-	} else if command == definitions.LDAPModify {
+	case definitions.LDAPModify:
 		dn = fieldValues["dn"].String()
 		operation = fieldValues["operation"].String()
 

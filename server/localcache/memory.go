@@ -257,11 +257,6 @@ func (sc *MemoryShardedCache) resetAndReturnToPoolIfPassDBResult(obj any) {
 	}
 }
 
-// startJanitor delegates to MemoryShardedCache.startJanitor
-func (c *Cache) startJanitor() {
-	c.MemoryShardedCache.startJanitor()
-}
-
 // Stop stops the background janitor on the underlying sharded cache, if any.
 func (c *Cache) Stop() { c.MemoryShardedCache.Stop() }
 
@@ -283,11 +278,6 @@ func (c *Cache) Delete(k string) {
 // DeleteExpired delegates to MemoryShardedCache.DeleteExpired
 func (c *Cache) DeleteExpired() {
 	c.MemoryShardedCache.DeleteExpired()
-}
-
-// resetAndReturnToPoolIfPassDBResult delegates to MemoryShardedCache.resetAndReturnToPoolIfPassDBResult
-func (c *Cache) resetAndReturnToPoolIfPassDBResult(obj any) {
-	c.MemoryShardedCache.resetAndReturnToPoolIfPassDBResult(obj)
 }
 
 // LocalCache is a cache object with a default expiration duration of 5 minutes.

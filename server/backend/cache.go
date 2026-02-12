@@ -309,8 +309,6 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 		definitions.DbgCache,
 		definitions.LogKeyGUID, guid,
 		"redis", result)
-
-	return
 }
 
 // cacheNamer is a minimal interface implemented by protocol configs that expose a cache name.

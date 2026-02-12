@@ -585,7 +585,7 @@ func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
 	}
 
 	// Add mapped fields
-	for _, field := range p.LDAPAttributeMapping.GetAllMappedFields() {
+	for _, field := range p.GetAllMappedFields() {
 		if field != "" {
 			uniqueAttributes[field] = struct{}{}
 		}
@@ -684,22 +684,22 @@ func (p *LDAPSearchProtocol) GetCacheName() (string, error) {
 
 // GetTotpSecretField returns the LDAP attribute for the TOTP secret.
 func (p *LDAPSearchProtocol) GetTotpSecretField() string {
-	return p.LDAPAttributeMapping.GetTOTPSecretField()
+	return p.GetTOTPSecretField()
 }
 
 // GetTotpRecoveryField returns the LDAP attribute for the TOTP recovery codes.
 func (p *LDAPSearchProtocol) GetTotpRecoveryField() string {
-	return p.LDAPAttributeMapping.GetTOTPRecoveryField()
+	return p.GetTOTPRecoveryField()
 }
 
 // GetTotpObjectClass returns the objectClass for TOTP usage.
 func (p *LDAPSearchProtocol) GetTotpObjectClass() string {
-	return p.LDAPAttributeMapping.GetTOTPObjectClass()
+	return p.GetTOTPObjectClass()
 }
 
 // GetTotpRecoveryObjectClass returns the objectClass for TOTP recovery codes.
 func (p *LDAPSearchProtocol) GetTotpRecoveryObjectClass() string {
-	return p.LDAPAttributeMapping.GetTOTPRecoveryObjectClass()
+	return p.GetTOTPRecoveryObjectClass()
 }
 
 // GetWebAuthnCredentialField returns the LDAP attribute for the WebAuthn credentials.

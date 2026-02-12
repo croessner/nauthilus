@@ -112,7 +112,7 @@ func (m *mockOIDCCfg) GetUsername() string   { return "X-Nauthilus-Username" }
 func (m *mockOIDCCfg) GetPassword() string   { return "X-Nauthilus-Password" }
 func (m *mockOIDCCfg) HandleFile() error     { return nil }
 func (m *mockOIDCCfg) GetConfigFileAsJSON() ([]byte, error) {
-	return json.Marshal(m)
+	return []byte("{}"), nil
 }
 func (m *mockOIDCCfg) HaveLuaFeatures() bool { return false }
 func (m *mockOIDCCfg) HaveLuaFilters() bool  { return false }

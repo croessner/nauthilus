@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -62,7 +63,7 @@ func TestGetAllHTTPRequestHeaders(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			manager := NewHTTPRequestManager(nil, nil, nil, NewHTTPMetaFromRequest(httpRequest))
+			manager := NewHTTPRequestManager(context.TODO(), nil, nil, NewHTTPMetaFromRequest(httpRequest))
 			manager.GetAllHTTPRequestHeaders(L)
 
 			lTable := L.CheckTable(-2)
@@ -151,7 +152,7 @@ func TestGetHTTPRequestHeader(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			manager := NewHTTPRequestManager(nil, nil, nil, NewHTTPMetaFromRequest(httpRequest))
+			manager := NewHTTPRequestManager(context.TODO(), nil, nil, NewHTTPMetaFromRequest(httpRequest))
 			manager.GetHTTPRequestHeader(L)
 
 			lTable := L.CheckTable(-2)

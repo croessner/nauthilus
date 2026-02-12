@@ -307,11 +307,7 @@ func (l *LDAPConnectionImpl) Search(ctx context.Context, cfg config.File, logger
 			}
 		}
 
-		if _, assertOk := result[definitions.DistinguishedName]; assertOk {
-			result[definitions.DistinguishedName] = append(result[definitions.DistinguishedName], searchResult.Entries[entryIndex].DN)
-		} else {
-			result[definitions.DistinguishedName] = []any{searchResult.Entries[entryIndex].DN}
-		}
+		result[definitions.DistinguishedName] = append(result[definitions.DistinguishedName], searchResult.Entries[entryIndex].DN)
 	}
 
 	return result, searchResult.Entries, nil
@@ -360,11 +356,12 @@ func (l *LDAPConnectionImpl) Modify(ctx context.Context, cfg config.File, logger
 
 	if ldapRequest.ModifyAttributes != nil {
 		for attributeName, attributeValues := range ldapRequest.ModifyAttributes {
-			if ldapRequest.SubCommand == definitions.LDAPModifyAdd {
+			switch ldapRequest.SubCommand {
+			case definitions.LDAPModifyAdd:
 				modifyRequest.Add(attributeName, attributeValues)
-			} else if ldapRequest.SubCommand == definitions.LDAPModifyDelete {
+			case definitions.LDAPModifyDelete:
 				modifyRequest.Delete(attributeName, attributeValues)
-			} else if ldapRequest.SubCommand == definitions.LDAPModifyReplace {
+			case definitions.LDAPModifyReplace:
 				modifyRequest.Replace(attributeName, attributeValues)
 			}
 		}

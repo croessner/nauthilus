@@ -88,7 +88,7 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 	// Read idempotency key as early as possible so we can echo it on early return paths (e.g., memory cache).
 	idem := ctx.GetHeader(idempotencyHeaderName)
 
-	if !(auth.HaveMonitoringFlag(definitions.MonInMemory) || auth.IsMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+	if !auth.HaveMonitoringFlag(definitions.MonInMemory) && !auth.IsMasterUser() && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
 		// Memory-cache hit is semantically a replay; if a key is present, echo it and mark replayed.
 		if idem != "" {
 			replayed := true

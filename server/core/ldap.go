@@ -29,7 +29,6 @@ import (
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/security"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -287,7 +286,7 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 		return
 	}
 
-	if totpSecretPre != nil && len(totpSecretPre) != 0 {
+	if len(totpSecretPre) != 0 {
 		// Use the TOTP secret from a master user if it exists.
 		passDBResult.Attributes[totpSecretField] = totpSecretPre
 	} else {
@@ -400,16 +399,6 @@ func (lm *ldapManagerImpl) effectiveCfg() config.File {
 // effectiveLogger returns the configured logger.
 func (lm *ldapManagerImpl) effectiveLogger() *slog.Logger {
 	return lm.deps.Logger
-}
-
-// effectiveEnv returns the configured environment accessor.
-func (lm *ldapManagerImpl) effectiveEnv() config.Environment {
-	return lm.deps.Env
-}
-
-// effectiveRedis returns the configured Redis client.
-func (lm *ldapManagerImpl) effectiveRedis() rediscli.Client {
-	return lm.deps.Redis
 }
 
 // PassDB implements the LDAP password database backend.

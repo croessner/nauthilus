@@ -31,7 +31,7 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
-const contactSupport = "Please contact your support"
+const contactSupport = "please contact your support"
 
 //goland:noinspection ALL
 var errContactSupport = errors.New(contactSupport)

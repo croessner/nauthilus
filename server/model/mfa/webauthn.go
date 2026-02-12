@@ -47,7 +47,7 @@ func (p *PersistentCredential) MarshalJSON() ([]byte, error) {
 		return nil, ErrNilPersistentCredential
 	}
 
-	signCount := p.Credential.Authenticator.SignCount
+	signCount := p.Authenticator.SignCount
 	aux := persistentCredentialJSON{
 		Credential: p.Credential,
 		Name:       p.Name,
@@ -73,7 +73,7 @@ func (p *PersistentCredential) UnmarshalJSON(data []byte) error {
 	p.Name = aux.Name
 	p.LastUsed = aux.LastUsed
 	if aux.SignCount != nil {
-		p.Credential.Authenticator.SignCount = *aux.SignCount
+		p.Authenticator.SignCount = *aux.SignCount
 	}
 
 	p.RawJSON = string(data)

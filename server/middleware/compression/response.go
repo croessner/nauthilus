@@ -55,7 +55,7 @@ func useZstdCompression(router *gin.Engine, alg string, cmp *config.Compression,
 		return false
 	}
 
-	if !(strings.EqualFold(alg, "zstd") || strings.EqualFold(alg, "zst") || strings.EqualFold(alg, "zstandard")) {
+	if !strings.EqualFold(alg, "zstd") && !strings.EqualFold(alg, "zst") && !strings.EqualFold(alg, "zstandard") {
 		return false
 	}
 
@@ -91,7 +91,7 @@ func useBrotliCompression(router *gin.Engine, alg string, cmp *config.Compressio
 		return false
 	}
 
-	if !(strings.EqualFold(alg, "br") || strings.EqualFold(alg, "brotli")) {
+	if !strings.EqualFold(alg, "br") && !strings.EqualFold(alg, "brotli") {
 		return false
 	}
 

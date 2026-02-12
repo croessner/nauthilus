@@ -112,7 +112,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 						a.Runtime.AccountField = definitions.MetaUserAccount
 					}
 
-					if a.Attributes.Attributes == nil || len(a.Attributes.Attributes) == 0 {
+					if len(a.Attributes.Attributes) == 0 {
 						attrs := make(bktype.AttributeMapping)
 						attrs[definitions.MetaUserAccount] = []any{acc}
 						a.ReplaceAllAttributes(attrs)

@@ -161,14 +161,12 @@ func runSendLMTPMail(lmtpServer string, heloName string, _ smtp.Auth, from strin
 	}
 
 	genericClient, err = NewLMTPClient(conn)
-	if genericClient != nil {
-		defer genericClient.Quit()
-		defer genericClient.Close()
-	}
-
 	if err != nil {
 		return err
 	}
+
+	defer genericClient.Quit()
+	defer genericClient.Close()
 
 	if err = genericClient.Hello(heloName); err != nil {
 		return err

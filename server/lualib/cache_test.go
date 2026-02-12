@@ -16,13 +16,14 @@
 package lualib
 
 import (
+	"context"
 	"testing"
 
 	lua "github.com/yuin/gopher-lua"
 )
 
 func setupCacheModule(L *lua.LState) {
-	L.PreloadModule("nauthilus_cache", LoaderModCache(nil, nil, nil))
+	L.PreloadModule("nauthilus_cache", LoaderModCache(context.TODO(), nil, nil))
 }
 
 func TestLuaCacheSetGetDelete(t *testing.T) {

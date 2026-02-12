@@ -126,13 +126,9 @@ func (h *BatchingHook) run() {
 
 	for {
 		// Block waiting for the first item or exit when queue is closed (never in current lifecycle)
-		var first *batchItem
-		var ok bool
-		select {
-		case first, ok = <-h.queue:
-			if !ok {
-				return
-			}
+		first, ok := <-h.queue
+		if !ok {
+			return
 		}
 
 		batch = batch[:0]

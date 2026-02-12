@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -33,7 +34,6 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/util"
-	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 )
 
