@@ -175,8 +175,9 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 			AuthTime: fixedTime,
 		}
 
-		sessionData, _ := json.Marshal(session)
-		mock.ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		// The stored session will contain the access token (JWT), so we use
+		// regexp matching for the refresh token SET value.
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
 		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
 		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
@@ -185,27 +186,69 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.NotEmpty(t, idToken)
 		assert.NotEmpty(t, accessToken)
 		assert.Equal(t, "na_rt_fixed-token", refreshToken)
+		assert.Equal(t, accessToken, session.AccessToken, "session must track access token")
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("ExchangeRefreshToken", func(t *testing.T) {
+	t.Run("ExchangeRefreshToken_WithJWTAccessToken", func(t *testing.T) {
+		oldAccessToken := "header.payload.signature"
 		session := &OIDCSession{
-			ClientID: "client1",
-			UserID:   "user123",
-			Scopes:   []string{"openid", "offline_access"},
-			AuthTime: fixedTime,
+			ClientID:    "client1",
+			UserID:      "user123",
+			Scopes:      []string{"openid", "offline_access"},
+			AuthTime:    fixedTime,
+			AccessToken: oldAccessToken,
 		}
+
 		refreshToken := "old-rt"
 		sessionData, _ := json.Marshal(session)
 
 		// Get old RT
 		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		// Deny old JWT access token
+		mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", 2*time.Hour).SetVal("OK")
 		// Delete old RT
 		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
 		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
 		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
-		// Store new RT (fixed-token due to mock)
-		mock.ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", string(sessionData), 7*24*time.Hour).SetVal("OK")
+		// Store new RT (fixed-token due to mock) — value contains JWT, so use regexp
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		assert.NoError(t, err)
+		assert.NotEmpty(t, idToken)
+		assert.NotEmpty(t, accessToken)
+		assert.Equal(t, "na_rt_fixed-token", newRefreshToken)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("ExchangeRefreshToken_WithOpaqueAccessToken", func(t *testing.T) {
+		oldAccessToken := "na_at_old-opaque-token"
+		session := &OIDCSession{
+			ClientID:    "client1",
+			UserID:      "user123",
+			Scopes:      []string{"openid", "offline_access"},
+			AuthTime:    fixedTime,
+			AccessToken: oldAccessToken,
+		}
+
+		refreshToken := "old-rt-opaque"
+		sessionData, _ := json.Marshal(session)
+
+		// Get old RT
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		// Delete old opaque access token
+		mock.ExpectGet("test:oidc:access_token:" + oldAccessToken).SetVal(string(sessionData))
+		mock.ExpectSRem("test:oidc:user_access_tokens:user123", oldAccessToken).SetVal(1)
+		mock.ExpectDel("test:oidc:access_token:" + oldAccessToken).SetVal(1)
+		// Delete old RT
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
+		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
+		// Store new RT — value contains JWT, so use regexp
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
 		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
 		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 

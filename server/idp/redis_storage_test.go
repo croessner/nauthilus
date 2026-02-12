@@ -92,4 +92,50 @@ func TestRedisTokenStorage(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("DenyJWTAccessToken", func(t *testing.T) {
+		token := "header.payload.signature"
+		ttl := 2 * time.Hour
+		key := prefix + "oidc:denied_access_token:" + token
+
+		mock.ExpectSet(key, "1", ttl).SetVal("OK")
+
+		err := storage.DenyJWTAccessToken(ctx, token, ttl)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("DenyJWTAccessToken_EmptyToken", func(t *testing.T) {
+		err := storage.DenyJWTAccessToken(ctx, "", time.Hour)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("DenyJWTAccessToken_ZeroTTL", func(t *testing.T) {
+		err := storage.DenyJWTAccessToken(ctx, "some-token", 0)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("IsJWTAccessTokenDenied_True", func(t *testing.T) {
+		token := "denied-jwt-token"
+		key := prefix + "oidc:denied_access_token:" + token
+
+		mock.ExpectGet(key).SetVal("1")
+
+		denied := storage.IsJWTAccessTokenDenied(ctx, token)
+		assert.True(t, denied)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("IsJWTAccessTokenDenied_False", func(t *testing.T) {
+		token := "valid-jwt-token"
+		key := prefix + "oidc:denied_access_token:" + token
+
+		mock.ExpectGet(key).RedisNil()
+
+		denied := storage.IsJWTAccessTokenDenied(ctx, token)
+		assert.False(t, denied)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
 }

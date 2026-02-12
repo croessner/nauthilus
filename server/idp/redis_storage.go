@@ -36,6 +36,7 @@ type OIDCSession struct {
 	RedirectURI       string         `json:"redirect_uri"`
 	AuthTime          time.Time      `json:"auth_time"`
 	Nonce             string         `json:"nonce,omitempty"`
+	AccessToken       string         `json:"access_token,omitempty"`
 	IdTokenClaims     map[string]any `json:"id_token_claims"`
 	AccessTokenClaims map[string]any `json:"access_token_claims"`
 }
@@ -242,6 +243,27 @@ func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string)
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
 
 	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+}
+
+// DenyJWTAccessToken adds a JWT access token to the denylist in Redis.
+// The token is stored with a TTL so it expires automatically when the original token would have expired.
+func (s *RedisTokenStorage) DenyJWTAccessToken(ctx context.Context, token string, ttl time.Duration) error {
+	if token == "" || ttl <= 0 {
+		return nil
+	}
+
+	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+
+	return s.redis.GetWriteHandle().Set(ctx, key, "1", ttl).Err()
+}
+
+// IsJWTAccessTokenDenied checks whether a JWT access token has been denied (invalidated).
+func (s *RedisTokenStorage) IsJWTAccessTokenDenied(ctx context.Context, token string) bool {
+	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+
+	_, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+
+	return err == nil
 }
 
 // ListUserSessions returns all active OIDC sessions (via access tokens) for a user.
