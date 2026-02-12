@@ -49,23 +49,31 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// TokenFlusher abstracts the ability to flush all OIDC/SAML2 tokens for a user.
+// It is implemented by idp.RedisTokenStorage and injected into restAdminDeps to
+// avoid a cyclic import between core and idp.
+type TokenFlusher interface {
+	FlushUserTokens(ctx context.Context, userID string) error
+}
+
 type restAdminDeps struct {
-	Cfg     config.File
-	Logger  *slog.Logger
-	Redis   rediscli.Client
-	Channel backend.Channel
+	Cfg          config.File
+	Logger       *slog.Logger
+	Redis        rediscli.Client
+	Channel      backend.Channel
+	TokenFlusher TokenFlusher
 }
 
-func (d restAdminDeps) effectiveLogger() *slog.Logger {
-	return d.Logger
+func (deps restAdminDeps) effectiveLogger() *slog.Logger {
+	return deps.Logger
 }
 
-func (d restAdminDeps) effectiveCfg() config.File {
-	return d.Cfg
+func (deps restAdminDeps) effectiveCfg() config.File {
+	return deps.Cfg
 }
 
-func (d restAdminDeps) effectiveRedis() rediscli.Client {
-	return d.Redis
+func (deps restAdminDeps) effectiveRedis() rediscli.Client {
+	return deps.Redis
 }
 
 // NewBruteForceListHandler constructs a Gin handler for the BruteForce list endpoint
@@ -442,99 +450,83 @@ func listBlockedAccounts(ctx context.Context, deps restAdminDeps, filterCmd *bf.
 		}
 
 		return blockedAccounts, err
-	} else {
-		if filterCmd != nil {
-			var (
-				account          string
-				filteredAccounts []string
-			)
+	}
 
-			for _, accountWanted := range filterCmd.Accounts {
-				for _, account = range accounts {
-					if account == accountWanted {
-						break
-					} else {
-						account = ""
-					}
-				}
+	if filterCmd != nil {
+		var (
+			account          string
+			filteredAccounts []string
+		)
 
-				if account != "" {
-					filteredAccounts = append(filteredAccounts, account)
-				}
-			}
-
-			accounts = filteredAccounts
-		}
-
-		for _, account := range accounts {
-			var accountIPs []string
-
-			key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + account
-			if accountIPs, err = deps.Redis.GetReadHandle().SMembers(ctx, key).Result(); err != nil {
-				stats.GetMetrics().GetRedisReadCounter().Inc()
-
-				if !stderrors.Is(err, redis.Nil) {
-					level.Error(logger).Log(
-						definitions.LogKeyGUID, guid,
-						definitions.LogKeyMsg, "Error retrieving IP addresses for account from Redis",
-						definitions.LogKeyError, err,
-					)
-
-					errMsg := err.Error()
-					blockedAccounts.Error = &errMsg
-
+		for _, accountWanted := range filterCmd.Accounts {
+			for _, account = range accounts {
+				if account == accountWanted {
 					break
 				} else {
-					err = nil
+					account = ""
 				}
-
-				continue
 			}
 
-			stats.GetMetrics().GetRedisReadCounter().Inc()
-			blockedAccounts.Accounts[account] = accountIPs
+			if account != "" {
+				filteredAccounts = append(filteredAccounts, account)
+			}
 		}
 
-		blockedAccounts.Error = nil
+		accounts = filteredAccounts
 	}
+
+	for _, account := range accounts {
+		var accountIPs []string
+
+		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + account
+		if accountIPs, err = deps.Redis.GetReadHandle().SMembers(ctx, key).Result(); err != nil {
+			stats.GetMetrics().GetRedisReadCounter().Inc()
+
+			if !stderrors.Is(err, redis.Nil) {
+				level.Error(logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "Error retrieving IP addresses for account from Redis",
+					definitions.LogKeyError, err,
+				)
+
+				errMsg := err.Error()
+				blockedAccounts.Error = &errMsg
+
+				break
+			} else {
+				err = nil
+			}
+
+			continue
+		}
+
+		stats.GetMetrics().GetRedisReadCounter().Inc()
+		blockedAccounts.Accounts[account] = accountIPs
+	}
+
+	blockedAccounts.Error = nil
 
 	return blockedAccounts, err
 }
 
-func (d restAdminDeps) effectiveChannel() backend.Channel {
-	if d.Channel != nil {
-		return d.Channel
+func (deps restAdminDeps) effectiveChannel() backend.Channel {
+	if deps.Channel != nil {
+		return deps.Channel
 	}
 
 	return nil
 }
 
-func (d restAdminDeps) validate() error {
-	if d.Cfg == nil {
+func (deps restAdminDeps) validate() error {
+	if deps.Cfg == nil {
 		return stderrors.New("config is nil")
 	}
 
-	if d.Redis == nil {
+	if deps.Redis == nil {
 		return stderrors.New("redis client is nil")
 	}
 
 	return nil
-}
-
-func NewRestAdminDeps(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, channel backend.Channel) restAdminDeps {
-	return restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient, Channel: channel}
-}
-
-func HandleBruteForceList(deps restAdminDeps) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		if err := deps.validate(); err != nil {
-			ctx.AbortWithStatus(http.StatusInternalServerError)
-
-			return
-		}
-
-		handleBruteForceList(ctx, deps)
-	}
 }
 
 func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
@@ -629,13 +621,8 @@ func (deps restAdminDeps) HandleConfigLoad(ctx *gin.Context) {
 	})
 }
 
-func HandleConfigLoad(deps restAdminDeps) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		deps.HandleConfigLoad(ctx)
-	}
-}
-
 // Flush User
+
 func (deps restAdminDeps) HandleUserFlush(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	userCmd := &admin.FlushUserCmd{}
@@ -662,15 +649,13 @@ func (deps restAdminDeps) HandleUserFlush(ctx *gin.Context) {
 
 // NewUserFlushHandler constructs a Gin handler for the user cache flush endpoint
 // using injected dependencies.
-func NewUserFlushHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
+func NewUserFlushHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, tokenFlusher ...TokenFlusher) gin.HandlerFunc {
 	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
 
-	return func(ctx *gin.Context) {
-		deps.HandleUserFlush(ctx)
+	if len(tokenFlusher) > 0 {
+		deps.TokenFlusher = tokenFlusher[0]
 	}
-}
 
-func HandleUserFlush(deps restAdminDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		deps.HandleUserFlush(ctx)
 	}
@@ -776,6 +761,23 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 	}
 
 	removedKeys = append(removedKeys, removeUserFromCache(ctx, deps, userCmd, userKeys, guid, removeHash)...)
+
+	// Flush OIDC/SAML2 tokens (access tokens, refresh tokens) for the user
+	if deps.TokenFlusher != nil {
+		if err := deps.TokenFlusher.FlushUserTokens(ctx.Request.Context(), accountName); err != nil {
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error while flushing IdP tokens",
+				definitions.LogKeyError, err,
+			)
+		} else {
+			level.Info(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "IdP tokens flushed for user",
+				"account", accountName,
+			)
+		}
+	}
 
 	return removedKeys, noUserAccountFound
 }
@@ -1179,13 +1181,6 @@ func (deps restAdminDeps) HandleBruteForceFlush(ctx *gin.Context) {
 	})
 }
 
-// HandleBruteForceRuleFlush handles the flushing of brute force rules for a given IP address and rule criteria.
-func HandleBruteForceRuleFlush(deps restAdminDeps) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		deps.HandleBruteForceFlush(ctx)
-	}
-}
-
 // --- Async job infrastructure ---
 
 const (
@@ -1377,8 +1372,12 @@ func (deps asyncJobDeps) HandleAsyncJobStatus(ctx *gin.Context) {
 
 // NewUserFlushAsyncHandler constructs a Gin handler for the async user cache flush endpoint
 // using injected dependencies.
-func NewUserFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
+func NewUserFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, tokenFlusher ...TokenFlusher) gin.HandlerFunc {
 	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+
+	if len(tokenFlusher) > 0 {
+		deps.TokenFlusher = tokenFlusher[0]
+	}
 
 	return func(ctx *gin.Context) {
 		deps.HandleUserFlushAsync(ctx)
@@ -1425,13 +1424,6 @@ func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
 	})
 }
 
-// HandleUserFlushAsync enqueues a user flush as a background job and returns 202 with jobId.
-func HandleUserFlushAsync(deps restAdminDeps) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		deps.HandleUserFlushAsync(ctx)
-	}
-}
-
 func (deps restAdminDeps) HandleBruteForceRuleFlushAsync(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	ipCmd := &bf.FlushRuleCmd{}
@@ -1468,13 +1460,6 @@ func (deps restAdminDeps) HandleBruteForceRuleFlushAsync(ctx *gin.Context) {
 			"status": jobStatusQueued,
 		},
 	})
-}
-
-// HandleBruteForceRuleFlushAsync enqueues a brute-force flush job and returns 202 with jobId.
-func HandleBruteForceRuleFlushAsync(deps restAdminDeps) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		deps.HandleBruteForceRuleFlushAsync(ctx)
-	}
 }
 
 func createBucketManager(ctx context.Context, deps restAdminDeps, guid string, ipAddress string, protocol string, oidcCID string) bruteforce.BucketManager {

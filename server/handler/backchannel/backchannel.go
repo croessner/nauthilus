@@ -80,7 +80,7 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	auth.NewWithDeps(deps).Register(group)
 	bruteforce.New(deps).Register(group)
 	confighandler.NewWithDeps(deps).Register(group)
-	cache.NewWithDeps(deps).Register(group)
+	cache.New(deps).Register(group)
 	asyncjobs.NewWithDeps(deps).Register(group)
 	mfa_backchannel.NewWithDeps(deps).Register(group)
 

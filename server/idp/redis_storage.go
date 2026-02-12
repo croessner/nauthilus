@@ -17,6 +17,7 @@ package idp
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"time"
 
@@ -264,6 +265,49 @@ func (s *RedisTokenStorage) IsJWTAccessTokenDenied(ctx context.Context, token st
 	_, err := s.redis.GetReadHandle().Get(ctx, key).Result()
 
 	return err == nil
+}
+
+// DeleteUserAccessTokens removes all access tokens for a given user from Redis.
+func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+
+	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", userID)
+
+	tokens, err := s.redis.GetReadHandle().SMembers(ctx, userKey).Result()
+	if err != nil {
+		return err
+	}
+
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	pipe := s.redis.GetWriteHandle().Pipeline()
+
+	for _, token := range tokens {
+		pipe.Del(ctx, s.prefix+fmt.Sprintf("oidc:access_token:%s", token))
+	}
+
+	pipe.Del(ctx, userKey)
+
+	_, err = pipe.Exec(ctx)
+
+	return err
+}
+
+// FlushUserTokens removes all OIDC access tokens and refresh tokens for a given user.
+// It returns a combined error if any of the underlying deletions fail.
+func (s *RedisTokenStorage) FlushUserTokens(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+
+	accessErr := s.DeleteUserAccessTokens(ctx, userID)
+	refreshErr := s.DeleteUserRefreshTokens(ctx, userID)
+
+	return stderrors.Join(accessErr, refreshErr)
 }
 
 // ListUserSessions returns all active OIDC sessions (via access tokens) for a user.

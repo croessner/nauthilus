@@ -19,7 +19,6 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -34,21 +33,8 @@ func New(deps *handlerdeps.Deps) *Handler {
 func (h *Handler) Register(router gin.IRouter) {
 	bg := router.Group("/" + definitions.CatBruteForce)
 
-	// Prefer deps-based registration so the request path can use injected Redis.
-	// The core handler keeps legacy wrappers for non-migrated call sites.
-	if h.deps != nil && h.deps.Cfg != nil {
-		bg.GET("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-		bg.POST("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-		bg.DELETE("/"+definitions.ServFlush, core.NewBruteForceFlushHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-		bg.DELETE("/"+definitions.ServFlush+"/async", core.NewBruteForceFlushAsyncHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-
-		return
-	}
-
-	adminDeps := core.NewRestAdminDeps(h.deps.Cfg, h.deps.Logger, h.deps.Redis, h.deps.Channel)
-
-	bg.GET("/"+definitions.ServList, core.HandleBruteForceList(adminDeps))
-	bg.POST("/"+definitions.ServList, core.HandleBruteForceList(adminDeps))
-	bg.DELETE("/"+definitions.ServFlush, core.HandleBruteForceRuleFlush(adminDeps))
-	bg.DELETE("/"+definitions.ServFlush+"/async", core.HandleBruteForceRuleFlushAsync(adminDeps))
+	bg.GET("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+	bg.POST("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+	bg.DELETE("/"+definitions.ServFlush, core.NewBruteForceFlushHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+	bg.DELETE("/"+definitions.ServFlush+"/async", core.NewBruteForceFlushAsyncHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
 }

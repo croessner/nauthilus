@@ -472,14 +472,17 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	}
 
 	// Backchannel API
+	tokenStorage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
+
 	setupBackchannel = func(e *gin.Engine) {
 		deps := &handlerdeps.Deps{
-			Cfg:         cfg,
-			CfgProvider: store.cfgProvider,
-			Env:         env,
-			Logger:      logger,
-			Redis:       store.redisClient,
-			LangManager: store.langManager,
+			Cfg:          cfg,
+			CfgProvider:  store.cfgProvider,
+			Env:          env,
+			Logger:       logger,
+			Redis:        store.redisClient,
+			LangManager:  store.langManager,
+			TokenFlusher: tokenStorage,
 		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		handlerbackchannel.SetupWithDeps(e, deps)

@@ -77,8 +77,6 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 		Redis:        redisClient,
 		AccountCache: nil,
 	}
-	adminDeps := NewRestAdminDeps(cfg, logger, redisClient, nil)
-
 	// router
 	composer := NewDefaultRouterComposer(deps)
 	r := composer.ComposeEngine()
@@ -88,12 +86,12 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 	group := r.Group("/api/v1")
 
 	// Brute-force endpoints
-	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush, HandleBruteForceRuleFlush(adminDeps))
-	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush+"/async", HandleBruteForceRuleFlushAsync(adminDeps))
+	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush, NewBruteForceFlushHandler(cfg, logger, redisClient))
+	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush+"/async", NewBruteForceFlushAsyncHandler(cfg, logger, redisClient))
 
 	// Cache endpoints
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, HandleUserFlush(adminDeps))
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", HandleUserFlushAsync(adminDeps))
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, NewUserFlushHandler(cfg, logger, redisClient))
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", NewUserFlushAsyncHandler(cfg, logger, redisClient))
 
 	// Async job status
 	ag := group.Group("/async")
