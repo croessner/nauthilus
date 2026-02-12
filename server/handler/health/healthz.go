@@ -61,11 +61,7 @@ type HealthzResult struct {
 	Checks map[string]*HealthzCheck `json:"checks"`
 }
 
-func ReadinessCheck(ctx *gin.Context) {
-	ReadinessCheckWithDeps(ctx, HealthzDeps{})
-}
-
-func ReadinessCheckWithDeps(ctx *gin.Context, deps HealthzDeps) {
+func ReadinessCheck(ctx *gin.Context, deps HealthzDeps) {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
 	}

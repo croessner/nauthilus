@@ -261,7 +261,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	luaCommand, nret = setLuaRequestParameters(cfg, L, luaRequest, request)
 
-	err := executeAndHandleError(ctx, cfg, logger, compiledScript, luaCommand, luaRequest, L, request, nret, logs)
+	err := executeAndHandleError(cfg, logger, compiledScript, luaCommand, luaRequest, L, request, nret, logs)
 
 	// Decide whether to replace VM on hard error/timeout
 	if err != nil || luaCtx.Err() != nil {
@@ -346,7 +346,7 @@ func setLuaRequestParameters(cfg config.File, L *lua.LState, luaRequest *bktype.
 }
 
 // executeAndHandleError executes a Lua script, handles errors, and logs details. It runs initialization, execution, and cleanup steps.
-func executeAndHandleError(ctx context.Context, cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
+func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)

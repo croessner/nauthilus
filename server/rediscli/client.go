@@ -29,7 +29,7 @@ import (
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
-	maintnotifications "github.com/redis/go-redis/v9/maintnotifications"
+	"github.com/redis/go-redis/v9/maintnotifications"
 )
 
 // RedisTLSOptions checks if Redis TLS is enabled in the configuration.

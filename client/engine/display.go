@@ -32,20 +32,6 @@ func truncateToCells(s string, max int) string { return runewidth.Truncate(s, ma
 
 func padToCellsRight(s string, w int) string { return runewidth.FillRight(s, w) }
 
-const (
-	AnsiReset = "\x1b[0m"
-	AnsiDim   = "\x1b[2m"
-	AnsiBold  = "\x1b[1m"
-
-	FgRed     = "\x1b[91m"
-	FgGreen   = "\x1b[92m"
-	FgYellow  = "\x1b[93m"
-	FgBlue    = "\x1b[94m"
-	FgMagenta = "\x1b[95m"
-	FgCyan    = "\x1b[96m"
-	FgWhite   = "\x1b[97m"
-)
-
 type colorStyle struct {
 	open    string
 	enabled bool
@@ -59,8 +45,15 @@ func (cs colorStyle) S(s string) string {
 }
 
 var (
-	StyleBold, StyleFaint, StyleItalic                                    colorStyle
-	StyleRed, StyleGreen, StyleYellow, StyleBlue, StyleMagenta, StyleCyan colorStyle
+	StyleFaint   colorStyle
+	StyleItalic  colorStyle
+	StyleBold    colorStyle
+	StyleGreen   colorStyle
+	StyleYellow  colorStyle
+	StyleBlue    colorStyle
+	StyleMagenta colorStyle
+	StyleCyan    colorStyle
+	StyleRed     colorStyle
 )
 
 func InitColorStyles(enabled bool) {
@@ -178,7 +171,7 @@ func computeHistogramCounts(buckets []atomic.Int64, start, end, bucketSpan, cols
 	return counts, maxC
 }
 
-func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64, overflow int64) {
+func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64) {
 	height := 10
 	dataStart, dataEnd, ok := findNonZeroRange(buckets)
 	if !ok {

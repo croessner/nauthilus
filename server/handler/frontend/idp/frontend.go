@@ -307,7 +307,7 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		if !h.hasMFAManagePermission(mgr) {
-			h.renderErrorModal(ctx, "Missing required permission for MFA management", http.StatusForbidden)
+			h.renderErrorModal(ctx, "Missing required permission for MFA management")
 			ctx.Abort()
 
 			return
@@ -404,7 +404,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
-		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, cfg, path, langManager.GetTags(), currentName),
+		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, path, langManager.GetTags(), currentName),
 		"Username":            username,
 		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
 		"ConfirmYes":          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
@@ -1557,7 +1557,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	code := ctx.PostForm("code")
 
 	if secret == "" || username == "" || code == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
@@ -1565,7 +1565,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		h.renderErrorModal(ctx, err.Error(), http.StatusBadRequest)
+		h.renderErrorModal(ctx, err.Error())
 
 		return
 	}
@@ -1600,20 +1600,20 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	}
 
 	if username == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Failed to fetch user data", http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to fetch user data")
 
 		return
 	}
 
 	if !userData.HaveTOTP && !userData.HaveWebAuthn {
-		h.renderErrorModal(ctx, "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes")
 
 		return
 	}
@@ -1621,7 +1621,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	codes, err := h.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
 	if err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to generate recovery codes: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to generate recovery codes: "+err.Error())
 
 		return
 	}
@@ -1659,7 +1659,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	}
 
 	if username == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
@@ -1667,7 +1667,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "fail").Inc()
-		h.renderErrorModal(ctx, "Failed to delete TOTP secret: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to delete TOTP secret: "+err.Error())
 
 		return
 	}
@@ -1680,7 +1680,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
-		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to initialize auth state")
 
 		return
 	}
@@ -1706,7 +1706,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	}
 
 	if userID == "" || username == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
@@ -1716,7 +1716,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
-		h.renderErrorModal(ctx, "Failed to delete WebAuthn from Redis: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to delete WebAuthn from Redis: "+err.Error())
 
 		return
 	}
@@ -1770,7 +1770,7 @@ func (h *FrontendHandler) LoggedOut(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_logged_out.html", data)
 }
 
-func (h *FrontendHandler) renderErrorModal(ctx *gin.Context, msg string, code int) {
+func (h *FrontendHandler) renderErrorModal(ctx *gin.Context, msg string) {
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
 	data["Message"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, msg)
@@ -1843,27 +1843,27 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 
 	id := ctx.Param("id")
 	if id == "" {
-		h.renderErrorModal(ctx, "Missing device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Missing device ID")
 
 		return
 	}
 
 	decodedID, err := base64.RawURLEncoding.DecodeString(id)
 	if err != nil {
-		h.renderErrorModal(ctx, "Invalid device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid device ID")
 
 		return
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Not logged in", http.StatusUnauthorized)
+		h.renderErrorModal(ctx, "Not logged in")
 
 		return
 	}
 
 	if userData.WebAuthnUser == nil {
-		h.renderErrorModal(ctx, "User not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "User not found")
 
 		return
 	}
@@ -1878,7 +1878,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	}
 
 	if targetCred == nil {
-		h.renderErrorModal(ctx, "Credential not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "Credential not found")
 
 		return
 	}
@@ -1886,7 +1886,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	// Delete from backend via AuthState
 	if err := userData.AuthState.DeleteWebAuthnCredential(targetCred); err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to delete credential: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to delete credential: "+err.Error())
 
 		return
 	}
@@ -1926,34 +1926,34 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 
 	id := ctx.Param("id")
 	if id == "" {
-		h.renderErrorModal(ctx, "Missing device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Missing device ID")
 
 		return
 	}
 
 	name := strings.TrimSpace(ctx.PostForm("name"))
 	if name == "" {
-		h.renderErrorModal(ctx, "Missing device name", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Missing device name")
 
 		return
 	}
 
 	decodedID, err := base64.RawURLEncoding.DecodeString(id)
 	if err != nil {
-		h.renderErrorModal(ctx, "Invalid device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid device ID")
 
 		return
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Not logged in", http.StatusUnauthorized)
+		h.renderErrorModal(ctx, "Not logged in")
 
 		return
 	}
 
 	if userData.WebAuthnUser == nil {
-		h.renderErrorModal(ctx, "User not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "User not found")
 
 		return
 	}
@@ -1969,7 +1969,7 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 	}
 
 	if !found {
-		h.renderErrorModal(ctx, "Credential not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "Credential not found")
 
 		return
 	}
@@ -1980,7 +1980,7 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 
 	if err := userData.AuthState.UpdateWebAuthnCredential(&oldCredential, &newCredential); err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to update credential: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to update credential: "+err.Error())
 
 		return
 	}

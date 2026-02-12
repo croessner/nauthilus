@@ -30,11 +30,7 @@ import (
 // It records request counts and response times based on the request path and mode query parameter.
 // Metrics include the total number of requests and the duration of HTTP responses.
 // The middleware respects configuration settings for enabling Prometheus timers and uses predefined labels for tracking.
-func PrometheusMiddleware() gin.HandlerFunc {
-	return PrometheusMiddlewareWithCfg(nil)
-}
-
-func PrometheusMiddlewareWithCfg(cfg config.File) gin.HandlerFunc {
+func PrometheusMiddleware(cfg config.File) gin.HandlerFunc {
 	enableTimer := false
 	if cfg != nil {
 		enableTimer = cfg.GetServer().GetPrometheusTimer().IsEnabled()

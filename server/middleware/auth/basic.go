@@ -236,13 +236,6 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	return false
 }
 
-// BasicAuthMiddleware provides HTTP Basic Authentication for protected routes in a Gin application.
-// It validates credentials against configured username and password, and challenges unauthorized requests.
-// If basic auth is disabled or bypassed based on the route configuration, it allows the request to proceed.
-func BasicAuthMiddleware(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
-	return BasicAuthMiddlewareWithDeps(cfg, logger)
-}
-
 func BasicAuthMiddlewareWithDeps(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey)

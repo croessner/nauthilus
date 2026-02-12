@@ -48,7 +48,7 @@ func NewMFAService(d *deps.Deps) *MFAService {
 }
 
 // GenerateTOTPSecret generates a new TOTP secret and returns the secret and QR code URL.
-func (s *MFAService) GenerateTOTPSecret(ctx *gin.Context, username string) (string, string, error) {
+func (s *MFAService) GenerateTOTPSecret(_ *gin.Context, username string) (string, string, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      s.deps.Cfg.GetServer().Frontend.GetTotpIssuer(),
 		AccountName: username,

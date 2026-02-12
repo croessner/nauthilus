@@ -66,7 +66,7 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	util.SetDefaultEnvironment(envCfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
-	if err := filter.PreCompileLuaFilters(config.GetFile(), log.GetLogger()); err != nil {
+	if err := filter.PreCompileLuaFilters(config.GetFile()); err != nil {
 		t.Fatalf("PreCompileLuaFilters failed: %v", err)
 	}
 

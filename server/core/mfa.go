@@ -22,8 +22,3 @@ import mfamodel "github.com/croessner/nauthilus/server/model/mfa"
 func NewTOTPSecret(value string) *mfamodel.TOTPSecret {
 	return mfamodel.NewTOTPSecret(value)
 }
-
-// NewWebAuthn creates and returns a new WebAuthn object initialized with the provided value.
-func NewWebAuthn(value string) *mfamodel.WebAuthn {
-	return mfamodel.NewWebAuthn(value)
-}

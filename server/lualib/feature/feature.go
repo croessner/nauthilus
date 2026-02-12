@@ -17,6 +17,7 @@ package feature
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -356,17 +357,17 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
 
 					return e
-				} else {
-					ret := Llocal.ToInt(-1)
-					Llocal.Pop(1)
-					ab := Llocal.ToBool(-1)
-					Llocal.Pop(1)
-					tr := Llocal.ToBool(-1)
-					Llocal.Pop(1)
-					fr.ret = ret
-					fr.abort = ab
-					fr.triggered = tr
 				}
+
+				ret := Llocal.ToInt(-1)
+				Llocal.Pop(1)
+				ab := Llocal.ToBool(-1)
+				Llocal.Pop(1)
+				tr := Llocal.ToBool(-1)
+				Llocal.Pop(1)
+				fr.ret = ret
+				fr.abort = ab
+				fr.triggered = tr
 			}
 
 			// Log per-feature outcome without touching shared r.Logs
@@ -430,20 +431,14 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	// Include Lua stacktrace when available for better diagnostics
-	if ae, ok := err.(*lua.ApiError); ok && ae != nil {
+	var ae *lua.ApiError
+	if stderrors.As(err, &ae) && ae != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, r.Session,
 			"name", scriptName,
 			definitions.LogKeyMsg, "Lua feature failed",
 			definitions.LogKeyError, ae.Error(),
 			"stacktrace", ae.StackTrace,
-		)
-	} else {
-		level.Error(logger).Log(
-			definitions.LogKeyGUID, r.Session,
-			"name", scriptName,
-			definitions.LogKeyMsg, "Lua feature failed",
-			definitions.LogKeyError, err,
 		)
 	}
 

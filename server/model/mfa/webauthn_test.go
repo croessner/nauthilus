@@ -16,6 +16,7 @@
 package mfa
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -33,7 +34,7 @@ func TestPersistentCredentialMarshalIncludesSignCount(t *testing.T) {
 		Name: "device",
 	}
 
-	data, err := jsoniter.ConfigFastest.Marshal(credential)
+	data, err := jsoniter.ConfigFastest.Marshal(&credential)
 	if err != nil {
 		t.Fatalf("marshal credential: %v", err)
 	}
@@ -66,5 +67,25 @@ func TestPersistentCredentialUnmarshalLegacySignCount(t *testing.T) {
 
 	if credential.Authenticator.SignCount != 9 {
 		t.Fatalf("expected signCount 9, got %d", credential.Authenticator.SignCount)
+	}
+}
+
+func TestPersistentCredentialNilReceiverMarshal(t *testing.T) {
+	var p *PersistentCredential
+
+	_, err := p.MarshalJSON()
+
+	if !errors.Is(err, ErrNilPersistentCredential) {
+		t.Fatalf("expected ErrNilPersistentCredential, got %v", err)
+	}
+}
+
+func TestPersistentCredentialNilReceiverUnmarshal(t *testing.T) {
+	var p *PersistentCredential
+
+	err := p.UnmarshalJSON([]byte(`{"id":"AQ=="}`))
+
+	if !errors.Is(err, ErrNilPersistentCredential) {
+		t.Fatalf("expected ErrNilPersistentCredential, got %v", err)
 	}
 }

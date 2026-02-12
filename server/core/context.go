@@ -46,12 +46,6 @@ func WithUsername(u string) CredentialOption { return func(c *Credentials) { c.U
 // WithPassword sets the password field.
 func WithPassword(p string) CredentialOption { return func(c *Credentials) { c.Password = p } }
 
-// WithTOTP sets a TOTP one-time code (unused in current flows).
-func WithTOTP(t string) CredentialOption { return func(c *Credentials) { c.TOTP = t } }
-
-// WithTOTPRecovery sets a TOTP recovery code (unused in current flows).
-func WithTOTPRecovery(t string) CredentialOption { return func(c *Credentials) { c.TOTPRecovery = t } }
-
 // AuthContext contains request/connection metadata that influences authentication.
 // It is applied to AuthState via ApplyContextData.
 //

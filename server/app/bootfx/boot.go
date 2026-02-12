@@ -111,13 +111,7 @@ func SetupConfiguration() error {
 
 	config.NewEnvironmentConfig()
 
-	if tz := os.Getenv("TZ"); tz != "" {
-		if loc, err := time.LoadLocation(tz); err == nil {
-			time.Local = loc
-		} else {
-			stdlog.Printf("Error loading location '%s': %v", tz, err)
-		}
-	}
+	setTimeZone()
 
 	if config.ConfigFilePath != "" {
 		if _, err := os.Stat(config.ConfigFilePath); os.IsNotExist(err) {
@@ -177,7 +171,7 @@ func PreCompileFeatures(cfg config.File, logger *slog.Logger) error {
 // PreCompileFilters pre-compiles Lua filters if enabled.
 func PreCompileFilters(cfg config.File, logger *slog.Logger) error {
 	if cfg.HaveLuaFilters() {
-		if err := filter.PreCompileLuaFilters(cfg, logger); err != nil {
+		if err := filter.PreCompileLuaFilters(cfg); err != nil {
 			return err
 		}
 	}

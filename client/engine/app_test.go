@@ -40,7 +40,7 @@ type manualMockCollector struct {
 	concurrency int64
 }
 
-func (m *manualMockCollector) AddSample(latency time.Duration, ok bool, isMatch bool, isHttpErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool, statusCode int) {
+func (m *manualMockCollector) AddSample(time.Duration, bool, bool, bool, bool, bool, bool, bool, int) {
 }
 
 func (m *manualMockCollector) Snapshot() Stats {
@@ -66,7 +66,7 @@ func (m *manualMockCollector) SetConcurrency(c int64) {
 	m.concurrency = c
 }
 
-func (m *manualMockCollector) SetPlateauActive(active bool) {
+func (m *manualMockCollector) SetPlateauActive(bool) {
 }
 
 func (m *manualMockCollector) IncParallelMatched() {

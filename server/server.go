@@ -89,23 +89,6 @@ type contextStore struct {
 	langManager language.Manager
 }
 
-// newContextStore creates and initializes a new instance of the contextStore structure and returns a pointer to it.
-func newContextStore() *contextStore {
-	store := &contextStore{}
-
-	return store
-}
-
-func newContextStoreWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *contextStore {
-	store := &contextStore{
-		cfgProvider: configfx.NewProviderWithSnapshot(cfg),
-		logger:      logger,
-		redisClient: redis,
-	}
-
-	return store
-}
-
 // newContextTuple creates a new contextTuple with a derived context and cancel function from the provided parent context.
 // It manages the lifecycle of the derived context and its cancellation.
 func newContextTuple(ctx context.Context) *contextTuple {
@@ -180,7 +163,7 @@ func startLuaWorkers(store *contextStore, cfg config.File, logger *slog.Logger, 
 func initializeActionWorkers(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, env config.Environment) []*action.Worker {
 	var workers []*action.Worker
 
-	for i := 0; i < int(cfg.GetLuaActionNumberOfWorkers()); i++ {
+	for i := 0; i < cfg.GetLuaActionNumberOfWorkers(); i++ {
 		workers = append(workers, action.NewWorker(cfg, logger, redisClient, env))
 	}
 
@@ -281,7 +264,7 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 		}
 
 		if checkRedisConnections(readinessCtx, client) {
-			go core.UpdateRedisPoolStats(cfg, logger, client)
+			go core.UpdateRedisPoolStats(client)
 			go rediscli.UpdateRedisServerMetrics(runCtx, cfg, logger)
 
 			// Upload all Lua scripts to Redis at startup
@@ -407,12 +390,12 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Health endpoint (always register)
 	setupHealth = func(e *gin.Engine) {
-		handlerhealth.NewWithDeps(cfg, logger, store.redisClient).Register(e)
+		handlerhealth.New(cfg, logger, store.redisClient).Register(e)
 	}
 
 	// Metrics endpoint (always register)
 	setupMetrics = func(e *gin.Engine) {
-		handlermetrics.NewWithDeps(cfg, logger, store.redisClient).Register(e)
+		handlermetrics.New(cfg, logger, store.redisClient).Register(e)
 	}
 
 	// Frontend handlers only if enabled (keeps logic parity)

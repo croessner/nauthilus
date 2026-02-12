@@ -15,7 +15,6 @@ indent_size = 4
 # Go files
 [*.go]
 indent_style = tab
-indent_size = 4
 
 # Makefile requires tabs
 [Makefile]
@@ -33,21 +32,6 @@ indent_size = 2
 [*.md]
 trim_trailing_whitespace = false
 
-# HTML Templates - IMPORTANT: Disable aggressive formatting
-# These files contain Go template syntax ({{ }}) that can be
-# corrupted by automatic formatters
-[static/templates/*.html]
-indent_style = space
-indent_size = 4
-# GoLand/IntelliJ specific: These settings signal to avoid
-# aggressive HTML reformatting. Additionally configure in IDE:
-# Settings > Editor > Code Style > HTML > Do not indent children of: template
-# Settings > Tools > Actions on Save > Disable "Reformat code" for templates
-
 # Shell scripts
 [*.sh]
 indent_size = 2
-
-# Lua files
-[*.lua]
-indent_size = 4

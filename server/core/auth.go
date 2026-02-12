@@ -27,7 +27,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -952,26 +951,36 @@ type AddTOTPSecretFunc func(auth *AuthState, totp *mfa.TOTPSecret) (err error)
 
 var BackendServers = NewBackendServer()
 
-// String returns an AuthState object as string excluding the user password.
+// authStateField describes a single key-value pair for string representation.
+type authStateField struct {
+	Name  string
+	Value any
+}
+
+// hiddenAuthStateFields lists field names whose values must be redacted in non-dev mode.
+var hiddenAuthStateFields = map[string]struct{}{
+	"Password": {},
+}
+
+// String returns a human-readable representation of the AuthState.
+// The GUID is omitted and the password is hidden unless dev mode is active.
 func (a *AuthState) String() string {
+	fields := a.collectFields()
+
 	var result strings.Builder
 
-	value := reflect.ValueOf(*a)
-	typeOfValue := value.Type()
-
-	for index := range value.NumField() {
-		switch typeOfValue.Field(index).Name {
-		case "GUID":
-			continue
-		case "Password":
+	for _, f := range fields {
+		if _, hidden := hiddenAuthStateFields[f.Name]; hidden {
 			if getDefaultEnvironment().GetDevMode() {
-				fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+				fmt.Fprintf(&result, " %s='%v'", f.Name, f.Value)
 			} else {
-				fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
+				fmt.Fprintf(&result, " %s='<hidden>'", f.Name)
 			}
-		default:
-			fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+
+			continue
 		}
+
+		fmt.Fprintf(&result, " %s='%v'", f.Name, f.Value)
 	}
 
 	if result.Len() == 0 {
@@ -979,6 +988,75 @@ func (a *AuthState) String() string {
 	}
 
 	return result.String()[1:]
+}
+
+// collectFields returns the ordered list of fields for string representation.
+// Fields that should never appear (e.g. GUID) are excluded here.
+func (a *AuthState) collectFields() []authStateField {
+	return []authStateField{
+		// --- Request ---
+		{"Protocol", a.Request.Protocol},
+		{"Method", a.Request.Method},
+		{"Username", a.Request.Username},
+		{"Password", a.Request.Password},
+		{"ClientIP", a.Request.ClientIP},
+		{"XClientPort", a.Request.XClientPort},
+		{"ClientHost", a.Request.ClientHost},
+		{"UserAgent", a.Request.UserAgent},
+		{"Service", a.Request.Service},
+		{"OIDCCID", a.Request.OIDCCID},
+		{"SAMLEntityID", a.Request.SAMLEntityID},
+		{"XSSL", a.Request.XSSL},
+		{"XSSLSessionID", a.Request.XSSLSessionID},
+		{"XSSLClientVerify", a.Request.XSSLClientVerify},
+		{"XSSLClientDN", a.Request.XSSLClientDN},
+		{"XSSLClientCN", a.Request.XSSLClientCN},
+		{"XSSLIssuer", a.Request.XSSLIssuer},
+		{"XSSLClientNotBefore", a.Request.XSSLClientNotBefore},
+		{"XSSLClientNotAfter", a.Request.XSSLClientNotAfter},
+		{"XSSLSubjectDN", a.Request.XSSLSubjectDN},
+		{"XSSLIssuerDN", a.Request.XSSLIssuerDN},
+		{"XSSLClientSubjectDN", a.Request.XSSLClientSubjectDN},
+		{"XSSLClientIssuerDN", a.Request.XSSLClientIssuerDN},
+		{"XSSLProtocol", a.Request.XSSLProtocol},
+		{"XSSLCipher", a.Request.XSSLCipher},
+		{"SSLSerial", a.Request.SSLSerial},
+		{"SSLFingerprint", a.Request.SSLFingerprint},
+		{"XClientID", a.Request.XClientID},
+		{"XLocalIP", a.Request.XLocalIP},
+		{"XPort", a.Request.XPort},
+		{"NoAuth", a.Request.NoAuth},
+		{"ListAccounts", a.Request.ListAccounts},
+		// --- Runtime ---
+		{"StatusMessage", a.Runtime.StatusMessage},
+		{"AccountField", a.Runtime.AccountField},
+		{"AccountName", a.Runtime.AccountName},
+		{"FeatureName", a.Runtime.FeatureName},
+		{"BackendName", a.Runtime.BackendName},
+		{"UsedBackendIP", a.Runtime.UsedBackendIP},
+		{"TOTPSecret", a.Runtime.TOTPSecret},
+		{"TOTPSecretField", a.Runtime.TOTPSecretField},
+		{"TOTPRecoveryField", a.Runtime.TOTPRecoveryField},
+		{"UniqueUserIDField", a.Runtime.UniqueUserIDField},
+		{"DisplayNameField", a.Runtime.DisplayNameField},
+		{"BFClientNet", a.Runtime.BFClientNet},
+		{"UsedBackendPort", a.Runtime.UsedBackendPort},
+		{"StatusCodeOK", a.Runtime.StatusCodeOK},
+		{"StatusCodeInternalError", a.Runtime.StatusCodeInternalError},
+		{"StatusCodeFail", a.Runtime.StatusCodeFail},
+		{"SourcePassDBBackend", a.Runtime.SourcePassDBBackend},
+		{"UsedPassDBBackend", a.Runtime.UsedPassDBBackend},
+		{"UserFound", a.Runtime.UserFound},
+		{"Authenticated", a.Runtime.Authenticated},
+		{"Authorized", a.Runtime.Authorized},
+		{"BFRepeating", a.Runtime.BFRepeating},
+		{"MasterUserMode", a.Runtime.MasterUserMode},
+		// --- Security ---
+		{"BruteForceName", a.Security.BruteForceName},
+		{"PasswordsAccountSeen", a.Security.PasswordsAccountSeen},
+		{"PasswordsTotalSeen", a.Security.PasswordsTotalSeen},
+		{"LoginAttempts", a.Security.LoginAttempts},
+	}
 }
 
 // SetUsername sets the username for the AuthState instance to the given value.
@@ -2823,18 +2901,34 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	return accountList
 }
 
-// String returns the string for a PassDBResult object.
+// String returns a human-readable representation of the PassDBResult.
 func (p *PassDBResult) String() string {
-	var result string
-
-	value := reflect.ValueOf(*p)
-	typeOfValue := value.Type()
-
-	for index := range value.NumField() {
-		result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+	fields := []authStateField{
+		{"BackendName", p.BackendName},
+		{"AccountField", p.AccountField},
+		{"Account", p.Account},
+		{"TOTPSecretField", p.TOTPSecretField},
+		{"TOTPRecoveryField", p.TOTPRecoveryField},
+		{"UniqueUserIDField", p.UniqueUserIDField},
+		{"DisplayNameField", p.DisplayNameField},
+		{"Attributes", p.Attributes},
+		{"AdditionalFeatures", p.AdditionalFeatures},
+		{"Authenticated", p.Authenticated},
+		{"UserFound", p.UserFound},
+		{"Backend", p.Backend},
 	}
 
-	return result[1:]
+	var result strings.Builder
+
+	for _, f := range fields {
+		fmt.Fprintf(&result, " %s='%v'", f.Name, f.Value)
+	}
+
+	if result.Len() == 0 {
+		return ""
+	}
+
+	return result.String()[1:]
 }
 
 // updateUserAccountInRedis returns the user account value from the user Redis hash. If none was found, a new entry in
@@ -3321,49 +3415,6 @@ func setupAuth(ctx *gin.Context, auth State) {
 	auth.InitMethodAndUserAgent()
 	auth.WithDefaults(ctx)
 	auth.SetOperationMode(ctx)
-}
-
-// NewAuthStateWithSetup creates a new instance of the AuthState struct.
-// It takes a gin.Context object as a parameter and sets it as the HTTPClientContext field of the AuthState struct.
-// If an error occurs while setting the StatusCode field using the SetStatusCodes function, it logs the error and returns nil.
-// Otherwise, it calls the setupAuth function to setup the AuthState struct based on the service parameter from the gin.Context object.
-// Finally, it returns the created AuthState struct.
-func NewAuthStateWithSetup(ctx *gin.Context) State {
-	// Setup tracing
-	tr := monittrace.New("nauthilus/auth")
-	tctx, tsp := tr.Start(ctx.Request.Context(), "auth.setup",
-		attribute.String("service", ctx.GetString(definitions.CtxServiceKey)),
-		attribute.String("method", ctx.Request.Method),
-	)
-
-	defer tsp.End()
-
-	// Propagate tracing context downwards for any callee that reads request context
-	ctx.Request = ctx.Request.WithContext(tctx)
-
-	auth := NewAuthStateFromContext(ctx)
-
-	svc := ctx.GetString(definitions.CtxServiceKey)
-	if svc == "" {
-		ctx.AbortWithStatus(http.StatusInternalServerError)
-
-		return nil
-	}
-
-	auth.SetStatusCodes(svc)
-	setupAuth(ctx, auth)
-
-	// prominent early log: show all incoming data including session GUID
-	if a, ok := auth.(*AuthState); ok {
-		a.traceSetupDetails(tsp)
-		logProcessingRequest(ctx, a)
-	}
-
-	if ctx.Errors.Last() != nil || ctx.IsAborted() {
-		return nil
-	}
-
-	return auth
 }
 
 // NewAuthStateWithSetupWithDeps is the dependency-injected variant of NewAuthStateWithSetup.

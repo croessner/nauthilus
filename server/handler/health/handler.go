@@ -32,11 +32,7 @@ type Handler struct {
 	redis  rediscli.Client
 }
 
-func New() *Handler {
-	return &Handler{}
-}
-
-func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
+func New(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
 	return &Handler{cfg: cfg, logger: logger, redis: redis}
 }
 
@@ -45,6 +41,6 @@ func (h *Handler) Register(router gin.IRouter) {
 
 	router.GET("/ping", approuter.HealthCheck)
 	router.GET("/healthz", func(ctx *gin.Context) {
-		ReadinessCheckWithDeps(ctx, deps)
+		ReadinessCheck(ctx, deps)
 	})
 }

@@ -547,12 +547,22 @@ type LDAPSearchProtocol struct {
 	Attributes []string `mapstructure:"attribute" validate:"required,dive,printascii,excludesall= "`
 }
 
+// getProtocols retrieves a list of protocols from the provided LDAPSearchProtocol.
+// Returns ["unknown"] if the input is nil.
+func getProtocols(p *LDAPSearchProtocol) []string {
+	if p == nil {
+		return []string{"unknown"}
+	}
+
+	return p.Protocols
+}
+
 // GetAccountField returns the LDAP attribute for an account. It returns a DetailedError, if no value has
 // been configured.
 func (p *LDAPSearchProtocol) GetAccountField() (string, error) {
 	if p == nil || p.AccountField == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP account field; protocols=%v", p.Protocols))
+			fmt.Sprintf("Missing LDAP account field; protocols=%v", getProtocols(p)))
 	}
 
 	return p.AccountField, nil
@@ -583,7 +593,7 @@ func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
 
 	if len(uniqueAttributes) == 0 {
 		return nil, errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP result attribute; protocols=%v", p.Protocols))
+			fmt.Sprintf("Missing LDAP result attribute; protocols=%v", getProtocols(p)))
 	}
 
 	result := make([]string, 0, len(uniqueAttributes))
@@ -599,7 +609,7 @@ func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
 func (p *LDAPSearchProtocol) GetUserFilter() (string, error) {
 	if p == nil || p.User == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP user filter; protocols=%v", p.Protocols))
+			fmt.Sprintf("Missing LDAP user filter; protocols=%v", getProtocols(p)))
 	}
 
 	return p.User, nil
@@ -610,7 +620,7 @@ func (p *LDAPSearchProtocol) GetUserFilter() (string, error) {
 func (p *LDAPSearchProtocol) GetListAccountsFilter() (string, error) {
 	if p == nil || p.ListAccounts == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP list_accounts filter; protocols=%v", p.Protocols))
+			fmt.Sprintf("Missing LDAP list_accounts filter; protocols=%v", getProtocols(p)))
 	}
 
 	return p.ListAccounts, nil
@@ -630,7 +640,7 @@ func (p *LDAPSearchProtocol) GetPoolName() string {
 func (p *LDAPSearchProtocol) GetBaseDN() (string, error) {
 	if p == nil || p.BaseDN == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP base DN; protocols=%v", p.Protocols))
+			fmt.Sprintf("Missing LDAP base DN; protocols=%v", getProtocols(p)))
 	}
 
 	return p.BaseDN, nil
@@ -642,13 +652,21 @@ func (p *LDAPSearchProtocol) GetScope() (*LDAPScope, error) {
 	var err error
 
 	scope := &LDAPScope{}
-	if p == nil || p.Scope == "" {
+	if p == nil {
 		scope.Set("sub")
-	} else {
-		if err = scope.Set(p.Scope); err != nil {
-			return nil, errors.ErrLDAPConfig.WithDetail(
-				fmt.Sprintf("LDAP scope not detected: %s; protocols=%v", err, p.Protocols))
-		}
+
+		return scope, nil
+	}
+
+	if p.Scope == "" {
+		scope.Set("sub")
+
+		return scope, nil
+	}
+
+	if err = scope.Set(p.Scope); err != nil {
+		return nil, errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("LDAP scope not detected: %s; protocols=%v", err, getProtocols(p)))
 	}
 
 	return scope, nil

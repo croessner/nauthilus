@@ -54,7 +54,7 @@ func (rm *RedisManager) RedisHSet(L *lua.LState) int {
 		var values []any
 
 		if top < 3 {
-			return stack.PushError(errors.New("Invalid number of arguments"))
+			return stack.PushError(errors.New("invalid number of arguments"))
 		}
 
 		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
@@ -72,7 +72,7 @@ func (rm *RedisManager) RedisHSet(L *lua.LState) int {
 			})
 		} else {
 			if top < 4 || (top-2)%2 != 0 {
-				return stack.PushError(errors.New("Invalid number of arguments"))
+				return stack.PushError(errors.New("invalid number of arguments"))
 			}
 
 			for i := 3; i <= top; i += 2 {

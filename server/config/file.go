@@ -1829,10 +1829,8 @@ func (f *FileSettings) validatePassDBBackends() error {
 			if requiresEncryptionSecret && f.GetLDAPConfigEncryptionSecret() == "" {
 				return errors.ErrLDAPConfig.WithDetail("Missing LDAP encryption secret for TOTP data in LDAP")
 			}
-		case definitions.BackendLua:
-		case definitions.BackendUnknown:
-		case definitions.BackendCache:
-		case definitions.BackendLocalCache:
+
+		default:
 		}
 	}
 

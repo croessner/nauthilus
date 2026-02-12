@@ -65,8 +65,8 @@ func (h *memHandler) Handle(ctx context.Context, r slog.Record) error {
 	return nil
 }
 
-func (h *memHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
-func (h *memHandler) WithGroup(name string) slog.Handler       { return h }
+func (h *memHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *memHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestInfoLogWithMessage(t *testing.T) {
 	h := newMemHandler(slog.LevelInfo)

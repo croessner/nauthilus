@@ -82,7 +82,7 @@ func NewController(in controllerIn) *Controller {
 // Start subscribes to OS signals and starts the internal routing loop.
 //
 // Start is idempotent.
-func (c *Controller) Start(context.Context) error {
+func (c *Controller) Start(_ context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -104,7 +104,7 @@ func (c *Controller) Start(context.Context) error {
 }
 
 // Stop unsubscribes from OS signals and waits for the routing loop to exit.
-func (c *Controller) Stop(context.Context) error {
+func (c *Controller) Stop(_ context.Context) error {
 	c.mu.Lock()
 	sigCh := c.sigCh
 	c.sigCh = nil

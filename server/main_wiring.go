@@ -147,15 +147,16 @@ func newContextStoreForRuntime(
 	accountCache *accountcache.Manager,
 	langManager language.Manager,
 ) *contextStore {
-	store := newContextStore()
-	store.cfgProvider = cfgProvider
-	store.env = env
-	store.logger = logger
-	store.redisClient = redisClient
-	store.channel = channel
-	store.accountCache = accountCache
-	store.langManager = langManager
-	store.action = newContextTuple(ctx)
+	store := &contextStore{
+		cfgProvider:  cfgProvider,
+		env:          env,
+		logger:       logger,
+		redisClient:  redisClient,
+		channel:      channel,
+		accountCache: accountCache,
+		langManager:  langManager,
+		action:       newContextTuple(ctx),
+	}
 
 	return store
 }

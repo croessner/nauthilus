@@ -41,6 +41,10 @@ func NewLMTPClient(conn net.Conn) (*LMTPClient, error) {
 	textConn := textproto.NewConn(conn)
 	internalClient, err := smtp.NewClient(conn, "")
 	if err != nil {
+		if textConn != nil {
+			textConn.Close()
+		}
+
 		return nil, err
 	}
 
@@ -157,6 +161,11 @@ func runSendLMTPMail(lmtpServer string, heloName string, _ smtp.Auth, from strin
 	}
 
 	genericClient, err = NewLMTPClient(conn)
+	if genericClient != nil {
+		defer genericClient.Quit()
+		defer genericClient.Close()
+	}
+
 	if err != nil {
 		return err
 	}
@@ -164,9 +173,6 @@ func runSendLMTPMail(lmtpServer string, heloName string, _ smtp.Auth, from strin
 	if err = genericClient.Hello(heloName); err != nil {
 		return err
 	}
-
-	defer genericClient.Quit()
-	defer genericClient.Close()
 
 	return sendEmailContent(genericClient, from, to, msg)
 }

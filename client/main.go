@@ -215,7 +215,7 @@ func printStats(app *engine.App) {
 
 		if engine.IsTTY() {
 			fmt.Println()
-			engine.PrintLatencyHistogram(stats, app.Collector.Buckets(), app.Collector.Overflow())
+			engine.PrintLatencyHistogram(stats, app.Collector.Buckets())
 			fmt.Println()
 		}
 	}

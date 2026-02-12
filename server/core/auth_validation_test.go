@@ -33,7 +33,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func setupAuthDeps(t *testing.T) AuthDeps {
+func setupAuthDeps() AuthDeps {
 	db, _ := redismock.NewClientMock()
 	redisClient := rediscli.NewTestClient(db)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -51,7 +51,7 @@ func setupAuthDeps(t *testing.T) AuthDeps {
 func TestAuthValidation_EmptyUsername_JSON(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps(t)
+	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -81,7 +81,7 @@ func TestAuthValidation_EmptyUsername_JSON(t *testing.T) {
 func TestAuthValidation_EmptyPassword_JSON(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps(t)
+	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -109,7 +109,7 @@ func TestAuthValidation_EmptyPassword_JSON(t *testing.T) {
 func TestAuthValidation_EmptyUsername_BasicAuth(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps(t)
+	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -140,7 +140,7 @@ func TestAuthValidation_EmptyUsername_BasicAuth(t *testing.T) {
 func TestAuthValidation_EmptyCredentials_BasicAuth(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps(t)
+	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -170,7 +170,7 @@ func TestAuthValidation_EmptyCredentials_BasicAuth(t *testing.T) {
 func TestAuthValidation_InvalidJSON(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps(t)
+	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -197,7 +197,7 @@ func TestAuthValidation_InvalidJSON(t *testing.T) {
 func TestAuthValidation_EmptyUsername_Header(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps(t)
+	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -222,7 +222,7 @@ func TestAuthValidation_EmptyUsername_Header(t *testing.T) {
 func TestAuthValidation_EmptyUsername_SASLAuthd(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps(t)
+	deps := setupAuthDeps()
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)

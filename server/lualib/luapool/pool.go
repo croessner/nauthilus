@@ -17,34 +17,8 @@
 package luapool
 
 import (
-	"sync"
-
 	lua "github.com/yuin/gopher-lua"
 )
-
-// LuaStatePool is a pool of Lua states that can be reused.
-var luaStatePool = sync.Pool{
-	New: func() any {
-		return lua.NewState()
-	},
-}
-
-// Get returns a Lua state from the pool or creates a new one if the pool is empty.
-func Get() *lua.LState {
-	return luaStatePool.Get().(*lua.LState)
-}
-
-// Put resets the Lua state and returns it to the pool.
-func Put(L *lua.LState) {
-	if L == nil {
-		return
-	}
-
-	// Reset the Lua state before returning it to the pool
-	ResetLuaState(L)
-
-	luaStatePool.Put(L)
-}
 
 // ResetLuaState resets the Lua state between requests by clearing only the
 // request environment and transient globals. The base environment and

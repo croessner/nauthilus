@@ -65,11 +65,11 @@ func TotpValidation(ctx *gin.Context, auth *AuthState, code string, deps AuthDep
 		}
 	}
 
-	return totpValidation(ctx, auth.Runtime.GUID, code, auth.GetAccount(), totpSecret, deps)
+	return totpValidation(code, totpSecret, deps)
 }
 
 // totpValidation validates the time-based one-time password (TOTP) code against the provided account and TOTP secret.
-func totpValidation(ctx *gin.Context, guid string, code string, account string, totpSecret string, deps AuthDeps) error {
+func totpValidation(code string, totpSecret string, deps AuthDeps) error {
 	codeValid, err := totp.ValidateCustom(code, totpSecret, time.Now(), totp.ValidateOpts{
 		Period:    30,
 		Skew:      deps.Cfg.GetServer().Frontend.GetTotpSkew(),

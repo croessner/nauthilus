@@ -304,11 +304,11 @@ func (l *LuaConf) GetNumberOfWorkers() int {
 // GetActionNumberOfWorkers returns the configured number of action workers or a sane default (definitions.MaxActionWorkers) if unset.
 func (l *LuaConf) GetActionNumberOfWorkers() int {
 	if l == nil {
-		return int(definitions.MaxActionWorkers)
+		return definitions.MaxActionWorkers
 	}
 
 	if l.ActionNumberOfWorkers == 0 {
-		return int(definitions.MaxActionWorkers)
+		return definitions.MaxActionWorkers
 	}
 
 	return l.ActionNumberOfWorkers

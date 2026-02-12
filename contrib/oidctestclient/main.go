@@ -186,7 +186,7 @@ func randString(nByte int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func setCallbackCookie(w http.ResponseWriter, r *http.Request, name, value string) {
+func setCallbackCookie(w http.ResponseWriter, name, value string) {
 	secure := util.ShouldSetSecureCookie()
 
 	c := &http.Cookie{
@@ -260,7 +260,7 @@ func main() {
 
 	scopes := parseScopesFromEnv()
 
-	config := oauth2.Config{
+	oauth2Config := oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		Endpoint:     provider.Endpoint(),
@@ -268,7 +268,7 @@ func main() {
 		Scopes:       scopes,
 	}
 
-	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, config.RedirectURL, config.Scopes)
+	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, oauth2Config.RedirectURL, oauth2Config.Scopes)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Received request on '/' - Starting OIDC flow")
@@ -287,10 +287,10 @@ func main() {
 
 		log.Printf("Generated state=%s, nonce=%s", state, nonce)
 
-		setCallbackCookie(w, r, "state", state)
-		setCallbackCookie(w, r, "nonce", nonce)
+		setCallbackCookie(w, "state", state)
+		setCallbackCookie(w, "nonce", nonce)
 
-		authURL := config.AuthCodeURL(state, oidc.Nonce(nonce))
+		authURL := oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce))
 		log.Printf("Redirecting to: %s", authURL)
 
 		http.Redirect(w, r, authURL, http.StatusFound)
@@ -320,7 +320,7 @@ func main() {
 		}
 
 		log.Println("Exchanging authorization code for tokens...")
-		oauth2Token, err := config.Exchange(ctx, queryCode)
+		oauth2Token, err := oauth2Config.Exchange(ctx, queryCode)
 		if err != nil {
 			log.Printf("Token exchange failed: %v", err)
 			http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)

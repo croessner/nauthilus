@@ -35,10 +35,10 @@ func (rm *RedisManager) RedisZAdd(L *lua.LState) int {
 		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
 			values := stack.CheckTable(3)
 
-			zValues = rm.parseLuaTableToRedisZSet(L, values, "zadd expects a table of scores and values")
+			zValues = rm.parseLuaTableToRedisZSet(values, "zadd expects a table of scores and values")
 		} else {
 			if top < 4 || (top-2)%2 != 0 {
-				return stack.PushError(errors.New("Invalid number of arguments"))
+				return stack.PushError(errors.New("invalid number of arguments"))
 			}
 
 			for i := 3; i <= top; i += 2 {
@@ -66,7 +66,7 @@ func (rm *RedisManager) RedisZAdd(L *lua.LState) int {
 }
 
 // parseLuaTableToRedisZSet is a helper function to parse a Lua table into a slice of redis.Z values.
-func (rm *RedisManager) parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, _ string) []redis.Z {
+func (rm *RedisManager) parseLuaTableToRedisZSet(values *lua.LTable, _ string) []redis.Z {
 	var zValues []redis.Z
 
 	values.ForEach(func(key lua.LValue, value lua.LValue) {
@@ -131,8 +131,8 @@ func (rm *RedisManager) RedisZRevRange(L *lua.LState) int {
 func (rm *RedisManager) RedisZRangeByScore(L *lua.LState) int {
 	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
-		min := stack.CheckString(3)
-		max := stack.CheckString(4)
+		minScore := stack.CheckString(3)
+		maxScore := stack.CheckString(4)
 
 		var (
 			offset int64
@@ -158,8 +158,8 @@ func (rm *RedisManager) RedisZRangeByScore(L *lua.LState) int {
 		}
 
 		cmd := conn.ZRangeByScore(ctx, key, &redis.ZRangeBy{
-			Min:    min,
-			Max:    max,
+			Min:    minScore,
+			Max:    maxScore,
 			Offset: offset,
 			Count:  count,
 		})
@@ -215,10 +215,10 @@ func (rm *RedisManager) RedisZRem(L *lua.LState) int {
 func (rm *RedisManager) RedisZRemRangeByScore(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
-		min := stack.CheckString(3)
-		max := stack.CheckString(4)
+		minScore := stack.CheckString(3)
+		maxScore := stack.CheckString(4)
 
-		cmd := conn.ZRemRangeByScore(ctx, key, min, max)
+		cmd := conn.ZRemRangeByScore(ctx, key, minScore, maxScore)
 		if cmd.Err() != nil {
 			return stack.PushError(cmd.Err())
 		}
@@ -262,10 +262,10 @@ func (rm *RedisManager) RedisZRank(L *lua.LState) int {
 func (rm *RedisManager) RedisZCount(L *lua.LState) int {
 	return rm.ExecuteRead(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		key := stack.CheckString(2)
-		min := stack.CheckString(3)
-		max := stack.CheckString(4)
+		minScore := stack.CheckString(3)
+		maxScore := stack.CheckString(4)
 
-		cmd := conn.ZCount(ctx, key, min, max)
+		cmd := conn.ZCount(ctx, key, minScore, maxScore)
 		if cmd.Err() != nil {
 			return stack.PushError(cmd.Err())
 		}

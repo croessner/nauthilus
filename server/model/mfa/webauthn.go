@@ -17,10 +17,14 @@ package mfa
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )
+
+// ErrNilPersistentCredential is returned when a nil *PersistentCredential receiver is used.
+var ErrNilPersistentCredential = errors.New("nil PersistentCredential receiver")
 
 // PersistentCredential wraps webauthn.Credential to add persistent metadata.
 type PersistentCredential struct {
@@ -38,7 +42,11 @@ type persistentCredentialJSON struct {
 }
 
 // MarshalJSON ensures the legacy top-level signCount field is present for compatibility.
-func (p PersistentCredential) MarshalJSON() ([]byte, error) {
+func (p *PersistentCredential) MarshalJSON() ([]byte, error) {
+	if p == nil {
+		return nil, ErrNilPersistentCredential
+	}
+
 	signCount := p.Credential.Authenticator.SignCount
 	aux := persistentCredentialJSON{
 		Credential: p.Credential,
@@ -52,6 +60,10 @@ func (p PersistentCredential) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON maps a legacy top-level signCount field into Authenticator.SignCount when present.
 func (p *PersistentCredential) UnmarshalJSON(data []byte) error {
+	if p == nil {
+		return ErrNilPersistentCredential
+	}
+
 	var aux persistentCredentialJSON
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err

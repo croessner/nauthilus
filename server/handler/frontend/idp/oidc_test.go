@@ -145,7 +145,7 @@ func (m *mockOIDCCfg) GetBackendServerMonitoring() *config.BackendServerMonitori
 func (m *mockOIDCCfg) GetBackendServers() []*config.BackendServer {
 	return []*config.BackendServer{}
 }
-func (m *mockOIDCCfg) GetBackendServer(protocol string) *config.BackendServer {
+func (m *mockOIDCCfg) GetBackendServer() *config.BackendServer {
 	return &config.BackendServer{}
 }
 func (m *mockOIDCCfg) HaveServer() bool {
@@ -161,21 +161,21 @@ func (m *mockOIDCCfg) GetLuaScriptPath() string  { return "" }
 func (m *mockOIDCCfg) RetrieveGetterMap() map[definitions.Backend]config.GetterHandler {
 	return nil
 }
-func (m *mockOIDCCfg) GetConfig(backend definitions.Backend) any { return nil }
-func (m *mockOIDCCfg) GetProtocols(backend definitions.Backend) any {
+func (m *mockOIDCCfg) GetConfig() any { return nil }
+func (m *mockOIDCCfg) GetProtocols() any {
 	return nil
 }
-func (m *mockOIDCCfg) GetSection(backend definitions.Backend) any {
+func (m *mockOIDCCfg) GetSection() any {
 	return nil
 }
 func (m *mockOIDCCfg) GetBruteForceRules() []config.BruteForceRule {
 	return nil
 }
 func (m *mockOIDCCfg) GetAllProtocols() []string { return nil }
-func (m *mockOIDCCfg) HasFeature(feature string) bool {
+func (m *mockOIDCCfg) HasFeature(string) bool {
 	return false
 }
-func (m *mockOIDCCfg) ShouldRunFeature(feature string, noAuth bool) bool {
+func (m *mockOIDCCfg) ShouldRunFeature(string, bool) bool {
 	return false
 }
 func (m *mockOIDCCfg) GetPasswordEncoded() string { return "" }
@@ -207,12 +207,12 @@ func (m *mockOIDCCfg) GetLuaActionNumberOfWorkers() int { return 0 }
 func (m *mockOIDCCfg) GetLuaFeatureVMPoolSize() int     { return 0 }
 func (m *mockOIDCCfg) GetLuaFilterVMPoolSize() int      { return 0 }
 func (m *mockOIDCCfg) GetLuaHookVMPoolSize() int        { return 0 }
-func (m *mockOIDCCfg) GetLuaSearchProtocol(protocol string, backendName string) (*config.LuaSearchProtocol, error) {
+func (m *mockOIDCCfg) GetLuaSearchProtocol(string, string) (*config.LuaSearchProtocol, error) {
 	return nil, nil
 }
 func (m *mockOIDCCfg) GetLuaOptionalBackends() map[string]*config.LuaConf { return nil }
-func (m *mockOIDCCfg) LDAPHavePoolOnly(backendName string) bool           { return false }
-func (m *mockOIDCCfg) GetLDAPSearchProtocol(protocol string, poolName string) (*config.LDAPSearchProtocol, error) {
+func (m *mockOIDCCfg) LDAPHavePoolOnly(string) bool                       { return false }
+func (m *mockOIDCCfg) GetLDAPSearchProtocol(string, string) (*config.LDAPSearchProtocol, error) {
 	return nil, nil
 }
 func (m *mockOIDCCfg) GetLDAPOptionalPools() map[string]*config.LDAPConf { return nil }
@@ -387,8 +387,8 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		userKey := "test:oidc:user_refresh_tokens:user123"
 		mock.ExpectSMembers(userKey).SetVal([]string{})
 
-		url := "/logout?id_token_hint=" + idToken + "&post_logout_redirect_uri=https://app.com/post-logout"
-		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		logoutURL := "/logout?id_token_hint=" + idToken + "&post_logout_redirect_uri=https://app.com/post-logout"
+		req, _ := http.NewRequest(http.MethodGet, logoutURL, nil)
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusFound, w.Code)

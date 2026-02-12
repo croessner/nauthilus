@@ -1204,14 +1204,14 @@ type asyncJobDeps struct {
 	Redis  rediscli.Client
 }
 
-func (d asyncJobDeps) validate() error {
-	if d.Cfg == nil {
+func (deps asyncJobDeps) validate() error {
+	if deps.Cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	if d.Logger == nil {
+	if deps.Logger == nil {
 		return fmt.Errorf("logger is nil")
 	}
-	if d.Redis == nil {
+	if deps.Redis == nil {
 		return fmt.Errorf("redis client is nil")
 	}
 	return nil

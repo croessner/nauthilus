@@ -18,6 +18,7 @@ package connmgr
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"sort"
 	"strconv"
@@ -36,7 +37,6 @@ import (
 	psnet "github.com/shirou/gopsutil/v4/net"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
-	"log/slog"
 )
 
 // GenericConnectionChan is a channel that carries GenericConnection updates reflecting the state of network connections.
@@ -166,7 +166,7 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context, cfg config.Fi
 		}
 
 		ctxTimeout, cancel := createDeadlineContext(ctx, cfg)
-		resolver := util.NewDNSResolverWithCfg(cfg)
+		resolver := util.NewDNSResolver(cfg)
 
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
@@ -229,7 +229,7 @@ func (m *ConnectionManager) Register(ctx context.Context, cfg config.File, targe
 
 	defer cancel()
 
-	resolver := util.NewDNSResolverWithCfg(cfg)
+	resolver := util.NewDNSResolver(cfg)
 
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",

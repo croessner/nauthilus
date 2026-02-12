@@ -109,7 +109,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	defer cancel()
 
-	resolver := util.NewDNSResolver()
+	resolver := util.NewDNSResolver(a.Cfg())
 
 	// Trace DNS lookup for RBL
 	tr := monittrace.New("nauthilus/dns")

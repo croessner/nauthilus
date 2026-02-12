@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"time"
 
@@ -255,7 +256,7 @@ func (m *Manager) RotateKeys(ctx context.Context) {
 
 	// 1. Get current active kid from Redis
 	activeKID, err := m.deps.Redis.GetReadHandle().Get(ctx, m.deps.Cfg.GetServer().GetRedis().GetPrefix()+RedisKeyOIDCActive).Result()
-	if err != nil && err != redis.Nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		level.Error(m.deps.Logger).Log("msg", "failed to get active kid from Redis", "error", err)
 
 		return

@@ -32,7 +32,7 @@ To effectively detect and mitigate distributed brute force attacks, we propose a
 
 1. **Global Pattern Recognition**: Detecting abnormal authentication patterns across the entire system
 2. **Account-Centric Monitoring**: Focusing on unusual activity targeting specific accounts
-4. **Dynamic Response Mechanisms**: Implementing adaptive countermeasures based on threat severity
+3. **Dynamic Response Mechanisms**: Implementing adaptive countermeasures based on threat severity
 
 ### 1. Global Pattern Recognition
 

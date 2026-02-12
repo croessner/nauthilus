@@ -16,6 +16,7 @@
 package csrf
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -73,7 +74,7 @@ func TestDefaultTokenMasker_MaskInvalidLength(t *testing.T) {
 
 	// Try to mask a token with invalid length
 	_, err := masker.Mask([]byte("short"))
-	if err != ErrInvalidTokenLength {
+	if !errors.Is(err, ErrInvalidTokenLength) {
 		t.Errorf("Mask() error = %v, want %v", err, ErrInvalidTokenLength)
 	}
 }

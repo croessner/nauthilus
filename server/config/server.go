@@ -2635,7 +2635,6 @@ func (t *Timeouts) GetLuaBackend() time.Duration {
 	return t.LuaBackend
 }
 
-// GetTimeouts retrieves the Timeouts configuration section from ServerSection.
 func (t *Timeouts) GetLuaScript() time.Duration {
 	if t.LuaScript == 0 {
 		return 30 * time.Second

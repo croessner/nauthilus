@@ -66,11 +66,6 @@ type RedisLogger struct {
 	logger *slog.Logger
 }
 
-// NewRedisLogger initializes and returns a new instance of RedisLogger with the provided logger.
-func NewRedisLogger(logger *slog.Logger) *RedisLogger {
-	return &RedisLogger{logger: logger}
-}
-
 // Printf implements the printf function from Redis.
 func (r *RedisLogger) Printf(ctx context.Context, format string, values ...any) {
 	// Downgrade all go-redis internal logs to DEBUG and avoid formatting cost
@@ -253,7 +248,7 @@ func ResolveIPAddress(ctx context.Context, cfg config.File, address string) (hos
 
 	defer cancel()
 
-	resolver := NewDNSResolverWithCfg(cfg)
+	resolver := NewDNSResolver(cfg)
 
 	// Trace reverse DNS (PTR) lookup
 	tr := monittrace.New("nauthilus/dns")
@@ -362,22 +357,6 @@ func getDefaultConfigFile() config.File {
 	})
 
 	panic("util: default config snapshot not configured")
-}
-
-func getDefaultLogger() *slog.Logger {
-	if v := defaultLog.Load(); v != nil {
-		if h, ok := v.(loggerHolder); ok {
-			if h.logger != nil {
-				return h.logger
-			}
-		}
-	}
-
-	warnMissingLogOnce.Do(func() {
-		stdlog.Printf("ERROR: util default logger is not configured. Ensure the boundary calls util.SetDefaultLogger(...)\n")
-	})
-
-	panic("util: default logger not configured")
 }
 
 func DebugModule(ctx context.Context, cfg config.File, logger *slog.Logger, module definitions.DbgModule, keyvals ...any) {
@@ -648,26 +627,26 @@ func ComparePasswords(hashPassword string, plainPassword string) (bool, error) {
 
 		// Use subtle.ConstantTimeCompare for secure comparison
 		return subtle.ConstantTimeCompare([]byte(password.Password), []byte(newPassword.Password)) == 1, nil
-	} else {
-		// Supported passwords: MD5, SSHA256, SSHA512, bcrypt, Argon2i, Argon2id
-		_, _, _, pwhash, err := crypt.DecodeSettings(hashPassword)
-		if err != nil {
-			return false, err
-		}
-
-		settings, _, found := strings.Cut(hashPassword, pwhash)
-		if !found {
-			return false, errors.ErrUnsupportedAlgorithm
-		}
-
-		encoded, err := crypt.Crypt(plainPassword, settings)
-		if err != nil {
-			return false, err
-		}
-
-		// Use subtle.ConstantTimeCompare for secure comparison
-		return subtle.ConstantTimeCompare([]byte(encoded), []byte(hashPassword)) == 1, nil
 	}
+
+	// Supported passwords: MD5, SSHA256, SSHA512, bcrypt, Argon2i, Argon2id
+	_, _, _, pwhash, err := crypt.DecodeSettings(hashPassword)
+	if err != nil {
+		return false, err
+	}
+
+	settings, _, found := strings.Cut(hashPassword, pwhash)
+	if !found {
+		return false, errors.ErrUnsupportedAlgorithm
+	}
+
+	encoded, err := crypt.Crypt(plainPassword, settings)
+	if err != nil {
+		return false, err
+	}
+
+	// Use subtle.ConstantTimeCompare for secure comparison
+	return subtle.ConstantTimeCompare([]byte(encoded), []byte(hashPassword)) == 1, nil
 }
 
 // ByteSize formats a given number of bytes into a human-readable string representation.
@@ -698,12 +677,8 @@ func ValidateUsername(username string) bool {
 	return usernamePattern.MatchString(username)
 }
 
-// NewDNSResolver creates a new DNS resolver based on the configured settings.
-func NewDNSResolver() (resolver *net.Resolver) {
-	return NewDNSResolverWithCfg(getDefaultConfigFile())
-}
-
-func NewDNSResolverWithCfg(cfg config.File) (resolver *net.Resolver) {
+// NewDNSResolver initializes and returns a new DNS resolver based on the provided configuration.
+func NewDNSResolver(cfg config.File) (resolver *net.Resolver) {
 	if cfg == nil || cfg.GetServer().GetDNS().GetResolver() == "" {
 		resolver = &net.Resolver{PreferGo: true}
 	} else {
@@ -722,7 +697,8 @@ func NewDNSResolverWithCfg(cfg config.File) (resolver *net.Resolver) {
 	return
 }
 
-func NewHTTPClientWithCfg(cfg config.File) *http.Client {
+// NewHTTPClient creates and returns a new instance of http.Client configured with settings from the provided config.File.
+func NewHTTPClient(cfg config.File) *http.Client {
 	var proxyFunc func(*http.Request) (*url.URL, error)
 
 	if cfg.GetServer().GetHTTPClient().GetProxy() != "" {
@@ -762,13 +738,6 @@ func NewHTTPClientWithCfg(cfg config.File) *http.Client {
 	}
 
 	return httpClient
-}
-
-// NewHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
-func NewHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 60 * time.Second,
-	}
 }
 
 // GetCtxWithDeadlineRedisRead creates a context with a timeout derived from the Redis read timeout configuration.

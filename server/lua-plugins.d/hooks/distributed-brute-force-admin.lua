@@ -156,8 +156,8 @@ end
 local function reset_protection_measures(redis_handle, request)
     -- Reset global settings
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
-        "", 
+        redis_handle,
+        "",
         "HSetMultiExpire",
             { nauthilus_util.get_redis_key(request, "multilayer:global:settings") },
         {
@@ -254,7 +254,7 @@ function nauthilus_run_hook(request)
 
         -- Check if we have any meaningful data
         local has_data = false
-        if metrics.attempts > 0 or metrics.unique_ips > 0 or metrics.unique_users > 0 or 
+        if metrics.attempts > 0 or metrics.unique_ips > 0 or metrics.unique_users > 0 or
            metrics.threat_level > 0 or #metrics.attacked_accounts > 0 or #metrics.blocked_regions > 0 or
            #metrics.rate_limited_ips > 0 or #metrics.captcha_accounts > 0 then
             has_data = true
@@ -273,7 +273,7 @@ function nauthilus_run_hook(request)
         result.metrics = metrics
     elseif action == "reset_protection" then
         -- Reset all protection measures
-        local success = reset_protection_measures(redis_handle, request)
+        reset_protection_measures(redis_handle, request)
 
         result.status = "success"
         result.message = "Protection measures reset successfully"

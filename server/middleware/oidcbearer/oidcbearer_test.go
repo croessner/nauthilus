@@ -338,7 +338,7 @@ func TestValidateAndStoreClaims_ValidToken(t *testing.T) {
 
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
 
-	claims := ValidateAndStoreClaims(ctx, validator, nil, nil, "valid-token")
+	claims := ValidateAndStoreClaims(ctx, validator, nil, "valid-token")
 
 	assert.NotNil(t, claims)
 	assert.Equal(t, "test-client", claims["sub"])
@@ -360,7 +360,7 @@ func TestValidateAndStoreClaims_InvalidToken(t *testing.T) {
 
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
 
-	claims := ValidateAndStoreClaims(ctx, validator, nil, nil, "bad-token")
+	claims := ValidateAndStoreClaims(ctx, validator, nil, "bad-token")
 
 	assert.Nil(t, claims)
 	assert.True(t, ctx.IsAborted())
@@ -378,7 +378,7 @@ func TestValidateAndStoreClaims_NoClaims(t *testing.T) {
 
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
 
-	ValidateAndStoreClaims(ctx, validator, nil, nil, "expired-token")
+	ValidateAndStoreClaims(ctx, validator, nil, "expired-token")
 
 	assert.Nil(t, GetClaimsFromContext(ctx))
 }

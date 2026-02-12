@@ -173,22 +173,13 @@ body {
     color: inherit;
 }
 
-:root[data-theme='light'] .idp-2fa-title {
-    color: #ffffff;
-}
-
-::root[data-theme='dark'] .idp-webauthn-title {
-    color: #ffffff;
-}
-
-::root[data-theme='dark'] .idp-header-title,
-::root[data-theme='dark'] .navbar .btn-ghost {
+:root[data-theme='dark'] .navbar .btn-ghost {
     color: rgba(255, 255, 255, 0.92);
 }
 
-::root[data-theme='dark'] .navbar .btn-ghost:hover,
-::root[data-theme='dark'] .navbar .btn-ghost.btn-active,
-::root[data-theme='dark'] .navbar .btn-ghost:focus-visible {
+:root[data-theme='dark'] .navbar .btn-ghost:hover,
+:root[data-theme='dark'] .navbar .btn-ghost.btn-active,
+:root[data-theme='dark'] .navbar .btn-ghost:focus-visible {
     color: #ffffff;
 }
 

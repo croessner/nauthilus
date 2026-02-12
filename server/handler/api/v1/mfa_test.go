@@ -144,15 +144,6 @@ func (m *mockCookieManager) HasKey(key string) bool {
 
 func (m *mockCookieManager) SetMaxAge(_ int) {}
 
-func setupTestRouter(d *deps.Deps) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-
-	api := NewMFAAPI(d)
-	api.Register(r)
-	return r
-}
-
 func setupTestRouterWithMockCookie(d *deps.Deps, mgr cookie.Manager) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

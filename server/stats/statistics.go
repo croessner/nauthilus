@@ -1125,21 +1125,9 @@ func PrometheusTimer(cfg config.File, serviceName string, taskName string, resou
 	return nil
 }
 
-// UpdateGenericConnections reads from GenericConnectionChan and updates the GenericConnections metric for each connection.
-func UpdateGenericConnections() {
-	for {
-		conn, openConn := <-connmgr.GenericConnectionChan
-		if !openConn {
-			break
-		}
-
-		GetMetrics().GetGenericConnections().WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
-	}
-}
-
-// UpdateGenericConnectionsWithContext reads from GenericConnectionChan and updates the GenericConnections metric.
+// UpdateGenericConnections reads from GenericConnectionChan and updates the GenericConnections metric.
 // It exits when ctx is canceled.
-func UpdateGenericConnectionsWithContext(ctx context.Context) {
+func UpdateGenericConnections(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():

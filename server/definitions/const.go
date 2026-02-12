@@ -71,9 +71,6 @@ const (
 	// SessionKeySubject stores the OIDC subject if computed in-session.
 	SessionKeySubject = "subject"
 
-	// SessionKeyRemember signals a "remember me" option for the session.
-	SessionKeyRemember = "remember"
-
 	// SessionKeyRememberTTL stores the TTL for the "remember me" option.
 	SessionKeyRememberTTL = "remember_ttl"
 
@@ -85,9 +82,6 @@ const (
 
 	// SessionKeyTOTPSecret temporarily holds a generated TOTP secret during flow.
 	SessionKeyTOTPSecret = "totp_secret"
-
-	// SessionKeyHome marks that the user reached the 2FA home page in the flow.
-	SessionKeyHome = "home"
 
 	// SessionKeyProtocol stores the network protocol used during authentication.
 	SessionKeyProtocol = "protocol"
@@ -135,11 +129,6 @@ const (
 	// SessionKeyIdPOriginalURL stores the original request URL for resuming the flow after login.
 	SessionKeyIdPOriginalURL = "idp_original_url"
 )
-
-// SingleflightWaitCap defines the maximum time a follower waits for an in-process
-// singleflight result when no request deadline is present.
-// It is intentionally short to collapse parallel MUA bursts without adding noticeable latency.
-const SingleflightWaitCap = 800 * time.Millisecond
 
 // FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.
 const FxStopTimeout = 10 * time.Second
@@ -263,9 +252,6 @@ const (
 	// LogKeyClientID represents the unique client ID.
 	LogKeyClientID = "client_id"
 
-	// LogKeyClientName represents the client name.
-	LogKeyClientName = "client_name"
-
 	// LogKeyPasswordsAccountSeen represents the number of passwords seen for an account.
 	LogKeyPasswordsAccountSeen = "account_passwords_seen"
 
@@ -306,23 +292,8 @@ const (
 	// LogKeyRateLimitReason represents the reason for a 429 Too Many Requests response.
 	LogKeyRateLimitReason = "ratelimit_reason"
 
-	// LogKeySkip indicates whether an operation was skipped.
-	LogKeySkip = "skip"
-
 	// LogKeyUriPath represents the URI path of a request.
 	LogKeyUriPath = "uri_path"
-
-	// LogKeyAuthStatus represents the status of the authentication process.
-	LogKeyAuthStatus = "status"
-
-	// LogKeyAuthAccept indicates if the authentication was accepted.
-	LogKeyAuthAccept = "accept"
-
-	// LogKeyAuthReject indicates if the authentication was rejected.
-	LogKeyAuthReject = "reject"
-
-	// LogKeyAuthSubject represents the subject identifier in an authentication process.
-	LogKeyAuthSubject = "subject"
 
 	// LogKeyMethod represents the HTTP method for request logging.
 	LogKeyMethod = "http_method"
@@ -389,12 +360,6 @@ const (
 
 	// LogKeyLDAPPoolName represents the name of the LDAP pool
 	LogKeyLDAPPoolName = "pool"
-
-	// LogKeyLoginSkip indicates whether login was skipped.
-	LogKeyLoginSkip = "login_skip"
-
-	// LogKeyLuaScripttimeout represents timeout setting for lua scripts
-	LogKeyLuaScripttimeout = "lua_script_timeout"
 
 	// LogKeyBackendServer represents the IP address of the backend server.
 	LogKeyBackendServer = "backend_server"
@@ -769,9 +734,6 @@ const (
 	RedisBFRWPAllowPrefix = "bf:rwp:allow:"
 )
 
-// ImageCopyright represents the copyright statement for a logo.
-const ImageCopyright = "Logo (c) by Roessner-Network-Solutions"
-
 const (
 	// CatAuth is a constant for the "generic" category.
 	CatAuth = "auth"
@@ -823,9 +785,6 @@ const (
 	// CtxAdditionalFeaturesKey is the key used to store additional features in the lualib.Context
 	CtxAdditionalFeaturesKey = "additional_features"
 
-	// CtxCSRFTokenKey is used as a key to store the session's CSRF token in session.Store
-	CtxCSRFTokenKey = "csrf"
-
 	// CtxLocalizedKey is used as a key to store the session's localization data in session.Store
 	CtxLocalizedKey = "localizer"
 
@@ -852,12 +811,6 @@ const (
 
 	// CtxRequestDurationKey is used as a key to store the request duration in the context.
 	CtxRequestDurationKey = "request_duration"
-
-	// CtxFailureKey is used as a key to store failure status in the context.
-	CtxFailureKey = "failure"
-
-	// CtxMessageKey is used as a key to store message information in the context.
-	CtxMessageKey = "message"
 
 	// CtxResponseWrittenKey marks that a Lua response has been written for this request.
 	CtxResponseWrittenKey = "response_written"
@@ -926,9 +879,6 @@ const (
 
 // LDAPPoolExhausted represents the state where no LDAP connections are available in the connection pool.
 const LDAPPoolExhausted = -1
-
-// InvalidCode represents the error message for an invalid TOTP code.
-const InvalidCode = "The TOTP code is invalid"
 
 // ReisPromPoolName is a constant string used for labeling Redis pool metrics in Prometheus.
 const ReisPromPoolName = "pool_name"
@@ -1625,9 +1575,6 @@ const (
 
 	// LuaFnBfIsIPAddressBlocked determines if a given IP address is blocked due to brute force or other security rules.
 	LuaFnBfIsIPAddressBlocked = "is_ip_address_blocked"
-
-	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
-	LuaFnDNSResolve = "resolve"
 )
 
 const (
@@ -1837,9 +1784,6 @@ const (
 
 	// LuaRequestSSLFingerprint is a constant that represents an SSL fingerprint identifier in a Lua request.
 	LuaRequestSSLFingerprint = "ssl_fingerprint"
-
-	// LuaRequestTOTPSecret signifies the TOTP secret of the user.
-	LuaRequestTOTPSecret = "totp_secret"
 
 	// LuaRequestWebAuthnCredential represents the serialized WebAuthn credential in a Lua request.
 	LuaRequestWebAuthnCredential = "webauthn_credential"
@@ -2081,18 +2025,6 @@ const (
 
 	// PromAuth is a constant string representing the authentication flow label for Prometheus timers.
 	PromAuth = "auth"
-
-	// PromIdPLogin is a constant representing the IdP login metric.
-	PromIdPLogin = "idp_login"
-
-	// PromIdPToken is a constant representing the IdP token issuance metric.
-	PromIdPToken = "idp_token"
-
-	// PromIdPConsent is a constant representing the IdP consent metric.
-	PromIdPConsent = "idp_consent"
-
-	// PromIdPMFA is a constant representing the IdP MFA operation metric.
-	PromIdPMFA = "idp_mfa"
 )
 
 const (

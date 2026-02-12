@@ -452,7 +452,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			}
 		default:
 			// If unknown, default to allowing existing behavior (basic or post)
-			allowed = (authSource == "client_secret_basic" || authSource == "client_secret_post")
+			allowed = authSource == "client_secret_basic" || authSource == "client_secret_post"
 		}
 
 		if !allowed {

@@ -69,7 +69,7 @@ func newPool(key PoolKey, opts PoolOptions) *Pool {
 		opts:   opts,
 		states: make(chan *lua.LState, opts.MaxVMs),
 		// Create a dedicated HTTP client for this pool's VMs.
-		httpClient: util.NewHTTPClientWithCfg(opts.Config),
+		httpClient: util.NewHTTPClient(opts.Config),
 	}
 
 	for i := 0; i < opts.MaxVMs; i++ {

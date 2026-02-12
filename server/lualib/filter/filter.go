@@ -93,7 +93,7 @@ func LoaderModBackend(ctx context.Context, cfg config.File, logger *slog.Logger,
 // PreCompileLuaFilters prepares and pre-compiles Lua filters based on the configuration, ensuring optimized filter execution.
 // Returns an error if pre-compilation fails or configuration is missing.
 // Initializes or resets the global LuaFilters container, adding compiled Lua filters sequentially.
-func PreCompileLuaFilters(cfgFile config.File, logger *slog.Logger) (err error) {
+func PreCompileLuaFilters(cfgFile config.File) (err error) {
 	tr := monittrace.New("nauthilus/filters")
 	ctx, sp := tr.Start(svcctx.Get(), "filters.precompile_all",
 		attribute.Int("configured", func() int {

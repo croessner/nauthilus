@@ -13,7 +13,7 @@ type CSVSource struct {
 	current int
 }
 
-func NewCSVSource(path string, delim rune, debug bool, maxRows int, shuffle bool) (*CSVSource, error) {
+func NewCSVSource(path string, delim rune, maxRows int, shuffle bool) (*CSVSource, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
