@@ -41,7 +41,7 @@ func performRequest(t *testing.T, handler gin.HandlerFunc, method string, url st
 }
 
 func TestValidationErrors(t *testing.T) {
-	handler := NewWithDeps(&handlerdeps.Deps{})
+	handler := New(&handlerdeps.Deps{})
 
 	t.Run("AddTOTP_MissingUsername", func(t *testing.T) {
 		recorder := performRequest(t, handler.AddTOTP, http.MethodPost, "/totp", `{"totp_secret":"abc"}`)

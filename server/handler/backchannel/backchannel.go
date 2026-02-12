@@ -34,20 +34,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Setup registers the backchannel endpoints on the provided engine.
-// It mirrors the previous setupBackChannelEndpoints behavior while delegating concrete
-// route registrations to modular handlers.
-func Setup(router *gin.Engine) {
-	panic("backchannel.Setup is deprecated; use backchannel.SetupWithDeps with explicit dependencies")
-}
-
-// SetupWithDeps registers backchannel API endpoints with explicit dependencies.
+// Setup registers backchannel API endpoints with explicit dependencies.
 // Authentication uses Basic Auth and/or OIDC Bearer tokens (client_credentials flow).
 // The legacy HS256 JWT mechanism (/api/v1/jwt/token, /api/v1/jwt/refresh) has been
 // removed in favor of the standard OIDC /oidc/token endpoint.
-func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
+func Setup(router *gin.Engine, deps *handlerdeps.Deps) {
 	if deps == nil || deps.Cfg == nil || deps.Logger == nil {
-		panic("backchannel.SetupWithDeps requires non-nil deps (Cfg, Logger)")
+		panic("backchannel.Setup requires non-nil deps (Cfg, Logger)")
 	}
 
 	if deps.Svc == nil {
@@ -77,12 +70,12 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	group.Use(mdlua.LuaContextMiddleware())
 
 	// Register modules (require mandatory authentication)
-	auth.NewWithDeps(deps).Register(group)
+	auth.New(deps).Register(group)
 	bruteforce.New(deps).Register(group)
-	confighandler.NewWithDeps(deps).Register(group)
+	confighandler.New(deps).Register(group)
 	cache.New(deps).Register(group)
-	asyncjobs.NewWithDeps(deps).Register(group)
-	mfa_backchannel.NewWithDeps(deps).Register(group)
+	asyncjobs.New(deps).Register(group)
+	mfa_backchannel.New(deps).Register(group)
 
 	// Custom hooks use a separate group without authentication middleware.
 	// Authentication and authorization are handled per-hook inside HasRequiredScopes:
@@ -91,7 +84,7 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	hookGroup := router.Group("/api/v1")
 	hookGroup.Use(mdlua.LuaContextMiddleware())
 
-	custom.NewWithDeps(deps.CfgProvider, deps.Logger, deps.Redis, nauthilusIdP).Register(hookGroup)
+	custom.New(deps.CfgProvider, deps.Logger, deps.Redis, nauthilusIdP).Register(hookGroup)
 
 	if deps.Env != nil && deps.Env.GetDevMode() {
 		devui.New(deps).Register(group)

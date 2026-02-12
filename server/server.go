@@ -485,7 +485,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 			TokenFlusher: tokenStorage,
 		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
-		handlerbackchannel.SetupWithDeps(e, deps)
+		handlerbackchannel.Setup(e, deps)
 	}
 
 	app := core.NewDefaultHTTPApp(core.HTTPDeps{

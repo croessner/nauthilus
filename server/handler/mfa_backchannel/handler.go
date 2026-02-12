@@ -34,8 +34,8 @@ type Handler struct {
 	deps *handlerdeps.Deps
 }
 
-// NewWithDeps constructs the backchannel handler with injected dependencies.
-func NewWithDeps(deps *handlerdeps.Deps) *Handler {
+// New constructs the backchannel handler with injected dependencies.
+func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
