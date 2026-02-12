@@ -179,35 +179,8 @@ func (rm *RedisManager) RedisZRangeByScore(L *lua.LState) int {
 
 // RedisZRem removes one or more members from a sorted set.
 func (rm *RedisManager) RedisZRem(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		top := stack.GetTop()
-		var members []any
-
-		// Check if the 3rd argument is a table. If so, use it as the members list.
-		// Otherwise, collect all arguments from the 3rd onwards.
-		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
-			tbl := stack.CheckTable(3)
-
-			tbl.ForEach(func(_, value lua.LValue) {
-				members = append(members, value.String())
-			})
-		} else {
-			for i := 3; i <= top; i++ {
-				members = append(members, stack.CheckString(i))
-			}
-		}
-
-		if len(members) == 0 {
-			return stack.PushResults(lua.LNumber(0), lua.LNil)
-		}
-
-		cmd := conn.ZRem(ctx, key, members...)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	return executeWriteIntCmd(rm, L, collectLuaValues, func(ctx context.Context, conn redis.Cmdable, key string, values []any) *redis.IntCmd {
+		return conn.ZRem(ctx, key, values...)
 	})
 }
 

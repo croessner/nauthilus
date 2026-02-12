@@ -102,34 +102,8 @@ func (rm *RedisManager) RedisHSet(L *lua.LState) int {
 
 // RedisHDel deletes one or more hash fields.
 func (rm *RedisManager) RedisHDel(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		hash := stack.CheckString(2)
-		top := stack.GetTop()
-
-		var fields []string
-
-		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
-			tbl := stack.CheckTable(3)
-
-			tbl.ForEach(func(_, value lua.LValue) {
-				fields = append(fields, value.String())
-			})
-		} else {
-			for i := 3; i <= top; i++ {
-				fields = append(fields, stack.CheckString(i))
-			}
-		}
-
-		if len(fields) == 0 {
-			return stack.PushResults(lua.LNumber(0), lua.LNil)
-		}
-
-		cmd := conn.HDel(ctx, hash, fields...)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	return executeWriteIntCmd(rm, L, collectLuaStrings, func(ctx context.Context, conn redis.Cmdable, key string, fields []string) *redis.IntCmd {
+		return conn.HDel(ctx, key, fields...)
 	})
 }
 

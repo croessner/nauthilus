@@ -273,6 +273,9 @@ const (
 	// LogKeyStatusMessage represents a status message for an operation.
 	LogKeyStatusMessage = "status_message"
 
+	// LogKeyBFRWP indicates whether the request was identified as a Repeating Wrong Password (RWP).
+	LogKeyBFRWP = "bf_rwp"
+
 	// LogKeyStatus represents the general status (like authentication) for logging.
 	LogKeyStatus = "authenticated"
 
@@ -724,12 +727,6 @@ const (
 	// RedisUserPositiveCachePrefix is the prefix used for positive user cache entries in Redis.
 	RedisUserPositiveCachePrefix = "UCP:"
 
-	// RedisBFColdStartPrefix represents the prefix used for cold-start grace in Redis.
-	RedisBFColdStartPrefix = "bf:cold:"
-
-	// RedisBFSeedPrefix represents the prefix used for brute-force seeds in Redis.
-	RedisBFSeedPrefix = "bf:seed:"
-
 	// RedisBFRWPAllowPrefix represents the prefix used for repeating wrong password allowance in Redis.
 	RedisBFRWPAllowPrefix = "bf:rwp:allow:"
 )
@@ -824,6 +821,10 @@ const (
 
 	// CtxSecureDataKey is used as a key to store the CookieManager instance for secure IDP data in the context.
 	CtxSecureDataKey = "secure_data"
+
+	// CtxRWPResultKey stores the RWP (Repeating Wrong Password) enforcement check result
+	// from CheckBruteForce for reuse in UpdateBruteForceBucketsCounter, avoiding redundant Redis calls.
+	CtxRWPResultKey = "rwp_result"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.
@@ -1670,6 +1671,9 @@ const (
 
 	// LuaRequestRepeating signifies that the request is repeating.
 	LuaRequestRepeating = "repeating"
+
+	// LuaRequestRWP indicates whether the request was identified as a Repeating Wrong Password (RWP).
+	LuaRequestRWP = "rwp"
 
 	// LuaRequestAuthenticated indicates that the request is authenticated.
 	LuaRequestAuthenticated = "authenticated"

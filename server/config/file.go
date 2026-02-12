@@ -2585,41 +2585,46 @@ func processVerboseLevel(input any) (any, error) {
 	return verbosity, err
 }
 
-// processDebugModules processes the input to generate a slice of DbgModule pointers or returns an error for invalid inputs.
-// The input can be a string, a slice of strings, or a slice of any containing strings.
-func processDebugModules(input any) (any, error) {
-	var dbgModules []*DbgModule
+// stringSettable is implemented by config types that can be initialized from a string.
+type stringSettable interface {
+	Set(string) error
+}
 
-	addDebugModule := func(data string) error {
-		module := &DbgModule{}
-		if err := module.Set(data); err != nil {
+// processStringSettableSlice is a generic helper that parses input (string, []string, or []any)
+// into a typed slice of pointer elements, each initialized via its Set method.
+func processStringSettableSlice[T stringSettable](input any, newFn func() T) (any, error) {
+	var items []T
+
+	add := func(data string) error {
+		item := newFn()
+		if err := item.Set(data); err != nil {
 			return err
 		}
 
-		dbgModules = append(dbgModules, module)
+		items = append(items, item)
 
 		return nil
 	}
 
 	switch data := input.(type) {
 	case string:
-		if err := addDebugModule(data); err != nil {
+		if err := add(data); err != nil {
 			return nil, err
 		}
 	case []string:
-		for _, dbgModule := range data {
-			if err := addDebugModule(dbgModule); err != nil {
+		for _, s := range data {
+			if err := add(s); err != nil {
 				return nil, err
 			}
 		}
 	case []any:
-		for _, dbgModule := range data {
-			str, ok := dbgModule.(string)
+		for _, v := range data {
+			str, ok := v.(string)
 			if !ok {
-				return nil, fmt.Errorf("invalid value in array, expected string, got %T", dbgModule)
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", v)
 			}
 
-			if err := addDebugModule(str); err != nil {
+			if err := add(str); err != nil {
 				return nil, err
 			}
 		}
@@ -2627,7 +2632,12 @@ func processDebugModules(input any) (any, error) {
 		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
 	}
 
-	return dbgModules, nil
+	return items, nil
+}
+
+// processDebugModules processes the input to generate a slice of DbgModule pointers or returns an error for invalid inputs.
+func processDebugModules(input any) (any, error) {
+	return processStringSettableSlice(input, func() *DbgModule { return &DbgModule{} })
 }
 
 // processFeatures converts input values into a slice of Feature pointers or returns an error for invalid input types or values.
@@ -2739,46 +2749,7 @@ func processProtocols(input any) (any, error) {
 
 // processBackends processes the input to create and configure a list of Backend instances, returning them or an error.
 func processBackends(input any) (any, error) {
-	var backends []*Backend
-
-	addBackend := func(data string) error {
-		backend := &Backend{}
-		if err := backend.Set(data); err != nil {
-			return err
-		}
-
-		backends = append(backends, backend)
-
-		return nil
-	}
-
-	switch data := input.(type) {
-	case string:
-		if err := addBackend(data); err != nil {
-			return nil, err
-		}
-	case []string:
-		for _, backend := range data {
-			if err := addBackend(backend); err != nil {
-				return nil, err
-			}
-		}
-	case []any:
-		for _, backend := range data {
-			str, ok := backend.(string)
-			if !ok {
-				return nil, fmt.Errorf("invalid value in array, expected string, got %T", backend)
-			}
-
-			if err := addBackend(str); err != nil {
-				return nil, err
-			}
-		}
-	default:
-		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
-	}
-
-	return backends, nil
+	return processStringSettableSlice(input, func() *Backend { return &Backend{} })
 }
 
 // createDecoderOption returns a viper.DecoderConfigOption to configure a mapstructure decoder with custom DecodeHook functions.

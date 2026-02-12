@@ -55,8 +55,12 @@ func (m *mockLuaConfig) GetServer() *config.ServerSection {
 	}
 }
 
-func TestLuaAddTOTPSecret(t *testing.T) {
+// setupLuaTOTPTest creates the common test fixtures for TOTP/recovery code tests.
+func setupLuaTOTPTest(t *testing.T) (*luaManagerImpl, *AuthState) {
+	t.Helper()
+
 	var verbosity config.Verbosity
+
 	_ = verbosity.Set("debug")
 
 	protocol := &config.LuaSearchProtocol{
@@ -96,6 +100,12 @@ func TestLuaAddTOTPSecret(t *testing.T) {
 	auth.Request.Protocol.Set("oidc")
 
 	priorityqueue.LuaQueue.AddBackendName("test")
+
+	return lm, auth
+}
+
+func TestLuaAddTOTPSecret(t *testing.T) {
+	lm, auth := setupLuaTOTPTest(t)
 
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
@@ -114,46 +124,7 @@ func TestLuaAddTOTPSecret(t *testing.T) {
 }
 
 func TestLuaDeleteTOTPSecret(t *testing.T) {
-	var verbosity config.Verbosity
-	_ = verbosity.Set("debug")
-
-	protocol := &config.LuaSearchProtocol{
-		BackendName: "test",
-		CacheName:   "test",
-		Protocols:   []string{"oidc"},
-	}
-
-	serverCfg := &config.ServerSection{
-		Timeouts: config.Timeouts{
-			LuaBackend: 2 * time.Second,
-		},
-		Log: config.Log{
-			Level: verbosity,
-		},
-	}
-
-	mcfg := &mockLuaConfig{server: serverCfg}
-	mcfg.On("GetLuaSearchProtocol", mock.Anything, "test").Return(protocol, nil)
-
-	deps := AuthDeps{Cfg: mcfg}
-	lm := &luaManagerImpl{
-		backendName: "test",
-		deps:        deps,
-	}
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username: "jdoe",
-			Protocol: new(config.Protocol),
-		},
-		Runtime: AuthRuntime{
-			GUID: "test-guid",
-		},
-	}
-	auth.Request.Protocol.Set("oidc")
-
-	priorityqueue.LuaQueue.AddBackendName("test")
+	lm, auth := setupLuaTOTPTest(t)
 
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
@@ -171,48 +142,9 @@ func TestLuaDeleteTOTPSecret(t *testing.T) {
 }
 
 func TestLuaAddTOTPRecoveryCodes(t *testing.T) {
-	var verbosity config.Verbosity
-	_ = verbosity.Set("debug")
-
-	protocol := &config.LuaSearchProtocol{
-		BackendName: "test",
-		CacheName:   "test",
-		Protocols:   []string{"oidc"},
-	}
-
-	serverCfg := &config.ServerSection{
-		Timeouts: config.Timeouts{
-			LuaBackend: 2 * time.Second,
-		},
-		Log: config.Log{
-			Level: verbosity,
-		},
-	}
-
-	mcfg := &mockLuaConfig{server: serverCfg}
-	mcfg.On("GetLuaSearchProtocol", mock.Anything, "test").Return(protocol, nil)
-
-	deps := AuthDeps{Cfg: mcfg}
-	lm := &luaManagerImpl{
-		backendName: "test",
-		deps:        deps,
-	}
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username: "jdoe",
-			Protocol: new(config.Protocol),
-		},
-		Runtime: AuthRuntime{
-			GUID: "test-guid",
-		},
-	}
-	auth.Request.Protocol.Set("oidc")
+	lm, auth := setupLuaTOTPTest(t)
 
 	recovery := mfa.NewTOTPRecovery([]string{"code1", "code2"})
-
-	priorityqueue.LuaQueue.AddBackendName("test")
 
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")
@@ -232,46 +164,7 @@ func TestLuaAddTOTPRecoveryCodes(t *testing.T) {
 }
 
 func TestLuaDeleteTOTPRecoveryCodes(t *testing.T) {
-	var verbosity config.Verbosity
-	_ = verbosity.Set("debug")
-
-	protocol := &config.LuaSearchProtocol{
-		BackendName: "test",
-		CacheName:   "test",
-		Protocols:   []string{"oidc"},
-	}
-
-	serverCfg := &config.ServerSection{
-		Timeouts: config.Timeouts{
-			LuaBackend: 2 * time.Second,
-		},
-		Log: config.Log{
-			Level: verbosity,
-		},
-	}
-
-	mcfg := &mockLuaConfig{server: serverCfg}
-	mcfg.On("GetLuaSearchProtocol", mock.Anything, "test").Return(protocol, nil)
-
-	deps := AuthDeps{Cfg: mcfg}
-	lm := &luaManagerImpl{
-		backendName: "test",
-		deps:        deps,
-	}
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username: "jdoe",
-			Protocol: new(config.Protocol),
-		},
-		Runtime: AuthRuntime{
-			GUID: "test-guid",
-		},
-	}
-	auth.Request.Protocol.Set("oidc")
-
-	priorityqueue.LuaQueue.AddBackendName("test")
+	lm, auth := setupLuaTOTPTest(t)
 
 	go func() {
 		req := priorityqueue.LuaQueue.Pop("test")

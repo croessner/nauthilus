@@ -916,10 +916,21 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	return ldapReply.Err
 }
 
-// DeleteTOTPSecret removes the TOTP secret from an LDAP server.
-func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
+// deleteLDAPFieldParams holds the per-operation parameters for deleteLDAPField.
+type deleteLDAPFieldParams struct {
+	spanName      string
+	promLabel     string
+	promMetric    string
+	prepareSpan   string
+	waitSpan      string
+	fieldGetter   func(*config.LDAPSearchProtocol) string
+	missingDetail string
+}
+
+// deleteLDAPField is the shared implementation for deleting a single LDAP attribute (TOTP secret, recovery codes, etc.).
+func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFieldParams) (err error) {
 	tr := monittrace.New("nauthilus/ldap")
-	mctx, msp := tr.Start(auth.Ctx(), "ldap.delete_totp",
+	mctx, msp := tr.Start(auth.Ctx(), params.spanName,
 		attribute.String("pool_name", lm.poolName),
 		attribute.String("service", auth.Request.Service),
 		attribute.String("protocol", auth.Request.Protocol.Get()),
@@ -940,7 +951,7 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 	)
 
 	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTP, "ldap_delete_totp_request_total", resource)
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), params.promLabel, params.promMetric, resource)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -948,7 +959,7 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	_, endPrepare := startSpan(tr, mctx, "ldap.delete_totp.prepare")
+	_, endPrepare := startSpan(tr, mctx, params.prepareSpan)
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
 		filterGetter: (*config.LDAPSearchProtocol).GetUserFilter,
@@ -967,12 +978,12 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 		attribute.String("scope", scope.String()),
 	)
 
-	configField = protocol.GetTotpSecretField()
+	configField = params.fieldGetter(protocol)
 	if configField == "" {
 		endPrepare()
 
 		err = errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Request.Protocol.Get()))
+			fmt.Sprintf("%s; protocol=%s", params.missingDetail, auth.Request.Protocol.Get()))
 
 		return
 	}
@@ -1002,7 +1013,7 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 	// Use priority queue instead of channel
 	lm.ldapQueue().Push(ldapRequest, priority)
 
-	ldapReply = waitLDAPReply(tr, mctx, "ldap.delete_totp.wait", ldapReplyChan)
+	ldapReply = waitLDAPReply(tr, mctx, params.waitSpan, ldapReplyChan)
 
 	if isNoSuchAttributeError(ldapReply.Err) {
 		return nil
@@ -1013,6 +1024,19 @@ func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 	}
 
 	return ldapReply.Err
+}
+
+// DeleteTOTPSecret removes the TOTP secret from an LDAP server.
+func (lm *ldapManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
+	return lm.deleteLDAPField(auth, deleteLDAPFieldParams{
+		spanName:      "ldap.delete_totp",
+		promLabel:     definitions.PromDeleteTOTP,
+		promMetric:    "ldap_delete_totp_request_total",
+		prepareSpan:   "ldap.delete_totp.prepare",
+		waitSpan:      "ldap.delete_totp.wait",
+		fieldGetter:   (*config.LDAPSearchProtocol).GetTotpSecretField,
+		missingDetail: "Missing LDAP TOTP secret field",
+	})
 }
 
 // AddTOTPRecoveryCodes adds the specified TOTP recovery codes to the user's authentication state in the LDAP backend.
@@ -1156,101 +1180,15 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 
 // DeleteTOTPRecoveryCodes removes all TOTP recovery codes for the user in the LDAP backend.
 func (lm *ldapManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) {
-	tr := monittrace.New("nauthilus/ldap")
-	mctx, msp := tr.Start(auth.Ctx(), "ldap.delete_totp_recovery",
-		attribute.String("pool_name", lm.poolName),
-		attribute.String("service", auth.Request.Service),
-		attribute.String("protocol", auth.Request.Protocol.Get()),
-	)
-
-	_ = mctx
-
-	defer msp.End()
-
-	var (
-		filter       string
-		baseDN       string
-		configField  string
-		ldapReply    *bktype.LDAPReply
-		scope        *config.LDAPScope
-		protocol     *config.LDAPSearchProtocol
-		searchConfig ldapSearchConfig
-	)
-
-	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
-	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromDeleteTOTPRecovery, "ldap_delete_totp_recovery_request_total", resource)
-
-	if stopTimer != nil {
-		defer stopTimer()
-	}
-
-	ldapReplyChan := make(chan *bktype.LDAPReply)
-
-	_, endPrepare := startSpan(tr, mctx, "ldap.delete_totp_recovery.prepare")
-
-	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter: (*config.LDAPSearchProtocol).GetUserFilter,
+	return lm.deleteLDAPField(auth, deleteLDAPFieldParams{
+		spanName:      "ldap.delete_totp_recovery",
+		promLabel:     definitions.PromDeleteTOTPRecovery,
+		promMetric:    "ldap_delete_totp_recovery_request_total",
+		prepareSpan:   "ldap.delete_totp_recovery.prepare",
+		waitSpan:      "ldap.delete_totp_recovery.wait",
+		fieldGetter:   (*config.LDAPSearchProtocol).GetTotpRecoveryField,
+		missingDetail: "Missing LDAP TOTP recovery field",
 	})
-	if err != nil || searchConfig.protocol == nil {
-		return
-	}
-
-	protocol = searchConfig.protocol
-	filter = searchConfig.filter
-	baseDN = searchConfig.baseDN
-	scope = searchConfig.scope
-
-	msp.SetAttributes(
-		attribute.String("base_dn", baseDN),
-		attribute.String("scope", scope.String()),
-	)
-
-	configField = protocol.GetTotpRecoveryField()
-	if configField == "" {
-		endPrepare()
-
-		err = errors.ErrLDAPConfig.WithDetail(
-			fmt.Sprintf("Missing LDAP TOTP recovery field; protocol=%s", auth.Request.Protocol.Get()))
-
-		return
-	}
-
-	// Derive a timeout context for LDAP modify using service-scoped context
-	ctxModify, cancelModify := lm.ldapModifyContext()
-	defer cancelModify()
-
-	ldapRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
-		auth:       auth,
-		filter:     filter,
-		baseDN:     baseDN,
-		scope:      scope,
-		subCommand: definitions.LDAPModifyDelete,
-		ctx:        ctxModify,
-		replyChan:  ldapReplyChan,
-	})
-
-	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 1)
-	ldapRequest.ModifyAttributes[configField] = []string{}
-
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
-	priority := lm.requestPriority(auth)
-
-	endPrepare()
-
-	// Use priority queue instead of channel
-	lm.ldapQueue().Push(ldapRequest, priority)
-
-	ldapReply = waitLDAPReply(tr, mctx, "ldap.delete_totp_recovery.wait", ldapReplyChan)
-
-	if isNoSuchAttributeError(ldapReply.Err) {
-		return nil
-	}
-
-	if ldapReply.Err != nil {
-		msp.RecordError(ldapReply.Err)
-	}
-
-	return ldapReply.Err
 }
 
 // isNoSuchAttributeError checks if the error is an LDAP "No Such Attribute" error.

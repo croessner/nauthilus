@@ -436,6 +436,15 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 	bm = bm.WithPassword(a.Request.Password).WithAccountName(accountName).WithUsername(a.Request.Username)
 
+	// Always check RWP (Repeating Wrong Password) and store result in gin.Context
+	// so UpdateBruteForceBucketsCounter can reuse it without a redundant Redis call.
+	if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err == nil {
+		ctx.Set(definitions.CtxRWPResultKey, needEnforce)
+
+		// RWP detected when enforcement is NOT needed (needEnforce == false).
+		a.Runtime.BFRWP = !needEnforce
+	}
+
 	// Determine IP once
 	ip := net.ParseIP(a.Request.ClientIP)
 
@@ -667,6 +676,36 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	bm = bm.WithUsername(a.Request.Username).WithPassword(a.Request.Password).WithAccountName(accountName)
+
+	// Check whether bucket counters should be increased.
+	// First try the context-cached result from CheckBruteForce; fall back to a fresh check.
+	if cached, exists := ctx.Get(definitions.CtxRWPResultKey); exists {
+		if enforce, ok := cached.(bool); ok && !enforce {
+			// RWP already detected in CheckBruteForce — do not increase buckets.
+			a.Runtime.BFRWP = true
+
+			bm.ProcessPWHist()
+
+			return
+		}
+	} else {
+		// Fallback: no cached result (e.g., called without prior CheckBruteForce).
+		if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err != nil {
+			return
+		} else if !needEnforce {
+			// Store result in context so downstream consumers (e.g., Post-Lua-Actions) can read it.
+			ctx.Set(definitions.CtxRWPResultKey, false)
+
+			a.Runtime.BFRWP = true
+
+			bm.ProcessPWHist()
+
+			return
+		}
+
+		// Enforcement needed — cache the positive result for downstream consumers.
+		ctx.Set(definitions.CtxRWPResultKey, true)
+	}
 
 	proto := ""
 	if a.Request.Protocol != nil {

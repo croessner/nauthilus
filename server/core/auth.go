@@ -530,6 +530,10 @@ type AuthRuntime struct {
 	// BFRepeating indicates whether brute-force detection is repeating.
 	BFRepeating bool
 
+	// BFRWP indicates whether the request was identified as a Repeating Wrong Password (RWP).
+	// When true, bucket counters were NOT increased because the same wrong password was repeated.
+	BFRWP bool
+
 	// MasterUserMode indicates whether the request is in master user mode.
 	MasterUserMode bool
 }
@@ -1042,6 +1046,7 @@ func (a *AuthState) collectFields() []authStateField {
 		{"Authenticated", a.Runtime.Authenticated},
 		{"Authorized", a.Runtime.Authorized},
 		{"BFRepeating", a.Runtime.BFRepeating},
+		{"BFRWP", a.Runtime.BFRWP},
 		{"MasterUserMode", a.Runtime.MasterUserMode},
 		// --- Security ---
 		{"BruteForceName", a.Security.BruteForceName},
@@ -2075,6 +2080,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.Latency = float64(time.Since(a.Runtime.StartTime).Milliseconds())
 	cr.Debug = false
 	cr.Repeating = a.Runtime.BFRepeating
+	cr.RWP = a.Runtime.BFRWP
 	cr.NoAuth = a.Request.NoAuth
 	cr.UserFound = a.Runtime.UserFound
 	cr.Authenticated = a.Runtime.Authenticated
@@ -2268,6 +2274,13 @@ func (a *AuthState) IsIPAddressBlocked() (buckets []string, found bool) {
 	bm := a.createBucketManager(a.Ctx())
 
 	return bm.IsIPAddressBlocked()
+}
+
+// ShouldEnforceBucketUpdate determines whether brute force bucket counters should be increased.
+func (a *AuthState) ShouldEnforceBucketUpdate() (bool, error) {
+	bm := a.createBucketManager(a.Ctx())
+
+	return bm.ShouldEnforceBucketUpdate()
 }
 
 // PrepareNetcalc pre-calculates network CIDRs for brute force rules.

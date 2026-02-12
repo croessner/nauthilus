@@ -48,62 +48,48 @@ func setupAuthDeps() AuthDeps {
 	}
 }
 
-func TestAuthValidation_EmptyUsername_JSON(t *testing.T) {
-	setupMinimalTestConfig(t)
-	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps()
+func TestAuthValidation_EmptyField_JSON(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		expectedField string
+	}{
+		{
+			name:          "EmptyUsername",
+			body:          `{"username": "", "password": "password"}`,
+			expectedField: "Username",
+		},
+		{
+			name:          "EmptyPassword",
+			body:          `{"username": "user1", "password": ""}`,
+			expectedField: "Password",
+		},
+	}
 
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupMinimalTestConfig(t)
+			gin.SetMode(gin.TestMode)
+			deps := setupAuthDeps()
 
-	// Setup request
-	body := []byte(`{"username": "", "password": "password"}`)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/json", bytes.NewBuffer(body))
-	ctx.Request.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
 
-	// Setup context variables
-	ctx.Set(definitions.CtxServiceKey, definitions.ServJSON)
-	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/json", bytes.NewBuffer([]byte(tt.body)))
+			ctx.Request.Header.Set("Content-Type", "application/json")
 
-	// Execute
-	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
+			ctx.Set(definitions.CtxServiceKey, definitions.ServJSON)
+			ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
-	// Assertions
-	assert.Nil(t, auth, "NewAuthStateWithSetupWithDeps should return nil when validation fails")
-	assert.True(t, ctx.IsAborted(), "Context should be aborted")
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			auth := NewAuthStateWithSetupWithDeps(ctx, deps)
 
-	// Check JSON response
-	assert.Contains(t, w.Body.String(), `"field":"Username"`)
-	assert.Contains(t, w.Body.String(), `"message":"This field is required"`)
-}
-
-func TestAuthValidation_EmptyPassword_JSON(t *testing.T) {
-	setupMinimalTestConfig(t)
-	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps()
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-
-	// Setup request
-	body := []byte(`{"username": "user1", "password": ""}`)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/json", bytes.NewBuffer(body))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	// Setup context variables
-	ctx.Set(definitions.CtxServiceKey, definitions.ServJSON)
-	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-	// Execute
-	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
-
-	// Assertions
-	assert.Nil(t, auth, "NewAuthStateWithSetupWithDeps should return nil for empty password")
-	assert.True(t, ctx.IsAborted(), "Context should be aborted")
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), `"field":"Password"`)
-	assert.Contains(t, w.Body.String(), `"message":"This field is required"`)
+			assert.Nil(t, auth, "NewAuthStateWithSetupWithDeps should return nil when validation fails")
+			assert.True(t, ctx.IsAborted(), "Context should be aborted")
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), `"field":"`+tt.expectedField+`"`)
+			assert.Contains(t, w.Body.String(), `"message":"This field is required"`)
+		})
+	}
 }
 
 func TestAuthValidation_EmptyUsername_BasicAuth(t *testing.T) {

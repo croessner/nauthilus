@@ -26,25 +26,20 @@ import (
 // PipelineFunc is a function that executes Redis commands on a pipeline.
 type PipelineFunc func(pipe redis.Pipeliner) error
 
-// ExecuteWritePipeline executes multiple Redis write commands in a pipeline to reduce network round trips.
-// It takes a context and a function that defines the commands to execute.
-// The function should add commands to the pipeline but not execute them.
-// Returns the command results and any error that occurred.
-func ExecuteWritePipeline(ctx context.Context, redisClient Client, fn PipelineFunc) ([]redis.Cmder, error) {
-	// Tracing: cover the lifecycle of a write pipeline execution
+// executePipeline is the shared implementation for pipeline execution.
+// It handles tracing, error recording, and op-count reporting for both read and write pipelines.
+func executePipeline(ctx context.Context, mode string, pipe redis.Pipeliner, fn PipelineFunc) ([]redis.Cmder, error) {
 	tr := monittrace.New("nauthilus/redis_batch")
 	pctx, sp := tr.Start(ctx, "redis.pipeline.exec",
-		attribute.String("mode", "write"),
+		attribute.String("mode", mode),
 	)
 
-	// Use pctx for Exec so any downstream hooks attach to this span
 	_ = pctx
 
 	if sp != nil {
 		defer sp.End()
 	}
 
-	pipe := redisClient.GetWritePipeline()
 	if err := fn(pipe); err != nil {
 		if sp != nil {
 			sp.RecordError(err)
@@ -70,46 +65,12 @@ func ExecuteWritePipeline(ctx context.Context, redisClient Client, fn PipelineFu
 	return cmds, err
 }
 
+// ExecuteWritePipeline executes multiple Redis write commands in a pipeline to reduce network round trips.
+func ExecuteWritePipeline(ctx context.Context, redisClient Client, fn PipelineFunc) ([]redis.Cmder, error) {
+	return executePipeline(ctx, "write", redisClient.GetWritePipeline(), fn)
+}
+
 // ExecuteReadPipeline executes multiple Redis read commands in a pipeline to reduce network round trips.
-// It takes a context and a function that defines the commands to execute.
-// The function should add commands to the pipeline but not execute them.
-// Returns the command results and any error that occurred.
 func ExecuteReadPipeline(ctx context.Context, redisClient Client, fn PipelineFunc) ([]redis.Cmder, error) {
-	// Tracing: cover the lifecycle of a read pipeline execution
-	tr := monittrace.New("nauthilus/redis_batch")
-	pctx, sp := tr.Start(ctx, "redis.pipeline.exec",
-		attribute.String("mode", "read"),
-	)
-
-	// Use pctx for Exec so any downstream hooks attach to this span
-	_ = pctx
-
-	if sp != nil {
-		defer sp.End()
-	}
-
-	pipe := redisClient.GetReadPipeline()
-	if err := fn(pipe); err != nil {
-		if sp != nil {
-			sp.RecordError(err)
-		}
-
-		return nil, err
-	}
-
-	// best effort op count before exec
-	if l, ok := any(pipe).(interface{ Len() int }); ok {
-		if sp != nil {
-			sp.SetAttributes(attribute.Int("op_count", l.Len()))
-		}
-	}
-
-	cmds, err := pipe.Exec(pctx)
-	if err != nil {
-		if sp != nil {
-			sp.RecordError(err)
-		}
-	}
-
-	return cmds, err
+	return executePipeline(ctx, "read", redisClient.GetReadPipeline(), fn)
 }

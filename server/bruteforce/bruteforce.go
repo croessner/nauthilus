@@ -168,6 +168,11 @@ type BucketManager interface {
 	// PrepareNetcalc precomputes parsed IP, IP family and unique CIDR networks for active rules.
 	// It is idempotent and safe to call multiple times.
 	PrepareNetcalc(rules []config.BruteForceRule)
+
+	// ShouldEnforceBucketUpdate determines whether brute force bucket counters should be increased.
+	// It returns true if enforcement is needed (i.e., the password is NOT a repeating wrong password),
+	// or false if the request should be tolerated (RWP detected).
+	ShouldEnforceBucketUpdate() (bool, error)
 }
 
 type bucketManagerImpl struct {
@@ -977,8 +982,6 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 	if alreadyTriggered || ruleTriggered {
 		sp.SetAttributes(attribute.String("rule", rule.Name))
 
-		var useCache bool
-
 		// capture context flag for downstream operations (e.g., PW_HIST behavior)
 		bm.alreadyTriggered = alreadyTriggered
 
@@ -990,33 +993,23 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		logBucketRuleDebug(bm, network, rule)
 
-		for _, backendType := range bm.cfg().GetServer().GetBackends() {
-			if backendType.Get() == definitions.BackendCache {
-				useCache = true
-
-				break
-			}
-		}
-
 		// Decide whether to enforce brute-force computation or treat as repeating-wrong-password
 		// even if the bucket rule matched. This reduces false positives and write amplification.
-		if useCache {
-			if needEnforce, err := bm.checkEnforceBruteForceComputation(); err != nil {
-				level.Error(logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, "Failed to check enforcement of brute force computation",
-					definitions.LogKeyError, err,
-				)
+		if needEnforce, err := bm.checkEnforceBruteForceComputation(); err != nil {
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to check enforcement of brute force computation",
+				definitions.LogKeyError, err,
+			)
 
-				return false
-			} else if !needEnforce {
-				// Repeating wrong password (or similar) detected: skip brute-force enforcement.
-				// We still learn the user's IP for later unlock operations, but do not mark the account as affected.
-				bm.ProcessPWHist()
-				stats.GetMetrics().GetBruteForceHits().WithLabelValues(rule.Name).Inc()
+			return false
+		} else if !needEnforce {
+			// Repeating wrong password (or similar) detected: skip brute-force enforcement.
+			// We still learn the user's IP for later unlock operations, but do not mark the account as affected.
+			bm.ProcessPWHist()
+			stats.GetMetrics().GetBruteForceHits().WithLabelValues(rule.Name).Inc()
 
-				return false
-			}
+			return false
 		}
 
 		if !alreadyTriggered {
@@ -1482,6 +1475,12 @@ func (bm *bucketManagerImpl) pipelineHMGetFields(ctx context.Context, fields []s
 
 var _ BucketManager = (*bucketManagerImpl)(nil)
 
+// ShouldEnforceBucketUpdate determines whether brute force bucket counters should be increased.
+// It delegates to the internal checkEnforceBruteForceComputation logic which evaluates RWP.
+func (bm *bucketManagerImpl) ShouldEnforceBucketUpdate() (bool, error) {
+	return bm.checkEnforceBruteForceComputation()
+}
+
 // isRepeatingWrongPassword implements the RWP allowance logic.
 // It returns true if the current wrong password should be tolerated (i.e., buckets should NOT be increased),
 // based on allowing up to N distinct wrong password hashes within a rolling window. Repeats of already seen
@@ -1604,124 +1603,25 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 // checkEnforceBruteForceComputation determines if brute force computation must be enforced based on user and password state.
 // It returns true if enforcement is needed, or false if not, along with any errors encountered during evaluation.
 func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
-	var (
-		repeating bool
-		err       error
-	)
-
-	cfg := bm.cfg()
-	logger := bm.logger()
-
 	/*
 		- If a user exists (known account), then check for repeating wrong password.
 		  - If it is a repeating wrong password, then skip increasing buckets.
-		- If it is NOT a repeating wrong password, but the account is known, check for cold-start grace.
-		- If cold-start grace applies, skip increasing buckets.
 		- Otherwise, or if the user is unknown, enforce the brute forcing computation (increase buckets).
 
 		- On any error that might occur during these checks, do NOT increase buckets (fail safe).
 	*/
 
 	if bm.accountName == "" {
-		return true, err
+		return true, nil
 	}
 
-	if repeating, err = bm.isRepeatingWrongPassword(); err != nil {
+	repeating, err := bm.isRepeatingWrongPassword()
+	if err != nil {
 		return false, err
-	} else if repeating {
+	}
+
+	if repeating {
 		return false, nil
-	} else if bm.passwordsAccountSeen == 0 {
-		// Known account but no negative history yet.
-
-		// Optimization: check L1 reputation cache before hitting Redis for cold-start grace.
-		if rep, ok := l1.GetEngine().GetReputation(bm.ctx, l1.KeyReputation(bm.clientIP)); ok {
-			// If IP has a very good reputation (e.g. > 50 positives and no negatives),
-			// skip brute-force enforcement for known accounts without history.
-			if rep.Positive > 50 && rep.Negative == 0 {
-				level.Info(logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, "Good IP reputation, skipping brute-force enforcement",
-					definitions.LogKeyClientIP, bm.clientIP,
-					"positives", rep.Positive,
-				)
-				bm.ProcessPWHist()
-
-				return false, nil
-			}
-		}
-
-		// If cold-start grace is DISABLED, we ENFORCE immediately (so complex rules can trigger/fill).
-		if !cfg.GetBruteForce().GetColdStartGraceEnabled() {
-			return true, nil
-		}
-
-		// Cold-start grace is ENABLED: perform a one-time grace and learn the IP; subsequent attempts within TTL enforce.
-		// Build keys and perform an atomic cold-start + seed in Redis using preloaded Lua script
-		scoped := bm.clientIP
-		if bm.scoper != nil {
-			scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
-		}
-
-		prefix := cfg.GetServer().GetRedis().GetPrefix()
-		coldKey := prefix + definitions.RedisBFColdStartPrefix + scoped
-
-		// Seed is per (ip-scope, account/username, password-hash)
-		acct := bm.accountName
-		if acct == "" {
-			acct = bm.username
-		}
-
-		pwHash := util.GetHash(util.PreparePassword(bm.password))
-		var sb strings.Builder
-
-		sb.WriteString(prefix)
-		sb.WriteString(definitions.RedisBFSeedPrefix)
-		sb.WriteString(scoped)
-		sb.WriteByte(':')
-		sb.WriteString(acct)
-		sb.WriteByte(':')
-		sb.WriteString(pwHash)
-
-		seedKey := sb.String()
-		ttl := cfg.GetBruteForce().GetColdStartGraceTTL()
-		argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
-		res, err := rediscli.ExecuteScript(
-			dCtx,
-			bm.redis(),
-			"ColdStartGraceSeed",
-			rediscli.LuaScripts["ColdStartGraceSeed"],
-			[]string{coldKey, seedKey},
-			argTTL,
-		)
-		cancel()
-
-		if err != nil {
-			level.Warn(logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Cold-start grace ExecuteScript error: %v", err),
-			)
-			bm.ProcessPWHist()
-
-			return false, nil
-		}
-
-		// res==int64(1) means grace (first observation)
-		if v, ok := res.(int64); ok && v == 1 {
-			level.Info(logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Cold-start grace: not enforcing and learning IP",
-				definitions.LogKeyUsername, bm.username,
-				definitions.LogKeyClientIP, bm.clientIP,
-			)
-			bm.ProcessPWHist()
-
-			return false, nil
-		}
-
-		// Subsequent observation within TTL: enforce computation so complex rules can fill/trigger.
-		return true, nil
 	}
 
 	return true, nil

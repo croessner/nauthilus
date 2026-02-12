@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   dyn_threat           Nullable(UInt64),
   dyn_response         LowCardinality(String),
   repeating            Nullable(Bool),
+  rwp Nullable(Bool),
   user_found           Nullable(Bool),
   authenticated        Nullable(Bool),
   xssl_protocol        LowCardinality(String),
@@ -94,6 +95,8 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS method      LowCardinality
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS latency     UInt64                 AFTER ssl_fingerprint;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS http_status UInt16                 AFTER latency;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS status_msg  LowCardinality(String) AFTER http_status;
+
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rwp Nullable(Bool) AFTER repeating;
 
 -- Notes:
 -- - These ALTERs trigger background mutation and re-encoding of affected parts.

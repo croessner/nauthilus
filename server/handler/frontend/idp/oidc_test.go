@@ -270,54 +270,52 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 
 func TestOIDCHandler_JWKS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: generateTestKey(), signingKeyID: "default"}
-	db, _ := redismock.NewClientMock()
-	rClient := rediscli.NewTestClient(db)
-	d := &deps.Deps{Cfg: cfg, Redis: rClient}
-	h := NewOIDCHandler(d, idp.NewNauthilusIdP(d))
 
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/jwks", nil)
+	tests := []struct {
+		name        string
+		signingKID  string
+		expectedKID string
+	}{
+		{
+			name:        "DefaultKid",
+			signingKID:  "default",
+			expectedKID: "default",
+		},
+		{
+			name:        "CustomKid",
+			signingKID:  "custom-kid",
+			expectedKID: "custom-kid",
+		},
+	}
 
-	h.JWKS(ctx)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: generateTestKey(), signingKeyID: tt.signingKID}
+			db, _ := redismock.NewClientMock()
+			rClient := rediscli.NewTestClient(db)
+			d := &deps.Deps{Cfg: cfg, Redis: rClient}
+			h := NewOIDCHandler(d, idp.NewNauthilusIdP(d))
 
-	assert.Equal(t, http.StatusOK, w.Code)
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/jwks", nil)
 
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.NotNil(t, resp["keys"])
-	keys := resp["keys"].([]any)
-	assert.Len(t, keys, 1)
-	key := keys[0].(map[string]any)
-	assert.Equal(t, "default", key["kid"])
-}
+			h.JWKS(ctx)
 
-func TestOIDCHandler_JWKS_CustomKid(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: generateTestKey(), signingKeyID: "custom-kid"}
-	db, _ := redismock.NewClientMock()
-	rClient := rediscli.NewTestClient(db)
-	d := &deps.Deps{Cfg: cfg, Redis: rClient}
-	h := NewOIDCHandler(d, idp.NewNauthilusIdP(d))
+			assert.Equal(t, http.StatusOK, w.Code)
 
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/jwks", nil)
+			var resp map[string]any
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			assert.NoError(t, err)
+			assert.NotNil(t, resp["keys"])
 
-	h.JWKS(ctx)
+			keys := resp["keys"].([]any)
+			assert.Len(t, keys, 1)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.NotNil(t, resp["keys"])
-	keys := resp["keys"].([]any)
-	assert.Len(t, keys, 1)
-	key := keys[0].(map[string]any)
-	assert.Equal(t, "custom-kid", key["kid"])
+			key := keys[0].(map[string]any)
+			assert.Equal(t, tt.expectedKID, key["kid"])
+		})
+	}
 }
 
 func TestOIDCHandler_Logout(t *testing.T) {

@@ -118,16 +118,6 @@ redis.call('EXPIRE', key, ttl)
 return 1
 `,
 
-	// ColdStartGraceSeed atomically sets a one-time cold-start grace key and seeds a per-password evidence key.
-	// KEYS[1] - The cold-start key (SET NX EX ttl)
-	// KEYS[2] - The seed key for the current password (SET NX EX ttl)
-	// ARGV[1] - TTL in seconds
-	"ColdStartGraceSeed": `
-local c = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
-redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[1])
-if c then return 1 else return 0 end
-`,
-
 	// UnlockIfTokenMatches deletes the lock key only if the stored token matches the provided token
 	// KEYS[1] - The lock key
 	// ARGV[1] - The expected token

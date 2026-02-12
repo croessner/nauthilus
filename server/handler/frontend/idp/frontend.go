@@ -975,17 +975,26 @@ func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_recovery_login.html", data)
 }
 
-// PostLoginRecovery handles the recovery code verification during login.
-// All flow state is read from the encrypted cookie - no form parameters for flow state.
-func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
-	defer sp.End()
+// mfaSessionState holds the common session state extracted for MFA verification handlers.
+type mfaSessionState struct {
+	mgr          cookie.Manager
+	username     string
+	oidcCID      string
+	samlEntityID string
+}
 
+// extractMFASessionAndUser reads the MFA session state and form code from the cookie/request,
+// validates presence of required fields, and looks up the user. Returns nil if any step fails
+// (the caller is redirected to the login page in that case).
+func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessionState, *backend.User, string) {
 	mgr := cookie.GetManager(ctx)
-	username := ""
-	hasAuthResult := false
-	oidcCID := ""
-	samlEntityID := ""
+
+	var (
+		username      string
+		hasAuthResult bool
+		oidcCID       string
+		samlEntityID  string
+	)
 
 	if mgr != nil {
 		username = mgr.GetString(definitions.SessionKeyUsername, "")
@@ -1009,7 +1018,7 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	if username == "" || !hasAuthResult || code == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
-		return
+		return nil, nil, ""
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
@@ -1018,17 +1027,38 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	if err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
+		return nil, nil, ""
+	}
+
+	state := &mfaSessionState{
+		mgr:          mgr,
+		username:     username,
+		oidcCID:      oidcCID,
+		samlEntityID: samlEntityID,
+	}
+
+	return state, user, code
+}
+
+// PostLoginRecovery handles the recovery code verification during login.
+// All flow state is read from the encrypted cookie - no form parameters for flow state.
+func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
+	defer sp.End()
+
+	sess, user, code := h.extractMFASessionAndUser(ctx)
+	if sess == nil {
 		return
 	}
 
 	// Verify Recovery Code
 	sourceBackend := uint8(definitions.BackendLDAP)
 
-	if mgr != nil {
-		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	if sess.mgr != nil {
+		sourceBackend = sess.mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
-	success, err := h.mfa.UseRecoveryCode(ctx, username, code, sourceBackend)
+	success, err := h.mfa.UseRecoveryCode(ctx, sess.username, code, sourceBackend)
 
 	if err != nil {
 		h.deps.Logger.Error("Failed to use recovery code", "error", err)
@@ -1245,46 +1275,15 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_totp")
 	defer sp.End()
 
-	mgr := cookie.GetManager(ctx)
-	username := ""
+	sess, user, code := h.extractMFASessionAndUser(ctx)
+	if sess == nil {
+		return
+	}
+
 	authResult := uint8(definitions.AuthResultFail)
-	hasAuthResult := false
-	oidcCID := ""
-	samlEntityID := ""
 
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyUsername, "")
-		authResult = mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
-		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
-
-		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-
-		switch flowType {
-		case definitions.ProtoOIDC:
-			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		case definitions.ProtoSAML:
-			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
-			if samlEntityID == "" {
-				samlEntityID = definitions.ProtoSAML
-			}
-		}
-	}
-
-	code := ctx.PostForm("code")
-
-	if username == "" || !hasAuthResult || code == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
-	}
-
-	idpInstance := idp.NewNauthilusIdP(h.deps)
-	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
-
-	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
+	if sess.mgr != nil {
+		authResult = sess.mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
 	}
 
 	// Verify TOTP
@@ -1298,9 +1297,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	}
 
 	auth := state.(*core.AuthState)
-	auth.SetUsername(username)
-	auth.SetOIDCCID(oidcCID)
-	auth.SetSAMLEntityID(samlEntityID)
+	auth.SetUsername(sess.username)
+	auth.SetOIDCCID(sess.oidcCID)
+	auth.SetSAMLEntityID(sess.samlEntityID)
 
 	// We need to load user into auth to get TOTP secret and recovery codes
 	// GetUserByUsername already did some of this, but TotpValidation expects secrets in AuthState
@@ -1308,7 +1307,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	auth.SetTOTPSecretField(user.TOTPSecretField)
 	auth.SetTOTPRecoveryField(user.TOTPRecoveryField)
 
-	err = core.TotpValidation(ctx, auth, code, authDeps)
+	err := core.TotpValidation(ctx, auth, code, authDeps)
 
 	if err != nil {
 		sp.RecordError(err)
@@ -1360,13 +1359,14 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 		// Calculate ShowRememberMe based on flow state.
 		showRememberMe := false
+		idpInstance := idp.NewNauthilusIdP(h.deps)
 
-		if oidcCID != "" {
-			if client, ok := idpInstance.FindClient(oidcCID); ok {
+		if sess.oidcCID != "" {
+			if client, ok := idpInstance.FindClient(sess.oidcCID); ok {
 				showRememberMe = client.RememberMeTTL > 0
 			}
-		} else if samlEntityID != "" {
-			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+		} else if sess.samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(sess.samlEntityID); ok {
 				showRememberMe = sp.RememberMeTTL > 0
 			}
 		}
@@ -1379,9 +1379,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
 
 		// Important: clean up cookie so they start over
-		if mgr != nil {
-			mgr.Delete(definitions.SessionKeyUsername)
-			mgr.Delete(definitions.SessionKeyAuthResult)
+		if sess.mgr != nil {
+			sess.mgr.Delete(definitions.SessionKeyUsername)
+			sess.mgr.Delete(definitions.SessionKeyAuthResult)
 		}
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)

@@ -34,7 +34,13 @@ The following flowchart illustrates the decision process during `CheckBruteForce
 flowchart TD
     A[Request Start] --> B{Protocol Enabled?}
     B -- No --> C[Allow Request]
-    B -- Yes --> D[Filter Active Rules]
+    B -- Yes --> RWP_EARLY[ShouldEnforceBucketUpdate]
+
+    subgraph RWP_Cache [Early RWP Check & Context Cache]
+        RWP_EARLY --> RWP_STORE[Store RWP Result in gin.Context]
+    end
+
+    RWP_STORE --> D[Filter Active Rules]
     D --> E[Prepare Netcalc]
     E --> F[CheckRepeatingBruteForcer]
     
@@ -59,9 +65,9 @@ flowchart TD
     F2 --> I[ProcessBruteForce]
     
     subgraph Enforcement [Enforcement Logic]
-        I --> I1{RWP / Cold Start?}
+        I --> I1{RWP?}
         I1 -- Skip --> H
-        I1 -- Enforce --> I2{Is Whitelisted/Tolerated?}
+        I1 -- Enforce --> I2{Is Tolerated?}
         I2 -- Yes --> H
         I2 -- No --> I3[Block Request]
         I3 --> I4[Broadcast Block via Pub/Sub]
@@ -69,6 +75,48 @@ flowchart TD
     end
     
     H --> J[Authentication Backend]
+```
+
+### 2.2 Processing Flow (Post-Auth Update)
+
+The following flowchart illustrates the decision process during `UpdateBruteForceBucketsCounter`, which is called
+after an authentication failure to update the sliding window counters:
+
+```mermaid
+flowchart TD
+    U_START[Auth Failure] --> U_FEAT{Feature Enabled?}
+    U_FEAT -- No --> U_DONE[Done]
+    U_FEAT -- Yes --> U_PROTO{Protocol Enabled?}
+    U_PROTO -- No --> U_DONE
+    U_PROTO -- Yes --> U_WL{IP Whitelisted?}
+    U_WL -- Yes --> U_DONE
+    U_WL -- No --> U_BM[Create BucketManager]
+    U_BM --> U_CTX{RWP Result in Context?}
+
+subgraph RWP_Decision [RWP Enforcement Decision]
+U_CTX -- Yes --> U_CTX_VAL{Enforce?}
+U_CTX_VAL -- No / RWP --> U_SKIP[ProcessPWHist only — do NOT increase buckets]
+U_CTX_VAL -- Yes --> U_UPDATE
+U_CTX -- No --> U_FRESH[Fallback: ShouldEnforceBucketUpdate]
+U_FRESH --> U_FRESH_VAL{Enforce?}
+U_FRESH_VAL -- No / RWP --> U_CACHE_FALSE[Store result in Context]
+U_CACHE_FALSE --> U_SKIP
+U_FRESH_VAL -- Yes --> U_CACHE_TRUE[Store result in Context]
+U_CACHE_TRUE --> U_UPDATE
+end
+
+U_UPDATE[Loop: Save Bucket Counters]
+U_UPDATE --> U_RULE_LOOP
+
+subgraph Bucket_Update [Per-Rule Counter Update]
+U_RULE_LOOP[For each matching rule] --> U_PERIOD{Period >= matched?}
+U_PERIOD -- Yes --> U_SAVE[SaveBruteForceBucketCounterToRedis]
+U_PERIOD -- No --> U_NEXT[Next Rule]
+U_SAVE --> U_NEXT
+end
+
+U_NEXT --> U_DONE
+U_SKIP --> U_DONE
 ```
 
 ## 3. Core Components
@@ -79,8 +127,7 @@ The `BucketManager` is the central engine of the system. It handles the evaluati
 
 * `CheckRepeatingBruteForcer`: Checks L1 and L2 for existing block decisions.
 * `CheckBucketOverLimit`: Executes the Sliding Window Lua script to evaluate rate limits.
-* `ProcessBruteForce`: Decides whether to actually enforce a block based on secondary logic (RWP, Cold Start,
-  Reputation).
+* `ProcessBruteForce`: Decides whether to actually enforce a block based on secondary logic (RWP, Toleration).
 
 ### 3.2 L1 Cache Engine (`server/bruteforce/l1`)
 
@@ -115,14 +162,6 @@ RWP detection prevents automated attacks that try common passwords across many a
   from the window. If the number of unique hashes in the window exceeds the threshold, the request is no longer
   "allowed" under RWP grace and must undergo full brute-force enforcement.
 
-### 3.5 Cold Start Grace
-
-Allows a one-time bypass for known accounts that have no previous negative history, preventing lockouts during service
-restarts or configuration changes.
-
-* **Logic:** Uses `ColdStartGraceSeed` Lua script. It seeds an "evidence" key in Redis. Subsequent attempts from the
-  same IP/Account/Password combo will then enforce brute-force checks once the seed is present.
-
 ## 4. Sequence Diagram
 
 This diagram shows the interaction between components during a blocked request.
@@ -131,11 +170,17 @@ This diagram shows the interaction between components during a blocked request.
 sequenceDiagram
     participant C as Auth Pipeline
     participant BM as BucketManager
+    participant Ctx as gin.Context
     participant L1 as L1 Engine
     participant R as Redis (L2)
     participant PS as Redis Pub/Sub
 
     C->>BM: CheckBruteForce()
+    Note over BM, R: Early RWP check
+    BM ->> R: EVAL (RWPSlidingWindow)
+    R -->> BM: Enforce=true
+    BM ->> Ctx: Set(CtxRWPResultKey, true)
+    Note over BM, L1: Rule evaluation
     BM->>L1: Get(BurstKey)
     L1-->>BM: Miss
     BM->>R: HMGET (Pre-Result Keys)
@@ -144,12 +189,18 @@ sequenceDiagram
     R-->>BM: Total > Limit
     BM->>BM: ProcessBruteForce(triggered=true)
     BM->>BM: checkEnforceBruteForceComputation()
-    BM->>R: EVAL (RWP / Cold Start)
+    BM ->> R: EVAL (RWP)
     R-->>BM: Enforce
     BM->>R: HSET (Pre-Result Block)
     BM->>PS: PUBLISH (bf:blocks, block_msg)
     BM->>L1: Set(BurstKey, Blocked)
     BM-->>C: Blocked
+    Note over C, R: Post-Auth update (on auth failure)
+    C ->> BM: UpdateBruteForceBucketsCounter()
+    BM ->> Ctx: Get(CtxRWPResultKey)
+    Ctx -->> BM: true (enforce)
+    BM ->> R: EVAL (SlidingWindowCounter, increment=1)
+    R -->> BM: OK
 ```
 
 ## 5. Redis Key Reference
@@ -161,8 +212,6 @@ All keys are prefixed with the configured Redis prefix.
 | `bf:cnt:{rule}:{net}:win:{timestamp}`     | String | Sliding window counter for a specific rule and network.                       |
 | `bruteforce:{net}`                        | Hash   | Stores the "Pre-Result" (the name of the rule that triggered the block).      |
 | `bf:rwp:allow:{scoped_ip}:{account}`      | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.    |
-| `bf:cold:{scoped_ip}`                     | String | Cold-start grace flag for an IP.                                              |
-| `bf:seed:{scoped_ip}:{account}:{pw_hash}` | String | Evidence key for cold-start grace.                                            |
 | `bf:tr:{ip}`                              | Hash   | Reputation data (`positive` and `negative` counters).                         |
 | `bf:tr:{ip}:P`                            | ZSet   | Time-series of positive authentication events.                                |
 | `bf:tr:{ip}:N`                            | ZSet   | Time-series of negative authentication events.                                |

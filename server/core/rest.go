@@ -981,21 +981,6 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 				sb.WriteString(accountName)
 				userKeys.Set(sb.String())
 			}
-
-			// Cold-start grace keys — delete for both raw and scoped IP
-			sb.Reset()
-			sb.WriteString(prefix)
-			sb.WriteString(definitions.RedisBFColdStartPrefix)
-			sb.WriteString(ip)
-			userKeys.Set(sb.String())
-
-			if scopedRWP != ip {
-				sb.Reset()
-				sb.WriteString(prefix)
-				sb.WriteString(definitions.RedisBFColdStartPrefix)
-				sb.WriteString(scopedRWP)
-				userKeys.Set(sb.String())
-			}
 		}
 	}
 

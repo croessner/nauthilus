@@ -46,8 +46,6 @@ syntax match nauthilusKeyL2 /^  \zsbasic_auth\ze:/
 syntax match nauthilusKeyL2 /^  \zsbrute_force_protocols\ze:/
 syntax match nauthilusKeyL2 /^  \zsbuckets\ze:/
 syntax match nauthilusKeyL2 /^  \zsclients\ze:/
-syntax match nauthilusKeyL2 /^  \zscold_start_grace_enabled\ze:/
-syntax match nauthilusKeyL2 /^  \zscold_start_grace_ttl\ze:/
 syntax match nauthilusKeyL2 /^  \zscompression\ze:/
 syntax match nauthilusKeyL2 /^  \zsconfig\ze:/
 syntax match nauthilusKeyL2 /^  \zsconfiguration\ze:/

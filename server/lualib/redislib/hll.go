@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
@@ -27,43 +26,8 @@ import (
 
 // RedisPFAdd adds the specified elements to the specified HyperLogLog (HLL) key.
 func (rm *RedisManager) RedisPFAdd(L *lua.LState) int {
-	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
-		key := stack.CheckString(2)
-		top := stack.GetTop()
-
-		var values []any
-
-		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
-			tbl := stack.CheckTable(3)
-			tbl.ForEach(func(_, value lua.LValue) {
-				val, err := convert.LuaValue(value)
-				if err != nil {
-					values = append(values, value.String())
-				} else {
-					values = append(values, val)
-				}
-			})
-		} else {
-			for i := 3; i <= top; i++ {
-				val, err := convert.LuaValue(stack.CheckAny(i))
-				if err != nil {
-					values = append(values, stack.CheckAny(i).String())
-				} else {
-					values = append(values, val)
-				}
-			}
-		}
-
-		if len(values) == 0 {
-			return stack.PushResults(lua.LNumber(0), lua.LNil)
-		}
-
-		cmd := conn.PFAdd(ctx, key, values...)
-		if cmd.Err() != nil {
-			return stack.PushError(cmd.Err())
-		}
-
-		return stack.PushResults(lua.LNumber(cmd.Val()), lua.LNil)
+	return executeWriteIntCmd(rm, L, collectLuaValues, func(ctx context.Context, conn redis.Cmdable, key string, values []any) *redis.IntCmd {
+		return conn.PFAdd(ctx, key, values...)
 	})
 }
 
@@ -93,20 +57,7 @@ func (rm *RedisManager) RedisPFCount(L *lua.LState) int {
 func (rm *RedisManager) RedisPFMerge(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		dest := stack.CheckString(2)
-		top := stack.GetTop()
-
-		var sources []string
-
-		if top == 3 && stack.L.Get(3).Type() == lua.LTTable {
-			tbl := stack.CheckTable(3)
-			tbl.ForEach(func(_, value lua.LValue) {
-				sources = append(sources, value.String())
-			})
-		} else {
-			for i := 3; i <= top; i++ {
-				sources = append(sources, stack.CheckString(i))
-			}
-		}
+		sources := collectLuaStrings(stack)
 
 		if len(sources) == 0 {
 			return stack.PushResults(lua.LString("OK"), lua.LNil)

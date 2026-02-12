@@ -29,7 +29,6 @@ type BruteForceSection struct {
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
 	SoftWhitelist              `mapstructure:"soft_whitelist"`
 	TolerateTTL                time.Duration `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
-	ColdStartGraceTTL          time.Duration `mapstructure:"cold_start_grace_ttl" validate:"omitempty,gt=0,max=8760h"`
 	RWPWindow                  time.Duration `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
 	ScaleFactor                float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
 	AllowedUniqueWrongPWHashes uint          `mapstructure:"rwp_allowed_unique_hashes" validate:"omitempty,min=1,max=100"`
@@ -38,7 +37,6 @@ type BruteForceSection struct {
 	MaxToleratePercent         uint8         `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	AdaptiveToleration         bool          `mapstructure:"adaptive_toleration"`
 	LogHistoryForKnownAccounts bool          `mapstructure:"pw_history_for_known_accounts"`
-	ColdStartGraceEnabled      bool          `mapstructure:"cold_start_grace_enabled"`
 }
 
 // IPScoping configures how client IPs are normalized/scoped for different contexts.
@@ -228,29 +226,6 @@ func (b *BruteForceSection) GetTolerationsIPv6CIDR() uint {
 	}
 
 	return b.IPScoping.TolerationsIPv6CIDR
-}
-
-// GetColdStartGraceEnabled tells whether the one-time cold-start grace is enabled.
-func (b *BruteForceSection) GetColdStartGraceEnabled() bool {
-	if b == nil {
-		return false
-	}
-
-	return b.ColdStartGraceEnabled
-}
-
-// GetColdStartGraceTTL returns the TTL for the cold-start grace.
-// Defaults to 120s if not set or invalid.
-func (b *BruteForceSection) GetColdStartGraceTTL() time.Duration {
-	if b == nil {
-		return 120 * time.Second
-	}
-
-	if b.ColdStartGraceTTL <= 0 {
-		return 120 * time.Second
-	}
-
-	return b.ColdStartGraceTTL
 }
 
 // GetRWPAllowedUniqueHashes returns how many distinct wrong password hashes are tolerated within the window.

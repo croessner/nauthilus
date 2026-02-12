@@ -30,14 +30,7 @@ import (
 func TestRedisLPush(t *testing.T) {
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
 
-	tests := []struct {
-		name             string
-		key              string
-		values           []lua.LValue
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	runMultiValueRedisTests(t, "redis_lpush", []multiValueRedisTest{
 		{
 			name:           "LPushSingleValue",
 			key:            "testList",
@@ -68,66 +61,11 @@ func TestRedisLPush(t *testing.T) {
 				mock.ExpectLPush("errorList", "value1").SetErr(errors.New("some error"))
 			},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-			L := lua.NewState()
-			defer L.Close()
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			// Set up the Lua code to call redis_lpush with the key and values
-			luaCode := `
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_lpush("default", key`
-
-			// Add each value as a global variable and append to the Lua code
-			for i, val := range tt.values {
-				varName := "value" + string(rune('0'+i))
-				L.SetGlobal(varName, val)
-				luaCode += ", " + varName
-			}
-
-			luaCode += ")"
-
-			err := L.DoString(luaCode)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || lua.LVAsNumber(gotResult) != lua.LVAsNumber(tt.expectedResult) {
-				t.Errorf("nauthilus.redis_lpush() gotResult = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			gotErr := L.GetGlobal("err")
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+	})
 }
 
 func TestRedisRPush(t *testing.T) {
-	tests := []struct {
-		name             string
-		key              string
-		values           []lua.LValue
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	runMultiValueRedisTests(t, "redis_rpush", []multiValueRedisTest{
 		{
 			name:           "RPushSingleValue",
 			key:            "testList",
@@ -158,65 +96,11 @@ func TestRedisRPush(t *testing.T) {
 				mock.ExpectRPush("errorList", "value1").SetErr(errors.New("some error"))
 			},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-			L := lua.NewState()
-			defer L.Close()
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			// Set up the Lua code to call redis_rpush with the key and values
-			luaCode := `
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_rpush("default", key`
-
-			// Add each value as a global variable and append to the Lua code
-			for i, val := range tt.values {
-				varName := "value" + string(rune('0'+i))
-				L.SetGlobal(varName, val)
-				luaCode += ", " + varName
-			}
-
-			luaCode += ")"
-
-			err := L.DoString(luaCode)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || lua.LVAsNumber(gotResult) != lua.LVAsNumber(tt.expectedResult) {
-				t.Errorf("nauthilus.redis_rpush() gotResult = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			gotErr := L.GetGlobal("err")
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+	})
 }
 
 func TestRedisLPop(t *testing.T) {
-	tests := []struct {
-		name             string
-		key              string
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	runSimpleKeyRedisTests(t, "redis_lpop", []simpleKeyRedisTest{
 		{
 			name:           "LPopExistingKey",
 			key:            "testList",
@@ -244,54 +128,11 @@ func TestRedisLPop(t *testing.T) {
 				mock.ExpectLPop("errorList").SetErr(errors.New("some error"))
 			},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-			L := lua.NewState()
-			defer L.Close()
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			err := L.DoString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_lpop("default", key)
-			`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("nauthilus.redis_lpop() gotResult = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			gotErr := L.GetGlobal("err")
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+	})
 }
 
 func TestRedisRPop(t *testing.T) {
-	tests := []struct {
-		name             string
-		key              string
-		expectedResult   lua.LValue
-		expectedErr      lua.LValue
-		prepareMockRedis func(mock redismock.ClientMock)
-	}{
+	runSimpleKeyRedisTests(t, "redis_rpop", []simpleKeyRedisTest{
 		{
 			name:           "RPopExistingKey",
 			key:            "testList",
@@ -319,44 +160,7 @@ func TestRedisRPop(t *testing.T) {
 				mock.ExpectRPop("errorList").SetErr(errors.New("some error"))
 			},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db, mock := redismock.NewClientMock()
-			if db == nil || mock == nil {
-				t.Fatalf("Failed to create Redis mock client.")
-			}
-			client := rediscli.NewTestClient(db)
-			SetDefaultClient(client)
-			L := lua.NewState()
-			defer L.Close()
-			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
-
-			tt.prepareMockRedis(mock)
-			rediscli.NewTestClient(db)
-
-			L.SetGlobal("key", lua.LString(tt.key))
-
-			err := L.DoString(`
-				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_rpop("default", key)
-			`)
-			if err != nil {
-				t.Fatalf("Running Lua code failed: %v", err)
-			}
-
-			gotResult := L.GetGlobal("result")
-			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
-				t.Errorf("nauthilus.redis_rpop() gotResult = %v, want %v", gotResult, tt.expectedResult)
-			}
-
-			gotErr := L.GetGlobal("err")
-			checkLuaError(t, gotErr, tt.expectedErr)
-
-			mock.ClearExpect()
-		})
-	}
+	})
 }
 
 func TestRedisLRange(t *testing.T) {
