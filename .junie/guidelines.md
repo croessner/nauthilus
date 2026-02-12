@@ -131,10 +131,29 @@ We verified this flow by temporarily adding a trivial test under server/util and
   - Logging: the server uses a custom log package with levels (server/log and server/log/level), plus slog/jsoniter integrations. Prefer level.Debug/Info/Warn/Error wrappers to keep logs structured. For bridging standard log to slog, server uses a custom writer (see server.go).
   - JSON: json-iterator (ConfigFastest) is used for performance-sensitive JSON encoding/decoding.
   - Vendoring: updates to dependencies must be vendored (go mod tidy && go mod vendor) so Makefile builds are reproducible.
-- Design preferences (OO, small and DRY)
-  - Prefer an object-oriented style with small types and methods. Define narrow interfaces at package boundaries (e.g., storage, Redis, HTTP clients) and inject them where needed for testability.
+- Design preferences (OO, small and DRY) — MANDATORY
+    - The DRY (Don't Repeat Yourself) principle is a **hard requirement** for every change in this project. Duplicated
+      logic, repeated code blocks, and copy-paste patterns are not acceptable. Every piece of knowledge or logic must
+      have a single, authoritative representation in the codebase.
+        - Before writing new code, check whether similar logic already exists. If it does, refactor it into a shared
+          helper, method, or package and reuse it.
+        - Extract common code into private helpers, utility functions, or shared packages rather than duplicating it
+          across call sites.
+        - Promote repeated string literals and magic numbers into named constants (use `goconst` linter to detect
+          violations).
+        - In tests, use table-driven test patterns to consolidate similar test flows instead of duplicating test logic.
+        - When duplicated or copy-paste code is discovered during any task (even if unrelated to the current issue), *
+          *report it to the user** and ask whether it should be cleaned up as a follow-up. Do not silently ignore DRY
+          violations.
+    - Prefer an object-oriented, clean architecture style:
+        - Use small, focused types with methods. Each type should have a single, clear responsibility.
+        - Define narrow interfaces at package boundaries (e.g., storage, Redis, HTTP clients) and inject them where
+          needed for testability and loose coupling.
+        - Apply composition over inheritance — embed smaller types or use interfaces to compose behavior.
+        - Encapsulate implementation details; expose only what is needed through exported methods and interfaces.
+        - When a function or method grows beyond its responsibility, split it into smaller, well-named helpers or
+          refactor it into a dedicated type with methods.
   - Keep functions short and focused. As a guideline, aim for fewer than ~60 lines and low cyclomatic complexity; split into helpers or methods when a function grows, or when multiple responsibilities appear.
-  - DRY: avoid duplication of logic. Extract common code into private helpers or shared packages; promote constants for repeated literals and use table-driven tests to consolidate similar test flows.
   - Favor early returns to keep indentation shallow; prefer explicit error handling over deeply nested branches.
 - Memory and Performance optimization (Structs)
   - Optimize structs for padding by ordering fields from largest to smallest to minimize memory overhead.
