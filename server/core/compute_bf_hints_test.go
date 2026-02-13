@@ -86,10 +86,10 @@ func TestComputeBruteForceHints_PositiveRepeatViaRedis(t *testing.T) {
 	db, mock := redismock.NewClientMock()
 	rediscli.NewTestClient(db)
 
-	// Expect HExists on sharded pre-result map key for candidate network
+	// Expect Exists on dedicated ban key for candidate network
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
-	key := rediscli.GetBruteForceHashKey(prefix, "203.0.113.0/24")
-	mock.ExpectHExists(key, "203.0.113.0/24").SetVal(true)
+	banKey := rediscli.GetBruteForceBanKey(prefix, "203.0.113.0/24")
+	mock.ExpectExists(banKey).SetVal(1)
 
 	ctx := context.Background()
 	cn, rep := corepkg.ComputeBruteForceHints(ctx, config.GetFile(), rediscli.GetClient(), "203.0.113.1", "imap", "")

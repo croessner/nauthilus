@@ -311,7 +311,8 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 	}
 }
 
-// listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis.
+// listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis using the
+// sharded ZSET ban index and per-network ban keys with TTL.
 func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedIPAddresses, error) {
 	blockedIPAddresses := &bf.BlockedIPAddresses{}
 
@@ -337,18 +338,34 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 	cfg := deps.effectiveCfg()
 	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
-	ipAddresses := make(map[string]string)
+	// Build a lookup map: bucket name → configured ban time
+	ruleMap := make(map[string]time.Duration)
+	if bfCfg := cfg.GetBruteForce(); bfCfg != nil {
+		for i := range bfCfg.Buckets {
+			ruleMap[bfCfg.Buckets[i].Name] = bfCfg.Buckets[i].GetBanTime()
+		}
+	}
 
-	activeKeysSet := prefix + definitions.RedisActiveBruteForceKeys
+	// Step 1: Query all 16 ZSET shards via Lua script
+	indexKeys := rediscli.GetAllBruteForceBanIndexKeys(prefix)
 
 	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-	shardKeys, err := deps.Redis.GetReadHandle().SMembers(dCtxR, activeKeysSet).Result()
+
+	rawResult, err := rediscli.ExecuteScript(
+		dCtxR,
+		deps.Redis,
+		"BanIndexListing",
+		rediscli.LuaScripts["BanIndexListing"],
+		indexKeys,
+		"0", "+inf",
+	)
+
 	cancelR()
 
 	if err != nil && !stderrors.Is(err, redis.Nil) {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Error retrieving active brute force keys from Redis",
+			definitions.LogKeyMsg, "Error executing BanIndexListing Lua script",
 			definitions.LogKeyError, err,
 		)
 
@@ -358,53 +375,139 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 		return blockedIPAddresses, err
 	}
 
-	if len(shardKeys) > 0 {
-		pipe := deps.Redis.GetReadHandle().Pipeline()
-		cmds := make([]*redis.MapStringStringCmd, len(shardKeys))
+	// Parse flat result array: [network1, score1, network2, score2, ...]
+	type indexEntry struct {
+		network  string
+		bannedAt float64
+	}
 
-		for i, shardKey := range shardKeys {
-			cmds[i] = pipe.HGetAll(ctx, shardKey)
-		}
+	var entries []indexEntry
 
-		_, err = pipe.Exec(ctx)
-		if err != nil && !stderrors.Is(err, redis.Nil) {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Error retrieving IP addresses from Redis shards",
-				definitions.LogKeyError, err,
-			)
+	if results, ok := rawResult.([]interface{}); ok {
+		for i := 0; i+1 < len(results); i += 2 {
+			networkStr, _ := results[i].(string)
+			scoreStr, _ := results[i+1].(string)
 
-			errMsg := err.Error()
-			blockedIPAddresses.Error = &errMsg
-
-			return blockedIPAddresses, err
-		}
-
-		for _, cmd := range cmds {
-			if res, cerr := cmd.Result(); cerr == nil {
-				for k, v := range res {
-					ipAddresses[k] = v
-				}
+			if networkStr == "" {
+				continue
 			}
+
+			var score float64
+
+			if _, scanErr := fmt.Sscanf(scoreStr, "%f", &score); scanErr != nil {
+				continue
+			}
+
+			entries = append(entries, indexEntry{network: networkStr, bannedAt: score})
 		}
 	}
 
+	if len(entries) == 0 {
+		blockedIPAddresses.Entries = []bf.BanEntry{}
+
+		return blockedIPAddresses, nil
+	}
+
+	// Step 2: Pipeline GET + TTL for each ban key
+	dCtxR2, cancelR2 := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
+	defer cancelR2()
+
+	pipe := deps.Redis.GetReadHandle().Pipeline()
+	getCmds := make([]*redis.StringCmd, len(entries))
+	ttlCmds := make([]*redis.DurationCmd, len(entries))
+
+	for i, e := range entries {
+		banKey := rediscli.GetBruteForceBanKey(prefix, e.network)
+		getCmds[i] = pipe.Get(dCtxR2, banKey)
+		ttlCmds[i] = pipe.TTL(dCtxR2, banKey)
+	}
+
+	_, _ = pipe.Exec(dCtxR2)
+
+	// Step 3: Build result entries + lazy cleanup for expired bans
+	now := time.Now()
+	var cleanupNetworks []string
+	banEntries := make([]bf.BanEntry, 0, len(entries))
+
+	for i, e := range entries {
+		bucket, getErr := getCmds[i].Result()
+		if getErr != nil || bucket == "" {
+			// Ban key expired — schedule lazy cleanup from ZSET index
+			cleanupNetworks = append(cleanupNetworks, e.network)
+
+			continue
+		}
+
+		ttlVal, ttlErr := ttlCmds[i].Result()
+		if ttlErr != nil || ttlVal < 0 {
+			// Key exists but has no TTL or is expiring — skip
+			cleanupNetworks = append(cleanupNetworks, e.network)
+
+			continue
+		}
+
+		// Look up configured ban time
+		configuredBanTime := definitions.DefaultBanTime
+		if bt, found := ruleMap[bucket]; found {
+			configuredBanTime = bt
+		}
+
+		// Calculate banned_at: now - (configuredBanTime - remaining TTL)
+		bannedAt := now.Add(-(configuredBanTime - ttlVal))
+
+		entry := bf.BanEntry{
+			Network:  e.network,
+			Bucket:   bucket,
+			BanTime:  configuredBanTime,
+			TTL:      ttlVal,
+			BannedAt: bannedAt,
+		}
+
+		banEntries = append(banEntries, entry)
+	}
+
+	// Step 4: Lazy cleanup of stale ZSET entries (best-effort, fire-and-forget)
+	if len(cleanupNetworks) > 0 {
+		go func() {
+			cleanupCtx, cleanupCancel := util.GetCtxWithDeadlineRedisWrite(context.Background(), cfg)
+			defer cleanupCancel()
+
+			cleanupPipe := deps.Redis.GetWriteHandle().Pipeline()
+
+			for _, n := range cleanupNetworks {
+				shard := rediscli.GetBanIndexShard(n)
+				shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, shard)
+				cleanupPipe.ZRem(cleanupCtx, shardKey, n)
+			}
+
+			if _, err := cleanupPipe.Exec(cleanupCtx); err != nil {
+				level.Warn(logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "Lazy cleanup of stale ban index entries failed",
+					definitions.LogKeyError, err,
+				)
+			}
+		}()
+	}
+
+	// Apply IP filter if specified
 	if filterCmd != nil && len(filterCmd.IPAddress) > 0 {
-		filteredIPs := make(map[string]string)
+		filtered := make([]bf.BanEntry, 0)
 
-		for _, filterIPWanted := range filterCmd.IPAddress {
-			for network, bucket := range ipAddresses {
-				if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
-					filteredIPs[network] = bucket
+		for _, entry := range banEntries {
+			for _, filterIPWanted := range filterCmd.IPAddress {
+				if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{entry.Network}, guid, filterIPWanted) {
+					filtered = append(filtered, entry)
+
+					break
 				}
 			}
 		}
 
-		ipAddresses = filteredIPs
+		banEntries = filtered
 	}
 
-	blockedIPAddresses.IPAddresses = ipAddresses
-	blockedIPAddresses.Error = nil
+	blockedIPAddresses.Entries = banEntries
 
 	return blockedIPAddresses, nil
 }

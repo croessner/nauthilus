@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/croessner/nauthilus/server/definitions"
 )
 
 type BruteForceSection struct {
@@ -356,6 +358,7 @@ type BruteForceRule struct {
 	FilterByOIDCCID  []string      `mapstructure:"filter_by_oidc_cid" validate:"omitempty"`
 	Name             string        `mapstructure:"name" validate:"required"`
 	Period           time.Duration `mapstructure:"period" validate:"required,gt=0,max=8760h"`
+	BanTime          time.Duration `mapstructure:"ban_time" validate:"omitempty,gt=0,max=8760h"`
 	CIDR             uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
 	FailedRequests   uint          `mapstructure:"failed_requests" validate:"required,min=1"`
 	IPv4             bool
@@ -367,7 +370,7 @@ func (b *BruteForceRule) String() string {
 		return "<nil>"
 	}
 
-	return fmt.Sprintf("Name: %s, Period: %s, CIDR: %d, IPv4: %t, IPv6: %t, FailedRequests: %d", b.Name, b.Period, b.CIDR, b.IPv4, b.IPv6, b.FailedRequests)
+	return fmt.Sprintf("Name: %s, Period: %s, BanTime: %s, CIDR: %d, IPv4: %t, IPv6: %t, FailedRequests: %d", b.Name, b.Period, b.GetBanTime(), b.CIDR, b.IPv4, b.IPv6, b.FailedRequests)
 }
 
 // GetName retrieves the name of the brute force rule.
@@ -378,6 +381,16 @@ func (b *BruteForceRule) GetName() string {
 	}
 
 	return b.Name
+}
+
+// GetBanTime retrieves the ban duration for the brute force rule.
+// Returns DefaultBanTime (8h) if the BruteForceRule is nil or BanTime is not set.
+func (b *BruteForceRule) GetBanTime() time.Duration {
+	if b == nil || b.BanTime == 0 {
+		return definitions.DefaultBanTime
+	}
+
+	return b.BanTime
 }
 
 // GetPeriod retrieves the period duration for the brute force rule.

@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -142,7 +143,8 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
 
-		mock.Regexp().ExpectHSet(".*bruteforce:.*", attackerIP+"/32", "testbucket").SetVal(int64(1))
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+		mock.Regexp().ExpectZAddNX(".*bf:\\{bans\\}:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 
 		// Verifiziere globale Sperre via Pub/Sub
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
@@ -181,7 +183,8 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
-		mock.Regexp().ExpectHSet(".*", attackerIP+"/32", "testbucket").SetVal(int64(1))
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+		mock.Regexp().ExpectZAddNX(".*bf:\\{bans\\}:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
@@ -217,7 +220,8 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
-		mock.Regexp().ExpectHSet(".*", attackerIP+"/32", "testbucket").SetVal(int64(1))
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+		mock.Regexp().ExpectZAddNX(".*bf:\\{bans\\}:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
@@ -249,8 +253,8 @@ func TestBruteForceLogic(t *testing.T) {
 		})
 		prefix := cfg.GetServer().GetRedis().GetPrefix()
 
-		shardKey := rediscli.GetBruteForceHashKey(prefix, testIP+"/32")
-		mock.ExpectHMGet(shardKey, testIP+"/32").SetVal([]interface{}{"testbucket"})
+		banKey := rediscli.GetBruteForceBanKey(prefix, testIP+"/32")
+		mock.ExpectExists(banKey).SetVal(1)
 
 		network := &net.IPNet{}
 		var message string

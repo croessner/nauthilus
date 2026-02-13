@@ -92,18 +92,19 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		if (!isRepeating || accountName == "") && clientNet != "" {
 			prefix := a.cfg().GetServer().GetRedis().GetPrefix()
 			userKey := rediscli.GetUserHashKey(prefix, a.Request.Username)
-			bfKey := rediscli.GetBruteForceHashKey(prefix, clientNet)
+			banKey := rediscli.GetBruteForceBanKey(prefix, clientNet)
 
 			dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx.Request.Context(), a.cfg())
 			pipe := a.Redis().GetReadHandle().Pipeline()
 			userCmd := pipe.HGet(dCtx, userKey, a.Request.Username)
-			bfCmd := pipe.HExists(dCtx, bfKey, clientNet)
+			bfCmd := pipe.Exists(dCtx, banKey)
 			_, err := pipe.Exec(dCtx)
 			cancel()
 
 			if err == nil || errors.Is(err, redis.Nil) {
 				acc, _ := userCmd.Result()
-				rep, _ := bfCmd.Result()
+				repVal, _ := bfCmd.Result()
+				rep := repVal > 0
 
 				if accountName == "" && acc != "" {
 					accountName = acc
@@ -507,12 +508,12 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	bfRepeating := alreadyTriggered || (a.Security.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
 		prefix := a.cfg().GetServer().GetRedis().GetPrefix()
-		key := rediscli.GetBruteForceHashKey(prefix, bfClientNet)
+		banKey := rediscli.GetBruteForceBanKey(prefix, bfClientNet)
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		exists, err := a.deps.Redis.GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
-		if err == nil && exists {
+		existsVal, err := a.deps.Redis.GetReadHandle().Exists(ctx.Request.Context(), banKey).Result()
+		if err == nil && existsVal > 0 {
 			bfRepeating = true
 		}
 	}

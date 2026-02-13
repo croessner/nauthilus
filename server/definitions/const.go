@@ -695,8 +695,6 @@ const (
 )
 
 const (
-	// RedisBruteForceHashKey represents the key used for brute force attempts in Redis.
-	RedisBruteForceHashKey = "bruteforce"
 
 	// RedisUserHashKey represents the key used for user data in Redis.
 	RedisUserHashKey = "user"
@@ -718,9 +716,6 @@ const (
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
 	RedisAffectedAccountsKey = "affected_accounts"
 
-	// RedisActiveBruteForceKeys represents the key used for storing active brute force keys in Redis.
-	RedisActiveBruteForceKeys = "active_brute_force_keys"
-
 	// RedisBFTolerationPrefix represents the prefix used for toleration buckets in Redis.
 	RedisBFTolerationPrefix = "bf:tr:"
 
@@ -729,6 +724,21 @@ const (
 
 	// RedisBFRWPAllowPrefix represents the prefix used for repeating wrong password allowance in Redis.
 	RedisBFRWPAllowPrefix = "bf:rwp:allow:"
+
+	// RedisBruteForceBanPrefix is the prefix for individual per-network ban keys (String keys with TTL).
+	RedisBruteForceBanPrefix = "bf:ban:"
+
+	// RedisBruteForceBanIndexPrefix is the prefix for the sharded ZSET ban index keys.
+	// The hash-tag {bans} ensures all 16 shards land on the same Redis Cluster slot.
+	RedisBruteForceBanIndexPrefix = "bf:{bans}:"
+
+	// BanIndexShardCount is the number of ZSET shards used for the ban index.
+	BanIndexShardCount = 16
+)
+
+const (
+	// DefaultBanTime is the default duration for a brute force ban when no explicit ban_time is configured.
+	DefaultBanTime = 8 * time.Hour
 )
 
 const (

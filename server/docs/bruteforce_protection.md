@@ -194,15 +194,16 @@ sequenceDiagram
     Note over BM, L1: Rule evaluation
     BM->>L1: Get(BurstKey)
     L1-->>BM: Miss
-    BM->>R: HMGET (Pre-Result Keys)
-    R-->>BM: Nil
+    BM ->> R: EXISTS (Ban Keys via Pipeline)
+    R -->> BM: 0 (no active ban)
     BM->>R: EVAL (SlidingWindowCounter)
     R-->>BM: Total > Limit
     BM->>BM: ProcessBruteForce(triggered=true)
     BM->>BM: checkEnforceBruteForceComputation()
     BM ->> R: EVAL (RWP)
     R-->>BM: Enforce
-    BM->>R: HSET (Pre-Result Block)
+    BM ->> R: SET banKey NX EX (Ban with TTL)
+    BM ->> R: ZADD NX (Ban Index ZSET Shard)
     BM->>PS: PUBLISH (bf:blocks, block_msg)
     BM->>L1: Set(BurstKey, Blocked)
     BM-->>C: Blocked
@@ -218,18 +219,18 @@ sequenceDiagram
 
 All keys are prefixed with the configured Redis prefix.
 
-| Pattern                                   | Type   | Description                                                                   |
-|:------------------------------------------|:-------|:------------------------------------------------------------------------------|
-| `bf:cnt:{rule}:{net}:win:{timestamp}`     | String | Sliding window counter for a specific rule and network.                       |
-| `bruteforce:{net}`                        | Hash   | Stores the "Pre-Result" (the name of the rule that triggered the block).      |
-| `bf:rwp:allow:{scoped_ip}:{account}`      | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.    |
-| `bf:tr:{ip}`                              | Hash   | Reputation data (`positive` and `negative` counters).                         |
-| `bf:tr:{ip}:P`                            | ZSet   | Time-series of positive authentication events.                                |
-| `bf:tr:{ip}:N`                            | ZSet   | Time-series of negative authentication events.                                |
-| `affected_accounts`                       | Set    | List of accounts currently affected by brute-force triggers.                  |
-| `active_brute_force_keys`                 | Set    | List of active `bruteforce:{net}` hash keys (used for the list API).          |
-| `pw_hist:{account}:{ip}`                  | Set    | Failed password hashes for a specific account and IP.                         |
-| `pw_hist_ips:{account}`                   | Set    | List of IPs that have attempted logins for an account (used for cache flush). |
+| Pattern                               | Type   | Description                                                                                                       |
+|:--------------------------------------|:-------|:------------------------------------------------------------------------------------------------------------------|
+| `bf:cnt:{rule}:{net}:win:{timestamp}` | String | Sliding window counter for a specific rule and network.                                                           |
+| `bf:ban:{network}`                    | String | Per-network ban key. Value = bucket name. Has TTL = `ban_time` (default 8h). Written with `SET NX EX`.            |
+| `bf:{bans}:X` (X = 0–F)               | ZSet   | Sharded ban index (16 shards). Member = network, Score = Unix timestamp. Hash-tag `{bans}` for cluster slot.      |
+| `bf:rwp:allow:{scoped_ip}:{account}`  | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.                                        |
+| `bf:tr:{ip}`                          | Hash   | Reputation data (`positive` and `negative` counters).                                                             |
+| `bf:tr:{ip}:P`                        | ZSet   | Time-series of positive authentication events.                                                                    |
+| `bf:tr:{ip}:N`                        | ZSet   | Time-series of negative authentication events.                                                                    |
+| `affected_accounts`                   | Set    | List of accounts affected by brute-force triggers. **No TTL** — cleared only via Flush API or admin intervention. |
+| `pw_hist:{account}:{ip}`              | Set    | Failed password hashes for a specific account and IP.                                                             |
+| `pw_hist_ips:{account}`               | Set    | List of IPs that have attempted logins for an account (used for cache flush).                                     |
 
 ## 6. Global Synchronization Service (`BruteForceSyncService`)
 
@@ -240,7 +241,40 @@ Located in `server/app/loopsfx/bruteforce_sync_service.go`, this service runs as
 3. Calls `l1.GetEngine().Set(key, decision, 0)` to update the local memory.
 4. This ensures that if Node A triggers a block, Node B is aware of it within milliseconds.
 
-## 7. Developer Tips
+## 7. Configuration: `ban_time`
+
+Each brute force rule can optionally specify a `ban_time` duration. If not set, the default of **8 hours** is used.
+
+```yaml
+brute_force:
+  buckets:
+    - name: login_rule
+      period: 10m
+      ban_time: 4h        # Optional: how long a banned network stays blocked
+      cidr: 24
+      failed_requests: 5
+```
+
+## 8. Ban Lifecycle
+
+1. **Trigger:** When `ProcessBruteForce` detects a threshold breach, it writes:
+    - `SET bf:ban:{network} {bucket_name} NX EX {ban_time_seconds}` — only if no ban exists yet (`NX`).
+    - `ZADD NX bf:{bans}:{shard} {unix_timestamp} {network}` — best-effort index update.
+2. **Check:** `CheckRepeatingBruteForcer` and `IsIPAddressBlocked` pipeline `EXISTS bf:ban:{network}` per candidate.
+3. **Expiry:** Redis TTL auto-expires the ban key. The ZSET index entry is lazily cleaned on next listing.
+4. **Manual Flush:** The Flush API deletes the ban key (`DEL`) and removes the ZSET entry (`ZREM`).
+5. **Listing:** The `/api/v1/bruteforce/list` endpoint uses a Lua script (`BanIndexListing`) to atomically read all
+   16 ZSET shards, then pipelines `GET` + `TTL` on each ban key to build the response with `network`, `bucket`,
+   `ban_time`, `ttl`, and `banned_at`.
+
+## 9. CROSSSLOT & Cluster Considerations
+
+- **Ban keys** (`bf:ban:{network}`) are individual String keys — no CROSSSLOT issues with `GET`/`SET`/`DEL`.
+- **ZSET shards** (`bf:{bans}:0` to `bf:{bans}:F`) all use hash-tag `{bans}`, ensuring they land on the same
+  Redis Cluster slot. This allows a single `EVALSHA` call across all 16 shards.
+- **Affected accounts** (`affected_accounts`) is a single key — no CROSSSLOT concern.
+
+## 10. Developer Tips
 
 * **Lua Debugging:** Redis Lua scripts are hard to debug. Use `redis.log(redis.LOG_NOTICE, ...)` within scripts and
   check the Redis server logs.
@@ -248,3 +282,5 @@ Located in `server/app/loopsfx/bruteforce_sync_service.go`, this service runs as
   instance-specific metrics `nauthilus_brute_force_cache_hits_total`.
 * **Cache Flush:** If a user is blocked incorrectly, use the Admin API to flush the cache for that user. This will clean
   up most `bf:*` keys associated with their IPs via `prepareRedisUserKeys` in `server/core/rest.go`.
+* **Affected Accounts:** The `affected_accounts` SET intentionally has no TTL. It preserves the signal path for
+  accounts that were targeted by brute-force attacks. Clean up only via the Flush API or administrative intervention.

@@ -247,4 +247,21 @@ end
 
 return {tostring(total), exceeded, tostring(limit)}
 `,
+
+	// BanIndexListing reads all 16 sharded ZSET ban indexes in a single atomic call.
+	// KEYS[1..16] = the 16 ZSET shard keys (prefix+bf:{bans}:0 .. prefix+bf:{bans}:F)
+	// ARGV[1]     = minScore (e.g. 0 or now - maxBanTime)
+	// ARGV[2]     = maxScore (e.g. +inf or now)
+	// Returns a flat array: [member1, score1, member2, score2, ...]
+	"BanIndexListing": `
+local result = {}
+for i = 1, #KEYS do
+    local entries = redis.call('ZRANGEBYSCORE', KEYS[i], ARGV[1], ARGV[2], 'WITHSCORES')
+    for j = 1, #entries, 2 do
+        result[#result + 1] = entries[j]
+        result[#result + 1] = entries[j + 1]
+    end
+end
+return result
+`,
 }

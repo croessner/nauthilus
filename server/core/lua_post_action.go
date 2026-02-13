@@ -175,13 +175,14 @@ func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient re
 			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, r.CIDR)); err == nil && n != nil {
 				candidate := n.String()
 
-				// (1) Historical hit in the sharded hash map?
+				// (1) Check for active ban on this network via dedicated ban key.
 				if !foundRepeating {
 					prefix := cfg.GetServer().GetRedis().GetPrefix()
-					key := rediscli.GetBruteForceHashKey(prefix, candidate)
+					banKey := rediscli.GetBruteForceBanKey(prefix, candidate)
 
 					stats.GetMetrics().GetRedisReadCounter().Inc()
-					if exists, err := redisClient.GetReadHandle().HExists(ctx, key, candidate).Result(); err == nil && exists {
+
+					if existsVal, err := redisClient.GetReadHandle().Exists(ctx, banKey).Result(); err == nil && existsVal > 0 {
 						if r.CIDR > bestCIDRRepeating {
 							bestCIDRRepeating = r.CIDR
 							foundRepeatingNet = candidate

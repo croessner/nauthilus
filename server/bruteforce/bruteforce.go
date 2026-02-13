@@ -610,54 +610,51 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		attribute.Int("candidates.total", len(candidates)),
 	)
 
-	// If we have candidates, issue a pipeline of HMGETs to find the first hit across shards
+	// If we have candidates, issue a pipeline of EXISTS on ban keys to find the first hit
 	if len(candidates) > 0 {
 		fields := make([]string, len(candidates))
 		for i, c := range candidates {
 			fields[i] = c.field
 		}
 
-		cmds, errPipe := bm.pipelineHMGetFields(bm.ctx, fields, "pipeline_hmget_preresult")
+		cmds, errPipe := bm.pipelineExistsBanKeys(bm.ctx, fields, "pipeline_exists_ban_preresult")
 		if errPipe != nil && !errors2.Is(errPipe, redis.Nil) {
 			// Fail-open: treat as no pre-result
-			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline HMGET pre-result failed: %v", errPipe))
+			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EXISTS ban-key failed: %v", errPipe))
 		} else {
 			for i, cmd := range cmds {
-				vals, err := cmd.Result()
-				if err != nil || len(vals) == 0 || vals[0] == nil {
+				exists, err := cmd.Result()
+				if err != nil || exists == 0 {
 					continue
 				}
 
-				// non-empty string indicates a hit
-				if s, ok := vals[0].(string); ok && s != "" {
-					// choose the first hit by rule order
-					alreadyTriggered = true
-					ruleName = s
-					bm.bruteForceName = s
-					*message = "Brute force attack detected (cached result)"
+				// Ban key exists — this network is currently banned.
+				alreadyTriggered = true
+				ruleName = rules[candidates[i].idx].Name
+				bm.bruteForceName = ruleName
+				*message = "Brute force attack detected (cached result)"
 
-					stats.GetMetrics().GetBruteForceRejected().WithLabelValues(ruleName).Inc()
+				stats.GetMetrics().GetBruteForceRejected().WithLabelValues(ruleName).Inc()
 
-					ruleNumber = candidates[i].idx
+				ruleNumber = candidates[i].idx
 
-					// also set the resolved network for downstream logging
-					if _, nnet, e := net.ParseCIDR(candidates[i].field); e == nil {
-						*network = nnet
-					}
-
-					sp.SetAttributes(
-						attribute.Bool("triggered", true),
-						attribute.String("rule", ruleName),
-						attribute.Int("rule.index", ruleNumber),
-					)
-
-					return false, alreadyTriggered, ruleNumber
+				// also set the resolved network for downstream logging
+				if _, nnet, e := net.ParseCIDR(candidates[i].field); e == nil {
+					*network = nnet
 				}
+
+				sp.SetAttributes(
+					attribute.Bool("triggered", true),
+					attribute.String("rule", ruleName),
+					attribute.Int("rule.index", ruleNumber),
+				)
+
+				return false, alreadyTriggered, ruleNumber
 			}
 		}
 	}
 
-	// If no HMGET hit, fall through to no pre-result
+	// If no EXISTS hit, fall through to no pre-result
 
 	// Log a warning if no rules matched
 	if !matchedAnyRule {
@@ -1308,7 +1305,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 		}
 	}
 
-	// Resolve network and check current stored value via HMGET (no HGET)
+	// Resolve network
 	network, err := bm.getNetwork(rule)
 	if err != nil {
 		level.Error(logger).Log(
@@ -1319,62 +1316,63 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 		return "", err
 	}
+
 	if network == nil {
 		return removedKey, nil
 	}
 
-	key := rediscli.GetBruteForceHashKey(prefix, network.String())
+	networkStr := network.String()
+	banKey := rediscli.GetBruteForceBanKey(prefix, networkStr)
 
-	// Read current value with HMGET
+	// Read current ban value (bucket name) to verify match
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-	vals, err := redisClient.GetReadHandle().HMGet(dCtxR, key, network.String()).Result()
+	current, err := redisClient.GetReadHandle().Get(dCtxR, banKey).Result()
 	cancelR()
 
-	if err != nil {
+	if err != nil && !errors2.Is(err, redis.Nil) {
 		return "", err
 	}
 
-	current := ""
-	if len(vals) > 0 && vals[0] != nil {
-		if s, ok := vals[0].(string); ok {
-			current = s
-		}
-	}
-
+	// Delete if the stored bucket matches the requested rule name, or if wildcard "*" is used.
 	if current == ruleName || ruleName == "*" {
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 		defer cancel()
 
-		if removed, err := redisClient.GetWriteHandle().HDel(dCtx, key, network.String()).Result(); err != nil {
+		if removed, delErr := redisClient.GetWriteHandle().Del(dCtx, banKey).Result(); delErr != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Failed to delete brute force entry",
-				definitions.LogKeyError, err,
+				definitions.LogKeyMsg, "Failed to delete brute force ban key",
+				definitions.LogKeyError, delErr,
 			)
 		} else if removed > 0 {
-			removedKey = key
+			removedKey = banKey
 
-			// Check if map is now empty and remove from tracking set if so
-			if hlen, err := redisClient.GetWriteHandle().HLen(dCtx, key).Result(); err == nil && hlen == 0 {
-				activeKeysSet := prefix + definitions.RedisActiveBruteForceKeys
-				if err = redisClient.GetWriteHandle().SRem(dCtx, activeKeysSet, key).Err(); err != nil {
-					level.Error(logger).Log(
-						definitions.LogKeyGUID, bm.guid,
-						definitions.LogKeyMsg, "Error removing key from active brute force keys set",
-						definitions.LogKeyError, err,
-					)
-				}
-			}
+			// Remove from ZSET ban index
+			bm.removeBanFromIndex(dCtx, prefix, networkStr, logger)
 		}
 
 		return removedKey, nil
 	}
 
 	return removedKey, nil
+}
+
+// removeBanFromIndex removes a network from the sharded ZSET ban index.
+func (bm *bucketManagerImpl) removeBanFromIndex(ctx context.Context, prefix, networkStr string, logger *slog.Logger) {
+	shard := rediscli.GetBanIndexShard(networkStr)
+	shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, shard)
+
+	if err := bm.redis().GetWriteHandle().ZRem(ctx, shardKey, networkStr).Err(); err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Error removing network from ban index ZSET",
+			definitions.LogKeyError, err,
+		)
+	}
 }
 
 // IsIPAddressBlocked determines if the client's IP address is blocked based on brute force rules.
@@ -1391,14 +1389,15 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 	buckets = make([]string, 0)
 	rules := bm.cfg().GetBruteForce().Buckets
 
-	// Build candidate fields and batch HMGET
+	// Build candidate networks and batch EXISTS on ban keys
 	type fieldRef struct {
-		name, field string
+		name, network string
 	}
 
 	logger := bm.logger()
 
 	refs := make([]fieldRef, 0, len(rules))
+
 	for i := range rules {
 		n, err := bm.getNetwork(&rules[i])
 		if err != nil {
@@ -1415,24 +1414,25 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 			continue
 		}
 
-		refs = append(refs, fieldRef{name: rules[i].Name, field: n.String()})
+		refs = append(refs, fieldRef{name: rules[i].Name, network: n.String()})
 	}
 
 	if len(refs) == 0 {
 		return buckets, false
 	}
 
-	fields := make([]string, len(refs))
+	networks := make([]string, len(refs))
+
 	for i, r := range refs {
-		fields[i] = r.field
+		networks[i] = r.network
 	}
 
-	cmds, err := bm.pipelineHMGetFields(ctx, fields, "pipeline_hmget_is_blocked")
+	cmds, err := bm.pipelineExistsBanKeys(ctx, networks, "pipeline_exists_ban_is_blocked")
 
 	if err != nil && !errors2.Is(err, redis.Nil) {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Failed pipeline HMGET in IsIPAddressBlocked",
+			definitions.LogKeyMsg, "Failed pipeline EXISTS in IsIPAddressBlocked",
 			definitions.LogKeyError, err,
 		)
 
@@ -1440,14 +1440,12 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 	}
 
 	for i, cmd := range cmds {
-		vals, err := cmd.Result()
-		if err != nil || len(vals) == 0 || vals[0] == nil {
+		exists, err := cmd.Result()
+		if err != nil || exists == 0 {
 			continue
 		}
 
-		if s, ok := vals[0].(string); ok && s == refs[i].name {
-			buckets = append(buckets, refs[i].name)
-		}
+		buckets = append(buckets, refs[i].name)
 	}
 
 	sp.SetAttributes(attribute.Int("blocked_buckets_count", len(buckets)))
@@ -1455,8 +1453,10 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 	return buckets, len(buckets) > 0
 }
 
-func (bm *bucketManagerImpl) pipelineHMGetFields(ctx context.Context, fields []string, metricLabel string) ([]*redis.SliceCmd, error) {
-	if len(fields) == 0 {
+// pipelineExistsBanKeys checks existence of ban keys for the given networks via a Redis pipeline.
+// Returns one BoolCmd per network indicating whether an active ban exists.
+func (bm *bucketManagerImpl) pipelineExistsBanKeys(ctx context.Context, networks []string, metricLabel string) ([]*redis.IntCmd, error) {
+	if len(networks) == 0 {
 		return nil, nil
 	}
 
@@ -1472,11 +1472,11 @@ func (bm *bucketManagerImpl) pipelineHMGetFields(ctx context.Context, fields []s
 	defer cancel()
 
 	pipe := bm.redis().GetReadHandle().Pipeline()
-	cmds := make([]*redis.SliceCmd, len(fields))
+	cmds := make([]*redis.IntCmd, len(networks))
 
-	for i, f := range fields {
-		shardKey := rediscli.GetBruteForceHashKey(prefix, f)
-		cmds[i] = pipe.HMGet(dCtx, shardKey, f)
+	for i, n := range networks {
+		banKey := rediscli.GetBruteForceBanKey(prefix, n)
+		cmds[i] = pipe.Exists(dCtx, banKey)
 	}
 
 	_, err := pipe.Exec(dCtx)
@@ -1935,7 +1935,8 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	bm.bruteForceCounter[rule.Name] = total
 }
 
-// setPreResultBruteForceRedis stores a brute force rule in Redis under a hashed key, handling network resolution and errors.
+// setPreResultBruteForceRedis stores a brute force ban in Redis as a dedicated per-network key with TTL.
+// It uses SET NX EX to avoid race conditions in multi-instance deployments and maintains a sharded ZSET index.
 func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
 	tr := monittrace.New("nauthilus/bruteforce")
 	ctx, sp := tr.Start(bm.ctx, "bruteforce.set_pre_result", attribute.String("rule", rule.Name))
@@ -1951,31 +1952,52 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 			definitions.LogKeyMsg, "Error getting network for brute force rule",
 			definitions.LogKeyError, err,
 		)
-	} else {
-		key := rediscli.GetBruteForceHashKey(prefix, network.String())
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		return
+	}
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
-		defer cancel()
+	networkStr := network.String()
+	banKey := rediscli.GetBruteForceBanKey(prefix, networkStr)
+	banTTL := rule.GetBanTime()
 
-		if err = bm.redis().GetWriteHandle().HSet(dCtx, key, network.String(), bm.bruteForceName).Err(); err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Error setting brute force rule in Redis",
-				definitions.LogKeyError, err,
-			)
-		} else {
-			// Track the active brute force key for the list API
-			activeKeysSet := prefix + definitions.RedisActiveBruteForceKeys
-			if err = bm.redis().GetWriteHandle().SAdd(dCtx, activeKeysSet, key).Err(); err != nil {
-				level.Error(logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, "Error adding key to active brute force keys set",
-					definitions.LogKeyError, err,
-				)
-			}
-		}
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
+	defer cancel()
+
+	// SET NX EX: only set if no active ban exists for this network (multi-instance safe).
+	set, err := bm.redis().GetWriteHandle().SetNX(dCtx, banKey, bm.bruteForceName, banTTL).Result()
+	if err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Error setting brute force ban key in Redis",
+			definitions.LogKeyError, err,
+		)
+
+		return
+	}
+
+	if !set {
+		// Ban already exists — nothing to do.
+		return
+	}
+
+	// Best-effort: add network to sharded ZSET index.
+	bm.addBanToIndex(dCtx, prefix, networkStr, logger)
+}
+
+// addBanToIndex adds a network to the sharded ZSET ban index (best-effort, not atomic with the ban key).
+func (bm *bucketManagerImpl) addBanToIndex(ctx context.Context, prefix, networkStr string, logger *slog.Logger) {
+	shard := rediscli.GetBanIndexShard(networkStr)
+	shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, shard)
+	score := float64(time.Now().Unix())
+
+	if err := bm.redis().GetWriteHandle().ZAddNX(ctx, shardKey, redis.Z{Score: score, Member: networkStr}).Err(); err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Error adding network to ban index ZSET",
+			definitions.LogKeyError, err,
+		)
 	}
 }
 
