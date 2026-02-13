@@ -837,6 +837,44 @@ func processFlushCache(ctx *gin.Context, deps restAdminDeps, userCmd *admin.Flus
 	return removedKeys, noUserAccountFound
 }
 
+func collectUserAccountMappings(ctx context.Context, deps restAdminDeps, username, guid string) (config.StringSet, config.StringSet) {
+	accountNames := config.NewStringSet()
+	fields := config.NewStringSet()
+
+	redisClient := deps.effectiveRedis()
+	logger := deps.effectiveLogger()
+	cfg := deps.effectiveCfg()
+
+	key := rediscli.GetUserHashKey(cfg.GetServer().GetRedis().GetPrefix(), username)
+	data, err := redisClient.GetReadHandle().HGetAll(ctx, key).Result()
+	if err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error while retrieving user account mappings",
+				definitions.LogKeyError, err,
+			)
+		}
+
+		return accountNames, fields
+	}
+
+	fieldPrefix := username + "|"
+	for field, accountName := range data {
+		if _, ok := strings.CutPrefix(field, fieldPrefix); !ok {
+			continue
+		}
+
+		fields.Set(field)
+
+		if accountName != "" {
+			accountNames.Set(accountName)
+		}
+	}
+
+	return accountNames, fields
+}
+
 // processUserCmd processes the user command by performing the following steps:
 // 1. Calls the GetUserAccountFromCache function to set up the cache flush and retrieve the account name, removeHash flag, and cacheFlushError flag.
 // 2. If cacheFlushError is true, returns true immediately.
@@ -847,25 +885,53 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 	var (
 		result        int64
 		removeHash    bool
-		accountName   string
-		ipAddresses   []string
 		removedIPKeys []string
 		err           error
-		userKeys      config.StringSet
 	)
 
 	logger := deps.effectiveLogger()
 	redisClient := deps.effectiveRedis()
 	cfg := deps.effectiveCfg()
 
-	// Accept either a username (resolved via USER hash) or a direct account name
-	if accountName = backend.ResolveAccountIdentifier(ctx.Request.Context(), cfg, logger, redisClient, userCmd.User, "", "", guid); accountName == "" {
-		return nil, true
+	mappedAccounts, hashFields := collectUserAccountMappings(ctx.Request.Context(), deps, userCmd.User, guid)
+	cleanupAccounts := config.NewStringSet()
+	tokenAccounts := config.NewStringSet()
+	userKeys := config.NewStringSet()
+	ipAddressSet := config.NewStringSet()
+
+	for _, accountName := range mappedAccounts.GetStringSlice() {
+		cleanupAccounts.Set(accountName)
+		tokenAccounts.Set(accountName)
 	}
 
-	ipAddresses, userKeys = prepareRedisUserKeys(ctx, deps, guid, accountName)
+	cleanupAccounts.Set(userCmd.User)
+	hashFields.Set(userCmd.User)
+
+	if len(tokenAccounts) == 0 {
+		tokenAccounts.Set(userCmd.User)
+	}
+
+	cleanupAccountNames := cleanupAccounts.GetStringSlice()
+	sort.Strings(cleanupAccountNames)
+
+	tokenAccountNames := tokenAccounts.GetStringSlice()
+	sort.Strings(tokenAccountNames)
+
+	for _, accountName := range cleanupAccountNames {
+		ipAddresses, keys := prepareRedisUserKeys(ctx, deps, guid, accountName)
+		for _, ipAddress := range ipAddresses {
+			ipAddressSet.Set(ipAddress)
+		}
+
+		for _, key := range keys.GetStringSlice() {
+			userKeys.Set(key)
+		}
+	}
 
 	// Remove all buckets (bf) associated with the user
+	ipAddresses := ipAddressSet.GetStringSlice()
+	sort.Strings(ipAddresses)
+
 	for _, ipAddress := range ipAddresses {
 		_, removedIPKeys, err = processBruteForceRules(ctx, deps, &bf.FlushRuleCmd{
 			IPAddress: ipAddress,
@@ -881,60 +947,74 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 		}
 	}
 
-	removedKeys = append(removedKeys, removedIPKeys...)
+	removedKeySet := config.NewStringSet()
+	for _, removedKey := range removedIPKeys {
+		removedKeySet.Set(removedKey)
+	}
 
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+	for _, accountName := range cleanupAccountNames {
+		stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	// Remove PW_HIST_SET from Redis (use UNLINK to avoid blocking)
-	key := bruteforce.GetPWHistIPsRedisKey(accountName, cfg)
-	if result, err = redisClient.GetWriteHandle().Unlink(ctx, key).Result(); err != nil {
-		level.Error(logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Error while flushing PW_HIST_SET",
-			definitions.LogKeyError, err,
-		)
-	} else {
-		if result > 0 {
-			removedKeys = append(removedKeys, key)
+		// Remove PW_HIST_SET from Redis (use UNLINK to avoid blocking)
+		key := bruteforce.GetPWHistIPsRedisKey(accountName, cfg)
+		if result, err = redisClient.GetWriteHandle().Unlink(ctx, key).Result(); err != nil {
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error while flushing PW_HIST_SET",
+				definitions.LogKeyError, err,
+			)
+		} else if result > 0 {
+			removedKeySet.Set(key)
+		}
+
+	}
+
+	if len(cleanupAccountNames) > 0 {
+		members := make([]any, 0, len(cleanupAccountNames))
+		for _, accountName := range cleanupAccountNames {
+			members = append(members, accountName)
+		}
+
+		stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		// Remove accounts from AFFECTED_ACCOUNTS
+		key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
+		if result, err = redisClient.GetWriteHandle().SRem(ctx, key, members...).Result(); err != nil {
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error while flushing AFFECTED_ACCOUNTS",
+				definitions.LogKeyError, err,
+			)
+		} else if result > 0 {
+			removedKeySet.Set(key)
 		}
 	}
 
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	// Remove an account from AFFECTED_ACCOUNTS
-	key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
-	if result, err = redisClient.GetWriteHandle().SRem(ctx, key, accountName).Result(); err != nil {
-		level.Error(logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Error while flushing AFFECTED_ACCOUNTS",
-			definitions.LogKeyError, err,
-		)
-	} else {
-		if result > 0 {
-			removedKeys = append(removedKeys, key)
-		}
+	removedKeys = removeUserFromCache(ctx, deps, userCmd, userKeys, guid, removeHash, hashFields.GetStringSlice())
+	for _, removedKey := range removedKeys {
+		removedKeySet.Set(removedKey)
 	}
-
-	removedKeys = append(removedKeys, removeUserFromCache(ctx, deps, userCmd, userKeys, guid, removeHash)...)
 
 	// Flush OIDC/SAML2 tokens (access tokens, refresh tokens) for the user
 	if deps.TokenFlusher != nil {
-		if err := deps.TokenFlusher.FlushUserTokens(ctx.Request.Context(), accountName); err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Error while flushing IdP tokens",
-				definitions.LogKeyError, err,
-			)
-		} else {
-			level.Info(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "IdP tokens flushed for user",
-				"account", accountName,
-			)
+		for _, accountName := range tokenAccountNames {
+			if err := deps.TokenFlusher.FlushUserTokens(ctx.Request.Context(), accountName); err != nil {
+				level.Error(logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "Error while flushing IdP tokens",
+					definitions.LogKeyError, err,
+				)
+			} else {
+				level.Info(logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "IdP tokens flushed for user",
+					"account", accountName,
+				)
+			}
 		}
 	}
 
-	return removedKeys, noUserAccountFound
+	return removedKeySet.GetStringSlice(), noUserAccountFound
 }
 
 func getIPsFromPWHistSet(ctx context.Context, deps restAdminDeps, accountName string) ([]string, error) {
@@ -1162,7 +1242,7 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 // Parameters: ctx is the request context, userCmd contains user info, userKeys is a set of keys to remove,
 // guid is a unique identifier for logs, and removeHash indicates whether to delete the entire hash or specific fields.
 // Returns a slice of strings representing the removed keys.
-func removeUserFromCache(ctx context.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
+func removeUserFromCache(ctx context.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool, hashFields []string) []string {
 	// Legacy wrapper: delegate to deps-based implementation using injected defaults.
 	return removeUserFromCacheWithDeps(
 		ctx,
@@ -1170,11 +1250,12 @@ func removeUserFromCache(ctx context.Context, deps restAdminDeps, userCmd *admin
 		userKeys,
 		guid,
 		removeHash,
+		hashFields,
 		deps,
 	)
 }
 
-func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool, deps restAdminDeps) []string {
+func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool, hashFields []string, deps restAdminDeps) []string {
 	removedKeys := make([]string, 0)
 
 	cfg := deps.effectiveCfg()
@@ -1187,18 +1268,24 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	keys := userKeys.GetStringSlice()
+	sort.Strings(keys)
 
 	pipe := redisClient.GetWriteHandle().Pipeline()
 	// Remove hash (whole hash or a single field) first
 	if removeHash {
 		// Flush all 256 shards
-		for i := 0; i < 256; i++ {
+		for i := range 256 {
 			shardKey := fmt.Sprintf("%s%s:{%02x}", prefix, definitions.RedisUserHashKey, i)
 			pipe.Del(ctx, shardKey)
 		}
 	} else {
 		redisKey := rediscli.GetUserHashKey(prefix, userCmd.User)
-		pipe.HDel(ctx, redisKey, userCmd.User)
+		fields := append([]string(nil), hashFields...)
+		if len(fields) == 0 {
+			fields = []string{userCmd.User}
+		}
+		sort.Strings(fields)
+		pipe.HDel(ctx, redisKey, fields...)
 	}
 
 	// Queue deletion of all user keys

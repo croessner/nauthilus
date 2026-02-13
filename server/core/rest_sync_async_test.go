@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -136,8 +137,10 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 
 	user := "acc1"
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	shardKey := rediscli.GetUserHashKey(prefix, user)
 
-	// ResolveAccountIdentifier may treat identifier as account directly; do not require HGET here for stability
+	// Read user account mappings
+	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
 
 	// getIPsFromPWHistSet may not be called in minimal path; do not assert SMEMBERS strictly
 	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
@@ -148,9 +151,54 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 
 	// removeUserFromCache pipeline: HDEL USER hash field and UNLINK default positive cache key
 	defaultPos := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
-	shardKey := rediscli.GetUserHashKey(prefix, user)
 	mock.ExpectHDel(shardKey, user).SetVal(1)
 	mock.ExpectUnlink(defaultPos).SetVal(1)
+
+	w := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"user":"` + user + `"}`)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/"+definitions.CatCache+"/"+definitions.ServFlush, body)
+	req.Header.Set("Content-Type", "application/json")
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
+	setupMinimalTestConfig(t)
+	r, mock := setupEngineWithMock(t)
+
+	user := "acc1"
+	mappedAccount := "mapped-account"
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	shardKey := rediscli.GetUserHashKey(prefix, user)
+	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
+
+	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{
+		mappingField: mappedAccount,
+	})
+
+	// processUserCmd: UNLINK PW_HIST_IPS sets, SREM affected accounts
+	userHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
+	mappedHistSet := bruteforce.GetPWHistIPsRedisKey(mappedAccount, config.GetFile())
+	mock.ExpectUnlink(userHistSet).SetVal(1)
+	mock.ExpectUnlink(mappedHistSet).SetVal(1)
+
+	affectedKey := prefix + definitions.RedisAffectedAccountsKey
+	mock.ExpectSRem(affectedKey, user, mappedAccount).SetVal(2)
+
+	// removeUserFromCache pipeline: HDEL USER hash fields and UNLINK default positive cache keys
+	defaultPosUser := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
+	defaultPosMapped := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + mappedAccount
+	mock.ExpectHDel(shardKey, user, mappingField).SetVal(2)
+	mock.ExpectUnlink(defaultPosUser).SetVal(1)
+	mock.ExpectUnlink(defaultPosMapped).SetVal(1)
 
 	w := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"user":"` + user + `"}`)
