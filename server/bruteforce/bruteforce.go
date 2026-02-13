@@ -790,9 +790,10 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			// Let's pass (limit - 1) as the limit to the script if we want to block the Nth attempt.
 			limit := int64(rule.FailedRequests) - 1
 
+			// rwp_floor = 0: read-only check path must never modify counters
 			cmds = append(cmds, pipe.EvalSha(dCtx, scriptSHA, []string{currentKey, prevKey},
 				0, weight, ttl, limit,
-				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive))
+				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, 0))
 		}
 
 		_, errP := pipe.Exec(dCtx)
@@ -1166,12 +1167,22 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 	ttl := int64(math.Round(rule.Period.Seconds() * 2))
 	limit := int64(rule.FailedRequests) - 1
 
+	// Determine RWP catch-up floor: when the bucket counter is below the RWP threshold,
+	// the Lua script will bring it up before the normal increment to compensate for
+	// attempts that were tolerated during the RWP grace period.
+	rwpFloor := 0
+	if increment > 0 {
+		if bfCfg := bm.cfg().GetBruteForce(); bfCfg != nil {
+			rwpFloor = int(bfCfg.GetRWPAllowedUniqueHashes())
+		}
+	}
+
 	// Limit is not needed for Save in terms of triggering here, but we pass it anyway
 	// to maintain script logic.
 	_, err := rediscli.ExecuteScript(dCtx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"],
 		[]string{currentKey, prevKey},
 		increment, weight, ttl, limit,
-		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
+		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, rwpFloor)
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 

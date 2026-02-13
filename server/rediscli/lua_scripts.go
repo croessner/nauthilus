@@ -181,6 +181,9 @@ return 0
 	//   [8] = scale factor
 	//   [9] = static tolerate percent
 	//   [10] = positive reputation counter
+	//   [11] = rwp_floor (optional, 0 = disabled). When > 0 and the current counter is below
+	//          this floor, the counter is raised to (rwp_floor - 1) before the normal increment.
+	//          This compensates for attempts that were tolerated during the RWP grace period.
 	// Returns:
 	//   {tostring(total), exceeded, tostring(effective_limit)}
 	"SlidingWindowCounter": `
@@ -198,6 +201,7 @@ local max_percent = tonumber(ARGV[7] or "0")
 local scale_factor = tonumber(ARGV[8] or "1")
 local static_percent = tonumber(ARGV[9] or "0")
 local positive = tonumber(ARGV[10] or "0")
+local rwp_floor = tonumber(ARGV[11] or "0")
 
 local limit = base_limit
 
@@ -212,11 +216,25 @@ if positive > 0 then
 end
 
 local current_cnt = tonumber(redis.call("GET", current_key) or 0)
+local is_new_key = (current_cnt == 0)
+
+-- RWP catch-up: if the bucket is below the RWP floor, bring it up to (floor - 1)
+-- so the subsequent normal +1 increment lands exactly at the floor value.
+-- This compensates for the attempts that were tolerated during RWP grace.
+if rwp_floor > 0 and current_cnt < rwp_floor then
+    local delta = rwp_floor - 1 - current_cnt
+    if delta > 0 then
+        current_cnt = redis.call("INCRBY", current_key, delta)
+    end
+end
+
 if increment > 0 then
     current_cnt = redis.call("INCRBY", current_key, increment)
-    if current_cnt == increment then
-        redis.call("EXPIRE", current_key, ttl)
-    end
+end
+
+-- Set expiry when the key was freshly created during this call
+if is_new_key and current_cnt > 0 then
+    redis.call("EXPIRE", current_key, ttl)
 end
 
 local prev_cnt = tonumber(redis.call("GET", prev_key) or 0)

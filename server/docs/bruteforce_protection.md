@@ -112,7 +112,11 @@ subgraph Bucket_Update [Per-Rule Counter Update]
 U_RULE_LOOP[For each matching rule] --> U_PERIOD{Period >= matched?}
 U_PERIOD -- Yes --> U_SAVE[SaveBruteForceBucketCounterToRedis]
 U_PERIOD -- No --> U_NEXT[Next Rule]
-U_SAVE --> U_NEXT
+U_SAVE --> U_FLOOR{Bucket < RWP Floor?}
+U_FLOOR -- Yes --> U_CATCHUP[Catch-up: raise to floor − 1 first]
+U_CATCHUP --> U_INC[Normal +1 increment]
+U_FLOOR -- No --> U_INC
+U_INC --> U_NEXT
 end
 
 U_NEXT --> U_DONE
@@ -161,6 +165,13 @@ RWP detection prevents automated attacks that try common passwords across many a
   sliding window. If a hash is repeated, its timestamp is updated, keeping it "fresh" and avoiding it being evicted
   from the window. If the number of unique hashes in the window exceeds the threshold, the request is no longer
   "allowed" under RWP grace and must undergo full brute-force enforcement.
+* **RWP Catch-Up Floor:** When RWP protection ends and enforcement begins, the bucket counters are typically still at
+  value 1 (from the very first request before RWP kicked in). To compensate, the `SlidingWindowCounter` Lua script
+  accepts an optional `rwp_floor` parameter (ARGV[11]). If the current counter is below this floor, it is raised to
+  `floor − 1` before the normal `+1` increment, so the bucket lands exactly at the RWP threshold. This ensures that
+  `FailedRequests` reflects the true total number of failed attempts, not just those after RWP grace expired. The
+  floor check is self-healing: once the counter reaches the floor, the condition `counter < floor` is false and the
+  catch-up never fires again.
 
 ## 4. Sequence Diagram
 
