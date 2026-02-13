@@ -729,8 +729,8 @@ const (
 	RedisBruteForceBanPrefix = "bf:ban:"
 
 	// RedisBruteForceBanIndexPrefix is the prefix for the sharded ZSET ban index keys.
-	// The hash-tag {bans} ensures all 16 shards land on the same Redis Cluster slot.
-	RedisBruteForceBanIndexPrefix = "bf:{bans}:"
+	// No hash-tag is used so shards distribute across Redis Cluster slots.
+	RedisBruteForceBanIndexPrefix = "bf:bans:"
 
 	// BanIndexShardCount is the number of ZSET shards used for the ban index.
 	BanIndexShardCount = 16

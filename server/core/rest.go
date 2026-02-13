@@ -64,6 +64,8 @@ type restAdminDeps struct {
 	TokenFlusher TokenFlusher
 }
 
+const bruteForceBanScanCount int64 = 500
+
 func (deps restAdminDeps) effectiveLogger() *slog.Logger {
 	return deps.Logger
 }
@@ -346,26 +348,24 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 		}
 	}
 
-	// Step 1: Query all 16 ZSET shards via Lua script
+	// Step 1: Query all 16 ZSET shards via pipeline
 	indexKeys := rediscli.GetAllBruteForceBanIndexKeys(prefix)
 
 	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
+	defer cancelR()
 
-	rawResult, err := rediscli.ExecuteScript(
-		dCtxR,
-		deps.Redis,
-		"BanIndexListing",
-		rediscli.LuaScripts["BanIndexListing"],
-		indexKeys,
-		"0", "+inf",
-	)
+	pipe := deps.Redis.GetReadHandle().Pipeline()
+	rangeCmds := make([]*redis.ZSliceCmd, len(indexKeys))
 
-	cancelR()
+	for i, key := range indexKeys {
+		rangeCmds[i] = pipe.ZRangeWithScores(dCtxR, key, 0, -1)
+	}
 
+	_, err := pipe.Exec(dCtxR)
 	if err != nil && !stderrors.Is(err, redis.Nil) {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Error executing BanIndexListing Lua script",
+			definitions.LogKeyMsg, "Error reading ban index shards",
 			definitions.LogKeyError, err,
 		)
 
@@ -375,30 +375,82 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 		return blockedIPAddresses, err
 	}
 
-	// Parse flat result array: [network1, score1, network2, score2, ...]
+	// Parse ZSET results from all shards
 	type indexEntry struct {
 		network  string
 		bannedAt float64
 	}
 
-	var entries []indexEntry
+	entries := make([]indexEntry, 0)
+	seenNetworks := make(map[string]struct{})
 
-	if results, ok := rawResult.([]interface{}); ok {
-		for i := 0; i+1 < len(results); i += 2 {
-			networkStr, _ := results[i].(string)
-			scoreStr, _ := results[i+1].(string)
+	for _, cmd := range rangeCmds {
+		if cmd == nil {
+			continue
+		}
+
+		for _, z := range cmd.Val() {
+			var networkStr string
+
+			switch v := z.Member.(type) {
+			case string:
+				networkStr = v
+			case []byte:
+				networkStr = string(v)
+			default:
+				networkStr = fmt.Sprint(v)
+			}
 
 			if networkStr == "" {
 				continue
 			}
 
-			var score float64
-
-			if _, scanErr := fmt.Sscanf(scoreStr, "%f", &score); scanErr != nil {
+			if _, exists := seenNetworks[networkStr]; exists {
 				continue
 			}
 
-			entries = append(entries, indexEntry{network: networkStr, bannedAt: score})
+			seenNetworks[networkStr] = struct{}{}
+
+			entries = append(entries, indexEntry{network: networkStr, bannedAt: z.Score})
+		}
+	}
+
+	// Step 1b: Scan ban keys to repair missing index entries
+	dCtxRScan, cancelRScan := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
+	defer cancelRScan()
+
+	scanPattern := rediscli.GetBruteForceBanKeyPattern(prefix)
+	var cursor uint64
+
+	for {
+		keys, nextCursor, scanErr := deps.Redis.GetReadHandle().Scan(dCtxRScan, cursor, scanPattern, bruteForceBanScanCount).Result()
+		if scanErr != nil && !stderrors.Is(scanErr, redis.Nil) {
+			level.Warn(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error scanning brute force ban keys",
+				definitions.LogKeyError, scanErr,
+			)
+
+			break
+		}
+
+		for _, key := range keys {
+			networkStr, ok := rediscli.ParseBruteForceBanKey(prefix, key)
+			if !ok {
+				continue
+			}
+
+			if _, exists := seenNetworks[networkStr]; exists {
+				continue
+			}
+
+			seenNetworks[networkStr] = struct{}{}
+			entries = append(entries, indexEntry{network: networkStr})
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
 		}
 	}
 
@@ -412,17 +464,17 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 	dCtxR2, cancelR2 := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 	defer cancelR2()
 
-	pipe := deps.Redis.GetReadHandle().Pipeline()
+	pipe2 := deps.Redis.GetReadHandle().Pipeline()
 	getCmds := make([]*redis.StringCmd, len(entries))
 	ttlCmds := make([]*redis.DurationCmd, len(entries))
 
 	for i, e := range entries {
 		banKey := rediscli.GetBruteForceBanKey(prefix, e.network)
-		getCmds[i] = pipe.Get(dCtxR2, banKey)
-		ttlCmds[i] = pipe.TTL(dCtxR2, banKey)
+		getCmds[i] = pipe2.Get(dCtxR2, banKey)
+		ttlCmds[i] = pipe2.TTL(dCtxR2, banKey)
 	}
 
-	_, _ = pipe.Exec(dCtxR2)
+	_, _ = pipe2.Exec(dCtxR2)
 
 	// Step 3: Build result entries + lazy cleanup for expired bans
 	now := time.Now()

@@ -223,7 +223,7 @@ All keys are prefixed with the configured Redis prefix.
 |:--------------------------------------|:-------|:------------------------------------------------------------------------------------------------------------------|
 | `bf:cnt:{rule}:{net}:win:{timestamp}` | String | Sliding window counter for a specific rule and network.                                                           |
 | `bf:ban:{network}`                    | String | Per-network ban key. Value = bucket name. Has TTL = `ban_time` (default 8h). Written with `SET NX EX`.            |
-| `bf:{bans}:X` (X = 0–F)               | ZSet   | Sharded ban index (16 shards). Member = network, Score = Unix timestamp. Hash-tag `{bans}` for cluster slot.      |
+| `bf:bans:X` (X = 0–F)                 | ZSet   | Sharded ban index (16 shards). Member = network, Score = Unix timestamp.                                          |
 | `bf:rwp:allow:{scoped_ip}:{account}`  | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.                                        |
 | `bf:tr:{ip}`                          | Hash   | Reputation data (`positive` and `negative` counters).                                                             |
 | `bf:tr:{ip}:P`                        | ZSet   | Time-series of positive authentication events.                                                                    |
@@ -259,19 +259,19 @@ brute_force:
 
 1. **Trigger:** When `ProcessBruteForce` detects a threshold breach, it writes:
     - `SET bf:ban:{network} {bucket_name} NX EX {ban_time_seconds}` — only if no ban exists yet (`NX`).
-    - `ZADD NX bf:{bans}:{shard} {unix_timestamp} {network}` — best-effort index update.
+   - `ZADD NX bf:bans:{shard} {unix_timestamp} {network}` — best-effort index update.
 2. **Check:** `CheckRepeatingBruteForcer` and `IsIPAddressBlocked` pipeline `EXISTS bf:ban:{network}` per candidate.
 3. **Expiry:** Redis TTL auto-expires the ban key. The ZSET index entry is lazily cleaned on next listing.
 4. **Manual Flush:** The Flush API deletes the ban key (`DEL`) and removes the ZSET entry (`ZREM`).
-5. **Listing:** The `/api/v1/bruteforce/list` endpoint uses a Lua script (`BanIndexListing`) to atomically read all
-   16 ZSET shards, then pipelines `GET` + `TTL` on each ban key to build the response with `network`, `bucket`,
-   `ban_time`, `ttl`, and `banned_at`.
+5. **Listing:** The `/api/v1/bruteforce/list` endpoint pipelines `ZRANGE WITHSCORES` across all 16 ZSET shards,
+   then pipelines `GET` + `TTL` on each ban key to build the response with `network`, `bucket`, `ban_time`, `ttl`,
+   and `banned_at`.
 
 ## 9. CROSSSLOT & Cluster Considerations
 
 - **Ban keys** (`bf:ban:{network}`) are individual String keys — no CROSSSLOT issues with `GET`/`SET`/`DEL`.
-- **ZSET shards** (`bf:{bans}:0` to `bf:{bans}:F`) all use hash-tag `{bans}`, ensuring they land on the same
-  Redis Cluster slot. This allows a single `EVALSHA` call across all 16 shards.
+- **ZSET shards** (`bf:bans:0` to `bf:bans:F`) are distributed across cluster slots. Listing uses pipelining
+  instead of multi-key Lua to avoid CROSSSLOT errors.
 - **Affected accounts** (`affected_accounts`) is a single key — no CROSSSLOT concern.
 
 ## 10. Developer Tips

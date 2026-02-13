@@ -58,6 +58,81 @@ func TestGetBruteForceBanKey(t *testing.T) {
 	}
 }
 
+func TestGetBruteForceBanKeyPattern(t *testing.T) {
+	tests := []struct {
+		name     string
+		prefix   string
+		expected string
+	}{
+		{
+			name:     "prefix with namespace",
+			prefix:   "nauthilus:",
+			expected: "nauthilus:bf:ban:*",
+		},
+		{
+			name:     "empty prefix",
+			prefix:   "",
+			expected: "bf:ban:*",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetBruteForceBanKeyPattern(tt.prefix)
+
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestParseBruteForceBanKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		prefix   string
+		key      string
+		expected string
+		ok       bool
+	}{
+		{
+			name:     "valid key with prefix",
+			prefix:   "nauthilus:",
+			key:      "nauthilus:bf:ban:192.168.1.0/24",
+			expected: "192.168.1.0/24",
+			ok:       true,
+		},
+		{
+			name:     "valid key without prefix",
+			prefix:   "",
+			key:      "bf:ban:2001:db8::/32",
+			expected: "2001:db8::/32",
+			ok:       true,
+		},
+		{
+			name:     "invalid prefix",
+			prefix:   "nauthilus:",
+			key:      "other:bf:ban:10.0.0.0/8",
+			expected: "",
+			ok:       false,
+		},
+		{
+			name:     "missing network",
+			prefix:   "nauthilus:",
+			key:      "nauthilus:bf:ban:",
+			expected: "",
+			ok:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := ParseBruteForceBanKey(tt.prefix, tt.key)
+
+			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.ok, ok)
+		})
+	}
+}
+
 func TestGetBanIndexShard(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -109,19 +184,19 @@ func TestGetBruteForceBanIndexShardKey(t *testing.T) {
 			name:     "shard 0",
 			prefix:   "nauthilus:",
 			shard:    0,
-			expected: "nauthilus:bf:{bans}:0",
+			expected: "nauthilus:bf:bans:0",
 		},
 		{
 			name:     "shard 15 (F)",
 			prefix:   "nauthilus:",
 			shard:    15,
-			expected: "nauthilus:bf:{bans}:F",
+			expected: "nauthilus:bf:bans:F",
 		},
 		{
 			name:     "shard 10 (A)",
 			prefix:   "test:",
 			shard:    10,
-			expected: "test:bf:{bans}:A",
+			expected: "test:bf:bans:A",
 		},
 	}
 
@@ -147,6 +222,6 @@ func TestGetAllBruteForceBanIndexKeys(t *testing.T) {
 	}
 
 	// Verify first and last key explicitly.
-	assert.Equal(t, "nauthilus:bf:{bans}:0", keys[0])
-	assert.Equal(t, "nauthilus:bf:{bans}:F", keys[15])
+	assert.Equal(t, "nauthilus:bf:bans:0", keys[0])
+	assert.Equal(t, "nauthilus:bf:bans:F", keys[15])
 }

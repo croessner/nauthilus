@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
@@ -991,24 +992,8 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		logBucketRuleDebug(bm, network, rule)
 
-		// Decide whether to enforce brute-force computation or treat as repeating-wrong-password
-		// even if the bucket rule matched. This reduces false positives and write amplification.
-		if needEnforce, err := bm.checkEnforceBruteForceComputation(); err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Failed to check enforcement of brute force computation",
-				definitions.LogKeyError, err,
-			)
-
-			return false
-		} else if !needEnforce {
-			// Repeating wrong password (or similar) detected: skip brute-force enforcement.
-			// We still learn the user's IP for later unlock operations, but do not mark the account as affected.
-			bm.ProcessPWHist()
-			stats.GetMetrics().GetBruteForceHits().WithLabelValues(rule.Name).Inc()
-
-			return false
-		}
+		// RWP allowance is handled during early checks and bucket updates. Once a rule is triggered,
+		// we always enforce here to ensure ban keys and indices are written consistently.
 
 		if !alreadyTriggered {
 			if tol := bm.tolerate(); tol != nil && tol.IsTolerated(bm.ctx, bm.clientIP) {
@@ -1030,7 +1015,11 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		bm.updateAffectedAccount()
 
 		if ruleTriggered {
-			bm.setPreResultBruteForceRedis(rule)
+			banActive, err := bm.setPreResultBruteForceRedis(rule)
+			if err != nil || !banActive {
+				return false
+			}
+
 			// Broadcast both the user-specific burst block and the network-wide block
 			BroadcastBlock(bm.ctx, bm.redis(), bm.cfg(), l1.KeyBurst(bm.bfBurstKey()), bm.bruteForceName)
 			if network != nil {
@@ -1079,11 +1068,14 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 		return
 	}
 
-	if bm.accountName == "" {
+	accountName = bm.resolveAccountNameForHistory()
+	if accountName == "" {
 		return
 	}
 
-	key := GetPWHistIPsRedisKey(bm.accountName, bm.cfg())
+	bm.updateAffectedAccount()
+
+	key := GetPWHistIPsRedisKey(accountName, bm.cfg())
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -1266,8 +1258,8 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 	var removedKey string
 
 	cfg := bm.cfg()
-	logger := bm.logger()
 	redisClient := bm.redis()
+	logger := bm.logger()
 
 	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
@@ -1516,9 +1508,15 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
 	}
 
-	acct := bm.accountName
+	acct := ""
+	if bm.username != "" {
+		acct = accountcache.GetAccountMappingField(bm.username, bm.protocol, bm.oidcCID)
+	}
 	if acct == "" {
-		acct = bm.username
+		acct = bm.accountName
+	}
+	if acct == "" {
+		return false, nil
 	}
 
 	cfg := bm.cfg()
@@ -1776,32 +1774,11 @@ func (bm *bucketManagerImpl) getPasswordHistoryBaseRedisKey(baseKey string, with
 	}
 
 	cfg := bm.cfg()
-	logger := bm.logger()
 
 	if withUsername {
-		// Prefer explicit accountName; if absent, optionally fall back to username.
-		accountName := bm.accountName
+		accountName := bm.resolveAccountNameForHistory()
 		if accountName == "" {
-			// Respect config to reduce PW_HIST on cached-blocks
-			if cfg.GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
-				level.Debug(logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, "Skipping account-scoped PW_HIST for unknown account on cached block",
-				)
-
-				return ""
-			}
-
-			if bm.username == "" {
-				level.Debug(logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, "Skipping getPasswordHistoryBaseRedisKey: no accountName or username",
-				)
-
-				return ""
-			}
-
-			accountName = bm.username
+			return ""
 		}
 
 		var sbHashTag strings.Builder
@@ -1937,7 +1914,8 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 
 // setPreResultBruteForceRedis stores a brute force ban in Redis as a dedicated per-network key with TTL.
 // It uses SET NX EX to avoid race conditions in multi-instance deployments and maintains a sharded ZSET index.
-func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
+// It returns whether a ban is active (created or already present) and any error encountered.
+func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForceRule) (bool, error) {
 	tr := monittrace.New("nauthilus/bruteforce")
 	ctx, sp := tr.Start(bm.ctx, "bruteforce.set_pre_result", attribute.String("rule", rule.Name))
 	defer sp.End()
@@ -1953,7 +1931,7 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 			definitions.LogKeyError, err,
 		)
 
-		return
+		return false, err
 	}
 
 	networkStr := network.String()
@@ -1974,16 +1952,37 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 			definitions.LogKeyError, err,
 		)
 
-		return
+		// Verify whether the ban key exists despite the write error.
+		stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
+		defer cancelR()
+
+		exists, existsErr := bm.redis().GetReadHandle().Exists(dCtxR, banKey).Result()
+		if existsErr != nil && !errors2.Is(existsErr, redis.Nil) {
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Error verifying brute force ban key in Redis",
+				definitions.LogKeyError, existsErr,
+			)
+		}
+
+		if existsErr == nil && exists > 0 {
+			return true, nil
+		}
+
+		return false, err
 	}
 
 	if !set {
 		// Ban already exists — nothing to do.
-		return
+		return true, nil
 	}
 
 	// Best-effort: add network to sharded ZSET index.
 	bm.addBanToIndex(dCtx, prefix, networkStr, logger)
+
+	return true, nil
 }
 
 // addBanToIndex adds a network to the sharded ZSET ban index (best-effort, not atomic with the ban key).
@@ -2004,12 +2003,13 @@ func (bm *bucketManagerImpl) addBanToIndex(ctx context.Context, prefix, networkS
 // updateAffectedAccount processes a blocked account by checking its existence in Redis and adding it if not present.
 // It increments Redis read and write counters and logs errors encountered during the operations.
 func (bm *bucketManagerImpl) updateAffectedAccount() {
-	if bm.accountName == "" {
+	accountName := bm.resolveAccountNameForHistory()
+	if accountName == "" {
 		return
 	}
 
 	tr := monittrace.New("nauthilus/bruteforce")
-	ctx, sp := tr.Start(bm.ctx, "bruteforce.update_affected_account", attribute.String("account", bm.accountName))
+	ctx, sp := tr.Start(bm.ctx, "bruteforce.update_affected_account", attribute.String("account", accountName))
 	defer sp.End()
 
 	key := bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
@@ -2020,7 +2020,7 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
 
-	isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, bm.accountName).Result()
+	isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, accountName).Result()
 	if err != nil {
 		if !errors2.Is(err, redis.Nil) {
 			level.Error(logger).Log(
@@ -2047,13 +2047,43 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
 	defer cancel()
 
-	if err := bm.redis().GetWriteHandle().SAdd(dCtx, key, bm.accountName).Err(); err != nil {
+	if err := bm.redis().GetWriteHandle().SAdd(dCtx, key, accountName).Err(); err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Error adding account to the affected accounts set",
 			definitions.LogKeyError, err,
 		)
 	}
+}
+
+func (bm *bucketManagerImpl) resolveAccountNameForHistory() string {
+	accountName := bm.accountName
+	if accountName != "" {
+		return accountName
+	}
+
+	cfg := bm.cfg()
+	logger := bm.logger()
+
+	if cfg.GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
+		level.Debug(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Skipping account-scoped PW_HIST for unknown account on cached block",
+		)
+
+		return ""
+	}
+
+	if bm.username == "" {
+		level.Debug(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Skipping account-scoped history: no accountName or username",
+		)
+
+		return ""
+	}
+
+	return bm.username
 }
 
 func (bm *bucketManagerImpl) loadPasswordHistoryCount(isAccountScoped bool) uint {

@@ -18,6 +18,7 @@ package rediscli
 import (
 	"fmt"
 	"hash/crc32"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
 )
@@ -28,6 +29,22 @@ func GetBruteForceBanKey(prefix, network string) string {
 	return prefix + definitions.RedisBruteForceBanPrefix + network
 }
 
+// GetBruteForceBanKeyPattern returns the Redis key pattern for all brute force ban keys.
+func GetBruteForceBanKeyPattern(prefix string) string {
+	return prefix + definitions.RedisBruteForceBanPrefix + "*"
+}
+
+// ParseBruteForceBanKey extracts the network part from a brute force ban key.
+func ParseBruteForceBanKey(prefix, key string) (string, bool) {
+	banPrefix := prefix + definitions.RedisBruteForceBanPrefix
+	network, ok := strings.CutPrefix(key, banPrefix)
+	if !ok || network == "" {
+		return "", false
+	}
+
+	return network, true
+}
+
 // GetBanIndexShard computes the ZSET shard index (0–15) for a given network string
 // using CRC32 and masking the lowest nibble.
 func GetBanIndexShard(network string) byte {
@@ -35,14 +52,12 @@ func GetBanIndexShard(network string) byte {
 }
 
 // GetBruteForceBanIndexShardKey returns the Redis key for one of the 16 ZSET ban-index shards.
-// Format: prefix + "bf:{bans}:" + hex-nibble (e.g. "nauthilus:bf:{bans}:A").
-// The hash-tag {bans} ensures all shards land on the same Redis Cluster slot.
+// Format: prefix + "bf:bans:" + hex-nibble (e.g. "nauthilus:bf:bans:A").
 func GetBruteForceBanIndexShardKey(prefix string, shard byte) string {
 	return fmt.Sprintf("%s%s%X", prefix, definitions.RedisBruteForceBanIndexPrefix, shard)
 }
 
 // GetAllBruteForceBanIndexKeys returns all 16 ZSET shard keys for the ban index.
-// This is used as the KEYS parameter for the Lua listing script.
 func GetAllBruteForceBanIndexKeys(prefix string) []string {
 	keys := make([]string, definitions.BanIndexShardCount)
 
