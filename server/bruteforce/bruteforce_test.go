@@ -132,6 +132,26 @@ func TestBruteForceScenarios(t *testing.T) {
 		assert.True(t, triggered)
 	})
 
+	t.Run("Scenario 1b: RWP active skips affected accounts", func(t *testing.T) {
+		mock, tol := setupSubtest(cfg)
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen1b", attackerIP, bruteforce.BucketManagerDeps{
+			Cfg:      cfg,
+			Logger:   log.GetLogger(),
+			Redis:    rediscli.GetClient(),
+			Tolerate: tol,
+		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(password).WithRWPDecision(false)
+
+		mock.MatchExpectationsInOrder(false)
+
+		mock.Regexp().ExpectSIsMember(".*pw_hist_ips.*", attackerIP).SetVal(false)
+		mock.Regexp().ExpectSAdd(".*pw_hist_ips.*", attackerIP).SetVal(int64(1))
+		mock.Regexp().ExpectExpire(".*pw_hist_ips.*", cfg.GetServer().Redis.NegCacheTTL).SetVal(true)
+
+		bm.ProcessPWHist()
+
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("Scenario 2: Known user, different passwords (Brute force triggered)", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)

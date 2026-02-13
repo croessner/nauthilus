@@ -136,6 +136,9 @@ type BucketManager interface {
 	// WithOIDCCID sets the OIDC Client ID for the BucketManager instance and returns the updated BucketManager.
 	WithOIDCCID(oidcCID string) BucketManager
 
+	// WithRWPDecision sets the RWP enforcement decision (true=enforce, false=RWP active).
+	WithRWPDecision(enforce bool) BucketManager
+
 	// LoadAllPasswordHistories retrieves password history metrics (counts and existence) for the current account and IP.
 	LoadAllPasswordHistories()
 
@@ -199,6 +202,7 @@ type bucketManagerImpl struct {
 	ipIsV4               bool
 	ipIsV6               bool
 	ipv6Validated        bool
+	rwpDecision          *bool
 }
 
 func (bm *bucketManagerImpl) cfg() config.File {
@@ -243,6 +247,13 @@ func (bm *bucketManagerImpl) GetFeatureName() string {
 // GetBruteForceName retrieves the BruteForceName associated with the bucketManagerImpl instance.
 func (bm *bucketManagerImpl) GetBruteForceName() string {
 	return bm.bruteForceName
+}
+
+// WithRWPDecision sets the cached RWP enforcement decision (true=enforce, false=RWP active).
+func (bm *bucketManagerImpl) WithRWPDecision(enforce bool) BucketManager {
+	bm.rwpDecision = &enforce
+
+	return bm
 }
 
 // GetBruteForceCounter retrieves the brute force counter map, tracking attempts by their respective identifiers.
@@ -1481,7 +1492,14 @@ var _ BucketManager = (*bucketManagerImpl)(nil)
 // ShouldEnforceBucketUpdate determines whether brute force bucket counters should be increased.
 // It delegates to the internal checkEnforceBruteForceComputation logic which evaluates RWP.
 func (bm *bucketManagerImpl) ShouldEnforceBucketUpdate() (bool, error) {
-	return bm.checkEnforceBruteForceComputation()
+	enforce, err := bm.checkEnforceBruteForceComputation()
+	if err != nil {
+		return false, err
+	}
+
+	bm.rwpDecision = &enforce
+
+	return enforce, nil
 }
 
 // isRepeatingWrongPassword implements the RWP allowance logic.
@@ -2015,6 +2033,21 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	key := bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 	logger := bm.logger()
 
+	rwpActive, err := bm.isRWPActive()
+	if err != nil {
+		level.Warn(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Failed to evaluate RWP decision for affected accounts",
+			definitions.LogKeyError, err,
+		)
+
+		return
+	}
+
+	if rwpActive {
+		return
+	}
+
 	// First check if the account is already a member
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -2054,6 +2087,21 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 			definitions.LogKeyError, err,
 		)
 	}
+}
+
+func (bm *bucketManagerImpl) isRWPActive() (bool, error) {
+	if bm.rwpDecision != nil {
+		return !*bm.rwpDecision, nil
+	}
+
+	enforce, err := bm.checkEnforceBruteForceComputation()
+	if err != nil {
+		return false, err
+	}
+
+	bm.rwpDecision = &enforce
+
+	return !enforce, nil
 }
 
 func (bm *bucketManagerImpl) resolveAccountNameForHistory() string {

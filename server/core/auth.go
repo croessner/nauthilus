@@ -2205,6 +2205,13 @@ func (a *AuthState) WithOIDCCID(oidcCID string) bruteforce.BucketManager {
 	return a
 }
 
+// WithRWPDecision sets the cached RWP enforcement decision (true=enforce, false=RWP active).
+func (a *AuthState) WithRWPDecision(enforce bool) bruteforce.BucketManager {
+	a.Runtime.BFRWP = !enforce
+
+	return a
+}
+
 // GetBruteForceName returns the brute force name from the AuthState.
 func (a *AuthState) GetBruteForceName() string {
 	return a.Security.BruteForceName

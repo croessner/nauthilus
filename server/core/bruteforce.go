@@ -681,7 +681,13 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	// Check whether bucket counters should be increased.
 	// First try the context-cached result from CheckBruteForce; fall back to a fresh check.
 	if cached, exists := ctx.Get(definitions.CtxRWPResultKey); exists {
-		if enforce, ok := cached.(bool); ok && !enforce {
+		if enforce, ok := cached.(bool); ok {
+			bm = bm.WithRWPDecision(enforce)
+
+			if enforce {
+				goto enforceBuckets
+			}
+
 			// RWP already detected in CheckBruteForce — do not increase buckets.
 			a.Runtime.BFRWP = true
 
@@ -694,6 +700,8 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err != nil {
 			return
 		} else if !needEnforce {
+			bm = bm.WithRWPDecision(false)
+
 			// Store result in context so downstream consumers (e.g., Post-Lua-Actions) can read it.
 			ctx.Set(definitions.CtxRWPResultKey, false)
 
@@ -707,6 +715,8 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		// Enforcement needed — cache the positive result for downstream consumers.
 		ctx.Set(definitions.CtxRWPResultKey, true)
 	}
+
+enforceBuckets:
 
 	proto := ""
 	if a.Request.Protocol != nil {
