@@ -32,10 +32,7 @@ func main() {
 	}
 
 	// Handle Color
-	useColor := true
-	if strings.ToLower(cfg.ColorMode) == "never" || os.Getenv("NO_COLOR") != "" {
-		useColor = false
-	}
+	useColor := !(strings.ToLower(cfg.ColorMode) == "never" || os.Getenv("NO_COLOR") != "")
 
 	engine.InitColorStyles(useColor)
 
@@ -215,7 +212,7 @@ func printStats(app *engine.App) {
 
 		if engine.IsTTY() {
 			fmt.Println()
-			engine.PrintLatencyHistogram(stats, app.Collector.Buckets(), app.Collector.Overflow())
+			engine.PrintLatencyHistogram(stats, app.Collector.Buckets())
 			fmt.Println()
 		}
 	}

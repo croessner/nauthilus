@@ -156,7 +156,7 @@ func SaveStatsToRedis(ctx context.Context, cfg config.File, logger *slog.Logger,
 }
 
 // UpdateRedisPoolStats updates and tracks Redis pool statistics such as hits, misses, timeouts, and connection counts.
-func UpdateRedisPoolStats(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) {
+func UpdateRedisPoolStats(redisClient rediscli.Client) {
 	previousHits := make(map[string]float64)
 	previousMisses := make(map[string]float64)
 	previousTimeouts := make(map[string]float64)

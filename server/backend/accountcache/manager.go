@@ -93,10 +93,8 @@ func (m *Manager) Set(cfg config.File, username, protocol, oidcClientID, account
 	}
 
 	// Optional: enforce max items (best-effort). If MaxItems==0 => unlimited.
-	if m.maxItems > 0 && m.cache.Len() >= m.maxItems {
-		// Best-effort: do nothing; cache will naturally rotate via TTL.
-		// We keep it simple to avoid adding LRU complexity.
-	}
+	// Note: if maxItems > 0 and cache is full, we rely on TTL-based rotation
+	// rather than adding LRU complexity.
 
 	key := m.makeKey(username, protocol, oidcClientID)
 

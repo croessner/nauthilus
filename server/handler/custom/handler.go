@@ -32,14 +32,9 @@ type Handler struct {
 	validator   oidcbearer.TokenValidator
 }
 
-// New creates a Handler with zero dependencies (for testing).
-func New() *Handler {
-	return &Handler{}
-}
-
-// NewWithDeps creates a Handler with explicit dependencies.
+// New creates a Handler with explicit dependencies.
 // The validator may be nil when OIDC authentication is not configured.
-func NewWithDeps(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) *Handler {
+func New(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) *Handler {
 	return &Handler{cfgProvider: cfgProvider, logger: logger, redis: redis, validator: validator}
 }
 

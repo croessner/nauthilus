@@ -45,7 +45,7 @@ type ConnMgrService struct {
 
 // NewDefaultConnMgrService creates a ConnMgrService with default settings for connection monitoring and context handling.
 func NewDefaultConnMgrService(cfgProvider configfx.Provider, logger *slog.Logger) *ConnMgrService {
-	return NewConnMgrService(5*time.Second, stats.UpdateGenericConnectionsWithContext, cfgProvider, logger)
+	return NewConnMgrService(5*time.Second, stats.UpdateGenericConnections, cfgProvider, logger)
 }
 
 // NewConnMgrService initializes and returns a new instance of ConnMgrService with the given interval and start function.

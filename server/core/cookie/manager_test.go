@@ -128,7 +128,7 @@ func TestSecureManager_TypedGetters(t *testing.T) {
 	mgr.Set("uint8", uint8(255))
 	mgr.Set("bool", true)
 	mgr.Set("strSlice", []string{"a", "b", "c"})
-	mgr.Set("duration", time.Duration(5*time.Second))
+	mgr.Set("duration", 5*time.Second)
 
 	// Test GetString.
 	assert.Equal(t, "hello", mgr.GetString("str", "default"))

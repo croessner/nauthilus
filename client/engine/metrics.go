@@ -215,7 +215,7 @@ func (p *MetricsPoller) fetchAndFormat(ctx context.Context) string {
 	for b, cur := range droppedByBackend {
 		prev := p.lastDrop[b]
 		if cur >= prev {
-			droppedDeltaTotal += (cur - prev)
+			droppedDeltaTotal += cur - prev
 		}
 		p.lastDrop[b] = cur
 	}

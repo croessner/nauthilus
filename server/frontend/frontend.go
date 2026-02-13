@@ -66,7 +66,7 @@ func GetLocalized(ctx *gin.Context, cfg config.File, logger *slog.Logger, messag
 }
 
 // CreateLanguagePassive creates a slice of Language structs for non-current languages.
-func CreateLanguagePassive(ctx *gin.Context, cfg config.File, destPage string, languageTags []language.Tag, currentName string) []Language {
+func CreateLanguagePassive(ctx *gin.Context, destPage string, languageTags []language.Tag, currentName string) []Language {
 	var languagePassive []Language
 
 	for _, languageTag := range languageTags {

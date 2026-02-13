@@ -91,81 +91,74 @@ func TestBasePageData(t *testing.T) {
 		r.ServeHTTP(w, req)
 	})
 
-	t.Run("OIDC Client Name", func(t *testing.T) {
-		r := gin.New()
-		cfg := &mockFrontendCfg{
-			FileSettings: config.FileSettings{
-				IdP: &config.IdPSection{
-					OIDC: config.OIDCConfig{
-						Clients: []config.OIDCClient{
-							{
-								ClientID: "client-1",
-								Name:     "Client One",
+	idpClientNameTests := []struct {
+		name         string
+		cfg          *mockFrontendCfg
+		sessionData  map[string]any
+		expectedName string
+	}{
+		{
+			name: "OIDC Client Name",
+			cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{
+					IdP: &config.IdPSection{
+						OIDC: config.OIDCConfig{
+							Clients: []config.OIDCClient{
+								{ClientID: "client-1", Name: "Client One"},
 							},
 						},
 					},
 				},
 			},
-		}
-
-		r.GET("/test", func(c *gin.Context) {
-			mgr := &mockCookieManager{data: map[string]any{
+			sessionData: map[string]any{
 				definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
 				definitions.SessionKeyIdPClientID: "client-1",
-			}}
-			c.Set(definitions.CtxSecureDataKey, mgr)
-
-			lm := &mockLangManager{}
-			localizer := i18n.NewLocalizer(lm.GetBundle(), "en")
-			c.Set(definitions.CtxLocalizedKey, localizer)
-
-			data := BasePageData(c, cfg, lm)
-			assert.Equal(t, "Client One", data["IdPClientName"])
-			c.Status(http.StatusOK)
-		})
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-		r.ServeHTTP(w, req)
-	})
-
-	t.Run("SAML Service Provider Name", func(t *testing.T) {
-		r := gin.New()
-		cfg := &mockFrontendCfg{
-			FileSettings: config.FileSettings{
-				IdP: &config.IdPSection{
-					SAML2: config.SAML2Config{
-						ServiceProviders: []config.SAML2ServiceProvider{
-							{
-								EntityID: "sp-1",
-								Name:     "Example SP",
+			},
+			expectedName: "Client One",
+		},
+		{
+			name: "SAML Service Provider Name",
+			cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{
+					IdP: &config.IdPSection{
+						SAML2: config.SAML2Config{
+							ServiceProviders: []config.SAML2ServiceProvider{
+								{EntityID: "sp-1", Name: "Example SP"},
 							},
 						},
 					},
 				},
 			},
-		}
-
-		r.GET("/test", func(c *gin.Context) {
-			mgr := &mockCookieManager{data: map[string]any{
+			sessionData: map[string]any{
 				definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
 				definitions.SessionKeyIdPSAMLEntityID: "sp-1",
-			}}
-			c.Set(definitions.CtxSecureDataKey, mgr)
+			},
+			expectedName: "Example SP",
+		},
+	}
 
-			lm := &mockLangManager{}
-			localizer := i18n.NewLocalizer(lm.GetBundle(), "en")
-			c.Set(definitions.CtxLocalizedKey, localizer)
+	for _, tt := range idpClientNameTests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
 
-			data := BasePageData(c, cfg, lm)
-			assert.Equal(t, "Example SP", data["IdPClientName"])
-			c.Status(http.StatusOK)
+			r.GET("/test", func(c *gin.Context) {
+				mgr := &mockCookieManager{data: tt.sessionData}
+				c.Set(definitions.CtxSecureDataKey, mgr)
+
+				lm := &mockLangManager{}
+				localizer := i18n.NewLocalizer(lm.GetBundle(), "en")
+				c.Set(definitions.CtxLocalizedKey, localizer)
+
+				data := BasePageData(c, tt.cfg, lm)
+				assert.Equal(t, tt.expectedName, data["IdPClientName"])
+				c.Status(http.StatusOK)
+			})
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+			r.ServeHTTP(w, req)
 		})
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-		r.ServeHTTP(w, req)
-	})
+	}
 }
 
 func TestURLParamsPreservation(t *testing.T) {

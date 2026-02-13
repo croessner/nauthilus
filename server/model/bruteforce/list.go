@@ -15,15 +15,33 @@
 
 package bruteforce
 
-// BlockedIPAddresses represents a structure to hold blocked IP addresses retrieved from Redis.
-// IPAddresses maps IP addresses to their corresponding rules/buckets.
-// Error holds any error encountered during the retrieval process.
+import "time"
+
+// BanEntry represents a single active brute force ban with all derived information.
+type BanEntry struct {
+	// Network is the banned IP network (e.g. "192.168.1.0/24").
+	Network string `json:"network"`
+
+	// Bucket is the name of the brute force rule that triggered the ban.
+	Bucket string `json:"bucket"`
+
+	// BanTime is the configured ban duration from the rule.
+	BanTime time.Duration `json:"ban_time,omitzero"`
+
+	// TTL is the remaining time until the ban expires (from Redis TTL).
+	TTL time.Duration `json:"ttl,omitzero"`
+
+	// BannedAt is the calculated timestamp when the ban was created.
+	BannedAt time.Time `json:"banned_at,omitzero"`
+}
+
+// BlockedIPAddresses represents the response for the brute force listing API.
 type BlockedIPAddresses struct {
-	// IPAddresses maps IP addresses to their respective buckets/rules that triggered blocking.
-	IPAddresses map[string]string `json:"ip_addresses"`
+	// Entries contains all active ban entries.
+	Entries []BanEntry `json:"entries"`
 
 	// Error holds any error encountered during the retrieval process.
-	Error *string `json:"error"`
+	Error *string `json:"error,omitempty"`
 }
 
 // BlockedAccounts represents a list of blocked user accounts and potential error information.

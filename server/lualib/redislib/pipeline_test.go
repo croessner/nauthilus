@@ -198,10 +198,9 @@ func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
 		t.Fatalf("expected an error, got nil")
 	}
 
-	// No Redis commands should have been executed
-	if err := mock.ExpectationsWereMet(); err != nil {
-		// redismock returns no expectations as met, which is fine here.
-	}
+	// No Redis commands should have been executed.
+	// redismock returns no expectations as met, which is fine here.
+	_ = mock.ExpectationsWereMet()
 }
 
 func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {

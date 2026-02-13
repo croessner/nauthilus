@@ -240,6 +240,10 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 			refreshTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultRefreshTokenLifetime()
 		}
 
+		// Link the access token to the refresh token session so it can be
+		// invalidated during token rotation (RFC 6749 best practice).
+		session.AccessToken = accessTokenString
+
 		err = n.storage.StoreRefreshToken(ctx, refreshTokenString, session, refreshTokenLifetime)
 		if err != nil {
 			sp.RecordError(err)
@@ -327,10 +331,49 @@ func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 		return "", "", "", 0, fmt.Errorf("client mismatch")
 	}
 
-	// Rotation: delete old refresh token
+	// Rotation: invalidate old access token and delete old refresh token
+	// (RFC 6749 best practice for token rotation).
+	n.invalidateOldAccessToken(ctx, session, clientID)
+
 	_ = n.storage.DeleteRefreshToken(ctx, refreshToken)
 
+	// Clear the old access token reference before issuing new tokens.
+	session.AccessToken = ""
+
 	return n.IssueTokens(ctx, session)
+}
+
+// invalidateOldAccessToken removes the previous access token that was linked
+// to the refresh token session. For opaque tokens it deletes the Redis entry;
+// for JWT tokens it adds the token to a denylist with the remaining lifetime.
+func (n *NauthilusIdP) invalidateOldAccessToken(ctx context.Context, session *OIDCSession, clientID string) {
+	oldAccessToken := session.AccessToken
+
+	if oldAccessToken == "" {
+		return
+	}
+
+	// Opaque tokens do not contain dots; JWT tokens always do.
+	if !strings.Contains(oldAccessToken, ".") {
+		_ = n.storage.DeleteAccessToken(ctx, oldAccessToken)
+
+		return
+	}
+
+	// JWT token: add to denylist with the client's access token lifetime
+	// as a conservative upper bound for the remaining validity.
+	client, ok := n.FindClient(clientID)
+	if !ok {
+		return
+	}
+
+	ttl := client.AccessTokenLifetime
+
+	if ttl == 0 {
+		ttl = n.deps.Cfg.GetIdP().OIDC.GetDefaultAccessTokenLifetime()
+	}
+
+	_ = n.storage.DenyJWTAccessToken(ctx, oldAccessToken, ttl)
 }
 
 // IssueLogoutToken generates a logout token for the given client and user.
@@ -381,6 +424,11 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 		}
 
 		return nil, fmt.Errorf("invalid or expired opaque token")
+	}
+
+	// Check JWT denylist before validation.
+	if n.storage.IsJWTAccessTokenDenied(ctx, tokenString) {
+		return nil, fmt.Errorf("access token has been revoked")
 	}
 
 	// Fallback to JWT

@@ -18,27 +18,24 @@ package confighandler
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/gin-gonic/gin"
 )
 
+// Handler exposes configuration-related routes.
 type Handler struct {
-	cfg  config.File
 	deps *handlerdeps.Deps
 }
 
-// NewWithDeps constructs the config handler with injected dependencies.
-//
-// Enables deps-based endpoints (avoid globals in request path).
-func NewWithDeps(deps *handlerdeps.Deps) *Handler {
+// New constructs the config handler with injected dependencies.
+func New(deps *handlerdeps.Deps) *Handler {
 	if deps == nil {
 		return &Handler{}
 	}
 
-	return &Handler{cfg: deps.Cfg, deps: deps}
+	return &Handler{deps: deps}
 }
 
 func (h *Handler) Register(r gin.IRouter) {
@@ -48,17 +45,17 @@ func (h *Handler) Register(r gin.IRouter) {
 }
 
 func (h *Handler) load(c *gin.Context) {
-	if h.cfg == nil {
+	if h.deps == nil || h.deps.Cfg == nil {
 		c.AbortWithStatus(http.StatusInternalServerError)
 
 		return
 	}
 
-	if h.cfg.GetServer().GetEndpoint().IsConfigurationDisabled() {
+	if h.deps.Cfg.GetServer().GetEndpoint().IsConfigurationDisabled() {
 		c.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
-	core.NewConfigLoadHandler(h.cfg, h.deps.Logger, h.deps.Redis)(c)
+	core.NewConfigLoadHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis)(c)
 }

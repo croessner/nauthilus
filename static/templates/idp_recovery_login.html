@@ -25,9 +25,12 @@
                     <label class="label">
                         <span class="label-text">{{ .Code }}</span>
                     </label>
-                    <input autocomplete="off" autofocus class="input input-bordered w-full text-center text-2xl tracking-widest font-mono"
-                           name="code" placeholder="{{ .Code }}"
-                           required type="text">
+                    <label>
+                        <input autocomplete="off" autofocus
+                               class="input input-bordered w-full text-center text-2xl tracking-widest font-mono"
+                               name="code" placeholder="{{ .Code }}"
+                               required type="text">
+                    </label>
                 </div>
 
                 <div class="card-actions justify-end mt-8">

@@ -17,7 +17,6 @@ package backend
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
@@ -47,8 +46,6 @@ type Channel interface {
 type channelImpl struct {
 	ldapChannel LDAPChannel
 	luaChannel  LuaChannel
-	ldapOnce    sync.Once
-	luaOnce     sync.Once
 }
 
 // GetLdapChannel retrieves and returns the LDAPChannel instance associated with the channelImpl instance.

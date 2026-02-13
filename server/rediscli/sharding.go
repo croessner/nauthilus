@@ -32,8 +32,3 @@ func GetShardID(input string) string {
 func GetUserHashKey(prefix, username string) string {
 	return fmt.Sprintf("%s%s:{%s}", prefix, definitions.RedisUserHashKey, GetShardID(username))
 }
-
-// GetBruteForceHashKey returns the sharded Redis key for brute-force tracking.
-func GetBruteForceHashKey(prefix, network string) string {
-	return fmt.Sprintf("%s%s:{%s}", prefix, definitions.RedisBruteForceHashKey, GetShardID(network))
-}

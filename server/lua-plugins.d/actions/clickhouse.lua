@@ -287,6 +287,7 @@ function nauthilus_call_action(request)
             dyn_threat = dyn_threat,
             dyn_response = dyn_response,
             repeating = (request.repeating == true),
+            rwp = (request.rwp == true),
             user_found = (request.user_found == true),
             authenticated = (request.authenticated == true),
             xssl_protocol = request.xssl_protocol or "",

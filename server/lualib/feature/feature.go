@@ -17,6 +17,7 @@ package feature
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -184,16 +185,6 @@ func (r *Request) CallFeatureLua(ctx *gin.Context, cfg config.File, logger *slog
 	return
 }
 
-// setRequest creates a new Lua table and sets the request properties as key-value pairs in the table. The table is then returned.
-// The request table is then returned.
-func (r *Request) setRequest(cfg config.File, L *lua.LState) *lua.LTable {
-	request := L.NewTable()
-
-	r.CommonRequest.SetupRequest(L, cfg, request)
-
-	return request
-}
-
 // executeScripts executes all Lua feature scripts in parallel. It waits for all to finish,
 // then aggregates their results considering error, abort, and triggered semantics.
 func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, pool *vmpool.Pool) (triggered bool, abortFeatures bool, err error) {
@@ -277,7 +268,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			// Build per-feature request table from the common request
 			request := Llocal.NewTable()
 
-			r.CommonRequest.SetupRequest(Llocal, cfg, request)
+			r.SetupRequest(Llocal, cfg, request)
 
 			// Set local override fields from Request struct
 			if r.Session != "" {
@@ -356,17 +347,17 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
 
 					return e
-				} else {
-					ret := Llocal.ToInt(-1)
-					Llocal.Pop(1)
-					ab := Llocal.ToBool(-1)
-					Llocal.Pop(1)
-					tr := Llocal.ToBool(-1)
-					Llocal.Pop(1)
-					fr.ret = ret
-					fr.abort = ab
-					fr.triggered = tr
 				}
+
+				ret := Llocal.ToInt(-1)
+				Llocal.Pop(1)
+				ab := Llocal.ToBool(-1)
+				Llocal.Pop(1)
+				tr := Llocal.ToBool(-1)
+				Llocal.Pop(1)
+				fr.ret = ret
+				fr.abort = ab
+				fr.triggered = tr
 			}
 
 			// Log per-feature outcome without touching shared r.Logs
@@ -430,20 +421,14 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	// Include Lua stacktrace when available for better diagnostics
-	if ae, ok := err.(*lua.ApiError); ok && ae != nil {
+	var ae *lua.ApiError
+	if stderrors.As(err, &ae) && ae != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, r.Session,
 			"name", scriptName,
 			definitions.LogKeyMsg, "Lua feature failed",
 			definitions.LogKeyError, ae.Error(),
 			"stacktrace", ae.StackTrace,
-		)
-	} else {
-		level.Error(logger).Log(
-			definitions.LogKeyGUID, r.Session,
-			"name", scriptName,
-			definitions.LogKeyMsg, "Lua feature failed",
-			definitions.LogKeyError, err,
 		)
 	}
 
@@ -452,28 +437,6 @@ func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc,
 	}
 
 	luaCancel()
-}
-
-// generateLog creates a log entry with details about a Lua feature execution, including triggered state, abort flag, and result.
-func (r *Request) generateLog(ctx context.Context, cfg config.File, logger *slog.Logger, triggered, abortFeatures bool, ret int, scriptName string) {
-	logs := []any{
-		definitions.LogKeyGUID, r.Session,
-		"name", scriptName,
-		definitions.LogKeyMsg, "Lua feature finished",
-		"triggered", triggered,
-		"abort_features", abortFeatures,
-		"result", func() string {
-			return r.formatResult(ret)
-		}(),
-	}
-
-	if r.Logs != nil {
-		for index := range *r.Logs {
-			logs = append(logs, (*r.Logs)[index])
-		}
-	}
-
-	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgFeature, logs...)
 }
 
 // formatResult returns a string representation of the given integer result.

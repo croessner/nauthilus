@@ -19,7 +19,7 @@ import (
 	"errors"
 	"net/http"
 
-	gin "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 )
 

@@ -18,7 +18,6 @@ package auth
 import (
 	"net/http"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
@@ -26,21 +25,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Handler registers authentication-related routes.
 type Handler struct {
-	cfg  config.File
 	deps *handlerdeps.Deps
 }
 
-func New(cfg config.File) *Handler {
-	return &Handler{cfg: cfg}
-}
-
-func NewWithDeps(deps *handlerdeps.Deps) *Handler {
+// New constructs the auth handler with injected dependencies.
+func New(deps *handlerdeps.Deps) *Handler {
 	if deps == nil {
 		return &Handler{}
 	}
 
-	return &Handler{cfg: deps.Cfg, deps: deps}
+	return &Handler{deps: deps}
 }
 
 func (h *Handler) Register(router gin.IRouter) {
@@ -66,7 +62,7 @@ func (h *Handler) Register(router gin.IRouter) {
 }
 
 func (h *Handler) basic(ctx *gin.Context) {
-	if h.cfg.GetServer().GetEndpoint().IsAuthBasicDisabled() {
+	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthBasicDisabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -84,7 +80,7 @@ func (h *Handler) basic(ctx *gin.Context) {
 }
 
 func (h *Handler) json(ctx *gin.Context) {
-	if h.cfg.GetServer().GetEndpoint().IsAuthJSONDisabled() {
+	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthJSONDisabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -105,7 +101,7 @@ func (h *Handler) json(ctx *gin.Context) {
 }
 
 func (h *Handler) header(ctx *gin.Context) {
-	if h.cfg.GetServer().GetEndpoint().IsAuthHeaderDisabled() {
+	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthHeaderDisabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -123,7 +119,7 @@ func (h *Handler) header(ctx *gin.Context) {
 }
 
 func (h *Handler) nginx(ctx *gin.Context) {
-	if h.cfg.GetServer().GetEndpoint().IsAuthNginxDisabled() {
+	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthNginxDisabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -141,7 +137,7 @@ func (h *Handler) nginx(ctx *gin.Context) {
 }
 
 func (h *Handler) saslAuthd(ctx *gin.Context) {
-	if h.cfg.GetServer().GetEndpoint().IsAuthSASLAuthdDisabled() {
+	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthSASLAuthdDisabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -187,16 +183,12 @@ func (h *Handler) process(ctx *gin.Context) {
 }
 
 func (h *Handler) newAuthState(ctx *gin.Context) core.State {
-	if h.deps != nil {
-		return core.NewAuthStateWithSetupWithDeps(ctx, core.AuthDeps{
-			Cfg:          h.deps.Cfg,
-			Env:          h.deps.Env,
-			Logger:       h.deps.Logger,
-			Redis:        h.deps.Redis,
-			AccountCache: h.deps.AccountCache,
-			Channel:      h.deps.Channel,
-		})
-	}
-
-	return core.NewAuthStateWithSetup(ctx)
+	return core.NewAuthStateWithSetupWithDeps(ctx, core.AuthDeps{
+		Cfg:          h.deps.Cfg,
+		Env:          h.deps.Env,
+		Logger:       h.deps.Logger,
+		Redis:        h.deps.Redis,
+		AccountCache: h.deps.AccountCache,
+		Channel:      h.deps.Channel,
+	})
 }

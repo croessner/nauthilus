@@ -155,38 +155,6 @@ func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
 	return true
 }
 
-// getIdPFlowType returns the current IdP flow type from the session cookie.
-func (h *FrontendHandler) getIdPFlowType(ctx *gin.Context) string {
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
-		return ""
-	}
-
-	return mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-}
-
-// clearIdPFlow removes all IdP flow state from the session cookie.
-func (h *FrontendHandler) clearIdPFlow(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-	if mgr == nil {
-		return
-	}
-
-	mgr.Delete(definitions.SessionKeyIdPFlowActive)
-	mgr.Delete(definitions.SessionKeyIdPFlowType)
-	mgr.Delete(definitions.SessionKeyIdPClientID)
-	mgr.Delete(definitions.SessionKeyIdPRedirectURI)
-	mgr.Delete(definitions.SessionKeyIdPScope)
-	mgr.Delete(definitions.SessionKeyIdPState)
-	mgr.Delete(definitions.SessionKeyIdPNonce)
-	mgr.Delete(definitions.SessionKeyIdPResponseType)
-	mgr.Delete(definitions.SessionKeyIdPPrompt)
-	mgr.Delete(definitions.SessionKeyIdPSAMLRequest)
-	mgr.Delete(definitions.SessionKeyIdPSAMLRelayState)
-	mgr.Delete(definitions.SessionKeyIdPSAMLEntityID)
-	mgr.Delete(definitions.SessionKeyIdPOriginalURL)
-}
-
 // renderNoFlowError renders an error page when the /login endpoint is accessed without a valid IdP flow.
 func (h *FrontendHandler) renderNoFlowError(ctx *gin.Context) {
 	// Check if deps is available (may not be in tests)
@@ -307,7 +275,7 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		if !h.hasMFAManagePermission(mgr) {
-			h.renderErrorModal(ctx, "Missing required permission for MFA management", http.StatusForbidden)
+			h.renderErrorModal(ctx, "Missing required permission for MFA management")
 			ctx.Abort()
 
 			return
@@ -373,9 +341,10 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
 		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcClientID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 		}
 	}
@@ -404,7 +373,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
-		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, cfg, path, langManager.GetTags(), currentName),
+		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, path, langManager.GetTags(), currentName),
 		"Username":            username,
 		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
 		"ConfirmYes":          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
@@ -455,9 +424,10 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	if mgr != nil {
 		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
@@ -617,9 +587,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	if mgr != nil {
 		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
@@ -1004,17 +975,26 @@ func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_recovery_login.html", data)
 }
 
-// PostLoginRecovery handles the recovery code verification during login.
-// All flow state is read from the encrypted cookie - no form parameters for flow state.
-func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
-	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
-	defer sp.End()
+// mfaSessionState holds the common session state extracted for MFA verification handlers.
+type mfaSessionState struct {
+	mgr          cookie.Manager
+	username     string
+	oidcCID      string
+	samlEntityID string
+}
 
+// extractMFASessionAndUser reads the MFA session state and form code from the cookie/request,
+// validates presence of required fields, and looks up the user. Returns nil if any step fails
+// (the caller is redirected to the login page in that case).
+func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessionState, *backend.User, string) {
 	mgr := cookie.GetManager(ctx)
-	username := ""
-	hasAuthResult := false
-	oidcCID := ""
-	samlEntityID := ""
+
+	var (
+		username      string
+		hasAuthResult bool
+		oidcCID       string
+		samlEntityID  string
+	)
 
 	if mgr != nil {
 		username = mgr.GetString(definitions.SessionKeyUsername, "")
@@ -1022,9 +1002,10 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 
 		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
-		if flowType == definitions.ProtoOIDC {
+		switch flowType {
+		case definitions.ProtoOIDC:
 			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
+		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 			if samlEntityID == "" {
 				samlEntityID = definitions.ProtoSAML
@@ -1037,7 +1018,7 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	if username == "" || !hasAuthResult || code == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
-		return
+		return nil, nil, ""
 	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
@@ -1046,17 +1027,38 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	if err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
 
+		return nil, nil, ""
+	}
+
+	state := &mfaSessionState{
+		mgr:          mgr,
+		username:     username,
+		oidcCID:      oidcCID,
+		samlEntityID: samlEntityID,
+	}
+
+	return state, user, code
+}
+
+// PostLoginRecovery handles the recovery code verification during login.
+// All flow state is read from the encrypted cookie - no form parameters for flow state.
+func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_recovery")
+	defer sp.End()
+
+	sess, user, code := h.extractMFASessionAndUser(ctx)
+	if sess == nil {
 		return
 	}
 
 	// Verify Recovery Code
 	sourceBackend := uint8(definitions.BackendLDAP)
 
-	if mgr != nil {
-		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+	if sess.mgr != nil {
+		sourceBackend = sess.mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
-	success, err := h.mfa.UseRecoveryCode(ctx, username, code, sourceBackend)
+	success, err := h.mfa.UseRecoveryCode(ctx, sess.username, code, sourceBackend)
 
 	if err != nil {
 		h.deps.Logger.Error("Failed to use recovery code", "error", err)
@@ -1273,45 +1275,15 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_login_totp")
 	defer sp.End()
 
-	mgr := cookie.GetManager(ctx)
-	username := ""
+	sess, user, code := h.extractMFASessionAndUser(ctx)
+	if sess == nil {
+		return
+	}
+
 	authResult := uint8(definitions.AuthResultFail)
-	hasAuthResult := false
-	oidcCID := ""
-	samlEntityID := ""
 
-	if mgr != nil {
-		username = mgr.GetString(definitions.SessionKeyUsername, "")
-		authResult = mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
-		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
-
-		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-
-		if flowType == definitions.ProtoOIDC {
-			oidcCID = mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		} else if flowType == definitions.ProtoSAML {
-			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
-			if samlEntityID == "" {
-				samlEntityID = definitions.ProtoSAML
-			}
-		}
-	}
-
-	code := ctx.PostForm("code")
-
-	if username == "" || !hasAuthResult || code == "" {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
-	}
-
-	idpInstance := idp.NewNauthilusIdP(h.deps)
-	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
-
-	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
+	if sess.mgr != nil {
+		authResult = sess.mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
 	}
 
 	// Verify TOTP
@@ -1325,9 +1297,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	}
 
 	auth := state.(*core.AuthState)
-	auth.SetUsername(username)
-	auth.SetOIDCCID(oidcCID)
-	auth.SetSAMLEntityID(samlEntityID)
+	auth.SetUsername(sess.username)
+	auth.SetOIDCCID(sess.oidcCID)
+	auth.SetSAMLEntityID(sess.samlEntityID)
 
 	// We need to load user into auth to get TOTP secret and recovery codes
 	// GetUserByUsername already did some of this, but TotpValidation expects secrets in AuthState
@@ -1335,7 +1307,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	auth.SetTOTPSecretField(user.TOTPSecretField)
 	auth.SetTOTPRecoveryField(user.TOTPRecoveryField)
 
-	err = core.TotpValidation(ctx, auth, code, authDeps)
+	err := core.TotpValidation(ctx, auth, code, authDeps)
 
 	if err != nil {
 		sp.RecordError(err)
@@ -1387,13 +1359,14 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 		// Calculate ShowRememberMe based on flow state.
 		showRememberMe := false
+		idpInstance := idp.NewNauthilusIdP(h.deps)
 
-		if oidcCID != "" {
-			if client, ok := idpInstance.FindClient(oidcCID); ok {
+		if sess.oidcCID != "" {
+			if client, ok := idpInstance.FindClient(sess.oidcCID); ok {
 				showRememberMe = client.RememberMeTTL > 0
 			}
-		} else if samlEntityID != "" {
-			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+		} else if sess.samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(sess.samlEntityID); ok {
 				showRememberMe = sp.RememberMeTTL > 0
 			}
 		}
@@ -1406,9 +1379,9 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
 
 		// Important: clean up cookie so they start over
-		if mgr != nil {
-			mgr.Delete(definitions.SessionKeyUsername)
-			mgr.Delete(definitions.SessionKeyAuthResult)
+		if sess.mgr != nil {
+			sess.mgr.Delete(definitions.SessionKeyUsername)
+			sess.mgr.Delete(definitions.SessionKeyAuthResult)
 		}
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
@@ -1557,7 +1530,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	code := ctx.PostForm("code")
 
 	if secret == "" || username == "" || code == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
@@ -1565,7 +1538,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		h.renderErrorModal(ctx, err.Error(), http.StatusBadRequest)
+		h.renderErrorModal(ctx, err.Error())
 
 		return
 	}
@@ -1600,20 +1573,20 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	}
 
 	if username == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Failed to fetch user data", http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to fetch user data")
 
 		return
 	}
 
 	if !userData.HaveTOTP && !userData.HaveWebAuthn {
-		h.renderErrorModal(ctx, "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "At least one MFA method (TOTP or WebAuthn) must be active to generate recovery codes")
 
 		return
 	}
@@ -1621,7 +1594,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	codes, err := h.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
 	if err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to generate recovery codes: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to generate recovery codes: "+err.Error())
 
 		return
 	}
@@ -1659,7 +1632,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	}
 
 	if username == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
@@ -1667,7 +1640,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "fail").Inc()
-		h.renderErrorModal(ctx, "Failed to delete TOTP secret: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to delete TOTP secret: "+err.Error())
 
 		return
 	}
@@ -1680,7 +1653,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 
 	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
 	if state == nil {
-		h.renderErrorModal(ctx, "Failed to initialize auth state", http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to initialize auth state")
 
 		return
 	}
@@ -1706,7 +1679,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	}
 
 	if userID == "" || username == "" {
-		h.renderErrorModal(ctx, "Invalid request", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid request")
 
 		return
 	}
@@ -1716,7 +1689,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
-		h.renderErrorModal(ctx, "Failed to delete WebAuthn from Redis: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to delete WebAuthn from Redis: "+err.Error())
 
 		return
 	}
@@ -1770,7 +1743,7 @@ func (h *FrontendHandler) LoggedOut(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_logged_out.html", data)
 }
 
-func (h *FrontendHandler) renderErrorModal(ctx *gin.Context, msg string, code int) {
+func (h *FrontendHandler) renderErrorModal(ctx *gin.Context, msg string) {
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
 	data["Message"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, msg)
@@ -1843,27 +1816,27 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 
 	id := ctx.Param("id")
 	if id == "" {
-		h.renderErrorModal(ctx, "Missing device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Missing device ID")
 
 		return
 	}
 
 	decodedID, err := base64.RawURLEncoding.DecodeString(id)
 	if err != nil {
-		h.renderErrorModal(ctx, "Invalid device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid device ID")
 
 		return
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Not logged in", http.StatusUnauthorized)
+		h.renderErrorModal(ctx, "Not logged in")
 
 		return
 	}
 
 	if userData.WebAuthnUser == nil {
-		h.renderErrorModal(ctx, "User not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "User not found")
 
 		return
 	}
@@ -1878,7 +1851,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	}
 
 	if targetCred == nil {
-		h.renderErrorModal(ctx, "Credential not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "Credential not found")
 
 		return
 	}
@@ -1886,7 +1859,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	// Delete from backend via AuthState
 	if err := userData.AuthState.DeleteWebAuthnCredential(targetCred); err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to delete credential: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to delete credential: "+err.Error())
 
 		return
 	}
@@ -1926,34 +1899,34 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 
 	id := ctx.Param("id")
 	if id == "" {
-		h.renderErrorModal(ctx, "Missing device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Missing device ID")
 
 		return
 	}
 
 	name := strings.TrimSpace(ctx.PostForm("name"))
 	if name == "" {
-		h.renderErrorModal(ctx, "Missing device name", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Missing device name")
 
 		return
 	}
 
 	decodedID, err := base64.RawURLEncoding.DecodeString(id)
 	if err != nil {
-		h.renderErrorModal(ctx, "Invalid device ID", http.StatusBadRequest)
+		h.renderErrorModal(ctx, "Invalid device ID")
 
 		return
 	}
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {
-		h.renderErrorModal(ctx, "Not logged in", http.StatusUnauthorized)
+		h.renderErrorModal(ctx, "Not logged in")
 
 		return
 	}
 
 	if userData.WebAuthnUser == nil {
-		h.renderErrorModal(ctx, "User not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "User not found")
 
 		return
 	}
@@ -1969,7 +1942,7 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 	}
 
 	if !found {
-		h.renderErrorModal(ctx, "Credential not found", http.StatusNotFound)
+		h.renderErrorModal(ctx, "Credential not found")
 
 		return
 	}
@@ -1980,7 +1953,7 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 
 	if err := userData.AuthState.UpdateWebAuthnCredential(&oldCredential, &newCredential); err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to update credential: "+err.Error(), http.StatusInternalServerError)
+		h.renderErrorModal(ctx, "Failed to update credential: "+err.Error())
 
 		return
 	}

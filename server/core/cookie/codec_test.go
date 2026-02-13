@@ -212,7 +212,7 @@ func TestSecureCodec_ComplexTypes(t *testing.T) {
 
 	original := map[string]any{
 		"strings":  []string{"a", "b", "c"},
-		"duration": time.Duration(5 * time.Second),
+		"duration": 5 * time.Second,
 		"time":     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		"nested": map[string]any{
 			"key": "value",
@@ -232,7 +232,7 @@ func TestSecureCodec_ComplexTypes(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{"a", "b", "c"}, decoded["strings"])
-	assert.Equal(t, time.Duration(5*time.Second), decoded["duration"])
+	assert.Equal(t, 5*time.Second, decoded["duration"])
 }
 
 func TestSecureCodec_UniqueEncodings(t *testing.T) {

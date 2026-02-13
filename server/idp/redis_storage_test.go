@@ -92,4 +92,108 @@ func TestRedisTokenStorage(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("DenyJWTAccessToken", func(t *testing.T) {
+		token := "header.payload.signature"
+		ttl := 2 * time.Hour
+		key := prefix + "oidc:denied_access_token:" + token
+
+		mock.ExpectSet(key, "1", ttl).SetVal("OK")
+
+		err := storage.DenyJWTAccessToken(ctx, token, ttl)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("DenyJWTAccessToken_EmptyToken", func(t *testing.T) {
+		err := storage.DenyJWTAccessToken(ctx, "", time.Hour)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("DenyJWTAccessToken_ZeroTTL", func(t *testing.T) {
+		err := storage.DenyJWTAccessToken(ctx, "some-token", 0)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("IsJWTAccessTokenDenied_True", func(t *testing.T) {
+		token := "denied-jwt-token"
+		key := prefix + "oidc:denied_access_token:" + token
+
+		mock.ExpectGet(key).SetVal("1")
+
+		denied := storage.IsJWTAccessTokenDenied(ctx, token)
+		assert.True(t, denied)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("IsJWTAccessTokenDenied_False", func(t *testing.T) {
+		token := "valid-jwt-token"
+		key := prefix + "oidc:denied_access_token:" + token
+
+		mock.ExpectGet(key).RedisNil()
+
+		denied := storage.IsJWTAccessTokenDenied(ctx, token)
+		assert.False(t, denied)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("DeleteUserAccessTokens", func(t *testing.T) {
+		userID := "user123"
+		userKey := prefix + "oidc:user_access_tokens:" + userID
+		tokens := []string{"at1", "at2"}
+
+		mock.ExpectSMembers(userKey).SetVal(tokens)
+		mock.ExpectDel(prefix + "oidc:access_token:at1").SetVal(1)
+		mock.ExpectDel(prefix + "oidc:access_token:at2").SetVal(1)
+		mock.ExpectDel(userKey).SetVal(1)
+
+		err := storage.DeleteUserAccessTokens(ctx, userID)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("DeleteUserAccessTokens_EmptyUser", func(t *testing.T) {
+		err := storage.DeleteUserAccessTokens(ctx, "")
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("DeleteUserAccessTokens_NoTokens", func(t *testing.T) {
+		userID := "user-no-tokens"
+		userKey := prefix + "oidc:user_access_tokens:" + userID
+
+		mock.ExpectSMembers(userKey).SetVal([]string{})
+
+		err := storage.DeleteUserAccessTokens(ctx, userID)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("FlushUserTokens", func(t *testing.T) {
+		userID := "user-flush"
+		accessKey := prefix + "oidc:user_access_tokens:" + userID
+		refreshKey := prefix + "oidc:user_refresh_tokens:" + userID
+
+		// Access tokens
+		mock.ExpectSMembers(accessKey).SetVal([]string{"at1"})
+		mock.ExpectDel(prefix + "oidc:access_token:at1").SetVal(1)
+		mock.ExpectDel(accessKey).SetVal(1)
+
+		// Refresh tokens
+		mock.ExpectSMembers(refreshKey).SetVal([]string{"rt1"})
+		mock.ExpectDel(prefix + "oidc:refresh_token:rt1").SetVal(1)
+		mock.ExpectDel(refreshKey).SetVal(1)
+
+		err := storage.FlushUserTokens(ctx, userID)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("FlushUserTokens_EmptyUser", func(t *testing.T) {
+		err := storage.FlushUserTokens(ctx, "")
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
 }

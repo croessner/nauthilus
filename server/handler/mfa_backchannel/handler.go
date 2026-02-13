@@ -34,8 +34,8 @@ type Handler struct {
 	deps *handlerdeps.Deps
 }
 
-// NewWithDeps constructs the backchannel handler with injected dependencies.
-func NewWithDeps(deps *handlerdeps.Deps) *Handler {
+// New constructs the backchannel handler with injected dependencies.
+func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
@@ -140,123 +140,138 @@ func parseCredential(raw string) (*mfa.PersistentCredential, error) {
 }
 
 func (h *Handler) AddTOTP(ctx *gin.Context) {
-	var payload totpRequest
+	executeMFAOp(h, ctx,
+		func(p totpRequest) string {
+			if p.Username == "" || p.TOTPSecret == "" {
+				return "username and totp_secret are required"
+			}
+
+			return ""
+		},
+		func(mgr core.BackendManager, auth *core.AuthState, p totpRequest) error {
+			return mgr.AddTOTPSecret(auth, core.NewTOTPSecret(p.TOTPSecret))
+		},
+	)
+}
+
+// mfaPayload is implemented by request types that carry backend routing and username information.
+type mfaPayload interface {
+	getBackend() string
+	getBackendName() string
+	getUsername() string
+}
+
+func (r totpRequest) getBackend() string              { return r.Backend }
+func (r totpRequest) getBackendName() string          { return r.BackendName }
+func (r totpRequest) getUsername() string             { return r.Username }
+func (r recoveryCodesRequest) getBackend() string     { return r.Backend }
+func (r recoveryCodesRequest) getBackendName() string { return r.BackendName }
+func (r recoveryCodesRequest) getUsername() string    { return r.Username }
+func (r webauthnRequest) getBackend() string          { return r.Backend }
+func (r webauthnRequest) getBackendName() string      { return r.BackendName }
+func (r webauthnRequest) getUsername() string         { return r.Username }
+
+// executeMFAOp binds JSON, validates the payload, resolves the backend, and executes the operation.
+// The validate function performs payload-specific checks (return error message or empty string).
+// The operate function receives the resolved backend manager, auth state, and the original payload.
+func executeMFAOp[T mfaPayload](
+	h *Handler,
+	ctx *gin.Context,
+	validate func(T) string,
+	operate func(core.BackendManager, *core.AuthState, T) error,
+) {
+	var payload T
+
 	if err := ctx.ShouldBindJSON(&payload); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
 
 		return
 	}
 
-	if payload.Username == "" || payload.TOTPSecret == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username and totp_secret are required"})
+	if msg := validate(payload); msg != "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": msg})
 
 		return
 	}
 
-	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username)
+	mgr, authState, err := h.resolveBackend(ctx, payload.getBackend(), payload.getBackendName(), payload.getUsername())
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 
 		return
 	}
 
-	if err := mgr.AddTOTPSecret(authState, core.NewTOTPSecret(payload.TOTPSecret)); err != nil {
+	if err := operate(mgr, authState, payload); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 
 		return
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// requireUsername validates that the username field is present.
+func requireUsername[T mfaPayload](p T) string {
+	if p.getUsername() == "" {
+		return "username is required"
+	}
+
+	return ""
+}
+
+// executeWebAuthnOp is a specialization of executeMFAOp for WebAuthn operations that
+// need to parse a credential from the payload before calling the backend operation.
+func executeWebAuthnOp(
+	h *Handler,
+	ctx *gin.Context,
+	validate func(webauthnRequest) string,
+	operate func(core.BackendManager, *core.AuthState, *mfa.PersistentCredential) error,
+) {
+	executeMFAOp(h, ctx, validate,
+		func(mgr core.BackendManager, auth *core.AuthState, p webauthnRequest) error {
+			credential, err := parseCredential(p.Credential)
+			if err != nil {
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": "credential must be valid JSON"})
+
+				return nil
+			}
+
+			return operate(mgr, auth, credential)
+		},
+	)
 }
 
 func (h *Handler) DeleteTOTP(ctx *gin.Context) {
-	var payload totpRequest
-	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
-
-		return
-	}
-
-	if payload.Username == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username is required"})
-
-		return
-	}
-
-	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	if err := mgr.DeleteTOTPSecret(authState); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+	executeMFAOp(h, ctx,
+		requireUsername[totpRequest],
+		func(mgr core.BackendManager, auth *core.AuthState, _ totpRequest) error {
+			return mgr.DeleteTOTPSecret(auth)
+		},
+	)
 }
 
 func (h *Handler) AddRecoveryCodes(ctx *gin.Context) {
-	var payload recoveryCodesRequest
-	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
+	executeMFAOp(h, ctx,
+		func(p recoveryCodesRequest) string {
+			if p.Username == "" || len(p.Codes) == 0 {
+				return "username and codes are required"
+			}
 
-		return
-	}
-
-	if payload.Username == "" || len(payload.Codes) == 0 {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username and codes are required"})
-
-		return
-	}
-
-	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	if err := mgr.AddTOTPRecoveryCodes(authState, mfa.NewTOTPRecovery(payload.Codes)); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+			return ""
+		},
+		func(mgr core.BackendManager, auth *core.AuthState, p recoveryCodesRequest) error {
+			return mgr.AddTOTPRecoveryCodes(auth, mfa.NewTOTPRecovery(p.Codes))
+		},
+	)
 }
 
 func (h *Handler) DeleteRecoveryCodes(ctx *gin.Context) {
-	var payload recoveryCodesRequest
-	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
-
-		return
-	}
-
-	if payload.Username == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username is required"})
-
-		return
-	}
-
-	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	if err := mgr.DeleteTOTPRecoveryCodes(authState); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+	executeMFAOp(h, ctx,
+		requireUsername[recoveryCodesRequest],
+		func(mgr core.BackendManager, auth *core.AuthState, _ recoveryCodesRequest) error {
+			return mgr.DeleteTOTPRecoveryCodes(auth)
+		},
+	)
 }
 
 func (h *Handler) GetWebAuthnCredential(ctx *gin.Context) {
@@ -297,40 +312,18 @@ func (h *Handler) GetWebAuthnCredential(ctx *gin.Context) {
 }
 
 func (h *Handler) SaveWebAuthnCredential(ctx *gin.Context) {
-	var payload webauthnRequest
-	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
+	executeWebAuthnOp(h, ctx,
+		func(p webauthnRequest) string {
+			if p.Username == "" || p.Credential == "" {
+				return "username and credential are required"
+			}
 
-		return
-	}
-
-	if payload.Username == "" || payload.Credential == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username and credential are required"})
-
-		return
-	}
-
-	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	credential, err := parseCredential(payload.Credential)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "credential must be valid JSON"})
-
-		return
-	}
-
-	if err := mgr.SaveWebAuthnCredential(authState, credential); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+			return ""
+		},
+		func(mgr core.BackendManager, auth *core.AuthState, cred *mfa.PersistentCredential) error {
+			return mgr.SaveWebAuthnCredential(auth, cred)
+		},
+	)
 }
 
 func (h *Handler) UpdateWebAuthnCredential(ctx *gin.Context) {
@@ -378,38 +371,16 @@ func (h *Handler) UpdateWebAuthnCredential(ctx *gin.Context) {
 }
 
 func (h *Handler) DeleteWebAuthnCredential(ctx *gin.Context) {
-	var payload webauthnRequest
-	if err := ctx.ShouldBindJSON(&payload); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
+	executeWebAuthnOp(h, ctx,
+		func(p webauthnRequest) string {
+			if p.Username == "" || p.Credential == "" {
+				return "username and credential are required"
+			}
 
-		return
-	}
-
-	if payload.Username == "" || payload.Credential == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "username and credential are required"})
-
-		return
-	}
-
-	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	credential, err := parseCredential(payload.Credential)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "credential must be valid JSON"})
-
-		return
-	}
-
-	if err := mgr.DeleteWebAuthnCredential(authState, credential); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+			return ""
+		},
+		func(mgr core.BackendManager, auth *core.AuthState, cred *mfa.PersistentCredential) error {
+			return mgr.DeleteWebAuthnCredential(auth, cred)
+		},
+	)
 }

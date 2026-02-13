@@ -17,7 +17,6 @@ package backend
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -77,55 +76,21 @@ func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 
 	queue.SetMaxQueueLength(poolName, lookupLimit)
 
-	var wg sync.WaitGroup
-	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case <-ctx.Done():
-					ldapPool.Close()
-
-					return
-				default:
-				}
-
-				// Get the next request from the priority queue.
-				ldapRequest := queue.PopWithContext(ctx, poolName)
-				if ldapRequest == nil {
-					ldapPool.Close()
-
-					return
-				}
-
-				func() {
-					_, span := trOps.Start(ldapRequest.HTTPClientContext, "ldap.worker.process",
-						attribute.String("pool", poolName),
-						attribute.String("guid", ldapRequest.GUID),
-					)
-					defer span.End()
-
-					// Check that we have enough idle connections.
-					if err := ldapPool.SetIdleConnections(true); err != nil {
-						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
-
-						return
-					}
-
-					if err := ldapPool.HandleLookupRequest(ldapRequest); err != nil {
-						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
-					}
-				}()
+	runLDAPWorkerLoop(ctx, ldapPool, poolName, ldapWorkerCallbacks{
+		spanName:   "ldap.worker.process",
+		idleExpand: true,
+		popRequest: func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error) {
+			req := queue.PopWithContext(ctx, poolName)
+			if req == nil {
+				return "", nil, nil, nil
 			}
-		}()
-	}
 
-	go func() {
-		wg.Wait()
-		TrySignalDone(channel.GetLdapChannel().GetLookupEndChan(poolName))
-	}()
+			return req.GUID, req.HTTPClientContext, req.LDAPReplyChan, func() error {
+				return ldapPool.HandleLookupRequest(req)
+			}
+		},
+		doneChan: channel.GetLdapChannel().GetLookupEndChan(poolName),
+	})
 }
 
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
@@ -164,9 +129,41 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 
 	authQueue.SetMaxQueueLength(poolName, authLimit)
 
+	runLDAPWorkerLoop(ctx, ldapPool, poolName, ldapWorkerCallbacks{
+		spanName:   "ldap.worker.process_auth",
+		idleExpand: false,
+		popRequest: func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error) {
+			req := authQueue.PopWithContext(ctx, poolName)
+			if req == nil {
+				return "", nil, nil, nil
+			}
+
+			return req.GUID, req.HTTPClientContext, req.LDAPReplyChan, func() error {
+				return ldapPool.HandleAuthRequest(req)
+			}
+		},
+		doneChan: channel.GetLdapChannel().GetAuthEndChan(poolName),
+	})
+}
+
+// ldapWorkerCallbacks holds the per-worker-type callbacks for runLDAPWorkerLoop.
+type ldapWorkerCallbacks struct {
+	// popRequest pops the next request from the queue and returns its fields.
+	// A nil handle return signals the queue is closed.
+	popRequest func() (guid string, httpCtx context.Context, replyChan chan *bktype.LDAPReply, handle func() error)
+	doneChan   chan bktype.Done
+	spanName   string
+	idleExpand bool
+}
+
+// runLDAPWorkerLoop starts worker goroutines that pop requests from a queue and process them.
+// It is shared between LDAPMainWorker and LDAPAuthWorker to avoid duplicating the loop logic.
+func runLDAPWorkerLoop(ctx context.Context, ldapPool ldappool.LDAPPool, poolName string, cb ldapWorkerCallbacks) {
 	var wg sync.WaitGroup
+
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
 		wg.Add(1)
+
 		go func() {
 			defer wg.Done()
 
@@ -179,30 +176,28 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 				default:
 				}
 
-				// Get the next request from the priority queue.
-				ldapAuthRequest := authQueue.PopWithContext(ctx, poolName)
-				if ldapAuthRequest == nil {
+				guid, httpCtx, replyChan, handle := cb.popRequest()
+				if handle == nil {
 					ldapPool.Close()
 
 					return
 				}
 
 				func() {
-					_, span := trOps.Start(ldapAuthRequest.HTTPClientContext, "ldap.worker.process_auth",
+					_, span := trOps.Start(httpCtx, cb.spanName,
 						attribute.String("pool", poolName),
-						attribute.String("guid", ldapAuthRequest.GUID),
+						attribute.String("guid", guid),
 					)
 					defer span.End()
 
-					// Check that we have enough idle connections.
-					if err := ldapPool.SetIdleConnections(false); err != nil {
-						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+					if err := ldapPool.SetIdleConnections(cb.idleExpand); err != nil {
+						replyChan <- &bktype.LDAPReply{Err: err}
 
 						return
 					}
 
-					if err := ldapPool.HandleAuthRequest(ldapAuthRequest); err != nil {
-						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+					if err := handle(); err != nil {
+						replyChan <- &bktype.LDAPReply{Err: err}
 					}
 				}()
 			}
@@ -211,7 +206,7 @@ func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, c
 
 	go func() {
 		wg.Wait()
-		TrySignalDone(channel.GetLdapChannel().GetAuthEndChan(poolName))
+		TrySignalDone(cb.doneChan)
 	}()
 }
 
@@ -225,7 +220,7 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 		scope.Set("sub")
 	} else {
 		if err = scope.Set(toString); err != nil {
-			return nil, stderrors.New(fmt.Sprintf("LDAP scope not detected: %s", toString))
+			return nil, fmt.Errorf("LDAP scope not detected: %s", toString)
 		}
 	}
 
@@ -452,7 +447,8 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 	guid := fieldValues["session"].String()
 	attrTable := fieldValues["attributes"].(*lua.LTable)
 
-	if command == definitions.LDAPSearch {
+	switch command {
+	case definitions.LDAPSearch:
 		basedn = fieldValues["basedn"].String()
 		filter = fieldValues["filter"].String()
 
@@ -465,7 +461,7 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 		}
 
 		searchAttributes = extractAttributes(attrTable)
-	} else if command == definitions.LDAPModify {
+	case definitions.LDAPModify:
 		dn = fieldValues["dn"].String()
 		operation = fieldValues["operation"].String()
 

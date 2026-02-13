@@ -58,7 +58,7 @@ func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) 
 			return
 		}
 
-		claims := ValidateAndStoreClaims(ctx, validator, cfg, logger, tokenString)
+		claims := ValidateAndStoreClaims(ctx, validator, cfg, tokenString)
 		if claims == nil {
 			return
 		}
@@ -92,7 +92,7 @@ func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) 
 //
 // This is the shared validation core used by both Middleware (for backchannel
 // API endpoints) and HasRequiredScopes in the hook package (for custom hooks).
-func ValidateAndStoreClaims(ctx *gin.Context, validator TokenValidator, cfg config.File, logger *slog.Logger, tokenString string) jwt.MapClaims {
+func ValidateAndStoreClaims(ctx *gin.Context, validator TokenValidator, cfg config.File, tokenString string) jwt.MapClaims {
 	claims, err := validator.ValidateToken(ctx.Request.Context(), tokenString)
 	if err != nil {
 		if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {

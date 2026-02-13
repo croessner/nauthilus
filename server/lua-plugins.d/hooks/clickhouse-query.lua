@@ -175,7 +175,7 @@ local TEXT_COLS = {
 }
 
 local BOOL_COL = {
-    repeating=true, user_found=true, authenticated=true, prot_active=true, failed_login_recognized=true
+    repeating = true, rwp = true, user_found = true, authenticated = true, prot_active = true, failed_login_recognized = true
 }
 
 local NUM_COL = {
@@ -618,7 +618,7 @@ function nauthilus_run_hook(request)
             "prot_active","prot_reason","prot_backoff","prot_delay_ms",
             "dyn_threat","dyn_response",
             -- flags and TLS
-            "repeating","user_found","authenticated",
+            "repeating", "rwp", "user_found", "authenticated",
             "xssl_protocol", "xssl_cipher", "ssl_fingerprint",
             "latency", "http_status", "status_msg"
         }, ",")

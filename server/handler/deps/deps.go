@@ -76,4 +76,5 @@ type Deps struct {
 	Channel      backend.Channel
 	Svc          Services
 	LangManager  language.Manager
+	TokenFlusher core.TokenFlusher
 }

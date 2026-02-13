@@ -58,7 +58,7 @@ func (l *LevelReloader) Order() int {
 }
 
 // ApplyConfig syncs the new configuration to the level package.
-func (l *LevelReloader) ApplyConfig(ctx context.Context, snap configfx.Snapshot) error {
+func (l *LevelReloader) ApplyConfig(_ context.Context, snap configfx.Snapshot) error {
 	if snap.File != nil && snap.File.GetServer() != nil {
 		level.ApplyGlobalConfig(snap.File.GetServer().GetLog().IsAddSourceEnabled())
 	}

@@ -83,7 +83,6 @@ local function should_emit_per_user(client, username, request)
     end
 
     -- Always include protected accounts (check hash flag set by account_protection_mode)
-    local nauthilus_keys = require("nauthilus_keys")
     local prot_hash_key = nauthilus_util.get_redis_key(request, "acct:" .. nauthilus_keys.account_tag(username) .. username .. ":proto:" .. protocol .. ":protection")
     local prot_active = nauthilus_redis.redis_hget(client, prot_hash_key, "active")
     if prot_active == "true" then

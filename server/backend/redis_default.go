@@ -16,8 +16,6 @@
 package backend
 
 import (
-	stdlog "log"
-	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -35,8 +33,6 @@ type redisHolder struct {
 
 var defaultRedis atomic.Value
 
-var warnMissingRedisOnce sync.Once
-
 func init() {
 	defaultRedis.Store(redisHolder{c: nil})
 }
@@ -44,21 +40,4 @@ func init() {
 // SetDefaultRedisClient sets the backend-wide default Redis client.
 func SetDefaultRedisClient(c rediscli.Client) {
 	defaultRedis.Store(redisHolder{c: c})
-}
-
-func getDefaultRedisClient() rediscli.Client {
-	if v := defaultRedis.Load(); v != nil {
-		if h, ok := v.(redisHolder); ok {
-			if h.c != nil {
-				return h.c
-			}
-		}
-	}
-
-	// Hard fail always.
-	warnMissingRedisOnce.Do(func() {
-		stdlog.Printf("ERROR: backend default Redis client is not configured. Ensure the boundary calls backend.SetDefaultRedisClient(...)\n")
-	})
-
-	panic("backend: default Redis client not configured")
 }

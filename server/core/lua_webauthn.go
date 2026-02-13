@@ -90,10 +90,16 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 	return
 }
 
-// SaveWebAuthnCredential saves a WebAuthn credential for the user in the Lua backend.
-func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
+// executeWebAuthnCredentialOp is the shared implementation for saving or deleting
+// a single WebAuthn credential via the Lua backend. Only the span name and Lua command differ.
+func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
+	auth *AuthState,
+	credential *mfa.PersistentCredential,
+	spanName string,
+	command definitions.LuaCommand,
+) (err error) {
 	tr := monittrace.New("nauthilus/lua_backend")
-	lctx, lsp := tr.Start(auth.Ctx(), "lua.save_webauthn_credential",
+	lctx, lsp := tr.Start(auth.Ctx(), spanName,
 		attribute.String("backend_name", lm.backendName),
 		attribute.String("username", auth.Request.Username),
 	)
@@ -106,6 +112,7 @@ func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mf
 
 	if credBytes, err = json.Marshal(credential); err != nil {
 		lsp.RecordError(err)
+
 		return
 	}
 
@@ -124,7 +131,7 @@ func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mf
 	defer cancelLua()
 
 	luaRequest := &bktype.LuaRequest{
-		Command:            definitions.LuaCommandSaveWebAuthnCredential,
+		Command:            command,
 		BackendName:        lm.backendName,
 		Service:            auth.Request.Service,
 		Protocol:           auth.Request.Protocol,
@@ -147,73 +154,23 @@ func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mf
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
 		lsp.RecordError(err)
+
 		return
 	}
 
 	return
 }
 
+// SaveWebAuthnCredential saves a WebAuthn credential for the user in the Lua backend.
+func (lm *luaManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) error {
+	return lm.executeWebAuthnCredentialOp(auth, credential,
+		"lua.save_webauthn_credential", definitions.LuaCommandSaveWebAuthnCredential)
+}
+
 // DeleteWebAuthnCredential removes a WebAuthn credential for the user in the Lua backend.
-func (lm *luaManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) (err error) {
-	tr := monittrace.New("nauthilus/lua_backend")
-	lctx, lsp := tr.Start(auth.Ctx(), "lua.delete_webauthn_credential",
-		attribute.String("backend_name", lm.backendName),
-		attribute.String("username", auth.Request.Username),
-	)
-	defer lsp.End()
-
-	var (
-		luaBackendResult *lualib.LuaBackendResult
-		credBytes        []byte
-	)
-
-	if credBytes, err = json.Marshal(credential); err != nil {
-		lsp.RecordError(err)
-		return
-	}
-
-	luaReplyChan := make(chan *lualib.LuaBackendResult)
-
-	commonRequest := lualib.GetCommonRequest()
-	defer lualib.PutCommonRequest(commonRequest)
-
-	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Username = auth.Request.Username
-	commonRequest.Service = auth.Request.Service
-	commonRequest.Session = auth.Runtime.GUID
-
-	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
-	ctxLua, cancelLua := context.WithTimeout(lctx, dLua)
-	defer cancelLua()
-
-	luaRequest := &bktype.LuaRequest{
-		Command:            definitions.LuaCommandDeleteWebAuthnCredential,
-		BackendName:        lm.backendName,
-		Service:            auth.Request.Service,
-		Protocol:           auth.Request.Protocol,
-		Context:            auth.Runtime.Context,
-		WebAuthnCredential: string(credBytes),
-		LuaReplyChan:       luaReplyChan,
-		HTTPClientContext:  ctxLua,
-		CommonRequest:      commonRequest,
-	}
-
-	priority := priorityqueue.PriorityMedium
-	if localcache.AuthCache.IsAuthenticated(auth.Request.Username) {
-		priority = priorityqueue.PriorityHigh
-	}
-
-	priorityqueue.LuaQueue.Push(luaRequest, priority)
-
-	luaBackendResult = <-luaReplyChan
-
-	if luaBackendResult.Err != nil {
-		err = luaBackendResult.Err
-		lsp.RecordError(err)
-		return
-	}
-
-	return
+func (lm *luaManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential *mfa.PersistentCredential) error {
+	return lm.executeWebAuthnCredentialOp(auth, credential,
+		"lua.delete_webauthn_credential", definitions.LuaCommandDeleteWebAuthnCredential)
 }
 
 // UpdateWebAuthnCredential updates an existing WebAuthn credential for the user in the Lua backend.

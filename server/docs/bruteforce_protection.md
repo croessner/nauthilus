@@ -34,7 +34,13 @@ The following flowchart illustrates the decision process during `CheckBruteForce
 flowchart TD
     A[Request Start] --> B{Protocol Enabled?}
     B -- No --> C[Allow Request]
-    B -- Yes --> D[Filter Active Rules]
+    B -- Yes --> RWP_EARLY[ShouldEnforceBucketUpdate]
+
+    subgraph RWP_Cache [Early RWP Check & Context Cache]
+        RWP_EARLY --> RWP_STORE[Store RWP Result in gin.Context]
+    end
+
+    RWP_STORE --> D[Filter Active Rules]
     D --> E[Prepare Netcalc]
     E --> F[CheckRepeatingBruteForcer]
     
@@ -59,9 +65,9 @@ flowchart TD
     F2 --> I[ProcessBruteForce]
     
     subgraph Enforcement [Enforcement Logic]
-        I --> I1{RWP / Cold Start?}
+        I --> I1{RWP?}
         I1 -- Skip --> H
-        I1 -- Enforce --> I2{Is Whitelisted/Tolerated?}
+        I1 -- Enforce --> I2{Is Tolerated?}
         I2 -- Yes --> H
         I2 -- No --> I3[Block Request]
         I3 --> I4[Broadcast Block via Pub/Sub]
@@ -69,6 +75,52 @@ flowchart TD
     end
     
     H --> J[Authentication Backend]
+```
+
+### 2.2 Processing Flow (Post-Auth Update)
+
+The following flowchart illustrates the decision process during `UpdateBruteForceBucketsCounter`, which is called
+after an authentication failure to update the sliding window counters:
+
+```mermaid
+flowchart TD
+    U_START[Auth Failure] --> U_FEAT{Feature Enabled?}
+    U_FEAT -- No --> U_DONE[Done]
+    U_FEAT -- Yes --> U_PROTO{Protocol Enabled?}
+    U_PROTO -- No --> U_DONE
+    U_PROTO -- Yes --> U_WL{IP Whitelisted?}
+    U_WL -- Yes --> U_DONE
+    U_WL -- No --> U_BM[Create BucketManager]
+    U_BM --> U_CTX{RWP Result in Context?}
+
+subgraph RWP_Decision [RWP Enforcement Decision]
+U_CTX -- Yes --> U_CTX_VAL{Enforce?}
+U_CTX_VAL -- No / RWP --> U_SKIP[ProcessPWHist only — do NOT increase buckets]
+U_CTX_VAL -- Yes --> U_UPDATE
+U_CTX -- No --> U_FRESH[Fallback: ShouldEnforceBucketUpdate]
+U_FRESH --> U_FRESH_VAL{Enforce?}
+U_FRESH_VAL -- No / RWP --> U_CACHE_FALSE[Store result in Context]
+U_CACHE_FALSE --> U_SKIP
+U_FRESH_VAL -- Yes --> U_CACHE_TRUE[Store result in Context]
+U_CACHE_TRUE --> U_UPDATE
+end
+
+U_UPDATE[Loop: Save Bucket Counters]
+U_UPDATE --> U_RULE_LOOP
+
+subgraph Bucket_Update [Per-Rule Counter Update]
+U_RULE_LOOP[For each matching rule] --> U_PERIOD{Period >= matched?}
+U_PERIOD -- Yes --> U_SAVE[SaveBruteForceBucketCounterToRedis]
+U_PERIOD -- No --> U_NEXT[Next Rule]
+U_SAVE --> U_FLOOR{Bucket < RWP Floor?}
+U_FLOOR -- Yes --> U_CATCHUP[Catch-up: raise to floor − 1 first]
+U_CATCHUP --> U_INC[Normal +1 increment]
+U_FLOOR -- No --> U_INC
+U_INC --> U_NEXT
+end
+
+U_NEXT --> U_DONE
+U_SKIP --> U_DONE
 ```
 
 ## 3. Core Components
@@ -79,8 +131,7 @@ The `BucketManager` is the central engine of the system. It handles the evaluati
 
 * `CheckRepeatingBruteForcer`: Checks L1 and L2 for existing block decisions.
 * `CheckBucketOverLimit`: Executes the Sliding Window Lua script to evaluate rate limits.
-* `ProcessBruteForce`: Decides whether to actually enforce a block based on secondary logic (RWP, Cold Start,
-  Reputation).
+* `ProcessBruteForce`: Decides whether to actually enforce a block based on secondary logic (RWP, Toleration).
 
 ### 3.2 L1 Cache Engine (`server/bruteforce/l1`)
 
@@ -114,14 +165,13 @@ RWP detection prevents automated attacks that try common passwords across many a
   sliding window. If a hash is repeated, its timestamp is updated, keeping it "fresh" and avoiding it being evicted
   from the window. If the number of unique hashes in the window exceeds the threshold, the request is no longer
   "allowed" under RWP grace and must undergo full brute-force enforcement.
-
-### 3.5 Cold Start Grace
-
-Allows a one-time bypass for known accounts that have no previous negative history, preventing lockouts during service
-restarts or configuration changes.
-
-* **Logic:** Uses `ColdStartGraceSeed` Lua script. It seeds an "evidence" key in Redis. Subsequent attempts from the
-  same IP/Account/Password combo will then enforce brute-force checks once the seed is present.
+* **RWP Catch-Up Floor:** When RWP protection ends and enforcement begins, the bucket counters are typically still at
+  value 1 (from the very first request before RWP kicked in). To compensate, the `SlidingWindowCounter` Lua script
+  accepts an optional `rwp_floor` parameter (ARGV[11]). If the current counter is below this floor, it is raised to
+  `floor − 1` before the normal `+1` increment, so the bucket lands exactly at the RWP threshold. This ensures that
+  `FailedRequests` reflects the true total number of failed attempts, not just those after RWP grace expired. The
+  floor check is self-healing: once the counter reaches the floor, the condition `counter < floor` is false and the
+  catch-up never fires again.
 
 ## 4. Sequence Diagram
 
@@ -131,45 +181,56 @@ This diagram shows the interaction between components during a blocked request.
 sequenceDiagram
     participant C as Auth Pipeline
     participant BM as BucketManager
+    participant Ctx as gin.Context
     participant L1 as L1 Engine
     participant R as Redis (L2)
     participant PS as Redis Pub/Sub
 
     C->>BM: CheckBruteForce()
+    Note over BM, R: Early RWP check
+    BM ->> R: EVAL (RWPSlidingWindow)
+    R -->> BM: Enforce=true
+    BM ->> Ctx: Set(CtxRWPResultKey, true)
+    Note over BM, L1: Rule evaluation
     BM->>L1: Get(BurstKey)
     L1-->>BM: Miss
-    BM->>R: HMGET (Pre-Result Keys)
-    R-->>BM: Nil
+    BM ->> R: EXISTS (Ban Keys via Pipeline)
+    R -->> BM: 0 (no active ban)
     BM->>R: EVAL (SlidingWindowCounter)
     R-->>BM: Total > Limit
     BM->>BM: ProcessBruteForce(triggered=true)
     BM->>BM: checkEnforceBruteForceComputation()
-    BM->>R: EVAL (RWP / Cold Start)
+    BM ->> R: EVAL (RWP)
     R-->>BM: Enforce
-    BM->>R: HSET (Pre-Result Block)
+    BM ->> R: SET banKey NX EX (Ban with TTL)
+    BM ->> R: ZADD NX (Ban Index ZSET Shard)
     BM->>PS: PUBLISH (bf:blocks, block_msg)
     BM->>L1: Set(BurstKey, Blocked)
     BM-->>C: Blocked
+    Note over C, R: Post-Auth update (on auth failure)
+    C ->> BM: UpdateBruteForceBucketsCounter()
+    BM ->> Ctx: Get(CtxRWPResultKey)
+    Ctx -->> BM: true (enforce)
+    BM ->> R: EVAL (SlidingWindowCounter, increment=1)
+    R -->> BM: OK
 ```
 
 ## 5. Redis Key Reference
 
 All keys are prefixed with the configured Redis prefix.
 
-| Pattern                                   | Type   | Description                                                                   |
-|:------------------------------------------|:-------|:------------------------------------------------------------------------------|
-| `bf:cnt:{rule}:{net}:win:{timestamp}`     | String | Sliding window counter for a specific rule and network.                       |
-| `bruteforce:{net}`                        | Hash   | Stores the "Pre-Result" (the name of the rule that triggered the block).      |
-| `bf:rwp:allow:{scoped_ip}:{account}`      | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.    |
-| `bf:cold:{scoped_ip}`                     | String | Cold-start grace flag for an IP.                                              |
-| `bf:seed:{scoped_ip}:{account}:{pw_hash}` | String | Evidence key for cold-start grace.                                            |
-| `bf:tr:{ip}`                              | Hash   | Reputation data (`positive` and `negative` counters).                         |
-| `bf:tr:{ip}:P`                            | ZSet   | Time-series of positive authentication events.                                |
-| `bf:tr:{ip}:N`                            | ZSet   | Time-series of negative authentication events.                                |
-| `affected_accounts`                       | Set    | List of accounts currently affected by brute-force triggers.                  |
-| `active_brute_force_keys`                 | Set    | List of active `bruteforce:{net}` hash keys (used for the list API).          |
-| `pw_hist:{account}:{ip}`                  | Set    | Failed password hashes for a specific account and IP.                         |
-| `pw_hist_ips:{account}`                   | Set    | List of IPs that have attempted logins for an account (used for cache flush). |
+| Pattern                               | Type   | Description                                                                                                       |
+|:--------------------------------------|:-------|:------------------------------------------------------------------------------------------------------------------|
+| `bf:cnt:{rule}:{net}:win:{timestamp}` | String | Sliding window counter for a specific rule and network.                                                           |
+| `bf:ban:{network}`                    | String | Per-network ban key. Value = bucket name. Has TTL = `ban_time` (default 8h). Written with `SET NX EX`.            |
+| `bf:bans:X` (X = 0–F)                 | ZSet   | Sharded ban index (16 shards). Member = network, Score = Unix timestamp.                                          |
+| `bf:rwp:allow:{scoped_ip}:{account}`  | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.                                        |
+| `bf:tr:{ip}`                          | Hash   | Reputation data (`positive` and `negative` counters).                                                             |
+| `bf:tr:{ip}:P`                        | ZSet   | Time-series of positive authentication events.                                                                    |
+| `bf:tr:{ip}:N`                        | ZSet   | Time-series of negative authentication events.                                                                    |
+| `affected_accounts`                   | Set    | List of accounts affected by brute-force triggers. **No TTL** — cleared only via Flush API or admin intervention. |
+| `pw_hist:{account}:{ip}`              | Set    | Failed password hashes for a specific account and IP.                                                             |
+| `pw_hist_ips:{account}`               | Set    | List of IPs that have attempted logins for an account (used for cache flush).                                     |
 
 ## 6. Global Synchronization Service (`BruteForceSyncService`)
 
@@ -180,7 +241,40 @@ Located in `server/app/loopsfx/bruteforce_sync_service.go`, this service runs as
 3. Calls `l1.GetEngine().Set(key, decision, 0)` to update the local memory.
 4. This ensures that if Node A triggers a block, Node B is aware of it within milliseconds.
 
-## 7. Developer Tips
+## 7. Configuration: `ban_time`
+
+Each brute force rule can optionally specify a `ban_time` duration. If not set, the default of **8 hours** is used.
+
+```yaml
+brute_force:
+  buckets:
+    - name: login_rule
+      period: 10m
+      ban_time: 4h        # Optional: how long a banned network stays blocked
+      cidr: 24
+      failed_requests: 5
+```
+
+## 8. Ban Lifecycle
+
+1. **Trigger:** When `ProcessBruteForce` detects a threshold breach, it writes:
+    - `SET bf:ban:{network} {bucket_name} NX EX {ban_time_seconds}` — only if no ban exists yet (`NX`).
+   - `ZADD NX bf:bans:{shard} {unix_timestamp} {network}` — best-effort index update.
+2. **Check:** `CheckRepeatingBruteForcer` and `IsIPAddressBlocked` pipeline `EXISTS bf:ban:{network}` per candidate.
+3. **Expiry:** Redis TTL auto-expires the ban key. The ZSET index entry is lazily cleaned on next listing.
+4. **Manual Flush:** The Flush API deletes the ban key (`DEL`) and removes the ZSET entry (`ZREM`).
+5. **Listing:** The `/api/v1/bruteforce/list` endpoint pipelines `ZRANGE WITHSCORES` across all 16 ZSET shards,
+   then pipelines `GET` + `TTL` on each ban key to build the response with `network`, `bucket`, `ban_time`, `ttl`,
+   and `banned_at`.
+
+## 9. CROSSSLOT & Cluster Considerations
+
+- **Ban keys** (`bf:ban:{network}`) are individual String keys — no CROSSSLOT issues with `GET`/`SET`/`DEL`.
+- **ZSET shards** (`bf:bans:0` to `bf:bans:F`) are distributed across cluster slots. Listing uses pipelining
+  instead of multi-key Lua to avoid CROSSSLOT errors.
+- **Affected accounts** (`affected_accounts`) is a single key — no CROSSSLOT concern.
+
+## 10. Developer Tips
 
 * **Lua Debugging:** Redis Lua scripts are hard to debug. Use `redis.log(redis.LOG_NOTICE, ...)` within scripts and
   check the Redis server logs.
@@ -188,3 +282,5 @@ Located in `server/app/loopsfx/bruteforce_sync_service.go`, this service runs as
   instance-specific metrics `nauthilus_brute_force_cache_hits_total`.
 * **Cache Flush:** If a user is blocked incorrectly, use the Admin API to flush the cache for that user. This will clean
   up most `bf:*` keys associated with their IPs via `prepareRedisUserKeys` in `server/core/rest.go`.
+* **Affected Accounts:** The `affected_accounts` SET intentionally has no TTL. It preserves the signal path for
+  accounts that were targeted by brute-force attacks. Clean up only via the Flush API or administrative intervention.

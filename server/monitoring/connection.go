@@ -116,6 +116,7 @@ func checkBackendConnection(cfg config.File, logger *slog.Logger, server *config
 		// If the underlying service expects implicit TLS (e.g., SMTPS/IMAPS/POPS/HTTPS), we can wrap immediately.
 		// Otherwise, STARTTLS should be handled at protocol layer (as with Sieve below).
 		tlsConn := tls.Client(conn, tlsConfig)
+		defer tlsConn.Close()
 
 		// Handshake to establish the secure connection with a short timeout
 		type deadlineConn interface {
@@ -416,7 +417,7 @@ func checkSieve(logger *slog.Logger, conn net.Conn, hostname, username, password
 			definitions.LogKeyError, "Sieve greeting not OK",
 		)
 
-		return fmt.Errorf("Sieve greeting failed: %s", response)
+		return fmt.Errorf("sieve greeting failed: %s", response)
 	}
 
 	// Send STARTTLS command
@@ -452,6 +453,8 @@ func checkSieve(logger *slog.Logger, conn net.Conn, hostname, username, password
 	}
 
 	tlsConn := tls.Client(conn, tlsConfig)
+	defer tlsConn.Close()
+
 	if err := tlsConn.Handshake(); err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, "TLS handshake failed (sieve STARTTLS)",
@@ -484,8 +487,7 @@ func checkSieve(logger *slog.Logger, conn net.Conn, hostname, username, password
 	if response, err := isOkResponseSieve(tp); err != nil {
 		return err
 	} else if response != "OK" {
-		//goland:noinspection GoErrorStringFormat
-		return fmt.Errorf("Sieve AUTHENTICATE command failed: %s", response)
+		return fmt.Errorf("sieve AUTHENTICATE command failed: %s", response)
 	}
 
 	return nil

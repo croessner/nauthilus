@@ -147,7 +147,7 @@ func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID stri
 	}
 
 	if len(keyDescriptors) > 0 {
-		ssoDescriptor.SSODescriptor.RoleDescriptor.KeyDescriptors = keyDescriptors
+		ssoDescriptor.RoleDescriptor.KeyDescriptors = keyDescriptors
 	}
 
 	return &saml.EntityDescriptor{
@@ -189,7 +189,7 @@ func buildSPKeyDescriptors(sp *config.SAML2ServiceProvider) ([]saml.KeyDescripto
 	}, nil
 }
 
-func (h *SAMLHandler) getSAMLIdP(ctx *gin.Context) (*saml.IdentityProvider, error) {
+func (h *SAMLHandler) getSAMLIdP() (*saml.IdentityProvider, error) {
 	samlCfg := h.deps.Cfg.GetIdP().SAML2
 	certStr, err := samlCfg.GetCert()
 	if err != nil {
@@ -290,7 +290,7 @@ func (h *SAMLHandler) Metadata(ctx *gin.Context) {
 		definitions.LogKeyMsg, "SAML Metadata request",
 	)
 
-	idpObj, err := h.getSAMLIdP(ctx)
+	idpObj, err := h.getSAMLIdP()
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to initialize SAML IdP: %v", err)
 
@@ -323,7 +323,7 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		definitions.LogKeyMsg, "SAML SSO request",
 	)
 
-	idpObj, err := h.getSAMLIdP(ctx)
+	idpObj, err := h.getSAMLIdP()
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to initialize SAML IdP: %v", err)
 

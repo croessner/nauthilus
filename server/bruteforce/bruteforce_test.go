@@ -17,6 +17,7 @@ package bruteforce_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -88,9 +90,8 @@ func TestBruteForceScenarios(t *testing.T) {
 	const attackerIP = "1.2.3.4"
 	const accountName = "user1"
 	const password = "password123"
-	hashedPW := util.GetHash(util.PreparePassword(password))
 
-	t.Run("Scenario 1: Known user, same password (RWP protection)", func(t *testing.T) {
+	t.Run("Scenario 1: Known user, same password (Brute force triggered)", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)
 		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen1", attackerIP, bruteforce.BucketManagerDeps{
@@ -98,22 +99,57 @@ func TestBruteForceScenarios(t *testing.T) {
 			Logger:   log.GetLogger(),
 			Redis:    rediscli.GetClient(),
 			Tolerate: tol,
-		}).WithAccountName(accountName).WithPassword(password)
+		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(password)
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, hashedPW, ".*", ".*", ".*").SetVal(int64(1))
+		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
+		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
+
+		mock.Regexp().ExpectSIsMember(".*affected_accounts", accountName).SetVal(false)
+		mock.Regexp().ExpectSAdd(".*affected_accounts", accountName).SetVal(int64(1))
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]interface{}{"0", int64(0), "4"})
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+			SetVal([]interface{}{"10", int64(1), "4"})
+
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
+
+		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
+		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
+
+		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
+		mock.Regexp().ExpectEvalSha("sha-inc", []string{".*"}, ".*").SetVal(int64(1))
+
+		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
+		mock.Regexp().ExpectEvalSha(".*", []string{".*"}, ".*", ".*", ".*").SetVal(int64(1))
 
 		rule := cfg.GetBruteForceRules()[0]
 		_, network, _ := net.ParseCIDR(attackerIP + "/32")
 		triggered := bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
 
-		assert.False(t, triggered)
+		assert.True(t, triggered)
+	})
+
+	t.Run("Scenario 1b: RWP active skips affected accounts", func(t *testing.T) {
+		mock, tol := setupSubtest(cfg)
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen1b", attackerIP, bruteforce.BucketManagerDeps{
+			Cfg:      cfg,
+			Logger:   log.GetLogger(),
+			Redis:    rediscli.GetClient(),
+			Tolerate: tol,
+		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(password).WithRWPDecision(false)
+
+		mock.MatchExpectationsInOrder(false)
+
+		mock.Regexp().ExpectSIsMember(".*pw_hist_ips.*", attackerIP).SetVal(false)
+		mock.Regexp().ExpectSAdd(".*pw_hist_ips.*", attackerIP).SetVal(int64(1))
+		mock.Regexp().ExpectExpire(".*pw_hist_ips.*", cfg.GetServer().Redis.NegCacheTTL).SetVal(true)
+
+		bm.ProcessPWHist()
+
+		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("Scenario 2: Known user, different passwords (Brute force triggered)", func(t *testing.T) {
@@ -128,9 +164,6 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", ".*", ".*").SetVal(int64(0))
-
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 
@@ -139,10 +172,11 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectSAdd(".*affected_accounts", accountName).SetVal(int64(1))
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
 
-		mock.Regexp().ExpectHSet(".*bruteforce:.*", attackerIP+"/32", "testbucket").SetVal(int64(1))
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 
 		// Verifiziere globale Sperre via Pub/Sub
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
@@ -162,6 +196,38 @@ func TestBruteForceScenarios(t *testing.T) {
 		assert.True(t, triggered)
 	})
 
+	t.Run("Scenario 2b: Ban write failure does not trigger", func(t *testing.T) {
+		mock, tol := setupSubtest(cfg)
+		mockNoisy(mock)
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "scen2b", attackerIP, bruteforce.BucketManagerDeps{
+			Cfg:      cfg,
+			Logger:   log.GetLogger(),
+			Redis:    rediscli.GetClient(),
+			Tolerate: tol,
+		}).WithAccountName(accountName).WithPassword("new_password")
+
+		mock.MatchExpectationsInOrder(false)
+
+		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
+		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
+
+		mock.Regexp().ExpectSIsMember(".*affected_accounts", accountName).SetVal(false)
+		mock.Regexp().ExpectSAdd(".*affected_accounts", accountName).SetVal(int64(1))
+
+		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+			SetVal([]interface{}{"10", int64(1), "4"})
+
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetErr(errors.New("redis write failed"))
+		mock.Regexp().ExpectExists(".*bf:ban:.*").SetVal(int64(0))
+
+		rule := cfg.GetBruteForceRules()[0]
+		_, network, _ := net.ParseCIDR(attackerIP + "/32")
+		triggered := bm.ProcessBruteForce(true, false, &rule, network, "attack", func() {})
+
+		assert.False(t, triggered)
+	})
+
 	t.Run("Scenario 3: Different users, same password (Brute force)", func(t *testing.T) {
 		mock, tol := setupSubtest(cfg)
 		mockNoisy(mock)
@@ -174,14 +240,13 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, hashedPW, ".*", ".*", ".*").SetVal(int64(0))
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
-		mock.Regexp().ExpectHSet(".*", attackerIP+"/32", "testbucket").SetVal(int64(1))
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
@@ -210,14 +275,13 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.MatchExpectationsInOrder(false)
 
-		mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindow"]).SetVal("sha-rwp")
-		mock.Regexp().ExpectEvalSha("sha-rwp", []string{".*"}, ".*", ".*", ".*", ".*").SetVal(int64(0))
 		mock.Regexp().ExpectHGetAll(".*:P").SetVal(map[string]string{"positive": "0"})
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
-		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"10", int64(1), "4"})
-		mock.Regexp().ExpectHSet(".*", attackerIP+"/32", "testbucket").SetVal(int64(1))
+		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
+		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
 		mock.ExpectScriptLoad(rediscli.LuaScripts["IncrementAndExpire"]).SetVal("sha-inc")
@@ -249,8 +313,8 @@ func TestBruteForceLogic(t *testing.T) {
 		})
 		prefix := cfg.GetServer().GetRedis().GetPrefix()
 
-		shardKey := rediscli.GetBruteForceHashKey(prefix, testIP+"/32")
-		mock.ExpectHMGet(shardKey, testIP+"/32").SetVal([]interface{}{"testbucket"})
+		banKey := rediscli.GetBruteForceBanKey(prefix, testIP+"/32")
+		mock.ExpectExists(banKey).SetVal(1)
 
 		network := &net.IPNet{}
 		var message string
@@ -279,7 +343,7 @@ func TestBruteForceLogic(t *testing.T) {
 		mock.MatchExpectationsInOrder(false)
 		mock.Regexp().ExpectHGet(".*", "positive").RedisNil()
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha1")
-		mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
+		mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 			SetVal([]interface{}{"15", int64(1), "4"})
 
 		var message string

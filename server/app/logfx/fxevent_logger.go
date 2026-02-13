@@ -22,7 +22,6 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 
-	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
 
@@ -33,12 +32,6 @@ type FxEventLogger struct {
 
 func NewFxEventLogger(logger *slog.Logger) fxevent.Logger {
 	return &FxEventLogger{logger: logger}
-}
-
-func WithFxEventLogger(logger *slog.Logger) fx.Option {
-	return fx.WithLogger(func() fxevent.Logger {
-		return NewFxEventLogger(logger)
-	})
 }
 
 func (l *FxEventLogger) LogEvent(event fxevent.Event) {

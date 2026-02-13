@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"context"
 	"testing"
 
 	lua "github.com/yuin/gopher-lua"
@@ -105,7 +106,7 @@ func TestValidatePassword(t *testing.T) {
 			L.SetGlobal("passwordPolicy", tt.table)
 			L.Push(tt.table)
 			L.Push(lua.LString(tt.password))
-			m := NewPasswordManager(nil, nil, nil)
+			m := NewPasswordManager(context.TODO(), nil, nil)
 			m.validatePassword(L)
 
 			got := L.ToBool(-2)
@@ -159,7 +160,7 @@ func TestGetCountryName(t *testing.T) {
 			defer L.Close()
 
 			L.Push(lua.LString(tt.isoCode))
-			m := NewMiscManager(nil, nil, nil)
+			m := NewMiscManager(context.TODO(), nil, nil)
 			m.getCountryName(L)
 
 			got := L.ToString(-2)
@@ -224,7 +225,7 @@ func TestWaitRandom(t *testing.T) {
 
 			L.Push(tt.minWait)
 			L.Push(tt.maxWait)
-			m := NewMiscManager(nil, nil, nil)
+			m := NewMiscManager(context.TODO(), nil, nil)
 			m.waitRandom(L)
 
 			hasError := L.Get(-1) != lua.LNil

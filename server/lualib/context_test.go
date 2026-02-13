@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"context"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -67,7 +68,7 @@ func TestContextSet(t *testing.T) {
 			L.Push(tc.key)
 			L.Push(tc.value)
 
-			manager := NewContextManager(nil, nil, nil, ctx)
+			manager := NewContextManager(context.TODO(), nil, nil, ctx)
 			manager.ContextSet(L)
 
 			val := convert.GoToLuaValue(L, ctx.Get(lua.LVAsString(tc.key)))
@@ -121,13 +122,13 @@ func TestContextGet(t *testing.T) {
 				L.Push(tt.key)
 				L.Push(tt.value)
 
-				manager := NewContextManager(nil, nil, nil, ctx)
+				manager := NewContextManager(context.TODO(), nil, nil, ctx)
 				manager.ContextSet(L)
 			}
 
 			L.Push(tt.key)
 
-			manager := NewContextManager(nil, nil, nil, ctx)
+			manager := NewContextManager(context.TODO(), nil, nil, ctx)
 			manager.ContextGet(L)
 
 			val := L.Get(-1)
@@ -185,7 +186,7 @@ func TestContextDelete(t *testing.T) {
 
 			L.Push(tt.key)
 
-			manager := NewContextManager(nil, nil, nil, ctx)
+			manager := NewContextManager(context.TODO(), nil, nil, ctx)
 			manager.ContextDelete(L)
 
 			for key, expectedValue := range tt.postSets {

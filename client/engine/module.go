@@ -22,7 +22,7 @@ func NewStatsCollector() StatsCollector {
 
 // NewCSVSourceFromConfig provides a RowSource based on the configuration.
 func NewCSVSourceFromConfig(cfg *Config) (RowSource, error) {
-	return NewCSVSource(cfg.CSVPath, 0, cfg.CSVDebug, cfg.MaxRows, cfg.Shuffle)
+	return NewCSVSource(cfg.CSVPath, 0, cfg.MaxRows, cfg.Shuffle)
 }
 
 // NewPacerFromConfig provides an optional Pacer based on the configuration.

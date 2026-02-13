@@ -39,7 +39,7 @@ func NewDefaultStatsCollector() *DefaultStatsCollector {
 	return s
 }
 
-func (s *DefaultStatsCollector) AddSample(latency time.Duration, ok bool, isMatch bool, isHttpErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool, statusCode int) {
+func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch bool, isHttpErr bool, isAborted bool, isSkipped bool, isToleratedBF bool, isTooManyRequests bool, statusCode int) {
 	s.total.Add(1)
 	if isAborted {
 		s.aborted.Add(1)

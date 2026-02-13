@@ -38,7 +38,7 @@ type Handler struct {
 	redis  rediscli.Client
 }
 
-func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
+func New(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
 	return &Handler{cfg: cfg, logger: logger, redis: redis}
 }
 

@@ -16,6 +16,7 @@
 package filter
 
 import (
+	"context"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -77,7 +78,7 @@ func TestGetBackendServers(t *testing.T) {
 			request := &Request{
 				BackendServers: tt.serversInput,
 			}
-			manager := NewFilterBackendManager(nil, nil, nil, request, nil, nil)
+			manager := NewFilterBackendManager(context.TODO(), nil, nil, request, nil, nil)
 			manager.getBackendServers(lState)
 
 			serverTable := lState.Get(-1).(*lua.LTable)
@@ -129,7 +130,7 @@ func TestSelectBackendServer(t *testing.T) {
 				UsedBackendAddr: server,
 				UsedBackendPort: port,
 			}
-			manager := NewFilterBackendManager(nil, nil, nil, request, nil, nil)
+			manager := NewFilterBackendManager(context.TODO(), nil, nil, request, nil, nil)
 
 			L.Push(lua.LString(tt.server))
 			L.Push(lua.LNumber(tt.port))

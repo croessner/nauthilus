@@ -322,23 +322,3 @@ func GetRedisConnection(L *lua.LState) int {
 
 	return 2
 }
-
-// getRedisConnectionWithFallback returns a Redis client from Lua state or a fallback client if the Lua state contains "default".
-func getRedisConnectionWithFallback(L *lua.LState, fallbackClient redis.UniversalClient) redis.UniversalClient {
-	ud := L.Get(1)
-	if ud.Type() == lua.LTString && ud.String() == "default" {
-		return fallbackClient
-	}
-
-	userData, okay := ud.(*lua.LUserData)
-	if !okay || userData == nil {
-		return fallbackClient
-	}
-
-	client, okay := userData.Value.(redis.UniversalClient)
-	if !okay {
-		return fallbackClient
-	}
-
-	return client
-}

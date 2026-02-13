@@ -16,8 +16,6 @@
 package ldappool
 
 import (
-	stdlog "log"
-	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -34,8 +32,6 @@ type envHolder struct {
 
 var defaultEnvironment atomic.Value
 
-var warnMissingEnvOnce sync.Once
-
 func init() {
 	defaultEnvironment.Store(envHolder{env: nil})
 }
@@ -43,21 +39,4 @@ func init() {
 // SetDefaultEnvironment sets the process-wide default environment for `ldappool`.
 func SetDefaultEnvironment(env config.Environment) {
 	defaultEnvironment.Store(envHolder{env: env})
-}
-
-func getDefaultEnvironment() config.Environment {
-	if v := defaultEnvironment.Load(); v != nil {
-		if h, ok := v.(envHolder); ok {
-			if h.env != nil {
-				return h.env
-			}
-		}
-	}
-
-	// Hard fail: environment must be configured at the boundary.
-	warnMissingEnvOnce.Do(func() {
-		stdlog.Printf("ERROR: ldappool default Environment is not configured. Ensure the boundary calls ldappool.SetDefaultEnvironment(...)\n")
-	})
-
-	panic("ldappool: default Environment not configured")
 }

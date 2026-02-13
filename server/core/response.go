@@ -141,7 +141,7 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	handleLogging(ctx, a)
 
 	// Only authentication attempts
-	if !(a.Request.NoAuth || a.Request.ListAccounts) {
+	if !a.Request.NoAuth && !a.Request.ListAccounts {
 		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
 		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
 
@@ -221,7 +221,7 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	handleLogging(ctx, a)
 
 	// Only authentication attempts
-	if !(a.Request.NoAuth || a.Request.ListAccounts) {
+	if !a.Request.NoAuth && !a.Request.ListAccounts {
 		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
 		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
 

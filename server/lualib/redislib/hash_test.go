@@ -144,7 +144,7 @@ func TestRedisHSet(t *testing.T) {
 			key:            "nilKey",
 			kvPairs:        []any{},
 			expectedResult: lua.LNil,
-			expectedErr:    lua.LString("Invalid number of arguments"),
+			expectedErr:    lua.LString("invalid number of arguments"),
 		},
 		{
 			name:           "SetKeyValuePairsWithError",

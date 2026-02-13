@@ -197,6 +197,10 @@ type CommonRequest struct {
 	// Repeating is a flag indicating if the action would be repeated.
 	Repeating bool
 
+	// RWP indicates whether the request was identified as a Repeating Wrong Password.
+	// When true, bucket counters were NOT increased because the same wrong password was repeated.
+	RWP bool
+
 	// UserFound is a flag indicating if the user executing the action was found in the system.
 	UserFound bool
 
@@ -260,6 +264,7 @@ func (c *CommonRequest) Reset() {
 	c.HTTPStatus = 0
 	c.Debug = false
 	c.Repeating = false
+	c.RWP = false
 	c.UserFound = false
 	c.Authenticated = false
 	c.NoAuth = false
@@ -280,6 +285,7 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 
 	request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(c.Debug))
 	request.RawSet(lua.LString(definitions.LuaRequestRepeating), lua.LBool(c.Repeating))
+	request.RawSet(lua.LString(definitions.LuaRequestRWP), lua.LBool(c.RWP))
 	request.RawSet(lua.LString(definitions.LuaRequestUserFound), lua.LBool(c.UserFound))
 	request.RawSet(lua.LString(definitions.LuaRequestAuthenticated), lua.LBool(c.Authenticated))
 	request.RawSet(lua.LString(definitions.LuaRequestNoAuth), lua.LBool(c.NoAuth))

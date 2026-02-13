@@ -92,18 +92,19 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		if (!isRepeating || accountName == "") && clientNet != "" {
 			prefix := a.cfg().GetServer().GetRedis().GetPrefix()
 			userKey := rediscli.GetUserHashKey(prefix, a.Request.Username)
-			bfKey := rediscli.GetBruteForceHashKey(prefix, clientNet)
+			banKey := rediscli.GetBruteForceBanKey(prefix, clientNet)
 
 			dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx.Request.Context(), a.cfg())
 			pipe := a.Redis().GetReadHandle().Pipeline()
 			userCmd := pipe.HGet(dCtx, userKey, a.Request.Username)
-			bfCmd := pipe.HExists(dCtx, bfKey, clientNet)
+			bfCmd := pipe.Exists(dCtx, banKey)
 			_, err := pipe.Exec(dCtx)
 			cancel()
 
 			if err == nil || errors.Is(err, redis.Nil) {
 				acc, _ := userCmd.Result()
-				rep, _ := bfCmd.Result()
+				repVal, _ := bfCmd.Result()
+				rep := repVal > 0
 
 				if accountName == "" && acc != "" {
 					accountName = acc
@@ -112,7 +113,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 						a.Runtime.AccountField = definitions.MetaUserAccount
 					}
 
-					if a.Attributes.Attributes == nil || len(a.Attributes.Attributes) == 0 {
+					if len(a.Attributes.Attributes) == 0 {
 						attrs := make(bktype.AttributeMapping)
 						attrs[definitions.MetaUserAccount] = []any{acc}
 						a.ReplaceAllAttributes(attrs)
@@ -436,6 +437,15 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 	bm = bm.WithPassword(a.Request.Password).WithAccountName(accountName).WithUsername(a.Request.Username)
 
+	// Always check RWP (Repeating Wrong Password) and store result in gin.Context
+	// so UpdateBruteForceBucketsCounter can reuse it without a redundant Redis call.
+	if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err == nil {
+		ctx.Set(definitions.CtxRWPResultKey, needEnforce)
+
+		// RWP detected when enforcement is NOT needed (needEnforce == false).
+		a.Runtime.BFRWP = !needEnforce
+	}
+
 	// Determine IP once
 	ip := net.ParseIP(a.Request.ClientIP)
 
@@ -498,12 +508,12 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	bfRepeating := alreadyTriggered || (a.Security.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
 		prefix := a.cfg().GetServer().GetRedis().GetPrefix()
-		key := rediscli.GetBruteForceHashKey(prefix, bfClientNet)
+		banKey := rediscli.GetBruteForceBanKey(prefix, bfClientNet)
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		exists, err := a.deps.Redis.GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
-		if err == nil && exists {
+		existsVal, err := a.deps.Redis.GetReadHandle().Exists(ctx.Request.Context(), banKey).Result()
+		if err == nil && existsVal > 0 {
 			bfRepeating = true
 		}
 	}
@@ -667,6 +677,46 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	bm = bm.WithUsername(a.Request.Username).WithPassword(a.Request.Password).WithAccountName(accountName)
+
+	// Check whether bucket counters should be increased.
+	// First try the context-cached result from CheckBruteForce; fall back to a fresh check.
+	if cached, exists := ctx.Get(definitions.CtxRWPResultKey); exists {
+		if enforce, ok := cached.(bool); ok {
+			bm = bm.WithRWPDecision(enforce)
+
+			if enforce {
+				goto enforceBuckets
+			}
+
+			// RWP already detected in CheckBruteForce — do not increase buckets.
+			a.Runtime.BFRWP = true
+
+			bm.ProcessPWHist()
+
+			return
+		}
+	} else {
+		// Fallback: no cached result (e.g., called without prior CheckBruteForce).
+		if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err != nil {
+			return
+		} else if !needEnforce {
+			bm = bm.WithRWPDecision(false)
+
+			// Store result in context so downstream consumers (e.g., Post-Lua-Actions) can read it.
+			ctx.Set(definitions.CtxRWPResultKey, false)
+
+			a.Runtime.BFRWP = true
+
+			bm.ProcessPWHist()
+
+			return
+		}
+
+		// Enforcement needed — cache the positive result for downstream consumers.
+		ctx.Set(definitions.CtxRWPResultKey, true)
+	}
+
+enforceBuckets:
 
 	proto := ""
 	if a.Request.Protocol != nil {

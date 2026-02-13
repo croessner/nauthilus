@@ -52,7 +52,6 @@ type Pool struct {
 	key    PoolKey
 	opts   PoolOptions
 	states chan *lua.LState
-	mu     sync.Mutex
 	// httpClient is used by luapool.NewLuaState to preload glua_http once per VM.
 	httpClient *stdhttp.Client
 	// inUse tracks the number of VMs currently checked out from the pool.
@@ -69,7 +68,7 @@ func newPool(key PoolKey, opts PoolOptions) *Pool {
 		opts:   opts,
 		states: make(chan *lua.LState, opts.MaxVMs),
 		// Create a dedicated HTTP client for this pool's VMs.
-		httpClient: util.NewHTTPClientWithCfg(opts.Config),
+		httpClient: util.NewHTTPClient(opts.Config),
 	}
 
 	for i := 0; i < opts.MaxVMs; i++ {

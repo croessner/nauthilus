@@ -16,8 +16,6 @@
 package tolerate
 
 import (
-	stdlog "log"
-	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -30,35 +28,16 @@ import (
 // default client that is set at boundaries from the injected `redifx.Client`.
 
 type clientHolder struct {
-	c rediscli.Client
+	client rediscli.Client
 }
 
 var defaultClient atomic.Value
 
-var warnMissingRedisOnce sync.Once
-
 func init() {
-	defaultClient.Store(clientHolder{c: nil})
+	defaultClient.Store(clientHolder{client: nil})
 }
 
 // SetDefaultClient sets the tolerate-wide default Redis client.
-func SetDefaultClient(c rediscli.Client) {
-	defaultClient.Store(clientHolder{c: c})
-}
-
-func getDefaultClient() rediscli.Client {
-	if v := defaultClient.Load(); v != nil {
-		if h, ok := v.(clientHolder); ok {
-			if h.c != nil {
-				return h.c
-			}
-		}
-	}
-
-	// Hard fail always.
-	warnMissingRedisOnce.Do(func() {
-		stdlog.Printf("ERROR: tolerate default Redis client is not configured. Ensure the boundary calls tolerate.SetDefaultClient(...)\n")
-	})
-
-	panic("tolerate: default Redis client not configured")
+func SetDefaultClient(client rediscli.Client) {
+	defaultClient.Store(clientHolder{client: client})
 }

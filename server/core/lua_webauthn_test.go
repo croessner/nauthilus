@@ -89,13 +89,18 @@ func TestLuaGetWebAuthnCredentials(t *testing.T) {
 	credentials, err := lm.GetWebAuthnCredentials(auth)
 	assert.NoError(t, err)
 	assert.Len(t, credentials, 1)
-	assert.True(t, bytes.Equal(cred.Credential.ID, credentials[0].Credential.ID))
+	assert.True(t, bytes.Equal(cred.ID, credentials[0].ID))
 	assert.Equal(t, cred.Name, credentials[0].Name)
 }
 
-func TestLuaSaveWebAuthnCredential(t *testing.T) {
+// setupWebAuthnCredentialTest creates common test fixtures for Save/Delete WebAuthn credential tests.
+func setupWebAuthnCredentialTest(t *testing.T) (*luaManagerImpl, *AuthState, *mfa.PersistentCredential) {
+	t.Helper()
+
 	mcfg := new(mockConfig)
+
 	var verbosity config.Verbosity
+
 	_ = verbosity.Set("debug")
 
 	mcfg.On("GetServer").Return(&config.ServerSection{
@@ -134,85 +139,55 @@ func TestLuaSaveWebAuthnCredential(t *testing.T) {
 
 	priorityqueue.LuaQueue.AddBackendName("test")
 
-	go func() {
-		req := priorityqueue.LuaQueue.Pop("test")
-		if req != nil {
-			assert.Equal(t, definitions.LuaCommandSaveWebAuthnCredential, req.Command)
-			assert.NotEmpty(t, req.WebAuthnCredential)
-
-			var credPopped webauthn.Credential
-			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
-			assert.True(t, bytes.Equal(cred.Credential.ID, credPopped.ID))
-
-			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}
-			}
-		}
-	}()
-
-	err := lm.SaveWebAuthnCredential(auth, cred)
-	assert.NoError(t, err)
+	return lm, auth, cred
 }
 
-func TestLuaDeleteWebAuthnCredential(t *testing.T) {
-	mcfg := new(mockConfig)
-	var verbosity config.Verbosity
-	_ = verbosity.Set("debug")
-
-	mcfg.On("GetServer").Return(&config.ServerSection{
-		Timeouts: config.Timeouts{
-			LuaBackend: 2 * time.Second,
+func TestLuaSaveDeleteWebAuthnCredential(t *testing.T) {
+	tests := []struct {
+		name      string
+		command   definitions.LuaCommand
+		operation func(lm *luaManagerImpl, auth *AuthState, cred *mfa.PersistentCredential) error
+	}{
+		{
+			name:    "Save",
+			command: definitions.LuaCommandSaveWebAuthnCredential,
+			operation: func(lm *luaManagerImpl, auth *AuthState, cred *mfa.PersistentCredential) error {
+				return lm.SaveWebAuthnCredential(auth, cred)
+			},
 		},
-		Log: config.Log{
-			Level: verbosity,
-		},
-	})
-
-	deps := AuthDeps{Cfg: mcfg}
-	lm := &luaManagerImpl{
-		backendName: "test",
-		deps:        deps,
-	}
-
-	cred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("test-id"),
-		},
-		Name: "Test Key",
-	}
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username: "jdoe",
-			Protocol: new(config.Protocol),
-		},
-		Runtime: AuthRuntime{
-			GUID: "test-guid",
+		{
+			name:    "Delete",
+			command: definitions.LuaCommandDeleteWebAuthnCredential,
+			operation: func(lm *luaManagerImpl, auth *AuthState, cred *mfa.PersistentCredential) error {
+				return lm.DeleteWebAuthnCredential(auth, cred)
+			},
 		},
 	}
-	auth.Request.Protocol.Set("oidc")
 
-	priorityqueue.LuaQueue.AddBackendName("test")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lm, auth, cred := setupWebAuthnCredentialTest(t)
 
-	go func() {
-		req := priorityqueue.LuaQueue.Pop("test")
-		if req != nil {
-			assert.Equal(t, definitions.LuaCommandDeleteWebAuthnCredential, req.Command)
-			assert.NotEmpty(t, req.WebAuthnCredential)
+			go func() {
+				req := priorityqueue.LuaQueue.Pop("test")
+				if req != nil {
+					assert.Equal(t, tt.command, req.Command)
+					assert.NotEmpty(t, req.WebAuthnCredential)
 
-			var credPopped webauthn.Credential
-			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
-			assert.True(t, bytes.Equal(cred.Credential.ID, credPopped.ID))
+					var credPopped webauthn.Credential
+					_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
+					assert.True(t, bytes.Equal(cred.ID, credPopped.ID))
 
-			if req.LuaReplyChan != nil {
-				req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}
-			}
-		}
-	}()
+					if req.LuaReplyChan != nil {
+						req.LuaReplyChan <- &lualib.LuaBackendResult{Err: nil}
+					}
+				}
+			}()
 
-	err := lm.DeleteWebAuthnCredential(auth, cred)
-	assert.NoError(t, err)
+			err := tt.operation(lm, auth, cred)
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestLuaUpdateWebAuthnCredential(t *testing.T) {

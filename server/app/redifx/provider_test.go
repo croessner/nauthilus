@@ -5,7 +5,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
-	redismock "github.com/go-redis/redismock/v9"
+	"github.com/go-redis/redismock/v9"
 )
 
 func TestNewClientReturnsClient(t *testing.T) {

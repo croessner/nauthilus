@@ -39,10 +39,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-var (
-	tolerate     Tolerate
-	initTolerate sync.Once
-)
+var tolerate Tolerate
 
 var (
 	cleaner     *houseKeeper
@@ -163,14 +160,6 @@ type tolerateImpl struct {
 	sg singleflight.Group
 
 	deps tolerateDeps
-}
-
-func (t *tolerateImpl) effectiveCfg() config.File {
-	return t.deps.cfg
-}
-
-func (t *tolerateImpl) effectiveLogger() *slog.Logger {
-	return t.deps.logger
 }
 
 func (t *tolerateImpl) effectiveRedis() rediscli.Client {
@@ -728,11 +717,7 @@ func (t *tolerateImpl) findIP(ipOrNet, ipAddress string) bool {
 		return false
 	}
 
-	if network.Contains(cmpAddress) {
-		return true
-	}
-
-	return false
+	return network.Contains(cmpAddress)
 }
 
 func NewTolerateWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client, pctTolerated uint8) Tolerate {

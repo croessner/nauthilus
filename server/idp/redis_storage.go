@@ -17,6 +17,7 @@ package idp
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"time"
 
@@ -36,6 +37,7 @@ type OIDCSession struct {
 	RedirectURI       string         `json:"redirect_uri"`
 	AuthTime          time.Time      `json:"auth_time"`
 	Nonce             string         `json:"nonce,omitempty"`
+	AccessToken       string         `json:"access_token,omitempty"`
 	IdTokenClaims     map[string]any `json:"id_token_claims"`
 	AccessTokenClaims map[string]any `json:"access_token_claims"`
 }
@@ -242,6 +244,70 @@ func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string)
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
 
 	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+}
+
+// DenyJWTAccessToken adds a JWT access token to the denylist in Redis.
+// The token is stored with a TTL so it expires automatically when the original token would have expired.
+func (s *RedisTokenStorage) DenyJWTAccessToken(ctx context.Context, token string, ttl time.Duration) error {
+	if token == "" || ttl <= 0 {
+		return nil
+	}
+
+	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+
+	return s.redis.GetWriteHandle().Set(ctx, key, "1", ttl).Err()
+}
+
+// IsJWTAccessTokenDenied checks whether a JWT access token has been denied (invalidated).
+func (s *RedisTokenStorage) IsJWTAccessTokenDenied(ctx context.Context, token string) bool {
+	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+
+	_, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+
+	return err == nil
+}
+
+// DeleteUserAccessTokens removes all access tokens for a given user from Redis.
+func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+
+	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", userID)
+
+	tokens, err := s.redis.GetReadHandle().SMembers(ctx, userKey).Result()
+	if err != nil {
+		return err
+	}
+
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	pipe := s.redis.GetWriteHandle().Pipeline()
+
+	for _, token := range tokens {
+		pipe.Del(ctx, s.prefix+fmt.Sprintf("oidc:access_token:%s", token))
+	}
+
+	pipe.Del(ctx, userKey)
+
+	_, err = pipe.Exec(ctx)
+
+	return err
+}
+
+// FlushUserTokens removes all OIDC access tokens and refresh tokens for a given user.
+// It returns a combined error if any of the underlying deletions fail.
+func (s *RedisTokenStorage) FlushUserTokens(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+
+	accessErr := s.DeleteUserAccessTokens(ctx, userID)
+	refreshErr := s.DeleteUserRefreshTokens(ctx, userID)
+
+	return stderrors.Join(accessErr, refreshErr)
 }
 
 // ListUserSessions returns all active OIDC sessions (via access tokens) for a user.

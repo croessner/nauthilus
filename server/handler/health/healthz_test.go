@@ -50,7 +50,7 @@ func TestReadinessCheckUsesTestBackend(t *testing.T) {
 		BackendName: "healthz-test",
 	}
 
-	ReadinessCheckWithDeps(ctx, deps)
+	ReadinessCheck(ctx, deps)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", recorder.Code)
@@ -116,7 +116,7 @@ func TestReadinessCheckIgnoresInformationalChecks(t *testing.T) {
 		Redis:       redisClient,
 	}
 
-	ReadinessCheckWithDeps(ctx, deps)
+	ReadinessCheck(ctx, deps)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", recorder.Code)

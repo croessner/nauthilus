@@ -271,7 +271,7 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	}
 
 	// Validate token and store claims in context (aborts with 401 on failure)
-	claims := oidcbearer.ValidateAndStoreClaims(ctx, validator, cfg, logger, tokenString)
+	claims := oidcbearer.ValidateAndStoreClaims(ctx, validator, cfg, tokenString)
 	if claims == nil {
 		return false
 	}

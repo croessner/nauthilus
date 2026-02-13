@@ -227,7 +227,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	actx, asp := tr.Start(aw.ctx, "actions.run",
 		attribute.String("service", func() string {
 			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.CommonRequest.Service
+				return aw.luaActionRequest.Service
 			}
 
 			return ""
@@ -235,7 +235,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 		attribute.String("username", func() string {
 			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.CommonRequest.Username
+				return aw.luaActionRequest.Username
 			}
 
 			return ""
@@ -243,7 +243,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 		attribute.Bool("repeating", func() bool {
 			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.CommonRequest.Repeating
+				return aw.luaActionRequest.Repeating
 			}
 			return false
 		}()),
@@ -389,7 +389,7 @@ func (aw *Worker) setupGlobals(ctx context.Context, L *lua.LState, logs *lualib.
 func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	aw.luaActionRequest.CommonRequest.SetupRequest(L, aw.cfg, request)
+	aw.luaActionRequest.SetupRequest(L, aw.cfg, request)
 
 	return request
 }
@@ -420,7 +420,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 		attribute.String("action", getLuaActionName(aw.actionScripts[index])),
 		attribute.String("service", func() string {
 			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.CommonRequest.Service
+				return aw.luaActionRequest.Service
 			}
 
 			return ""
@@ -428,7 +428,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 
 		attribute.String("username", func() string {
 			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.CommonRequest.Username
+				return aw.luaActionRequest.Username
 			}
 
 			return ""

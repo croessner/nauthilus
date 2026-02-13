@@ -16,8 +16,6 @@
 package bruteforce
 
 import (
-	stdlog "log"
-	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -36,8 +34,6 @@ type redisHolder struct {
 
 var defaultRedis atomic.Value
 
-var warnMissingRedisOnce sync.Once
-
 func init() {
 	defaultRedis.Store(redisHolder{c: nil})
 }
@@ -45,21 +41,4 @@ func init() {
 // SetDefaultRedisClient sets the bruteforce-wide default Redis client.
 func SetDefaultRedisClient(c rediscli.Client) {
 	defaultRedis.Store(redisHolder{c: c})
-}
-
-func getDefaultRedisClient() rediscli.Client {
-	if v := defaultRedis.Load(); v != nil {
-		if h, ok := v.(redisHolder); ok {
-			if h.c != nil {
-				return h.c
-			}
-		}
-	}
-
-	// Hard fail always.
-	warnMissingRedisOnce.Do(func() {
-		stdlog.Printf("ERROR: bruteforce default Redis client is not configured. Ensure the boundary calls bruteforce.SetDefaultRedisClient(...)\n")
-	})
-
-	panic("bruteforce: default Redis client not configured")
 }

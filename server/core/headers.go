@@ -113,7 +113,7 @@ func setNginxHeadersWithDeps(cfg config.File, logger *slog.Logger, ctx *gin.Cont
 // - X-Nauthilus-Attribute1: "Value1"
 // - X-Nauthilus-Attribute2: "Value2_1,Value2_2"
 func setHeaderHeaders(ctx *gin.Context, auth *AuthState) {
-	if auth.Attributes.Attributes != nil && len(auth.Attributes.Attributes) > 0 {
+	if len(auth.Attributes.Attributes) > 0 {
 		for name, value := range auth.Attributes.Attributes {
 			handleAttributeValue(ctx, name, value)
 		}

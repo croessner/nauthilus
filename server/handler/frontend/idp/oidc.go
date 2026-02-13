@@ -452,7 +452,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			}
 		default:
 			// If unknown, default to allowing existing behavior (basic or post)
-			allowed = (authSource == "client_secret_basic" || authSource == "client_secret_post")
+			allowed = authSource == "client_secret_basic" || authSource == "client_secret_post"
 		}
 
 		if !allowed {
@@ -696,8 +696,8 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	case "authorization_code":
 		code := ctx.PostForm("code")
 
-		session, err := h.storage.GetSession(ctx.Request.Context(), code)
-		if err != nil {
+		session, getErr := h.storage.GetSession(ctx.Request.Context(), code)
+		if getErr != nil {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 
 			return

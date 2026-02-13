@@ -172,7 +172,7 @@ func bindModuleIntoReq(L *lua.LState, req *lua.LTable, name string, mod *lua.LTa
 func resetRequestEnv(L *lua.LState) {
 	// Clear stack and context
 	L.SetTop(0)
-	L.SetContext(nil)
+	L.SetContext(context.TODO())
 
 	// Clear request env
 	if v := L.GetGlobal(reqEnvKey); v.Type() == lua.LTTable {

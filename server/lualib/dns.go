@@ -73,7 +73,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 
 	defer cancel()
 
-	resolver := util.NewDNSResolverWithCfg(cfg)
+	resolver := util.NewDNSResolver(cfg)
 
 	switch kind {
 	case "A", "AAAA":

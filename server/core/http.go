@@ -168,7 +168,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	}
 
 	if mw.IsLoggingEnabled() {
-		r.Use(mdlog.LoggerMiddlewareWithLogger(c.logger))
+		r.Use(mdlog.LoggerMiddleware(c.logger))
 	}
 }
 

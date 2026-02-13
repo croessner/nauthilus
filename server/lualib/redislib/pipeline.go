@@ -554,7 +554,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 	}
 
 	cmders, err := pipe.Exec(dCtx)
-	if err != nil && err != redis.Nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return luastack.NewManager(L).PushError(err)
 	}
 
@@ -568,7 +568,7 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 	resultTbl := L.NewTable()
 	for _, cmd := range cmders {
 		item := L.NewTable()
-		if cmd.Err() != nil && cmd.Err() != redis.Nil {
+		if cmd.Err() != nil && !errors.Is(cmd.Err(), redis.Nil) {
 			item.RawSetString("ok", lua.LBool(false))
 			item.RawSetString("err", lua.LString(cmd.Err().Error()))
 		} else {

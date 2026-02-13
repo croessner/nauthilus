@@ -53,15 +53,15 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 		if act.CommonRequest == nil {
 			t.Errorf("CommonRequest must not be nil")
 		} else {
-			if act.CommonRequest.StatusMessage == nil || *act.CommonRequest.StatusMessage != "status-1" {
-				t.Errorf("status message copy mismatch: %v", act.CommonRequest.StatusMessage)
+			if act.StatusMessage == nil || *act.StatusMessage != "status-1" {
+				t.Errorf("status message copy mismatch: %v", act.StatusMessage)
 			}
 
-			if act.CommonRequest.ClientNet != "10.0.0.0/24" { // pre-set, so no derivation
-				t.Errorf("unexpected client_net: %q", act.CommonRequest.ClientNet)
+			if act.ClientNet != "10.0.0.0/24" { // pre-set, so no derivation
+				t.Errorf("unexpected client_net: %q", act.ClientNet)
 			}
 
-			if !act.CommonRequest.Repeating {
+			if !act.Repeating {
 				t.Errorf("expected repeating=true")
 			}
 		}
