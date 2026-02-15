@@ -299,6 +299,24 @@ func TestBruteForceScenarios(t *testing.T) {
 	})
 }
 
+func TestProcessPWHistSkipsWithoutAccountName(t *testing.T) {
+	cfg := initTestConfig()
+	mock, tol := setupSubtest(cfg)
+	mock.MatchExpectationsInOrder(false)
+
+	bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "pw_hist_skip", "1.2.3.4", bruteforce.BucketManagerDeps{
+		Cfg:      cfg,
+		Logger:   log.GetLogger(),
+		Redis:    rediscli.GetClient(),
+		Tolerate: tol,
+	}).WithUsername("user1").WithProtocol("imap").WithPassword("password123")
+
+	accountName := bm.ProcessPWHist()
+	assert.Empty(t, accountName)
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBruteForceLogic(t *testing.T) {
 	cfg := initTestConfig()
 	const testIP = "192.168.1.1"

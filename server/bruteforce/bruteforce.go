@@ -2122,16 +2122,12 @@ func (bm *bucketManagerImpl) resolveAccountNameForHistory() string {
 		return ""
 	}
 
-	if bm.username == "" {
-		level.Debug(logger).Log(
-			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Skipping account-scoped history: no accountName or username",
-		)
+	level.Debug(logger).Log(
+		definitions.LogKeyGUID, bm.guid,
+		definitions.LogKeyMsg, "Skipping account-scoped history: no accountName",
+	)
 
-		return ""
-	}
-
-	return bm.username
+	return ""
 }
 
 func (bm *bucketManagerImpl) loadPasswordHistoryCount(isAccountScoped bool) uint {
