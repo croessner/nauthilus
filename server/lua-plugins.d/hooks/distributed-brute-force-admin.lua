@@ -201,12 +201,13 @@ local function reset_account(redis_handle, username, request)
     local ips = nauthilus_redis.redis_smembers(redis_handle, pw_hist_ips_key) or {}
 
     -- Build a single write pipeline to delete all related keys and set entries
+    local affected_accounts_key = nauthilus_util.get_redis_key(request, "affected_accounts")
     local pipeline_cmds = {
         {"zrem", attacked_accounts_key, { username }},
         {"srem", captcha_accounts_key, username},
         {"del", ip_key},
         {"del", fail_key},
-        {"srem", "AFFECTED_ACCOUNTS", username},
+        { "srem", affected_accounts_key, username },
     }
 
     for _, ip in ipairs(ips) do
