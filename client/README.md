@@ -39,7 +39,8 @@ Unknown CSV columns are ignored. The client only sends keys that exist in the se
 CSV delimiter: auto-detected from the header (comma/semicolon/tab). You can override with `--csv-delim="," | ";" | "tab"`. Use `--csv-debug` to print detected headers and the first row.
 
 ## Build
-Requirement: Go 1.25.x
+
+Requirement: Go 1.26.x
 
 ```
 cd client
@@ -123,7 +124,7 @@ curl -sS -X POST http://localhost:8080/api/v1/auth/json \
 ## Generate a large CSV (e.g., 10,000 rows)
 The client can generate the CSV directly. All columns are filled appropriately and the file `client/logins.csv` will be overwritten.
 
-Requirement: Go 1.25.x
+Requirement: Go 1.26.x
 
 Example (10,000 rows):
 ```

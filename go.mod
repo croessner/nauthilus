@@ -1,6 +1,6 @@
 module github.com/croessner/nauthilus
 
-go 1.25
+go 1.26
 
 require (
 	github.com/andybalholm/brotli v1.2.0
