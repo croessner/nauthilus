@@ -2933,6 +2933,8 @@ func bindEnvs(i any, parts ...string) error {
 	}
 
 	ift := ifv.Type()
+	secretType := reflect.TypeFor[secret.Value]()
+	secretPtrType := reflect.TypeFor[*secret.Value]()
 
 	for i := range ift.NumField() {
 		v := ifv.Field(i)
@@ -2947,7 +2949,9 @@ func bindEnvs(i any, parts ...string) error {
 			tag = t.Name
 		}
 
-		if t.Type.Kind() == reflect.Ptr && t.Type.Elem().Kind() == reflect.Struct {
+		isSecret := t.Type == secretType || t.Type == secretPtrType
+
+		if t.Type.Kind() == reflect.Ptr && t.Type.Elem().Kind() == reflect.Struct && !isSecret {
 			if v.IsNil() {
 				v.Set(reflect.New(t.Type.Elem()))
 			}
@@ -2956,7 +2960,7 @@ func bindEnvs(i any, parts ...string) error {
 			if err != nil {
 				return err
 			}
-		} else if v.Kind() == reflect.Struct {
+		} else if v.Kind() == reflect.Struct && !isSecret {
 			err := bindEnvs(v.Addr().Interface(), append(parts, tag)...)
 			if err != nil {
 				return err
