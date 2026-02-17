@@ -2828,8 +2828,6 @@ func prettyFormatValidationErrors(validationErrors validator.ValidationErrors) e
 // HandleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *FileSettings) HandleFile() (err error) {
-	var validationErrors validator.ValidationErrors
-
 	if f == nil {
 		return nil
 	}
@@ -2856,7 +2854,7 @@ func (f *FileSettings) HandleFile() (err error) {
 	validate.RegisterValidation("hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot)
 
 	if err = validate.Struct(f); err != nil {
-		if stderrors.As(err, &validationErrors) {
+		if validationErrors, ok := stderrors.AsType[validator.ValidationErrors](err); ok {
 			return prettyFormatValidationErrors(validationErrors)
 		}
 

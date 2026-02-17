@@ -387,8 +387,7 @@ func isTransportError(err error) bool {
 	}
 
 	// net errors or EOF
-	var ne net.Error
-	if stderrors.As(err, &ne) {
+	if ne, ok := stderrors.AsType[net.Error](err); ok {
 		_ = ne
 
 		return true
@@ -399,8 +398,7 @@ func isTransportError(err error) bool {
 	}
 
 	// ldap.Error may wrap transport issues
-	var le *ldap.Error
-	if stderrors.As(err, &le) {
+	if le, ok := stderrors.AsType[*ldap.Error](err); ok {
 		// ResultCode 81 (server down) is typical transport failure
 		if le.ResultCode == uint16(ldap.ErrorNetwork) || uint16(le.ResultCode) == 81 {
 			return true

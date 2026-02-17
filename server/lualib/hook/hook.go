@@ -743,8 +743,7 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 // processError logs an error with the associated script hook for debugging or monitoring purposes.
 func processError(logger *slog.Logger, err error, hook string) {
 	// Include Lua stacktrace when available to simplify debugging
-	var ae *lua.ApiError
-	if errors.As(err, &ae) && ae != nil {
+	if ae, ok := errors.AsType[*lua.ApiError](err); ok && ae != nil {
 		level.Error(logger).Log(
 			"script", hook,
 			definitions.LogKeyMsg, "Error executing script",

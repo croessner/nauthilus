@@ -2546,9 +2546,7 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 	}
 
 	if err != nil {
-		var detailedError *errors.DetailedError
-
-		if stderrors.As(err, &detailedError) {
+		if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
 			logs := []any{
 				definitions.LogKeyGUID, a.Runtime.GUID,
 				definitions.LogKeyMsg, detailedError.GetDetails(),
@@ -2891,8 +2889,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		if err == nil {
 			accountList = append(accountList, result...)
 		} else {
-			var detailedError *errors.DetailedError
-			if stderrors.As(err, &detailedError) {
+			if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
 				level.Error(a.logger()).Log(
 					definitions.LogKeyGUID, a.Runtime.GUID,
 					definitions.LogKeyMsg, detailedError.GetDetails(),

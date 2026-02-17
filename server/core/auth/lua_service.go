@@ -104,8 +104,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	if err != nil {
 		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
 			// Include Lua stacktrace when available
-			var ae *lua.ApiError
-			if stderrors.As(err, &ae) && ae != nil {
+			if ae, ok := stderrors.AsType[*lua.ApiError](err); ok && ae != nil {
 				level.Error(auth.Logger()).Log(
 					definitions.LogKeyGUID, auth.Runtime.GUID,
 					definitions.LogKeyMsg, "Error calling Lua filter",

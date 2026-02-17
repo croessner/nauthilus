@@ -252,8 +252,7 @@ type Request struct {
 // stops the running timer and cancels the Lua context to abort pending operations.
 func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	// Try to include Lua stacktrace for easier diagnostics
-	var ae *lua.ApiError
-	if stderrs.As(err, &ae) && ae != nil {
+	if ae, ok := stderrs.AsType[*lua.ApiError](err); ok && ae != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, func() string {
 				if r != nil && r.CommonRequest != nil {

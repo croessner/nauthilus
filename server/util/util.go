@@ -287,23 +287,20 @@ func ResolveIPAddress(ctx context.Context, cfg config.File, address string) (hos
 }
 
 func ProtoErrToFields(err error) (fields []zap.Field) {
-	var e *protocol.Error
-
 	if err == nil {
 		return nil
 	}
 
-	switch {
-	case stderrors.As(err, &e):
+	if e, ok := stderrors.AsType[*protocol.Error](err); ok {
 		return []zap.Field{
 			{Key: "err", Type: zapcore.ErrorType, Interface: e},
 			{Key: "details", Type: zapcore.StringType, String: e.Details},
 			{Key: "info", Type: zapcore.StringType, String: e.DevInfo},
 			{Key: "type", Type: zapcore.StringType, String: e.Type},
 		}
-	default:
-		return nil
 	}
+
+	return nil
 }
 
 func RemoveCRLFFromQueryOrFilter(value string, sep string) string {

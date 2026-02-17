@@ -531,8 +531,7 @@ func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogK
 		definitions.LogKeyMsg, "failed to execute Lua script",
 	}
 
-	var ae *lua.ApiError
-	if errors.As(err, &ae) && ae != nil {
+	if ae, ok := errors.AsType[*lua.ApiError](err); ok && ae != nil {
 		parts = append(parts,
 			definitions.LogKeyError, ae.Error(),
 			"stacktrace", ae.StackTrace,

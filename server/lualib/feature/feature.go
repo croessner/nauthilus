@@ -421,8 +421,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	// Include Lua stacktrace when available for better diagnostics
-	var ae *lua.ApiError
-	if stderrors.As(err, &ae) && ae != nil {
+	if ae, ok := stderrors.AsType[*lua.ApiError](err); ok && ae != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, r.Session,
 			"name", scriptName,
