@@ -20,6 +20,7 @@ package clientauth
 import (
 	"crypto/subtle"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/croessner/nauthilus/server/idp/signing"
@@ -194,17 +195,10 @@ func (a *PrivateKeyJWTAuthenticator) validateAudience(claims jwt.MapClaims) erro
 			return fmt.Errorf("aud claim mismatch: expected %s, got %s", a.audience, aud)
 		}
 	case []any:
-		found := false
-
-		for _, v := range aud {
-			if s, ok := v.(string); ok && s == a.audience {
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
+		if !slices.ContainsFunc(aud, func(value any) bool {
+			audience, ok := value.(string)
+			return ok && audience == a.audience
+		}) {
 			return fmt.Errorf("aud claim does not contain expected audience %s", a.audience)
 		}
 	default:

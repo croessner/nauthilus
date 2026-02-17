@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -1931,17 +1932,11 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 		return
 	}
 
-	var targetIndex int
-	found := false
-	for i := range userData.WebAuthnUser.Credentials {
-		if bytes.Equal(userData.WebAuthnUser.Credentials[i].ID, decodedID) {
-			targetIndex = i
-			found = true
-			break
-		}
-	}
+	targetIndex := slices.IndexFunc(userData.WebAuthnUser.Credentials, func(credential mfa.PersistentCredential) bool {
+		return bytes.Equal(credential.ID, decodedID)
+	})
 
-	if !found {
+	if targetIndex == -1 {
 		h.renderErrorModal(ctx, "Credential not found")
 
 		return

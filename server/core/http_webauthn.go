@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -58,15 +59,7 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 
 	// Always ensure localhost is in origins if we are in developer mode
 	if b.env.GetDevMode() {
-		localhostFound := false
-
-		for _, o := range origins {
-			if o == "https://localhost:9443" {
-				localhostFound = true
-
-				break
-			}
-		}
+		localhostFound := slices.Contains(origins, "https://localhost:9443")
 
 		if !localhostFound {
 			origins = append(origins, "https://localhost:9443", "http://localhost:9094")
