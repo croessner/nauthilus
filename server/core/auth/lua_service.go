@@ -16,6 +16,7 @@
 package auth
 
 import (
+	"bytes"
 	stderrors "errors"
 	"fmt"
 
@@ -88,7 +89,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	filterRequest := &filter.Request{
 		Session:            auth.Runtime.GUID,
 		Username:           auth.Request.Username,
-		Password:           auth.Request.Password,
+		Password:           auth.PasswordBytes(),
 		ClientIP:           auth.Request.ClientIP,
 		AccountName:        auth.GetAccount(),
 		AdditionalFeatures: auth.Runtime.AdditionalFeatures,
@@ -236,12 +237,19 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		cr.HTTPStatus = auth.Runtime.StatusCodeFail
 	}
 
+	requestCopy := *cr
+	if len(cr.Password) > 0 {
+		requestCopy.Password = bytes.Clone(cr.Password)
+	} else {
+		requestCopy.Password = nil
+	}
+
 	args := core.PostActionArgs{
 		Context:       auth.Runtime.Context,
 		HTTPRequest:   auth.Request.HTTPClientRequest,
 		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
 		StatusMessage: auth.Runtime.StatusMessage,
-		Request:       *cr,
+		Request:       requestCopy,
 	}
 
 	go auth.RunLuaPostAction(args)

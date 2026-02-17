@@ -49,6 +49,7 @@ import (
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -114,7 +115,7 @@ type State interface {
 	SetUsername(username string)
 
 	// SetPassword sets the password for the current authentication state.
-	SetPassword(password string)
+	SetPassword(password secret.Value)
 
 	// SetClientIP sets the client's IP address used during the authentication process.
 	SetClientIP(clientIP string)
@@ -146,8 +147,8 @@ type State interface {
 	// GetUsername retrieves the username currently stored in the state and returns it as a string.
 	GetUsername() string
 
-	// GetPassword retrieves the current password stored in the authentication state as a string.
-	GetPassword() string
+	// GetPassword retrieves the current password stored in the authentication state.
+	GetPassword() secret.Value
 
 	// GetProtocol retrieves the protocol configuration associated with the current state.
 	GetProtocol() *config.Protocol
@@ -357,7 +358,7 @@ type AuthRequest struct {
 	Username string
 
 	// Password is the user's password.
-	Password string
+	Password secret.Value
 
 	// ClientIP is the IP address of the client making the request.
 	ClientIP string
@@ -1082,7 +1083,7 @@ func (a *AuthState) SetTOTPRecoveryField(totpRecoveryField string) {
 }
 
 // SetPassword sets the password for the AuthState instance.
-func (a *AuthState) SetPassword(password string) {
+func (a *AuthState) SetPassword(password secret.Value) {
 	a.Request.Password = password
 }
 
@@ -1289,9 +1290,42 @@ func (a *AuthState) GetUsername() string {
 	return a.Request.Username
 }
 
-// GetPassword retrieves the password stored in the AuthState instance. It returns the password as a string.
-func (a *AuthState) GetPassword() string {
+// GetPassword retrieves the password stored in the AuthState instance.
+func (a *AuthState) GetPassword() secret.Value {
 	return a.Request.Password
+}
+
+func (a *AuthState) passwordString() string {
+	var password string
+	a.Request.Password.WithString(func(value string) {
+		password = value
+	})
+
+	return password
+}
+
+func (a *AuthState) passwordBytes() []byte {
+	var password []byte
+
+	a.Request.Password.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		password = bytes.Clone(value)
+	})
+
+	return password
+}
+
+// PasswordString materializes the password as a short-lived string.
+func (a *AuthState) PasswordString() string {
+	return a.passwordString()
+}
+
+// PasswordBytes materializes the password as a short-lived byte slice.
+func (a *AuthState) PasswordBytes() []byte {
+	return a.passwordBytes()
 }
 
 // GetProtocol retrieves the configured Protocol for the AuthState. If no Protocol is set, it returns a default Protocol instance.
@@ -2040,7 +2074,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 
 	cr.Session = a.Runtime.GUID
 	cr.Username = a.Request.Username
-	cr.Password = a.Request.Password
+	cr.Password = a.passwordBytes()
 	cr.ClientIP = a.Request.ClientIP
 	cr.Account = a.GetAccount()
 	cr.AccountField = a.Runtime.AccountField
@@ -2178,7 +2212,7 @@ func (a *AuthState) WithUsername(username string) bruteforce.BucketManager {
 }
 
 // WithPassword sets the password in the AuthState.
-func (a *AuthState) WithPassword(password string) bruteforce.BucketManager {
+func (a *AuthState) WithPassword(password secret.Value) bruteforce.BucketManager {
 	a.Request.Password = password
 
 	return a
@@ -2371,7 +2405,7 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 		return definitions.AuthResultEmptyUsername
 	}
 
-	if !a.Request.NoAuth && a.Request.Password == "" {
+	if !a.Request.NoAuth && a.Request.Password.IsZero() {
 		util.DebugModuleWithCfg(a.Ctx(), a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, "Empty password")
 
 		return definitions.AuthResultEmptyPassword
@@ -2675,13 +2709,15 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 		UniqueUserIDField: a.Runtime.UniqueUserIDField,
 		DisplayNameField:  a.Runtime.DisplayNameField,
 		Password: func() string {
-			if a.Request.Password != "" {
-				passwordShort := util.GetHash(util.PreparePassword(a.Request.Password))
+			var passwordShort string
+			a.Request.Password.WithString(func(value string) {
+				if value == "" {
+					return
+				}
+				passwordShort = util.GetHash(util.PreparePassword(value))
+			})
 
-				return passwordShort
-			}
-
-			return ""
+			return passwordShort
 		}(),
 		Backend:     a.Runtime.SourcePassDBBackend,
 		BackendName: a.Runtime.BackendName,
@@ -3107,34 +3143,49 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
 	username := ctx.GetHeader(cfg.GetUsername())
 	password := ctx.GetHeader(cfg.GetPassword())
+	if password != "" {
+		ctx.Request.Header.Del(cfg.GetPassword())
+	}
 
-	if strings.Contains(password, "%") {
-		if decodedPassword, err := url.PathUnescape(password); err == nil {
-			password = decodedPassword
+	passwordValue := password
+	password = ""
+
+	if strings.Contains(passwordValue, "%") {
+		if decodedPassword, err := url.PathUnescape(passwordValue); err == nil {
+			passwordValue = decodedPassword
 		}
 	}
 
 	encoded := ctx.GetHeader(cfg.GetPasswordEncoded())
+	if encoded != "" {
+		ctx.Request.Header.Del(cfg.GetPasswordEncoded())
+	}
+
+	passwordBytes := []byte(passwordValue)
 	if encoded == "1" {
 		// Decode password locally before applying
-		padding := len(password) % 4
+		padding := len(passwordValue) % 4
 		if padding > 0 {
-			password += string(bytes.Repeat([]byte("="), 4-padding))
+			passwordValue += string(bytes.Repeat([]byte("="), 4-padding))
 		}
 
-		if decodedPassword, err := base64.URLEncoding.DecodeString(password); err != nil {
-			password = ""
+		if decodedPassword, err := base64.URLEncoding.DecodeString(passwordValue); err != nil {
+			clear(passwordBytes)
+			passwordBytes = nil
 			ctx.Error(errors.ErrPasswordEncoding)
 		} else {
-			password = string(decodedPassword)
+			clear(passwordBytes)
+			passwordBytes = decodedPassword
 		}
 	}
+
+	passwordValue = ""
 
 	if a, ok := auth.(*AuthState); ok {
 		// Apply credentials and header-derived context in a consolidated manner
 		a.ApplyCredentials(NewCredentials(
 			WithUsername(username),
-			WithPassword(password),
+			WithPassword(secret.FromBytes(passwordBytes)),
 		))
 
 		a.ApplyContextData(NewAuthContext(
@@ -3142,6 +3193,8 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 			WithMethod(ctx.GetHeader(cfg.GetAuthMethod())),
 		))
 	}
+
+	clear(passwordBytes)
 
 	// Initialize login attempts from header using the centralized manager.
 	if a, ok := auth.(*AuthState); ok {
@@ -3167,17 +3220,31 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 	// Build username incorporating optional realm suffix
 	username := ctx.PostForm("username")
 	realm := ctx.PostForm("realm")
+	passwordValue := ctx.PostForm("password")
 
 	if len(realm) > 0 {
 		username = username + "@" + realm
 	}
 
+	passwordBytes := []byte(passwordValue)
+	passwordValue = ""
+
 	// Apply credentials via builder
 	if a, ok := auth.(*AuthState); ok {
 		a.ApplyCredentials(NewCredentials(
 			WithUsername(username),
-			WithPassword(ctx.PostForm("password")),
+			WithPassword(secret.FromBytes(passwordBytes)),
 		))
+	}
+
+	clear(passwordBytes)
+
+	if ctx.Request.PostForm != nil {
+		ctx.Request.PostForm.Del("password")
+	}
+
+	if ctx.Request.Form != nil {
+		ctx.Request.Form.Del("password")
 	}
 
 	// Build and apply context metadata
@@ -3229,6 +3296,10 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 		auth.WithUserAgent(ctx)
 	}
 
+	jsonRequest = authdto.Request{}
+	ctx.Request.Body = http.NoBody
+	ctx.Request.ContentLength = 0
+
 	// Apply DNS resolution logic after setting client IP
 	if authState, ok := auth.(*AuthState); ok {
 		authState.postResolvDNS(ctx)
@@ -3258,7 +3329,10 @@ func buildCredentialOptions(request *authdto.Request) []CredentialOption {
 	}
 
 	if request.Password != "" {
-		opts = append(opts, WithPassword(request.Password))
+		passwordBytes := []byte(request.Password)
+		opts = append(opts, WithPassword(secret.FromBytes(passwordBytes)))
+		clear(passwordBytes)
+		request.Password = ""
 	}
 
 	return opts
@@ -3412,7 +3486,7 @@ func setupAuth(ctx *gin.Context, auth State) {
 			return
 		}
 
-		if auth.GetPassword() == "" {
+		if auth.GetPassword().IsZero() {
 			ctx.Error(errors.ErrEmptyPassword)
 
 			return
@@ -3664,7 +3738,13 @@ func (a *AuthState) generateSingleflightKey() string {
 	}
 
 	// Short password hash (same function as for positive password cache)
-	pwShort := util.GetHash(util.PreparePassword(a.Request.Password))
+	var pwShort string
+	a.Request.Password.WithString(func(value string) {
+		if value == "" {
+			return
+		}
+		pwShort = util.GetHash(util.PreparePassword(value))
+	})
 
 	const sep = "\x00"
 
@@ -3807,7 +3887,7 @@ func (a *AuthState) ApplyCredentials(c Credentials) {
 		a.Request.Username = c.Username
 	}
 
-	if c.Password != "" {
+	if !c.Password.IsZero() {
 		a.Request.Password = c.Password
 	}
 

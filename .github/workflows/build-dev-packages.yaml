@@ -12,7 +12,7 @@ env:
   APP_NAME: 'nauthilus'
   MAINTAINER: 'croessner'
   DESC: 'Multi purpose authentication server'
-  GOEXPERIMENT: greenteagc
+  GOEXPERIMENT: runtimesecret
   DEV_VERSION: '0.0.0'
 
 jobs:

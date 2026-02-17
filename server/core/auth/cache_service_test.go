@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
 )
@@ -65,7 +66,7 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 	auth.Runtime.UsedPassDBBackend = definitions.BackendLDAP // will map to CacheLDAP but default cache name applies
 	auth.Runtime.SourcePassDBBackend = definitions.BackendLDAP
 	auth.Runtime.AccountField = "uid"
-	auth.Request.Password = "secret"
+	auth.Request.Password = secret.New("secret")
 	auth.ReplaceAllAttributes(map[string][]any{"uid": {"acc"}})
 
 	accountName := "acc"
@@ -76,7 +77,7 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 	attrsJSONBytes, _ := jsoniter.ConfigFastest.Marshal(auth.Attributes.Attributes)
 	expected := map[string]any{
 		"backend":       int(definitions.BackendLDAP),
-		"password":      util.GetHash(util.PreparePassword(auth.Request.Password)),
+		"password":      util.GetHash(util.PreparePassword(auth.PasswordString())),
 		"account_field": auth.Runtime.AccountField,
 		"attributes":    string(attrsJSONBytes),
 	}

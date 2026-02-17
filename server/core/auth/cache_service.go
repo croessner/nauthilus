@@ -38,7 +38,7 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 		return nil
 	}
 
-	if auth.Request.NoAuth || auth.Request.Password == "" {
+	if auth.Request.NoAuth || auth.GetPassword().IsZero() {
 		return nil
 	}
 

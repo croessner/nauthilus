@@ -13,7 +13,7 @@ env:
   MAINTAINER: 'croessner'
   DESC: 'Multi purpose authentication server'
   CHGELOG_VERSION: '0.15.4'
-  GOEXPERIMENT: greenteagc
+  GOEXPERIMENT: runtimesecret
   SYFT_VERSION: 'v1.16.0'
 
 jobs:

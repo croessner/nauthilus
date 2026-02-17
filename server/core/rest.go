@@ -41,6 +41,7 @@ import (
 	bf "github.com/croessner/nauthilus/server/model/bruteforce"
 	restdto "github.com/croessner/nauthilus/server/model/rest"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -197,7 +198,13 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 		var httpBasicAuthOk bool
 
 		// Decode HTTP basic Auth
-		a.Request.Username, a.Request.Password, httpBasicAuthOk = ctx.Request.BasicAuth()
+		username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
+		a.Request.Username = username
+		passwordBytes := []byte(password)
+		a.Request.Password = secret.FromBytes(passwordBytes)
+		clear(passwordBytes)
+		password = ""
+		ctx.Request.Header.Del("Authorization")
 		if !httpBasicAuthOk {
 			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
@@ -211,7 +218,7 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 			ctx.Error(errors.ErrInvalidUsername)
 		}
 
-		if a.Request.Password == "" {
+		if a.Request.Password.IsZero() {
 			ctx.Error(errors.ErrEmptyPassword)
 		}
 	}

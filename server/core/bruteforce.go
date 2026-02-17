@@ -154,7 +154,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		commonRequest.AccountField = a.GetAccountField()
 		commonRequest.UniqueUserID = "" // unavailable
 		commonRequest.DisplayName = ""  // unavailable
-		commonRequest.Password = a.Request.Password
+		commonRequest.Password = a.passwordBytes()
 		commonRequest.Protocol = a.Request.Protocol.Get()
 		commonRequest.BruteForceName = rule.Name
 		commonRequest.FeatureName = a.Runtime.FeatureName

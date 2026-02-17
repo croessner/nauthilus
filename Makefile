@@ -12,7 +12,7 @@ SBOM_DOCKER_IMAGE ?= ghcr.io/croessner/nauthilus:latest
 SBOM_DOCKER_PULL ?= true
 SBOM_SYFT_VERSION ?= v1.16.0
 
-export GOEXPERIMENT := greenteagc
+export GOEXPERIMENT := runtimesecret
 
 .PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks
 

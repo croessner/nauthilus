@@ -196,7 +196,11 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
+	frontendSecret := ""
+	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithString(func(value string) {
+		frontendSecret = value
+	})
+	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 	csrfMW := csrf.New()
 

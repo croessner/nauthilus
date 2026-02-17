@@ -268,7 +268,11 @@ func (h *SAMLHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
+	frontendSecret := ""
+	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithString(func(value string) {
+		frontendSecret = value
+	})
+	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 
 	router.GET("/saml/metadata", h.Metadata)
 	router.GET("/saml/sso", secureMW, h.SSO)

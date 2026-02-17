@@ -77,7 +77,11 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
+	frontendSecret := ""
+	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithString(func(value string) {
+		frontendSecret = value
+	})
+	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 	csrfMW := csrf.New()
 
@@ -474,12 +478,17 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 		}
 	}
 
-	if client.ClientSecret != clientSecret {
+	expectedSecret := ""
+	client.ClientSecret.WithString(func(value string) {
+		expectedSecret = value
+	})
+
+	if expectedSecret != clientSecret {
 		keyvals := []any{
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "OIDC client secret mismatch",
 			"client_id", clientID,
-			"expected_len", len(client.ClientSecret),
+			"expected_len", len(expectedSecret),
 			"received_len", len(clientSecret),
 		}
 

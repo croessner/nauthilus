@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log/level"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -342,7 +343,7 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 		conf            []*config.LDAPConf
 		serverURIs      []string
 		bindDN          string
-		bindPW          string
+		bindPW          secret.Value
 		startTLS        bool
 		tlsSkipVerify   bool
 		tlsCAFile       string

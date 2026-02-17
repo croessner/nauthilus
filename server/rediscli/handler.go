@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/secret"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -337,7 +338,7 @@ func (tc *testClient) Close() {
 // GetSecurityManager returns the security manager for the testClient.
 func (tc *testClient) GetSecurityManager() *SecurityManager {
 	if tc.securityManager == nil {
-		tc.securityManager = NewSecurityManager("")
+		tc.securityManager = NewSecurityManager(secret.Value{})
 	}
 
 	return tc.securityManager

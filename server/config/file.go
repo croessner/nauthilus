@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/secret"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/go-viper/mapstructure/v2"
@@ -195,10 +196,10 @@ type File interface {
 	GetLDAPConfigBindDN() string
 
 	// GetLDAPConfigBindPW retrieves the password for the LDAP bind.
-	GetLDAPConfigBindPW() string
+	GetLDAPConfigBindPW() secret.Value
 
 	// GetLDAPConfigEncryptionSecret retrieves the encryption secret for LDAP.
-	GetLDAPConfigEncryptionSecret() string
+	GetLDAPConfigEncryptionSecret() secret.Value
 
 	// GetLDAPConfigTLSCAFile returns the TLS CA file for LDAP.
 	GetLDAPConfigTLSCAFile() string
@@ -659,40 +660,40 @@ func (f *FileSettings) GetLDAPConfigBindDN() string {
 	return ""
 }
 
-// GetLDAPConfigBindPW retrieves the BindPW (bind password) from the LDAP configuration if available, or returns an empty string.
-func (f *FileSettings) GetLDAPConfigBindPW() string {
+// GetLDAPConfigBindPW retrieves the BindPW (bind password) from the LDAP configuration if available.
+func (f *FileSettings) GetLDAPConfigBindPW() secret.Value {
 	if f == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.GetBindPW()
 	}
 
-	return ""
+	return secret.Value{}
 }
 
-// GetLDAPConfigEncryptionSecret retrieves the encryption secret from the LDAP configuration if available, or returns an empty string.
-func (f *FileSettings) GetLDAPConfigEncryptionSecret() string {
+// GetLDAPConfigEncryptionSecret retrieves the encryption secret from the LDAP configuration if available.
+func (f *FileSettings) GetLDAPConfigEncryptionSecret() secret.Value {
 	if f == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.GetEncryptionSecret()
 	}
 
-	return ""
+	return secret.Value{}
 }
 
 // GetLDAPConfigTLSCAFile retrieves the TLS CA file for the LDAP configuration if available, returning an empty string if not.
@@ -1826,7 +1827,7 @@ func (f *FileSettings) validatePassDBBackends() error {
 				}
 			}
 
-			if requiresEncryptionSecret && f.GetLDAPConfigEncryptionSecret() == "" {
+			if requiresEncryptionSecret && f.GetLDAPConfigEncryptionSecret().IsZero() {
 				return errors.ErrLDAPConfig.WithDetail("Missing LDAP encryption secret for TOTP data in LDAP")
 			}
 
@@ -2755,21 +2756,37 @@ func processBackends(input any) (any, error) {
 // createDecoderOption returns a viper.DecoderConfigOption to configure a mapstructure decoder with custom DecodeHook functions.
 // The DecodeHook functions handle conversions to specific types such as Verbosity, DbgModule, Feature, Protocol, and Backend.
 func createDecoderOption() viper.DecoderConfigOption {
+	verbosityType := reflect.TypeFor[Verbosity]()
+	debugModulesType := reflect.TypeFor[[]*DbgModule]()
+	featuresType := reflect.TypeFor[[]*Feature]()
+	protocolsType := reflect.TypeFor[[]*Protocol]()
+	backendsType := reflect.TypeFor[[]*Backend]()
+	secretType := reflect.TypeFor[secret.Value]()
+
 	return func(config *mapstructure.DecoderConfig) {
 		config.DecodeHook = mapstructure.ComposeDecodeHookFunc(
 			config.DecodeHook,
 			func(from reflect.Type, to reflect.Type, data any) (any, error) {
 				switch {
-				case to == reflect.TypeOf(Verbosity{}):
+				case to == verbosityType:
 					return processVerboseLevel(data)
-				case to == reflect.TypeOf([]*DbgModule{}):
+				case to == debugModulesType:
 					return processDebugModules(data)
-				case to == reflect.TypeOf([]*Feature{}):
+				case to == featuresType:
 					return processFeatures(data)
-				case to == reflect.TypeOf([]*Protocol{}):
+				case to == protocolsType:
 					return processProtocols(data)
-				case to == reflect.TypeOf([]*Backend{}):
+				case to == backendsType:
 					return processBackends(data)
+				case to == secretType:
+					switch value := data.(type) {
+					case string:
+						return secret.New(value), nil
+					case []byte:
+						return secret.FromBytes(value), nil
+					default:
+						return data, nil
+					}
 				default:
 					return data, nil
 				}
@@ -2841,7 +2858,36 @@ func (f *FileSettings) HandleFile() (err error) {
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterCustomTypeFunc(func(field reflect.Value) interface{} {
+		if !field.IsValid() {
+			return nil
+		}
 
+		if field.Kind() == reflect.Ptr {
+			if field.IsNil() {
+				return ""
+			}
+
+			field = field.Elem()
+		}
+
+		secretValue, ok := field.Interface().(secret.Value)
+		if !ok {
+			return nil
+		}
+
+		var value string
+		secretValue.WithString(func(s string) {
+			value = s
+		})
+
+		return value
+	}, secret.Value{}, &secret.Value{})
+
+	validate.RegisterValidation("secret_required", secretRequired)
+	validate.RegisterValidation("secret_min", secretMin)
+	validate.RegisterValidation("secret_excludesall", secretExcludesAll)
+	validate.RegisterValidation("secret_required_if_enabled", secretRequiredIfEnabled)
 	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
 	validate.RegisterValidation("validateAuthPoolRequired", validateAuthPoolRequired)
 	validate.RegisterValidation("validatDefaultBackendName", validatDefaultBackendName)

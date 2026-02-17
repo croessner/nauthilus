@@ -858,13 +858,18 @@ func (l *LDAPConnectionImpl) simpleBind(ctx context.Context, cfg config.File, lo
 	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
 	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
+	var bindPassword string
+	ldapConf.BindPW.WithString(func(value string) {
+		bindPassword = value
+	})
+
 	if cfg.GetServer().GetEnvironment().GetDevMode() {
-		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", bindPassword)
 	}
 
 	_, err := l.conn.SimpleBind(&ldap.SimpleBindRequest{
 		Username: ldapConf.BindDN,
-		Password: ldapConf.BindPW,
+		Password: bindPassword,
 	})
 
 	if err != nil {

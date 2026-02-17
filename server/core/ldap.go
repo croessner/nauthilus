@@ -607,11 +607,16 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
 		defer cancelBind()
 
+		var bindPassword string
+		auth.Request.Password.WithString(func(value string) {
+			bindPassword = value
+		})
+
 		ldapUserBindRequest := &bktype.LDAPAuthRequest{
 			GUID:              auth.Runtime.GUID,
 			PoolName:          lm.poolName,
 			BindDN:            dn,
-			BindPW:            auth.Request.Password,
+			BindPW:            bindPassword,
 			LDAPReplyChan:     ldapReplyChan,
 			HTTPClientContext: ctxBind,
 		}

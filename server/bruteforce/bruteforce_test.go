@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
@@ -99,7 +100,7 @@ func TestBruteForceScenarios(t *testing.T) {
 			Logger:   log.GetLogger(),
 			Redis:    rediscli.GetClient(),
 			Tolerate: tol,
-		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(password)
+		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(secret.New(password))
 
 		mock.MatchExpectationsInOrder(false)
 
@@ -139,7 +140,7 @@ func TestBruteForceScenarios(t *testing.T) {
 			Logger:   log.GetLogger(),
 			Redis:    rediscli.GetClient(),
 			Tolerate: tol,
-		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(password).WithRWPDecision(false)
+		}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(secret.New(password)).WithRWPDecision(false)
 
 		mock.MatchExpectationsInOrder(false)
 
@@ -160,7 +161,7 @@ func TestBruteForceScenarios(t *testing.T) {
 			Logger:   log.GetLogger(),
 			Redis:    rediscli.GetClient(),
 			Tolerate: tol,
-		}).WithAccountName(accountName).WithPassword("new_password")
+		}).WithAccountName(accountName).WithPassword(secret.New("new_password"))
 
 		mock.MatchExpectationsInOrder(false)
 
@@ -204,7 +205,7 @@ func TestBruteForceScenarios(t *testing.T) {
 			Logger:   log.GetLogger(),
 			Redis:    rediscli.GetClient(),
 			Tolerate: tol,
-		}).WithAccountName(accountName).WithPassword("new_password")
+		}).WithAccountName(accountName).WithPassword(secret.New("new_password"))
 
 		mock.MatchExpectationsInOrder(false)
 
@@ -236,7 +237,7 @@ func TestBruteForceScenarios(t *testing.T) {
 			Logger:   log.GetLogger(),
 			Redis:    rediscli.GetClient(),
 			Tolerate: tol,
-		}).WithUsername("user2").WithPassword(password)
+		}).WithUsername("user2").WithPassword(secret.New(password))
 
 		mock.MatchExpectationsInOrder(false)
 
@@ -271,7 +272,7 @@ func TestBruteForceScenarios(t *testing.T) {
 			Logger:   log.GetLogger(),
 			Redis:    rediscli.GetClient(),
 			Tolerate: tol,
-		}).WithUsername("user3").WithPassword("passX")
+		}).WithUsername("user3").WithPassword(secret.New("passX"))
 
 		mock.MatchExpectationsInOrder(false)
 
@@ -309,7 +310,7 @@ func TestProcessPWHistSkipsWithoutAccountName(t *testing.T) {
 		Logger:   log.GetLogger(),
 		Redis:    rediscli.GetClient(),
 		Tolerate: tol,
-	}).WithUsername("user1").WithProtocol("imap").WithPassword("password123")
+	}).WithUsername("user1").WithProtocol("imap").WithPassword(secret.New("password123"))
 
 	accountName := bm.ProcessPWHist()
 	assert.Empty(t, accountName)

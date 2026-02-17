@@ -7,6 +7,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -23,7 +24,7 @@ func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 			BasicAuth: config.BasicAuth{
 				Enabled:  true,
 				Username: "admin",
-				Password: "password",
+				Password: secret.New("password"),
 			},
 		},
 	}

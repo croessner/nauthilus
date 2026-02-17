@@ -9,7 +9,7 @@ on:
       - features
 
 env:
-  GOEXPERIMENT: greenteagc
+  GOEXPERIMENT: runtimesecret
 
 jobs:
   test:
