@@ -19,11 +19,12 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/security"
 )
 
 func TestMasterUserTOTPSecretDecryptOrder(t *testing.T) {
-	manager := security.NewManager("testsecret12345678")
+	manager := security.NewManager(secret.New("testsecret12345678"))
 
 	encrypted, err := manager.Encrypt("totp-secret")
 	if err != nil {

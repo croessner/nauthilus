@@ -224,7 +224,7 @@ func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 type Request struct {
 	Session            string
 	Username           string
-	Password           string
+	Password           []byte
 	ClientIP           string
 	AccountName        string
 	AdditionalFeatures map[string]any
@@ -252,8 +252,7 @@ type Request struct {
 // stops the running timer and cancels the Lua context to abort pending operations.
 func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	// Try to include Lua stacktrace for easier diagnostics
-	var ae *lua.ApiError
-	if stderrs.As(err, &ae) && ae != nil {
+	if ae, ok := stderrs.AsType[*lua.ApiError](err); ok && ae != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, func() string {
 				if r != nil && r.CommonRequest != nil {
@@ -677,8 +676,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				request.RawSetString(definitions.LuaRequestUsername, lua.LString(r.Username))
 			}
 
-			if r.Password != "" {
-				request.RawSetString(definitions.LuaRequestPassword, lua.LString(r.Password))
+			if len(r.Password) > 0 {
+				request.RawSetString(definitions.LuaRequestPassword, lua.LString(string(r.Password)))
 			}
 
 			if r.ClientIP != "" {

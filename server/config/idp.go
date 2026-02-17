@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/secret"
 )
 
 // IdPSection represents the configuration for the internal Identity Provider.
@@ -99,10 +100,14 @@ type OIDCConfig struct {
 
 // OIDCKey represents a single OIDC signing key.
 type OIDCKey struct {
-	ID      string `mapstructure:"id"`
-	Key     string `mapstructure:"key"`
-	KeyFile string `mapstructure:"key_file"`
-	Active  bool   `mapstructure:"active"`
+	ID      string       `mapstructure:"id"`
+	Key     secret.Value `mapstructure:"key"`
+	KeyFile string       `mapstructure:"key_file"`
+	Active  bool         `mapstructure:"active"`
+}
+
+func (o OIDCKey) String() string {
+	return fmt.Sprintf("OIDCKey{ID:%s Key:<hidden> KeyFile:%s Active:%t}", o.ID, o.KeyFile, o.Active)
 }
 
 func (o *OIDCConfig) String() string {
@@ -360,7 +365,7 @@ func (o *OIDCConfig) warnUnsupported() []string {
 type OIDCClient struct {
 	Name                              string            `mapstructure:"name"`
 	ClientID                          string            `mapstructure:"client_id" validate:"required"`
-	ClientSecret                      string            `mapstructure:"client_secret"`
+	ClientSecret                      secret.Value      `mapstructure:"client_secret"`
 	RedirectURIs                      []string          `mapstructure:"redirect_uris"`
 	Scopes                            []string          `mapstructure:"scopes"`
 	GrantTypes                        []string          `mapstructure:"grant_types"`
@@ -381,6 +386,10 @@ type OIDCClient struct {
 	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
 	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
 	LogoutRedirectURI                 string            `mapstructure:"logout_redirect_uri"`
+}
+
+func (c OIDCClient) String() string {
+	return fmt.Sprintf("OIDCClient{Name:%s ClientID:%s ClientSecret:<hidden> RedirectURIs:%v GrantTypes:%v TokenEndpointAuthMethod:%s}", c.Name, c.ClientID, c.RedirectURIs, c.GrantTypes, c.TokenEndpointAuthMethod)
 }
 
 // GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.
@@ -559,9 +568,16 @@ func (s *SAML2Config) warnUnsupported() []string {
 	return warnings
 }
 
-func GetContent(raw, path string) (string, error) {
-	if raw != "" {
-		return raw, nil
+func GetContent(raw any, path string) (string, error) {
+	switch value := raw.(type) {
+	case string:
+		if value != "" {
+			return value, nil
+		}
+	case secret.Value:
+		if !value.IsZero() {
+			return value.String(), nil
+		}
 	}
 
 	if path != "" {

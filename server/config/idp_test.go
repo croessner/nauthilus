@@ -19,6 +19,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 )
@@ -58,7 +59,7 @@ func TestOIDCConfig_GetSigningKey(t *testing.T) {
 	t.Run("from list", func(t *testing.T) {
 		cfg := OIDCConfig{
 			SigningKeys: []OIDCKey{
-				{ID: "test-key", Key: "test-key-content", Active: true},
+				{ID: "test-key", Key: secret.New("test-key-content"), Active: true},
 			},
 		}
 		key, err := cfg.GetSigningKey()
@@ -139,7 +140,7 @@ func TestIdPConfig_Validation(t *testing.T) {
 				Enabled: true,
 				Issuer:  "https://auth.example.com",
 				SigningKeys: []OIDCKey{
-					{ID: "key", Key: "key-content", Active: true},
+					{ID: "key", Key: secret.New("key-content"), Active: true},
 				},
 			},
 			SAML2: SAML2Config{

@@ -16,8 +16,7 @@ func TestProviderNewProviderRequiresConfigLoaded(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 
-	var notLoaded config.ErrConfigNotLoaded
-	if !errors.As(err, &notLoaded) {
+	if _, ok := errors.AsType[config.ErrConfigNotLoaded](err); !ok {
 		t.Fatalf("expected ErrConfigNotLoaded, got %T", err)
 	}
 }

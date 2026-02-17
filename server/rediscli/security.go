@@ -15,12 +15,15 @@
 
 package rediscli
 
-import "github.com/croessner/nauthilus/server/security"
+import (
+	"github.com/croessner/nauthilus/server/secret"
+	"github.com/croessner/nauthilus/server/security"
+)
 
 // SecurityManager handles encryption and decryption of sensitive data stored in Redis.
 type SecurityManager = security.Manager
 
 // NewSecurityManager creates a new SecurityManager with the given secret.
-func NewSecurityManager(secret string) *SecurityManager {
+func NewSecurityManager(secret secret.Value) *SecurityManager {
 	return security.NewManager(secret, security.WithAllowEmptySecret(), security.WithAllowPlaintext())
 }

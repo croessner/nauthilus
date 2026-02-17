@@ -96,7 +96,7 @@ type CommonRequest struct {
 	DisplayName string
 
 	// Password stores the user's password.
-	Password string
+	Password []byte
 
 	// WebAuthnCredential stores a serialized WebAuthn credential (JSON).
 	WebAuthnCredential string
@@ -230,7 +230,11 @@ func (c *CommonRequest) Reset() {
 	c.AccountField = ""
 	c.UniqueUserID = ""
 	c.DisplayName = ""
-	c.Password = ""
+	if len(c.Password) > 0 {
+		clear(c.Password)
+	}
+
+	c.Password = nil
 	c.WebAuthnCredential = ""
 	c.WebAuthnOldCredential = ""
 	c.Protocol = ""
@@ -314,7 +318,7 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 		}
 		request.RawSetString(definitions.LuaRequestTOTPRecoveryCodes, recoveryTable)
 	}
-	request.RawSetString(definitions.LuaRequestPassword, lua.LString(c.Password))
+	request.RawSetString(definitions.LuaRequestPassword, lua.LString(string(c.Password)))
 	request.RawSetString(definitions.LuaRequestWebAuthnCredential, lua.LString(c.WebAuthnCredential))
 	request.RawSetString(definitions.LuaRequestWebAuthnOldCredential, lua.LString(c.WebAuthnOldCredential))
 	request.RawSetString(definitions.LuaRequestProtocol, lua.LString(c.Protocol))

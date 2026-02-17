@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,7 +15,7 @@ func TestAuthState_String_HidesPassword(t *testing.T) {
 	auth := &AuthState{
 		Request: AuthRequest{
 			Username: "alice",
-			Password: "s3cret",
+			Password: secret.New("s3cret"),
 			ClientIP: "10.0.0.1",
 			Protocol: &config.Protocol{},
 		},
@@ -36,7 +37,7 @@ func TestAuthState_String_ShowsPasswordInDevMode(t *testing.T) {
 	auth := &AuthState{
 		Request: AuthRequest{
 			Username: "alice",
-			Password: "s3cret",
+			Password: secret.New("s3cret"),
 			Protocol: &config.Protocol{},
 		},
 	}

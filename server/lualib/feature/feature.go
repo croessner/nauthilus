@@ -132,7 +132,7 @@ func NewLuaFeature(name string, scriptPath string, whenNoAuth bool) (*LuaFeature
 type Request struct {
 	Session            string
 	Username           string
-	Password           string
+	Password           []byte
 	ClientIP           string
 	AccountName        string
 	UsedBackendPort    *int
@@ -279,8 +279,8 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				request.RawSetString(definitions.LuaRequestUsername, lua.LString(r.Username))
 			}
 
-			if r.Password != "" {
-				request.RawSetString(definitions.LuaRequestPassword, lua.LString(r.Password))
+			if len(r.Password) > 0 {
+				request.RawSetString(definitions.LuaRequestPassword, lua.LString(string(r.Password)))
 			}
 
 			if r.ClientIP != "" {
@@ -421,8 +421,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	// Include Lua stacktrace when available for better diagnostics
-	var ae *lua.ApiError
-	if stderrors.As(err, &ae) && ae != nil {
+	if ae, ok := stderrors.AsType[*lua.ApiError](err); ok && ae != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, r.Session,
 			"name", scriptName,

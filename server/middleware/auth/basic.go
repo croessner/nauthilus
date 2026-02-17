@@ -223,7 +223,12 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	}
 
 	username, password, ok := ctx.Request.BasicAuth()
-	if ok && secureCompare(username, cfg.GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, cfg.GetServer().GetBasicAuth().GetPassword()) {
+	expectedPassword := ""
+	cfg.GetServer().GetBasicAuth().GetPassword().WithString(func(value string) {
+		expectedPassword = value
+	})
+
+	if ok && secureCompare(username, cfg.GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, expectedPassword) {
 		return true
 	}
 

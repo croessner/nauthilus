@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/security"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
@@ -72,7 +73,7 @@ func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 
 	backend := &config.Backend{}
 	_ = backend.Set("ldap")
-	encryptionSecret := "testsecret12345678"
+	encryptionSecret := secret.New("testsecret12345678")
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
@@ -145,7 +146,7 @@ func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 
 	backend := &config.Backend{}
 	_ = backend.Set("ldap")
-	encryptionSecret := "testsecret12345678"
+	encryptionSecret := secret.New("testsecret12345678")
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{

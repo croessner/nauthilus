@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine3.22 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.22 AS builder
 
 WORKDIR /build
 
@@ -6,7 +6,7 @@ COPY . ./
 
 # Set necessarry environment vairables and compile the app
 ENV CGO_ENABLED=0
-ENV GOEXPERIMENT=greenteagc
+ENV GOEXPERIMENT=runtimesecret
 
 RUN pwd && ls -a
 RUN cd blocklist && go build -mod=vendor -trimpath -ldflags="-s" -o blocklist .

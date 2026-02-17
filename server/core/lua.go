@@ -114,7 +114,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.AccountField = "" // set by nauthilus_backend_result
 	commonRequest.UniqueUserID = "" // set by nauthilus_backend_result
 	commonRequest.DisplayName = ""  // set by nauthilus_backend_result
-	commonRequest.Password = auth.Request.Password
+	commonRequest.Password = auth.passwordBytes()
 	commonRequest.Protocol = auth.Request.Protocol.Get()
 	commonRequest.OIDCCID = auth.Request.OIDCCID
 	commonRequest.BruteForceName = "" // unavailable

@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -29,11 +30,11 @@ import (
 func TestRedisSecurity(t *testing.T) {
 	testFile := &config.FileSettings{Server: &config.ServerSection{}}
 
-	secret := "testsecret"
+	secretValue := secret.New("testsecret")
 
 	t.Run("EncryptionEnabled", func(t *testing.T) {
 		db, _ := redismock.NewClientMock()
-		sm := rediscli.NewSecurityManager(secret)
+		sm := rediscli.NewSecurityManager(secretValue)
 		client := rediscli.NewTestClientWithSecurity(db, sm)
 
 		L := lua.NewState()
@@ -51,7 +52,7 @@ func TestRedisSecurity(t *testing.T) {
 
 	t.Run("EncryptionDisabled", func(t *testing.T) {
 		db, _ := redismock.NewClientMock()
-		sm := rediscli.NewSecurityManager("")
+		sm := rediscli.NewSecurityManager(secret.Value{})
 		client := rediscli.NewTestClientWithSecurity(db, sm)
 
 		L := lua.NewState()
@@ -69,7 +70,7 @@ func TestRedisSecurity(t *testing.T) {
 
 	t.Run("EncryptDecrypt", func(t *testing.T) {
 		db, _ := redismock.NewClientMock()
-		sm := rediscli.NewSecurityManager(secret)
+		sm := rediscli.NewSecurityManager(secretValue)
 		client := rediscli.NewTestClientWithSecurity(db, sm)
 
 		L := lua.NewState()
@@ -81,10 +82,10 @@ func TestRedisSecurity(t *testing.T) {
 			local plaintext = "hello world"
 			local ciphertext, err = nr.redis_encrypt("default", plaintext)
 			if err ~= nil then error(err) end
-			
+
 			local decrypted, err2 = nr.redis_decrypt("default", ciphertext)
 			if err2 ~= nil then error(err2) end
-			
+
 			final = decrypted
 		`)
 		if err != nil {

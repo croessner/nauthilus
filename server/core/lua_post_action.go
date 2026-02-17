@@ -16,6 +16,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -94,6 +95,11 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 
 	// Copy-by-value from args.Request then set computed hints
 	*cr = args.Request
+	if len(args.Request.Password) > 0 {
+		cr.Password = bytes.Clone(args.Request.Password)
+	} else {
+		cr.Password = nil
+	}
 	cr.ClientNet = clientNet
 	cr.Repeating = repeating
 	// Deep copy StatusMessage string if it exists

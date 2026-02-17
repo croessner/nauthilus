@@ -16,11 +16,15 @@
 package config
 
 import (
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-playground/validator/v10"
 )
 
@@ -747,9 +751,9 @@ func (c *HTTPClient) GetTLS() *TLS {
 
 // BasicAuth represents the configuration for basic HTTP authentication.
 type BasicAuth struct {
-	Enabled  bool   `mapstructure:"enabled"`
-	Username string `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password string `mapstructure:"password" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
+	Enabled  bool         `mapstructure:"enabled"`
+	Username string       `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password secret.Value `mapstructure:"password" validate:"omitempty,secret_min=16,alphanumsymbol,secret_excludesall= "`
 }
 
 // IsEnabled returns true if basic HTTP authentication is enabled, otherwise false.
@@ -774,9 +778,9 @@ func (b *BasicAuth) GetUsername() string {
 
 // GetPassword retrieves the password for the BasicAuth configuration.
 // Returns an empty string if the BasicAuth is nil.
-func (b *BasicAuth) GetPassword() string {
+func (b *BasicAuth) GetPassword() secret.Value {
 	if b == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return b.Password
@@ -1066,8 +1070,8 @@ func (d *DNS) GetResolveClientIP() bool {
 type Redis struct {
 	DatabaseNmuber   int           `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
 	Prefix           string        `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
-	PasswordNonce    string        `mapstructure:"password_nonce" validate:"required,min=16,alphanumsymbol,excludesall= "`
-	EncryptionSecret string        `mapstructure:"encryption_secret" validate:"required,min=16,alphanumsymbol,excludesall= "`
+	PasswordNonce    secret.Value  `mapstructure:"password_nonce" validate:"secret_required,secret_min=16,alphanumsymbol,secret_excludesall= "`
+	EncryptionSecret secret.Value  `mapstructure:"encryption_secret" validate:"secret_required,secret_min=16,alphanumsymbol,secret_excludesall= "`
 	PoolSize         int           `mapstructure:"pool_size" validate:"omitempty,gte=1"`
 	IdlePoolSize     int           `mapstructure:"idle_pool_size" validate:"omitempty,gte=0"`
 	TLS              TLS           `mapstructure:"tls" validate:"omitempty"`
@@ -1207,18 +1211,18 @@ func (r *Redis) GetPrefix() string {
 
 // GetPasswordNonce retrieves the password nonce configured for the Redis instance.
 // Returns an empty string if the Redis is nil.
-func (r *Redis) GetPasswordNonce() string {
+func (r *Redis) GetPasswordNonce() secret.Value {
 	if r == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return r.PasswordNonce
 }
 
 // GetEncryptionSecret returns the encryption secret for Redis.
-func (r *Redis) GetEncryptionSecret() string {
+func (r *Redis) GetEncryptionSecret() secret.Value {
 	if r == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return r.EncryptionSecret
@@ -1621,9 +1625,9 @@ func (r *Redis) GetCluster() *Cluster {
 // Master represents the configuration for the master Redis instance.
 // Includes fields for address, username, and password for the master instance.
 type Master struct {
-	Address  string `mapstructure:"address" validate:"omitempty,hostname_port"`
-	Username string `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password string `mapstructure:"password" validate:"omitempty,excludesall= "`
+	Address  string       `mapstructure:"address" validate:"omitempty,hostname_port"`
+	Username string       `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password secret.Value `mapstructure:"password" validate:"omitempty,secret_excludesall= "`
 }
 
 // GetAddress returns the address of the master Redis instance stored in the Master struct.
@@ -1637,7 +1641,7 @@ func (m Master) GetUsername() string {
 }
 
 // GetPassword returns the password of the master Redis instance stored in the Master struct.
-func (m Master) GetPassword() string {
+func (m Master) GetPassword() secret.Value {
 	return m.Password
 }
 
@@ -1660,10 +1664,10 @@ func (r Replica) GetAddresses() []string {
 
 // Sentinels represents the configuration for Redis Sentinel.
 type Sentinels struct {
-	Master    string   `mapstructure:"master" validate:"required,printascii,excludesall= "`
-	Addresses []string `mapstructure:"addresses" validate:"required,dive,hostname_port"`
-	Username  string   `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password  string   `mapstructure:"password" validate:"omitempty,excludesall= "`
+	Master    string       `mapstructure:"master" validate:"required,printascii,excludesall= "`
+	Addresses []string     `mapstructure:"addresses" validate:"required,dive,hostname_port"`
+	Username  string       `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password  secret.Value `mapstructure:"password" validate:"omitempty,secret_excludesall= "`
 }
 
 // GetMasterName returns the name of the master Redis instance configured in the Sentinels struct.
@@ -1698,9 +1702,9 @@ func (s *Sentinels) GetUsername() string {
 
 // GetPassword retrieves the password configured for the Redis Sentinel connection.
 // Returns an empty string if the Sentinels is nil.
-func (s *Sentinels) GetPassword() string {
+func (s *Sentinels) GetPassword() secret.Value {
 	if s == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return s.Password
@@ -1710,7 +1714,7 @@ func (s *Sentinels) GetPassword() string {
 type Cluster struct {
 	Addresses            []string      `mapstructure:"addresses" validate:"required,dive,hostname_port"`
 	Username             string        `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password             string        `mapstructure:"password" validate:"omitempty,excludesall= "`
+	Password             secret.Value  `mapstructure:"password" validate:"omitempty,secret_excludesall= "`
 	RouteByLatency       bool          `mapstructure:"route_by_latency"`
 	RouteRandomly        bool          `mapstructure:"route_randomly"`
 	ReadOnly             bool          `mapstructure:"read_only"` // Deprecated: Use RouteReadsToReplicas instead
@@ -1742,9 +1746,9 @@ func (c *Cluster) GetUsername() string {
 
 // GetPassword retrieves the password configured for the Redis cluster.
 // Returns an empty string if the Cluster is nil.
-func (c *Cluster) GetPassword() string {
+func (c *Cluster) GetPassword() secret.Value {
 	if c == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return c.Password
@@ -1851,14 +1855,14 @@ func (m *MasterUser) GetDelimiter() string {
 
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
-	Enabled               bool     `mapstructure:"enabled"`
-	EncryptionSecret      string   `mapstructure:"encryption_secret" validate:"required_if=Enabled true,min=16,alphanumsymbol,excludesall= "`
-	HTMLStaticContentPath string   `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
-	LanguageResources     string   `mapstructure:"language_resources" validate:"omitempty,dir"`
-	Languages             []string `mapstructure:"languages" validate:"omitempty"`
-	DefaultLanguage       string   `mapstructure:"default_language" validate:"omitempty"`
-	TotpIssuer            string   `mapstructure:"totp_issuer" validate:"omitempty"`
-	TotpSkew              uint     `mapstructure:"totp_skew" validate:"omitempty"`
+	Enabled               bool         `mapstructure:"enabled"`
+	EncryptionSecret      secret.Value `mapstructure:"encryption_secret" validate:"secret_required_if_enabled,secret_min=16,alphanumsymbol,secret_excludesall= "`
+	HTMLStaticContentPath string       `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
+	LanguageResources     string       `mapstructure:"language_resources" validate:"omitempty,dir"`
+	Languages             []string     `mapstructure:"languages" validate:"omitempty"`
+	DefaultLanguage       string       `mapstructure:"default_language" validate:"omitempty"`
+	TotpIssuer            string       `mapstructure:"totp_issuer" validate:"omitempty"`
+	TotpSkew              uint         `mapstructure:"totp_skew" validate:"omitempty"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -1929,12 +1933,91 @@ func (f *Frontend) GetTotpSkew() uint {
 
 // GetEncryptionSecret retrieves the encryption secret from the Frontend configuration.
 // This secret is used to derive keys for secure cookie encryption.
-func (f *Frontend) GetEncryptionSecret() string {
+func (f *Frontend) GetEncryptionSecret() secret.Value {
 	if f == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return f.EncryptionSecret
+}
+
+var secretValueType = reflect.TypeFor[secret.Value]()
+
+func fieldStringValue(field reflect.Value) string {
+	if !field.IsValid() {
+		return ""
+	}
+
+	if field.Kind() == reflect.String {
+		return field.String()
+	}
+
+	if field.Type() == secretValueType {
+		if value, ok := field.Interface().(secret.Value); ok {
+			return value.String()
+		}
+	}
+
+	return ""
+}
+
+func secretRequired(fl validator.FieldLevel) bool {
+	return fieldStringValue(fl.Field()) != ""
+}
+
+func secretMin(fl validator.FieldLevel) bool {
+	value := fieldStringValue(fl.Field())
+	if value == "" {
+		return true
+	}
+
+	minValue64, err := strconv.ParseInt(fl.Param(), 10, 0)
+	if err != nil {
+		return false
+	}
+
+	return utf8.RuneCountInString(value) >= int(minValue64)
+}
+
+func secretExcludesAll(fl validator.FieldLevel) bool {
+	value := fieldStringValue(fl.Field())
+	if value == "" {
+		return true
+	}
+
+	for _, r := range fl.Param() {
+		if strings.ContainsRune(value, r) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func secretRequiredIfEnabled(fl validator.FieldLevel) bool {
+	parent := fl.Parent()
+	if parent.Kind() == reflect.Ptr {
+		if parent.IsNil() {
+			return true
+		}
+
+		parent = parent.Elem()
+	}
+
+	if parent.Kind() != reflect.Struct {
+		return false
+	}
+
+	enabledField := parent.FieldByName("Enabled")
+	if !enabledField.IsValid() || enabledField.Kind() != reflect.Bool {
+		return false
+	}
+
+	if !enabledField.Bool() {
+		return true
+	}
+
+	return fieldStringValue(fl.Field()) != ""
 }
 
 // isAlphanumSymbol is a validation function for validating if the current field's value
@@ -1943,7 +2026,7 @@ func (f *Frontend) GetEncryptionSecret() string {
 // It is an extension of the alphanumunicode validator that also allows symbols.
 func isAlphanumSymbol(fl validator.FieldLevel) bool {
 	// Check if the string contains any control characters or whitespace
-	return !strings.ContainsFunc(fl.Field().String(), func(r rune) bool {
+	return !strings.ContainsFunc(fieldStringValue(fl.Field()), func(r rune) bool {
 		return unicode.IsControl(r) || unicode.IsSpace(r)
 	})
 }
@@ -1951,7 +2034,7 @@ func isAlphanumSymbol(fl validator.FieldLevel) bool {
 // isScopeToken validates a scope-token according to RFC 6749 (OAuth 2.0) ABNF.
 // Allowed: %x21 / %x23-5B / %x5D-7E (no spaces, quotes, or backslashes; ASCII only).
 func isScopeToken(fl validator.FieldLevel) bool {
-	value := fl.Field().String()
+	value := fieldStringValue(fl.Field())
 	if value == "" {
 		return false
 	}
@@ -1968,7 +2051,7 @@ func isScopeToken(fl validator.FieldLevel) bool {
 // isOIDCClaimName validates an OIDC claim name as a non-empty JSON member name.
 // It allows any Unicode characters except control characters.
 func isOIDCClaimName(fl validator.FieldLevel) bool {
-	value := fl.Field().String()
+	value := fieldStringValue(fl.Field())
 	if value == "" {
 		return false
 	}
@@ -1978,7 +2061,7 @@ func isOIDCClaimName(fl validator.FieldLevel) bool {
 
 // isOIDCClaimType validates an OIDC claim type against the supported set.
 func isOIDCClaimType(fl validator.FieldLevel) bool {
-	value := fl.Field().String()
+	value := fieldStringValue(fl.Field())
 	if value == "" {
 		return false
 	}
@@ -2005,7 +2088,7 @@ func isOIDCClaimType(fl validator.FieldLevel) bool {
 // Implementation detail: If the value ends with a dot, the dot is stripped before validating
 // using the built-in "hostname_rfc1123" rule from go-playground/validator.
 func hostnameRFC1123WithOptionalTrailingDot(fl validator.FieldLevel) bool {
-	s := fl.Field().String()
+	s := fieldStringValue(fl.Field())
 
 	// Allow optional trailing dot for FQDNs, but not a string that is only "."
 	if strings.HasSuffix(s, ".") {

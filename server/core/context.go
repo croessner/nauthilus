@@ -15,6 +15,8 @@
 
 package core
 
+import "github.com/croessner/nauthilus/server/secret"
+
 // Credentials captures user-supplied credentials (username/password, optional MFA).
 // It is intended to be immutable via options; apply them to AuthState via ApplyCredentials.
 //
@@ -22,7 +24,7 @@ package core
 // behavior changes in existing flows. They are placeholders for future phases.
 type Credentials struct {
 	Username     string
-	Password     string
+	Password     secret.Value
 	TOTP         string
 	TOTPRecovery string
 }
@@ -44,7 +46,7 @@ func NewCredentials(opts ...CredentialOption) Credentials {
 func WithUsername(u string) CredentialOption { return func(c *Credentials) { c.Username = u } }
 
 // WithPassword sets the password field.
-func WithPassword(p string) CredentialOption { return func(c *Credentials) { c.Password = p } }
+func WithPassword(p secret.Value) CredentialOption { return func(c *Credentials) { c.Password = p } }
 
 // AuthContext contains request/connection metadata that influences authentication.
 // It is applied to AuthState via ApplyContextData.

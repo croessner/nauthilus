@@ -23,18 +23,19 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/idp/signing"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestClientSecretAuthenticator_Basic(t *testing.T) {
-	auth := NewClientSecretAuthenticator("my-secret", MethodClientSecretBasic)
+	auth := NewClientSecretAuthenticator(secret.New("my-secret"), MethodClientSecretBasic)
 	assert.Equal(t, MethodClientSecretBasic, auth.Method())
 
 	t.Run("valid secret", func(t *testing.T) {
 		err := auth.Authenticate(&AuthRequest{
 			ClientID:     "client1",
-			ClientSecret: "my-secret",
+			ClientSecret: secret.New("my-secret"),
 		})
 		assert.NoError(t, err)
 	})
@@ -42,7 +43,7 @@ func TestClientSecretAuthenticator_Basic(t *testing.T) {
 	t.Run("invalid secret", func(t *testing.T) {
 		err := auth.Authenticate(&AuthRequest{
 			ClientID:     "client1",
-			ClientSecret: "wrong-secret",
+			ClientSecret: secret.New("wrong-secret"),
 		})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "mismatch")
@@ -51,7 +52,7 @@ func TestClientSecretAuthenticator_Basic(t *testing.T) {
 	t.Run("empty secret", func(t *testing.T) {
 		err := auth.Authenticate(&AuthRequest{
 			ClientID:     "client1",
-			ClientSecret: "",
+			ClientSecret: secret.Value{},
 		})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "empty")
@@ -64,12 +65,12 @@ func TestClientSecretAuthenticator_Basic(t *testing.T) {
 }
 
 func TestClientSecretAuthenticator_Post(t *testing.T) {
-	auth := NewClientSecretAuthenticator("post-secret", MethodClientSecretPost)
+	auth := NewClientSecretAuthenticator(secret.New("post-secret"), MethodClientSecretPost)
 	assert.Equal(t, MethodClientSecretPost, auth.Method())
 
 	err := auth.Authenticate(&AuthRequest{
 		ClientID:     "client1",
-		ClientSecret: "post-secret",
+		ClientSecret: secret.New("post-secret"),
 	})
 	assert.NoError(t, err)
 }

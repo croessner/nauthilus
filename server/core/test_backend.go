@@ -194,7 +194,8 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 		return passDBResult, nil
 	}
 
-	user := tm.store.withUser(tm.backendName, username, auth.Request.Password, nil)
+	password := auth.passwordString()
+	user := tm.store.withUser(tm.backendName, username, password, nil)
 
 	passDBResult.UserFound = true
 	passDBResult.AccountField = "uid"
@@ -214,12 +215,12 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 	}
 
 	if user.PasswordHash == "" {
-		passDBResult.Authenticated = auth.Request.Password == ""
+		passDBResult.Authenticated = password == ""
 
 		return passDBResult, nil
 	}
 
-	passDBResult.Authenticated = util.GetHash(util.PreparePassword(auth.Request.Password)) == user.PasswordHash
+	passDBResult.Authenticated = util.GetHash(util.PreparePassword(password)) == user.PasswordHash
 
 	return passDBResult, nil
 }

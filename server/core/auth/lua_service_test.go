@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
@@ -83,7 +84,7 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	auth.Runtime.StartTime = time.Now()
 	auth.Request.Protocol = config.NewProtocol("imap")
 	auth.Request.Username = "user@example.com"
-	auth.Request.Password = "secret"
+	auth.Request.Password = secret.New("secret")
 	auth.Request.ClientIP = "127.0.0.1"
 	auth.Runtime.AccountField = "rnsMSDovecotUser"
 	auth.ReplaceAllAttributes(map[string][]any{

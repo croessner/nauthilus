@@ -46,9 +46,7 @@ func getErrorMsg(fe validator.FieldError) string {
 
 // HandleJSONError handles JSON validation errors by aborting the request and returning a JSON response with error details.
 func HandleJSONError(ctx *gin.Context, err error) {
-	var validationErrors validator.ValidationErrors
-
-	if errors.As(err, &validationErrors) {
+	if validationErrors, ok := errors.AsType[validator.ValidationErrors](err); ok {
 		errorMsgList := make([]JSONErrorMsg, len(validationErrors))
 
 		for i, validationError := range validationErrors {

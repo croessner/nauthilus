@@ -86,7 +86,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	fr := &feature.Request{
 		Session:            a.Runtime.GUID,
 		Username:           a.Request.Username,
-		Password:           a.Request.Password,
+		Password:           a.passwordBytes(),
 		ClientIP:           a.Request.ClientIP,
 		AccountName:        a.GetAccount(),
 		UsedBackendPort:    &a.Runtime.UsedBackendPort,

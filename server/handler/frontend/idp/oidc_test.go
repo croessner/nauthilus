@@ -37,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
@@ -45,7 +46,7 @@ import (
 
 type mockOIDCCfg struct {
 	issuer       string
-	signingKey   string
+	signingKey   secret.Value
 	signingKeyID string
 	clients      []config.OIDCClient
 }
@@ -97,8 +98,12 @@ func (m *mockOIDCCfg) GetServer() *config.ServerSection {
 	}
 }
 
-func (m *mockOIDCCfg) GetLDAPConfigEncryptionSecret() string {
-	return ""
+func (m *mockOIDCCfg) GetLDAPConfigEncryptionSecret() secret.Value {
+	return secret.Value{}
+}
+
+func (m *mockOIDCCfg) GetLDAPConfigBindPW() secret.Value {
+	return secret.Value{}
 }
 
 func (m *mockOIDCCfg) GetOIDCCID() string    { return "X-Nauthilus-OIDC-ClientID" }
@@ -220,7 +225,6 @@ func (m *mockOIDCCfg) GetLDAPConfigLookupPoolSize() int                  { retur
 func (m *mockOIDCCfg) GetLDAPConfigAuthPoolSize() int                    { return 0 }
 func (m *mockOIDCCfg) GetLDAPConfigConnectAbortTimeout() time.Duration   { return 0 }
 func (m *mockOIDCCfg) GetLDAPConfigBindDN() string                       { return "" }
-func (m *mockOIDCCfg) GetLDAPConfigBindPW() string                       { return "" }
 func (m *mockOIDCCfg) GetLDAPConfigTLSCAFile() string                    { return "" }
 func (m *mockOIDCCfg) GetLDAPConfigTLSClientCert() string                { return "" }
 func (m *mockOIDCCfg) GetLDAPConfigTLSClientKey() string                 { return "" }
@@ -235,7 +239,7 @@ func (m *mockOIDCCfg) GetLDAPConfigAuthIdlePoolSize() int                { retur
 func TestOIDCHandler_Discovery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	issuer := "https://auth.example.com"
-	cfg := &mockOIDCCfg{issuer: issuer, signingKey: generateTestKey()}
+	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey())}
 
 	db, _ := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
@@ -290,7 +294,7 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: generateTestKey(), signingKeyID: tt.signingKID}
+			cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: secret.New(generateTestKey()), signingKeyID: tt.signingKID}
 			db, _ := redismock.NewClientMock()
 			rClient := rediscli.NewTestClient(db)
 			d := &deps.Deps{Cfg: cfg, Redis: rClient}
@@ -321,7 +325,7 @@ func TestOIDCHandler_JWKS(t *testing.T) {
 func TestOIDCHandler_Logout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	issuer := "https://auth.example.com"
-	signingKey := generateTestKey()
+	signingKey := secret.New(generateTestKey())
 	client := config.OIDCClient{
 		ClientID:               "test-client",
 		PostLogoutRedirectURIs: []string{"https://app.com/post-logout"},
@@ -591,10 +595,10 @@ func TestOIDCHandler_Consent(t *testing.T) {
 func TestOIDCHandler_Introspect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	issuer := "https://auth.example.com"
-	signingKey := generateTestKey()
+	signingKey := secret.New(generateTestKey())
 	client := config.OIDCClient{
 		ClientID:     "test-client",
-		ClientSecret: "test-secret",
+		ClientSecret: secret.New("test-secret"),
 	}
 
 	cfg := &mockOIDCCfg{
@@ -682,10 +686,10 @@ func TestOIDCHandler_Token(t *testing.T) {
 	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
 	gin.SetMode(gin.TestMode)
 	issuer := "https://auth.example.com"
-	signingKey := generateTestKey()
+	signingKey := secret.New(generateTestKey())
 	client := config.OIDCClient{
 		ClientID:     "test-client",
-		ClientSecret: "test-secret",
+		ClientSecret: secret.New("test-secret"),
 		RedirectURIs: []string{"https://app.com/callback"},
 	}
 
@@ -780,7 +784,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		// Mock client with special characters
 		cfg.clients = append(cfg.clients, config.OIDCClient{
 			ClientID:     specialClientID,
-			ClientSecret: specialSecret,
+			ClientSecret: secret.New(specialSecret),
 			RedirectURIs: []string{"https://app.com/callback"},
 		})
 

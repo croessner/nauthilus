@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp/oidckeys"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel/attribute"
@@ -494,7 +495,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	}
 
 	auth.SetUsername(username)
-	auth.SetPassword(password)
+	auth.SetPassword(secret.New(password))
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
 

@@ -19,12 +19,13 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util/crypto"
 )
 
 // Manager handles encryption and decryption of sensitive data.
 type Manager struct {
-	secret           string
+	secret           secret.Value
 	allowEmptySecret bool
 	allowPlaintext   bool
 }
@@ -47,7 +48,7 @@ func WithAllowPlaintext() Option {
 }
 
 // NewManager creates a new Manager with the given secret and options.
-func NewManager(secret string, opts ...Option) *Manager {
+func NewManager(secret secret.Value, opts ...Option) *Manager {
 	m := &Manager{secret: secret}
 	for _, opt := range opts {
 		opt(m)
@@ -66,13 +67,23 @@ func (m *Manager) Encrypt(plaintext string) (string, error) {
 		return "", err
 	}
 
-	if m.secret == "" {
+	if m.secret.IsZero() {
 		return plaintext, nil
 	}
 
-	ciphertext, err := crypto.EncryptString(plaintext, m.secret)
-	if err != nil {
-		return "", err
+	var ciphertext []byte
+	var encErr error
+	m.secret.WithBytes(func(secretBytes []byte) {
+		if len(secretBytes) == 0 {
+			return
+		}
+		ciphertext, encErr = crypto.EncryptString(plaintext, secretBytes)
+	})
+	if encErr != nil {
+		return "", encErr
+	}
+	if len(ciphertext) == 0 {
+		return "", nil
 	}
 
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
@@ -88,7 +99,7 @@ func (m *Manager) Decrypt(encodedCiphertext string) (string, error) {
 		return "", err
 	}
 
-	if m.secret == "" {
+	if m.secret.IsZero() {
 		return encodedCiphertext, nil
 	}
 
@@ -100,12 +111,19 @@ func (m *Manager) Decrypt(encodedCiphertext string) (string, error) {
 		return "", err
 	}
 
-	plaintext, err := crypto.DecryptString(ciphertext, m.secret)
-	if err != nil {
+	var plaintext string
+	var decErr error
+	m.secret.WithBytes(func(secretBytes []byte) {
+		if len(secretBytes) == 0 {
+			return
+		}
+		plaintext, decErr = crypto.DecryptString(ciphertext, secretBytes)
+	})
+	if decErr != nil {
 		if m.allowPlaintext {
 			return encodedCiphertext, nil
 		}
-		return "", err
+		return "", decErr
 	}
 
 	return plaintext, nil
@@ -113,11 +131,11 @@ func (m *Manager) Decrypt(encodedCiphertext string) (string, error) {
 
 // IsEncryptionEnabled returns true if an encryption secret is configured.
 func (m *Manager) IsEncryptionEnabled() bool {
-	return m.secret != ""
+	return !m.secret.IsZero()
 }
 
 func (m *Manager) ensureSecret() error {
-	if m.secret == "" && !m.allowEmptySecret {
+	if m.secret.IsZero() && !m.allowEmptySecret {
 		return fmt.Errorf("encryption secret is required")
 	}
 	return nil

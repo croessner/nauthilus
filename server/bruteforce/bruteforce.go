@@ -38,6 +38,7 @@ import (
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -125,7 +126,7 @@ type BucketManager interface {
 	WithUsername(username string) BucketManager
 
 	// WithPassword sets the password for the current bucket manager instance.
-	WithPassword(password string) BucketManager
+	WithPassword(password secret.Value) BucketManager
 
 	// WithAccountName sets the account name for the BucketManager instance and returns the updated BucketManager.
 	WithAccountName(accountName string) BucketManager
@@ -186,7 +187,7 @@ type bucketManagerImpl struct {
 	parsedIP             net.IP
 	guid                 string
 	username             string
-	password             string
+	password             secret.Value
 	clientIP             string
 	accountName          string
 	bruteForceName       string
@@ -416,7 +417,7 @@ func (bm *bucketManagerImpl) WithUsername(username string) BucketManager {
 }
 
 // WithPassword sets the password for the bucketManager instance.
-func (bm *bucketManagerImpl) WithPassword(password string) BucketManager {
+func (bm *bucketManagerImpl) WithPassword(password secret.Value) BucketManager {
 	bm.password = password
 
 	return bm
@@ -478,10 +479,19 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 	}
 
 	// 3) Check if current password was already seen for this account
-	if key := bm.getPasswordHistoryRedisSetKey(true); key != "" && bm.password != "" {
+	if key := bm.getPasswordHistoryRedisSetKey(true); key != "" && !bm.password.IsZero() {
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		passwordHash := util.GetHash(util.PreparePassword(bm.password))
+		var passwordHash string
+		bm.password.WithString(func(value string) {
+			if value != "" {
+				passwordHash = util.GetHash(util.PreparePassword(value))
+			}
+		})
+
+		if passwordHash == "" {
+			return
+		}
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 		if isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, passwordHash).Result(); err == nil && isMember {
@@ -1207,7 +1217,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 
 	logger := bm.logger()
 
-	if bm.password == "" {
+	if bm.password.IsZero() {
 		level.Debug(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Skipping SaveFailedPasswordCounterInRedis: password is empty",
@@ -1216,7 +1226,15 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		return
 	}
 
-	passwordHash := util.GetHash(util.PreparePassword(bm.password))
+	var passwordHash string
+	bm.password.WithString(func(value string) {
+		if value != "" {
+			passwordHash = util.GetHash(util.PreparePassword(value))
+		}
+	})
+	if passwordHash == "" {
+		return
+	}
 	ttl := bm.cfg().GetServer().GetRedis().GetNegCacheTTL()
 	maxEntries := bm.cfg().GetServer().GetMaxPasswordHistoryEntries()
 
@@ -1509,7 +1527,7 @@ func (bm *bucketManagerImpl) ShouldEnforceBucketUpdate() (bool, error) {
 func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
 	logger := bm.logger()
 
-	if bm.password == "" {
+	if bm.password.IsZero() {
 		level.Debug(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Skipping isRepeatingWrongPassword: password is empty",
@@ -1518,7 +1536,15 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		return false, nil
 	}
 
-	passwordHash := util.GetHash(util.PreparePassword(bm.password))
+	var passwordHash string
+	bm.password.WithString(func(value string) {
+		if value != "" {
+			passwordHash = util.GetHash(util.PreparePassword(value))
+		}
+	})
+	if passwordHash == "" {
+		return false, nil
+	}
 
 	// Build scope (IP scoping may reduce IPv6 precision) and account identifier
 	scoped := bm.clientIP

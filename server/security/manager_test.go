@@ -15,10 +15,14 @@
 
 package security
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/croessner/nauthilus/server/secret"
+)
 
 func TestManagerEncryptDecryptRoundTrip(t *testing.T) {
-	manager := NewManager("testsecret12345678")
+	manager := NewManager(secret.New("testsecret12345678"))
 
 	encrypted, err := manager.Encrypt("totp-secret")
 	if err != nil {
@@ -38,7 +42,7 @@ func TestManagerEncryptDecryptRoundTrip(t *testing.T) {
 }
 
 func TestManagerEncryptRequiresSecret(t *testing.T) {
-	manager := NewManager("")
+	manager := NewManager(secret.New(""))
 
 	if _, err := manager.Encrypt("totp-secret"); err == nil {
 		t.Fatalf("expected encryption to fail without secret")
@@ -46,7 +50,7 @@ func TestManagerEncryptRequiresSecret(t *testing.T) {
 }
 
 func TestManagerDecryptInvalidCiphertext(t *testing.T) {
-	manager := NewManager("testsecret12345678")
+	manager := NewManager(secret.New("testsecret12345678"))
 
 	if _, err := manager.Decrypt("not-base64"); err == nil {
 		t.Fatalf("expected decryption to fail for invalid ciphertext")

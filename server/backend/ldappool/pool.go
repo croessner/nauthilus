@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log/level"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -342,7 +343,7 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 		conf            []*config.LDAPConf
 		serverURIs      []string
 		bindDN          string
-		bindPW          string
+		bindPW          secret.Value
 		startTLS        bool
 		tlsSkipVerify   bool
 		tlsCAFile       string
@@ -1251,12 +1252,9 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		// error metric for search
 		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "search", ldapErrorCode(err)).Inc()
 
-		var (
-			ldapError *ldap.Error
-			doLog     bool
-		)
+		var doLog bool
 
-		if stderrors.As(err, &ldapError) {
+		if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
 			if ldapError.ResultCode != uint16(ldap.LDAPResultNoSuchObject) {
 				doLog = true
 				if isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
@@ -1497,13 +1495,11 @@ func ldapErrorCode(err error) string {
 		return "0"
 	}
 
-	var le *ldap.Error
-	if stderrors.As(err, &le) {
+	if le, ok := stderrors.AsType[*ldap.Error](err); ok {
 		return fmt.Sprintf("%d", le.ResultCode)
 	}
 
-	var ne net.Error
-	if stderrors.As(err, &ne) {
+	if _, ok := stderrors.AsType[net.Error](err); ok {
 		return "network"
 	}
 
@@ -1525,14 +1521,12 @@ func isTimeoutErr(err error) bool {
 	}
 
 	// net.Error with Timeout() == true
-	var ne net.Error
-	if stderrors.As(err, &ne) && ne.Timeout() {
+	if ne, ok := stderrors.AsType[net.Error](err); ok && ne.Timeout() {
 		return true
 	}
 
 	// LDAP error may wrap an underlying timeout
-	var le *ldap.Error
-	if stderrors.As(err, &le) {
+	if le, ok := stderrors.AsType[*ldap.Error](err); ok {
 		if le != nil && le.Err != nil {
 			if isTimeoutErr(le.Err) {
 				return true
@@ -1556,8 +1550,7 @@ func isLDAPTimeLimitExceeded(err error) bool {
 		return false
 	}
 
-	var le *ldap.Error
-	if stderrors.As(err, &le) {
+	if le, ok := stderrors.AsType[*ldap.Error](err); ok {
 		if le.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
 			return true
 		}
@@ -1571,9 +1564,7 @@ func isTransientNetworkError(err error) bool {
 		return false
 	}
 
-	var ne net.Error
-
-	if stderrors.As(err, &ne) {
+	if ne, ok := stderrors.AsType[net.Error](err); ok {
 		if ne.Timeout() {
 			return true
 		}

@@ -103,15 +103,25 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 //
 //	client := newRedisFailoverClient(true)
 func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, slavesOnly bool) (redisHandle *redis.Client) {
+	sentinelPassword := ""
+	redisCfg.GetSentinel().GetPassword().WithString(func(value string) {
+		sentinelPassword = value
+	})
+
+	masterPassword := ""
+	redisCfg.GetStandaloneMaster().GetPassword().WithString(func(value string) {
+		masterPassword = value
+	})
+
 	fo := &redis.FailoverOptions{
 		MasterName:       redisCfg.GetSentinel().GetMasterName(),
 		SentinelAddrs:    redisCfg.GetSentinel().GetAddresses(),
 		ReplicaOnly:      slavesOnly,
 		DB:               redisCfg.GetDatabaseNumber(),
 		SentinelUsername: redisCfg.GetSentinel().GetUsername(),
-		SentinelPassword: redisCfg.GetSentinel().GetPassword(),
+		SentinelPassword: sentinelPassword,
 		Username:         redisCfg.GetStandaloneMaster().GetUsername(),
-		Password:         redisCfg.GetStandaloneMaster().GetPassword(),
+		Password:         masterPassword,
 		PoolSize:         redisCfg.GetPoolSize(),
 		MinIdleConns:     redisCfg.GetIdlePoolSize(),
 		TLSConfig:        RedisTLSOptions(redisCfg.GetTLS()),
@@ -154,10 +164,15 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 // The address is used to specify the network address of the Redis server.
 // The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().GetServer().Redis.Master" and
 func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, address string) *redis.Client {
+	masterPassword := ""
+	redisCfg.GetStandaloneMaster().GetPassword().WithString(func(value string) {
+		masterPassword = value
+	})
+
 	opts := &redis.Options{
 		Addr:         address,
 		Username:     redisCfg.GetStandaloneMaster().GetUsername(),
-		Password:     redisCfg.GetStandaloneMaster().GetPassword(),
+		Password:     masterPassword,
 		DB:           redisCfg.GetDatabaseNumber(),
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
@@ -209,11 +224,15 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
 func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
+	clusterPassword := ""
+	clusterCfg.GetPassword().WithString(func(value string) {
+		clusterPassword = value
+	})
 
 	options := &redis.ClusterOptions{
 		Addrs:        clusterCfg.GetAddresses(),
 		Username:     clusterCfg.GetUsername(),
-		Password:     clusterCfg.GetPassword(),
+		Password:     clusterPassword,
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
@@ -290,11 +309,15 @@ func instrumentRedisIfEnabled(c redis.UniversalClient) {
 // and reduce load on master nodes.
 func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
+	clusterPassword := ""
+	clusterCfg.GetPassword().WithString(func(value string) {
+		clusterPassword = value
+	})
 
 	options := &redis.ClusterOptions{
 		Addrs:        clusterCfg.GetAddresses(),
 		Username:     clusterCfg.GetUsername(),
-		Password:     clusterCfg.GetPassword(),
+		Password:     clusterPassword,
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),

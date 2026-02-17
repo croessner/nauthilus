@@ -78,7 +78,7 @@ func TestSetupHeaderBasedAuth_NginxPasswordDecoding(t *testing.T) {
 			auth := NewAuthStateFromContextWithDeps(ctx, deps)
 			setupHeaderBasedAuth(ctx, auth)
 
-			assert.Equal(t, tt.expectedPassword, auth.(*AuthState).Request.Password)
+			assert.Equal(t, tt.expectedPassword, auth.(*AuthState).PasswordString())
 		})
 	}
 }

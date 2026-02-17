@@ -20,9 +20,11 @@ package clientauth
 import (
 	"crypto/subtle"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/croessner/nauthilus/server/idp/signing"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -51,7 +53,7 @@ type AuthRequest struct {
 	ClientID string
 
 	// ClientSecret is the client secret (for client_secret_basic/post).
-	ClientSecret string
+	ClientSecret secret.Value
 
 	// ClientAssertion is the JWT assertion (for private_key_jwt).
 	ClientAssertion string
@@ -66,13 +68,13 @@ type AuthRequest struct {
 // ClientSecretAuthenticator authenticates clients using a shared secret.
 // It supports both client_secret_basic and client_secret_post methods.
 type ClientSecretAuthenticator struct {
-	expectedSecret string
+	expectedSecret secret.Value
 	method         string
 }
 
 // NewClientSecretAuthenticator creates a new ClientSecretAuthenticator.
 // The method parameter should be MethodClientSecretBasic or MethodClientSecretPost.
-func NewClientSecretAuthenticator(expectedSecret string, method string) *ClientSecretAuthenticator {
+func NewClientSecretAuthenticator(expectedSecret secret.Value, method string) *ClientSecretAuthenticator {
 	return &ClientSecretAuthenticator{
 		expectedSecret: expectedSecret,
 		method:         method,
@@ -85,11 +87,19 @@ func (a *ClientSecretAuthenticator) Authenticate(request *AuthRequest) error {
 		return fmt.Errorf("auth request is nil")
 	}
 
-	if request.ClientSecret == "" {
+	if request.ClientSecret.IsZero() {
 		return fmt.Errorf("client secret is empty")
 	}
 
-	if subtle.ConstantTimeCompare([]byte(a.expectedSecret), []byte(request.ClientSecret)) != 1 {
+	var expectedSecret string
+	a.expectedSecret.WithString(func(value string) {
+		expectedSecret = value
+	})
+	var providedSecret string
+	request.ClientSecret.WithString(func(value string) {
+		providedSecret = value
+	})
+	if subtle.ConstantTimeCompare([]byte(expectedSecret), []byte(providedSecret)) != 1 {
 		return fmt.Errorf("client secret mismatch")
 	}
 
@@ -194,17 +204,10 @@ func (a *PrivateKeyJWTAuthenticator) validateAudience(claims jwt.MapClaims) erro
 			return fmt.Errorf("aud claim mismatch: expected %s, got %s", a.audience, aud)
 		}
 	case []any:
-		found := false
-
-		for _, v := range aud {
-			if s, ok := v.(string); ok && s == a.audience {
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
+		if !slices.ContainsFunc(aud, func(value any) bool {
+			audience, ok := value.(string)
+			return ok && audience == a.audience
+		}) {
 			return fmt.Errorf("aud claim does not contain expected audience %s", a.audience)
 		}
 	default:

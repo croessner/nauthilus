@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
@@ -68,7 +69,7 @@ func (m *mockIdpConfig) GetServer() *config.ServerSection {
 }
 
 func TestNauthilusIdP_Tokens(t *testing.T) {
-	signingKey := generateTestKey()
+	signingKey := secret.New(generateTestKey())
 	oidcCfg := config.OIDCConfig{
 		Issuer: "https://issuer.example.com",
 		SigningKeys: []config.OIDCKey{
@@ -351,7 +352,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 }
 
 func TestNauthilusIdP_ClientCredentials(t *testing.T) {
-	signingKey := generateTestKey()
+	signingKey := secret.New(generateTestKey())
 	oidcCfg := config.OIDCConfig{
 		Issuer: "https://issuer.example.com",
 		SigningKeys: []config.OIDCKey{
@@ -360,14 +361,14 @@ func TestNauthilusIdP_ClientCredentials(t *testing.T) {
 		Clients: []config.OIDCClient{
 			{
 				ClientID:            "cc-client",
-				ClientSecret:        "cc-secret",
+				ClientSecret:        secret.New("cc-secret"),
 				GrantTypes:          []string{"client_credentials"},
 				Scopes:              []string{"api.read", "api.write"},
 				AccessTokenLifetime: time.Hour,
 			},
 			{
 				ClientID:     "authcode-only",
-				ClientSecret: "secret",
+				ClientSecret: secret.New("secret"),
 				RedirectURIs: []string{"http://localhost/cb"},
 			},
 		},

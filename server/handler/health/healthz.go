@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -115,7 +116,7 @@ func checkTestBackend(deps HealthzDeps, result *HealthzResult) {
 	}
 
 	authState.SetUsername("healthz-test")
-	authState.SetPassword("healthz-secret")
+	authState.SetPassword(secret.New("healthz-secret"))
 	authState.Request.NoAuth = false
 	backend := core.NewTestBackendManager(deps.BackendName, core.AuthDeps{
 		Cfg:    deps.Cfg,

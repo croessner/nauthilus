@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -195,7 +196,11 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	secureMW := cookie.Middleware(h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret(), h.deps.Cfg, h.deps.Env)
+	frontendSecret := ""
+	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithString(func(value string) {
+		frontendSecret = value
+	})
+	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 	csrfMW := csrf.New()
 
@@ -1931,17 +1936,11 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 		return
 	}
 
-	var targetIndex int
-	found := false
-	for i := range userData.WebAuthnUser.Credentials {
-		if bytes.Equal(userData.WebAuthnUser.Credentials[i].ID, decodedID) {
-			targetIndex = i
-			found = true
-			break
-		}
-	}
+	targetIndex := slices.IndexFunc(userData.WebAuthnUser.Credentials, func(credential mfa.PersistentCredential) bool {
+		return bytes.Equal(credential.ID, decodedID)
+	})
 
-	if !found {
+	if targetIndex == -1 {
 		h.renderErrorModal(ctx, "Credential not found")
 
 		return

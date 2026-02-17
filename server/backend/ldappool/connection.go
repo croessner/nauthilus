@@ -387,8 +387,7 @@ func isTransportError(err error) bool {
 	}
 
 	// net errors or EOF
-	var ne net.Error
-	if stderrors.As(err, &ne) {
+	if ne, ok := stderrors.AsType[net.Error](err); ok {
 		_ = ne
 
 		return true
@@ -399,8 +398,7 @@ func isTransportError(err error) bool {
 	}
 
 	// ldap.Error may wrap transport issues
-	var le *ldap.Error
-	if stderrors.As(err, &le) {
+	if le, ok := stderrors.AsType[*ldap.Error](err); ok {
 		// ResultCode 81 (server down) is typical transport failure
 		if le.ResultCode == uint16(ldap.ErrorNetwork) || uint16(le.ResultCode) == 81 {
 			return true
@@ -860,13 +858,18 @@ func (l *LDAPConnectionImpl) simpleBind(ctx context.Context, cfg config.File, lo
 	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
 	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
+	var bindPassword string
+	ldapConf.BindPW.WithString(func(value string) {
+		bindPassword = value
+	})
+
 	if cfg.GetServer().GetEnvironment().GetDevMode() {
-		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", bindPassword)
 	}
 
 	_, err := l.conn.SimpleBind(&ldap.SimpleBindRequest{
 		Username: ldapConf.BindDN,
-		Password: ldapConf.BindPW,
+		Password: bindPassword,
 	})
 
 	if err != nil {

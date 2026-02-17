@@ -23,6 +23,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-playground/validator/v10"
 )
 
@@ -122,12 +123,12 @@ type LDAPConf struct {
 	LookupQueueLength  int `mapstructure:"lookup_queue_length" validate:"omitempty,min=0"`
 	AuthQueueLength    int `mapstructure:"auth_queue_length" validate:"omitempty,min=0"`
 
-	BindDN           string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
-	BindPW           string `mapstructure:"bind_pw" validate:"omitempty"`
-	EncryptionSecret string `mapstructure:"encryption_secret" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
-	TLSCAFile        string `mapstructure:"tls_ca_cert" validate:"omitempty,file"`
-	TLSClientCert    string `mapstructure:"tls_client_cert" validate:"omitempty,file"`
-	TLSClientKey     string `mapstructure:"tls_client_key" validate:"omitempty,file"`
+	BindDN           string       `mapstructure:"bind_dn" validate:"omitempty,printascii"`
+	BindPW           secret.Value `mapstructure:"bind_pw" validate:"omitempty"`
+	EncryptionSecret secret.Value `mapstructure:"encryption_secret" validate:"omitempty,secret_min=16,alphanumsymbol,secret_excludesall= "`
+	TLSCAFile        string       `mapstructure:"tls_ca_cert" validate:"omitempty,file"`
+	TLSClientCert    string       `mapstructure:"tls_client_cert" validate:"omitempty,file"`
+	TLSClientKey     string       `mapstructure:"tls_client_key" validate:"omitempty,file"`
 
 	ConnectAbortTimeout time.Duration `mapstructure:"connect_abort_timeout" validate:"omitempty,max=10m"`
 	// Operation-specific timeouts (0 = library default)
@@ -196,7 +197,11 @@ func (l *LDAPConf) String() string {
 		switch typeOfValue.Field(index).Name {
 		case "BindPW":
 			if environment.GetDevMode() {
-				fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+				if secretValue, ok := value.Field(index).Interface().(secret.Value); ok {
+					fmt.Fprintf(&result, " %s='%s'", typeOfValue.Field(index).Name, secretValue.String())
+				} else {
+					fmt.Fprintf(&result, " %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
+				}
 			} else {
 				fmt.Fprintf(&result, " %s='<hidden>'", typeOfValue.Field(index).Name)
 			}
@@ -325,9 +330,9 @@ func (l *LDAPConf) GetBindDN() string {
 
 // GetBindPW retrieves the bind password from the LDAPConf.
 // Returns an empty string if the LDAPConf is nil.
-func (l *LDAPConf) GetBindPW() string {
+func (l *LDAPConf) GetBindPW() secret.Value {
 	if l == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return l.BindPW
@@ -335,9 +340,9 @@ func (l *LDAPConf) GetBindPW() string {
 
 // GetEncryptionSecret retrieves the LDAP encryption secret from the LDAPConf.
 // Returns an empty string if the LDAPConf is nil.
-func (l *LDAPConf) GetEncryptionSecret() string {
+func (l *LDAPConf) GetEncryptionSecret() secret.Value {
 	if l == nil {
-		return ""
+		return secret.Value{}
 	}
 
 	return l.EncryptionSecret

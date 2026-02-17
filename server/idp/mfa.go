@@ -17,6 +17,7 @@ package idp
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -152,19 +153,16 @@ func (s *MFAService) UseRecoveryCode(ctx *gin.Context, username string, code str
 	dummyAuth.SetTOTPRecoveryField(user.TOTPRecoveryField)
 
 	recoveryCodes := dummyAuth.GetTOTPRecoveryCodes()
-	found := false
-	newCodes := make([]string, 0)
 
-	for _, c := range recoveryCodes {
-		if c == code {
-			found = true
-		} else {
-			newCodes = append(newCodes, c)
-		}
+	if !slices.Contains(recoveryCodes, code) {
+		return false, nil
 	}
 
-	if !found {
-		return false, nil
+	newCodes := make([]string, 0, len(recoveryCodes)-1)
+	for _, c := range recoveryCodes {
+		if c != code {
+			newCodes = append(newCodes, c)
+		}
 	}
 
 	// Save updated codes

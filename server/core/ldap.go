@@ -607,11 +607,16 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
 		defer cancelBind()
 
+		var bindPassword string
+		auth.Request.Password.WithString(func(value string) {
+			bindPassword = value
+		})
+
 		ldapUserBindRequest := &bktype.LDAPAuthRequest{
 			GUID:              auth.Runtime.GUID,
 			PoolName:          lm.poolName,
 			BindDN:            dn,
-			BindPW:            auth.Request.Password,
+			BindPW:            bindPassword,
 			LDAPReplyChan:     ldapReplyChan,
 			HTTPClientContext: ctxBind,
 		}
@@ -627,8 +632,6 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		ldapReply = waitLDAPReply(tr, lctx, "ldap.passdb.auth.wait", ldapReplyChan)
 
 		if ldapReply.Err != nil {
-			var ldapError *ldap.Error
-
 			util.DebugModuleWithCfg(
 				auth.Ctx(),
 				lm.effectiveCfg(),
@@ -638,7 +641,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 				definitions.LogKeyMsg, err,
 			)
 
-			if stderrors.As(err, &ldapError) {
+			if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
 				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
 					lspan.RecordError(ldapError)
 
@@ -762,9 +765,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	ldapReply = waitLDAPReply(tr, actx, "ldap.accountdb.wait", ldapReplyChan)
 
 	if ldapReply.Err != nil {
-		var ldapError *ldap.Error
-
-		if stderrors.As(err, &ldapError) {
+		if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
 			asp.RecordError(ldapError)
 
 			return accounts, ldapError.Err
@@ -816,7 +817,6 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		scope        *config.LDAPScope
 		protocol     *config.LDAPSearchProtocol
 		searchConfig ldapSearchConfig
-		ldapError    *ldap.Error
 	)
 
 	resource := util.RequestResource(auth.Request.HTTPClientContext, auth.Request.HTTPClientRequest, lm.poolName)
@@ -899,7 +899,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	ldapReply = waitLDAPReply(tr, mctx, "ldap.add_totp.wait", ldapReplyChan)
 
-	if stderrors.As(ldapReply.Err, &ldapError) {
+	if ldapError, ok := stderrors.AsType[*ldap.Error](ldapReply.Err); ok {
 		if ldapError.ResultCode == uint16(ldap.LDAPResultAttributeOrValueExists) && totpObjectClass != "" {
 			return nil
 		}
@@ -1197,8 +1197,7 @@ func isNoSuchAttributeError(err error) bool {
 		return false
 	}
 
-	var ldapErr *ldap.Error
-	if stderrors.As(err, &ldapErr) {
+	if ldapErr, ok := stderrors.AsType[*ldap.Error](err); ok {
 		return ldapErr.ResultCode == ldap.LDAPResultNoSuchAttribute
 	}
 
@@ -1211,8 +1210,7 @@ func isAttributeOrValueExistsError(err error) bool {
 		return false
 	}
 
-	var ldapErr *ldap.Error
-	if stderrors.As(err, &ldapErr) {
+	if ldapErr, ok := stderrors.AsType[*ldap.Error](err); ok {
 		return ldapErr.ResultCode == ldap.LDAPResultAttributeOrValueExists
 	}
 
