@@ -38,7 +38,7 @@ func (e *testEnv) GetDevMode() bool {
 	return e.devMode
 }
 
-const testSecret = "test-secret-key-for-cookie-encryption"
+var testSecret = []byte("test-secret-key-for-cookie-encryption")
 
 func newTestManager(cookieName string, devMode bool) *SecureManager {
 	return NewSecureManager(testSecret, cookieName, nil, &testEnv{devMode: devMode})

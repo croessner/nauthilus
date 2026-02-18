@@ -16,6 +16,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
@@ -2876,12 +2877,16 @@ func (f *FileSettings) HandleFile() (err error) {
 			return nil
 		}
 
-		var value string
-		secretValue.WithString(func(s string) {
-			value = s
+		var value []byte
+		secretValue.WithBytes(func(s []byte) {
+			if len(s) == 0 {
+				return
+			}
+
+			value = bytes.Clone(s)
 		})
 
-		return value
+		return string(value)
 	}, secret.Value{}, &secret.Value{})
 
 	validate.RegisterValidation("secret_required", secretRequired)

@@ -483,10 +483,15 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		var passwordHash string
-		bm.password.WithString(func(value string) {
-			if value != "" {
-				passwordHash = util.GetHash(util.PreparePassword(value))
+		bm.password.WithBytes(func(value []byte) {
+			if len(value) == 0 {
+				return
 			}
+
+			prepared := util.PreparePasswordBytes(value)
+			defer clear(prepared)
+
+			passwordHash = util.GetHashBytes(prepared)
 		})
 
 		if passwordHash == "" {
@@ -1227,10 +1232,15 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 	}
 
 	var passwordHash string
-	bm.password.WithString(func(value string) {
-		if value != "" {
-			passwordHash = util.GetHash(util.PreparePassword(value))
+	bm.password.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
 		}
+
+		prepared := util.PreparePasswordBytes(value)
+		defer clear(prepared)
+
+		passwordHash = util.GetHashBytes(prepared)
 	})
 	if passwordHash == "" {
 		return
@@ -1537,10 +1547,15 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	}
 
 	var passwordHash string
-	bm.password.WithString(func(value string) {
-		if value != "" {
-			passwordHash = util.GetHash(util.PreparePassword(value))
+	bm.password.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
 		}
+
+		prepared := util.PreparePasswordBytes(value)
+		defer clear(prepared)
+
+		passwordHash = util.GetHashBytes(prepared)
 	})
 	if passwordHash == "" {
 		return false, nil

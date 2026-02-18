@@ -18,6 +18,7 @@
 package clientauth
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"fmt"
 	"slices"
@@ -91,15 +92,25 @@ func (a *ClientSecretAuthenticator) Authenticate(request *AuthRequest) error {
 		return fmt.Errorf("client secret is empty")
 	}
 
-	var expectedSecret string
-	a.expectedSecret.WithString(func(value string) {
-		expectedSecret = value
+	var expectedSecret []byte
+	a.expectedSecret.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		expectedSecret = bytes.Clone(value)
 	})
-	var providedSecret string
-	request.ClientSecret.WithString(func(value string) {
-		providedSecret = value
+
+	var providedSecret []byte
+	request.ClientSecret.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		providedSecret = bytes.Clone(value)
 	})
-	if subtle.ConstantTimeCompare([]byte(expectedSecret), []byte(providedSecret)) != 1 {
+
+	if subtle.ConstantTimeCompare(expectedSecret, providedSecret) != 1 {
 		return fmt.Errorf("client secret mismatch")
 	}
 

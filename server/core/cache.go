@@ -113,8 +113,18 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			passDBResult.BackendName = ppc.BackendName
 			passDBResult.Attributes = ppc.Attributes
 
-			password := auth.passwordString()
-			if auth.Request.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(password)) {
+			var pwShort string
+			auth.Request.Password.WithBytes(func(value []byte) {
+				if len(value) == 0 {
+					return
+				}
+
+				prepared := util.PreparePasswordBytes(value)
+				defer clear(prepared)
+
+				pwShort = util.GetHashBytes(prepared)
+			})
+			if auth.Request.NoAuth || ppc.Password == pwShort {
 				passDBResult.Authenticated = true
 			}
 

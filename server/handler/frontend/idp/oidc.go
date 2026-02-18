@@ -16,7 +16,9 @@
 package idp
 
 import (
+	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -77,9 +79,13 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	frontendSecret := ""
-	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithString(func(value string) {
-		frontendSecret = value
+	var frontendSecret []byte
+	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		frontendSecret = bytes.Clone(value)
 	})
 	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
@@ -478,18 +484,23 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 		}
 	}
 
-	expectedSecret := ""
-	client.ClientSecret.WithString(func(value string) {
-		expectedSecret = value
+	var expectedSecret []byte
+	client.ClientSecret.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		expectedSecret = bytes.Clone(value)
 	})
 
-	if expectedSecret != clientSecret {
+	receivedSecret := []byte(clientSecret)
+	if subtle.ConstantTimeCompare(expectedSecret, receivedSecret) != 1 {
 		keyvals := []any{
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "OIDC client secret mismatch",
 			"client_id", clientID,
 			"expected_len", len(expectedSecret),
-			"received_len", len(clientSecret),
+			"received_len", len(receivedSecret),
 		}
 
 		if clientSecret == "secret" {
