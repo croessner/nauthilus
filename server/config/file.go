@@ -58,6 +58,10 @@ var fileLoaded atomic.Bool
 // ConfigFilePath stores the path to the configuration file specified via the -config flag
 var ConfigFilePath string
 
+// ConfigFileType stores the config format specified via the -config-format flag.
+// Defaults to yaml when not set.
+var ConfigFileType = "yaml"
+
 // GetFile returns the loaded FileSettings configuration instance.
 func GetFile() File {
 	if !fileLoaded.Load() {
@@ -2987,22 +2991,19 @@ func bindEnvs(i any, parts ...string) error {
 func NewFile() (newCfg File, err error) {
 	newCfg = &FileSettings{}
 
-	if ConfigFilePath == "" {
-		viper.SetConfigName("nauthilus") // name of environment file (without extension)
-		// Note: Config type is now set via command line flag in server.go
-		viper.AddConfigPath(".")
-		viper.AddConfigPath("$HOME/.nauthilus")
-		viper.AddConfigPath("/etc/nauthilus/")
-		viper.AddConfigPath("/usr/local/etc/nauthilus/")
-	}
-
-	err = viper.ReadInConfig()
+	mergedSettings, rootPath, err := loadMergedConfigSettings(ConfigFileType)
 	if err != nil {
 		return nil, err
 	}
 
+	if err = applyMergedConfigSettings(mergedSettings, ConfigFileType, rootPath); err != nil {
+		return nil, err
+	}
+
 	// Register all known config variables with env variables.
-	bindEnvs(&FileSettings{})
+	if err = bindEnvs(&FileSettings{}); err != nil {
+		return nil, err
+	}
 
 	err = newCfg.HandleFile()
 
@@ -3018,8 +3019,13 @@ func NewFile() (newCfg File, err error) {
 func ReloadConfigFile() (err error) {
 	newCfgReload := &FileSettings{}
 
-	if err = viper.ReadInConfig(); err != nil {
-		return
+	mergedSettings, rootPath, err := loadMergedConfigSettings(ConfigFileType)
+	if err != nil {
+		return err
+	}
+
+	if err = applyMergedConfigSettings(mergedSettings, ConfigFileType, rootPath); err != nil {
+		return err
 	}
 
 	// Construct new configuration
