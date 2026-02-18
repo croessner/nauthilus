@@ -16,6 +16,7 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -226,7 +227,31 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 }
 
 func PreparePassword(password string) string {
-	return fmt.Sprintf("%s\x00%s", getDefaultConfigFile().GetServer().Redis.PasswordNonce, password)
+	prepared := PreparePasswordBytes([]byte(password))
+	defer clear(prepared)
+
+	return string(prepared)
+}
+
+func PreparePasswordBytes(password []byte) []byte {
+	var nonce []byte
+	getDefaultConfigFile().GetServer().GetRedis().GetPasswordNonce().WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		nonce = bytes.Clone(value)
+	})
+	if len(nonce) > 0 {
+		defer clear(nonce)
+	}
+
+	prepared := make([]byte, len(nonce)+1+len(password))
+	copy(prepared, nonce)
+	prepared[len(nonce)] = 0
+	copy(prepared[len(nonce)+1:], password)
+
+	return prepared
 }
 
 // GetHash creates an SHA-256 hash of a plain text password and returns the first 128 bits.
@@ -235,8 +260,20 @@ func GetHash(value string) string {
 		return value
 	}
 
+	return getHashBytes([]byte(value))
+}
+
+func GetHashBytes(value []byte) string {
+	if getDefaultEnvironment().GetDevMode() {
+		return string(value)
+	}
+
+	return getHashBytes(value)
+}
+
+func getHashBytes(value []byte) string {
 	hashValue := sha256.New()
-	hashValue.Write([]byte(value))
+	_, _ = hashValue.Write(value)
 
 	// 32 bit is good enough
 	return hex.EncodeToString(hashValue.Sum(nil))[:8]

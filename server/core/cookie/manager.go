@@ -121,7 +121,7 @@ var sensitiveKeys = map[string]bool{
 // NewSecureManager creates a new encrypted cookie manager.
 // The secret is used to derive encryption and authentication keys via SHA256.
 // The cfg parameter provides access to debug module configuration.
-func NewSecureManager(secret string, cookieName string, cfg config.File, env config.Environment) *SecureManager {
+func NewSecureManager(secret []byte, cookieName string, cfg config.File, env config.Environment) *SecureManager {
 	codec := NewSecureCodec(secret)
 
 	return &SecureManager{
@@ -438,7 +438,7 @@ var _ Manager = (*SecureManager)(nil)
 // Middleware creates a gin middleware that loads the secure data cookie at the start
 // of the request and saves it after the handler chain completes.
 // The CookieManager is stored in the gin.Context under CtxSecureDataKey.
-func Middleware(secret string, cfg config.File, env config.Environment) gin.HandlerFunc {
+func Middleware(secret []byte, cfg config.File, env config.Environment) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		mgr := NewSecureManager(secret, definitions.SecureDataCookieName, cfg, env)
 

@@ -16,6 +16,7 @@
 package idp
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/x509"
 	"encoding/base64"
@@ -268,9 +269,13 @@ func (h *SAMLHandler) Register(router gin.IRouter) {
 		ctx.Next()
 	}, mdlua.LuaContextMiddleware())
 
-	frontendSecret := ""
-	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithString(func(value string) {
-		frontendSecret = value
+	var frontendSecret []byte
+	h.deps.Cfg.GetServer().GetFrontend().GetEncryptionSecret().WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		frontendSecret = bytes.Clone(value)
 	})
 	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 

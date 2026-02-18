@@ -52,13 +52,17 @@ type SecureCodec struct {
 	maxAge  int // Maximum age in seconds (0 = no expiry check)
 }
 
-// NewSecureCodec creates a new codec from a secret string.
+// NewSecureCodec creates a new codec from a secret byte slice.
 // The secret is used to derive encryption and authentication keys via SHA256.
-func NewSecureCodec(secret string) *SecureCodec {
+func NewSecureCodec(secret []byte) *SecureCodec {
 	// Derive encryption key.
-	encHash := sha256.Sum256([]byte(secret))
+	encHash := sha256.Sum256(secret)
 	// Derive authentication key (different from encryption key).
-	authHash := sha256.Sum256([]byte(secret + "_auth"))
+	authInput := make([]byte, 0, len(secret)+len("_auth"))
+	authInput = append(authInput, secret...)
+	authInput = append(authInput, "_auth"...)
+	authHash := sha256.Sum256(authInput)
+	clear(authInput)
 
 	return &SecureCodec{
 		encKey:  encHash[:],

@@ -107,7 +107,7 @@ type Endpoint struct {
 func (h *DevUIHandler) Register(router gin.IRouter) {
 	// DevUI uses its own cookie (nauthilus_dev) for development purposes
 	devCookieMW := func(ctx *gin.Context) {
-		mgr := cookie.NewSecureManager(definitions.DevCookieSecret, definitions.DevCookieName, h.deps.Cfg, h.deps.Env)
+		mgr := cookie.NewSecureManager([]byte(definitions.DevCookieSecret), definitions.DevCookieName, h.deps.Cfg, h.deps.Env)
 		_ = mgr.Load(ctx)
 		ctx.Set(definitions.CtxSecureDataKey, mgr)
 		ctx.Next()

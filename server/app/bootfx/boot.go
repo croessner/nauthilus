@@ -98,6 +98,7 @@ func ParseFlagsAndPrintVersion(version string) {
 		viper.SetConfigFile(*configFlag)
 	}
 
+	config.ConfigFileType = *configFormatFlag
 	viper.SetConfigType(*configFormatFlag)
 }
 

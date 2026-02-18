@@ -22,8 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var codecTestSecret = []byte("test-secret")
+
 func TestNewSecureCodec(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	assert.NotNil(t, codec)
 	assert.Len(t, codec.encKey, 32)
@@ -32,7 +34,7 @@ func TestNewSecureCodec(t *testing.T) {
 }
 
 func TestSecureCodec_EncodeDecodeString(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	original := "hello world"
 
@@ -54,7 +56,7 @@ func TestSecureCodec_EncodeDecodeString(t *testing.T) {
 }
 
 func TestSecureCodec_EncodeDecodeMap(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	original := map[string]any{
 		"username":      "testuser",
@@ -80,7 +82,7 @@ func TestSecureCodec_EncodeDecodeMap(t *testing.T) {
 }
 
 func TestSecureCodec_DifferentCookieNames(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	original := "test data"
 
@@ -106,8 +108,8 @@ func TestSecureCodec_DifferentCookieNames(t *testing.T) {
 }
 
 func TestSecureCodec_DifferentSecrets(t *testing.T) {
-	codec1 := NewSecureCodec("secret1")
-	codec2 := NewSecureCodec("secret2")
+	codec1 := NewSecureCodec([]byte("secret1"))
+	codec2 := NewSecureCodec([]byte("secret2"))
 
 	original := "test data"
 
@@ -125,7 +127,7 @@ func TestSecureCodec_DifferentSecrets(t *testing.T) {
 }
 
 func TestSecureCodec_TamperedData(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	original := "test data"
 
@@ -145,7 +147,7 @@ func TestSecureCodec_TamperedData(t *testing.T) {
 }
 
 func TestSecureCodec_InvalidBase64(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	var decoded string
 
@@ -155,7 +157,7 @@ func TestSecureCodec_InvalidBase64(t *testing.T) {
 }
 
 func TestSecureCodec_TooShort(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	var decoded string
 
@@ -166,7 +168,7 @@ func TestSecureCodec_TooShort(t *testing.T) {
 }
 
 func TestSecureCodec_ExpiredCookie(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 	codec.SetMaxAge(1) // 1 second
 
 	original := "test data"
@@ -187,7 +189,7 @@ func TestSecureCodec_ExpiredCookie(t *testing.T) {
 }
 
 func TestSecureCodec_NoExpiry(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 	codec.SetMaxAge(0) // Disable expiry check.
 
 	original := "test data"
@@ -208,7 +210,7 @@ func TestSecureCodec_NoExpiry(t *testing.T) {
 }
 
 func TestSecureCodec_ComplexTypes(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	original := map[string]any{
 		"strings":  []string{"a", "b", "c"},
@@ -236,7 +238,7 @@ func TestSecureCodec_ComplexTypes(t *testing.T) {
 }
 
 func TestSecureCodec_UniqueEncodings(t *testing.T) {
-	codec := NewSecureCodec("test-secret")
+	codec := NewSecureCodec(codecTestSecret)
 
 	original := "test data"
 

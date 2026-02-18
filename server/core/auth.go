@@ -1297,8 +1297,12 @@ func (a *AuthState) GetPassword() secret.Value {
 
 func (a *AuthState) passwordString() string {
 	var password string
-	a.Request.Password.WithString(func(value string) {
-		password = value
+	a.Request.Password.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		password = string(value)
 	})
 
 	return password
@@ -2710,11 +2714,15 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 		DisplayNameField:  a.Runtime.DisplayNameField,
 		Password: func() string {
 			var passwordShort string
-			a.Request.Password.WithString(func(value string) {
-				if value == "" {
+			a.Request.Password.WithBytes(func(value []byte) {
+				if len(value) == 0 {
 					return
 				}
-				passwordShort = util.GetHash(util.PreparePassword(value))
+
+				prepared := util.PreparePasswordBytes(value)
+				defer clear(prepared)
+
+				passwordShort = util.GetHashBytes(prepared)
 			})
 
 			return passwordShort
@@ -3739,11 +3747,15 @@ func (a *AuthState) generateSingleflightKey() string {
 
 	// Short password hash (same function as for positive password cache)
 	var pwShort string
-	a.Request.Password.WithString(func(value string) {
-		if value == "" {
+	a.Request.Password.WithBytes(func(value []byte) {
+		if len(value) == 0 {
 			return
 		}
-		pwShort = util.GetHash(util.PreparePassword(value))
+
+		prepared := util.PreparePasswordBytes(value)
+		defer clear(prepared)
+
+		pwShort = util.GetHashBytes(prepared)
 	})
 
 	const sep = "\x00"

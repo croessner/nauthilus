@@ -16,6 +16,7 @@
 package config
 
 import (
+	"bytes"
 	"reflect"
 	"strconv"
 	"strings"
@@ -1954,7 +1955,16 @@ func fieldStringValue(field reflect.Value) string {
 
 	if field.Type() == secretValueType {
 		if value, ok := field.Interface().(secret.Value); ok {
-			return value.String()
+			var secretBytes []byte
+			value.WithBytes(func(data []byte) {
+				if len(data) == 0 {
+					return
+				}
+
+				secretBytes = bytes.Clone(data)
+			})
+
+			return string(secretBytes)
 		}
 	}
 
