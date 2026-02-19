@@ -1,0 +1,86 @@
+server:
+  address: "0.0.0.0:8080"
+  instance_name: "nauthilus-demo"
+  log:
+    level: "debug"
+    json: true
+    add_source: true
+    debug_modules: [ "auth", "ldap", "idp" ]
+  frontend:
+    enabled: true
+    encryption_secret: "demofrontendsecret123456"
+    html_static_content_path: "static/templates"
+    language_resources: "server/resources"
+    languages:
+      - "en"
+    default_language: "en"
+  backends:
+    - "cache"
+    - "ldap"
+  redis:
+    master:
+      address: "valkey:6379"
+    database_number: 0
+    prefix: "nauthilus:"
+    pool_size: 16
+    idle_pool_size: 4
+    positive_cache_ttl: 1h
+    negative_cache_ttl: 1h
+    password_nonce: "demopasswordnonce123456"
+    encryption_secret: "demoencryptionsecret123456"
+
+ldap:
+  config:
+    server_uri:
+      - "ldap://openldap:389"
+    bind_dn: "cn=admin,dc=demo,dc=local"
+    bind_pw: "admin"
+    lookup_pool_size: 5
+    lookup_idle_pool_size: 2
+    auth_pool_size: 5
+    auth_idle_pool_size: 2
+  search:
+    - protocol:
+        - "idp"
+        - "oidc"
+      cache_name: "ldap"
+      base_dn: "ou=people,dc=demo,dc=local"
+      filter:
+        user: "(uid=%s)"
+        list_accounts: "(uid=*)"
+      mapping:
+        account_field: "uid"
+        display_name_field: "cn"
+        unique_user_id_field: "uid"
+      attribute:
+        - "uid"
+        - "cn"
+        - "mail"
+
+idp:
+  oidc:
+    enabled: true
+    issuer: "http://localhost:8080"
+    signing_keys:
+      - id: "demo"
+        key_file: "/etc/nauthilus/idp-signing-key.pem"
+        active: true
+    device_code_expiry: 10m
+    device_code_polling_interval: 5
+    device_code_user_code_length: 8
+    clients:
+      - name: "PAM Demo"
+        client_id: "ssh"
+        client_secret: "demo-secret"
+        grant_types:
+          - urn:ietf:params:oauth:grant-type:device_code
+        token_endpoint_auth_method: "client_secret_basic"
+        scopes:
+          - openid
+          - profile
+          - email
+        access_token_claims:
+          mappings:
+            - claim: "preferred_username"
+              attribute: "uid"
+              type: "string"
