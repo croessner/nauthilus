@@ -1,0 +1,11 @@
+dn: ou=people,dc=demo,dc=local
+objectClass: organizationalUnit
+ou: people
+
+dn: uid=demo,ou=people,dc=demo,dc=local
+objectClass: inetOrgPerson
+cn: Demo User
+sn: User
+uid: demo
+mail: demo@example.com
+userPassword: {SSHA}jcs6xin9WQ4IhGRE65Ah+L+2owxvwbg2

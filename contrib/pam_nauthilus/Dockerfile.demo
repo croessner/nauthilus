@@ -1,0 +1,35 @@
+FROM golang:1.26-bookworm AS builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpam0g-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY . .
+
+RUN make build
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        libpam0g \
+        libpam-modules \
+        login \
+        passwd \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash demo \
+    && ln -sf /bin/login /sbin/login
+
+COPY --from=builder /src/pam_nauthilus.so /usr/lib/security/pam_nauthilus.so
+COPY --from=builder /src/pam_nauthilus.h /usr/local/include/pam_nauthilus.h
+COPY entrypoint.sh /usr/local/bin/pam-nauthilus-entrypoint
+
+RUN chmod 0755 /usr/local/bin/pam-nauthilus-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/pam-nauthilus-entrypoint"]
+CMD ["sleep", "infinity"]
