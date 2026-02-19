@@ -50,6 +50,18 @@ type CommonRequest struct {
 	// TOTPRecoveryCodes stores the user's TOTP recovery codes.
 	TOTPRecoveryCodes []string
 
+	// RequestedScopes holds the OIDC scopes requested by the client.
+	RequestedScopes []string
+
+	// UserGroups holds the user's group memberships (e.g. from LDAP memberOf).
+	UserGroups []string
+
+	// AllowedClientScopes holds the configured allowed scopes for the OIDC client.
+	AllowedClientScopes []string
+
+	// AllowedClientGrantTypes holds the configured allowed grant types for the OIDC client.
+	AllowedClientGrantTypes []string
+
 	// Service is the http routers endpoint name.
 	Service string
 
@@ -115,6 +127,18 @@ type CommonRequest struct {
 
 	// SAMLEntityID represents the SAML Entity ID used for authentication.
 	SAMLEntityID string
+
+	// GrantType represents the OIDC grant type used for the current flow.
+	GrantType string
+
+	// OIDCClientName represents the human-readable OIDC client name.
+	OIDCClientName string
+
+	// RedirectURI represents the requested redirect URI for OIDC flows.
+	RedirectURI string
+
+	// MFAMethod represents the MFA method used (e.g. totp, webauthn, recovery).
+	MFAMethod string
 
 	// BruteForceName stores the name of the brute force protection mechanism.
 	BruteForceName string
@@ -209,12 +233,19 @@ type CommonRequest struct {
 
 	// NoAuth is a flag indicating if the action requires no authentication.
 	NoAuth bool
+
+	// MFACompleted indicates whether MFA verification was successfully completed.
+	MFACompleted bool
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.
 func (c *CommonRequest) Reset() {
 	c.BackendServers = nil
 	c.TOTPRecoveryCodes = nil
+	c.RequestedScopes = nil
+	c.UserGroups = nil
+	c.AllowedClientScopes = nil
+	c.AllowedClientGrantTypes = nil
 	c.Service = ""
 	c.Session = ""
 	c.ClientIP = ""
@@ -241,6 +272,10 @@ func (c *CommonRequest) Reset() {
 	c.Method = ""
 	c.OIDCCID = ""
 	c.SAMLEntityID = ""
+	c.GrantType = ""
+	c.OIDCClientName = ""
+	c.RedirectURI = ""
+	c.MFAMethod = ""
 	c.BruteForceName = ""
 	c.FeatureName = ""
 	c.XSSL = ""
@@ -272,6 +307,19 @@ func (c *CommonRequest) Reset() {
 	c.UserFound = false
 	c.Authenticated = false
 	c.NoAuth = false
+	c.MFACompleted = false
+}
+
+// setStringSliceField writes a string slice as a Lua table into the given request table.
+// If the slice is empty, an empty table is set.
+func (c *CommonRequest) setStringSliceField(L *lua.LState, request *lua.LTable, key string, values []string) {
+	tbl := L.NewTable()
+
+	for _, v := range values {
+		tbl.Append(lua.LString(v))
+	}
+
+	request.RawSetString(key, tbl)
 }
 
 // SetupRequest sets up the request object with the common request properties
@@ -325,6 +373,17 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestMethod, lua.LString(c.Method))
 	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
 	request.RawSetString(definitions.LuaRequestSAMLEntityID, lua.LString(c.SAMLEntityID))
+	request.RawSetString(definitions.LuaRequestGrantType, lua.LString(c.GrantType))
+	request.RawSetString(definitions.LuaRequestOIDCClientName, lua.LString(c.OIDCClientName))
+	request.RawSetString(definitions.LuaRequestRedirectURI, lua.LString(c.RedirectURI))
+	request.RawSetString(definitions.LuaRequestMFAMethod, lua.LString(c.MFAMethod))
+	request.RawSet(lua.LString(definitions.LuaRequestMFACompleted), lua.LBool(c.MFACompleted))
+
+	c.setStringSliceField(L, request, definitions.LuaRequestRequestedScopes, c.RequestedScopes)
+	c.setStringSliceField(L, request, definitions.LuaRequestUserGroups, c.UserGroups)
+	c.setStringSliceField(L, request, definitions.LuaRequestAllowedClientScopes, c.AllowedClientScopes)
+	c.setStringSliceField(L, request, definitions.LuaRequestAllowedClientGrantTypes, c.AllowedClientGrantTypes)
+
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
 	if c.StatusMessage != nil {

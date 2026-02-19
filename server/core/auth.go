@@ -2148,6 +2148,57 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	if a.deps.Cfg != nil {
 		cr.Debug = a.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	}
+
+	a.fillIdPFields(cr)
+}
+
+// findOIDCClient looks up an OIDC client by its ID from the loaded configuration.
+func (a *AuthState) findOIDCClient(clientID string) *config.OIDCClient {
+	cfg := a.Cfg()
+	if cfg == nil || cfg.GetIdP() == nil {
+		return nil
+	}
+
+	clients := cfg.GetIdP().OIDC.Clients
+
+	for i := range clients {
+		if clients[i].ClientID == clientID {
+			return &clients[i]
+		}
+	}
+
+	return nil
+}
+
+// fillIdPFields enriches the CommonRequest with IdP-specific data read from the
+// session cookie (grant type, scopes, redirect URI, MFA status) and the OIDC client
+// configuration (client name, allowed scopes, allowed grant types).
+func (a *AuthState) fillIdPFields(cr *lualib.CommonRequest) {
+	if a.Request.HTTPClientContext == nil {
+		return
+	}
+
+	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	if mgr == nil {
+		return
+	}
+
+	cr.GrantType = mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
+	cr.RedirectURI = mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+	cr.MFACompleted = mgr.GetBool(definitions.SessionKeyMFACompleted, false)
+	cr.MFAMethod = mgr.GetString(definitions.SessionKeyMFAMethod, "")
+
+	if scopeStr := mgr.GetString(definitions.SessionKeyIdPScope, ""); scopeStr != "" {
+		cr.RequestedScopes = strings.Split(scopeStr, " ")
+	}
+
+	if a.Request.OIDCCID != "" {
+		if client := a.findOIDCClient(a.Request.OIDCCID); client != nil {
+			cr.OIDCClientName = client.Name
+			cr.AllowedClientScopes = client.GetAllowedScopes()
+			cr.AllowedClientGrantTypes = client.GetGrantTypes()
+		}
+	}
 }
 
 // GetLoginAttempts returns the number of login attempts from the AuthState.

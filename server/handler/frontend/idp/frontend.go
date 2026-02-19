@@ -1254,6 +1254,10 @@ func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
 	secure := util.ShouldSetSecureCookie()
 
 	ctx.SetCookie("last_mfa_method", method, 365*24*60*60, "/", "", secure, true)
+
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		mgr.Set(definitions.SessionKeyMFAMethod, method)
+	}
 }
 
 func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string) mfaAvailability {
@@ -1355,6 +1359,7 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
 		mgr.Set(definitions.SessionKeySubject, user.Id)
 		mgr.Set(definitions.SessionKeyProtocol, protocol)
+		mgr.Set(definitions.SessionKeyMFACompleted, true)
 
 		if rememberMeTTL > 0 {
 			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
