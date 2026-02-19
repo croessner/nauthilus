@@ -13,6 +13,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
@@ -213,12 +214,7 @@ func (m *Manager) privateKeyToPEM(key *rsa.PrivateKey) string {
 }
 
 func (m *Manager) pemToPrivateKey(pemData string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemData))
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
-	}
-
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
+	return signing.ParseRSAPrivateKeyPEM(pemData)
 }
 
 // StartRotationJob starts a background job that periodically checks and rotates the signing key.

@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -270,6 +271,37 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Contains(t, scopes, "offline_access")
 	assert.Contains(t, scopes, "groups")
 	assert.Contains(t, scopes, "openid")
+}
+
+func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	issuer := "https://auth.example.com"
+	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey())}
+
+	db, _ := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	d := &deps.Deps{
+		Cfg:         cfg,
+		Env:         config.NewTestEnvironmentConfig(),
+		LangManager: &mockLangManager{},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Redis:       rClient,
+	}
+
+	h := NewOIDCHandler(d, idp.NewNauthilusIdP(d))
+	r := gin.New()
+	h.Register(r)
+
+	routes := r.Routes()
+	hasRoute := func(method, path string) bool {
+		return slices.IndexFunc(routes, func(route gin.RouteInfo) bool {
+			return route.Method == method && route.Path == path
+		}) >= 0
+	}
+
+	assert.True(t, hasRoute(http.MethodGet, "/oidc/device/verify/:languageTag"))
+	assert.True(t, hasRoute(http.MethodPost, "/oidc/device/verify/:languageTag"))
 }
 
 func TestOIDCHandler_JWKS(t *testing.T) {

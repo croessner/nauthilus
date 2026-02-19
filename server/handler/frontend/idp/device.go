@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -186,6 +187,17 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 		h.issueDeviceCodeTokens(ctx, deviceCode, request, client)
 
 	default:
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token exchange: unexpected status",
+			"device_code", deviceCode,
+			"status", request.Status,
+		)
+
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 	}
 }
@@ -200,13 +212,49 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		AuthTime: time.Now(),
 	}
 
-	// Get claims for the user
+	// Get claims for the user – the token endpoint context lacks middleware
+	// keys (Lua data-exchange, service tag) that GetUserByUsername requires,
+	// so we set them explicitly on the copy.
 	ginCtx := ctx.Copy()
 
+	if _, exists := ginCtx.Get(definitions.CtxDataExchangeKey); !exists {
+		ginCtx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+	}
+
+	if ginCtx.GetString(definitions.CtxServiceKey) == "" {
+		ginCtx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+	}
+
 	user, err := h.idp.GetUserByUsername(ginCtx, request.UserID, request.ClientID, "")
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token: failed to get user by username",
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+			"error", err,
+		)
+	}
+
 	if err == nil && user != nil {
 		idTokenClaims, accessTokenClaims, claimsErr := h.idp.GetClaims(ginCtx, user, client, request.Scopes)
-		if claimsErr == nil {
+		if claimsErr != nil {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "Device code token: failed to get claims",
+				"user_id", request.UserID,
+				"client_id", request.ClientID,
+				"error", claimsErr,
+			)
+		} else {
 			session.IdTokenClaims = idTokenClaims
 			session.AccessTokenClaims = accessTokenClaims
 		}
@@ -218,10 +266,34 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		if user.Name != "" {
 			session.Username = user.Name
 		}
+	} else if user == nil && err == nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token: user not found (nil) without error",
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+		)
 	}
 
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token: IssueTokens failed",
+			"device_code", deviceCode,
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+			"error", err,
+		)
+
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 
 		return

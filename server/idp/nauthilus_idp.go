@@ -580,8 +580,8 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
 	}
 
+	// !!DO NOT CHANGE ORDER!!
 	auth.FinishSetup(ctx)
-
 	auth.SetNoAuth(true)
 
 	// We use HandlePassword with NoAuth=true which should skip password check but load attributes

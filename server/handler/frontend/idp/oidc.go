@@ -100,7 +100,9 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.GET("/oidc/jwks", h.JWKS)
 	router.POST("/oidc/device", h.DeviceAuthorization)
 	router.GET("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
+	router.GET("/oidc/device/verify/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
 	router.POST("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerify)
+	router.POST("/oidc/device/verify/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerify)
 	router.GET("/oidc/logout", secureMW, h.Logout)
 	router.GET("/logout", secureMW, h.Logout)
 	router.GET("/oidc/consent", csrfMW, secureMW, i18nMW, h.ConsentGET)
@@ -768,6 +770,18 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	}
 
 	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC Token issuance failed",
+			"grant_type", grantType,
+			"client_id", clientID,
+			"error", err,
+		)
+
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 
 		return
