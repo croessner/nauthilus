@@ -325,7 +325,7 @@ func TestIdPConfig_WarnUnsupported(t *testing.T) {
 		warnings := cfg.warnUnsupported()
 		assert.Contains(t, warnings, "oidc.response_types_supported: 'id_token' is currently not supported (only 'code' is supported)")
 		assert.Contains(t, warnings, "oidc.subject_types_supported: 'pairwise' is currently not supported (only 'public' is supported)")
-		assert.Contains(t, warnings, "oidc.id_token_signing_alg_values_supported: 'HS256' is currently not supported (only 'RS256' is supported)")
+		assert.Contains(t, warnings, "oidc.id_token_signing_alg_values_supported: 'HS256' is currently not supported (only 'RS256' and 'EdDSA' are supported)")
 		assert.Contains(t, warnings, "oidc.front_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
 		assert.Contains(t, warnings, "oidc.back_channel_logout_session_supported: setting to 'true' is currently not supported (no effect)")
 	})

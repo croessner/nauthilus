@@ -111,3 +111,5 @@ temp/*
 sbom/
 client/logins.local.csv
 client/result.ldif
+!/contrib/pam_nauthilus/idp-signing-key.pem
+!/contrib/pam_nauthilus/nauthilus.yml

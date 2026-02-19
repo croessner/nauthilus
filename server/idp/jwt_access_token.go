@@ -17,29 +17,27 @@ package idp
 
 import (
 	"context"
-	"crypto/rsa"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 // JWTAccessToken implements the AccessToken interface using JWT.
 type JWTAccessToken struct {
+	signer   signing.Signer
 	issuer   string
-	key      *rsa.PrivateKey
-	kid      string
 	session  *OIDCSession
 	lifetime time.Duration
 }
 
 // NewJWTAccessToken creates a new JWTAccessToken.
-func NewJWTAccessToken(issuer string, key *rsa.PrivateKey, kid string, session *OIDCSession, lifetime time.Duration) *JWTAccessToken {
+func NewJWTAccessToken(issuer string, signer signing.Signer, session *OIDCSession, lifetime time.Duration) *JWTAccessToken {
 	return &JWTAccessToken{
+		signer:   signer,
 		issuer:   issuer,
-		key:      key,
-		kid:      kid,
 		session:  session,
 		lifetime: lifetime,
 	}
@@ -62,10 +60,7 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 		accessClaims[key] = value
 	}
 
-	accessToken := jwt.NewWithClaims(jwt.SigningMethodRS256, accessClaims)
-	accessToken.Header["kid"] = t.kid
-
-	accessTokenString, err := accessToken.SignedString(t.key)
+	accessTokenString, err := t.signer.Sign(accessClaims)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to sign access token: %w", err)
 	}

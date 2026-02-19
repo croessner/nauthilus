@@ -128,6 +128,19 @@ const (
 
 	// SessionKeyIdPOriginalURL stores the original request URL for resuming the flow after login.
 	SessionKeyIdPOriginalURL = "idp_original_url"
+
+	// SessionKeyDeviceCode stores the device code string during the device code MFA flow.
+	SessionKeyDeviceCode = "device_code"
+
+	// SessionKeyOIDCGrantType stores the specific OIDC grant type (e.g. authorization_code, device_code)
+	// to distinguish sub-flows within the ProtoOIDC protocol.
+	SessionKeyOIDCGrantType = "oidc_grant_type"
+
+	// SessionKeyMFACompleted indicates whether MFA verification was successfully completed.
+	SessionKeyMFACompleted = "mfa_completed"
+
+	// SessionKeyMFAMethod stores the MFA method used (e.g. totp, webauthn, recovery).
+	SessionKeyMFAMethod = "mfa_method"
 )
 
 // FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.
@@ -642,6 +655,12 @@ const (
 
 	// OIDCDeviceCodeDefaultUserCodeLength is the default length for user codes (number of characters).
 	OIDCDeviceCodeDefaultUserCodeLength = 8
+
+	// OIDCFlowAuthorizationCode identifies the OIDC Authorization Code Grant flow.
+	OIDCFlowAuthorizationCode = "authorization_code"
+
+	// OIDCFlowDeviceCode identifies the OIDC Device Authorization Grant flow (RFC 8628).
+	OIDCFlowDeviceCode = "device_code"
 
 	// ProtoSAML corresponds to the "saml" protocol
 	ProtoSAML = "saml"
@@ -1825,6 +1844,33 @@ const (
 
 	// LuaRequestRedisPrefix represents the redis prefix used for keys.
 	LuaRequestRedisPrefix = "redis_prefix"
+
+	// LuaRequestGrantType represents the OIDC grant type used for the current flow.
+	LuaRequestGrantType = "grant_type"
+
+	// LuaRequestOIDCClientName represents the human-readable OIDC client name.
+	LuaRequestOIDCClientName = "oidc_client_name"
+
+	// LuaRequestRedirectURI represents the requested redirect URI for OIDC flows.
+	LuaRequestRedirectURI = "redirect_uri"
+
+	// LuaRequestRequestedScopes represents the OIDC scopes requested by the client.
+	LuaRequestRequestedScopes = "requested_scopes"
+
+	// LuaRequestMFACompleted indicates whether MFA verification was completed.
+	LuaRequestMFACompleted = "mfa_completed"
+
+	// LuaRequestMFAMethod represents the MFA method used (e.g. totp, webauthn, recovery).
+	LuaRequestMFAMethod = "mfa_method"
+
+	// LuaRequestUserGroups represents the user's group memberships.
+	LuaRequestUserGroups = "user_groups"
+
+	// LuaRequestAllowedClientScopes represents the configured allowed scopes for the OIDC client.
+	LuaRequestAllowedClientScopes = "allowed_client_scopes"
+
+	// LuaRequestAllowedClientGrantTypes represents the configured allowed grant types for the OIDC client.
+	LuaRequestAllowedClientGrantTypes = "allowed_client_grant_types"
 )
 
 // Standard OpenID Connect scopes.

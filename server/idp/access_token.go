@@ -17,9 +17,9 @@ package idp
 
 import (
 	"context"
-	"crypto/rsa"
 	"time"
 
+	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -34,20 +34,18 @@ type AccessToken interface {
 
 // TokenIssuer is a helper to issue tokens using the appropriate implementation.
 type TokenIssuer struct {
+	signer   signing.Signer
 	issuer   string
-	key      *rsa.PrivateKey
-	kid      string
 	session  *OIDCSession
 	storage  *RedisTokenStorage
 	tokenGen TokenGenerator
 }
 
 // NewTokenIssuer creates a new TokenIssuer.
-func NewTokenIssuer(issuer string, key *rsa.PrivateKey, kid string, session *OIDCSession, storage *RedisTokenStorage, tokenGen TokenGenerator) *TokenIssuer {
+func NewTokenIssuer(issuer string, signer signing.Signer, session *OIDCSession, storage *RedisTokenStorage, tokenGen TokenGenerator) *TokenIssuer {
 	return &TokenIssuer{
+		signer:   signer,
 		issuer:   issuer,
-		key:      key,
-		kid:      kid,
 		session:  session,
 		storage:  storage,
 		tokenGen: tokenGen,
@@ -56,12 +54,14 @@ func NewTokenIssuer(issuer string, key *rsa.PrivateKey, kid string, session *OID
 
 // IssueJWT creates a JWT access token.
 func (ti *TokenIssuer) IssueJWT(ctx context.Context, lifetime time.Duration) (string, time.Duration, error) {
-	token := NewJWTAccessToken(ti.issuer, ti.key, ti.kid, ti.session, lifetime)
+	token := NewJWTAccessToken(ti.issuer, ti.signer, ti.session, lifetime)
+
 	return token.Issue(ctx)
 }
 
 // IssueOpaque creates an opaque access token.
 func (ti *TokenIssuer) IssueOpaque(ctx context.Context, lifetime time.Duration) (string, time.Duration, error) {
 	token := NewOpaqueAccessToken(ti.session, ti.storage, ti.tokenGen, lifetime)
+
 	return token.Issue(ctx)
 }

@@ -828,6 +828,8 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
 			mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
 			mgr.Set(definitions.SessionKeySubject, user.Id)
+			mgr.Set(definitions.SessionKeyMFACompleted, true)
+			mgr.Set(definitions.SessionKeyMFAMethod, "webauthn")
 
 			proto := mgr.GetString(definitions.SessionKeyProtocol, definitions.ProtoIDP)
 			mgr.Set(definitions.SessionKeyProtocol, proto)

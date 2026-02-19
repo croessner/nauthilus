@@ -21,9 +21,12 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
+	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -186,6 +189,17 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 		h.issueDeviceCodeTokens(ctx, deviceCode, request, client)
 
 	default:
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token exchange: unexpected status",
+			"device_code", deviceCode,
+			"status", request.Status,
+		)
+
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 	}
 }
@@ -200,13 +214,49 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		AuthTime: time.Now(),
 	}
 
-	// Get claims for the user
+	// Get claims for the user – the token endpoint context lacks middleware
+	// keys (Lua data-exchange, service tag) that GetUserByUsername requires,
+	// so we set them explicitly on the copy.
 	ginCtx := ctx.Copy()
 
+	if _, exists := ginCtx.Get(definitions.CtxDataExchangeKey); !exists {
+		ginCtx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+	}
+
+	if ginCtx.GetString(definitions.CtxServiceKey) == "" {
+		ginCtx.Set(definitions.CtxServiceKey, definitions.ServIdP)
+	}
+
 	user, err := h.idp.GetUserByUsername(ginCtx, request.UserID, request.ClientID, "")
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token: failed to get user by username",
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+			"error", err,
+		)
+	}
+
 	if err == nil && user != nil {
 		idTokenClaims, accessTokenClaims, claimsErr := h.idp.GetClaims(ginCtx, user, client, request.Scopes)
-		if claimsErr == nil {
+		if claimsErr != nil {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "Device code token: failed to get claims",
+				"user_id", request.UserID,
+				"client_id", request.ClientID,
+				"error", claimsErr,
+			)
+		} else {
 			session.IdTokenClaims = idTokenClaims
 			session.AccessTokenClaims = accessTokenClaims
 		}
@@ -218,10 +268,34 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		if user.Name != "" {
 			session.Username = user.Name
 		}
+	} else if user == nil && err == nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token: user not found (nil) without error",
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+		)
 	}
 
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token: IssueTokens failed",
+			"device_code", deviceCode,
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+			"error", err,
+		)
+
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 
 		return
@@ -322,7 +396,95 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		return
 	}
 
-	// Authorization successful - update device code with user info
+	// Check if user has MFA configured
+	protocol := definitions.ProtoOIDC
+	availability := h.frontend.getMFAAvailability(ctx, user, protocol)
+
+	if availability.count > 0 {
+		// MFA is required - store session state and redirect to MFA flow
+		mgr := cookie.GetManager(ctx)
+		if mgr == nil {
+			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+			return
+		}
+
+		// Determine auth result for delayed response behavior
+		authResult := uint8(definitions.AuthResultOK)
+
+		mgr.Set(definitions.SessionKeyUsername, username)
+		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+		mgr.Set(definitions.SessionKeyAuthResult, authResult)
+		mgr.Set(definitions.SessionKeyProtocol, protocol)
+		mgr.Set(definitions.SessionKeyIdPFlowActive, true)
+		mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoOIDC)
+		mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowDeviceCode)
+		mgr.Set(definitions.SessionKeyIdPClientID, request.ClientID)
+		mgr.Set(definitions.SessionKeyDeviceCode, deviceCode)
+
+		multi := availability.count > 1
+		mgr.Set(definitions.SessionKeyMFAMulti, multi)
+
+		mgr.Debug(ctx, h.deps.Logger, "Device code MFA required - session data stored")
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code flow requires MFA",
+			"client_id", request.ClientID,
+			"username", username,
+			"mfa_count", availability.count,
+		)
+
+		// Redirect to the appropriate MFA page
+		if redirectURL, ok := h.frontend.getMFARedirectURLFromCookie(ctx, user); ok {
+			ctx.Redirect(http.StatusFound, redirectURL)
+
+			return
+		}
+
+		// Multiple MFA options - redirect to selection page
+		ctx.Redirect(http.StatusFound, h.frontend.getMFASelectPath(ctx))
+
+		return
+	}
+
+	// No MFA required - check if consent is needed before authorizing
+	if h.deviceCodeNeedsConsent(ctx, request.ClientID) {
+		mgr := cookie.GetManager(ctx)
+		if mgr == nil {
+			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+			return
+		}
+
+		mgr.Set(definitions.SessionKeyIdPFlowActive, true)
+		mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoOIDC)
+		mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowDeviceCode)
+		mgr.Set(definitions.SessionKeyIdPClientID, request.ClientID)
+		mgr.Set(definitions.SessionKeyDeviceCode, deviceCode)
+		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code flow requires consent",
+			"client_id", request.ClientID,
+			"username", username,
+		)
+
+		ctx.Redirect(http.StatusFound, h.deviceConsentPath(ctx))
+
+		return
+	}
+
+	// No consent required - authorize device code directly
 	request.Status = idp.DeviceCodeStatusAuthorized
 	request.UserID = user.Id
 
@@ -332,13 +494,15 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		return
 	}
 
+	addClientToCookie(cookie.GetManager(ctx), request.ClientID)
+
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
 		h.deps.Logger,
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "Device code authorized",
+		definitions.LogKeyMsg, "Device code authorized (no MFA, consent skipped)",
 		"client_id", request.ClientID,
 		"user_id", user.Id,
 		"user_code", request.UserCode,
@@ -378,13 +542,193 @@ func (h *OIDCHandler) renderDeviceVerifyError(ctx *gin.Context, userCode string,
 	ctx.HTML(http.StatusOK, "idp_device_verify.html", data)
 }
 
-// renderDeviceVerifySuccess renders the success page after device authorization.
-func (h *OIDCHandler) renderDeviceVerifySuccess(ctx *gin.Context) {
+// deviceCodeNeedsConsent checks whether the device code flow requires user consent for the given client.
+// It mirrors the consent logic from the authorization code grant: consent is needed when
+// the client has not set skip_consent and the user has not previously consented in this session.
+func (h *OIDCHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string) bool {
+	client, ok := h.idp.FindClient(clientID)
+	if !ok {
+		return false
+	}
+
+	if client.SkipConsent {
+		return false
+	}
+
+	mgr := cookie.GetManager(ctx)
+
+	return !hasClientConsent(mgr, clientID)
+}
+
+// deviceConsentPath returns the device consent page path with optional language tag.
+func (h *OIDCHandler) deviceConsentPath(ctx *gin.Context) string {
+	lang := ctx.Param("languageTag")
+
+	if lang != "" {
+		return "/oidc/device/consent/" + lang
+	}
+
+	return "/oidc/device/consent"
+}
+
+// DeviceConsentGET renders the consent page for the device code flow (RFC 8628 §3.3).
+// The user is shown which application requests access and which scopes are requested,
+// and can approve or deny the authorization.
+func (h *OIDCHandler) DeviceConsentGET(ctx *gin.Context) {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+
+		return
+	}
+
+	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+	if deviceCode == "" {
+		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+
+		return
+	}
+
+	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
+	if err != nil || request == nil {
+		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+
+		return
+	}
+
+	data := h.buildDeviceConsentPageData(ctx, request)
+
+	ctx.HTML(http.StatusOK, "idp_consent.html", data)
+}
+
+// DeviceConsentPOST handles the user's consent decision for the device code flow.
+// On approval, the device code is authorized and the success page is shown.
+// On denial, the device code is denied and an error page is shown.
+func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_consent_post")
+	defer sp.End()
+
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+
+		return
+	}
+
+	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+	if deviceCode == "" {
+		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+
+		return
+	}
+
+	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
+	if err != nil || request == nil {
+		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
+
+		return
+	}
+
+	submit := ctx.PostForm("submit")
+
+	sp.SetAttributes(attribute.String("client_id", request.ClientID))
+
+	if submit != "allow" {
+		// User denied consent
+		request.Status = idp.DeviceCodeStatusDenied
+		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+
+		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
+
+		// Clean up device code flow session data
+		mgr.Delete(definitions.SessionKeyDeviceCode)
+		mgr.Delete(definitions.SessionKeyIdPFlowActive)
+		mgr.Delete(definitions.SessionKeyIdPFlowType)
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code consent denied",
+			"client_id", request.ClientID,
+			"user_code", request.UserCode,
+		)
+
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Authorization denied")
+
+		return
+	}
+
+	// User approved consent
+	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "allow").Inc()
+
+	request.Status = idp.DeviceCodeStatusAuthorized
+	request.UserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+
+	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
+
+		return
+	}
+
+	addClientToCookie(mgr, request.ClientID)
+
+	// Clean up device code flow session data
+	mgr.Delete(definitions.SessionKeyDeviceCode)
+	mgr.Delete(definitions.SessionKeyIdPFlowActive)
+	mgr.Delete(definitions.SessionKeyIdPFlowType)
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Device code authorized (consent approved)",
+		"client_id", request.ClientID,
+		"user_id", request.UserID,
+		"user_code", request.UserCode,
+	)
+
+	h.renderDeviceVerifySuccess(ctx)
+}
+
+// buildDeviceConsentPageData returns the template data for the device consent page.
+func (h *OIDCHandler) buildDeviceConsentPageData(ctx *gin.Context, request *idp.DeviceCodeRequest) gin.H {
 	data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 
-	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Device Authorized")
-	data["DeviceVerifySuccessMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your device has been successfully authorized.")
-	data["DeviceVerifySuccessHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You can close this window and return to your device.")
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Consent")
+	data["Application"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Application")
+	data["WantsToAccessYourAccount"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "wants to access your account")
+	data["RequestedPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Requested permissions")
+	data["Allow"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Allow")
+	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
+
+	data["ClientID"] = request.ClientID
+	data["Scopes"] = request.Scopes
+	data["ConsentChallenge"] = ""
+	data["State"] = ""
+	data["PostConsentEndpoint"] = ctx.Request.URL.Path
+	data["CSRFToken"] = csrf.Token(ctx)
+
+	return data
+}
+
+// renderDeviceVerifySuccess renders the success page after device authorization.
+func (h *OIDCHandler) renderDeviceVerifySuccess(ctx *gin.Context) {
+	renderDeviceCodeSuccess(ctx, h.deps)
+}
+
+// renderDeviceCodeSuccess is a package-level helper that renders the device authorization success page.
+// It is used by both OIDCHandler and FrontendHandler to avoid code duplication.
+func renderDeviceCodeSuccess(ctx *gin.Context, d *deps.Deps) {
+	data := BasePageData(ctx, d.Cfg, d.LangManager)
+
+	data["Title"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Device Authorized")
+	data["DeviceVerifySuccessMessage"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Your device has been successfully authorized.")
+	data["DeviceVerifySuccessHint"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "You can close this window and return to your device.")
 
 	ctx.HTML(http.StatusOK, "idp_device_verify_success.html", data)
 }

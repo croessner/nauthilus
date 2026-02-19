@@ -53,3 +53,33 @@ The plugin runs automatically on each authentication attempt. You can configure 
 - `monitoring_metrics_retention`: How long to retain detailed metrics (in days)
 
 The plugin stores metrics in Redis for later analysis and visualization.
+
+### idp_policy.lua
+
+Example policy filter that demonstrates how to use the IdP-specific request fields to enforce access control in OIDC
+flows (Authorization Code Grant, Device Code, Client Credentials).
+
+**Features:**
+
+- Requires MFA for Device Code flows
+- Restricts `offline_access` scope to specific user groups
+- Limits access to sensitive OIDC clients based on group membership
+- Enforces strong MFA (TOTP/WebAuthn) for sensitive scopes like `groups`
+- Blocks redirect URIs pointing to internal/staging environments for non-privileged users
+
+**Available IdP request fields:**
+
+- `request.grant_type` — OIDC grant type (e.g. `authorization_code`, `urn:ietf:params:oauth:grant-type:device_code`)
+- `request.oidc_cid` — OIDC Client ID
+- `request.oidc_client_name` — Human-readable OIDC client name
+- `request.redirect_uri` — Requested redirect URI
+- `request.mfa_completed` — Whether MFA was successfully completed (boolean)
+- `request.mfa_method` — MFA method used: `totp`, `webauthn`, or `recovery`
+- `request.requested_scopes` — Table of OIDC scopes requested by the client
+- `request.user_groups` — Table of user's group memberships
+- `request.allowed_client_scopes` — Table of configured allowed scopes for the OIDC client
+- `request.allowed_client_grant_types` — Table of configured allowed grant types for the OIDC client
+
+**Usage:**
+Copy this file to your active filters directory and customize the policy rules (client IDs, group names, thresholds) to
+match your environment. The plugin is designed as a starting point — add, remove, or modify rules as needed.

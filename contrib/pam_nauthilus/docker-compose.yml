@@ -1,0 +1,53 @@
+services:
+  valkey:
+    image: valkey/valkey:7.2
+    ports:
+      - "6379:6379"
+
+  openldap:
+    image: osixia/openldap:1.5.0
+    environment:
+      LDAP_ORGANISATION: "Demo Org"
+      LDAP_DOMAIN: "demo.local"
+      LDAP_ADMIN_PASSWORD: "admin"
+      LDAP_TLS: "false"
+      LDAP_REMOVE_CONFIG_AFTER_SETUP: "false"
+    volumes:
+      - ./ldap:/container/service/slapd/assets/config/bootstrap/ldif/custom:rw
+    ports:
+      - "389:389"
+
+  nauthilus:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      - valkey
+      - openldap
+    volumes:
+      - ./nauthilus.yml:/etc/nauthilus/nauthilus.yml:ro
+      - ./idp-signing-key.pem:/etc/nauthilus/idp-signing-key.pem:ro
+    ports:
+      - "8080:8080"
+
+  pam_nauthilus:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    depends_on:
+      - nauthilus
+    environment:
+      PAM_ISSUER: "http://localhost:8080"
+      PAM_DEVICE_ENDPOINT: "http://nauthilus:8080/oidc/device"
+      PAM_TOKEN_ENDPOINT: "http://nauthilus:8080/oidc/token"
+      PAM_USERINFO_ENDPOINT: "http://nauthilus:8080/oidc/userinfo"
+      PAM_JWKS_ENDPOINT: "http://nauthilus:8080/oidc/jwks"
+      PAM_INTROSPECTION_ENDPOINT: "http://nauthilus:8080/oidc/introspect"
+      PAM_CLIENT_ID: "ssh"
+      PAM_CLIENT_SECRET: "demo-secret"
+      PAM_SCOPE: "openid%20profile%20email"
+      PAM_USER_CLAIM: "preferred_username"
+      PAM_TIMEOUT: "5m"
+      PAM_ALLOW_HTTP: "true"
+    tty: true
+    stdin_open: true
