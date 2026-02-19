@@ -172,7 +172,8 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
-	key, kid, err := n.keyMgr.GetActiveKey(ctx)
+
+	signer, err := n.keyMgr.GetActiveSigner(ctx, "")
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("failed to get active signing key: %w", err)
 	}
@@ -201,10 +202,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 			idClaims[k] = v
 		}
 
-		idToken := jwt.NewWithClaims(jwt.SigningMethodRS256, idClaims)
-		idToken.Header["kid"] = kid
-
-		idTokenString, err = idToken.SignedString(key)
+		idTokenString, err = signer.Sign(idClaims)
 		if err != nil {
 			sp.RecordError(err)
 
@@ -213,7 +211,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	}
 
 	// Access Token
-	tokenIssuer := NewTokenIssuer(issuer, key, kid, session, n.storage, n.tokenGen)
+	tokenIssuer := NewTokenIssuer(issuer, signer, session, n.storage, n.tokenGen)
 	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
 
 	var accessTokenString string
@@ -279,7 +277,8 @@ func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID
 	}
 
 	issuer := n.deps.Cfg.GetIdP().OIDC.Issuer
-	key, kid, err := n.keyMgr.GetActiveKey(ctx)
+
+	signer, err := n.keyMgr.GetActiveSigner(ctx, "")
 	if err != nil {
 		sp.RecordError(err)
 
@@ -296,7 +295,7 @@ func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID
 	}
 
 	// Access Token
-	tokenIssuer := NewTokenIssuer(issuer, key, kid, session, n.storage, n.tokenGen)
+	tokenIssuer := NewTokenIssuer(issuer, signer, session, n.storage, n.tokenGen)
 	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIdP().OIDC.GetAccessTokenType())
 
 	var accessTokenString string
@@ -385,7 +384,7 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 	)
 	defer sp.End()
 
-	key, kid, err := n.keyMgr.GetActiveKey(ctx)
+	signer, err := n.keyMgr.GetActiveSigner(ctx, "")
 	if err != nil {
 		return "", err
 	}
@@ -403,11 +402,7 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-
-	token.Header["kid"] = kid
-
-	return token.SignedString(key)
+	return signer.Sign(claims)
 }
 
 // ValidateToken parses and validates an access token (JWT or opaque).
@@ -433,32 +428,8 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 	}
 
 	// Fallback to JWT
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-
-		kid, _ := token.Header["kid"].(string)
-		allKeys, err := n.keyMgr.GetAllKeys(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		if kid != "" {
-			if key, ok := allKeys[kid]; ok {
-				return &key.PublicKey, nil
-			}
-
-			return nil, fmt.Errorf("key with kid %s not found", kid)
-		}
-
-		// Fallback: if no kid, try the active key or all keys
-		key, _, err := n.keyMgr.GetActiveKey(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		return &key.PublicKey, nil
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+		return n.resolveJWTPublicKey(ctx, token)
 	})
 
 	if err != nil {
@@ -474,6 +445,68 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 	}
 
 	return nil, fmt.Errorf("invalid token")
+}
+
+// resolveJWTPublicKey returns the public key for verifying a JWT based on its algorithm and kid header.
+func (n *NauthilusIdP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token) (any, error) {
+	kid, _ := token.Header["kid"].(string)
+
+	switch token.Method.(type) {
+	case *jwt.SigningMethodRSA:
+		return n.resolveRSAPublicKey(ctx, kid)
+	case *jwt.SigningMethodEd25519:
+		return n.resolveEdDSAPublicKey(ctx, kid)
+	default:
+		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+	}
+}
+
+// resolveRSAPublicKey finds the RSA public key matching the given kid.
+func (n *NauthilusIdP) resolveRSAPublicKey(ctx context.Context, kid string) (any, error) {
+	allKeys, err := n.keyMgr.GetAllKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if kid != "" {
+		if key, ok := allKeys[kid]; ok {
+			return &key.PublicKey, nil
+		}
+
+		return nil, fmt.Errorf("RSA key with kid %s not found", kid)
+	}
+
+	// Fallback: try the active key
+	key, _, err := n.keyMgr.GetActiveKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &key.PublicKey, nil
+}
+
+// resolveEdDSAPublicKey finds the Ed25519 public key matching the given kid.
+func (n *NauthilusIdP) resolveEdDSAPublicKey(ctx context.Context, kid string) (any, error) {
+	allKeys, err := n.keyMgr.GetAllEdKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if kid != "" {
+		if key, ok := allKeys[kid]; ok {
+			return key.Public(), nil
+		}
+
+		return nil, fmt.Errorf("EdDSA key with kid %s not found", kid)
+	}
+
+	// Fallback: try the active EdDSA signer
+	signer, err := n.keyMgr.GetActiveSigner(ctx, "EdDSA")
+	if err != nil {
+		return nil, err
+	}
+
+	return signer.PublicKey(), nil
 }
 
 // Authenticate performs user authentication using AuthState.

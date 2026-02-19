@@ -22,10 +22,13 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )
+
+const testKID = "test-kid"
 
 func TestAccessToken_OOP(t *testing.T) {
 	ctx := t.Context()
@@ -47,10 +50,10 @@ func TestAccessToken_OOP(t *testing.T) {
 	}
 
 	issuer := "https://issuer.local"
-	kid := "test-kid"
+	signer := signing.NewRS256Signer(key, testKID)
 
 	t.Run("JWT Access Token", func(t *testing.T) {
-		token := NewJWTAccessToken(issuer, key, kid, session, time.Hour)
+		token := NewJWTAccessToken(issuer, signer, session, time.Hour)
 		tokenString, lifetime, err := token.Issue(ctx)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, tokenString)

@@ -18,6 +18,7 @@ package idp
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -889,16 +890,16 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 
 // JWKS handles the OIDC JWKS request.
 func (h *OIDCHandler) JWKS(ctx *gin.Context) {
-	allKeys, err := h.idp.GetKeyManager().GetAllKeys(ctx.Request.Context())
+	var keys []gin.H
+
+	rsaKeys, err := h.idp.GetKeyManager().GetAllKeys(ctx.Request.Context())
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get keys"})
 
 		return
 	}
 
-	var keys []gin.H
-
-	for kid, key := range allKeys {
+	for kid, key := range rsaKeys {
 		publicKey := key.PublicKey
 		n := base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes())
 		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes())
@@ -911,6 +912,23 @@ func (h *OIDCHandler) JWKS(ctx *gin.Context) {
 			"n":   n,
 			"e":   e,
 		})
+	}
+
+	edKeys, err := h.idp.GetKeyManager().GetAllEdKeys(ctx.Request.Context())
+	if err == nil {
+		for kid, key := range edKeys {
+			pubKey := key.Public().(ed25519.PublicKey)
+			x := base64.RawURLEncoding.EncodeToString(pubKey)
+
+			keys = append(keys, gin.H{
+				"kty": "OKP",
+				"alg": "EdDSA",
+				"use": "sig",
+				"kid": kid,
+				"crv": "Ed25519",
+				"x":   x,
+			})
+		}
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{

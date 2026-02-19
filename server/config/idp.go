@@ -100,14 +100,24 @@ type OIDCConfig struct {
 
 // OIDCKey represents a single OIDC signing key.
 type OIDCKey struct {
-	ID      string       `mapstructure:"id"`
-	Key     secret.Value `mapstructure:"key"`
-	KeyFile string       `mapstructure:"key_file"`
-	Active  bool         `mapstructure:"active"`
+	ID        string       `mapstructure:"id"`
+	Key       secret.Value `mapstructure:"key"`
+	KeyFile   string       `mapstructure:"key_file"`
+	Algorithm string       `mapstructure:"algorithm"`
+	Active    bool         `mapstructure:"active"`
 }
 
 func (o OIDCKey) String() string {
-	return fmt.Sprintf("OIDCKey{ID:%s Key:<hidden> KeyFile:%s Active:%t}", o.ID, o.KeyFile, o.Active)
+	return fmt.Sprintf("OIDCKey{ID:%s Key:<hidden> KeyFile:%s Algorithm:%s Active:%t}", o.ID, o.KeyFile, o.GetAlgorithm(), o.Active)
+}
+
+// GetAlgorithm returns the algorithm for this key, defaulting to RS256.
+func (o OIDCKey) GetAlgorithm() string {
+	if o.Algorithm != "" {
+		return strings.ToUpper(o.Algorithm)
+	}
+
+	return "RS256"
 }
 
 func (o *OIDCConfig) String() string {
@@ -170,7 +180,7 @@ func (o *OIDCConfig) GetIDTokenSigningAlgValuesSupported() []string {
 		return o.IDTokenSigningAlgValuesSupported
 	}
 
-	return []string{"RS256"}
+	return []string{"RS256", "EdDSA"}
 }
 
 // GetTokenEndpointAuthMethodsSupported returns the supported token endpoint auth methods.
@@ -344,8 +354,8 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 	if len(o.IDTokenSigningAlgValuesSupported) > 0 {
 		for _, alg := range o.IDTokenSigningAlgValuesSupported {
-			if alg != "RS256" {
-				warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only 'RS256' is supported)", alg))
+			if alg != "RS256" && alg != "EdDSA" {
+				warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only 'RS256' and 'EdDSA' are supported)", alg))
 			}
 		}
 	}
