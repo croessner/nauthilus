@@ -422,8 +422,10 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 					nauthilusIdP.GetKeyManager().StartRotationJob(store.server.ctx)
 				}
 
+				var frontendHandler *handleridp.FrontendHandler
+
 				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
-					frontendHandler := handleridp.NewFrontendHandler(deps)
+					frontendHandler = handleridp.NewFrontendHandler(deps)
 					frontendHandler.Register(e)
 
 					mfaAPI := handlerapiv1.NewMFAAPI(deps)
@@ -436,7 +438,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 				}
 
 				if cfg.GetIdP().OIDC.Enabled {
-					oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIdP)
+					oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIdP, frontendHandler)
 					oidcHandler.Register(e)
 				}
 

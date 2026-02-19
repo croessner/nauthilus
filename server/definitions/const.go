@@ -128,6 +128,13 @@ const (
 
 	// SessionKeyIdPOriginalURL stores the original request URL for resuming the flow after login.
 	SessionKeyIdPOriginalURL = "idp_original_url"
+
+	// SessionKeyDeviceCode stores the device code string during the device code MFA flow.
+	SessionKeyDeviceCode = "device_code"
+
+	// SessionKeyOIDCGrantType stores the specific OIDC grant type (e.g. authorization_code, device_code)
+	// to distinguish sub-flows within the ProtoOIDC protocol.
+	SessionKeyOIDCGrantType = "oidc_grant_type"
 )
 
 // FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.
@@ -642,6 +649,12 @@ const (
 
 	// OIDCDeviceCodeDefaultUserCodeLength is the default length for user codes (number of characters).
 	OIDCDeviceCodeDefaultUserCodeLength = 8
+
+	// OIDCFlowAuthorizationCode identifies the OIDC Authorization Code Grant flow.
+	OIDCFlowAuthorizationCode = "authorization_code"
+
+	// OIDCFlowDeviceCode identifies the OIDC Device Authorization Grant flow (RFC 8628).
+	OIDCFlowDeviceCode = "device_code"
 
 	// ProtoSAML corresponds to the "saml" protocol
 	ProtoSAML = "saml"

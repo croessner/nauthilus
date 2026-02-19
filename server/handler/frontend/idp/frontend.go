@@ -50,9 +50,10 @@ import (
 
 // FrontendHandler handles general IdP frontend pages like login and consent.
 type FrontendHandler struct {
-	deps   *deps.Deps
-	mfa    idp.MFAProvider
-	tracer monittrace.Tracer
+	deps        *deps.Deps
+	mfa         idp.MFAProvider
+	deviceStore idp.DeviceCodeStore
+	tracer      monittrace.Tracer
 }
 
 type mfaAvailability struct {
@@ -64,10 +65,13 @@ type mfaAvailability struct {
 
 // NewFrontendHandler creates a new FrontendHandler.
 func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
+	prefix := d.Cfg.GetServer().GetRedis().GetPrefix()
+
 	return &FrontendHandler{
-		deps:   d,
-		mfa:    idp.NewMFAService(d),
-		tracer: monittrace.New("nauthilus/idp/frontend"),
+		deps:        d,
+		mfa:         idp.NewMFAService(d),
+		deviceStore: idp.NewRedisDeviceCodeStore(d.Redis, prefix),
+		tracer:      monittrace.New("nauthilus/idp/frontend"),
 	}
 }
 
@@ -76,16 +80,31 @@ func (h *FrontendHandler) getLoginURL(ctx *gin.Context) string {
 }
 
 func (h *FrontendHandler) getLoginPath(ctx *gin.Context) string {
-	lang := ctx.Param("languageTag")
-	var path string
-
-	if lang != "" {
-		path = "/login/" + lang
-	} else {
-		path = "/login"
+	// For device code flow, redirect back to the device verify page
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		if mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
+			return h.deviceVerifyPath(ctx)
+		}
 	}
 
-	return path
+	lang := ctx.Param("languageTag")
+
+	if lang != "" {
+		return "/login/" + lang
+	}
+
+	return "/login"
+}
+
+// deviceVerifyPath returns the device verify page path with optional language tag.
+func (h *FrontendHandler) deviceVerifyPath(ctx *gin.Context) string {
+	lang := ctx.Param("languageTag")
+
+	if lang != "" {
+		return "/oidc/device/verify/" + lang
+	}
+
+	return "/oidc/device/verify"
 }
 
 func (h *FrontendHandler) getMFASelectPath(ctx *gin.Context) string {
@@ -113,7 +132,8 @@ func (h *FrontendHandler) appendQueryString(path string, query string) string {
 }
 
 // isValidIdPFlow checks if an active IdP flow exists in the secure session cookie.
-// A valid IdP flow is either an OIDC authorization request or a SAML2 SSO request.
+// A valid IdP flow is either an OIDC request (authorization code or device code grant)
+// or a SAML2 SSO request.
 // The /login endpoint MUST NOT be accessed directly without a proper IdP flow.
 // All flow state is stored in the encrypted cookie - no URL parameters are used for security.
 func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
@@ -134,13 +154,25 @@ func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
 		return false
 	}
 
-	// For OIDC, verify we have required parameters
+	// For OIDC, verify we have required parameters based on the grant type
 	if flowType == definitions.ProtoOIDC {
+		grantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
 		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		redirectURI := mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
 
-		if clientID == "" || redirectURI == "" {
-			return false
+		if grantType == definitions.OIDCFlowDeviceCode {
+			// Device Code flow requires device code and client ID
+			deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+
+			if deviceCode == "" || clientID == "" {
+				return false
+			}
+		} else {
+			// Authorization Code flow requires client ID and redirect URI
+			redirectURI := mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+
+			if clientID == "" || redirectURI == "" {
+				return false
+			}
 		}
 	}
 
@@ -451,6 +483,18 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		return
 	}
 
+	// For device code flow, user must re-authenticate via the device verify page
+	oidcGrantType := ""
+	if mgr != nil {
+		oidcGrantType = mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
+	}
+
+	if oidcGrantType == definitions.OIDCFlowDeviceCode {
+		ctx.Redirect(http.StatusFound, h.deviceVerifyPath(ctx))
+
+		return
+	}
+
 	if mgr != nil {
 		mgr.Delete(definitions.SessionKeyMFAMulti)
 	}
@@ -525,6 +569,14 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 func (h *FrontendHandler) redirectToIdPEndpoint(ctx *gin.Context, mgr cookie.Manager) {
 	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
+	// Device code flow must be checked before the general OIDC authorize redirect,
+	// because it does not use redirectURI, responseType, etc.
+	if flowType == definitions.ProtoOIDC && mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
+		h.completeDeviceCodeFlow(ctx, mgr)
+
+		return
+	}
+
 	if flowType == definitions.ProtoOIDC {
 		// Reconstruct the OIDC authorize URL from cookie parameters
 		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
@@ -572,6 +624,100 @@ func (h *FrontendHandler) redirectToIdPEndpoint(ctx *gin.Context, mgr cookie.Man
 	ctx.Redirect(http.StatusFound, "/")
 }
 
+// deviceCodeNeedsConsent checks whether the device code flow requires user consent for the given client.
+// It mirrors the consent logic from the authorization code grant: consent is needed when
+// the client has not set skip_consent and the user has not previously consented in this session.
+func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string) bool {
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+
+	client, ok := idpInstance.FindClient(clientID)
+	if !ok {
+		return false
+	}
+
+	if client.SkipConsent {
+		return false
+	}
+
+	mgr := cookie.GetManager(ctx)
+
+	return !hasClientConsent(mgr, clientID)
+}
+
+// completeDeviceCodeFlow authorizes the device code and renders the success page.
+// This is called after successful authentication (and MFA if required) in the device code flow.
+func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Manager) {
+	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+	if deviceCode == "" {
+		ctx.Redirect(http.StatusFound, "/")
+
+		return
+	}
+
+	request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
+	if err != nil || request == nil {
+		ctx.Redirect(http.StatusFound, "/")
+
+		return
+	}
+
+	// Check if consent is needed before authorizing
+	if h.deviceCodeNeedsConsent(ctx, request.ClientID) {
+		lang := ctx.Param("languageTag")
+		consentPath := "/oidc/device/consent"
+
+		if lang != "" {
+			consentPath += "/" + lang
+		}
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code flow requires consent (after MFA)",
+			"client_id", request.ClientID,
+		)
+
+		ctx.Redirect(http.StatusFound, consentPath)
+
+		return
+	}
+
+	// Authorize the device code
+	request.Status = idp.DeviceCodeStatusAuthorized
+	request.UserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+
+	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+		ctx.Redirect(http.StatusFound, "/")
+
+		return
+	}
+
+	addClientToCookie(mgr, request.ClientID)
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Device code authorized via MFA flow (consent skipped)",
+		"client_id", request.ClientID,
+		"user_id", request.UserID,
+		"user_code", request.UserCode,
+	)
+
+	// Clean up device code flow session data
+	mgr.Delete(definitions.SessionKeyDeviceCode)
+	mgr.Delete(definitions.SessionKeyIdPFlowActive)
+	mgr.Delete(definitions.SessionKeyIdPFlowType)
+	mgr.Delete(definitions.SessionKeyOIDCGrantType)
+
+	renderDeviceCodeSuccess(ctx, h.deps)
+}
+
 // PostLogin handles the login submission.
 // This endpoint is ONLY for IdP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
 // All flow state is read from the secure encrypted cookie - no form parameters for flow state.
@@ -605,6 +751,13 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 				samlEntityID = definitions.ProtoSAML
 			}
 		}
+	}
+
+	// Device code flow has its own login handler
+	if flowType == definitions.ProtoOIDC && mgr != nil && mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
+		ctx.Redirect(http.StatusFound, h.deviceVerifyPath(ctx))
+
+		return
 	}
 
 	username := ctx.PostForm("username")

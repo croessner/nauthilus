@@ -25,10 +25,15 @@ fully integrated into the Nauthilus core, leveraging existing authentication and
 - **`server/handler/api/v1/`**: The "JSON Interface".
     - `mfa.go`: Provides a clean JSON API for managing TOTP, Recovery Codes, and WebAuthn credentials.
 - **`server/handler/frontend/idp/`**: The "Face" and "Voice".
-    - `oidc.go`: Implements the OpenID Connect 1.0 specification (Discovery, Authorize, Token, Introspect, UserInfo,
-      JWKS, Logout).
+    - `oidc.go`: Core OIDC handler (Discovery, Token, Introspect, UserInfo, JWKS, Logout) and route registration.
+    - `oidc_authorization_code.go`: Implements the Authorization Code Grant (Authorize, Consent, token exchange,
+      refresh token exchange).
+    - `oidc_client_credentials.go`: Implements the Client Credentials Grant token exchange.
+    - `oidc_device_code.go`: Implements the Device Authorization Grant (RFC 8628) including device authorization,
+      user verification with MFA support, device consent, and token polling.
     - `saml.go`: Implements the SAML 2.0 Identity Provider logic (Metadata, SSO).
-    - `frontend.go`: Manages the web-based flows (Login, Consent, 2FA Portal).
+    - `frontend.go`: Manages the web-based flows (Login, MFA, 2FA Portal) and handles post-authentication
+      redirection for all grant types including device code flow completion after MFA.
 - **`server/idp/redis_storage.go`**: The "Short-term Memory". Handles volatile state like OIDC codes and session data in
   Redis.
 - **`server/core/auth.go`**: The "Engine". Manages the complex multi-step authentication process (Password -> MFA ->
@@ -131,16 +136,18 @@ The IdP stores all flow state in the encrypted `nauthilus_secure_data` cookie to
 
 **Session Keys for IdP Flow:**
 
-| Key                | Description                           |
-|--------------------|---------------------------------------|
-| `idp_flow_active`  | Boolean indicating an active IdP flow |
-| `idp_flow_type`    | Flow type: `oidc` or `saml`           |
-| `idp_client_id`    | OIDC client_id                        |
-| `idp_redirect_uri` | Validated OIDC redirect_uri           |
-| `idp_scope`        | Requested OIDC scopes                 |
-| `idp_state`        | OIDC state parameter                  |
-| `idp_nonce`        | OIDC nonce parameter                  |
-| `idp_original_url` | SAML original request URL             |
+| Key                | Description                                                                  |
+|--------------------|------------------------------------------------------------------------------|
+| `idp_flow_active`  | Boolean indicating an active IdP flow                                        |
+| `idp_flow_type`    | Flow type: `oidc` or `saml`                                                  |
+| `idp_client_id`    | OIDC client_id                                                               |
+| `idp_redirect_uri` | Validated OIDC redirect_uri                                                  |
+| `idp_scope`        | Requested OIDC scopes                                                        |
+| `idp_state`        | OIDC state parameter                                                         |
+| `idp_nonce`        | OIDC nonce parameter                                                         |
+| `idp_original_url` | SAML original request URL                                                    |
+| `oidc_grant_type`  | OIDC grant type (`authorization_code` or `device_code`) to distinguish flows |
+| `device_code`      | Device code string during the device code MFA flow                           |
 
 **How it works:**
 
@@ -163,6 +170,8 @@ All IdP frontend pages use CSRF protection via `nosurf`. The CSRF token is:
 - Login pages (`/login`, `/login/:languageTag`)
 - MFA pages (`/login/totp`, `/login/webauthn`, `/login/mfa`, `/login/recovery`)
 - Consent pages (`/oidc/consent`, `/oidc/consent/:languageTag`)
+- Device consent pages (`/oidc/device/consent`, `/oidc/device/consent/:languageTag`)
+- Device verification pages (`/oidc/device/verify`, `/oidc/device/verify/:languageTag`)
 - Registration pages (`/mfa/totp/register`, `/mfa/webauthn/register`)
 - 2FA Home (`/mfa/register/home`)
 - Device management (`/mfa/webauthn/devices`)
@@ -352,6 +361,10 @@ The `FrontendHandler` uses **HTMX** to provide a single-page-application (SPA) f
 - **OIDC Authorization Code Flow**: The handler manages the login redirect, session establishment, and code generation.
   It now supports **Delayed Response** by hiding authentication failures until after the MFA step. If `/login` is called
   without a protocol-specific context, it redirects to the MFA portal after successful authentication.
+- **Device Code Flow MFA**: When a device code verification detects that the user has MFA configured, it stores session
+  state (including `device_code` and `oidc_grant_type`) in the encrypted cookie and redirects to the shared MFA flow
+  (TOTP/WebAuthn). After successful MFA, `FrontendHandler.completeDeviceCodeFlow` authorizes the device code, optionally
+  showing a consent page before completion.
 - **Multi-Factor Authentication (MFA)**:
     - **TOTP**: Uses the `otp` package for generation and validation. Secrets are stored in the backend (LDAP or Lua).
       Verification is integrated into the login flow (`/login/totp`).
@@ -901,6 +914,7 @@ the code, and authenticates. Meanwhile, the original device polls the token endp
 sequenceDiagram
     participant D as Device / CLI
     participant AS as Authorization Server
+    participant F as Frontend Handler
     participant U as User (Browser)
     Note over D, U: Phase 1: Device Authorization Request
     D ->> AS: POST /oidc/device (client_id, scope)
@@ -909,8 +923,32 @@ sequenceDiagram
     D ->> D: Display user_code and verification_uri to user
     U ->> AS: POST /oidc/device/verify (user_code, username, password)
     AS ->> AS: Authenticate user
-    AS ->> AS: Update device code status → authorized
-    AS -->> U: { "status": "authorized" }
+    alt MFA Required
+        AS ->> AS: Store session state in encrypted cookie (device_code, oidc_grant_type)
+        AS ->> U: 302 Redirect to /login/totp or /login/webauthn or /login/mfa
+        U ->> F: POST /login/totp (code) or WebAuthn assertion
+        F ->> F: Verify MFA
+        F ->> F: completeDeviceCodeFlow()
+        alt Consent Required
+            F ->> U: 302 Redirect to /oidc/device/consent
+            U ->> AS: GET /oidc/device/consent
+            AS -->> U: Render consent page
+            U ->> AS: POST /oidc/device/consent (Accept)
+            AS ->> AS: Update device code status → authorized
+        else Consent Skipped
+            F ->> F: Update device code status → authorized
+        end
+        F -->> U: Render success page
+    else No MFA
+        alt Consent Required
+            AS ->> U: 302 Redirect to /oidc/device/consent
+            U ->> AS: POST /oidc/device/consent (Accept)
+            AS ->> AS: Update device code status → authorized
+        else Consent Skipped
+            AS ->> AS: Update device code status → authorized
+        end
+        AS -->> U: Render success page
+    end
     Note over D, U: Phase 3: Token Polling
     D ->> AS: POST /oidc/token (grant_type=device_code, device_code, client_id)
     AS -->> D: { "error": "authorization_pending" }
@@ -968,13 +1006,16 @@ The user submits the user code along with their credentials to authorize the dev
 | `username`  | Yes      | The user's login name                 |
 | `password`  | Yes      | The user's password                   |
 
-**Response (200 OK):**
+**Behavior:**
 
-```json
-{
-    "status": "authorized"
-}
-```
+After successful password authentication, the endpoint checks whether the user has MFA (TOTP or WebAuthn) configured:
+
+- **No MFA**: If the client does not require consent (or the user has already consented), the device code is immediately
+  authorized and a success page is rendered. Otherwise, the user is redirected to `/oidc/device/consent`.
+- **MFA required**: Session state (including `device_code` and `oidc_grant_type=device_code`) is stored in the encrypted
+  cookie, and the user is redirected to the appropriate MFA page (`/login/totp`, `/login/webauthn`, or `/login/mfa` for
+  multi-method selection). After successful MFA verification, the shared `FrontendHandler` completes the device code
+  flow, optionally showing a consent page.
 
 **Error responses:**
 
@@ -988,7 +1029,28 @@ The user submits the user code along with their credentials to authorize the dev
 **Security note:** The user code is normalized (uppercased, hyphens/spaces removed) before lookup, so users can enter
 it in any format (e.g., `abcd-efgh`, `ABCDEFGH`, or `ABCD EFGH`).
 
-#### 9.3.3 Token Endpoint (Device Code Grant)
+#### 9.3.3 Device Consent Endpoint
+
+**`GET /oidc/device/consent`**
+
+Renders the consent page for the device code flow. The page displays the client name and requested scopes, allowing
+the user to accept or deny the authorization.
+
+**`POST /oidc/device/consent`**
+
+Processes the user's consent decision. On acceptance, the device code status is set to `authorized`. On denial, the
+device code status is set to `denied`.
+
+**Request parameters:**
+
+| Parameter  | Required | Description                                    |
+|------------|----------|------------------------------------------------|
+| `decision` | Yes      | `accept` to authorize, any other value to deny |
+
+Consent is tracked in the session cookie (`oidc_clients`), so subsequent authorizations for the same client within the
+same session skip the consent page (unless `skip_consent` is configured on the client).
+
+#### 9.3.4 Token Endpoint (Device Code Grant)
 
 **`POST /oidc/token`**
 
@@ -1084,6 +1146,11 @@ The device authorization endpoint is advertised in the OpenID Connect Discovery 
 - **Expiration:** Device codes automatically expire in Redis after the configured TTL.
 - **Authentication on verification:** The user must provide valid credentials during the verification step. Failed
   authentication immediately marks the device code as denied.
+- **MFA enforcement:** When a user has MFA configured (TOTP or WebAuthn), the device code verification endpoint enforces
+  MFA before authorizing the device. The MFA flow reuses the shared login infrastructure, ensuring consistent security
+  policies across all grant types.
+- **Consent enforcement:** The device code flow enforces user consent unless the client has `skip_consent` configured.
+  Consent decisions are tracked per session to avoid repeated prompts.
 
 ### 9.7 Package Structure
 
@@ -1092,9 +1159,15 @@ server/idp/
 ├── device_code.go              # DeviceCodeStore interface, RedisDeviceCodeStore, UserCodeGenerator
 ├── device_code_test.go         # Unit tests for storage and code generation
 server/handler/frontend/idp/
-├── device.go                   # DeviceAuthorization, DeviceVerify, handleDeviceCodeTokenExchange handlers
+├── oidc.go                     # OIDCHandler struct, route registration, Discovery, Token, JWKS, Logout, etc.
+├── oidc_authorization_code.go  # Authorize, ConsentGET/POST, authorization code & refresh token exchange
+├── oidc_client_credentials.go  # Client credentials token exchange
+├── oidc_device_code.go         # DeviceAuthorization, DeviceVerify (with MFA), DeviceConsentGET/POST,
+│                               # handleDeviceCodeTokenExchange, issueDeviceCodeTokens
+├── frontend.go                 # FrontendHandler: Login, MFA flows, completeDeviceCodeFlow (post-MFA)
 server/definitions/
-├── const.go                    # OIDCGrantTypeDeviceCode, default interval/expiry/length constants
+├── const.go                    # OIDCFlowAuthorizationCode, OIDCFlowDeviceCode, SessionKeyDeviceCode,
+│                               # SessionKeyOIDCGrantType, default interval/expiry/length constants
 server/config/
 ├── idp.go                      # DeviceCodeExpiry, DeviceCodePollingInterval, DeviceCodeUserCodeLength fields
 ```
