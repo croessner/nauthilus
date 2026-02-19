@@ -77,7 +77,10 @@ func main() {
 		return
 
 	case FlowClientCredentials:
+		// Client Credentials flow runs entirely on the console and terminates.
 		registerClientCredentialsRoutes(ctx, provider, providerClaims, verifier, scopes)
+
+		return
 	}
 
 	log.Printf("listening on http://%s/", listenAddr)
