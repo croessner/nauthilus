@@ -861,6 +861,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	securityManager := security.NewManager(lm.effectiveCfg().GetLDAPConfigEncryptionSecret())
 	encryptedSecret, encryptErr := securityManager.Encrypt(totp.GetValue())
+
 	if encryptErr != nil {
 		endPrepare()
 
@@ -868,7 +869,46 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 			fmt.Sprintf("Failed to encrypt LDAP TOTP secret: %v", encryptErr))
 	}
 
-	// Derive a timeout context for LDAP modify using service-scoped context
+	totpObjectClass := protocol.GetTotpObjectClass()
+
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := lm.requestPriority(auth)
+
+	endPrepare()
+
+	// Step 1: Add objectClass in a separate request (ignore "already exists")
+	if totpObjectClass != "" {
+		ctxAddOC, cancelAddOC := lm.ldapModifyContext()
+		defer cancelAddOC()
+
+		objectClassReplyChan := make(chan *bktype.LDAPReply, 1)
+
+		ocRequest := lm.newLDAPModifyRequest(ldapModifyRequestInput{
+			auth:              auth,
+			filter:            filter,
+			baseDN:            baseDN,
+			scope:             scope,
+			subCommand:        definitions.LDAPModifyAdd,
+			ctx:               ctxAddOC,
+			replyChan:         objectClassReplyChan,
+			includeTOTPSecret: true,
+		})
+
+		ocRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
+			"objectClass": []string{totpObjectClass},
+		}
+
+		lm.ldapQueue().Push(ocRequest, priority)
+
+		ocReply := waitLDAPReply(tr, mctx, "ldap.add_totp.objectclass", objectClassReplyChan)
+		if ocReply.Err != nil && !isAttributeOrValueExistsError(ocReply.Err) {
+			msp.RecordError(ocReply.Err)
+
+			return wrapLDAPModifyError(ocReply.Err, "Failed to add objectClass for TOTP")
+		}
+	}
+
+	// Step 2: Replace the TOTP secret (works for both new and existing values)
 	ctxModify, cancelModify := lm.ldapModifyContext()
 	defer cancelModify()
 
@@ -877,39 +917,19 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		filter:            filter,
 		baseDN:            baseDN,
 		scope:             scope,
-		subCommand:        definitions.LDAPModifyAdd,
+		subCommand:        definitions.LDAPModifyReplace,
 		ctx:               ctxModify,
 		replyChan:         ldapReplyChan,
 		includeTOTPSecret: true,
 	})
 
-	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
-	ldapRequest.ModifyAttributes[configField] = []string{encryptedSecret}
-
-	totpObjectClass := protocol.GetTotpObjectClass()
-	if totpObjectClass != "" {
-		ldapRequest.ModifyAttributes["objectClass"] = []string{totpObjectClass}
+	ldapRequest.ModifyAttributes = bktype.LDAPModifyAttributes{
+		configField: []string{encryptedSecret},
 	}
 
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
-	priority := lm.requestPriority(auth)
-
-	endPrepare()
-
-	// Use priority queue instead of channel
 	lm.ldapQueue().Push(ldapRequest, priority)
 
 	ldapReply = waitLDAPReply(tr, mctx, "ldap.add_totp.wait", ldapReplyChan)
-
-	if ldapError, ok := stderrors.AsType[*ldap.Error](ldapReply.Err); ok {
-		if ldapError.ResultCode == uint16(ldap.LDAPResultAttributeOrValueExists) && totpObjectClass != "" {
-			return nil
-		}
-
-		msp.RecordError(ldapError)
-
-		return wrapLDAPModifyError(ldapError, "Failed to add TOTP secret")
-	}
 
 	if ldapReply.Err != nil {
 		msp.RecordError(ldapReply.Err)
