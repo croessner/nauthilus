@@ -205,9 +205,6 @@ const (
 
 	// ScopeListAccounts grants access to the list-accounts mode.
 	ScopeListAccounts = "nauthilus:list_accounts"
-
-	// ScopeMFAManage grants access to MFA registration and management pages.
-	ScopeMFAManage = "nauthilus:mfa:manage"
 )
 
 const (

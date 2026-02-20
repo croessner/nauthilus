@@ -207,8 +207,8 @@ func TestMFAAPI_SetupTOTP_Success(t *testing.T) {
 	}
 	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
 
-	// Use mock cookie manager with authenticated OIDC session including MFA scope
-	mgr := &mockCookieManager{data: newOIDCSessionData("testuser", "openid "+definitions.ScopeMFAManage)}
+	// Use mock cookie manager with authenticated OIDC session
+	mgr := &mockCookieManager{data: newOIDCSessionData("testuser", "openid profile")}
 	r := setupTestRouterWithMockCookie(d, mgr)
 
 	w := httptest.NewRecorder()
@@ -241,17 +241,17 @@ func TestMFAAPI_RegisterTOTP_Unauthenticated(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestMFAAPI_MFAManageMiddleware_OIDCMissingScope(t *testing.T) {
+func TestMFAAPI_MFAManageMiddleware_ValidSession(t *testing.T) {
 	cfg := &config.FileSettings{
-		IdP: &config.IdPSection{
-			OIDC: config.OIDCConfig{
-				Enabled: true,
+		Server: &config.ServerSection{
+			Frontend: config.Frontend{
+				TotpIssuer: "NauthilusTest",
 			},
 		},
 	}
 	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
 
-	// OIDC session without MFA scope
+	// Any authenticated session should pass the middleware
 	mgr := &mockCookieManager{data: newOIDCSessionData("testuser", "openid profile")}
 	r := setupTestRouterWithMockCookie(d, mgr)
 
@@ -259,22 +259,11 @@ func TestMFAAPI_MFAManageMiddleware_OIDCMissingScope(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/api/v1/mfa/totp/setup", nil)
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
-
-	var resp map[string]string
-
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.Contains(t, resp["error"], "Missing required permission")
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestMFAAPI_MFAManageMiddleware_OIDCWithScope(t *testing.T) {
+func TestMFAAPI_MFAManageMiddleware_SAMLValidSession(t *testing.T) {
 	cfg := &config.FileSettings{
-		IdP: &config.IdPSection{
-			OIDC: config.OIDCConfig{
-				Enabled: true,
-			},
-		},
 		Server: &config.ServerSection{
 			Frontend: config.Frontend{
 				TotpIssuer: "NauthilusTest",
@@ -283,41 +272,7 @@ func TestMFAAPI_MFAManageMiddleware_OIDCWithScope(t *testing.T) {
 	}
 	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
 
-	// OIDC session with MFA scope
-	mgr := &mockCookieManager{data: newOIDCSessionData("testuser", "openid "+definitions.ScopeMFAManage)}
-	r := setupTestRouterWithMockCookie(d, mgr)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/mfa/totp/setup", nil)
-	r.ServeHTTP(w, req)
-
-	// Should pass middleware and reach the handler
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestMFAAPI_MFAManageMiddleware_SAMLAllowed(t *testing.T) {
-	cfg := &config.FileSettings{
-		IdP: &config.IdPSection{
-			SAML2: config.SAML2Config{
-				Enabled: true,
-				ServiceProviders: []config.SAML2ServiceProvider{
-					{
-						EntityID:       "https://sp.example.com",
-						ACSURL:         "https://sp.example.com/acs",
-						AllowMFAManage: true,
-					},
-				},
-			},
-		},
-		Server: &config.ServerSection{
-			Frontend: config.Frontend{
-				TotpIssuer: "NauthilusTest",
-			},
-		},
-	}
-	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
-
-	// SAML session with whitelisted entity ID
+	// SAML session with any entity ID should pass the middleware
 	mgr := &mockCookieManager{data: newSAMLSessionData("testuser", "https://sp.example.com")}
 	r := setupTestRouterWithMockCookie(d, mgr)
 
@@ -326,126 +281,4 @@ func TestMFAAPI_MFAManageMiddleware_SAMLAllowed(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestMFAAPI_MFAManageMiddleware_SAMLDenied(t *testing.T) {
-	cfg := &config.FileSettings{
-		IdP: &config.IdPSection{
-			SAML2: config.SAML2Config{
-				Enabled: true,
-				ServiceProviders: []config.SAML2ServiceProvider{
-					{
-						EntityID:       "https://sp.example.com",
-						ACSURL:         "https://sp.example.com/acs",
-						AllowMFAManage: false,
-					},
-				},
-			},
-		},
-	}
-	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
-
-	// SAML session with non-whitelisted entity ID
-	mgr := &mockCookieManager{data: newSAMLSessionData("testuser", "https://sp.example.com")}
-	r := setupTestRouterWithMockCookie(d, mgr)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/mfa/totp/setup", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
-
-func TestMFAAPI_MFAManageMiddleware_SAMLUnknownEntityID(t *testing.T) {
-	cfg := &config.FileSettings{
-		IdP: &config.IdPSection{
-			SAML2: config.SAML2Config{
-				Enabled: true,
-				ServiceProviders: []config.SAML2ServiceProvider{
-					{
-						EntityID:       "https://sp.example.com",
-						ACSURL:         "https://sp.example.com/acs",
-						AllowMFAManage: true,
-					},
-				},
-			},
-		},
-	}
-	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
-
-	// SAML session with unknown entity ID
-	mgr := &mockCookieManager{data: newSAMLSessionData("testuser", "https://unknown-sp.example.com")}
-	r := setupTestRouterWithMockCookie(d, mgr)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/mfa/totp/setup", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
-
-func TestMFAAPI_MFAManageMiddleware_UnknownFlowType(t *testing.T) {
-	cfg := &config.FileSettings{}
-	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger()}
-
-	// Session with unknown flow type
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyAccount:     "testuser",
-		definitions.SessionKeyIdPFlowType: "unknown",
-	}}
-	r := setupTestRouterWithMockCookie(d, mgr)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/mfa/totp/setup", nil)
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
-
-func TestHasSessionScope(t *testing.T) {
-	tests := []struct {
-		name     string
-		scopeStr string
-		target   string
-		want     bool
-	}{
-		{
-			name:     "scope present among multiple",
-			scopeStr: "openid profile " + definitions.ScopeMFAManage,
-			target:   definitions.ScopeMFAManage,
-			want:     true,
-		},
-		{
-			name:     "scope is the only scope",
-			scopeStr: definitions.ScopeMFAManage,
-			target:   definitions.ScopeMFAManage,
-			want:     true,
-		},
-		{
-			name:     "scope not present",
-			scopeStr: "openid profile email",
-			target:   definitions.ScopeMFAManage,
-			want:     false,
-		},
-		{
-			name:     "empty scope string",
-			scopeStr: "",
-			target:   definitions.ScopeMFAManage,
-			want:     false,
-		},
-		{
-			name:     "partial match should not match",
-			scopeStr: "nauthilus:mfa:manage_extra",
-			target:   definitions.ScopeMFAManage,
-			want:     false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := hasSessionScope(tt.scopeStr, tt.target)
-
-			assert.Equal(t, tt.want, got)
-		})
-	}
 }

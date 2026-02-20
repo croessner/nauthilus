@@ -293,10 +293,6 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 // AuthMiddleware ensures the user is logged in for protected pages like 2FA Self-Service.
 // Users must already have a valid session from a completed IdP flow.
 // Direct access without a prior login redirects to an error page.
-//
-// For OIDC flows, the session must contain the nauthilus:mfa:manage scope.
-// For SAML flows, the service provider must be whitelisted via allow_mfa_manage
-// in the configuration.
 func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		mgr := cookie.GetManager(ctx)
@@ -315,48 +311,8 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if !h.hasMFAManagePermission(mgr) {
-			h.renderErrorModal(ctx, "Missing required permission for MFA management")
-			ctx.Abort()
-
-			return
-		}
-
 		ctx.Next()
 	}
-}
-
-// hasMFAManagePermission checks whether the current session grants MFA management access.
-// For OIDC flows, the nauthilus:mfa:manage scope must be present.
-// For SAML flows, the service provider entity ID must be whitelisted in the configuration.
-func (h *FrontendHandler) hasMFAManagePermission(mgr cookie.Manager) bool {
-	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-
-	switch flowType {
-	case definitions.ProtoOIDC:
-		scope := mgr.GetString(definitions.SessionKeyIdPScope, "")
-
-		return hasSessionScope(scope, definitions.ScopeMFAManage)
-
-	case definitions.ProtoSAML:
-		entityID := mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
-
-		return h.deps.Cfg.GetIdP().SAML2.IsMFAManageAllowed(entityID)
-
-	default:
-		return false
-	}
-}
-
-// hasSessionScope checks whether a space-separated scope string contains the target scope.
-func hasSessionScope(scopeStr, target string) bool {
-	for s := range strings.SplitSeq(scopeStr, " ") {
-		if s == target {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {

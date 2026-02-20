@@ -339,21 +339,6 @@ func TestIdPConfig_WarnUnsupported(t *testing.T) {
 		assert.Contains(t, warnings, "saml2.signature_method: 'invalid' is currently not supported (only 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256' is supported)")
 	})
 
-	t.Run("SAML2 IsMFAManageAllowed", func(t *testing.T) {
-		cfg := &SAML2Config{
-			Enabled: true,
-			ServiceProviders: []SAML2ServiceProvider{
-				{EntityID: "https://allowed.example.com", ACSURL: "https://allowed.example.com/acs", AllowMFAManage: true},
-				{EntityID: "https://denied.example.com", ACSURL: "https://denied.example.com/acs", AllowMFAManage: false},
-			},
-		}
-
-		assert.True(t, cfg.IsMFAManageAllowed("https://allowed.example.com"))
-		assert.False(t, cfg.IsMFAManageAllowed("https://denied.example.com"))
-		assert.False(t, cfg.IsMFAManageAllowed("https://unknown.example.com"))
-		assert.False(t, cfg.IsMFAManageAllowed(""))
-	})
-
 	t.Run("All supported", func(t *testing.T) {
 		cfg := &IdPSection{
 			OIDC: OIDCConfig{
