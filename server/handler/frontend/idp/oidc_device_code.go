@@ -136,7 +136,7 @@ func (h *OIDCHandler) createDeviceCodeRequest(
 // handleDeviceCodeTokenExchange handles the token exchange for the device code grant (RFC 8628 §3.4).
 // The client polls this endpoint until the user authorizes or denies the request.
 func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient) {
-	deviceCode := ctx.PostForm("device_code")
+	deviceCode := formValue(ctx, "device_code")
 
 	if deviceCode == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "device_code is required"})

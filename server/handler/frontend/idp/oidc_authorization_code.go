@@ -272,7 +272,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 // within the token endpoint.
 func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
-	code := ctx.PostForm("code")
+	code := formValue(ctx, "code")
 
 	session, getErr := h.storage.GetSession(ctx.Request.Context(), code)
 	if getErr != nil {
@@ -309,7 +309,7 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 // within the token endpoint.
 func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
-	rt := ctx.PostForm("refresh_token")
+	rt := formValue(ctx, "refresh_token")
 
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
 	if err != nil {
