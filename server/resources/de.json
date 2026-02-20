@@ -107,5 +107,11 @@
   "Device Authorized": "Gerät autorisiert",
   "Your device has been successfully authorized.": "Ihr Gerät wurde erfolgreich autorisiert.",
   "You can close this window and return to your device.": "Sie können dieses Fenster schließen und zu Ihrem Gerät zurückkehren.",
-  "Missing required permission for MFA management": "Fehlende Berechtigung für die MFA-Verwaltung"
+  "Missing required permission for MFA management": "Fehlende Berechtigung für die MFA-Verwaltung",
+  "Failed to register TOTP": "TOTP-Registrierung fehlgeschlagen",
+  "Failed to generate recovery codes": "Wiederherstellungscodes konnten nicht generiert werden",
+  "Failed to delete TOTP secret": "TOTP-Geheimnis konnte nicht gelöscht werden",
+  "Failed to delete WebAuthn from Redis": "WebAuthn konnte nicht aus Redis gelöscht werden",
+  "Failed to delete credential": "Anmeldeinformation konnte nicht gelöscht werden",
+  "Failed to update credential": "Anmeldeinformation konnte nicht aktualisiert werden"
 }

@@ -27,6 +27,10 @@ type DetailedError struct {
 }
 
 func (d *DetailedError) Error() string {
+	if d.details != "" {
+		return d.err.Error() + ": " + d.details
+	}
+
 	return d.err.Error()
 }
 

@@ -831,7 +831,9 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	_, endPrepare := startSpan(tr, mctx, "ldap.add_totp.prepare")
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter: (*config.LDAPSearchProtocol).GetUserFilter,
+		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
+		requireProtocol:       true,
+		missingProtocolDetail: "Missing LDAP search protocol for TOTP; protocol=%s",
 	})
 	if err != nil || searchConfig.protocol == nil {
 		return
@@ -906,14 +908,14 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 		msp.RecordError(ldapError)
 
-		return ldapError.Err
+		return wrapLDAPModifyError(ldapError, "Failed to add TOTP secret")
 	}
 
 	if ldapReply.Err != nil {
 		msp.RecordError(ldapReply.Err)
 	}
 
-	return ldapReply.Err
+	return wrapLDAPModifyError(ldapReply.Err, "Failed to add TOTP secret")
 }
 
 // deleteLDAPFieldParams holds the per-operation parameters for deleteLDAPField.
@@ -962,7 +964,9 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 	_, endPrepare := startSpan(tr, mctx, params.prepareSpan)
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter: (*config.LDAPSearchProtocol).GetUserFilter,
+		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
+		requireProtocol:       true,
+		missingProtocolDetail: "Missing LDAP search protocol for delete; protocol=%s",
 	})
 	if err != nil || searchConfig.protocol == nil {
 		return
@@ -1023,7 +1027,7 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 		msp.RecordError(ldapReply.Err)
 	}
 
-	return ldapReply.Err
+	return wrapLDAPModifyError(ldapReply.Err, "Failed to delete LDAP field")
 }
 
 // DeleteTOTPSecret removes the TOTP secret from an LDAP server.
@@ -1074,7 +1078,9 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 	_, endPrepare := startSpan(tr, mctx, "ldap.add_totp_recovery.prepare")
 
 	searchConfig, err = lm.loadSearchConfig(endPrepare, auth.Request.Protocol.Get(), ldapSearchConfigOptions{
-		filterGetter: (*config.LDAPSearchProtocol).GetUserFilter,
+		filterGetter:          (*config.LDAPSearchProtocol).GetUserFilter,
+		requireProtocol:       true,
+		missingProtocolDetail: "Missing LDAP search protocol for TOTP recovery; protocol=%s",
 	})
 	if err != nil || searchConfig.protocol == nil {
 		return
@@ -1160,7 +1166,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 		if objectClassReply.Err != nil && !isAttributeOrValueExistsError(objectClassReply.Err) {
 			msp.RecordError(objectClassReply.Err)
 
-			return objectClassReply.Err
+			return wrapLDAPModifyError(objectClassReply.Err, "Failed to add objectClass for TOTP recovery")
 		}
 	}
 
@@ -1175,7 +1181,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 		msp.RecordError(ldapReply.Err)
 	}
 
-	return ldapReply.Err
+	return wrapLDAPModifyError(ldapReply.Err, "Failed to add TOTP recovery codes")
 }
 
 // DeleteTOTPRecoveryCodes removes all TOTP recovery codes for the user in the LDAP backend.
@@ -1215,6 +1221,24 @@ func isAttributeOrValueExistsError(err error) bool {
 	}
 
 	return false
+}
+
+// wrapLDAPModifyError wraps a raw LDAP error (or any error returned from an
+// LDAP modify operation) into ErrLDAPModify with a human-readable detail that
+// includes the LDAP result code description. If the error is nil it returns nil.
+func wrapLDAPModifyError(err error, operation string) error {
+	if err == nil {
+		return nil
+	}
+
+	if ldapErr, ok := stderrors.AsType[*ldap.Error](err); ok {
+		desc := ldap.LDAPResultCodeMap[ldapErr.ResultCode]
+
+		return errors.ErrLDAPModify.WithDetail(
+			fmt.Sprintf("%s: LDAP result code %d (%s)", operation, ldapErr.ResultCode, desc))
+	}
+
+	return errors.ErrLDAPModify.WithDetail(fmt.Sprintf("%s: %v", operation, err))
 }
 
 var _ BackendManager = (*ldapManagerImpl)(nil)

@@ -107,5 +107,11 @@
   "Device Authorized": "डिवाइस अधिकृत",
   "Your device has been successfully authorized.": "आपका डिवाइस सफलतापूर्वक अधिकृत किया गया है।",
   "You can close this window and return to your device.": "आप इस विंडो को बंद कर सकते हैं और अपने डिवाइस पर वापस जा सकते हैं।",
-  "Missing required permission for MFA management": "MFA प्रबंधन के लिए आवश्यक अनुमति नहीं है"
+  "Missing required permission for MFA management": "MFA प्रबंधन के लिए आवश्यक अनुमति नहीं है",
+  "Failed to register TOTP": "TOTP पंजीकरण विफल",
+  "Failed to generate recovery codes": "पुनर्प्राप्ति कोड उत्पन्न करना विफल",
+  "Failed to delete TOTP secret": "TOTP रहस्य हटाना विफल",
+  "Failed to delete WebAuthn from Redis": "Redis से WebAuthn हटाना विफल",
+  "Failed to delete credential": "प्रमाण पत्र हटाना विफल",
+  "Failed to update credential": "प्रमाण पत्र अपडेट करना विफल"
 }

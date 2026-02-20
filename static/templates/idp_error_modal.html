@@ -5,6 +5,7 @@
     <div class="modal-box">
         <h3 class="font-bold text-lg text-error">{{ .Title }}</h3>
         <p class="py-4">{{ .Message }}</p>
+        {{ if .Detail }}<p class="text-sm opacity-70 break-all">{{ .Detail }}</p>{{ end }}
         <div class="modal-action">
             <form method="dialog">
                 <button class="btn" onclick="document.getElementById('error-modal').remove()">{{ .Close }}</button>
