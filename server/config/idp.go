@@ -398,7 +398,11 @@ type OIDCClient struct {
 	LogoutRedirectURI                 string            `mapstructure:"logout_redirect_uri"`
 }
 
-func (c OIDCClient) String() string {
+func (c *OIDCClient) String() string {
+	if c == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("OIDCClient{Name:%s ClientID:%s ClientSecret:<hidden> RedirectURIs:%v GrantTypes:%v TokenEndpointAuthMethod:%s}", c.Name, c.ClientID, c.RedirectURIs, c.GrantTypes, c.TokenEndpointAuthMethod)
 }
 
