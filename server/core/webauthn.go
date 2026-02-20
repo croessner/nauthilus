@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,11 +118,16 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	}
 
 	// No cookie (default login page), search all configured databases.
+	// Skip backends that do not support this protocol.
 	if passDB == definitions.BackendUnknown || len(credentials) == 0 {
 		for _, backendType := range a.Cfg().GetServer().GetBackends() {
 			if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
 				credentials, err = mgr.GetWebAuthnCredentials(a)
 				if err != nil {
+					if stderrors.Is(err, errors.ErrLDAPConfig) {
+						continue
+					}
+
 					return nil, err
 				}
 

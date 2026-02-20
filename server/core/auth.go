@@ -658,6 +658,11 @@ func (a *AuthState) GetWebAuthnCredentials() (credentials []mfa.PersistentCreden
 		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
 			credentials, err = mgr.GetWebAuthnCredentials(a)
 			if err != nil {
+				// Skip backends that do not support this protocol.
+				if stderrors.Is(err, errors.ErrLDAPConfig) {
+					continue
+				}
+
 				return nil, err
 			}
 
@@ -693,10 +698,19 @@ func (a *AuthState) SaveWebAuthnCredential(credential *mfa.PersistentCredential)
 		}
 	}
 
-	// Default to first LDAP backend if none specified (safest bet for registration)
+	// Default to first LDAP backend if none specified (safest bet for registration).
+	// Skip backends that do not support this protocol.
 	for _, backendType := range a.Cfg().GetServer().GetBackends() {
 		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
-			return mgr.SaveWebAuthnCredential(a, credential)
+			if err := mgr.SaveWebAuthnCredential(a, credential); err != nil {
+				if stderrors.Is(err, errors.ErrLDAPConfig) {
+					continue
+				}
+
+				return err
+			}
+
+			return nil
 		}
 	}
 
@@ -726,7 +740,8 @@ func (a *AuthState) DeleteWebAuthnCredential(credential *mfa.PersistentCredentia
 		}
 	}
 
-	// No cookie, search all backends to find where it is stored and delete it
+	// No cookie, search all backends to find where it is stored and delete it.
+	// GetWebAuthnCredentials already skips pools without protocol support (returns empty).
 	for _, backendType := range a.Cfg().GetServer().GetBackends() {
 		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
 			credentials, _ := mgr.GetWebAuthnCredentials(a)
@@ -764,7 +779,8 @@ func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCreden
 		}
 	}
 
-	// No cookie, search all backends to find where it is stored and update it
+	// No cookie, search all backends to find where it is stored and update it.
+	// GetWebAuthnCredentials already skips pools without protocol support (returns empty).
 	for _, backendType := range a.Cfg().GetServer().GetBackends() {
 		if mgr := a.GetBackendManager(backendType.Get(), backendType.GetName()); mgr != nil {
 			credentials, _ := mgr.GetWebAuthnCredentials(a)
