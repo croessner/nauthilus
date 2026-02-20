@@ -107,5 +107,11 @@
   "Device Authorized": "设备已授权",
   "Your device has been successfully authorized.": "您的设备已成功授权。",
   "You can close this window and return to your device.": "您可以关闭此窗口并返回您的设备。",
-  "Missing required permission for MFA management": "缺少MFA管理所需的权限"
+  "Missing required permission for MFA management": "缺少MFA管理所需的权限",
+  "Failed to register TOTP": "TOTP注册失败",
+  "Failed to generate recovery codes": "生成恢复代码失败",
+  "Failed to delete TOTP secret": "删除TOTP密钥失败",
+  "Failed to delete WebAuthn from Redis": "从Redis删除WebAuthn失败",
+  "Failed to delete credential": "删除凭据失败",
+  "Failed to update credential": "更新凭据失败"
 }

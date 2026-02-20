@@ -107,5 +107,11 @@
   "Device Authorized": "デバイス認可完了",
   "Your device has been successfully authorized.": "デバイスが正常に認可されました。",
   "You can close this window and return to your device.": "このウィンドウを閉じてデバイスに戻ることができます。",
-  "Missing required permission for MFA management": "MFA管理に必要な権限がありません"
+  "Missing required permission for MFA management": "MFA管理に必要な権限がありません",
+  "Failed to register TOTP": "TOTPの登録に失敗しました",
+  "Failed to generate recovery codes": "リカバリーコードの生成に失敗しました",
+  "Failed to delete TOTP secret": "TOTPシークレットの削除に失敗しました",
+  "Failed to delete WebAuthn from Redis": "RedisからのWebAuthn削除に失敗しました",
+  "Failed to delete credential": "認証情報の削除に失敗しました",
+  "Failed to update credential": "認証情報の更新に失敗しました"
 }

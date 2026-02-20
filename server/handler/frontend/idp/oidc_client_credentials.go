@@ -34,7 +34,7 @@ func (h *OIDCHandler) handleClientCredentialsTokenExchange(ctx *gin.Context, cli
 		return
 	}
 
-	requestedScopes := strings.Fields(ctx.PostForm("scope"))
+	requestedScopes := strings.Fields(formValue(ctx, "scope"))
 	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
 
 	accessToken, expiresIn, err := h.idp.IssueClientCredentialsToken(ctx.Request.Context(), clientID, filteredScopes)

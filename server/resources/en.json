@@ -107,5 +107,11 @@
   "Device Authorized": "Device Authorized",
   "Your device has been successfully authorized.": "Your device has been successfully authorized.",
   "You can close this window and return to your device.": "You can close this window and return to your device.",
-  "Missing required permission for MFA management": "Missing required permission for MFA management"
+  "Missing required permission for MFA management": "Missing required permission for MFA management",
+  "Failed to register TOTP": "Failed to register TOTP",
+  "Failed to generate recovery codes": "Failed to generate recovery codes",
+  "Failed to delete TOTP secret": "Failed to delete TOTP secret",
+  "Failed to delete WebAuthn from Redis": "Failed to delete WebAuthn from Redis",
+  "Failed to delete credential": "Failed to delete credential",
+  "Failed to update credential": "Failed to update credential"
 }

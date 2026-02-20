@@ -18,6 +18,7 @@ package idp
 import (
 	"bytes"
 	"encoding/base64"
+	stderrors "errors"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
@@ -293,10 +295,6 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 // AuthMiddleware ensures the user is logged in for protected pages like 2FA Self-Service.
 // Users must already have a valid session from a completed IdP flow.
 // Direct access without a prior login redirects to an error page.
-//
-// For OIDC flows, the session must contain the nauthilus:mfa:manage scope.
-// For SAML flows, the service provider must be whitelisted via allow_mfa_manage
-// in the configuration.
 func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		mgr := cookie.GetManager(ctx)
@@ -315,48 +313,8 @@ func (h *FrontendHandler) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if !h.hasMFAManagePermission(mgr) {
-			h.renderErrorModal(ctx, "Missing required permission for MFA management")
-			ctx.Abort()
-
-			return
-		}
-
 		ctx.Next()
 	}
-}
-
-// hasMFAManagePermission checks whether the current session grants MFA management access.
-// For OIDC flows, the nauthilus:mfa:manage scope must be present.
-// For SAML flows, the service provider entity ID must be whitelisted in the configuration.
-func (h *FrontendHandler) hasMFAManagePermission(mgr cookie.Manager) bool {
-	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-
-	switch flowType {
-	case definitions.ProtoOIDC:
-		scope := mgr.GetString(definitions.SessionKeyIdPScope, "")
-
-		return hasSessionScope(scope, definitions.ScopeMFAManage)
-
-	case definitions.ProtoSAML:
-		entityID := mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
-
-		return h.deps.Cfg.GetIdP().SAML2.IsMFAManageAllowed(entityID)
-
-	default:
-		return false
-	}
-}
-
-// hasSessionScope checks whether a space-separated scope string contains the target scope.
-func hasSessionScope(scopeStr, target string) bool {
-	for s := range strings.SplitSeq(scopeStr, " ") {
-		if s == target {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
@@ -1705,7 +1663,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	if err := h.mfa.VerifyAndSaveTOTP(ctx, username, secret, code, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "totp", "fail").Inc()
-		h.renderErrorModal(ctx, err.Error())
+		h.renderErrorModalWithErr(ctx, "Failed to register TOTP", err)
 
 		return
 	}
@@ -1761,7 +1719,7 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	codes, err := h.mfa.GenerateRecoveryCodes(ctx, username, sourceBackend)
 	if err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to generate recovery codes: "+err.Error())
+		h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
 
 		return
 	}
@@ -1807,7 +1765,7 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	if err := h.mfa.DeleteTOTP(ctx, username, sourceBackend); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "totp", "fail").Inc()
-		h.renderErrorModal(ctx, "Failed to delete TOTP secret: "+err.Error())
+		h.renderErrorModalWithErr(ctx, "Failed to delete TOTP secret", err)
 
 		return
 	}
@@ -1856,7 +1814,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
-		h.renderErrorModal(ctx, "Failed to delete WebAuthn from Redis: "+err.Error())
+		h.renderErrorModalWithErr(ctx, "Failed to delete WebAuthn from Redis", err)
 
 		return
 	}
@@ -1915,6 +1873,23 @@ func (h *FrontendHandler) renderErrorModal(ctx *gin.Context, msg string) {
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
 	data["Message"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, msg)
 	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
+
+	ctx.HTML(http.StatusOK, "idp_error_modal.html", data)
+}
+
+// renderErrorModalWithErr renders an error modal that extracts details from
+// DetailedError instances, showing a translatable message and technical details separately.
+func (h *FrontendHandler) renderErrorModalWithErr(ctx *gin.Context, msg string, err error) {
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
+	data["Message"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, msg)
+	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
+
+	if detailedErr, ok := stderrors.AsType[*errors.DetailedError](err); ok {
+		if detail := detailedErr.GetDetails(); detail != "" {
+			data["Detail"] = detail
+		}
+	}
 
 	ctx.HTML(http.StatusOK, "idp_error_modal.html", data)
 }
@@ -2026,7 +2001,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 	// Delete from backend via AuthState
 	if err := userData.AuthState.DeleteWebAuthnCredential(targetCred); err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to delete credential: "+err.Error())
+		h.renderErrorModalWithErr(ctx, "Failed to delete credential", err)
 
 		return
 	}
@@ -2114,7 +2089,7 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 
 	if err := userData.AuthState.UpdateWebAuthnCredential(&oldCredential, &newCredential); err != nil {
 		sp.RecordError(err)
-		h.renderErrorModal(ctx, "Failed to update credential: "+err.Error())
+		h.renderErrorModalWithErr(ctx, "Failed to update credential", err)
 
 		return
 	}

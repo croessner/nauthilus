@@ -48,6 +48,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// formValue retrieves a request parameter from either the POST body or the URL
+// query string. This allows token-endpoint handlers to work with both POST and
+// GET requests (some OIDC clients, e.g. Roundcube, use GET for /oidc/token).
+func formValue(ctx *gin.Context, key string) string {
+	return ctx.Request.FormValue(key)
+}
+
 // OIDCHandler handles OIDC protocol requests.
 type OIDCHandler struct {
 	deps        *deps.Deps
@@ -97,6 +104,7 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.GET("/oidc/authorize", secureMW, i18nMW, h.Authorize)
 	router.GET("/oidc/authorize/:languageTag", secureMW, i18nMW, h.Authorize)
 	router.POST("/oidc/token", h.Token)
+	router.GET("/oidc/token", h.Token)
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.POST("/oidc/introspect", h.Introspect)
 	router.GET("/oidc/jwks", h.JWKS)
@@ -175,8 +183,8 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	}
 
 	// 2. Try Body
-	bClientID := ctx.PostForm("client_id")
-	bClientSecret := ctx.PostForm("client_secret")
+	bClientID := formValue(ctx, "client_id")
+	bClientSecret := formValue(ctx, "client_secret")
 
 	if bClientID != "" || bClientSecret != "" {
 		if authSource != "" {
@@ -308,9 +316,9 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 
 // authenticateClientPrivateKeyJWT authenticates a client using the private_key_jwt method (RFC 7523).
 func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config.OIDCClient, bool) {
-	assertionType := ctx.PostForm("client_assertion_type")
-	assertion := ctx.PostForm("client_assertion")
-	clientID := ctx.PostForm("client_id")
+	assertionType := formValue(ctx, "client_assertion_type")
+	assertion := formValue(ctx, "client_assertion")
+	clientID := formValue(ctx, "client_id")
 
 	if assertionType == "" || assertion == "" {
 		return nil, false
@@ -502,13 +510,13 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
 	defer sp.End()
 
-	grantType := ctx.PostForm("grant_type")
+	grantType := formValue(ctx, "grant_type")
 
 	// Try private_key_jwt first if client_assertion is present
 	var client *config.OIDCClient
 	var ok bool
 
-	if ctx.PostForm("client_assertion") != "" {
+	if formValue(ctx, "client_assertion") != "" {
 		client, ok = h.authenticateClientPrivateKeyJWT(ctx)
 	} else {
 		client, ok = h.authenticateClient(ctx)

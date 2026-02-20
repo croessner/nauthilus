@@ -107,5 +107,11 @@
   "Device Authorized": "دستگاه مجاز شد",
   "Your device has been successfully authorized.": "دستگاه شما با موفقیت مجاز شد.",
   "You can close this window and return to your device.": "می‌توانید این پنجره را ببندید و به دستگاه خود بازگردید.",
-  "Missing required permission for MFA management": "مجوز لازم برای مدیریت MFA وجود ندارد"
+  "Missing required permission for MFA management": "مجوز لازم برای مدیریت MFA وجود ندارد",
+  "Failed to register TOTP": "ثبت TOTP ناموفق بود",
+  "Failed to generate recovery codes": "ایجاد کدهای بازیابی ناموفق بود",
+  "Failed to delete TOTP secret": "حذف رمز TOTP ناموفق بود",
+  "Failed to delete WebAuthn from Redis": "حذف WebAuthn از Redis ناموفق بود",
+  "Failed to delete credential": "حذف اعتبارنامه ناموفق بود",
+  "Failed to update credential": "به‌روزرسانی اعتبارنامه ناموفق بود"
 }

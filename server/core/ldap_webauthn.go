@@ -305,7 +305,7 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 			definitions.LogKeyError, ldapReply.Err,
 		)
 
-		return ldapReply.Err
+		return wrapLDAPModifyError(ldapReply.Err, "Failed to save WebAuthn credential")
 	}
 }
 
@@ -382,7 +382,7 @@ func (lm *ldapManagerImpl) DeleteWebAuthnCredential(auth *AuthState, credential 
 			return nil
 		}
 
-		return ldapReply.Err
+		return wrapLDAPModifyError(ldapReply.Err, "Failed to delete WebAuthn credential")
 	}
 }
 
@@ -499,7 +499,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (add phase)")
 	case ldapReply := <-ldapReplyChan:
 		if ldapReply.Err != nil {
-			return ldapReply.Err
+			return wrapLDAPModifyError(ldapReply.Err, "Failed to add new WebAuthn credential")
 		}
 	}
 
@@ -538,7 +538,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 			return nil
 		}
 
-		return ldapReply.Err
+		return wrapLDAPModifyError(ldapReply.Err, "Failed to delete old WebAuthn credential")
 	}
 }
 
@@ -570,7 +570,7 @@ func (lm *ldapManagerImpl) fetchObjectClasses(ctx context.Context, auth *AuthSta
 		return nil, errors.ErrLDAPSearchTimeout
 	case ldapReply := <-ldapReplyChan:
 		if ldapReply.Err != nil {
-			return nil, ldapReply.Err
+			return nil, wrapLDAPModifyError(ldapReply.Err, "Failed to fetch objectClasses")
 		}
 
 		if values, ok := ldapReply.Result["objectClass"]; ok {
@@ -649,7 +649,7 @@ func (lm *ldapManagerImpl) addObjectClass(ctx context.Context, auth *AuthState, 
 		return errors.ErrLDAPModify.WithDetail("LDAP modify timeout (objectClass phase)")
 	case ldapReply := <-ldapReplyChan:
 		if ldapReply.Err != nil && !isAttributeOrValueExistsError(ldapReply.Err) {
-			return ldapReply.Err
+			return wrapLDAPModifyError(ldapReply.Err, "Failed to add objectClass")
 		}
 	}
 
