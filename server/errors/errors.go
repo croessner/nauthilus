@@ -30,14 +30,29 @@ func (d *DetailedError) Error() string {
 	return d.err.Error()
 }
 
+// Unwrap returns the underlying error, enabling errors.Is to match copies
+// created by WithDetail/WithGUID/WithInstance against the original sentinel.
+func (d *DetailedError) Unwrap() error {
+	return d.err
+}
+
+// Is reports whether target matches this DetailedError. Two DetailedErrors match
+// when they share the same underlying error string, so copies produced by
+// WithDetail/WithGUID/WithInstance still match the original sentinel.
+func (d *DetailedError) Is(target error) bool {
+	if t, ok := target.(*DetailedError); ok {
+		return d.err.Error() == t.err.Error()
+	}
+
+	return false
+}
+
 func (d *DetailedError) WithGUID(guid string) *DetailedError {
 	if d == nil {
 		return nil
 	}
 
-	d.guid = guid
-
-	return d
+	return &DetailedError{err: d.err, guid: guid, details: d.details, instance: d.instance}
 }
 
 func (d *DetailedError) WithDetail(detail string) *DetailedError {
@@ -45,9 +60,7 @@ func (d *DetailedError) WithDetail(detail string) *DetailedError {
 		return nil
 	}
 
-	d.details = detail
-
-	return d
+	return &DetailedError{err: d.err, guid: d.guid, details: detail, instance: d.instance}
 }
 
 func (d *DetailedError) WithInstance(instance string) *DetailedError {
@@ -55,9 +68,7 @@ func (d *DetailedError) WithInstance(instance string) *DetailedError {
 		return nil
 	}
 
-	d.instance = instance
-
-	return d
+	return &DetailedError{err: d.err, guid: d.guid, details: d.details, instance: instance}
 }
 
 func (d *DetailedError) GetGUID() string {
@@ -79,7 +90,7 @@ func NewDetailedError(err string) *DetailedError {
 // auth.
 
 var (
-	ErrAllBackendConfigError                   = errors.New("configuration errors in all Database sections")
+	ErrAllBackendConfigError                   = NewDetailedError("configuration errors in all Database sections")
 	ErrUnsupportedMediaType                    = errors.New("unsupported media type")
 	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_server_monitoring not enabled")
 	ErrMonitoringBackendServersEmpty           = errors.New("no monitoring backend servers configured")

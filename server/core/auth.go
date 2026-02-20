@@ -1808,7 +1808,7 @@ func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 
 		// After all password databases were running,  check if SQL, LDAP and Lua  backends have configuration errors.
 		if passDBIndex == len(passDBs)-1 {
-			err = checkAllBackends(configErrors, auth)
+			err = checkAllBackends(configErrors, passDBs, auth)
 		}
 	} else {
 		level.Error(auth.logger()).Log(
@@ -1822,29 +1822,64 @@ func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 }
 
 // After all password databases were running, check if SQL, LDAP and Lua backends have configuration errors.
-func checkAllBackends(configErrors map[definitions.Backend]error, auth *AuthState) (err error) {
-	var allConfigErrors = true
+// A backend is considered "real" (non-cache) if it is not BackendCache. Only if every real backend
+// has a configuration error do we report ErrAllBackendConfigError.
+func checkAllBackends(configErrors map[definitions.Backend]error, passDBs []*PassDBMap, auth *AuthState) (err error) {
+	realBackends := 0
+	failedBackends := 0
 
-	for _, err = range configErrors {
-		if err == nil {
-			allConfigErrors = false
+	for _, pdb := range passDBs {
+		if pdb.backend == definitions.BackendCache {
+			continue
+		}
 
-			break
+		realBackends++
+
+		if cfgErr, exists := configErrors[pdb.backend]; exists && cfgErr != nil {
+			failedBackends++
 		}
 	}
 
-	// If all (real) Database backends failed, we must return with a temporary failure
-	if allConfigErrors {
-		err = errors.ErrAllBackendConfigError
+	// If all real Database backends failed, we must return with a temporary failure
+	if realBackends > 0 && failedBackends == realBackends {
+		details := collectConfigErrorDetails(configErrors)
+		err = errors.ErrAllBackendConfigError.WithDetail(details)
+
 		level.Error(auth.logger()).Log(
 			definitions.LogKeyGUID, auth.Runtime.GUID,
 			"passdb", "all",
 			definitions.LogKeyMsg, "All backends failed",
 			definitions.LogKeyError, err,
+			"details", details,
 		)
 	}
 
 	return err
+}
+
+// collectConfigErrorDetails builds a summary string from all backend configuration errors.
+func collectConfigErrorDetails(configErrors map[definitions.Backend]error) string {
+	var parts []string
+
+	for backend, cfgErr := range configErrors {
+		if cfgErr == nil {
+			continue
+		}
+
+		detail := cfgErr.Error()
+
+		if detailedErr, ok := stderrors.AsType[*errors.DetailedError](cfgErr); ok {
+			if d := detailedErr.GetDetails(); d != "" {
+				detail = d
+			}
+		}
+
+		parts = append(parts, fmt.Sprintf("%s: %s", backend, detail))
+	}
+
+	sort.Strings(parts)
+
+	return strings.Join(parts, "; ")
 }
 
 // ProcessPassDBResult updates the passDBResult based on the provided passDB
