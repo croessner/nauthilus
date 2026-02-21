@@ -113,5 +113,6 @@
   "Failed to delete TOTP secret": "Failed to delete TOTP secret",
   "Failed to delete WebAuthn from Redis": "Failed to delete WebAuthn from Redis",
   "Failed to delete credential": "Failed to delete credential",
-  "Failed to update credential": "Failed to update credential"
+  "Failed to update credential": "Failed to update credential",
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced."
 }

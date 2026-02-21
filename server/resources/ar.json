@@ -113,5 +113,6 @@
   "Failed to delete TOTP secret": "فشل حذف سر TOTP",
   "Failed to delete WebAuthn from Redis": "فشل حذف WebAuthn من Redis",
   "Failed to delete credential": "فشل حذف بيانات الاعتماد",
-  "Failed to update credential": "فشل تحديث بيانات الاعتماد"
+  "Failed to update credential": "فشل تحديث بيانات الاعتماد",
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "هل أنت متأكد أنك تريد إنشاء رموز استرداد جديدة؟ سيتم استبدال الرموز الحالية بشكل دائم."
 }

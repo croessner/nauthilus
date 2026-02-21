@@ -1,6 +1,6 @@
 {{ template "idp_header.html" . }}
 <div class="max-w-4xl mx-auto mt-10">
-    <div class="flex justify-between items-center mb-8">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-2">
         <h1 class="text-3xl font-bold idp-webauthn-title">{{ .Title }}</h1>
         <a class="btn btn-ghost idp-back-link" href="/mfa/register/home">{{ .BackTo2FA }}</a>
     </div>
@@ -10,48 +10,45 @@
             <h2 class="card-title">{{ .RegisteredDevices }}</h2>
 
             {{ if .Devices }}
-            <div class="overflow-x-auto">
-                <table class="table w-full table-fixed">
-                    <thead>
-                    <tr>
-                        <th>{{ .DeviceName }}</th>
-                        <th>{{ .DeviceID }}</th>
-                        <th>{{ .LastUsed }}</th>
-                        <th></th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {{ range .Devices }}
-                    <tr>
-                        <td>
-                            <form class="flex items-center gap-2" hx-post="/mfa/webauthn/device/{{ .ID }}/name"
-                                  hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
-                                  hx-target="#modal-container">
-                                <label>
-                                    <input class="input input-bordered input-sm flex-1 min-w-0 max-w-xs" maxlength="64"
-                                           name="name" placeholder="{{ $.UnnamedDevice }}" required type="text"
-                                           value="{{ .Name }}"/>
-                                </label>
-                                <button class="btn btn-primary btn-sm" type="submit">
-                                    {{ $.Save }}
-                                </button>
-                            </form>
-                        </td>
-                        <td class="font-mono text-sm break-all whitespace-normal max-w-xs">{{ .ID }}</td>
-                        <td>{{ .LastUsed }}</td>
-                        <td class="text-right">
-                            <button class="btn btn-error btn-sm btn-outline"
-                                    hx-confirm="{{ $.DeleteConfirm }}"
-                                    hx-delete="/mfa/webauthn/device/{{ .ID }}"
-                                    hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
-                                    hx-target="#modal-container">
-                                {{ $.Delete }}
-                            </button>
-                        </td>
-                    </tr>
-                    {{ end }}
-                    </tbody>
-                </table>
+            <div class="space-y-4 mt-4">
+                {{ range .Devices }}
+                <div class="border border-base-300 rounded-lg p-4">
+                    <!-- Row 1: Name + Save -->
+                    <form class="flex items-center gap-2" hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
+                          hx-post="/mfa/webauthn/device/{{ .ID }}/name"
+                          hx-target="#modal-container">
+                        <label class="flex-1">
+                            <input class="input input-bordered input-sm w-full" maxlength="64"
+                                   name="name" placeholder="{{ $.UnnamedDevice }}" required type="text"
+                                   value="{{ .Name }}"/>
+                        </label>
+                        <button class="btn btn-primary btn-sm flex-shrink-0" type="submit">
+                            {{ $.Save }}
+                        </button>
+                    </form>
+
+                    <!-- Row 2: Device ID -->
+                    <div class="mt-2">
+                        <span class="text-xs opacity-60">{{ $.DeviceID }}:</span>
+                        <span class="font-mono text-xs break-all">{{ .ID }}</span>
+                    </div>
+
+                    <!-- Row 3: Last Used + Delete -->
+                    <div class="flex items-center justify-between mt-2">
+                        <span class="text-sm">
+                            <span class="opacity-60">{{ $.LastUsed }}:</span>
+                            {{ .LastUsed }}
+                        </span>
+                        <button class="btn btn-error btn-sm btn-outline flex-shrink-0"
+                                hx-confirm="{{ $.DeleteConfirm }}"
+                                hx-delete="/mfa/webauthn/device/{{ .ID }}"
+                                hx-headers='{"X-CSRF-Token": "{{ $.CSRFToken }}"}'
+                                hx-target="#modal-container">
+                            {{ $.Delete }}
+                        </button>
+                    </div>
+                </div>
+                {{ end }}
             </div>
             {{ else }}
             <p>{{ .NoDevicesFound }}</p>

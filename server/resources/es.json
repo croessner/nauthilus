@@ -113,5 +113,6 @@
   "Failed to delete TOTP secret": "Error al eliminar el secreto TOTP",
   "Failed to delete WebAuthn from Redis": "Error al eliminar WebAuthn de Redis",
   "Failed to delete credential": "Error al eliminar la credencial",
-  "Failed to update credential": "Error al actualizar la credencial"
+  "Failed to update credential": "Error al actualizar la credencial",
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "¿Está seguro de que desea generar nuevos códigos de recuperación? Los códigos existentes se reemplazarán de forma permanente."
 }
