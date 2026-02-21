@@ -310,6 +310,70 @@ func TestSAML2ServiceProvider_GetCert(t *testing.T) {
 	})
 }
 
+func TestWebAuthn_GetAuthenticatorAttachment(t *testing.T) {
+	tests := []struct {
+		name string
+		w    *WebAuthn
+		want string
+	}{
+		{name: "nil receiver", w: nil, want: ""},
+		{name: "empty value", w: &WebAuthn{}, want: ""},
+		{name: "platform", w: &WebAuthn{AuthenticatorAttachment: "platform"}, want: "platform"},
+		{name: "cross-platform", w: &WebAuthn{AuthenticatorAttachment: "cross-platform"}, want: "cross-platform"},
+		{name: "uppercase normalized", w: &WebAuthn{AuthenticatorAttachment: "Platform"}, want: "platform"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.w.GetAuthenticatorAttachment())
+		})
+	}
+}
+
+func TestWebAuthn_GetResidentKey(t *testing.T) {
+	tests := []struct {
+		name string
+		w    *WebAuthn
+		want string
+	}{
+		{name: "nil receiver", w: nil, want: "discouraged"},
+		{name: "empty defaults to discouraged", w: &WebAuthn{}, want: "discouraged"},
+		{name: "discouraged", w: &WebAuthn{ResidentKey: "discouraged"}, want: "discouraged"},
+		{name: "preferred", w: &WebAuthn{ResidentKey: "preferred"}, want: "preferred"},
+		{name: "required", w: &WebAuthn{ResidentKey: "required"}, want: "required"},
+		{name: "invalid defaults to discouraged", w: &WebAuthn{ResidentKey: "bogus"}, want: "discouraged"},
+		{name: "uppercase normalized", w: &WebAuthn{ResidentKey: "Required"}, want: "required"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.w.GetResidentKey())
+		})
+	}
+}
+
+func TestWebAuthn_GetUserVerification(t *testing.T) {
+	tests := []struct {
+		name string
+		w    *WebAuthn
+		want string
+	}{
+		{name: "nil receiver", w: nil, want: "preferred"},
+		{name: "empty defaults to preferred", w: &WebAuthn{}, want: "preferred"},
+		{name: "discouraged", w: &WebAuthn{UserVerification: "discouraged"}, want: "discouraged"},
+		{name: "preferred", w: &WebAuthn{UserVerification: "preferred"}, want: "preferred"},
+		{name: "required", w: &WebAuthn{UserVerification: "required"}, want: "required"},
+		{name: "invalid defaults to preferred", w: &WebAuthn{UserVerification: "bogus"}, want: "preferred"},
+		{name: "uppercase normalized", w: &WebAuthn{UserVerification: "Discouraged"}, want: "discouraged"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.w.GetUserVerification())
+		})
+	}
+}
+
 func TestIdPConfig_WarnUnsupported(t *testing.T) {
 	t.Run("OIDC unsupported", func(t *testing.T) {
 		cfg := &OIDCConfig{

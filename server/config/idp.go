@@ -57,9 +57,12 @@ func (i *IdPSection) warnUnsupported() []string {
 
 // WebAuthn represents the configuration for WebAuthn.
 type WebAuthn struct {
-	RPDisplayName string   `mapstructure:"rp_display_name"`
-	RPID          string   `mapstructure:"rp_id"`
-	RPOrigins     []string `mapstructure:"rp_origins"`
+	RPDisplayName           string   `mapstructure:"rp_display_name"`
+	RPID                    string   `mapstructure:"rp_id"`
+	RPOrigins               []string `mapstructure:"rp_origins"`
+	AuthenticatorAttachment string   `mapstructure:"authenticator_attachment" validate:"omitempty,oneof=platform cross-platform"`
+	ResidentKey             string   `mapstructure:"resident_key" validate:"omitempty,oneof=discouraged preferred required"`
+	UserVerification        string   `mapstructure:"user_verification" validate:"omitempty,oneof=discouraged preferred required"`
 }
 
 func (w *WebAuthn) String() string {
@@ -67,7 +70,52 @@ func (w *WebAuthn) String() string {
 		return "WebAuthn: <nil>"
 	}
 
-	return fmt.Sprintf("WebAuthn: {RPDisplayName:%s RPID:%s RPOrigins:%v}", w.RPDisplayName, w.RPID, w.RPOrigins)
+	return fmt.Sprintf("WebAuthn: {RPDisplayName:%s RPID:%s RPOrigins:%v AuthenticatorAttachment:%s ResidentKey:%s UserVerification:%s}",
+		w.RPDisplayName, w.RPID, w.RPOrigins, w.AuthenticatorAttachment, w.ResidentKey, w.UserVerification)
+}
+
+// GetAuthenticatorAttachment returns the configured authenticator attachment preference.
+// Valid values are "platform" and "cross-platform". An empty string means no preference.
+func (w *WebAuthn) GetAuthenticatorAttachment() string {
+	if w == nil {
+		return ""
+	}
+
+	return strings.ToLower(w.AuthenticatorAttachment)
+}
+
+// GetResidentKey returns the configured resident key requirement.
+// Valid values are "discouraged", "preferred", and "required". Defaults to "discouraged".
+func (w *WebAuthn) GetResidentKey() string {
+	if w == nil {
+		return "discouraged"
+	}
+
+	value := strings.ToLower(w.ResidentKey)
+
+	switch value {
+	case "discouraged", "preferred", "required":
+		return value
+	default:
+		return "discouraged"
+	}
+}
+
+// GetUserVerification returns the configured user verification requirement.
+// Valid values are "discouraged", "preferred", and "required". Defaults to "preferred".
+func (w *WebAuthn) GetUserVerification() string {
+	if w == nil {
+		return "preferred"
+	}
+
+	value := strings.ToLower(w.UserVerification)
+
+	switch value {
+	case "discouraged", "preferred", "required":
+		return value
+	default:
+		return "preferred"
+	}
 }
 
 // OIDCConfig represents the configuration for OpenID Connect.

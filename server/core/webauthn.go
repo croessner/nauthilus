@@ -270,10 +270,7 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			auth.(*AuthState).putUser(user)
 		}
 
-		authSelect := protocol.AuthenticatorSelection{
-			RequireResidentKey: protocol.ResidentKeyNotRequired(),
-			UserVerification:   protocol.VerificationPreferred,
-		}
+		authSelect := buildAuthenticatorSelection(deps.Cfg)
 
 		conveyancePref := protocol.PreferNoAttestation
 
@@ -859,6 +856,56 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		ctx.JSON(http.StatusOK, "Login success")
+	}
+}
+
+// buildAuthenticatorSelection constructs the protocol.AuthenticatorSelection from the
+// WebAuthn configuration. It maps string-based config values to their protocol equivalents.
+func buildAuthenticatorSelection(cfg config.File) protocol.AuthenticatorSelection {
+	webAuthnCfg := cfg.GetIdP().WebAuthn
+
+	authSelect := protocol.AuthenticatorSelection{
+		UserVerification: mapUserVerification(webAuthnCfg.GetUserVerification()),
+		ResidentKey:      mapResidentKey(webAuthnCfg.GetResidentKey()),
+	}
+
+	switch webAuthnCfg.GetAuthenticatorAttachment() {
+	case "platform":
+		authSelect.AuthenticatorAttachment = protocol.Platform
+	case "cross-platform":
+		authSelect.AuthenticatorAttachment = protocol.CrossPlatform
+	}
+
+	if authSelect.ResidentKey == protocol.ResidentKeyRequirementRequired {
+		authSelect.RequireResidentKey = protocol.ResidentKeyRequired()
+	} else {
+		authSelect.RequireResidentKey = protocol.ResidentKeyNotRequired()
+	}
+
+	return authSelect
+}
+
+// mapResidentKey converts a string resident key requirement to the protocol type.
+func mapResidentKey(value string) protocol.ResidentKeyRequirement {
+	switch value {
+	case "preferred":
+		return protocol.ResidentKeyRequirementPreferred
+	case "required":
+		return protocol.ResidentKeyRequirementRequired
+	default:
+		return protocol.ResidentKeyRequirementDiscouraged
+	}
+}
+
+// mapUserVerification converts a string user verification requirement to the protocol type.
+func mapUserVerification(value string) protocol.UserVerificationRequirement {
+	switch value {
+	case "discouraged":
+		return protocol.VerificationDiscouraged
+	case "required":
+		return protocol.VerificationRequired
+	default:
+		return protocol.VerificationPreferred
 	}
 }
 
