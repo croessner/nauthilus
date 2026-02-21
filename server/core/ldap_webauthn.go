@@ -55,13 +55,13 @@ func (lm *ldapManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials 
 	}
 
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(protocolName, lm.poolName)
-	if err != nil || protocol == nil {
-		if err == nil {
-			err = errors.ErrLDAPConfig.WithDetail(
-				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", protocolName))
-		}
-
+	if err != nil {
 		return nil, err
+	}
+
+	// This pool does not handle the requested protocol — gracefully return empty.
+	if protocol == nil {
+		return []mfa.PersistentCredential{}, nil
 	}
 
 	credentialField := protocol.GetWebAuthnCredentialField()
@@ -602,18 +602,22 @@ func hasRequiredObjectClass(objectClass string, currentObjectClasses []string) b
 func (lm *ldapManagerImpl) webAuthnProtocolAndField(auth *AuthState) (*config.LDAPSearchProtocol, string, error) {
 	protocolName := auth.Request.Protocol.Get()
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(protocolName, lm.poolName)
-	if err != nil || protocol == nil {
-		if err == nil {
-			err = errors.ErrLDAPConfig.WithDetail(
-				fmt.Sprintf("Missing LDAP search protocol; protocol=%s", protocolName))
-		}
 
+	if err != nil {
 		return nil, "", err
+	}
+
+	// This pool does not handle the requested protocol — signal a config mismatch
+	// so the caller can skip to the next backend.
+	if protocol == nil {
+		return nil, "", errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("Pool %q has no search protocol for %q", lm.poolName, protocolName))
 	}
 
 	credentialField := protocol.GetWebAuthnCredentialField()
 	if credentialField == "" {
-		return nil, "", errors.ErrLDAPConfig.WithDetail("Missing LDAP webauthn_credential_field mapping")
+		return nil, "", errors.ErrLDAPConfig.WithDetail(
+			fmt.Sprintf("Pool %q: missing webauthn_credential_field for protocol %q", lm.poolName, protocolName))
 	}
 
 	return protocol, credentialField, nil

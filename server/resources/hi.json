@@ -113,5 +113,6 @@
   "Failed to delete TOTP secret": "TOTP रहस्य हटाना विफल",
   "Failed to delete WebAuthn from Redis": "Redis से WebAuthn हटाना विफल",
   "Failed to delete credential": "प्रमाण पत्र हटाना विफल",
-  "Failed to update credential": "प्रमाण पत्र अपडेट करना विफल"
+  "Failed to update credential": "प्रमाण पत्र अपडेट करना विफल",
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "क्या आप वाकई नए रिकवरी कोड जनरेट करना चाहते हैं? मौजूदा कोड स्थायी रूप से बदल दिए जाएंगे।"
 }

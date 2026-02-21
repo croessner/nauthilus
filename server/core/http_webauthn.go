@@ -75,6 +75,9 @@ func (b DefaultBootstrap) InitWebAuthn() error {
 		"rp_id", rpID,
 		"rp_display_name", idpCfg.WebAuthn.RPDisplayName,
 		"rp_origins", origins,
+		"authenticator_attachment", idpCfg.WebAuthn.GetAuthenticatorAttachment(),
+		"resident_key", idpCfg.WebAuthn.GetResidentKey(),
+		"user_verification", idpCfg.WebAuthn.GetUserVerification(),
 		"oidc_issuer", idpCfg.OIDC.Issuer,
 		"dev_mode", b.env.GetDevMode(),
 	)

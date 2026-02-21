@@ -113,5 +113,6 @@
   "Failed to delete TOTP secret": "删除TOTP密钥失败",
   "Failed to delete WebAuthn from Redis": "从Redis删除WebAuthn失败",
   "Failed to delete credential": "删除凭据失败",
-  "Failed to update credential": "更新凭据失败"
+  "Failed to update credential": "更新凭据失败",
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "您确定要生成新的恢复代码吗？现有代码将被永久替换。"
 }

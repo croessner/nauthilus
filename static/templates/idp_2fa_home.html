@@ -67,6 +67,7 @@
                 {{ end }}
                 <div class="card-actions justify-end mt-4">
                     <button class="btn btn-secondary"
+                            hx-confirm="{{ .GenerateRecoveryCodesConfirm }}"
                             hx-post="/mfa/recovery/generate"
                             hx-target="#modal-container"
                             hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}'
