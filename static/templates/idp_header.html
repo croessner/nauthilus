@@ -82,7 +82,41 @@
         [data-theme='light'] .theme-icon-dark {
             display: block;
         }
+
+        /* 2FA buttons: consistent width on narrow screens */
+        @media (max-width: 640px) {
+            .card-actions .btn {
+                width: 100%;
+                text-align: center;
+            }
+        }
+
+        /* Language dropdown toggle support */
+        #lang-dropdown:not(.dropdown-open) #lang-menu {
+            display: none;
+        }
+
+        #lang-dropdown.dropdown-open #lang-menu {
+            display: block;
+        }
     </style>
+    <script>
+        function toggleLangDropdown(event) {
+            event.stopPropagation();
+
+            const dropdown = document.getElementById('lang-dropdown');
+
+            dropdown.classList.toggle('dropdown-open');
+        }
+
+        document.addEventListener('click', function (event) {
+            const dropdown = document.getElementById('lang-dropdown');
+
+            if (dropdown && !dropdown.contains(event.target)) {
+                dropdown.classList.remove('dropdown-open');
+            }
+        });
+    </script>
     {{ if .DevMode }}
     <script>
         htmx.logAll();
@@ -115,14 +149,15 @@
                       stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
             </svg>
         </button>
-        <div class="dropdown dropdown-end mr-4">
-            <label class="btn btn-ghost" tabindex="0">
+        <div class="dropdown dropdown-end mr-4" id="lang-dropdown">
+            <label class="btn btn-ghost" onclick="toggleLangDropdown(event)" tabindex="0">
                 {{ .LanguageCurrentName }}
                 <svg class="fill-current" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
                     <path d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
                 </svg>
             </label>
-            <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52" tabindex="0">
+            <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52" id="lang-menu"
+                tabindex="0">
                 {{ range .LanguagePassive }}
                 <li><a href="{{ .LanguageLink }}">{{ .LanguageName }}</a></li>
                 {{ end }}
