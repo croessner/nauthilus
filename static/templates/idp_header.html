@@ -82,7 +82,125 @@
         [data-theme='light'] .theme-icon-dark {
             display: block;
         }
+
+        /* Navbar: mobile layout – burger menu left, logo center, controls right */
+        @media (max-width: 640px) {
+            .navbar {
+                flex-wrap: wrap;
+                justify-content: center;
+                position: relative;
+            }
+
+            .navbar .flex-1 {
+                flex: 0 1 auto;
+                justify-content: center;
+                width: 100%;
+                order: 1;
+            }
+
+            .navbar .navbar-controls {
+                justify-content: flex-end;
+                order: 2;
+                width: 100%;
+            }
+
+            .navbar .navbar-burger {
+                margin-right: auto;
+            }
+        }
+
+        /* Hide burger icon on wide screens, show on narrow */
+        .navbar-burger {
+            display: none;
+        }
+
+        @media (max-width: 640px) {
+            .navbar-burger {
+                display: flex;
+            }
+
+            /* Hide the user menu in the right controls area on mobile */
+            .navbar-controls .navbar-user-desktop {
+                display: none;
+            }
+        }
+
+        /* On wide screens hide the burger menu */
+        @media (min-width: 641px) {
+            .navbar-burger {
+                display: none;
+            }
+        }
+
+        /* Burger dropdown menu */
+        #burger-dropdown {
+            position: relative;
+        }
+
+        #burger-dropdown:not(.dropdown-open) #burger-menu {
+            display: none;
+        }
+
+        #burger-dropdown.dropdown-open #burger-menu {
+            display: block;
+            position: absolute;
+            top: 100%;
+            left: 0;
+        }
+
+        /* 2FA buttons: consistent width and centering on narrow and medium screens */
+        @media (max-width: 1024px) {
+            .card-actions {
+                justify-content: center !important;
+            }
+
+            .card-actions .btn {
+                width: 100%;
+                max-width: 100%;
+                text-align: center;
+            }
+        }
+
+        /* Language dropdown toggle support */
+        #lang-dropdown:not(.dropdown-open) #lang-menu {
+            display: none;
+        }
+
+        #lang-dropdown.dropdown-open #lang-menu {
+            display: block;
+        }
     </style>
+    <script>
+        function toggleLangDropdown(event) {
+            event.stopPropagation();
+
+            const dropdown = document.getElementById('lang-dropdown');
+
+            dropdown.classList.toggle('dropdown-open');
+        }
+
+        document.addEventListener('click', function (event) {
+            const langDropdown = document.getElementById('lang-dropdown');
+
+            if (langDropdown && !langDropdown.contains(event.target)) {
+                langDropdown.classList.remove('dropdown-open');
+            }
+
+            const burgerDropdown = document.getElementById('burger-dropdown');
+
+            if (burgerDropdown && !burgerDropdown.contains(event.target)) {
+                burgerDropdown.classList.remove('dropdown-open');
+            }
+        });
+
+        function toggleBurgerDropdown(event) {
+            event.stopPropagation();
+
+            const dropdown = document.getElementById('burger-dropdown');
+
+            dropdown.classList.toggle('dropdown-open');
+        }
+    </script>
     {{ if .DevMode }}
     <script>
         htmx.logAll();
@@ -102,7 +220,22 @@
             Nauthilus IdP
         </a>
     </div>
-    <div class="flex-none">
+    <div class="flex-none navbar-controls">
+        {{ if .Username }}
+        <div class="navbar-burger" id="burger-dropdown">
+            <button class="btn btn-ghost btn-circle" onclick="toggleBurgerDropdown(event)" title="Menu">
+                <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                </svg>
+            </button>
+            <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52"
+                id="burger-menu">
+                <li><a href="/mfa/register/home">2FA Verwaltung</a></li>
+                <li><a href="/oidc/logout">Logout</a></li>
+            </ul>
+        </div>
+        {{ end }}
         <button class="btn btn-ghost btn-circle mr-2" onclick="toggleTheme()" title="Toggle Theme">
             <svg class="theme-icon-dark h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                  xmlns="http://www.w3.org/2000/svg">
@@ -115,21 +248,22 @@
                       stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
             </svg>
         </button>
-        <div class="dropdown dropdown-end mr-4">
-            <label class="btn btn-ghost" tabindex="0">
+        <div class="dropdown dropdown-end mr-4" id="lang-dropdown">
+            <label class="btn btn-ghost" onclick="toggleLangDropdown(event)" tabindex="0">
                 {{ .LanguageCurrentName }}
                 <svg class="fill-current" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
                     <path d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
                 </svg>
             </label>
-            <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52" tabindex="0">
+            <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52" id="lang-menu"
+                tabindex="0">
                 {{ range .LanguagePassive }}
                 <li><a href="{{ .LanguageLink }}">{{ .LanguageName }}</a></li>
                 {{ end }}
             </ul>
         </div>
         {{ if .Username }}
-        <div class="dropdown dropdown-end">
+        <div class="dropdown dropdown-end navbar-user-desktop">
             <label class="btn btn-ghost btn-circle avatar" tabindex="0">
                 <div class="w-10 rounded-full bg-primary text-primary-content flex items-center justify-center">
                     <span class="text-xl font-bold">{{ slice .Username 0 1 | upper }}</span>
