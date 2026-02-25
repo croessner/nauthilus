@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -147,19 +148,17 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 			return true, rbl.Name, nil
 		}
 
-		for _, returnCode := range rbl.GetReturnCodes() {
-			if result.String() == returnCode {
-				util.DebugModuleWithCfg(
-					ctx.Request.Context(),
-					a.Cfg(),
-					a.Logger(),
-					definitions.DbgRBL,
-					definitions.LogKeyGUID, guid,
-					"query", query, "result", result.String(), "rbl", rbl.GetName(),
-				)
+		if slices.Contains(rbl.GetReturnCodes(), result.String()) {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				a.Cfg(),
+				a.Logger(),
+				definitions.DbgRBL,
+				definitions.LogKeyGUID, guid,
+				"query", query, "result", result.String(), "rbl", rbl.GetName(),
+			)
 
-				return true, rbl.Name, nil
-			}
+			return true, rbl.Name, nil
 		}
 	}
 

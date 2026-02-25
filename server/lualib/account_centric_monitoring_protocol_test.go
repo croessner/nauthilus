@@ -80,7 +80,7 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 			keys := L.CheckTable(4)
 			L.SetGlobal("last_keys", keys)
 			res := L.NewTable()
-			for i := 0; i < 9; i++ {
+			for range 9 {
 				res.Append(lua.LNumber(0))
 			}
 			L.Push(res)

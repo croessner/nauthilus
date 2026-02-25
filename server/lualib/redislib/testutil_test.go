@@ -18,6 +18,7 @@ package redislib
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -117,20 +118,21 @@ func runMultiValueRedisTests(t *testing.T, luaCmd string, tests []multiValueRedi
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			luaCode := fmt.Sprintf(
+			var luaCode strings.Builder
+			luaCode.WriteString(fmt.Sprintf(
 				`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.%s("default", key`,
 				luaCmd,
-			)
+			))
 
 			for i, val := range tt.values {
 				varName := fmt.Sprintf("value%d", i)
 				L.SetGlobal(varName, val)
-				luaCode += ", " + varName
+				luaCode.WriteString(", " + varName)
 			}
 
-			luaCode += ")"
+			luaCode.WriteString(")")
 
-			if err := L.DoString(luaCode); err != nil {
+			if err := L.DoString(luaCode.String()); err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
 

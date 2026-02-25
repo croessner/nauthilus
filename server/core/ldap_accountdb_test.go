@@ -39,7 +39,6 @@ func TestLDAPAccountDB_SkipsMissingProtocolOrFilter(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			mcfg := new(mockConfig)
 			mcfg.On("GetLDAPSearchProtocol", definitions.ProtoAccountProvider, "test").Return(testCase.protocol, nil)

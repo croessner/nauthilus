@@ -18,6 +18,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -510,13 +511,7 @@ func (c *OIDCClient) SupportsGrantType(grantType string) bool {
 		return false
 	}
 
-	for _, gt := range c.GetGrantTypes() {
-		if gt == grantType {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(c.GetGrantTypes(), grantType)
 }
 
 // GetClientPublicKey returns the client's public key content (inline or from file).

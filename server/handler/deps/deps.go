@@ -32,8 +32,7 @@ import (
 // Services defines the transport-agnostic business endpoints that HTTP handlers
 // depend on. Each method returns a gin.HandlerFunc to keep registration code
 // unchanged while allowing a clean DI seam.
-type Services interface {
-}
+type Services any
 
 // DefaultServices is the default implementation that delegates to core package handlers.
 type DefaultServices struct {

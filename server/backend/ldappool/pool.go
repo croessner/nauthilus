@@ -133,10 +133,7 @@ func (l *ldapPoolImpl) StartHouseKeeper() {
 			l.closeIdleConnections(openConnections)
 			openAfter := l.determineOpenConnections()
 
-			closed := openBefore - openAfter
-			if closed < 0 {
-				closed = 0
-			}
+			closed := max(openBefore-openAfter, 0)
 
 			// needClosing based on current policy
 			needClosing := max(openConnections-l.idlePoolSize, 0)
@@ -1596,10 +1593,7 @@ func jitterBackoffDuration(base time.Duration, attempt int, max time.Duration) t
 		max = 2 * time.Second
 	}
 
-	b := base * time.Duration(1<<attempt)
-	if b > max {
-		b = max
-	}
+	b := min(base*time.Duration(1<<attempt), max)
 
 	if b <= 0 {
 		return 0

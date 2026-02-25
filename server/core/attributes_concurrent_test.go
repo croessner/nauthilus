@@ -35,7 +35,7 @@ func TestAuthState_Attributes_Concurrent(t *testing.T) {
 	a.Attributes.attributesMu.Lock()
 	a.Attributes.Attributes = make(bktype.AttributeMapping)
 
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		key := testKeyName(i)
 		a.Attributes.Attributes[key] = []any{i}
 	}

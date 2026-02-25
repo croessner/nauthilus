@@ -396,7 +396,7 @@ func enableClientTracking(ctx context.Context, cn *redis.Conn, ct *config.RedisC
 }
 
 // buildClientTrackingArgs builds arguments slice for CLIENT TRACKING ON
-func buildClientTrackingArgs(ct *config.RedisClientTracking) []interface{} {
+func buildClientTrackingArgs(ct *config.RedisClientTracking) []any {
 	args := []any{"client", "tracking", "on"}
 
 	if ct == nil {

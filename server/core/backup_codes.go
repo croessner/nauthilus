@@ -30,7 +30,7 @@ const (
 // GenerateBackupCodes generates a new set of backup codes.
 func GenerateBackupCodes() (*mfa.TOTPRecovery, error) {
 	codes := make([]string, DefaultNumberOfBackupCodes)
-	for i := 0; i < DefaultNumberOfBackupCodes; i++ {
+	for i := range DefaultNumberOfBackupCodes {
 		code, err := util.GenerateRandomString(DefaultBackupCodeLength)
 		if err != nil {
 			return nil, err

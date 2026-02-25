@@ -18,6 +18,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -477,14 +478,7 @@ func (b *BruteForceRule) MatchesContext(protocol string, oidcCID string, ip net.
 
 	// Protocol filter
 	if len(b.FilterByProtocol) > 0 && protocol != "" {
-		matched := false
-		for _, p := range b.FilterByProtocol {
-			if p == protocol {
-				matched = true
-
-				break
-			}
-		}
+		matched := slices.Contains(b.FilterByProtocol, protocol)
 
 		if !matched {
 			return false
@@ -493,14 +487,7 @@ func (b *BruteForceRule) MatchesContext(protocol string, oidcCID string, ip net.
 
 	// OIDC filter
 	if len(b.FilterByOIDCCID) > 0 && oidcCID != "" {
-		matched := false
-		for _, cid := range b.FilterByOIDCCID {
-			if cid == oidcCID {
-				matched = true
-
-				break
-			}
-		}
+		matched := slices.Contains(b.FilterByOIDCCID, oidcCID)
 
 		if !matched {
 			return false

@@ -20,6 +20,7 @@ import (
 	stderrs "errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -407,9 +408,7 @@ func (m *FilterBackendManager) applyBackendResult(L *lua.LState) int {
 	}
 
 	// Merge attributes (overwrite on conflict)
-	for k, v := range luaBackendResult.Attributes {
-		(*m.backendResult).Attributes[k] = v
-	}
+	maps.Copy((*m.backendResult).Attributes, luaBackendResult.Attributes)
 
 	return 0
 }
@@ -434,13 +433,9 @@ func (m *FilterBackendManager) removeFromBackendResult(L *lua.LState) int {
 func mergeMaps(m1, m2 map[any]any) map[any]any {
 	result := make(map[any]any)
 
-	for k, v := range m1 {
-		result[k] = v
-	}
+	maps.Copy(result, m1)
 
-	for k, v := range m2 {
-		result[k] = v
-	}
+	maps.Copy(result, m2)
 
 	return result
 }

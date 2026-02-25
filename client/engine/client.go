@@ -64,8 +64,8 @@ func (c *AuthClient) BaseHeader() http.Header {
 	h := make(http.Header)
 
 	if c.config.HeadersList != "" {
-		pairs := strings.Split(c.config.HeadersList, "||")
-		for _, p := range pairs {
+		pairs := strings.SplitSeq(c.config.HeadersList, "||")
+		for p := range pairs {
 			kv := strings.SplitN(p, ":", 2)
 			if len(kv) == 2 {
 				h.Set(strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))
@@ -102,10 +102,7 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 	defer reqCancel()
 
 	if c.config.AbortProb > 0 && rand.Float64() < c.config.AbortProb {
-		maxMs := c.config.TimeoutMs / 2
-		if maxMs < 1 {
-			maxMs = 1
-		}
+		maxMs := max(c.config.TimeoutMs/2, 1)
 		d := time.Duration(rand.IntN(maxMs+1)) * time.Millisecond
 		time.AfterFunc(d, reqCancel)
 	}
@@ -142,8 +139,8 @@ func (c *AuthClient) DoRequest(ctx context.Context, row Row) (ok bool, isMatch b
 
 	// Add headers
 	if c.config.HeadersList != "" {
-		pairs := strings.Split(c.config.HeadersList, "||")
-		for _, p := range pairs {
+		pairs := strings.SplitSeq(c.config.HeadersList, "||")
+		for p := range pairs {
 			kv := strings.SplitN(p, ":", 2)
 			if len(kv) == 2 {
 				req.Header.Set(strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1]))

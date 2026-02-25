@@ -46,7 +46,7 @@ func hasClientConsent(mgr cookie.Manager, clientID string) bool {
 		return false
 	}
 
-	for _, id := range strings.Split(oidcClients, ",") {
+	for id := range strings.SplitSeq(oidcClients, ",") {
 		if id == clientID {
 			return true
 		}
@@ -65,7 +65,7 @@ func addClientToCookie(mgr cookie.Manager, clientID string) {
 	oidcClients := mgr.GetString(definitions.SessionKeyOIDCClients, "")
 
 	if oidcClients != "" {
-		for _, id := range strings.Split(oidcClients, ",") {
+		for id := range strings.SplitSeq(oidcClients, ",") {
 			if id == clientID {
 				return
 			}

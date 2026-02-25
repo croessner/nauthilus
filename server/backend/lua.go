@@ -151,10 +151,7 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, re
 
 	var wg sync.WaitGroup
 	for i := 0; i < numberOfWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -170,7 +167,7 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, re
 
 				handleLuaRequest(ctx, cfg, logger, redisClient, luaRequest, compiledScript, vmPool)
 			}
-		}()
+		})
 	}
 
 	go func() {

@@ -31,7 +31,7 @@ var (
 // SetPassDBResultPoolNewFunc sets the new function for the global PassDBResultPool instance
 // This function must be called before GetPassDBResultPool is called for the first time
 // It is typically called during application initialization
-func SetPassDBResultPoolNewFunc(newFunc func() interface{}) {
+func SetPassDBResultPoolNewFunc(newFunc func() any) {
 	passDBResultPoolOnce.Do(func() {
 		passDBResultPoolInstance = NewPassDBResultPool(newFunc)
 	})

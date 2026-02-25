@@ -35,7 +35,7 @@ func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 	clientIP := "1.2.3.4"
 
 	// Trigger 5 failures on /metrics
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		w := httptest.NewRecorder()
 		router := gin.New()
 		router.GET("/metrics", func(c *gin.Context) {
@@ -70,7 +70,7 @@ func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 
 	// However, failures on another path SHOULD lead to throttling
 	// First, trigger 5 failures on another path
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		w := httptest.NewRecorder()
 		router := gin.New()
 		router.GET("/other", func(c *gin.Context) {

@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -88,12 +89,12 @@ func TestRedisPFAdd(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			valueStr := ""
+			var valueStr strings.Builder
 			for _, v := range tt.values {
-				valueStr += fmt.Sprintf(", %s", formatLuaValue(v))
+				valueStr.WriteString(fmt.Sprintf(", %s", formatLuaValue(v)))
 			}
 
-			if err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_pfadd("default", key%s)`, valueStr)); err != nil {
+			if err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_pfadd("default", key%s)`, valueStr.String())); err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
 

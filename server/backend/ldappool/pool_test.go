@@ -174,9 +174,7 @@ func TestHandleLookupRequest(t *testing.T) {
 				}
 			}
 
-			ctx, cancel := context.WithCancel(context.Background())
-
-			defer cancel()
+			ctx := t.Context()
 
 			dummyLDAPConf := make([]*config.LDAPConf, 0)
 			dummyLDAPConf = append(dummyLDAPConf, &config.LDAPConf{})
@@ -193,7 +191,7 @@ func TestHandleLookupRequest(t *testing.T) {
 			}
 
 			// Prefill tokens to simulate available capacity equal to poolSize
-			for i := 0; i < len(mockConns); i++ {
+			for range mockConns {
 				pool.tokens <- Token{}
 			}
 
@@ -231,8 +229,7 @@ func TestSemaphoreTimeout(t *testing.T) {
 		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{ConnectAbortTimeout: 100 * time.Millisecond}},
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// One connection that sleeps to hold the token
 	mockConns := []LDAPConnection{
@@ -264,8 +261,7 @@ func TestSemaphoreTimeout(t *testing.T) {
 func TestNegativeCacheKeyUsesExpandedFilter(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	conf := &config.LDAPConf{NegativeCacheTTL: 5 * time.Minute}
 

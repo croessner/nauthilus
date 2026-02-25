@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -164,8 +165,8 @@ func (l CustomLocation) GetScript(location, method string) *PrecompiledLuaScript
 	}
 
 	// If not found and location has a leading slash, try without it
-	if strings.HasPrefix(location, "/") {
-		if hook := l.GetCustomHook(strings.TrimPrefix(location, "/")); hook != nil {
+	if after, ok := strings.CutPrefix(location, "/"); ok {
+		if hook := l.GetCustomHook(after); hook != nil {
 			if script := hook.GetScript(method); script != nil {
 				return script
 			}
@@ -386,14 +387,7 @@ func PreCompileLuaScript(cfg config.File, filePath string) (err error) {
 
 	for luaScriptName := range LuaScripts {
 		// Check if this script is one of the init scripts
-		isInitScript := false
-		for _, initScriptPath := range initScriptPaths {
-			if luaScriptName == initScriptPath {
-				isInitScript = true
-
-				break
-			}
-		}
+		isInitScript := slices.Contains(initScriptPaths, luaScriptName)
 
 		// If it's not an init script and has no compiled script, delete it
 		if !isInitScript {

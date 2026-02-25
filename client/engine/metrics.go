@@ -273,8 +273,8 @@ func deriveMetricsURL(apiURL string) string {
 	}
 	// /api/v1/auth/json -> /metrics
 	path := u.Path
-	if idx := strings.Index(path, "/api/"); idx != -1 {
-		u.Path = path[:idx] + "/metrics"
+	if before, _, ok := strings.Cut(path, "/api/"); ok {
+		u.Path = before + "/metrics"
 	} else {
 		u.Path = "/metrics"
 	}

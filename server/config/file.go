@@ -25,6 +25,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -820,10 +821,8 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 		}
 
 		protocols := ldapProtocols[index].GetProtocols()
-		for protoIndex := range protocols {
-			if protocols[protoIndex] == protocol {
-				return &ldapProtocols[index], nil
-			}
+		if slices.Contains(protocols, protocol) {
+			return &ldapProtocols[index], nil
 		}
 	}
 
@@ -857,11 +856,8 @@ func ResolveLDAPSearchPoolName(cfg File, protocol string) (string, bool) {
 	matches := make(map[string]struct{})
 	for index := range ldapProtocols {
 		protocols := ldapProtocols[index].GetProtocols()
-		for protoIndex := range protocols {
-			if protocols[protoIndex] == protocol {
-				matches[ldapProtocols[index].GetPoolName()] = struct{}{}
-				break
-			}
+		if slices.Contains(protocols, protocol) {
+			matches[ldapProtocols[index].GetPoolName()] = struct{}{}
 		}
 	}
 
@@ -1131,10 +1127,8 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string, backendName string)
 		}
 
 		protocols := luaProtocols[index].GetProtocols()
-		for protoIndex := range protocols {
-			if protocols[protoIndex] == protocol {
-				return &luaProtocols[index], nil
-			}
+		if slices.Contains(protocols, protocol) {
+			return &luaProtocols[index], nil
 		}
 	}
 
@@ -2863,12 +2857,12 @@ func (f *FileSettings) HandleFile() (err error) {
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterCustomTypeFunc(func(field reflect.Value) interface{} {
+	validate.RegisterCustomTypeFunc(func(field reflect.Value) any {
 		if !field.IsValid() {
 			return nil
 		}
 
-		if field.Kind() == reflect.Ptr {
+		if field.Kind() == reflect.Pointer {
 			if field.IsNil() {
 				return ""
 			}
@@ -2937,7 +2931,7 @@ func (f *FileSettings) HandleFile() (err error) {
 // Returns an error if environment variable binding fails for any key.
 func bindEnvs(i any, parts ...string) error {
 	ifv := reflect.ValueOf(i)
-	if ifv.Kind() == reflect.Ptr {
+	if ifv.Kind() == reflect.Pointer {
 		ifv = ifv.Elem()
 	}
 
@@ -2960,7 +2954,7 @@ func bindEnvs(i any, parts ...string) error {
 
 		isSecret := t.Type == secretType || t.Type == secretPtrType
 
-		if t.Type.Kind() == reflect.Ptr && t.Type.Elem().Kind() == reflect.Struct && !isSecret {
+		if t.Type.Kind() == reflect.Pointer && t.Type.Elem().Kind() == reflect.Struct && !isSecret {
 			if v.IsNil() {
 				v.Set(reflect.New(t.Type.Elem()))
 			}

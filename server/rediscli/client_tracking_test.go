@@ -26,37 +26,37 @@ func TestBuildClientTrackingArgs(t *testing.T) {
 	tests := []struct {
 		name string
 		ct   *config.RedisClientTracking
-		want []interface{}
+		want []any
 	}{
 		{
 			name: "nil config",
 			ct:   nil,
-			want: []interface{}{"client", "tracking", "on"},
+			want: []any{"client", "tracking", "on"},
 		},
 		{
 			name: "enabled defaults",
 			ct:   &config.RedisClientTracking{Enabled: true},
-			want: []interface{}{"client", "tracking", "on"},
+			want: []any{"client", "tracking", "on"},
 		},
 		{
 			name: "bcast noloop",
 			ct:   &config.RedisClientTracking{Enabled: true, BCast: true, NoLoop: true},
-			want: []interface{}{"client", "tracking", "on", "bcast", "noloop"},
+			want: []any{"client", "tracking", "on", "bcast", "noloop"},
 		},
 		{
 			name: "optin optout (both set)",
 			ct:   &config.RedisClientTracking{Enabled: true, OptIn: true, OptOut: true},
-			want: []interface{}{"client", "tracking", "on", "optin", "optout"},
+			want: []any{"client", "tracking", "on", "optin", "optout"},
 		},
 		{
 			name: "prefixes",
 			ct:   &config.RedisClientTracking{Enabled: true, Prefixes: []string{"nt:", "bf:"}},
-			want: []interface{}{"client", "tracking", "on", "prefix", "nt:", "prefix", "bf:"},
+			want: []any{"client", "tracking", "on", "prefix", "nt:", "prefix", "bf:"},
 		},
 		{
 			name: "full flags",
 			ct:   &config.RedisClientTracking{Enabled: true, BCast: true, NoLoop: true, OptOut: true, Prefixes: []string{"nt:"}},
-			want: []interface{}{"client", "tracking", "on", "bcast", "noloop", "optout", "prefix", "nt:"},
+			want: []any{"client", "tracking", "on", "bcast", "noloop", "optout", "prefix", "nt:"},
 		},
 	}
 

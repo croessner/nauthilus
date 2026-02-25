@@ -86,20 +86,14 @@ func (s *ConnMgrService) Start(parent context.Context) error {
 	manager := connmgr.GetConnectionManager()
 	manager.Register(s.ctx, snap.File, snap.File.GetServer().Address, "local", "HTTP server")
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-
+	s.wg.Go(func() {
 		manager.StartTickerWithContext(s.ctx, s.interval)
-	}()
+	})
 
 	if s.startGenericConnections != nil {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-
+		s.wg.Go(func() {
 			s.startGenericConnections(s.ctx)
-		}()
+		})
 	}
 
 	manager.StartMonitoring(s.ctx, snap.File)

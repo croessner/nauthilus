@@ -698,10 +698,7 @@ func jitterBackoff(base time.Duration, attempt int, max time.Duration) time.Dura
 	}
 
 	// exponential backoff
-	b := base * time.Duration(1<<attempt)
-	if b > max {
-		b = max
-	}
+	b := min(base*time.Duration(1<<attempt), max)
 
 	if b <= 0 {
 		return 0

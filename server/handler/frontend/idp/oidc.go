@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -637,9 +638,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 		"active": true,
 	}
 
-	for k, v := range claims {
-		response[k] = v
-	}
+	maps.Copy(response, claims)
 
 	ctx.JSON(http.StatusOK, response)
 }

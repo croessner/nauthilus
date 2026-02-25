@@ -25,10 +25,10 @@ func TestCommonRequestPoolSafety(t *testing.T) {
 	numGoroutines := 100
 	wg.Add(numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				cr := lualib.GetCommonRequest()
 				assert.Equal(t, "", cr.Username)
 				cr.Username = "test"

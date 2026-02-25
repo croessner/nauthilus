@@ -119,7 +119,7 @@ func (p *TestFixedLuaStatePool) triggerReplenishment() {
 
 // replenishPool adds the specified number of new Lua states to the pool
 func (p *TestFixedLuaStatePool) replenishPool(count int) {
-	for i := 0; i < count; i++ {
+	for range count {
 		select {
 		case p.states <- lua.NewState():
 			atomic.AddInt64(&p.created, 1)
@@ -227,12 +227,8 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 		var wg sync.WaitGroup
 
 		// Simulate 10 concurrent requests
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-
-			go func() {
-				defer wg.Done()
-
+		for range 10 {
+			wg.Go(func() {
 				for j := 0; j < b.N/10; j++ {
 					// Get a Lua state from the pool
 					L := GetForTest()
@@ -248,7 +244,7 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 					// Return the state to the pool
 					PutForTest(L)
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -261,12 +257,8 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 		var wg sync.WaitGroup
 
 		// Simulate 10 concurrent requests
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-
-			go func() {
-				defer wg.Done()
-
+		for range 10 {
+			wg.Go(func() {
 				for j := 0; j < b.N/10; j++ {
 					// Get a Lua state from the pool
 					L := pool.GetState()
@@ -281,7 +273,7 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 
 					// Note: We don't return the state to the pool in this implementation
 				}
-			}()
+			})
 		}
 
 		wg.Wait()

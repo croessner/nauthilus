@@ -42,8 +42,7 @@ func TestStatsServiceStartStop(t *testing.T) {
 		func(context.Context) {},
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	if err := svc.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -60,8 +59,7 @@ func TestBackendMonitoringServiceStartStopWhenDisabled(t *testing.T) {
 
 	svc := NewBackendMonitoringService(10*time.Millisecond, &mockCfgProvider{snap: snap}, slog.Default())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	if err := svc.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -89,8 +87,7 @@ func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
 
 	svc := NewBackendMonitoringService(10*time.Millisecond, &mockCfgProvider{snap: snap}, slog.Default())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	if err := svc.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)

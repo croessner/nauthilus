@@ -79,7 +79,7 @@ func setupSubtest(cfg config.File) (redismock.ClientMock, tolerate.Tolerate) {
 }
 
 func mockNoisy(mock redismock.ClientMock) {
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		mock.Regexp().ExpectHGetAll(".*").SetVal(map[string]string{})
 		mock.Regexp().ExpectGet(".*").RedisNil()
 		mock.Regexp().ExpectHGet(".*", ".*").RedisNil()
@@ -112,7 +112,7 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]interface{}{"10", int64(1), "4"})
+			SetVal([]any{"10", int64(1), "4"})
 
 		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
 		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
@@ -174,7 +174,7 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]interface{}{"10", int64(1), "4"})
+			SetVal([]any{"10", int64(1), "4"})
 
 		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
 		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
@@ -217,7 +217,7 @@ func TestBruteForceScenarios(t *testing.T) {
 
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]interface{}{"10", int64(1), "4"})
+			SetVal([]any{"10", int64(1), "4"})
 
 		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetErr(errors.New("redis write failed"))
 		mock.Regexp().ExpectExists(".*bf:ban:.*").SetVal(int64(0))
@@ -245,7 +245,7 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]interface{}{"10", int64(1), "4"})
+			SetVal([]any{"10", int64(1), "4"})
 		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
 		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
@@ -280,7 +280,7 @@ func TestBruteForceScenarios(t *testing.T) {
 		mock.Regexp().ExpectHGetAll(".*:N").SetVal(map[string]string{"negative": "0"})
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-sw")
 		mock.Regexp().ExpectEvalSha("sha-sw", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]interface{}{"10", int64(1), "4"})
+			SetVal([]any{"10", int64(1), "4"})
 		mock.Regexp().ExpectSetNX(".*bf:ban:.*", "testbucket", 8*time.Hour).SetVal(true)
 		mock.Regexp().ExpectZAddNX(".*bf:bans:.*", redis.Z{Score: 0, Member: ""}).SetVal(int64(1))
 		mock.Regexp().ExpectPublish(definitions.RedisBFBlocksChannel, ".*").SetVal(1)
@@ -363,7 +363,7 @@ func TestBruteForceLogic(t *testing.T) {
 		mock.Regexp().ExpectHGet(".*", "positive").RedisNil()
 		mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha1")
 		mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
-			SetVal([]interface{}{"15", int64(1), "4"})
+			SetVal([]any{"15", int64(1), "4"})
 
 		var message string
 		withError, ruleTriggered, _ := bm.CheckBucketOverLimit(rules, &message)

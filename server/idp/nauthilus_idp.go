@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -127,13 +128,7 @@ func (n *NauthilusIdP) IsDelayedResponse(clientID string, samlEntityID string) b
 
 // ValidateRedirectURI checks if the given redirect URI is valid for the client.
 func (n *NauthilusIdP) ValidateRedirectURI(client *config.OIDCClient, redirectURI string) bool {
-	for _, uri := range client.RedirectURIs {
-		if uri == redirectURI {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(client.RedirectURIs, redirectURI)
 }
 
 // ValidatePostLogoutRedirectURI checks if the given post-logout redirect URI is valid for the client.
@@ -142,13 +137,7 @@ func (n *NauthilusIdP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, 
 		return true
 	}
 
-	for _, uri := range client.PostLogoutRedirectURIs {
-		if uri == redirectURI {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(client.PostLogoutRedirectURIs, redirectURI)
 }
 
 // IssueTokens generates tokens for the given OIDC session.
@@ -198,9 +187,7 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 		}
 
 		// Add mapped claims from session
-		for k, v := range session.IdTokenClaims {
-			idClaims[k] = v
-		}
+		maps.Copy(idClaims, session.IdTokenClaims)
 
 		idTokenString, err = signer.Sign(idClaims)
 		if err != nil {

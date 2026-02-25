@@ -522,7 +522,7 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 		}
 	}
 
-	for i := 0; i < len(actionWorkers); i++ {
+	for i := range actionWorkers {
 		select {
 		case <-actionWorkers[i].DoneChan:
 		case <-ctx.Done():
