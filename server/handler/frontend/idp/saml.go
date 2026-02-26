@@ -482,6 +482,11 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
+	// Clean up IdP flow state after successful SAML SSO
+	if mgr != nil {
+		CleanupIdPFlowState(mgr)
+	}
+
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	ctx.Status(http.StatusOK)
 

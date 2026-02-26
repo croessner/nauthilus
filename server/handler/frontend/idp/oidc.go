@@ -856,3 +856,49 @@ func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {
 
 	defer resp.Body.Close()
 }
+
+// CleanupIdPFlowState removes all temporary IdP flow state keys from the cookie.
+// These keys are only needed during the login redirect cycle
+// (e.g. /oidc/authorize → /login → /oidc/authorize or /saml/sso → /login → /saml/sso)
+// and should be cleaned up after the flow completes successfully.
+// This covers OIDC (authorization code, device code) and SAML flows.
+func CleanupIdPFlowState(mgr cookie.Manager) {
+	if mgr == nil {
+		return
+	}
+
+	// Common IdP flow keys
+	mgr.Delete(definitions.SessionKeyIdPFlowActive)
+	mgr.Delete(definitions.SessionKeyIdPFlowType)
+
+	// OIDC-specific flow keys
+	mgr.Delete(definitions.SessionKeyOIDCGrantType)
+	mgr.Delete(definitions.SessionKeyIdPClientID)
+	mgr.Delete(definitions.SessionKeyIdPRedirectURI)
+	mgr.Delete(definitions.SessionKeyIdPScope)
+	mgr.Delete(definitions.SessionKeyIdPState)
+	mgr.Delete(definitions.SessionKeyIdPNonce)
+	mgr.Delete(definitions.SessionKeyIdPResponseType)
+	mgr.Delete(definitions.SessionKeyIdPPrompt)
+
+	// SAML-specific flow keys
+	mgr.Delete(definitions.SessionKeyIdPSAMLRequest)
+	mgr.Delete(definitions.SessionKeyIdPSAMLRelayState)
+	mgr.Delete(definitions.SessionKeyIdPSAMLEntityID)
+	mgr.Delete(definitions.SessionKeyIdPOriginalURL)
+}
+
+// CleanupMFAState removes all temporary MFA flow keys from the cookie.
+// These keys are only needed during MFA verification and should be cleaned up
+// after the MFA flow completes successfully (in finalizeMFALogin).
+func CleanupMFAState(mgr cookie.Manager) {
+	if mgr == nil {
+		return
+	}
+
+	mgr.Delete(definitions.SessionKeyUsername)
+	mgr.Delete(definitions.SessionKeyAuthResult)
+	mgr.Delete(definitions.SessionKeyMFAMulti)
+	mgr.Delete(definitions.SessionKeyMFAMethod)
+	mgr.Delete(definitions.SessionKeyMFACompleted)
+}
