@@ -18,6 +18,15 @@ local nauthilus_util = require("nauthilus_util")
 
 local N = "test_context_chain"
 
+-- Skip localhost requests: the feature stage is not executed for local/empty
+-- IPs (see isLocalOrEmptyIP in features.go), so the context keys it would set
+-- are absent. Return early with ACCEPT to avoid nil-context assertions.
+local function is_localhost(request)
+    local ip = request.client_ip or ""
+
+    return ip == "" or ip == "127.0.0.1" or ip == "::1"
+end
+
 -- Helper: assert that a context key holds the expected value.
 local function assert_context(key, expected, stage_label)
     local value = nauthilus_context.context_get(key)
@@ -33,6 +42,10 @@ end
 
 -- Filter stage: verify feature context, then set filter context values.
 function nauthilus_call_filter(request)
+    if is_localhost(request) then
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+    end
+
     local label = N .. "/filter"
     local marker = tostring(request.session or "")
 

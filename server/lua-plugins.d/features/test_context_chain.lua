@@ -18,8 +18,21 @@ local nauthilus_util = require("nauthilus_util")
 
 local N = "test_context_chain"
 
+-- Skip localhost requests: the feature stage is not executed for local/empty
+-- IPs (see isLocalOrEmptyIP in features.go). Downstream stages (filter/action)
+-- must also skip to avoid nil-context assertions.
+local function is_localhost(request)
+    local ip = request.client_ip or ""
+
+    return ip == "" or ip == "127.0.0.1" or ip == "::1"
+end
+
 -- Feature stage: set two context values for downstream stages to verify.
 function nauthilus_call_feature(request)
+    if is_localhost(request) then
+        return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
+    end
+
     local marker = tostring(request.session or "")
 
     if marker == "" then
