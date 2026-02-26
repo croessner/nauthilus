@@ -162,11 +162,8 @@ func runLDAPWorkerLoop(ctx context.Context, ldapPool ldappool.LDAPPool, poolName
 	var wg sync.WaitGroup
 
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
-		wg.Add(1)
 
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -201,7 +198,7 @@ func runLDAPWorkerLoop(ctx context.Context, ldapPool ldappool.LDAPPool, poolName
 					}
 				}()
 			}
-		}()
+		})
 	}
 
 	go func() {

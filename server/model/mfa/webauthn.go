@@ -31,13 +31,13 @@ type PersistentCredential struct {
 	webauthn.Credential
 	Name     string    `json:"name,omitempty"`
 	RawJSON  string    `json:"-"`
-	LastUsed time.Time `json:"lastUsed,omitempty"`
+	LastUsed time.Time `json:"lastUsed"`
 }
 
 type persistentCredentialJSON struct {
 	webauthn.Credential
 	Name      string    `json:"name,omitempty"`
-	LastUsed  time.Time `json:"lastUsed,omitempty"`
+	LastUsed  time.Time `json:"lastUsed"`
 	SignCount *uint32   `json:"signCount,omitempty"`
 }
 

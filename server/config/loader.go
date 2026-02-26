@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -407,9 +408,7 @@ func applyAdd(parent map[string]any, key string, value any, fullPath string) err
 			return fmt.Errorf("add to map at %q requires map value, got %T", fullPath, value)
 		}
 
-		for mapKey, mapValue := range valueMap {
-			typed[mapKey] = mapValue
-		}
+		maps.Copy(typed, valueMap)
 
 		return nil
 	default:

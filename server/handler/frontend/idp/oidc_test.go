@@ -495,6 +495,127 @@ func Test_addClientToCookie(t *testing.T) {
 	})
 }
 
+func Test_cleanupIdPFlowState(t *testing.T) {
+	flowKeys := []string{
+		// Common IdP flow keys
+		definitions.SessionKeyIdPFlowActive,
+		definitions.SessionKeyIdPFlowType,
+		// OIDC-specific flow keys
+		definitions.SessionKeyOIDCGrantType,
+		definitions.SessionKeyIdPClientID,
+		definitions.SessionKeyIdPRedirectURI,
+		definitions.SessionKeyIdPScope,
+		definitions.SessionKeyIdPState,
+		definitions.SessionKeyIdPNonce,
+		definitions.SessionKeyIdPResponseType,
+		definitions.SessionKeyIdPPrompt,
+		// SAML-specific flow keys
+		definitions.SessionKeyIdPSAMLRequest,
+		definitions.SessionKeyIdPSAMLRelayState,
+		definitions.SessionKeyIdPSAMLEntityID,
+		definitions.SessionKeyIdPOriginalURL,
+	}
+
+	t.Run("removes all IdP flow state keys including OIDC and SAML", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{
+			// OIDC keys
+			definitions.SessionKeyIdPFlowActive:   true,
+			definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
+			definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
+			definitions.SessionKeyIdPClientID:     "my-app",
+			definitions.SessionKeyIdPRedirectURI:  "https://app.example.com/callback",
+			definitions.SessionKeyIdPScope:        "openid profile email",
+			definitions.SessionKeyIdPState:        "state123",
+			definitions.SessionKeyIdPNonce:        "nonce456",
+			definitions.SessionKeyIdPResponseType: "code",
+			definitions.SessionKeyIdPPrompt:       "consent",
+			// SAML keys
+			definitions.SessionKeyIdPSAMLRequest:    "<saml-request>",
+			definitions.SessionKeyIdPSAMLRelayState: "relay-state",
+			definitions.SessionKeyIdPSAMLEntityID:   "https://sp.example.com",
+			definitions.SessionKeyIdPOriginalURL:    "/saml/sso?SAMLRequest=abc",
+			// Non-flow keys (must survive)
+			definitions.SessionKeyAccount:     "user@example.com",
+			definitions.SessionKeyOIDCClients: "my-app",
+		}}
+
+		CleanupIdPFlowState(mgr)
+
+		for _, key := range flowKeys {
+			_, exists := mgr.data[key]
+			assert.False(t, exists, "key %q should have been deleted", key)
+		}
+
+		// Non-flow keys must be preserved
+		assert.Equal(t, "user@example.com", mgr.data[definitions.SessionKeyAccount])
+		assert.Equal(t, "my-app", mgr.data[definitions.SessionKeyOIDCClients])
+	})
+
+	t.Run("handles nil manager gracefully", func(t *testing.T) {
+		assert.NotPanics(t, func() {
+			CleanupIdPFlowState(nil)
+		})
+	})
+
+	t.Run("handles empty manager gracefully", func(t *testing.T) {
+		mgr := &mockCookieManager{data: make(map[string]any)}
+
+		assert.NotPanics(t, func() {
+			CleanupIdPFlowState(mgr)
+		})
+	})
+}
+
+func Test_cleanupMFAState(t *testing.T) {
+	mfaKeys := []string{
+		definitions.SessionKeyUsername,
+		definitions.SessionKeyAuthResult,
+		definitions.SessionKeyMFAMulti,
+		definitions.SessionKeyMFAMethod,
+		definitions.SessionKeyMFACompleted,
+	}
+
+	t.Run("removes all MFA state keys", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyUsername:     "user@example.com",
+			definitions.SessionKeyAuthResult:   uint8(1),
+			definitions.SessionKeyMFAMulti:     true,
+			definitions.SessionKeyMFAMethod:    "totp",
+			definitions.SessionKeyMFACompleted: true,
+			// Non-MFA keys (must survive)
+			definitions.SessionKeyAccount:     "user@example.com",
+			definitions.SessionKeyOIDCClients: "my-app",
+			definitions.SessionKeyProtocol:    definitions.ProtoOIDC,
+		}}
+
+		CleanupMFAState(mgr)
+
+		for _, key := range mfaKeys {
+			_, exists := mgr.data[key]
+			assert.False(t, exists, "key %q should have been deleted", key)
+		}
+
+		// Non-MFA keys must be preserved
+		assert.Equal(t, "user@example.com", mgr.data[definitions.SessionKeyAccount])
+		assert.Equal(t, "my-app", mgr.data[definitions.SessionKeyOIDCClients])
+		assert.Equal(t, definitions.ProtoOIDC, mgr.data[definitions.SessionKeyProtocol])
+	})
+
+	t.Run("handles nil manager gracefully", func(t *testing.T) {
+		assert.NotPanics(t, func() {
+			CleanupMFAState(nil)
+		})
+	})
+
+	t.Run("handles empty manager gracefully", func(t *testing.T) {
+		mgr := &mockCookieManager{data: make(map[string]any)}
+
+		assert.NotPanics(t, func() {
+			CleanupMFAState(mgr)
+		})
+	})
+}
+
 // mockCookieManager implements cookie.Manager for testing.
 type mockCookieManager struct {
 	data map[string]any

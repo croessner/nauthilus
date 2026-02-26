@@ -46,7 +46,7 @@ func hasClientConsent(mgr cookie.Manager, clientID string) bool {
 		return false
 	}
 
-	for _, id := range strings.Split(oidcClients, ",") {
+	for id := range strings.SplitSeq(oidcClients, ",") {
 		if id == clientID {
 			return true
 		}
@@ -65,7 +65,7 @@ func addClientToCookie(mgr cookie.Manager, clientID string) {
 	oidcClients := mgr.GetString(definitions.SessionKeyOIDCClients, "")
 
 	if oidcClients != "" {
-		for _, id := range strings.Split(oidcClients, ",") {
+		for id := range strings.SplitSeq(oidcClients, ",") {
 			if id == clientID {
 				return
 			}
@@ -254,6 +254,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
 
 	addClientToCookie(mgr, clientID)
+	CleanupIdPFlowState(mgr)
 
 	if mgr != nil {
 		mgr.Debug(ctx, h.deps.Logger, "OIDC authorization successful - client added to session")
@@ -414,6 +415,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 
 	if mgr := cookie.GetManager(ctx); mgr != nil {
 		addClientToCookie(mgr, session.ClientID)
+		CleanupIdPFlowState(mgr)
 		mgr.Debug(ctx, h.deps.Logger, "OIDC consent granted - client added to session")
 	}
 

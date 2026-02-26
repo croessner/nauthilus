@@ -205,9 +205,9 @@ func collectMetricsFromClient(ctx context.Context, logger *slog.Logger, client r
 // parseRedisInfo parses the Redis INFO command output into a map
 func parseRedisInfo(info string) map[string]string {
 	result := make(map[string]string)
-	lines := strings.Split(info, "\r\n")
+	lines := strings.SplitSeq(info, "\r\n")
 
-	for _, line := range lines {
+	for line := range lines {
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -330,7 +330,7 @@ func collectLatencyMetrics(ctx context.Context, cfg config.File, logger *slog.Lo
 
 	// Process each command's latency
 	for _, cmdData := range latencyData {
-		cmdSlice, ok := cmdData.([]interface{})
+		cmdSlice, ok := cmdData.([]any)
 		if !ok || len(cmdSlice) < 4 {
 			continue
 		}

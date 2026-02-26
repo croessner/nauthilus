@@ -76,10 +76,7 @@ func (s *DefaultStatsCollector) AddSample(latency time.Duration, _ bool, isMatch
 		s.maxLat.Store(latNs)
 	}
 
-	ms := latency.Milliseconds()
-	if ms < 0 {
-		ms = 0
-	}
+	ms := max(latency.Milliseconds(), 0)
 	if ms > maxLatencyMs {
 		s.latOverflow.Add(1)
 	} else {
@@ -135,7 +132,7 @@ func (s *DefaultStatsCollector) Snapshot() Stats {
 		StatusCounts:       make(map[int]int64),
 	}
 
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		if v := s.statusCounts[i].Load(); v > 0 {
 			stats.StatusCounts[i] = v
 		}
@@ -218,7 +215,7 @@ func (s *DefaultStatsCollector) Reset() {
 	for i := 0; i <= maxLatencyMs; i++ {
 		s.latBuckets[i].Store(0)
 	}
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		s.statusCounts[i].Store(0)
 	}
 	s.latOverflow.Store(0)

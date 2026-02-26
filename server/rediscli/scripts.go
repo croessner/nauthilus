@@ -183,7 +183,7 @@ func UploadScript(ctx context.Context, client Client, scriptName, scriptContent 
 //
 // In Redis Cluster mode, this function ensures that all keys hash to the same slot by adding
 // a common hash tag if needed.
-func ExecuteScript(ctx context.Context, client Client, scriptName, scriptContent string, keys []string, args ...interface{}) (interface{}, error) {
+func ExecuteScript(ctx context.Context, client Client, scriptName, scriptContent string, keys []string, args ...any) (any, error) {
 	// Tracing: cover a Redis Lua script execution including retries
 	tr := monittrace.New("nauthilus/redis_batch")
 	sctx, sp := tr.Start(ctx, "redis.script",

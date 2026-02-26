@@ -25,6 +25,7 @@ import (
 	"math"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,13 +54,7 @@ import (
 // containsString reports whether s is present in the slice.
 // Kept unexported and simple to avoid allocations and stay DRY for common membership checks.
 func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(ss, s)
 }
 
 // BlockMessage is the payload for Pub/Sub global synchronization.
@@ -838,7 +833,7 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 				continue
 			}
 
-			if resParts, ok := res.([]interface{}); ok && len(resParts) >= 2 {
+			if resParts, ok := res.([]any); ok && len(resParts) >= 2 {
 				totalStr, _ := resParts[0].(string)
 				exceeded, _ := resParts[1].(int64)
 
@@ -1304,14 +1299,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 	// If the rule has FilterByProtocol specified, we need to check if the current protocol matches
 	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
-		protocolMatched := false
-		for _, p := range rule.GetFilterByProtocol() {
-			if p == bm.protocol {
-				protocolMatched = true
-
-				break
-			}
-		}
+		protocolMatched := slices.Contains(rule.GetFilterByProtocol(), bm.protocol)
 
 		if !protocolMatched {
 			// Skip this rule if the protocol doesn't match
@@ -1321,14 +1309,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 	// If the rule has FilterByOIDCCID specified, we need to check if the current OIDC Client ID matches
 	if len(rule.GetFilterByOIDCCID()) > 0 && bm.oidcCID != "" {
-		oidcCIDMatched := false
-		for _, cid := range rule.FilterByOIDCCID {
-			if cid == bm.oidcCID {
-				oidcCIDMatched = true
-
-				break
-			}
-		}
+		oidcCIDMatched := slices.Contains(rule.FilterByOIDCCID, bm.oidcCID)
 
 		if !oidcCIDMatched {
 			// Skip this rule if the OIDC Client ID doesn't match
@@ -1580,10 +1561,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 
 	cfg := bm.cfg()
 
-	threshold := cfg.GetBruteForce().GetRWPAllowedUniqueHashes()
-	if threshold < 1 {
-		threshold = 1
-	}
+	threshold := max(cfg.GetBruteForce().GetRWPAllowedUniqueHashes(), 1)
 
 	ttl := cfg.GetBruteForce().GetRWPWindow()
 	if ttl <= 0 {
@@ -1955,7 +1933,7 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	}
 
 	total := uint(0)
-	if resParts, ok := res.([]interface{}); ok && len(resParts) > 0 {
+	if resParts, ok := res.([]any); ok && len(resParts) > 0 {
 		if totalStr, ok := resParts[0].(string); ok {
 			totalFloat, _ := strconv.ParseFloat(totalStr, 64)
 			total = uint(math.Round(totalFloat))

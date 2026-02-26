@@ -51,14 +51,14 @@ func NewApp(cfg *Config, src RowSource, collector StatsCollector, client *AuthCl
 }
 
 func (a *App) SpawnWorkers(ctx context.Context, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		a.wg.Add(1)
 		go a.worker(ctx, a.rowChan)
 	}
 }
 
 func (a *App) ReduceWorkers(n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		select {
 		case a.quitCh <- struct{}{}:
 		default:
@@ -200,9 +200,7 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 				var mu sync.Mutex
 
 				for i := 0; i < numReqs; i++ {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
+					wg.Go(func() {
 						okResp, isMatch, isHttpErr, isTooManyRequests, isToleratedBF, isAborted, latency, rb, statusCode, _ := a.Client.DoRequest(ctx, row)
 						if a.Config.RunFor > 0 && time.Since(a.startTime) > a.Config.RunFor {
 							return
@@ -214,7 +212,7 @@ func (a *App) worker(ctx context.Context, rows <-chan Row) {
 							bodies = append(bodies, rb)
 							mu.Unlock()
 						}
-					}()
+					})
 				}
 				wg.Wait()
 
@@ -325,17 +323,11 @@ func (a *App) renderTTY() {
 	etaStr := "--:--:--"
 	if plannedTotal == -2 {
 		if a.Config.RunFor > 0 {
-			remain := a.Config.RunFor - s.Elapsed
-			if remain < 0 {
-				remain = 0
-			}
+			remain := max(a.Config.RunFor-s.Elapsed, 0)
 			etaStr = humanETA(remain)
 		}
 	} else if plannedTotal > 0 {
-		remain := plannedTotal - s.Total
-		if remain < 0 {
-			remain = 0
-		}
+		remain := max(plannedTotal-s.Total, 0)
 		if rps > 0 {
 			etaDur := time.Duration(float64(remain) / rps * float64(time.Second))
 			etaStr = humanETA(etaDur)
@@ -421,23 +413,14 @@ func (a *App) renderTTY() {
 
 	if available < minBar {
 		need := minBar - available
-		newLeftW := leftW - need
-		if newLeftW < 0 {
-			newLeftW = 0
-		}
+		newLeftW := max(leftW-need, 0)
 		left = truncateToCells(left, newLeftW)
 		leftW = displayWidth(left)
 		available = termW - fixedSpaces - leftW
 	}
 
 	barWidth := available
-	fill := int(math.Round(ratio * float64(barWidth)))
-	if fill < 0 {
-		fill = 0
-	}
-	if fill > barWidth {
-		fill = barWidth
-	}
+	fill := min(max(int(math.Round(ratio*float64(barWidth))), 0), barWidth)
 
 	fillChar := "#"
 	emptyChar := "-"

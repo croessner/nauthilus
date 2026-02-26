@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -138,7 +139,7 @@ func SupportsUnicode() bool {
 func findNonZeroRange(buckets []atomic.Int64) (int, int, bool) {
 	start := -1
 	end := -1
-	for i := 0; i < len(buckets); i++ {
+	for i := range buckets {
 		if buckets[i].Load() > 0 {
 			if start == -1 {
 				start = i
@@ -155,9 +156,9 @@ func findNonZeroRange(buckets []atomic.Int64) (int, int, bool) {
 func computeHistogramCounts(buckets []atomic.Int64, start, end, bucketSpan, cols int) ([]int64, int64) {
 	counts := make([]int64, cols)
 	var maxC int64
-	for i := 0; i < cols; i++ {
+	for i := range cols {
 		var sum int64
-		for j := 0; j < bucketSpan; j++ {
+		for j := range bucketSpan {
 			ms := start + i*bucketSpan + j
 			if ms <= end && ms < len(buckets) {
 				sum += buckets[ms].Load()
@@ -195,21 +196,12 @@ func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64) {
 	}
 
 	span := end - start + 1
-	dataSpan := dataEnd - dataStart + 1
-	if dataSpan < 1 {
-		dataSpan = 1
-	}
+	dataSpan := max(dataEnd-dataStart+1, 1)
 
 	termW, _ := TermSize()
 	gutter := 2
 	provisionalLabel := 4
-	usable := termW - provisionalLabel - gutter
-	if usable < 20 {
-		usable = 20
-	}
-	if span < usable {
-		usable = span
-	}
+	usable := min(span, max(termW-provisionalLabel-gutter, 20))
 
 	bucketSpan := (span + usable - 1) / usable
 	cols := (span + bucketSpan - 1) / bucketSpan
@@ -223,34 +215,19 @@ func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64) {
 		return
 	}
 
-	labelWidth := len(humanCount(maxC))
-	if labelWidth < 4 {
-		labelWidth = 4
-	}
+	labelWidth := max(len(humanCount(maxC)), 4)
 
 	// Recompute for exact fit
-	usable = termW - labelWidth - gutter
-	if usable < 20 {
-		usable = 20
-	}
-	if span < usable {
-		usable = span
-	}
+	usable = min(span, max(termW-labelWidth-gutter, 20))
 	bucketSpan = (span + usable - 1) / usable
 	cols = (span + bucketSpan - 1) / bucketSpan
 	counts, maxC = computeHistogramCounts(buckets, start, end, bucketSpan, cols)
 
 	fmt.Printf("Latency histogram  bins=%d height=%d\n", cols, height)
 
-	drawCols := cols
-	if drawCols < usable {
-		drawCols = usable
-	}
+	drawCols := max(cols, usable)
 
-	colWidth := drawCols / cols
-	if colWidth < 1 {
-		colWidth = 1
-	}
+	colWidth := max(drawCols/cols, 1)
 	rem := drawCols - colWidth*cols
 
 	binWidths := make([]int, cols)
@@ -289,14 +266,8 @@ func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64) {
 	fmt.Print(StyleBlue.S("└"))
 
 	tickPos := []int{0, int(math.Round(float64(drawCols-1) * 0.25)), int(math.Round(float64(drawCols-1) * 0.5)), int(math.Round(float64(drawCols-1) * 0.75)), drawCols - 1}
-	for x := 0; x < drawCols; x++ {
-		isTick := false
-		for _, t := range tickPos {
-			if x == t {
-				isTick = true
-				break
-			}
-		}
+	for x := range drawCols {
+		isTick := slices.Contains(tickPos, x)
 		if isTick {
 			fmt.Print(StyleBlue.S("┬"))
 		} else {
@@ -330,10 +301,7 @@ func PrintLatencyHistogram(stats Stats, buckets []atomic.Int64) {
 		s := binStarts[bin]
 		w := binWidths[bin]
 		t := []rune(text)
-		pos := s + (w-len(t))/2
-		if pos < 0 {
-			pos = 0
-		}
+		pos := max(s+(w-len(t))/2, 0)
 		for i, r := range t {
 			p := pos + i
 			if p >= 0 && p < len(line) {

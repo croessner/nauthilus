@@ -40,8 +40,8 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 
 	if username == "" {
 		authHeader := ctx.GetHeader("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		if after, ok := strings.CutPrefix(authHeader, "Bearer "); ok {
+			tokenString := after
 			idpInstance := idp.NewNauthilusIdP(h.deps)
 
 			claims, err := idpInstance.ValidateToken(ctx.Request.Context(), tokenString)

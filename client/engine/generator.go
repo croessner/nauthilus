@@ -30,7 +30,7 @@ func GenerateCSV(path string, total int, cidrProb float64, cidrPrefix int) error
 		baseNet, mask, hasCIDR = pickRoutableCIDR(cidrPrefix)
 	}
 
-	for i := 0; i < total; i++ {
+	for i := range total {
 		username := fmt.Sprintf("user%d", i)
 		password := "password"
 		ip := ""
@@ -79,7 +79,7 @@ func isRoutableIPv4(u uint32) bool {
 
 func pickRoutableCIDR(prefix int) (uint32, uint32, bool) {
 	mask := maskFromPrefix(prefix)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		base := rand.Uint32() & mask
 		if isRoutableIPv4(base) && isRoutableIPv4(base|(^mask)) {
 			return base, mask, true

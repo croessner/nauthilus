@@ -642,8 +642,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 
 		// Clean up device code flow session data
 		mgr.Delete(definitions.SessionKeyDeviceCode)
-		mgr.Delete(definitions.SessionKeyIdPFlowActive)
-		mgr.Delete(definitions.SessionKeyIdPFlowType)
+		CleanupIdPFlowState(mgr)
 
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -677,8 +676,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 
 	// Clean up device code flow session data
 	mgr.Delete(definitions.SessionKeyDeviceCode)
-	mgr.Delete(definitions.SessionKeyIdPFlowActive)
-	mgr.Delete(definitions.SessionKeyIdPFlowType)
+	CleanupIdPFlowState(mgr)
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),

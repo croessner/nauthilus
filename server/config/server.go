@@ -2006,7 +2006,7 @@ func secretExcludesAll(fl validator.FieldLevel) bool {
 
 func secretRequiredIfEnabled(fl validator.FieldLevel) bool {
 	parent := fl.Parent()
-	if parent.Kind() == reflect.Ptr {
+	if parent.Kind() == reflect.Pointer {
 		if parent.IsNil() {
 			return true
 		}
@@ -2101,8 +2101,8 @@ func hostnameRFC1123WithOptionalTrailingDot(fl validator.FieldLevel) bool {
 	s := fieldStringValue(fl.Field())
 
 	// Allow optional trailing dot for FQDNs, but not a string that is only "."
-	if strings.HasSuffix(s, ".") {
-		s = strings.TrimSuffix(s, ".")
+	if before, ok := strings.CutSuffix(s, "."); ok {
+		s = before
 		if s == "" {
 			return false
 		}

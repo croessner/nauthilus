@@ -70,10 +70,7 @@ func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, err
 
 	for _, rbl := range rblLists {
 		r := rbl
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			listed, rblName, rblErr := core.RBLIsListed(ctx, view, &r)
 			if rblErr != nil {
 				if strings.Contains(rblErr.Error(), "no such host") {
@@ -105,7 +102,7 @@ func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, err
 			}
 
 			rblChan <- 0
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -115,7 +112,7 @@ func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, err
 	}
 
 	total := 0
-	for i := 0; i < numberOfRBLs; i++ {
+	for range numberOfRBLs {
 		total += <-rblChan
 	}
 

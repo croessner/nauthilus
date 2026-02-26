@@ -18,6 +18,7 @@ package redislib
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -41,7 +42,7 @@ func TestRedisMGet(t *testing.T) {
 			expectedResult: map[string]string{"key1": "value1", "key2": "value2", "key3": "value3"},
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectMGet("key1", "key2", "key3").SetVal([]interface{}{"value1", "value2", "value3"})
+				mock.ExpectMGet("key1", "key2", "key3").SetVal([]any{"value1", "value2", "value3"})
 			},
 		},
 		{
@@ -50,7 +51,7 @@ func TestRedisMGet(t *testing.T) {
 			expectedResult: map[string]string{"key1": "value1", "key3": "value3"},
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectMGet("key1", "nonexistent", "key3").SetVal([]interface{}{"value1", nil, "value3"})
+				mock.ExpectMGet("key1", "nonexistent", "key3").SetVal([]any{"value1", nil, "value3"})
 			},
 		},
 		{
@@ -80,20 +81,21 @@ func TestRedisMGet(t *testing.T) {
 			rediscli.NewTestClient(db)
 
 			// Set up the Lua code to call redis_mget with the keys
-			luaCode := `
+			var luaCode strings.Builder
+			luaCode.WriteString(`
 				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_mget("default"`
+				result, err = nauthilus_redis.redis_mget("default"`)
 
 			// Add each key as a global variable and append to the Lua code
 			for i, key := range tt.keys {
 				varName := "key" + string(rune('0'+i))
 				L.SetGlobal(varName, lua.LString(key))
-				luaCode += ", " + varName
+				luaCode.WriteString(", " + varName)
 			}
 
-			luaCode += ")"
+			luaCode.WriteString(")")
 
-			err := L.DoString(luaCode)
+			err := L.DoString(luaCode.String())
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -175,9 +177,10 @@ func TestRedisMSet(t *testing.T) {
 			rediscli.NewTestClient(db)
 
 			// Set up the Lua code to call redis_mset with the key-value pairs
-			luaCode := `
+			var luaCode strings.Builder
+			luaCode.WriteString(`
 				local nauthilus_redis = require("nauthilus_redis")
-				result, err = nauthilus_redis.redis_mset("default"`
+				result, err = nauthilus_redis.redis_mset("default"`)
 
 			// Add each key-value pair as global variables and append to the Lua code
 			i := 0
@@ -186,13 +189,13 @@ func TestRedisMSet(t *testing.T) {
 				valueVarName := "value" + string(rune('0'+i))
 				L.SetGlobal(keyVarName, lua.LString(key))
 				L.SetGlobal(valueVarName, value)
-				luaCode += ", " + keyVarName + ", " + valueVarName
+				luaCode.WriteString(", " + keyVarName + ", " + valueVarName)
 				i++
 			}
 
-			luaCode += ")"
+			luaCode.WriteString(")")
 
-			err := L.DoString(luaCode)
+			err := L.DoString(luaCode.String())
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}

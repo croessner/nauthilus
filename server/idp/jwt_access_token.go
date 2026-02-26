@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -56,9 +57,7 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 		"scope": strings.Join(t.session.Scopes, " "),
 	}
 
-	for key, value := range t.session.AccessTokenClaims {
-		accessClaims[key] = value
-	}
+	maps.Copy(accessClaims, t.session.AccessTokenClaims)
 
 	accessTokenString, err := t.signer.Sign(accessClaims)
 	if err != nil {

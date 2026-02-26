@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -361,11 +362,5 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 }
 
 func containsAccount(accounts core.AccountList, username string) bool {
-	for _, account := range accounts {
-		if account == username {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(accounts, username)
 }

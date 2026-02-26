@@ -24,9 +24,11 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -917,9 +919,7 @@ func (p *PassDBResult) Clone() *PassDBResult {
 
 	if p.AdditionalFeatures != nil {
 		res.AdditionalFeatures = make(map[string]any, len(p.AdditionalFeatures))
-		for k, v := range p.AdditionalFeatures {
-			res.AdditionalFeatures[k] = v
-		}
+		maps.Copy(res.AdditionalFeatures, p.AdditionalFeatures)
 	}
 
 	return res
@@ -2464,13 +2464,7 @@ func (a *AuthState) PostLuaAction(_ *gin.Context, passDBResult *PassDBResult) {
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
 // It iterates over the MonitoringFlags slice and returns true if the flag is found, otherwise it returns false.
 func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
-	for _, setFlag := range a.Runtime.MonitoringFlags {
-		if setFlag == flag {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(a.Runtime.MonitoringFlags, flag)
 }
 
 // SFKeyHash returns a short hash for the strict singleflight key to use in Redis keys.

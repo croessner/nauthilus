@@ -66,10 +66,7 @@ func (m *defaultLoginAttemptManager) InitFromHeader(headerVal string) {
 	}
 
 	// Header is 1-based attempt ordinal; convert to 0-based fail count.
-	fc := n - 1
-	if fc < 0 {
-		fc = 0
-	}
+	fc := max(n-1, 0)
 
 	if uint(fc) > m.failCount {
 		m.failCount = uint(fc)

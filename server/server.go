@@ -105,7 +105,7 @@ func stopContext(tuple *contextTuple) {
 
 // startActionWorker starts the action workers concurrently to perform the specified actions using the provided context.
 func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
-	for i := 0; i < len(actionWorkers); i++ {
+	for i := range actionWorkers {
 		go actionWorkers[i].Work(act.ctx)
 	}
 }
@@ -256,7 +256,7 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 	maxRetries := 10
 	retryInterval := 5 * time.Second
 
-	for retries := 0; retries < maxRetries; retries++ {
+	for retries := range maxRetries {
 		if readinessCtx != nil {
 			if err := readinessCtx.Err(); err != nil {
 				return err

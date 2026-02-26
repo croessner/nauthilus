@@ -182,16 +182,16 @@ func TestRedisHSet(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			kvPairsStr := ""
+			var kvPairsStr strings.Builder
 
 			for i := 0; i < len(tt.kvPairs); i += 2 {
 				field := formatLuaValue(tt.kvPairs[i])
 				value := formatLuaValue(tt.kvPairs[i+1])
 
-				kvPairsStr += fmt.Sprintf(", %s, %s", field, value)
+				kvPairsStr.WriteString(fmt.Sprintf(", %s, %s", field, value))
 			}
 
-			luaScript := fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hset("default", key%s)`, kvPairsStr)
+			luaScript := fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hset("default", key%s)`, kvPairsStr.String())
 
 			err := L.DoString(luaScript)
 			if err != nil {
@@ -751,13 +751,13 @@ func TestRedisHMGet(t *testing.T) {
 			key:    "hashKey",
 			fields: []string{"f1", "f2", "f3"},
 			expectedResult: map[string]*string{
-				"f1": ptr("v1"),
-				"f2": ptr("v2"),
-				"f3": ptr("v3"),
+				"f1": new("v1"),
+				"f2": new("v2"),
+				"f3": new("v3"),
 			},
 			expectedErr: lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectHMGet("hashKey", "f1", "f2", "f3").SetVal([]interface{}{"v1", "v2", "v3"})
+				mock.ExpectHMGet("hashKey", "f1", "f2", "f3").SetVal([]any{"v1", "v2", "v3"})
 			},
 		},
 		{
@@ -765,13 +765,13 @@ func TestRedisHMGet(t *testing.T) {
 			key:    "hashKey",
 			fields: []string{"f1", "missing", "f3"},
 			expectedResult: map[string]*string{
-				"f1":      ptr("v1"),
+				"f1":      new("v1"),
 				"missing": nil,
-				"f3":      ptr("v3"),
+				"f3":      new("v3"),
 			},
 			expectedErr: lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectHMGet("hashKey", "f1", "missing", "f3").SetVal([]interface{}{"v1", nil, "v3"})
+				mock.ExpectHMGet("hashKey", "f1", "missing", "f3").SetVal([]any{"v1", nil, "v3"})
 			},
 		},
 		{
@@ -803,15 +803,16 @@ func TestRedisHMGet(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			// Prepare fields as Lua variables
-			luaCode := `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hmget("default", key`
+			var luaCode strings.Builder
+			luaCode.WriteString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hmget("default", key`)
 			for i, f := range tt.fields {
 				varName := "f" + string(rune('0'+i))
 				L.SetGlobal(varName, lua.LString(f))
-				luaCode += ", " + varName
+				luaCode.WriteString(", " + varName)
 			}
-			luaCode += ")"
+			luaCode.WriteString(")")
 
-			if err := L.DoString(luaCode); err != nil {
+			if err := L.DoString(luaCode.String()); err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
 
@@ -849,4 +850,6 @@ func TestRedisHMGet(t *testing.T) {
 }
 
 // ptr is a small helper for test expected values
-func ptr(s string) *string { return &s }
+//
+//go:fix inline
+func ptr(s string) *string { return new(s) }

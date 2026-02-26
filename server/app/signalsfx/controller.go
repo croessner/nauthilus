@@ -94,11 +94,9 @@ func (c *Controller) Start(_ context.Context) error {
 	c.sigCh = sigCh
 	c.notifier.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
 
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
+	c.wg.Go(func() {
 		c.loop(sigCh)
-	}()
+	})
 
 	return nil
 }

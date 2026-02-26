@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -552,10 +553,8 @@ func addressValue(value any) (map[string]any, bool) {
 }
 
 func appendUnique(values []string, entry string) []string {
-	for _, value := range values {
-		if value == entry {
-			return values
-		}
+	if slices.Contains(values, entry) {
+		return values
 	}
 
 	return append(values, entry)

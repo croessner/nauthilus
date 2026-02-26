@@ -669,9 +669,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 
 	// Clean up device code flow session data
 	mgr.Delete(definitions.SessionKeyDeviceCode)
-	mgr.Delete(definitions.SessionKeyIdPFlowActive)
-	mgr.Delete(definitions.SessionKeyIdPFlowType)
-	mgr.Delete(definitions.SessionKeyOIDCGrantType)
+	CleanupIdPFlowState(mgr)
 
 	renderDeviceCodeSuccess(ctx, h.deps)
 }
@@ -1323,6 +1321,8 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
 		}
 
+		CleanupMFAState(mgr)
+
 		mgr.Debug(ctx, h.deps.Logger, "MFA login finalized - session data stored")
 	}
 
@@ -1504,10 +1504,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
 
 		// Important: clean up cookie so they start over
-		if sess.mgr != nil {
-			sess.mgr.Delete(definitions.SessionKeyUsername)
-			sess.mgr.Delete(definitions.SessionKeyAuthResult)
-		}
+		CleanupMFAState(sess.mgr)
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 

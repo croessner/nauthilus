@@ -63,7 +63,7 @@ type janitor struct {
 // NewMemoryShardedCache creates a new sharded cache with the specified number of shards
 func NewMemoryShardedCache(numShards int, defaultExpiration, cleanupInterval time.Duration) *MemoryShardedCache {
 	shards := make([]*MemoryCacheShard, numShards)
-	for i := 0; i < numShards; i++ {
+	for i := range numShards {
 		shards[i] = &MemoryCacheShard{
 			items: make(map[string]Item),
 		}

@@ -46,7 +46,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 	mock.ExpectIncr("cnt").SetVal(1)
 	mock.ExpectHSet("h", "f", "v").SetVal(1)
 	mock.ExpectHGet("h", "f").SetVal("v")
-	mock.ExpectMGet("k1", "k2").SetVal([]interface{}{"v1", nil})
+	mock.ExpectMGet("k1", "k2").SetVal([]any{"v1", nil})
 
 	// Build Lua command table and execute pipeline
 	luaCode := `
@@ -260,7 +260,7 @@ func TestRedisPipeline_HMGET(t *testing.T) {
 	rediscli.NewTestClient(db)
 
 	// Expect HMGET returning mix of values and nil
-	mock.ExpectHMGet("hkey", "f1", "missing", "f3").SetVal([]interface{}{"v1", nil, "v3"})
+	mock.ExpectHMGet("hkey", "f1", "missing", "f3").SetVal([]any{"v1", nil, "v3"})
 
 	// Build Lua pipeline with hmget (varargs form)
 	luaCode := `

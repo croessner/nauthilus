@@ -22,10 +22,6 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-func pString(v string) *string {
-	return &v
-}
-
 func TestSetStatusMessage(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -39,7 +35,7 @@ func TestSetStatusMessage(t *testing.T) {
 		},
 		{
 			name:          "NonNilInitialStatus",
-			initialStatus: pString("Initial status message"),
+			initialStatus: new("Initial status message"),
 			newStatus:     "New status message",
 		},
 	}

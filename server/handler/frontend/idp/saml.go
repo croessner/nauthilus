@@ -55,37 +55,37 @@ type samlLogger struct {
 	logger *slog.Logger
 }
 
-func (l *samlLogger) Printf(format string, v ...interface{}) {
+func (l *samlLogger) Printf(format string, v ...any) {
 	l.logger.Info(fmt.Sprintf(format, v...))
 }
 
-func (l *samlLogger) Print(v ...interface{}) {
+func (l *samlLogger) Print(v ...any) {
 	l.logger.Info(fmt.Sprint(v...))
 }
 
-func (l *samlLogger) Println(v ...interface{}) {
+func (l *samlLogger) Println(v ...any) {
 	l.logger.Info(fmt.Sprintln(v...))
 }
 
-func (l *samlLogger) Fatal(v ...interface{}) {
+func (l *samlLogger) Fatal(v ...any) {
 	l.logger.Error(fmt.Sprint(v...))
 
 	os.Exit(1)
 }
 
-func (l *samlLogger) Fatalf(format string, v ...interface{}) {
+func (l *samlLogger) Fatalf(format string, v ...any) {
 	l.logger.Error(fmt.Sprintf(format, v...))
 
 	os.Exit(1)
 }
 
-func (l *samlLogger) Fatalln(v ...interface{}) {
+func (l *samlLogger) Fatalln(v ...any) {
 	l.logger.Error(fmt.Sprintln(v...))
 
 	os.Exit(1)
 }
 
-func (l *samlLogger) Panic(v ...interface{}) {
+func (l *samlLogger) Panic(v ...any) {
 	s := fmt.Sprint(v...)
 
 	l.logger.Error(s)
@@ -93,7 +93,7 @@ func (l *samlLogger) Panic(v ...interface{}) {
 	panic(s)
 }
 
-func (l *samlLogger) Panicf(format string, v ...interface{}) {
+func (l *samlLogger) Panicf(format string, v ...any) {
 	s := fmt.Sprintf(format, v...)
 
 	l.logger.Error(s)
@@ -101,7 +101,7 @@ func (l *samlLogger) Panicf(format string, v ...interface{}) {
 	panic(s)
 }
 
-func (l *samlLogger) Panicln(v ...interface{}) {
+func (l *samlLogger) Panicln(v ...any) {
 	s := fmt.Sprintln(v...)
 
 	l.logger.Error(s)
@@ -480,6 +480,11 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		ctx.String(http.StatusInternalServerError, "Failed to make SAML assertion: %v", err)
 
 		return
+	}
+
+	// Clean up IdP flow state after successful SAML SSO
+	if mgr != nil {
+		CleanupIdPFlowState(mgr)
 	}
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")

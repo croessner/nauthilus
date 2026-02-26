@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -68,9 +69,7 @@ func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (j
 		"scope": strings.Join(session.Scopes, " "),
 	}
 
-	for k, v := range session.AccessTokenClaims {
-		claims[k] = v
-	}
+	maps.Copy(claims, session.AccessTokenClaims)
 
 	return claims, nil
 }

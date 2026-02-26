@@ -3,7 +3,6 @@ CLIENT_OUTPUT := nauthilus/bin/nauthilus-client
 OIDCTESTCLIENT_OUTPUT := nauthilus/bin/oidctestclient
 SAML2TESTCLIENT_OUTPUT := nauthilus/bin/saml2testclient
 HEALTHCHECK_OUTPUT := nauthilus/bin/nauthilus-healthcheck
-PKG_LIST := $(shell go list ./... | grep -v /vendor/)
 GIT_TAG=$(shell git describe --tags --abbrev=0)
 GIT_COMMIT=$(shell git rev-parse --short HEAD)
 SBOM_OUTPUT_DIR ?= sbom
@@ -14,23 +13,29 @@ SBOM_SYFT_VERSION ?= v1.16.0
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks
 
 all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
+
+fix: ## Run go fix to apply automated code migrations
+	go fix ./...
+
+vet: ## Run go vet for static analysis
+	go vet ./...
 
 $(OUTPUT) $(CLIENT_OUTPUT) $(OIDCTESTCLIENT_OUTPUT) $(SAML2TESTCLIENT_OUTPUT) $(HEALTHCHECK_OUTPUT):
 	mkdir -p $(dir $@)
 
 test:
-	go test -short ${PKG_LIST}
+	go test -short $$(go list ./... | grep -v /vendor/)
 
 race:
-	go test -race -short ${PKG_LIST}
+	go test -race -short $$(go list ./... | grep -v /vendor/)
 
 msan:
-	go test -msan -short ${PKG_LIST}
+	go test -msan -short $$(go list ./... | grep -v /vendor/)
 
-build: $(OUTPUT)
+build: fix vet $(OUTPUT)
 	go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) ./server
 
 build-client: $(CLIENT_OUTPUT)

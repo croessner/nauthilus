@@ -24,13 +24,7 @@ func NewAutoController(cfg *Config, collector StatsCollector, pacer *Pacer, app 
 
 func (c *AutoController) Run(ctx context.Context) {
 	// Control cadence: at most every 5s to ramp faster regardless of progress interval
-	ctrlEvery := c.config.ProgressEvery
-	if ctrlEvery > 5*time.Second {
-		ctrlEvery = 5 * time.Second
-	}
-	if ctrlEvery < 1*time.Second {
-		ctrlEvery = 1 * time.Second
-	}
+	ctrlEvery := max(min(c.config.ProgressEvery, 5*time.Second), 1*time.Second)
 
 	maxR := c.config.AutoMaxRPS
 	maxC := c.config.AutoMaxConc
@@ -130,10 +124,7 @@ func (c *AutoController) Run(ctx context.Context) {
 				}
 				if c.config.AutoFocus != "rps" {
 					oldC := stats.Concurrency
-					newC := int64(math.Ceil(float64(oldC) * c.config.AutoBackoff))
-					if newC < 1 {
-						newC = 1
-					}
+					newC := max(int64(math.Ceil(float64(oldC)*c.config.AutoBackoff)), 1)
 					if oldC > newC {
 						c.app.ReduceWorkers(int(oldC - newC))
 						c.collector.SetConcurrency(newC)
