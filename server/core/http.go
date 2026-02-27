@@ -254,6 +254,16 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	rb.Engine = r
 
 	rb.WithBackchannel(setupBackchannel)
+
+	r.NoRoute(func(ctx *gin.Context) {
+		if strings.HasPrefix(ctx.Request.URL.Path, "/api/v1") {
+			ctx.Status(http.StatusNotFound)
+
+			return
+		}
+
+		ctx.String(http.StatusNotFound, "404 - Page Not Found")
+	})
 }
 
 // DefaultHTTPServerFactory builds http.Server and configures HTTP/2 settings.
