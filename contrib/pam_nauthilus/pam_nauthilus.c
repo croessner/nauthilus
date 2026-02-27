@@ -11,6 +11,7 @@
 #include <security/pam_ext.h>
 #include <syslog.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <curl/curl.h>
 
@@ -20,7 +21,13 @@
 
 #define ERRBUF_SIZE 512
 
-/* show_device_instruction displays the verification URL and code to the user. */
+/* show_device_instruction displays the verification URL and code to the user.
+ *
+ * OpenSSH buffers PAM_TEXT_INFO messages and only sends them to the client
+ * together with the next PAM_PROMPT_ECHO_ON/OFF message.  We therefore
+ * append a dummy prompt ("Press Enter to continue...") so that the info
+ * messages are actually delivered over the SSH channel.
+ */
 static void show_device_instruction(pam_handle_t *pamh, const device_auth *auth)
 {
     const char *uri = auth->verification_uri;
@@ -38,6 +45,16 @@ static void show_device_instruction(pam_handle_t *pamh, const device_auth *auth)
         pam_prompt(pamh, PAM_TEXT_INFO, NULL,
                    "Enter this code in the browser: %s", auth->user_code);
     }
+
+    /*
+     * Flush the buffered info messages by sending a real prompt.
+     * The user just presses Enter; the response is discarded.
+     */
+    char *resp = NULL;
+
+    pam_prompt(pamh, PAM_PROMPT_ECHO_ON, &resp,
+               "Press Enter after you have approved the login in the browser...");
+    free(resp);
 }
 
 /* handle_flow_error maps flow error codes to PAM return codes and logs them. */
@@ -95,6 +112,8 @@ static int run_device_flow(pam_handle_t *pamh, const pam_settings *settings,
         return PAM_SERVICE_ERR;
     }
 
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: HTTP client initialized");
+
     /* Initialize the device flow. */
     device_flow df;
 
@@ -107,8 +126,12 @@ static int run_device_flow(pam_handle_t *pamh, const pam_settings *settings,
         return PAM_SERVICE_ERR;
     }
 
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: device flow initialized, endpoints ready");
+
     /* Step 1: Start device authorization. */
     device_auth auth;
+
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: calling device_flow_start_auth (POST to device endpoint)");
 
     rc = device_flow_start_auth(&df, &auth, errbuf, sizeof(errbuf));
 
@@ -119,8 +142,12 @@ static int run_device_flow(pam_handle_t *pamh, const pam_settings *settings,
         return PAM_AUTH_ERR;
     }
 
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: device auth OK, showing instruction to user");
+
     /* Step 2: Show verification URL and code to the user. */
     show_device_instruction(pamh, &auth);
+
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: instruction shown, starting token poll");
 
     /* Step 3: Poll for token. */
     token_response tok;
@@ -136,17 +163,22 @@ static int run_device_flow(pam_handle_t *pamh, const pam_settings *settings,
         return pam_rc;
     }
 
-    /* Step 4: Verify JWT signature via JWKS. */
-    rc = device_flow_verify_signature(&df, tok.access_token, errbuf, sizeof(errbuf));
+    /* Step 4: Verify JWT signature via JWKS (only for JWT tokens). */
+    if (strchr(tok.access_token, '.') != NULL) {
+        rc = device_flow_verify_signature(&df, tok.access_token, errbuf, sizeof(errbuf));
 
-    if (rc != FLOW_OK) {
-        pam_syslog(pamh, LOG_ERR, "pam_nauthilus JWKS signature verification failed");
-        int pam_rc = handle_flow_error(pamh, rc, errbuf);
+        if (rc != FLOW_OK) {
+            pam_syslog(pamh, LOG_ERR, "pam_nauthilus JWKS signature verification failed");
+            int pam_rc = handle_flow_error(pamh, rc, errbuf);
 
-        token_response_free(&tok);
-        http_client_cleanup(&hc);
+            token_response_free(&tok);
+            http_client_cleanup(&hc);
 
-        return pam_rc;
+            return pam_rc;
+        }≤
+    } else {
+        pam_syslog(pamh, LOG_DEBUG,
+                   "pam_nauthilus: opaque access token, skipping JWKS verification");
     }
 
     /* Step 5: Introspect token. */
@@ -198,6 +230,20 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags,
 {
     (void)flags;
 
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: pam_sm_authenticate entered");
+
+    /*
+     * Prevent libcurl from initializing OpenSSL globals.  OpenSSH already
+     * initializes OpenSSL in the parent process before forking the
+     * privilege-separation child that loads this PAM module.  Letting
+     * libcurl call OPENSSL_init_ssl() again inside the forked child can
+     * deadlock or corrupt state.  CURL_GLOBAL_NOTHING skips all
+     * sub-library initialization while still allowing curl_easy_init().
+     */
+    curl_global_init(CURL_GLOBAL_NOTHING);
+
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: curl_global_init done");
+
     char errbuf[ERRBUF_SIZE] = {0};
 
     /* Parse and validate configuration. */
@@ -211,6 +257,8 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags,
         return PAM_SERVICE_ERR;
     }
 
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: settings parsed OK");
+
     /* Get the PAM username. */
     const char *username = NULL;
 
@@ -219,6 +267,8 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
         return PAM_SERVICE_ERR;
     }
+
+    pam_syslog(pamh, LOG_DEBUG, "pam_nauthilus: username=%s, starting device flow", username);
 
     return run_device_flow(pamh, &settings, username);
 }

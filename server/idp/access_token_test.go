@@ -47,6 +47,7 @@ func TestAccessToken_OOP(t *testing.T) {
 		Scopes:            []string{"openid", "profile"},
 		AuthTime:          time.Now(),
 		AccessTokenClaims: map[string]any{"name": "Test User"},
+		IdTokenClaims:     map[string]any{"preferred_username": "testuser", "email": "test@example.com"},
 	}
 
 	issuer := "https://issuer.local"
@@ -76,6 +77,60 @@ func TestAccessToken_OOP(t *testing.T) {
 		assert.Contains(t, tokenString, definitions.OIDCTokenPrefixAccessToken)
 		assert.Equal(t, time.Hour, lifetime)
 
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestOpaqueAccessToken_Validate(t *testing.T) {
+	ctx := t.Context()
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	storage := NewRedisTokenStorage(redisClient, "test:")
+
+	session := &OIDCSession{
+		ClientID:          "client1",
+		UserID:            "user1",
+		Scopes:            []string{"openid", "profile"},
+		AuthTime:          time.Now(),
+		AccessTokenClaims: map[string]any{"name": "Test User"},
+		IdTokenClaims:     map[string]any{"preferred_username": "testuser", "email": "test@example.com"},
+	}
+
+	tokenGen := NewDefaultTokenGenerator()
+	tokenKey := "test:oidc:access_token:na_at_testtoken"
+	sessionData, _ := json.Marshal(session)
+
+	t.Run("Validate returns AccessTokenClaims", func(t *testing.T) {
+		mock.ExpectGet(tokenKey).SetVal(string(sessionData))
+
+		token := NewOpaqueAccessToken(session, storage, tokenGen, time.Hour)
+		claims, err := token.Validate(ctx, "na_at_testtoken")
+
+		assert.NoError(t, err)
+		assert.Equal(t, "user1", claims["sub"])
+		assert.Equal(t, "client1", claims["aud"])
+		assert.Equal(t, "openid profile", claims["scope"])
+		assert.Equal(t, "Test User", claims["name"])
+		// Must NOT contain IdTokenClaims
+		assert.Nil(t, claims["preferred_username"])
+		assert.Nil(t, claims["email"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("ValidateForUserInfo returns IdTokenClaims", func(t *testing.T) {
+		mock.ExpectGet(tokenKey).SetVal(string(sessionData))
+
+		token := NewOpaqueAccessToken(session, storage, tokenGen, time.Hour)
+		claims, err := token.ValidateForUserInfo(ctx, "na_at_testtoken")
+
+		assert.NoError(t, err)
+		assert.Equal(t, "user1", claims["sub"])
+		assert.Equal(t, "testuser", claims["preferred_username"])
+		assert.Equal(t, "test@example.com", claims["email"])
+		// Must NOT contain AccessTokenClaims or introspection fields
+		assert.Nil(t, claims["aud"])
+		assert.Nil(t, claims["scope"])
+		assert.Nil(t, claims["name"])
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

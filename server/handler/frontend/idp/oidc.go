@@ -580,15 +580,15 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-	// Validate token
-	claims, err := h.idp.ValidateToken(ctx.Request.Context(), tokenString)
+	// Validate token and retrieve IdTokenClaims for the UserInfo endpoint.
+	claims, err := h.idp.ValidateTokenForUserInfo(ctx.Request.Context(), tokenString)
 	if err != nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_token"})
 
 		return
 	}
 
-	// Return user info from token claims
+	// Return user info from IdToken claims
 	ctx.JSON(http.StatusOK, claims)
 }
 

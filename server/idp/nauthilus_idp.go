@@ -434,6 +434,29 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 	return nil, fmt.Errorf("invalid token")
 }
 
+// ValidateTokenForUserInfo validates an access token and returns IdTokenClaims suitable for the UserInfo endpoint.
+// For opaque tokens it reads the IdTokenClaims from the stored session.
+// For JWT tokens it falls back to standard JWT validation (claims are already embedded in the token).
+func (n *NauthilusIdP) ValidateTokenForUserInfo(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
+	_, sp := n.tracer.Start(ctx, "idp.validate_token_for_userinfo")
+	defer sp.End()
+
+	// Heuristic: JWT tokens always contain dots. Opaque tokens (KSUIDs) do not.
+	if !strings.Contains(tokenString, ".") {
+		session, err := n.storage.GetAccessToken(ctx, tokenString)
+		if err == nil && session != nil {
+			token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
+
+			return token.ValidateForUserInfo(ctx, tokenString)
+		}
+
+		return nil, fmt.Errorf("invalid or expired opaque token")
+	}
+
+	// For JWT access tokens, fall back to standard validation.
+	return n.ValidateToken(ctx, tokenString)
+}
+
 // resolveJWTPublicKey returns the public key for verifying a JWT based on its algorithm and kid header.
 func (n *NauthilusIdP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token) (any, error) {
 	kid, _ := token.Header["kid"].(string)
