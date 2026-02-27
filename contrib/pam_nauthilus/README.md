@@ -4,11 +4,17 @@
 It prompts the user with a verification URL and code and then polls the token endpoint until approval, timeout, or
 denial.
 
+This is a **pure C implementation** that is fully compatible with OpenSSH's privilege separation (fork-based
+architecture).
+
 ## Requirements
 
-- Go toolchain (Go 1.26)
+- C compiler (gcc or clang)
 - PAM development headers (`libpam-dev` on Debian/Ubuntu, `pam-devel` on RHEL/Fedora)
-- A Nauthilus IdP client configured for Device Code flow and `client_secret_basic` token authentication
+- libcurl development headers (`libcurl4-openssl-dev` on Debian/Ubuntu, `libcurl-devel` on RHEL/Fedora)
+- OpenSSL development headers (`libssl-dev` on Debian/Ubuntu, `openssl-devel` on RHEL/Fedora)
+- cJSON development headers (`libcjson-dev` on Debian/Ubuntu, `cjson-devel` on RHEL/Fedora or from EPEL)
+- pkg-config
 
 ## Build
 
@@ -16,7 +22,7 @@ denial.
 make build
 ```
 
-This produces `pam_nauthilus.so` and a C header file `pam_nauthilus.h` in the module directory.
+This produces `pam_nauthilus.so` in the module directory.
 
 ## Install
 
@@ -24,7 +30,7 @@ This produces `pam_nauthilus.so` and a C header file `pam_nauthilus.h` in the mo
 sudo make install LIBDIR=/lib/security
 ```
 
-Some distributions use `/usr/lib/security`. Adjust `LIBDIR` accordingly.
+Some distributions use `/usr/lib/security` or `/usr/lib64/security`. Adjust `LIBDIR` accordingly.
 
 ## PAM configuration
 
@@ -100,12 +106,12 @@ idp:
 
 ## Demo Dockerfile
 
-This demo image builds `pam_nauthilus.so` and installs it into `/usr/lib/security` inside the container. The container
-keeps running (`sleep infinity`) and an entrypoint renders `/etc/pam.d/login` from environment variables so you can
-attach to it and run `/sbin/login` for a realistic PAM prompt.
+This demo image builds `pam_nauthilus.so` using gcc and installs it into `/usr/lib/security` inside the container. The
+container keeps running (`sleep infinity`) and an entrypoint renders `/etc/pam.d/login` from environment variables so
+you can attach to it and run `/sbin/login` for a realistic PAM prompt.
 
 ```bash
-docker build -f contrib/pam_nauthilus/Dockerfile.demo -t pam_nauthilus-demo .
+docker build -f Dockerfile.demo -t pam_nauthilus-demo .
 ```
 
 Run the container with environment variables that map to the PAM module options:
@@ -137,10 +143,8 @@ Supported environment variables are `PAM_ISSUER`, `PAM_DEVICE_ENDPOINT`, `PAM_TO
 `PAM_SCOPE`, `PAM_USER_CLAIM`, `PAM_TIMEOUT`, `PAM_REQUEST_TIMEOUT`, `PAM_CA_FILE`, `PAM_TLS_SERVER_NAME`, and
 `PAM_ALLOW_HTTP`. If you need a fully custom PAM stack, override the entrypoint and edit `/etc/pam.d/login` manually.
 
-## Testing
+## Why pure C?
 
-```bash
-make test
-```
-
-Unit tests cover the device-flow logic using `httptest`.
+PAM modules loaded by OpenSSH run inside a forked privilege-separation child process. A pure C shared library using
+only POSIX-safe libraries (libcurl, OpenSSL, cJSON) works correctly in this environment without any runtime
+initialization issues.
