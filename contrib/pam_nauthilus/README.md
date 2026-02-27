@@ -12,7 +12,8 @@ architecture).
 - C compiler (gcc or clang)
 - PAM development headers (`libpam-dev` on Debian/Ubuntu, `pam-devel` on RHEL/Fedora)
 - libcurl development headers (`libcurl4-openssl-dev` on Debian/Ubuntu, `libcurl-devel` on RHEL/Fedora)
-- OpenSSL development headers (`libssl-dev` on Debian/Ubuntu, `openssl-devel` on RHEL/Fedora)
+- OpenSSL development headers (`libssl-dev` on Debian/Ubuntu, `openssl-devel` on RHEL/Fedora) — both OpenSSL 1.1.1+ and
+  3.0+ are supported
 - cJSON development headers (`libcjson-dev` on Debian/Ubuntu, `cjson-devel` on RHEL/Fedora or from EPEL)
 - pkg-config
 

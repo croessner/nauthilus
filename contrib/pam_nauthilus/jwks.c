@@ -6,9 +6,15 @@
 
 #include <cjson/cJSON.h>
 #include <openssl/bn.h>
-#include <openssl/core_names.h>
 #include <openssl/evp.h>
+#include <openssl/opensslv.h>
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/core_names.h>
 #include <openssl/param_build.h>
+#else
+#include <openssl/rsa.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,11 +172,15 @@ static cJSON *find_signing_key(cJSON *keys_array, const char *kid)
 }
 
 /*
- * build_rsa_pkey constructs an EVP_PKEY from the JWK "n" and "e" values
- * using the OpenSSL 3.0+ EVP_PKEY_fromdata API (no deprecated RSA_* calls).
+ * build_rsa_pkey constructs an EVP_PKEY from the JWK "n" and "e" values.
+ * On OpenSSL 3.0+ it uses EVP_PKEY_fromdata; on OpenSSL 1.1.x it falls
+ * back to RSA_new + RSA_set0_key + EVP_PKEY_assign_RSA.
  * Caller must free the returned key with EVP_PKEY_free().
  */
-static EVP_PKEY *build_rsa_pkey(const char *n_b64, const char *e_b64)
+
+/* Shared helper: decode n and e, convert to BIGNUMs. */
+static int decode_rsa_components(const char *n_b64, const char *e_b64,
+                                 BIGNUM **bn_n, BIGNUM **bn_e)
 {
     size_t n_len = 0, e_len = 0;
     unsigned char *n_bytes = base64url_decode(n_b64, &n_len);
@@ -180,28 +190,40 @@ static EVP_PKEY *build_rsa_pkey(const char *n_b64, const char *e_b64)
         free(n_bytes);
         free(e_bytes);
 
+        return -1;
+    }
+
+    *bn_n = BN_bin2bn(n_bytes, (int)n_len, NULL);
+    *bn_e = BN_bin2bn(e_bytes, (int)e_len, NULL);
+
+    free(n_bytes);
+    free(e_bytes);
+
+    if (*bn_n == NULL || *bn_e == NULL) {
+        BN_free(*bn_n);
+        BN_free(*bn_e);
+
+        return -1;
+    }
+
+    return 0;
+}
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+
+static EVP_PKEY *build_rsa_pkey(const char *n_b64, const char *e_b64)
+{
+    BIGNUM *bn_n = NULL, *bn_e = NULL;
+
+    if (decode_rsa_components(n_b64, e_b64, &bn_n, &bn_e) != 0) {
         return NULL;
     }
 
     OSSL_PARAM_BLD *bld = OSSL_PARAM_BLD_new();
 
     if (bld == NULL) {
-        free(n_bytes);
-        free(e_bytes);
-
-        return NULL;
-    }
-
-    BIGNUM *bn_n = BN_bin2bn(n_bytes, (int)n_len, NULL);
-    BIGNUM *bn_e = BN_bin2bn(e_bytes, (int)e_len, NULL);
-
-    free(n_bytes);
-    free(e_bytes);
-
-    if (bn_n == NULL || bn_e == NULL) {
         BN_free(bn_n);
         BN_free(bn_e);
-        OSSL_PARAM_BLD_free(bld);
 
         return NULL;
     }
@@ -242,6 +264,53 @@ static EVP_PKEY *build_rsa_pkey(const char *n_b64, const char *e_b64)
 
     return pkey;
 }
+
+#else /* OpenSSL 1.1.x */
+
+static EVP_PKEY *build_rsa_pkey(const char *n_b64, const char *e_b64)
+{
+    BIGNUM *bn_n = NULL, *bn_e = NULL;
+
+    if (decode_rsa_components(n_b64, e_b64, &bn_n, &bn_e) != 0) {
+        return NULL;
+    }
+
+    RSA *rsa = RSA_new();
+
+    if (rsa == NULL) {
+        BN_free(bn_n);
+        BN_free(bn_e);
+
+        return NULL;
+    }
+
+    /* RSA_set0_key takes ownership of the BIGNUMs on success. */
+    if (RSA_set0_key(rsa, bn_n, bn_e, NULL) != 1) {
+        RSA_free(rsa);
+
+        return NULL;
+    }
+
+    EVP_PKEY *pkey = EVP_PKEY_new();
+
+    if (pkey == NULL) {
+        RSA_free(rsa);
+
+        return NULL;
+    }
+
+    /* EVP_PKEY_assign_RSA takes ownership of rsa on success. */
+    if (EVP_PKEY_assign_RSA(pkey, rsa) != 1) {
+        RSA_free(rsa);
+        EVP_PKEY_free(pkey);
+
+        return NULL;
+    }
+
+    return pkey;
+}
+
+#endif /* OPENSSL_VERSION_NUMBER */
 
 /*
  * verify_rs256 verifies an RS256 signature over signing_input using pkey.
