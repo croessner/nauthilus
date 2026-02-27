@@ -56,7 +56,7 @@ func (t *OpaqueAccessToken) Issue(ctx context.Context) (string, time.Duration, e
 	return token, t.lifetime, nil
 }
 
-// Validate verifies an opaque access token against Redis.
+// Validate verifies an opaque access token against Redis and returns AccessTokenClaims (for introspection).
 func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
 	session, err := t.storage.GetAccessToken(ctx, tokenString)
 	if err != nil {
@@ -70,6 +70,22 @@ func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (j
 	}
 
 	maps.Copy(claims, session.AccessTokenClaims)
+
+	return claims, nil
+}
+
+// ValidateForUserInfo verifies an opaque access token and returns IdTokenClaims (for the UserInfo endpoint).
+func (t *OpaqueAccessToken) ValidateForUserInfo(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
+	session, err := t.storage.GetAccessToken(ctx, tokenString)
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired opaque token: %w", err)
+	}
+
+	claims := jwt.MapClaims{
+		"sub": session.UserID,
+	}
+
+	maps.Copy(claims, session.IdTokenClaims)
 
 	return claims, nil
 }
