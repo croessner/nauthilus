@@ -4,6 +4,12 @@
         <div class="card-body items-center text-center">
             <h2 class="card-title text-2xl mb-4">{{ .Title }}</h2>
 
+            {{if .RequireMFAFlow}}
+            <div class="alert alert-info mb-6 w-full text-left">
+                <span>{{ .RequireMFAMessage }}</span>
+            </div>
+            {{end}}
+
             <p class="mb-6">{{ .TOTPMessage }}</p>
 
             <div class="bg-white p-4 rounded-lg mb-6 shadow-inner" id="qrcode">
@@ -32,6 +38,12 @@
                     <button class="btn btn-primary" type="submit">{{ .Submit }}</button>
                 </div>
             </form>
+
+            {{if .RequireMFAFlow}}
+            <div class="form-control mt-3 w-full">
+                <a class="btn btn-ghost" href="/mfa/register/cancel">{{ .Cancel }}</a>
+            </div>
+            {{end}}
         </div>
     </div>
 </div>

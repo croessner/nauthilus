@@ -288,6 +288,11 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.POST("/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
 
+	authGroup.GET("/register/continue", h.ContinueRequiredMFARegistration)
+	authGroup.GET("/register/continue/:languageTag", h.ContinueRequiredMFARegistration)
+	authGroup.GET("/register/cancel", h.CancelRequiredMFARegistration)
+	authGroup.GET("/register/cancel/:languageTag", h.CancelRequiredMFARegistration)
+
 	router.GET("/logged_out", csrfMW, secureMW, i18nMW, h.LoggedOut)
 	router.GET("/logged_out/:languageTag", csrfMW, secureMW, i18nMW, h.LoggedOut)
 }
@@ -434,9 +439,12 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 		}
 	}
 
-	// If user is already logged in with a valid session, redirect back to the IdP endpoint
+	// If user is already logged in with a valid session, redirect back to the IdP endpoint.
+	// Check first whether required MFA methods still need to be registered.
 	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
-		h.redirectToIdPEndpoint(ctx, mgr)
+		if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+			h.redirectToIdPEndpoint(ctx, mgr)
+		}
 
 		return
 	}
@@ -890,8 +898,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
-	// Redirect back to IdP endpoint to complete the flow
-	h.redirectToIdPEndpoint(ctx, mgr)
+	// Redirect back to IdP endpoint; check for mandatory MFA registration first.
+	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+		h.redirectToIdPEndpoint(ctx, mgr)
+	}
 }
 
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
@@ -1328,8 +1338,10 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
-	// Redirect back to IdP endpoint to complete the flow
-	h.redirectToIdPEndpoint(ctx, mgr)
+	// Redirect back to IdP endpoint; check for mandatory MFA registration first.
+	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+		h.redirectToIdPEndpoint(ctx, mgr)
+	}
 }
 
 // LoginWebAuthn renders the WebAuthn verification page during login.
@@ -1599,8 +1611,14 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 	}
 
 	if haveTOTP {
-		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
-		ctx.Status(http.StatusFound)
+		// In a forced-registration flow redirect to the continue endpoint so the
+		// next required method (if any) is handled; otherwise go to the self-service home.
+		if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+			ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
+		} else {
+			ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
+			ctx.Status(http.StatusFound)
+		}
 
 		return
 	}
@@ -1630,6 +1648,12 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "OTP Code")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
 	data["CSRFToken"] = csrf.Token(ctx)
+
+	requireFlow := mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
+
+	data["RequireMFAFlow"] = requireFlow
+	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
+	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
 
 	ctx.HTML(http.StatusOK, "idp_totp_register.html", data)
 }
@@ -1675,6 +1699,23 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	if mgr != nil {
 		mgr.Set(definitions.SessionKeyHaveTOTP, true)
 		mgr.Delete(definitions.SessionKeyTOTPSecret)
+	}
+
+	// In a forced-registration flow the pending list must be updated and the browser
+	// must be sent to the continue endpoint so that the next required method (if any)
+	// is registered before the IdP flow resumes.
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		remaining := removeFromMFAPendingList(
+			mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
+			definitions.MFAMethodTOTP,
+		)
+
+		mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+
+		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/continue")
+		ctx.Status(http.StatusOK)
+
+		return
 	}
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
@@ -1838,6 +1879,8 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 		return
 	}
 
+	requireFlow := mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
+
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Register WebAuthn")
 	data["WebAuthnMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please connect your security key and follow the instructions")
@@ -1851,6 +1894,10 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	data["JSDeviceNameRequired"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter a device name")
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
 	data["CSRFToken"] = csrf.Token(ctx)
+
+	data["RequireMFAFlow"] = requireFlow
+	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
+	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_register.html", data)
 }

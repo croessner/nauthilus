@@ -4,6 +4,12 @@
         <div class="card-body items-center text-center">
             <h2 class="card-title text-2xl mb-4">{{ .Title }}</h2>
 
+            {{if .RequireMFAFlow}}
+            <div class="alert alert-info mb-6 w-full text-left">
+                <span>{{ .RequireMFAMessage }}</span>
+            </div>
+            {{end}}
+
             <p class="mb-8">{{ .WebAuthnMessage }}</p>
 
             <div class="form-control w-full mb-6">
@@ -35,6 +41,12 @@
             <button class="btn btn-primary btn-lg w-full" id="register-button">
                 {{ .Submit }}
             </button>
+
+            {{if .RequireMFAFlow}}
+            <div class="form-control mt-3 w-full">
+                <a class="btn btn-ghost" href="/mfa/register/cancel">{{ .Cancel }}</a>
+            </div>
+            {{end}}
         </div>
     </div>
 </div>
@@ -133,8 +145,13 @@
                 throw new Error(await finishResponse.text());
             }
 
-            // Success!
+            // Success! In a forced-registration flow continue to the next required
+            // method; in self-service mode return to the 2FA overview.
+            {{if .RequireMFAFlow}}
+            window.location.href = "/mfa/register/continue";
+            {{else}}
             window.location.href = "/mfa/register/home";
+            {{end}}
 
         } catch (err) {
             console.error(err);
