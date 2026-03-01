@@ -114,5 +114,6 @@
   "Failed to delete WebAuthn from Redis": "从Redis删除WebAuthn失败",
   "Failed to delete credential": "删除凭据失败",
   "Failed to update credential": "更新凭据失败",
-  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "您确定要生成新的恢复代码吗？现有代码将被永久替换。"
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "您确定要生成新的恢复代码吗？现有代码将被永久替换。",
+  "Your application requires this authentication method to be set up before you can continue": "您的应用程序要求在继续之前设置此身份验证方法"
 }

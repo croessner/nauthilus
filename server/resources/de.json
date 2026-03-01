@@ -114,5 +114,6 @@
   "Failed to delete WebAuthn from Redis": "WebAuthn konnte nicht aus Redis gelöscht werden",
   "Failed to delete credential": "Anmeldeinformation konnte nicht gelöscht werden",
   "Failed to update credential": "Anmeldeinformation konnte nicht aktualisiert werden",
-  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Möchten Sie wirklich neue Wiederherstellungscodes generieren? Vorhandene Codes werden unwiderruflich ersetzt."
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Möchten Sie wirklich neue Wiederherstellungscodes generieren? Vorhandene Codes werden unwiderruflich ersetzt.",
+  "Your application requires this authentication method to be set up before you can continue": "Ihre Anwendung erfordert, dass diese Authentifizierungsmethode eingerichtet wird, bevor Sie fortfahren können"
 }
