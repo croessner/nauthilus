@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/idp"
@@ -211,20 +212,8 @@ func (h *FrontendHandler) ContinueRequiredMFARegistration(ctx *gin.Context) {
 // invalidated:  the forced-registration state is removed, the IdP flow state is
 // cleaned up, and the user is logged out before being sent to /logged_out.
 func (h *FrontendHandler) CancelRequiredMFARegistration(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-
-	if mgr != nil {
-		mgr.Delete(definitions.SessionKeyRequireMFAFlow)
-		mgr.Delete(definitions.SessionKeyRequireMFAPending)
-
-		CleanupIdPFlowState(mgr)
-
-		mgr.Delete(definitions.SessionKeyAccount)
-		mgr.Delete(definitions.SessionKeyUniqueUserID)
-		mgr.Delete(definitions.SessionKeyDisplayName)
-		mgr.Delete(definitions.SessionKeySubject)
-		mgr.Delete(definitions.SessionKeyMFACompleted)
-	}
+	core.SessionCleaner(ctx)
+	core.ClearBrowserCookies(ctx)
 
 	ctx.Redirect(http.StatusFound, "/logged_out")
 }
