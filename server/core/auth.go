@@ -2536,6 +2536,14 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	// so final logs include authn=true for cache hits.
 	a.Runtime.Authenticated = true
 
+	// Run features for cache hits (authenticated state).
+	// Features with when_authenticated=true will be evaluated.
+	featureResult := a.HandleFeatures(ctx)
+
+	if featureResult != definitions.AuthResultOK {
+		return featureResult
+	}
+
 	authResult := definitions.AuthResultOK
 
 	if lf := getLuaFilter(); lf != nil {
