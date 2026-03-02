@@ -29,6 +29,10 @@ func (globalTestClient) GetReadPipeline() redis.Pipeliner {
 	return rediscli.GetClient().GetReadPipeline()
 }
 
+func (globalTestClient) GetReadHandles() []redis.UniversalClient {
+	return rediscli.GetClient().GetReadHandles()
+}
+
 func (globalTestClient) Close() {}
 
 func (globalTestClient) GetSecurityManager() *rediscli.SecurityManager {
