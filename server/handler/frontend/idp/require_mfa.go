@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/idp"
@@ -29,7 +30,7 @@ import (
 // for the current IdP client or SAML service provider read from the cookie.
 // Returns nil when no requirement is configured or the flow type is unknown.
 func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
-	if mgr == nil {
+	if mgr == nil || h.deps == nil {
 		return nil
 	}
 
@@ -96,6 +97,10 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 
 	protocol := mgr.GetString(definitions.SessionKeyProtocol, "")
 
+	if h.deps == nil {
+		return false
+	}
+
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 
 	user, err := idpInstance.GetUserByUsername(ctx, username, "", "")
@@ -159,25 +164,6 @@ func (h *FrontendHandler) redirectToNextRequiredMFARegistration(ctx *gin.Context
 	return false
 }
 
-// removeFromMFAPendingList removes the first occurrence of method from the
-// comma-separated pending list and returns the remainder.
-func removeFromMFAPendingList(pending, method string) string {
-	if pending == "" {
-		return ""
-	}
-
-	parts := strings.Split(pending, ",")
-	remaining := make([]string, 0, len(parts))
-
-	for _, p := range parts {
-		if strings.TrimSpace(p) != method {
-			remaining = append(remaining, p)
-		}
-	}
-
-	return strings.Join(remaining, ",")
-}
-
 // ContinueRequiredMFARegistration is the GET handler for /mfa/register/continue.
 // It is called after each individual MFA registration step in a forced-registration
 // flow to decide whether another method still needs to be registered or whether the
@@ -211,20 +197,8 @@ func (h *FrontendHandler) ContinueRequiredMFARegistration(ctx *gin.Context) {
 // invalidated:  the forced-registration state is removed, the IdP flow state is
 // cleaned up, and the user is logged out before being sent to /logged_out.
 func (h *FrontendHandler) CancelRequiredMFARegistration(ctx *gin.Context) {
-	mgr := cookie.GetManager(ctx)
-
-	if mgr != nil {
-		mgr.Delete(definitions.SessionKeyRequireMFAFlow)
-		mgr.Delete(definitions.SessionKeyRequireMFAPending)
-
-		CleanupIdPFlowState(mgr)
-
-		mgr.Delete(definitions.SessionKeyAccount)
-		mgr.Delete(definitions.SessionKeyUniqueUserID)
-		mgr.Delete(definitions.SessionKeyDisplayName)
-		mgr.Delete(definitions.SessionKeySubject)
-		mgr.Delete(definitions.SessionKeyMFACompleted)
-	}
+	core.SessionCleaner(ctx)
+	core.ClearBrowserCookies(ctx)
 
 	ctx.Redirect(http.StatusFound, "/logged_out")
 }

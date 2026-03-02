@@ -493,6 +493,16 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 
 		mgr.Delete(definitions.SessionKeyRegistration)
 
+		// In a forced-registration flow, remove WebAuthn from the pending list so
+		// that ContinueRequiredMFARegistration can advance to the next method or
+		// resume the IdP flow.
+		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+			pending := mgr.GetString(definitions.SessionKeyRequireMFAPending, "")
+			remaining := util.RemoveFromCommaSeparatedList(pending, definitions.MFAMethodWebAuthn)
+
+			mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+		}
+
 		if err = mgr.Save(ctx); err != nil {
 			ctx.JSON(http.StatusInternalServerError, err)
 

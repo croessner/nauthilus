@@ -1705,7 +1705,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	// must be sent to the continue endpoint so that the next required method (if any)
 	// is registered before the IdP flow resumes.
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		remaining := removeFromMFAPendingList(
+		remaining := util.RemoveFromCommaSeparatedList(
 			mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
 			definitions.MFAMethodTOTP,
 		)
