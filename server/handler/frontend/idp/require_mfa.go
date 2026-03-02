@@ -30,7 +30,7 @@ import (
 // for the current IdP client or SAML service provider read from the cookie.
 // Returns nil when no requirement is configured or the flow type is unknown.
 func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
-	if mgr == nil {
+	if mgr == nil || h.deps == nil {
 		return nil
 	}
 
@@ -96,6 +96,10 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 	}
 
 	protocol := mgr.GetString(definitions.SessionKeyProtocol, "")
+
+	if h.deps == nil {
+		return false
+	}
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 
