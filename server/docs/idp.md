@@ -136,18 +136,20 @@ The IdP stores all flow state in the encrypted `nauthilus_secure_data` cookie to
 
 **Session Keys for IdP Flow:**
 
-| Key                | Description                                                                  |
-|--------------------|------------------------------------------------------------------------------|
-| `idp_flow_active`  | Boolean indicating an active IdP flow                                        |
-| `idp_flow_type`    | Flow type: `oidc` or `saml`                                                  |
-| `idp_client_id`    | OIDC client_id                                                               |
-| `idp_redirect_uri` | Validated OIDC redirect_uri                                                  |
-| `idp_scope`        | Requested OIDC scopes                                                        |
-| `idp_state`        | OIDC state parameter                                                         |
-| `idp_nonce`        | OIDC nonce parameter                                                         |
-| `idp_original_url` | SAML original request URL                                                    |
-| `oidc_grant_type`  | OIDC grant type (`authorization_code` or `device_code`) to distinguish flows |
-| `device_code`      | Device code string during the device code MFA flow                           |
+| Key                   | Description                                                                             |
+|-----------------------|-----------------------------------------------------------------------------------------|
+| `idp_flow_active`     | Boolean indicating an active IdP flow                                                   |
+| `idp_flow_type`       | Flow type: `oidc` or `saml`                                                             |
+| `idp_client_id`       | OIDC client_id                                                                          |
+| `idp_redirect_uri`    | Validated OIDC redirect_uri                                                             |
+| `idp_scope`           | Requested OIDC scopes                                                                   |
+| `idp_state`           | OIDC state parameter                                                                    |
+| `idp_nonce`           | OIDC nonce parameter                                                                    |
+| `idp_original_url`    | SAML original request URL                                                               |
+| `oidc_grant_type`     | OIDC grant type (`authorization_code` or `device_code`) to distinguish flows            |
+| `device_code`         | Device code string during the device code MFA flow                                      |
+| `require_mfa_flow`    | Boolean indicating that the user must register missing MFA methods                      |
+| `require_mfa_pending` | Comma-separated list of MFA methods still requiring registration (e.g. `totp,webauthn`) |
 
 **How it works:**
 
@@ -174,6 +176,7 @@ All IdP frontend pages use CSRF protection via `nosurf`. The CSRF token is:
 - Device verification pages (`/oidc/device/verify`, `/oidc/device/verify/:languageTag`)
 - Registration pages (`/mfa/totp/register`, `/mfa/webauthn/register`)
 - 2FA Home (`/mfa/register/home`)
+- Forced MFA registration (`/mfa/register/continue`, `/mfa/register/cancel`)
 - Device management (`/mfa/webauthn/devices`)
 
 **HTMX requests:**
@@ -336,6 +339,95 @@ Nauthilus provides a basic SAML Single Logout (SLO) endpoint.
 
 Currently, the SAML SLO implementation focuses on local session termination and does not yet support complex
 asynchronous SLO propagation to other Service Providers.
+
+## 3.6 Forced MFA Registration Flow (`require_mfa`)
+
+Nauthilus supports per-client enforcement of MFA registration. When an OIDC client or SAML2 service provider has a
+`require_mfa` list configured, the IdP checks whether the user has all required MFA methods registered before
+completing the authorization flow. If any methods are missing, the user is sent through a forced-registration flow.
+
+### Configuration
+
+The `require_mfa` field accepts a list of MFA method identifiers. Valid values are `totp` and `webauthn`.
+
+**OIDC client example:**
+
+```yaml
+idp:
+    oidc:
+        clients:
+            -   client_id: "secure-app"
+                require_mfa:
+                    - totp
+                    - webauthn
+```
+
+**SAML2 service provider example:**
+
+```yaml
+idp:
+    saml2:
+        service_providers:
+            -   entity_id: "https://sp.example.com"
+                require_mfa:
+                    - totp
+```
+
+### Signal Flow
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant F as Frontend Handler
+    participant I as IdP Core
+    Note over B, I: After successful login + MFA verification
+    F ->> F: Check require_mfa against user's registered methods
+    alt Missing MFA methods
+        F ->> F: Store pending methods in cookie (require_mfa_pending)
+        F ->> F: Set require_mfa_flow = true
+        F ->> B: 302 Redirect to /mfa/totp/register or /mfa/webauthn/register
+        B ->> F: Complete registration
+        F ->> F: GET /mfa/register/continue
+        F ->> F: Remove completed method from pending list
+        alt More methods pending
+            F ->> B: 302 Redirect to next registration page
+        else All methods registered
+            F ->> F: Clear require_mfa session keys
+            F ->> B: 302 Redirect to IdP endpoint (authorize / SSO)
+        end
+    else All methods already registered
+        F ->> B: 302 Redirect to IdP endpoint
+    end
+```
+
+### Endpoints
+
+| Endpoint                              | Method | Description                                                      |
+|---------------------------------------|--------|------------------------------------------------------------------|
+| `/mfa/register/continue`              | GET    | Advances to the next required MFA registration or completes flow |
+| `/mfa/register/continue/:languageTag` | GET    | Same, with language override                                     |
+| `/mfa/register/cancel`                | GET    | Cancels the forced registration and logs the user out            |
+| `/mfa/register/cancel/:languageTag`   | GET    | Same, with language override                                     |
+
+### Behavior Details
+
+- **Sequential registration**: If multiple methods are required (e.g., both `totp` and `webauthn`), the user registers
+  them one at a time. After each successful registration, `/mfa/register/continue` removes the completed method from
+  the pending list and redirects to the next one.
+- **Cancel path**: The user can cancel at any point via `/mfa/register/cancel`, which safely clears the session and
+  logs the user out.
+- **UI indicators**: During the forced-registration flow, the registration pages display an informational banner
+  explaining that the application requires the MFA method, along with a cancel button.
+- **Template variables**: `RequireMFAFlow` (bool), `RequireMFAMessage` (string), and `Cancel` (cancel URL) are passed
+  to the TOTP and WebAuthn registration templates when the forced flow is active.
+- **Session cleanup**: The `require_mfa_flow` and `require_mfa_pending` session keys are removed when the flow
+  completes normally or when the overall IdP flow state is cleaned up.
+
+### Configuration Field Reference
+
+| Field         | Type       | Default | Description                                                                |
+|---------------|------------|---------|----------------------------------------------------------------------------|
+| `require_mfa` | `[]string` | `[]`    | MFA methods the user must have registered (`totp`, `webauthn`), per client |
 
 ## 4. Core Components & Logic
 
@@ -1169,5 +1261,12 @@ server/definitions/
 ├── const.go                    # OIDCFlowAuthorizationCode, OIDCFlowDeviceCode, SessionKeyDeviceCode,
 │                               # SessionKeyOIDCGrantType, default interval/expiry/length constants
 server/config/
-├── idp.go                      # DeviceCodeExpiry, DeviceCodePollingInterval, DeviceCodeUserCodeLength fields
+├── idp.go                      # DeviceCodeExpiry, DeviceCodePollingInterval, DeviceCodeUserCodeLength fields,
+│                               # RequireMFA on OIDCClient and SAML2ServiceProvider
+server/handler/frontend/idp/
+├── require_mfa.go              # Forced MFA registration: getRequiredMFAMethods,
+│                               # checkRequireMFARegistrationAndRedirect,
+│                               # redirectToNextRequiredMFARegistration,
+│                               # removeFromMFAPendingList,
+│                               # ContinueRequiredMFARegistration, CancelRequiredMFARegistration
 ```

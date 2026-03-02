@@ -886,6 +886,10 @@ func CleanupIdPFlowState(mgr cookie.Manager) {
 	mgr.Delete(definitions.SessionKeyIdPSAMLRelayState)
 	mgr.Delete(definitions.SessionKeyIdPSAMLEntityID)
 	mgr.Delete(definitions.SessionKeyIdPOriginalURL)
+
+	// Forced MFA-registration flow keys
+	mgr.Delete(definitions.SessionKeyRequireMFAFlow)
+	mgr.Delete(definitions.SessionKeyRequireMFAPending)
 }
 
 // CleanupMFAState removes all temporary MFA flow keys from the cookie.

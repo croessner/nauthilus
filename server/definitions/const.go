@@ -141,6 +141,14 @@ const (
 
 	// SessionKeyMFAMethod stores the MFA method used (e.g. totp, webauthn, recovery).
 	SessionKeyMFAMethod = "mfa_method"
+
+	// SessionKeyRequireMFAFlow indicates that the user must register missing MFA methods
+	// before the IdP flow can be completed.
+	SessionKeyRequireMFAFlow = "require_mfa_flow"
+
+	// SessionKeyRequireMFAPending holds the MFA methods still requiring registration,
+	// encoded as a comma-separated string (e.g. "totp,webauthn" or "webauthn").
+	SessionKeyRequireMFAPending = "require_mfa_pending"
 )
 
 // FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.
@@ -800,6 +808,14 @@ const (
 
 // MFARoot is the root path for the multi-factor authentication (MFA) endpoints.
 const MFARoot = "/mfa"
+
+const (
+	// MFAMethodTOTP identifies the TOTP authenticator-app method.
+	MFAMethodTOTP = "totp"
+
+	// MFAMethodWebAuthn identifies the WebAuthn security-key method.
+	MFAMethodWebAuthn = "webauthn"
+)
 
 const (
 	// CtxGUIDKey is used as a key to store the session's unique identifier in session.Store

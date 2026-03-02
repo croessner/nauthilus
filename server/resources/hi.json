@@ -114,5 +114,6 @@
   "Failed to delete WebAuthn from Redis": "Redis से WebAuthn हटाना विफल",
   "Failed to delete credential": "प्रमाण पत्र हटाना विफल",
   "Failed to update credential": "प्रमाण पत्र अपडेट करना विफल",
-  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "क्या आप वाकई नए रिकवरी कोड जनरेट करना चाहते हैं? मौजूदा कोड स्थायी रूप से बदल दिए जाएंगे।"
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "क्या आप वाकई नए रिकवरी कोड जनरेट करना चाहते हैं? मौजूदा कोड स्थायी रूप से बदल दिए जाएंगे।",
+  "Your application requires this authentication method to be set up before you can continue": "आपके एप्लिकेशन के लिए आवश्यक है कि जारी रखने से पहले इस प्रमाणीकरण विधि को सेट किया जाए"
 }

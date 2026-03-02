@@ -114,5 +114,6 @@
   "Failed to delete WebAuthn from Redis": "RedisからのWebAuthn削除に失敗しました",
   "Failed to delete credential": "認証情報の削除に失敗しました",
   "Failed to update credential": "認証情報の更新に失敗しました",
-  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "新しいリカバリーコードを生成してもよろしいですか？既存のコードは完全に置き換えられます。"
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "新しいリカバリーコードを生成してもよろしいですか？既存のコードは完全に置き換えられます。",
+  "Your application requires this authentication method to be set up before you can continue": "続行する前に、アプリケーションによってこの認証方式を設定する必要があります"
 }

@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"golang.org/x/oauth2"
 )
 
 // deviceAuthResponse represents the JSON response from the device authorization endpoint (RFC 8628 §3.2).
@@ -324,39 +323,14 @@ func verifyDeviceIDToken(
 
 // queryUserinfo calls the provider's userinfo endpoint and displays the result.
 func queryUserinfo(ctx context.Context, provider *oidc.Provider, tokenResp *deviceTokenResponse) {
-	if provider.UserInfoEndpoint() == "" {
-		log.Println("Userinfo endpoint not available — skipping")
+	result := fetchUserinfo(ctx, provider, tokenResp.AccessToken)
+	if result == nil {
+		log.Println("Userinfo endpoint not available or request failed — skipping")
 
 		return
 	}
 
-	log.Printf("Querying userinfo endpoint: %s", provider.UserInfoEndpoint())
-
-	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{
-		AccessToken: tokenResp.AccessToken,
-		TokenType:   tokenResp.TokenType,
-	})
-
-	userInfo, err := provider.UserInfo(ctx, tokenSource)
-	if err != nil {
-		log.Fatalf("Userinfo request failed: %v", err)
-	}
-
-	log.Println("Userinfo request: SUCCESS")
-	log.Printf("  Subject: %s", userInfo.Subject)
-	log.Printf("  Email: %s", userInfo.Email)
-	log.Printf("  Email verified: %v", userInfo.EmailVerified)
-	log.Printf("  Profile: %s", userInfo.Profile)
-
-	var claims json.RawMessage
-
-	if err := userInfo.Claims(&claims); err != nil {
-		log.Printf("Warning: Failed to extract userinfo claims: %v", err)
-
-		return
-	}
-
-	prettyPrintJSON("Userinfo Claims", claims)
+	prettyPrintJSON("Userinfo Claims", *result)
 }
 
 // performDeviceIntrospection runs token introspection if the endpoint is available.

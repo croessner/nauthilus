@@ -427,23 +427,24 @@ type OIDCClient struct {
 	RedirectURIs                      []string          `mapstructure:"redirect_uris"`
 	Scopes                            []string          `mapstructure:"scopes"`
 	GrantTypes                        []string          `mapstructure:"grant_types"`
-	SkipConsent                       bool              `mapstructure:"skip_consent"`
-	DelayedResponse                   bool              `mapstructure:"delayed_response"`
-	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
-	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
+	RequireMFA                        []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn"`
+	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
+	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
+	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
+	LogoutRedirectURI                 string            `mapstructure:"logout_redirect_uri"`
 	AccessTokenType                   string            `mapstructure:"access_token_type"`
-	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
 	TokenEndpointAuthMethod           string            `mapstructure:"token_endpoint_auth_method"`
 	ClientPublicKey                   string            `mapstructure:"client_public_key"`
 	ClientPublicKeyFile               string            `mapstructure:"client_public_key_file"`
 	ClientPublicKeyAlgorithm          string            `mapstructure:"client_public_key_algorithm"`
 	IdTokenClaims                     IdTokenClaims     `mapstructure:"id_token_claims"`
 	AccessTokenClaims                 AccessTokenClaims `mapstructure:"access_token_claims"`
-	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
-	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
-	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
+	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
+	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
+	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
+	SkipConsent                       bool              `mapstructure:"skip_consent"`
+	DelayedResponse                   bool              `mapstructure:"delayed_response"`
 	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
-	LogoutRedirectURI                 string            `mapstructure:"logout_redirect_uri"`
 }
 
 func (c *OIDCClient) String() string {
@@ -452,6 +453,16 @@ func (c *OIDCClient) String() string {
 	}
 
 	return fmt.Sprintf("OIDCClient{Name:%s ClientID:%s ClientSecret:<hidden> RedirectURIs:%v GrantTypes:%v TokenEndpointAuthMethod:%s}", c.Name, c.ClientID, c.RedirectURIs, c.GrantTypes, c.TokenEndpointAuthMethod)
+}
+
+// GetRequireMFA returns the list of MFA methods required for this client.
+// An empty list means no MFA registration is enforced.
+func (c *OIDCClient) GetRequireMFA() []string {
+	if c == nil {
+		return nil
+	}
+
+	return c.RequireMFA
 }
 
 // GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.
@@ -641,9 +652,20 @@ type SAML2ServiceProvider struct {
 	Cert              string        `mapstructure:"cert"`
 	CertFile          string        `mapstructure:"cert_file"`
 	AllowedAttributes []string      `mapstructure:"allowed_attributes"`
+	RequireMFA        []string      `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn"`
 	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
 	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse   bool          `mapstructure:"delayed_response"`
+}
+
+// GetRequireMFA returns the list of MFA methods required for this service provider.
+// An empty list means no MFA registration is enforced.
+func (s *SAML2ServiceProvider) GetRequireMFA() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.RequireMFA
 }
 
 // GetCert returns the SP certificate content (inline or from file).

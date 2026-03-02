@@ -49,7 +49,7 @@ func registerAuthorizationCodeRoutes(
 	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, oauth2Config.RedirectURL, oauth2Config.Scopes)
 
 	http.HandleFunc("/", handleAuthCodeLogin(&oauth2Config))
-	http.HandleFunc("/oauth2", handleAuthCodeCallback(ctx, &oauth2Config, providerClaims, verifier, tmpl, scopes))
+	http.HandleFunc("/oauth2", handleAuthCodeCallback(ctx, provider, &oauth2Config, providerClaims, verifier, tmpl, scopes))
 	http.HandleFunc("/frontchannel-logout", handleFrontChannelLogout)
 	http.HandleFunc("/backchannel-logout", handleBackChannelLogout(ctx, verifier))
 	http.HandleFunc("/logout-callback", handleLogoutCallback)
@@ -93,6 +93,7 @@ func handleAuthCodeLogin(oauth2Config *oauth2.Config) http.HandlerFunc {
 // callback, exchanges the code for tokens, verifies the ID token, and renders the result page.
 func handleAuthCodeCallback(
 	ctx context.Context,
+	provider *oidc.Provider,
 	oauth2Config *oauth2.Config,
 	providerClaims *ProviderClaims,
 	verifier *oidc.IDTokenVerifier,
@@ -111,6 +112,7 @@ func handleAuthCodeCallback(
 		deleteCallbackCookie(w, "nonce")
 
 		resp.IntrospectionResult = performIntrospection(providerClaims.IntrospectionEndpoint, resp.OAuth2Token.AccessToken)
+		resp.UserinfoResult = fetchUserinfo(ctx, provider, resp.OAuth2Token.AccessToken)
 
 		renderSuccessPage(w, tmpl, providerClaims, rawIDToken, signatureVerified, resp)
 	}
@@ -256,11 +258,12 @@ func verifyIDToken(
 	return idTokenClaims, true, true
 }
 
-// tokenResponse holds the OAuth2 token and optional claims/introspection results.
+// tokenResponse holds the OAuth2 token and optional claims/introspection/userinfo results.
 type tokenResponse struct {
 	OAuth2Token         *oauth2.Token
 	IDTokenClaims       *json.RawMessage `json:",omitzero"`
-	IntrospectionResult *json.RawMessage `json:",omitzero"`
+	IntrospectionResult *json.RawMessage `json:"-"`
+	UserinfoResult      *json.RawMessage `json:"-"`
 }
 
 // renderSuccessPage marshals the token response and renders the HTML success page.
@@ -286,6 +289,8 @@ func renderSuccessPage(
 
 	err = tmpl.Execute(w, struct {
 		JSON                  string
+		IntrospectionJSON     string
+		UserinfoJSON          string
 		LogoutURL             string
 		TwoFAHomeURL          string
 		SignatureVerified     bool
@@ -295,6 +300,8 @@ func renderSuccessPage(
 		BackChannelLogoutURI  string
 	}{
 		JSON:                  string(data),
+		IntrospectionJSON:     prettyPrintRawJSON(resp.IntrospectionResult),
+		UserinfoJSON:          prettyPrintRawJSON(resp.UserinfoResult),
 		LogoutURL:             buildLogoutURL(providerClaims.EndSessionEndpoint, rawIDToken),
 		TwoFAHomeURL:          build2FAHomeURL(),
 		SignatureVerified:     signatureVerified,

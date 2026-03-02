@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/croessner/nauthilus/server/util"
+	"golang.org/x/oauth2"
 )
 
 // FlowType represents the OAuth 2.0 / OIDC grant type to execute.
@@ -318,6 +320,54 @@ func performIntrospection(introspectionEndpoint, accessToken string) *json.RawMe
 	return &intr
 }
 
+// fetchUserinfo calls the provider's userinfo endpoint and returns the result as raw JSON.
+func fetchUserinfo(ctx context.Context, provider *oidc.Provider, accessToken string) *json.RawMessage {
+	if provider.UserInfoEndpoint() == "" {
+		return nil
+	}
+
+	log.Printf("Querying userinfo endpoint: %s", provider.UserInfoEndpoint())
+
+	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+	})
+
+	userInfo, err := provider.UserInfo(ctx, tokenSource)
+	if err != nil {
+		log.Printf("Userinfo request failed: %v", err)
+
+		return nil
+	}
+
+	log.Println("Userinfo request successful")
+
+	var claims json.RawMessage
+
+	if err := userInfo.Claims(&claims); err != nil {
+		log.Printf("Failed to extract userinfo claims: %v", err)
+
+		return nil
+	}
+
+	return &claims
+}
+
+// prettyPrintRawJSON formats a raw JSON message with indentation.
+// Returns an empty string if the input is nil.
+func prettyPrintRawJSON(raw *json.RawMessage) string {
+	if raw == nil {
+		return ""
+	}
+
+	indented, err := json.MarshalIndent(raw, "", "    ")
+	if err != nil {
+		return string(*raw)
+	}
+
+	return string(indented)
+}
+
 const successPageTmpl = `
 <!DOCTYPE html>
 <html>
@@ -403,6 +453,22 @@ const successPageTmpl = `
             <p>The following tokens and claims were received from the provider:</p>
             <pre>{{.JSON}}</pre>
         </div>
+
+        {{if .IntrospectionJSON}}
+        <div class="section">
+            <h2>Token Introspection</h2>
+            <p>Result from the introspection endpoint:</p>
+            <pre>{{.IntrospectionJSON}}</pre>
+        </div>
+        {{end}}
+
+        {{if .UserinfoJSON}}
+        <div class="section">
+            <h2>Userinfo</h2>
+            <p>Result from the userinfo endpoint:</p>
+            <pre>{{.UserinfoJSON}}</pre>
+        </div>
+        {{end}}
 
         <div style="margin-top: 20px;">
             {{if .TwoFAHomeURL}}

@@ -114,5 +114,6 @@
   "Failed to delete WebAuthn from Redis": "حذف WebAuthn از Redis ناموفق بود",
   "Failed to delete credential": "حذف اعتبارنامه ناموفق بود",
   "Failed to update credential": "به‌روزرسانی اعتبارنامه ناموفق بود",
-  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "آیا مطمئن هستید که می‌خواهید کدهای بازیابی جدید ایجاد کنید؟ کدهای موجود به طور دائمی جایگزین خواهند شد."
+  "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "آیا مطمئن هستید که می‌خواهید کدهای بازیابی جدید ایجاد کنید؟ کدهای موجود به طور دائمی جایگزین خواهند شد.",
+  "Your application requires this authentication method to be set up before you can continue": "برنامه شما الزام می‌کند که این روش احراز هویت قبل از ادامه تنظیم شود"
 }
