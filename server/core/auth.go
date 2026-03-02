@@ -2397,6 +2397,12 @@ func (a *AuthState) ProcessPWHist() (accountName string) {
 	return
 }
 
+// CommitRWPSlidingWindow delegates to the underlying BucketManager to write the RWP hash.
+func (a *AuthState) CommitRWPSlidingWindow() {
+	bm := a.createBucketManager(a.Ctx())
+	bm.CommitRWPSlidingWindow()
+}
+
 // SaveBruteForceBucketCounterToRedis persists the brute force bucket counter to Redis.
 func (a *AuthState) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
 	bm := a.createBucketManager(a.Ctx())

@@ -504,6 +504,8 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 
 		return definitions.AuthResultTempFail
 	} else if triggered {
+		ctx.Set(definitions.CtxFeatureRejectedKey, true)
+
 		fsp.SetAttributes(attribute.String("decision", "feature_lua"))
 		fsp.End()
 
@@ -516,6 +518,8 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 	}
 
 	if a.checkTLSEncryptionFeature(ctx) {
+		ctx.Set(definitions.CtxFeatureRejectedKey, true)
+
 		fsp.SetAttributes(attribute.String("decision", "feature_tls"))
 		fsp.End()
 
@@ -523,6 +527,8 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 	}
 
 	if a.checkRelayDomainsFeature(ctx) {
+		ctx.Set(definitions.CtxFeatureRejectedKey, true)
+
 		fsp.SetAttributes(attribute.String("decision", "feature_relay_domains"))
 		fsp.End()
 
@@ -536,6 +542,8 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 
 		return definitions.AuthResultTempFail
 	} else if triggered {
+		ctx.Set(definitions.CtxFeatureRejectedKey, true)
+
 		fsp.SetAttributes(attribute.String("decision", "feature_rbl"))
 		fsp.End()
 

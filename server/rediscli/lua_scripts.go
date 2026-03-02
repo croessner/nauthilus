@@ -129,13 +129,45 @@ else
 end
 `,
 
-	// RWPSlidingWindow implements a sliding window for repeating-wrong-passwords using a sorted set.
+	// RWPSlidingWindowCheck performs a read-only check of the RWP sliding window.
+	// It prunes expired entries and checks whether the password hash already exists or the window is below the limit,
+	// but does NOT add the hash. The actual write is deferred to RWPSlidingWindowCommit.
 	// KEYS[1] - The sorted set key
 	// ARGV[1] - The password hash
 	// ARGV[2] - Current timestamp (seconds)
 	// ARGV[3] - TTL (seconds)
 	// ARGV[4] - Max allowed unique hashes in the window
-	"RWPSlidingWindow": `
+	"RWPSlidingWindowCheck": `
+local key = KEYS[1]
+local hash = ARGV[1]
+local now = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+local max = tonumber(ARGV[4])
+
+-- Remove outdated entries (necessary for accurate cardinality)
+redis.call('ZREMRANGEBYSCORE', key, '-inf', '(' .. (now - ttl))
+
+-- Check if hash already exists
+local score = redis.call('ZSCORE', key, hash)
+local card = redis.call('ZCARD', key)
+
+-- Return 1 if it was a repeat (existed before) or if we were below the limit
+if score or card < max then
+    return 1
+end
+
+return 0
+`,
+
+	// RWPSlidingWindowCommit writes the password hash into the RWP sliding window.
+	// This must only be called after confirming that the password was actually wrong
+	// (i.e., not rejected by a feature before authentication).
+	// KEYS[1] - The sorted set key
+	// ARGV[1] - The password hash
+	// ARGV[2] - Current timestamp (seconds)
+	// ARGV[3] - TTL (seconds)
+	// ARGV[4] - Max allowed unique hashes in the window
+	"RWPSlidingWindowCommit": `
 local key = KEYS[1]
 local hash = ARGV[1]
 local now = tonumber(ARGV[2])
@@ -145,11 +177,7 @@ local max = tonumber(ARGV[4])
 -- Remove outdated entries
 redis.call('ZREMRANGEBYSCORE', key, '-inf', '(' .. (now - ttl))
 
--- Check if hash already exists
-local score = redis.call('ZSCORE', key, hash)
-local card = redis.call('ZCARD', key)
-
--- Always add/update the current hash
+-- Add/update the current hash
 redis.call('ZADD', key, now, hash)
 
 -- If we exceed the max unique hashes, remove the oldest one
@@ -159,12 +187,7 @@ end
 
 redis.call('EXPIRE', key, ttl)
 
--- Return 1 if it was a repeat (existed before) or if we were below the limit
-if score or card < max then
-    return 1
-end
-
-return 0
+return 1
 `,
 	// SlidingWindowCounter implements a sliding window counter for rate limiting with adaptive reputation scaling.
 	// KEYS:

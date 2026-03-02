@@ -16,6 +16,7 @@
 package rediscli
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -56,9 +57,7 @@ func TestInvalidateScript(t *testing.T) {
 			resetScriptsCache()
 
 			scriptsMutex.Lock()
-			for k, v := range tt.preload {
-				scripts[k] = v
-			}
+			maps.Copy(scripts, tt.preload)
 			scriptsMutex.Unlock()
 
 			InvalidateScript(tt.invalidate)

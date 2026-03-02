@@ -161,10 +161,15 @@ RWP detection prevents automated attacks that try common passwords across many a
     * `brute_force.rwp_allowed_unique_hashes`: The number of distinct wrong password hashes tolerated within the
       window (default: 1).
     * `brute_force.rwp_window`: The sliding window duration (default: 15 minutes).
-* **Logic:** Uses `RWPSlidingWindow` Lua script. It allows a certain number of unique failed password hashes within a
-  sliding window. If a hash is repeated, its timestamp is updated, keeping it "fresh" and avoiding it being evicted
-  from the window. If the number of unique hashes in the window exceeds the threshold, the request is no longer
-  "allowed" under RWP grace and must undergo full brute-force enforcement.
+* **Logic:** Uses two Lua scripts: `RWPSlidingWindowCheck` (read-only) and `RWPSlidingWindowCommit` (write).
+  The check runs early in `CheckBruteForce` to determine whether the password is a repeat, but does **not** record
+  the hash yet. The commit is deferred to `UpdateBruteForceBucketsCounter` and only executes when the rejection was
+  due to a genuine authentication failure — not a feature-based rejection (e.g., RBL) where the password was never
+  verified. If `bruteforce.learning` includes the triggering feature, the commit is still performed.
+  The scripts allow a certain number of unique failed password hashes within a sliding window. If a hash is repeated,
+  its timestamp is updated on commit, keeping it "fresh" and avoiding eviction. If the number of unique hashes in
+  the window exceeds the threshold, the request is no longer "allowed" under RWP grace and must undergo full
+  brute-force enforcement.
 * **RWP Catch-Up Floor:** When RWP protection ends and enforcement begins, the bucket counters are typically still at
   value 1 (from the very first request before RWP kicked in). To compensate, the `SlidingWindowCounter` Lua script
   accepts an optional `rwp_floor` parameter (ARGV[11]). If the current counter is below this floor, it is raised to
@@ -188,7 +193,7 @@ sequenceDiagram
 
     C->>BM: CheckBruteForce()
     Note over BM, R: Early RWP check
-    BM ->> R: EVAL (RWPSlidingWindow)
+    BM ->> R: EVAL (RWPSlidingWindowCheck)
     R -->> BM: Enforce=true
     BM ->> Ctx: Set(CtxRWPResultKey, true)
     Note over BM, L1: Rule evaluation
