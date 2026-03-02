@@ -74,6 +74,10 @@ type Client interface {
 	// GetReadHandle retrieves a Redis client's read handle, supporting multiple read handles for load balancing.
 	GetReadHandle() redis.UniversalClient
 
+	// GetReadHandles returns all distinct read handles. This is used to upload Lua scripts
+	// to every node (including replicas) so that EvalSha works on read handles as well.
+	GetReadHandles() []redis.UniversalClient
+
 	// GetWritePipeline returns a Redis pipeline for batching write operations.
 	GetWritePipeline() redis.Pipeliner
 
@@ -232,6 +236,23 @@ func (clt *redisClient) GetWriteHandle() redis.UniversalClient {
 	return clt.writeHandle
 }
 
+// GetReadHandles returns all distinct read handles for script distribution.
+func (clt *redisClient) GetReadHandles() []redis.UniversalClient {
+	if clt.readHandle == nil {
+		return nil
+	}
+
+	handles := make([]redis.UniversalClient, 0, len(clt.readHandle))
+
+	for _, handle := range clt.readHandle {
+		if handle != clt.writeHandle {
+			handles = append(handles, handle)
+		}
+	}
+
+	return handles
+}
+
 // GetReadHandle returns a read handle from the redisClient, shuffling among available read handles if multiple exist.
 func (clt *redisClient) GetReadHandle() redis.UniversalClient {
 	var addresses []string
@@ -310,6 +331,11 @@ func (tc *testClient) GetWriteHandle() redis.UniversalClient {
 // GetReadHandle retrieves the Redis UniversalClient instance for read operations.
 func (tc *testClient) GetReadHandle() redis.UniversalClient {
 	return tc.client
+}
+
+// GetReadHandles returns an empty slice because the test client uses the same handle for both reads and writes.
+func (tc *testClient) GetReadHandles() []redis.UniversalClient {
+	return nil
 }
 
 // GetWritePipeline returns a Redis pipeline for batching write operations.

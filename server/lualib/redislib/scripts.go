@@ -135,9 +135,20 @@ func (rm *RedisManager) RedisUploadScript(L *lua.LState) int {
 	})
 }
 
-// uploadRedisScript is an internal helper to upload a script to Redis.
+// uploadRedisScript uploads a Lua script to the primary Redis handle and then
+// distributes it to all read handles so that EvalSha works on replicas as well.
 func (rm *RedisManager) uploadRedisScript(ctx context.Context, conn redis.Cmdable, script string) (any, error) {
-	return conn.ScriptLoad(ctx, script).Result()
+	sha1, err := conn.ScriptLoad(ctx, script).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// Distribute to all read handles (replicas / read-only cluster nodes)
+	for _, rh := range rm.client.GetReadHandles() {
+		rh.ScriptLoad(ctx, script)
+	}
+
+	return sha1, nil
 }
 
 // getLuaTableAsStringSlice extracts string values from a Lua table and returns them as a slice of strings.

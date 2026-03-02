@@ -733,10 +733,6 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	matchedAnyRule := false
 
 	// Phase 2: batch load all candidate counters with one MGET
-	type bkcand struct {
-		idx     int
-		network *net.IPNet
-	}
 	cands := make([]bkcand, 0, len(rules))
 
 	_, gatherSpan := tr.Start(ctx, "auth.bruteforce.bucket_over_limit.gather_candidates")
@@ -796,28 +792,23 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_eval_bucket_counter").Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-		pipe := bm.redis().GetReadHandle().Pipeline()
-		cmds := make([]*redis.Cmd, 0, len(cands))
+		cmds, errP := bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
 
-		for _, c := range cands {
-			rule := &rules[c.idx]
-			currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, c.network)
-			ttl := int64(math.Round(rule.Period.Seconds() * 2))
-			// We check if (total + 1) > FailedRequests to match legacy behavior
-			// Or we just pass the limit and adjust the script/call.
-			// Let's pass (limit - 1) as the limit to the script if we want to block the Nth attempt.
-			limit := int64(rule.FailedRequests) - 1
+		// NOSCRIPT retry: if a read-handle replica lost the script (e.g. Redis restart),
+		// force a re-upload to all handles and retry the pipeline once.
+		if errP != nil && strings.Contains(errP.Error(), "NOSCRIPT") {
+			level.Warn(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Pipeline NOSCRIPT on read handle, re-uploading script to all nodes",
+			)
 
-			// rwp_floor = 0: read-only check path must never modify counters
-			cmds = append(cmds, pipe.EvalSha(dCtx, scriptSHA, []string{currentKey, prevKey},
-				0, weight, ttl, limit,
-				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, 0))
+			rediscli.InvalidateScript("SlidingWindowCounter")
+
+			scriptSHA, errUpload = rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
+			if errUpload == nil {
+				cmds, errP = bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
+			}
 		}
-
-		_, errP := pipe.Exec(dCtx)
-
-		cancel()
 
 		if errP != nil && !errors2.Is(errP, redis.Nil) {
 			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EVAL bucket counters failed: %v", errP))
@@ -886,6 +877,42 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	)
 
 	return withError, ruleTriggered, ruleNumber
+}
+
+// bkcand pairs a rule index with its resolved client network for brute-force bucket evaluation.
+type bkcand struct {
+	idx     int
+	network *net.IPNet
+}
+
+// execBucketCounterPipeline builds and executes a Redis pipeline that runs EvalSha
+// for each brute-force candidate on a read handle. It returns the resulting commands
+// and any pipeline execution error.
+func (bm *bucketManagerImpl) execBucketCounterPipeline(
+	cands []bkcand, rules []config.BruteForceRule, scriptSHA string,
+	adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64,
+) ([]*redis.Cmd, error) {
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	defer cancel()
+
+	pipe := bm.redis().GetReadHandle().Pipeline()
+	cmds := make([]*redis.Cmd, 0, len(cands))
+
+	for _, c := range cands {
+		rule := &rules[c.idx]
+		currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, c.network)
+		ttl := int64(math.Round(rule.Period.Seconds() * 2))
+		limit := int64(rule.FailedRequests) - 1
+
+		// rwp_floor = 0: read-only check path must never modify counters
+		cmds = append(cmds, pipe.EvalSha(dCtx, scriptSHA, []string{currentKey, prevKey},
+			0, weight, ttl, limit,
+			adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, 0))
+	}
+
+	_, errP := pipe.Exec(dCtx)
+
+	return cmds, errP
 }
 
 // bfBurstKey builds a short, privacy-safe Redis key for burst gating by hashing
