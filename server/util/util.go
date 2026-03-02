@@ -36,6 +36,7 @@ import (
 	"net/url"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -864,4 +865,20 @@ func GenerateRandomString(n int) (string, error) {
 	}
 
 	return string(ret), nil
+}
+
+// RemoveFromCommaSeparatedList removes all occurrences of value from a
+// comma-separated list and returns the remaining items joined by commas.
+func RemoveFromCommaSeparatedList(list, value string) string {
+	if list == "" {
+		return ""
+	}
+
+	parts := strings.Split(list, ",")
+
+	parts = slices.DeleteFunc(parts, func(p string) bool {
+		return strings.TrimSpace(p) == value
+	})
+
+	return strings.Join(parts, ",")
 }

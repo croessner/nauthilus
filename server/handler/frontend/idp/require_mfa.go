@@ -160,25 +160,6 @@ func (h *FrontendHandler) redirectToNextRequiredMFARegistration(ctx *gin.Context
 	return false
 }
 
-// removeFromMFAPendingList removes the first occurrence of method from the
-// comma-separated pending list and returns the remainder.
-func removeFromMFAPendingList(pending, method string) string {
-	if pending == "" {
-		return ""
-	}
-
-	parts := strings.Split(pending, ",")
-	remaining := make([]string, 0, len(parts))
-
-	for _, p := range parts {
-		if strings.TrimSpace(p) != method {
-			remaining = append(remaining, p)
-		}
-	}
-
-	return strings.Join(remaining, ",")
-}
-
 // ContinueRequiredMFARegistration is the GET handler for /mfa/register/continue.
 // It is called after each individual MFA registration step in a forced-registration
 // flow to decide whether another method still needs to be registered or whether the
