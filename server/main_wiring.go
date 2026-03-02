@@ -41,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/monitoring"
+	"github.com/croessner/nauthilus/server/privilege"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -261,6 +262,13 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			if err := startHTTPServer(p.Ctx, p.Store); err != nil {
 				return err
+			}
+
+			// Drop privileges after all file-based initialization and socket binding.
+			srv := snap.File.GetServer()
+
+			if err := privilege.DropPrivileges(srv.GetRunAsUser(), srv.GetRunAsGroup(), srv.GetChroot()); err != nil {
+				return fmt.Errorf("privilege drop failed: %w", err)
 			}
 
 			if err := p.ConnMgrSvc.Start(p.Ctx); err != nil {

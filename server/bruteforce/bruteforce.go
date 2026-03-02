@@ -173,6 +173,11 @@ type BucketManager interface {
 	// It returns true if enforcement is needed (i.e., the password is NOT a repeating wrong password),
 	// or false if the request should be tolerated (RWP detected).
 	ShouldEnforceBucketUpdate() (bool, error)
+
+	// CommitRWPSlidingWindow writes the current password hash into the RWP sliding window in Redis.
+	// This must only be called after confirming that the rejection was due to a genuine authentication
+	// failure, not a feature-based rejection (e.g., RBL) where the password was never verified.
+	CommitRWPSlidingWindow()
 }
 
 type bucketManagerImpl struct {
@@ -733,10 +738,6 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	matchedAnyRule := false
 
 	// Phase 2: batch load all candidate counters with one MGET
-	type bkcand struct {
-		idx     int
-		network *net.IPNet
-	}
 	cands := make([]bkcand, 0, len(rules))
 
 	_, gatherSpan := tr.Start(ctx, "auth.bruteforce.bucket_over_limit.gather_candidates")
@@ -796,28 +797,23 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_eval_bucket_counter").Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-		pipe := bm.redis().GetReadHandle().Pipeline()
-		cmds := make([]*redis.Cmd, 0, len(cands))
+		cmds, errP := bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
 
-		for _, c := range cands {
-			rule := &rules[c.idx]
-			currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, c.network)
-			ttl := int64(math.Round(rule.Period.Seconds() * 2))
-			// We check if (total + 1) > FailedRequests to match legacy behavior
-			// Or we just pass the limit and adjust the script/call.
-			// Let's pass (limit - 1) as the limit to the script if we want to block the Nth attempt.
-			limit := int64(rule.FailedRequests) - 1
+		// NOSCRIPT retry: if a read-handle replica lost the script (e.g. Redis restart),
+		// force a re-upload to all handles and retry the pipeline once.
+		if errP != nil && strings.Contains(errP.Error(), "NOSCRIPT") {
+			level.Warn(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Pipeline NOSCRIPT on read handle, re-uploading script to all nodes",
+			)
 
-			// rwp_floor = 0: read-only check path must never modify counters
-			cmds = append(cmds, pipe.EvalSha(dCtx, scriptSHA, []string{currentKey, prevKey},
-				0, weight, ttl, limit,
-				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, 0))
+			rediscli.InvalidateScript("SlidingWindowCounter")
+
+			scriptSHA, errUpload = rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
+			if errUpload == nil {
+				cmds, errP = bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
+			}
 		}
-
-		_, errP := pipe.Exec(dCtx)
-
-		cancel()
 
 		if errP != nil && !errors2.Is(errP, redis.Nil) {
 			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EVAL bucket counters failed: %v", errP))
@@ -886,6 +882,42 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	)
 
 	return withError, ruleTriggered, ruleNumber
+}
+
+// bkcand pairs a rule index with its resolved client network for brute-force bucket evaluation.
+type bkcand struct {
+	idx     int
+	network *net.IPNet
+}
+
+// execBucketCounterPipeline builds and executes a Redis pipeline that runs EvalSha
+// for each brute-force candidate on a read handle. It returns the resulting commands
+// and any pipeline execution error.
+func (bm *bucketManagerImpl) execBucketCounterPipeline(
+	cands []bkcand, rules []config.BruteForceRule, scriptSHA string,
+	adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64,
+) ([]*redis.Cmd, error) {
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	defer cancel()
+
+	pipe := bm.redis().GetReadHandle().Pipeline()
+	cmds := make([]*redis.Cmd, 0, len(cands))
+
+	for _, c := range cands {
+		rule := &rules[c.idx]
+		currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, c.network)
+		ttl := int64(math.Round(rule.Period.Seconds() * 2))
+		limit := int64(rule.FailedRequests) - 1
+
+		// rwp_floor = 0: read-only check path must never modify counters
+		cmds = append(cmds, pipe.EvalSha(dCtx, scriptSHA, []string{currentKey, prevKey},
+			0, weight, ttl, limit,
+			adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, 0))
+	}
+
+	_, errP := pipe.Exec(dCtx)
+
+	return cmds, errP
 }
 
 // bfBurstKey builds a short, privacy-safe Redis key for burst gating by hashing
@@ -1511,52 +1543,22 @@ func (bm *bucketManagerImpl) ShouldEnforceBucketUpdate() (bool, error) {
 	return enforce, nil
 }
 
-// isRepeatingWrongPassword implements the RWP allowance logic.
-// It returns true if the current wrong password should be tolerated (i.e., buckets should NOT be increased),
-// based on allowing up to N distinct wrong password hashes within a rolling window. Repeats of already seen
-// hashes are always tolerated within the window.
-func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
-	logger := bm.logger()
+// rwpScriptArgs holds the pre-computed arguments shared by both the RWP check and commit scripts.
+type rwpScriptArgs struct {
+	allowKey     string
+	passwordHash string
+	argThreshold string
+	argTTL       string
+	argNow       string
+	threshold    uint
+}
 
-	if bm.password.IsZero() {
-		level.Debug(logger).Log(
-			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Skipping isRepeatingWrongPassword: password is empty",
-		)
-
-		return false, nil
-	}
-
-	var passwordHash string
-	bm.password.WithBytes(func(value []byte) {
-		if len(value) == 0 {
-			return
-		}
-
-		prepared := util.PreparePasswordBytes(value)
-		defer clear(prepared)
-
-		passwordHash = util.GetHashBytes(prepared)
-	})
-	if passwordHash == "" {
-		return false, nil
-	}
-
-	// Build scope (IP scoping may reduce IPv6 precision) and account identifier
-	scoped := bm.clientIP
-	if bm.scoper != nil {
-		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
-	}
-
-	acct := ""
-	if bm.username != "" {
-		acct = accountcache.GetAccountMappingField(bm.username, bm.protocol, bm.oidcCID)
-	}
-	if acct == "" {
-		acct = bm.accountName
-	}
-	if acct == "" {
-		return false, nil
+// buildRWPScriptArgs computes the common arguments needed by both RWPSlidingWindowCheck and RWPSlidingWindowCommit.
+// Returns nil if the key or hash cannot be determined.
+func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
+	allowKey, passwordHash := bm.buildRWPKeyAndHash()
+	if allowKey == "" || passwordHash == "" {
+		return nil
 	}
 
 	cfg := bm.cfg()
@@ -1568,7 +1570,86 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		ttl = 15 * time.Minute
 	}
 
+	return &rwpScriptArgs{
+		allowKey:     allowKey,
+		passwordHash: passwordHash,
+		argThreshold: strconv.FormatUint(uint64(threshold), 10),
+		argTTL:       strconv.FormatInt(int64(ttl.Seconds()), 10),
+		argNow:       strconv.FormatInt(time.Now().Unix(), 10),
+		threshold:    threshold,
+	}
+}
+
+// CommitRWPSlidingWindow writes the current password hash into the RWP sliding window.
+// It must only be called when the password was genuinely wrong (not rejected by a feature).
+func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
+	args := bm.buildRWPScriptArgs()
+	if args == nil {
+		return
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
+	_, execErr := rediscli.ExecuteScript(
+		dCtx,
+		bm.redis(),
+		"RWPSlidingWindowCommit",
+		rediscli.LuaScripts["RWPSlidingWindowCommit"],
+		[]string{args.allowKey},
+		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
+	)
+	cancel()
+
+	if execErr != nil {
+		level.Warn(bm.logger()).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("RWPSlidingWindowCommit script error: %v", execErr),
+		)
+	}
+}
+
+// buildRWPKeyAndHash computes the Redis key and password hash used by the RWP sliding window.
+// Returns empty strings if the password or account cannot be determined.
+func (bm *bucketManagerImpl) buildRWPKeyAndHash() (allowKey, passwordHash string) {
+	if bm.password.IsZero() {
+		return "", ""
+	}
+
+	bm.password.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		prepared := util.PreparePasswordBytes(value)
+		defer clear(prepared)
+
+		passwordHash = util.GetHashBytes(prepared)
+	})
+
+	if passwordHash == "" {
+		return "", ""
+	}
+
+	scoped := bm.clientIP
+	if bm.scoper != nil {
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+	}
+
+	acct := ""
+	if bm.username != "" {
+		acct = accountcache.GetAccountMappingField(bm.username, bm.protocol, bm.oidcCID)
+	}
+
+	if acct == "" {
+		acct = bm.accountName
+	}
+
+	if acct == "" {
+		return "", ""
+	}
+
+	cfg := bm.cfg()
 	prefix := cfg.GetServer().GetRedis().GetPrefix()
+
 	var sb strings.Builder
 
 	sb.WriteString(prefix)
@@ -1577,21 +1658,38 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	sb.WriteByte(':')
 	sb.WriteString(acct)
 
-	allowKey := sb.String()
+	return sb.String(), passwordHash
+}
 
-	// Atomically check/add using Lua script
-	argThreshold := strconv.FormatUint(uint64(threshold), 10)
-	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
-	argNow := strconv.FormatInt(time.Now().Unix(), 10)
+// isRepeatingWrongPassword implements the RWP allowance logic.
+// It returns true if the current wrong password should be tolerated (i.e., buckets should NOT be increased),
+// based on allowing up to N distinct wrong password hashes within a rolling window. Repeats of already seen
+// hashes are always tolerated within the window.
+// This is a read-only check; the actual write is deferred to CommitRWPSlidingWindow.
+func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
+	logger := bm.logger()
 
+	args := bm.buildRWPScriptArgs()
+	if args == nil {
+		if bm.password.IsZero() {
+			level.Debug(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Skipping isRepeatingWrongPassword: password is empty",
+			)
+		}
+
+		return false, nil
+	}
+
+	// Read-only check using Lua script (no ZADD — the write is deferred to CommitRWPSlidingWindow)
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	res, execErr := rediscli.ExecuteScript(
 		dCtx,
 		bm.redis(),
-		"RWPSlidingWindow",
-		rediscli.LuaScripts["RWPSlidingWindow"],
-		[]string{allowKey},
-		passwordHash, argNow, argTTL, argThreshold,
+		"RWPSlidingWindowCheck",
+		rediscli.LuaScripts["RWPSlidingWindowCheck"],
+		[]string{args.allowKey},
+		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
 	)
 	cancel()
 
@@ -1612,7 +1710,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		dCtx, cancel = util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-		isMember, _ := bm.redis().GetReadHandle().SIsMember(dCtx, acctKey, passwordHash).Result()
+		isMember, _ := bm.redis().GetReadHandle().SIsMember(dCtx, acctKey, args.passwordHash).Result()
 		cancel()
 
 		if isMember {
@@ -1637,7 +1735,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 			definitions.LogKeyBruteForce, "RWP allowance active",
 			definitions.LogKeyUsername, userForLog,
 			definitions.LogKeyClientIP, bm.clientIP,
-			"allowed_unique_hashes", threshold,
+			"allowed_unique_hashes", args.threshold,
 		)
 
 		return true, nil

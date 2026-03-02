@@ -867,6 +867,11 @@ const (
 	// CtxRWPResultKey stores the RWP (Repeating Wrong Password) enforcement check result
 	// from CheckBruteForce for reuse in UpdateBruteForceBucketsCounter, avoiding redundant Redis calls.
 	CtxRWPResultKey = "rwp_result"
+
+	// CtxFeatureRejectedKey indicates that a security feature (RBL, TLS, relay domain, Lua)
+	// rejected the request before password authentication could take place.
+	// When set to true, RWP must not record the password hash because the password was never verified.
+	CtxFeatureRejectedKey = "feature_rejected"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

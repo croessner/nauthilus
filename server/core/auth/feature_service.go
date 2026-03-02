@@ -43,6 +43,7 @@ func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bo
 		Context:            auth.Runtime.Context,
 		HTTPClientContext:  auth.Request.HTTPClientContext,
 		HTTPClientRequest:  auth.Request.HTTPClientRequest,
+		Authenticated:      auth.Runtime.Authenticated,
 		NoAuth:             auth.Request.NoAuth,
 		BruteForceCounter:  0,
 		MasterUserMode:     auth.Runtime.MasterUserMode,

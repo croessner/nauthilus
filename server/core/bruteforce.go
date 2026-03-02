@@ -541,6 +541,21 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	return triggered || alreadyTriggered
 }
 
+// commitRWPIfAllowed commits the RWP sliding window write unless a feature rejected the request
+// without learning being active for that feature. In that case, the password was never verified,
+// so recording it in the RWP window would be incorrect.
+func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager) {
+	if ctx.GetBool(definitions.CtxFeatureRejectedKey) {
+		bfCfg := a.cfg().GetBruteForce()
+
+		if bfCfg == nil || !bfCfg.LearnFromFeature(a.Runtime.FeatureName) {
+			return
+		}
+	}
+
+	bm.CommitRWPSlidingWindow()
+}
+
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.
 func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	tr := monittrace.New("nauthilus/auth")
@@ -717,6 +732,10 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 enforceBuckets:
+
+	// Commit the RWP sliding window write only if the rejection is genuine
+	// (not caused by a feature like RBL that never verified the password).
+	a.commitRWPIfAllowed(ctx, bm)
 
 	proto := ""
 	if a.Request.Protocol != nil {

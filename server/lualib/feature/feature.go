@@ -59,10 +59,25 @@ func PreCompileLuaFeatures(cfg config.File, _ *slog.Logger) (err error) {
 		for index := range cfg.GetLua().Features {
 			var luaFeature *LuaFeature
 
-			luaFeature, err = NewLuaFeature(cfg.GetLua().Features[index].Name, cfg.GetLua().Features[index].ScriptPath, cfg.GetLua().Features[index].WhenNoAuth)
+			luaFeature, err = NewLuaFeature(cfg.GetLua().Features[index].Name, cfg.GetLua().Features[index].ScriptPath)
 			if err != nil {
 				return err
 			}
+
+			// Apply execution flags with sane defaults for backward compatibility
+			wa := cfg.GetLua().Features[index].WhenAuthenticated
+			wu := cfg.GetLua().Features[index].WhenUnauthenticated
+			wn := cfg.GetLua().Features[index].WhenNoAuth
+
+			if !wa && !wu && !wn {
+				// No flags specified in config → run in authenticated and unauthenticated by default
+				wa = true
+				wu = true
+			}
+
+			luaFeature.WhenAuthenticated = wa
+			luaFeature.WhenUnauthenticated = wu
+			luaFeature.WhenNoAuth = wn
 
 			// Add compiled Lua features.
 			LuaFeatures.Add(luaFeature)
@@ -100,14 +115,16 @@ func (a *PreCompiledLuaFeatures) Reset() {
 // LuaFeature represents a Lua feature that has been compiled.
 // It contains a name identifying the feature and the compiled Lua script.
 type LuaFeature struct {
-	Name           string
-	CompiledScript *lua.FunctionProto
-	WhenNoAuth     bool
+	Name                string
+	CompiledScript      *lua.FunctionProto
+	WhenAuthenticated   bool
+	WhenUnauthenticated bool
+	WhenNoAuth          bool
 }
 
 // NewLuaFeature creates a new LuaFeature instance by compiling the Lua script found at the given path and assigning its name.
 // Returns the LuaFeature instance or an error if either the name or scriptPath is empty, or if script compilation fails.
-func NewLuaFeature(name string, scriptPath string, whenNoAuth bool) (*LuaFeature, error) {
+func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
 	if name == "" {
 		return nil, errors.ErrFeatureLuaNameMissing
 	}
@@ -124,7 +141,6 @@ func NewLuaFeature(name string, scriptPath string, whenNoAuth bool) (*LuaFeature
 	return &LuaFeature{
 		Name:           name,
 		CompiledScript: compiledScript,
-		WhenNoAuth:     whenNoAuth,
 	}, nil
 }
 
@@ -148,6 +164,7 @@ type Request struct {
 
 	HTTPClientContext *gin.Context
 	HTTPClientRequest *http.Request
+	Authenticated     bool
 	NoAuth            bool
 	BruteForceCounter uint
 	MasterUserMode    bool
@@ -217,6 +234,14 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 		feature := LuaFeatures.LuaScripts[idx]
 
 		if r.NoAuth && !feature.WhenNoAuth {
+			continue
+		}
+
+		if !r.NoAuth && r.Authenticated && !feature.WhenAuthenticated {
+			continue
+		}
+
+		if !r.NoAuth && !r.Authenticated && !feature.WhenUnauthenticated {
 			continue
 		}
 

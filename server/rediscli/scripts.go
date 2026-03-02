@@ -129,7 +129,31 @@ func EnsureKeysInSameSlot(keys []string, hashTag string) []string {
 	return modifiedKeys
 }
 
+// uploadScriptToHandle loads a Lua script onto a single Redis handle and returns its SHA1 hash.
+func uploadScriptToHandle(ctx context.Context, handle redis.UniversalClient, scriptContent string) (string, error) {
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	return handle.ScriptLoad(ctx, scriptContent).Result()
+}
+
+// uploadScriptToReadHandles distributes a Lua script to all distinct read handles
+// so that EvalSha calls on read pipelines succeed. Errors are logged but not fatal,
+// because the write-handle upload is the authoritative one.
+func uploadScriptToReadHandles(ctx context.Context, client Client, scriptName, scriptContent string) {
+	for _, rh := range client.GetReadHandles() {
+		_, err := uploadScriptToHandle(ctx, rh, scriptContent)
+		if err != nil {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s' to read handle (non-fatal)", scriptName),
+				definitions.LogKeyError, err,
+			)
+		}
+	}
+}
+
 // UploadScript uploads a Lua script to Redis and stores its SHA1 hash.
+// The script is loaded on the write handle first, then distributed to all
+// distinct read handles so that EvalSha works on read pipelines as well.
 // If the script is already uploaded, it returns the existing SHA1 hash.
 // This function is thread-safe and can be called concurrently.
 func UploadScript(ctx context.Context, client Client, scriptName, scriptContent string) (string, error) {
@@ -152,10 +176,10 @@ func UploadScript(ctx context.Context, client Client, scriptName, scriptContent 
 		return sha1, nil
 	}
 
-	// Upload the script to Redis
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	// Upload the script to the write handle (authoritative)
+	var err error
 
-	sha1, err := client.GetWriteHandle().ScriptLoad(ctx, scriptContent).Result()
+	sha1, err = uploadScriptToHandle(ctx, client.GetWriteHandle(), scriptContent)
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s'. This may affect Redis operations. Check Redis connectivity and permissions.", scriptName),
@@ -165,6 +189,9 @@ func UploadScript(ctx context.Context, client Client, scriptName, scriptContent 
 		return "", err
 	}
 
+	// Distribute to all read handles (replicas / read-only cluster nodes)
+	uploadScriptToReadHandles(ctx, client, scriptName, scriptContent)
+
 	// Store the SHA1 hash
 	scripts[scriptName] = sha1
 	util.DebugModuleWithCfg(ctx, config.GetFile(), log.Logger, definitions.DbgStats,
@@ -172,6 +199,16 @@ func UploadScript(ctx context.Context, client Client, scriptName, scriptContent 
 	)
 
 	return sha1, nil
+}
+
+// InvalidateScript removes a single script from the local SHA1 cache so that
+// the next UploadScript call will re-upload it to all Redis handles.
+// This is used by NOSCRIPT retry paths to force a fresh upload.
+func InvalidateScript(scriptName string) {
+	scriptsMutex.Lock()
+	defer scriptsMutex.Unlock()
+
+	delete(scripts, scriptName)
 }
 
 // ExecuteScript executes a Lua script on Redis using its SHA1 hash.
@@ -239,7 +276,10 @@ func ExecuteScript(ctx context.Context, client Client, scriptName, scriptContent
 
 			sp.SetAttributes(attribute.String("retry_reason", "noscript"))
 
-			// Re-upload the script
+			// Invalidate the local cache so UploadScript actually re-uploads to all handles
+			InvalidateScript(scriptName)
+
+			// Re-upload the script to write + all read handles
 			sha1, err = UploadScript(sctx, client, scriptName, scriptContent)
 			if err != nil {
 				sp.RecordError(err)

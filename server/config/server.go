@@ -75,6 +75,13 @@ type ServerSection struct {
 	Timeouts    Timeouts    `mapstructure:"timeouts" validate:"omitempty"`
 
 	TrustedProxies []string `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
+
+	// RunAsUser specifies the unprivileged user to switch to after startup.
+	RunAsUser string `mapstructure:"run_as_user" validate:"omitempty"`
+	// RunAsGroup specifies the unprivileged group to switch to after startup.
+	RunAsGroup string `mapstructure:"run_as_group" validate:"omitempty"`
+	// Chroot specifies the directory to chroot into before dropping privileges.
+	Chroot string `mapstructure:"chroot" validate:"omitempty,dir"`
 }
 
 // Middlewares defines switches for enabling/disabling individual HTTP middlewares.
@@ -2754,4 +2761,31 @@ func (s *ServerSection) GetTimeouts() *Timeouts {
 	}
 
 	return &s.Timeouts
+}
+
+// GetRunAsUser returns the configured run_as_user or an empty string.
+func (s *ServerSection) GetRunAsUser() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.RunAsUser
+}
+
+// GetRunAsGroup returns the configured run_as_group or an empty string.
+func (s *ServerSection) GetRunAsGroup() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.RunAsGroup
+}
+
+// GetChroot returns the configured chroot path or an empty string.
+func (s *ServerSection) GetChroot() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.Chroot
 }

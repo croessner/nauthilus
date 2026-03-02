@@ -2397,6 +2397,12 @@ func (a *AuthState) ProcessPWHist() (accountName string) {
 	return
 }
 
+// CommitRWPSlidingWindow delegates to the underlying BucketManager to write the RWP hash.
+func (a *AuthState) CommitRWPSlidingWindow() {
+	bm := a.createBucketManager(a.Ctx())
+	bm.CommitRWPSlidingWindow()
+}
+
 // SaveBruteForceBucketCounterToRedis persists the brute force bucket counter to Redis.
 func (a *AuthState) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
 	bm := a.createBucketManager(a.Ctx())
@@ -2535,6 +2541,14 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	// the PassDB stage has already decided previously. Reflect that in AuthState
 	// so final logs include authn=true for cache hits.
 	a.Runtime.Authenticated = true
+
+	// Run features for cache hits (authenticated state).
+	// Features with when_authenticated=true will be evaluated.
+	featureResult := a.HandleFeatures(ctx)
+
+	if featureResult != definitions.AuthResultOK {
+		return featureResult
+	}
 
 	authResult := definitions.AuthResultOK
 
