@@ -87,6 +87,15 @@ func (m *ManagedClient) GetReadHandle() redis.UniversalClient {
 	return nil
 }
 
+// GetReadHandles returns all distinct read handles for Lua script distribution.
+func (m *ManagedClient) GetReadHandles() []redis.UniversalClient {
+	if c := m.get(); c != nil {
+		return c.GetReadHandles()
+	}
+
+	return nil
+}
+
 func (m *ManagedClient) GetWritePipeline() redis.Pipeliner {
 	if c := m.get(); c != nil {
 		return c.GetWritePipeline()
