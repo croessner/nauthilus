@@ -427,7 +427,7 @@ type OIDCClient struct {
 	RedirectURIs                      []string          `mapstructure:"redirect_uris"`
 	Scopes                            []string          `mapstructure:"scopes"`
 	GrantTypes                        []string          `mapstructure:"grant_types"`
-	RequireMFA                        []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn"`
+	RequireMFA                        []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
 	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
 	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
@@ -652,7 +652,7 @@ type SAML2ServiceProvider struct {
 	Cert              string        `mapstructure:"cert"`
 	CertFile          string        `mapstructure:"cert_file"`
 	AllowedAttributes []string      `mapstructure:"allowed_attributes"`
-	RequireMFA        []string      `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn"`
+	RequireMFA        []string      `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
 	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse   bool          `mapstructure:"delayed_response"`

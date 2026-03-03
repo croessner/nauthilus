@@ -348,7 +348,8 @@ completing the authorization flow. If any methods are missing, the user is sent 
 
 ### Configuration
 
-The `require_mfa` field accepts a list of MFA method identifiers. Valid values are `totp` and `webauthn`.
+The `require_mfa` field accepts a list of MFA method identifiers. Valid values are `totp`, `webauthn`, and
+`recovery_codes`.
 
 **OIDC client example:**
 
@@ -360,6 +361,7 @@ idp:
                 require_mfa:
                     - totp
                     - webauthn
+                    - recovery_codes
 ```
 
 **SAML2 service provider example:**
@@ -371,6 +373,7 @@ idp:
             -   entity_id: "https://sp.example.com"
                 require_mfa:
                     - totp
+                    - recovery_codes
 ```
 
 ### Signal Flow
@@ -419,15 +422,15 @@ sequenceDiagram
 - **UI indicators**: During the forced-registration flow, the registration pages display an informational banner
   explaining that the application requires the MFA method, along with a cancel button.
 - **Template variables**: `RequireMFAFlow` (bool), `RequireMFAMessage` (string), and `Cancel` (cancel URL) are passed
-  to the TOTP and WebAuthn registration templates when the forced flow is active.
+  to the TOTP, WebAuthn, and recovery codes registration templates when the forced flow is active.
 - **Session cleanup**: The `require_mfa_flow` and `require_mfa_pending` session keys are removed when the flow
   completes normally or when the overall IdP flow state is cleaned up.
 
 ### Configuration Field Reference
 
-| Field         | Type       | Default | Description                                                                |
-|---------------|------------|---------|----------------------------------------------------------------------------|
-| `require_mfa` | `[]string` | `[]`    | MFA methods the user must have registered (`totp`, `webauthn`), per client |
+| Field         | Type       | Default | Description                                                                                  |
+|---------------|------------|---------|----------------------------------------------------------------------------------------------|
+| `require_mfa` | `[]string` | `[]`    | MFA methods the user must have registered (`totp`, `webauthn`, `recovery_codes`), per client |
 
 ## 4. Core Components & Logic
 

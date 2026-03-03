@@ -1,0 +1,187 @@
+{{ template "idp_header.html" . }}
+<div class="flex justify-center items-center mt-10">
+    <div class="card w-full max-w-lg bg-base-100 shadow-xl">
+        <div class="card-body items-center text-center">
+            <h2 class="card-title text-2xl mb-4">{{ .Title }}</h2>
+
+            {{if .RequireMFAFlow}}
+            <div class="alert alert-info mb-6 w-full text-left">
+                <span>{{ .RequireMFAMessage }}</span>
+            </div>
+            {{end}}
+
+            <p class="text-info font-semibold mb-2">{{ .BackupTheseCodes }}</p>
+            <p class="mb-6">{{ .ShownOnlyOnce }}</p>
+
+            <div class="bg-base-200 p-4 rounded-lg grid grid-cols-2 gap-2 font-mono text-center w-full mb-6"
+                 id="recovery-codes-grid">
+                {{ range .Codes }}
+                <div class="p-2 bg-base-100 rounded shadow-sm select-all">{{ . }}</div>
+                {{ end }}
+            </div>
+
+            <!-- Clipboard copy button -->
+            <button class="btn btn-ghost btn-sm gap-2 mb-4" id="copy-btn" onclick="copyRecoveryCodes()" type="button">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
+                        stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                </svg>
+                <span id="copy-label">{{ .Copy }}</span>
+            </button>
+
+            <!-- Download as PNG -->
+            <button class="btn btn-secondary w-full mb-3" id="download-btn" onclick="downloadRecoveryCodesAsPng()"
+                    type="button">
+                <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                          stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                </svg>
+                {{ .Download }}
+            </button>
+
+            <!-- Continue (disabled until download) -->
+            <form action="/mfa/recovery/register" class="w-full" method="POST">
+                <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
+                <button class="btn btn-primary w-full" disabled id="continue-btn" type="submit">
+                    {{ .Continue }}
+                </button>
+            </form>
+
+            {{if .RequireMFAFlow}}
+            <div class="form-control mt-3 w-full">
+                <a class="btn btn-ghost" href="/mfa/register/cancel">{{ .Cancel }}</a>
+            </div>
+            {{end}}
+        </div>
+    </div>
+</div>
+
+<script>
+    // Collect codes from the grid for clipboard and download operations.
+    function getRecoveryCodes() {
+        const cells = document.querySelectorAll('#recovery-codes-grid > div');
+        const codes = [];
+
+        cells.forEach(function (cell) {
+            codes.push(cell.textContent.trim());
+        });
+
+        return codes;
+    }
+
+    // Copy recovery codes to clipboard.
+    function copyRecoveryCodes() {
+        const codes = getRecoveryCodes();
+        const text = codes.join('\n');
+
+        navigator.clipboard.writeText(text).then(function () {
+            const label = document.getElementById('copy-label');
+            const original = label.textContent;
+
+            label.textContent = '{{ .CopiedToClipboard }}';
+
+            setTimeout(function () {
+                label.textContent = original;
+            }, 2000);
+        });
+    }
+
+    // Build a PNG data URL from the recovery codes rendered onto a canvas.
+    // Uses toDataURL() which is synchronous, keeping the result available
+    // within the original user-gesture context.
+    function buildRecoveryCodesPngDataURL(codes) {
+        const lineHeight = 32;
+        const colWidth = 220;
+        const cols = 2;
+        const rows = Math.ceil(codes.length / cols);
+        const padding = 40;
+        const titleHeight = 50;
+        const width = cols * colWidth + padding * 2;
+        const height = titleHeight + rows * lineHeight + padding * 2;
+
+        const canvas = document.createElement('canvas');
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const c = canvas.getContext('2d');
+
+        // Background
+        c.fillStyle = '#ffffff';
+        c.fillRect(0, 0, width, height);
+
+        // Title
+        c.fillStyle = '#000000';
+        c.font = 'bold 18px monospace';
+        c.textAlign = 'center';
+        c.fillText('Recovery Codes', width / 2, padding);
+
+        // Codes in two columns
+        c.font = '16px monospace';
+        c.textAlign = 'left';
+
+        for (let i = 0; i < codes.length; i++) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const x = padding + col * colWidth;
+            const y = titleHeight + padding + row * lineHeight;
+
+            c.fillText(codes[i], x, y);
+        }
+
+        return canvas.toDataURL('image/png');
+    }
+
+    // Save codes to backend, then offer the PNG download.
+    // The PNG is built synchronously (toDataURL) and the download link is
+    // triggered immediately within the user-gesture context so that the
+    // browser does not block the programmatic click.
+    function downloadRecoveryCodesAsPng() {
+        var btn = document.getElementById('download-btn');
+        var continueBtn = document.getElementById('continue-btn');
+        var codes = getRecoveryCodes();
+
+        if (codes.length === 0) {
+            return;
+        }
+
+        btn.disabled = true;
+
+        // Build the data URL synchronously — still within the user-gesture.
+        var dataURL = buildRecoveryCodesPngDataURL(codes);
+
+        // Trigger the download immediately within the click context.
+        var a = document.createElement('a');
+
+        a.href = dataURL;
+        a.download = 'recovery-codes.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        // Now persist codes to the backend asynchronously.
+        fetch('/mfa/recovery/register/save', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': '{{ .CSRFToken }}'
+            },
+            body: JSON.stringify({codes: codes})
+        }).then(function (resp) {
+            if (resp.ok) {
+                continueBtn.disabled = false;
+            } else {
+                console.error('Save failed with status ' + resp.status);
+                btn.disabled = false;
+            }
+        }).catch(function (err) {
+            console.error('Save request error:', err);
+            btn.disabled = false;
+        });
+    }
+</script>
+{{ template "idp_footer.html" . }}

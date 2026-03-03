@@ -56,10 +56,14 @@
   "Recovery Codes": "Codes de récupération",
   "Backup codes can be used to log in if you lose access to your 2FA device.": "Les codes de secours peuvent être utilisés pour se connecter si vous perdez l'accès à votre appareil 2FA.",
   "Generate new recovery codes": "Générer de nouveaux codes de récupération",
-  "Backup these codes!": "Sauvegardez ces codes !",
+  "Backup these codes!": "Conservez ces codes en lieu sûr.",
   "They will be shown only once.": "Ils ne seront affichés qu'une seule fois.",
   "You have %d recovery codes left.": "Il vous reste %d codes de récupération.",
   "New recovery codes": "Nouveaux codes de récupération",
+  "Copy": "Copier",
+  "Copied to clipboard": "Copié dans le presse-papiers",
+  "Download": "Télécharger",
+  "Continue": "Continuer",
   "Close": "Fermer",
   "Please enter your 2FA code": "Veuillez entrer votre code 2FA",
   "Please use your security key to login": "Veuillez utiliser votre clé de sécurité pour vous connecter",
@@ -114,6 +118,7 @@
   "Failed to delete WebAuthn from Redis": "Échec de la suppression de WebAuthn de Redis",
   "Failed to delete credential": "Échec de la suppression de l'identifiant",
   "Failed to update credential": "Échec de la mise à jour de l'identifiant",
+  "Recovery codes have not been saved": "Les codes de récupération n'ont pas été enregistrés",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Êtes-vous sûr de vouloir générer de nouveaux codes de récupération ? Les codes existants seront définitivement remplacés.",
   "Your application requires this authentication method to be set up before you can continue": "Votre application exige que cette méthode d'authentification soit configurée avant de pouvoir continuer"
 }

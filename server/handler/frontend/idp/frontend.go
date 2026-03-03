@@ -284,6 +284,12 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.GET("/webauthn/devices/:languageTag", h.WebAuthnDevices)
 	authGroup.DELETE("/webauthn/device/:id", h.DeleteWebAuthnDevice)
 	authGroup.POST("/webauthn/device/:id/name", h.UpdateWebAuthnDeviceName)
+	authGroup.GET("/recovery/register", h.RegisterRecoveryCodes)
+	authGroup.GET("/recovery/register/:languageTag", h.RegisterRecoveryCodes)
+	authGroup.POST("/recovery/register", h.PostRegisterRecoveryCodes)
+	authGroup.POST("/recovery/register/:languageTag", h.PostRegisterRecoveryCodes)
+	authGroup.POST("/recovery/register/save", h.SaveRecoveryCodes)
+	authGroup.POST("/recovery/register/save/:languageTag", h.SaveRecoveryCodes)
 
 	authGroup.POST("/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
@@ -1008,7 +1014,8 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 
 	// Get user to check available MFA methods
 	idpInstance := idp.NewNauthilusIdP(h.deps)
-	user, err := idpInstance.GetUserByUsername(ctx, username, "", "")
+	oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
+	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 
 	if err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
@@ -1722,6 +1729,245 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	ctx.Status(http.StatusOK)
 }
 
+// RegisterRecoveryCodes renders the recovery codes registration page.
+func (h *FrontendHandler) RegisterRecoveryCodes(ctx *gin.Context) {
+	mgr := cookie.GetManager(ctx)
+	account := ""
+	requireFlow := false
+
+	if mgr != nil {
+		account = mgr.GetString(definitions.SessionKeyAccount, "")
+		mgr.Delete(definitions.SessionKeyRecoveryCodesSaved)
+		requireFlow = mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
+	}
+
+	if account == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		h.renderErrorModal(ctx, "Failed to fetch user data")
+
+		return
+	}
+
+	if mgr != nil && !requireFlow && mgr.GetBool(definitions.SessionKeyIdPFlowActive, false) {
+		required := h.getRequiredMFAMethods(mgr)
+
+		if len(required) > 0 {
+			missing := make([]string, 0, len(required))
+
+			for _, method := range required {
+				switch method {
+				case definitions.MFAMethodTOTP:
+					if !userData.HaveTOTP {
+						missing = append(missing, definitions.MFAMethodTOTP)
+					}
+				case definitions.MFAMethodWebAuthn:
+					if !userData.HaveWebAuthn {
+						missing = append(missing, definitions.MFAMethodWebAuthn)
+					}
+				case definitions.MFAMethodRecoveryCodes:
+					if userData.NumRecoveryCodes == 0 {
+						missing = append(missing, definitions.MFAMethodRecoveryCodes)
+					}
+				}
+			}
+
+			if len(missing) > 0 {
+				requireFlow = true
+				mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
+				mgr.Set(definitions.SessionKeyRequireMFAPending, strings.Join(missing, ","))
+			}
+		}
+	}
+
+	if userData.NumRecoveryCodes > 0 {
+		if requireFlow {
+			ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
+		} else {
+			ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
+			ctx.Status(http.StatusFound)
+		}
+
+		return
+	}
+
+	recovery, err := core.GenerateBackupCodes()
+	if err != nil {
+		h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
+
+		return
+	}
+
+	codes := recovery.GetCodes()
+
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyRecoveryCodes, strings.Join(codes, ","))
+	}
+
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Codes")
+	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup these codes!")
+	data["ShownOnlyOnce"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "They will be shown only once.")
+	data["Copy"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copy")
+	data["Download"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Download")
+	data["Continue"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Continue")
+	data["CopiedToClipboard"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copied to clipboard")
+	data["Codes"] = codes
+	data["CSRFToken"] = csrf.Token(ctx)
+
+	data["RequireMFAFlow"] = requireFlow
+	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
+	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
+
+	ctx.HTML(http.StatusOK, "idp_recovery_codes_register.html", data)
+}
+
+// SaveRecoveryCodes persists the recovery codes once the user downloaded them.
+func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.save_recovery_codes")
+	defer sp.End()
+
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
+	stored := ""
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+		stored = mgr.GetString(definitions.SessionKeyRecoveryCodes, "")
+	}
+
+	if username == "" || stored == "" {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	var payload struct {
+		Codes []string `json:"codes"`
+	}
+
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	storedCodes := strings.Split(stored, ",")
+	if len(payload.Codes) > 0 && !slices.Equal(payload.Codes, storedCodes) {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	if err := h.mfa.SaveRecoveryCodes(ctx, username, storedCodes, sourceBackend); err != nil {
+		sp.RecordError(err)
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "fail").Inc()
+		h.renderErrorModalWithErr(ctx, "Failed to save recovery codes", err)
+
+		return
+	}
+
+	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "success").Inc()
+
+	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+	if state != nil {
+		state.PurgeCacheFor(username)
+	}
+
+	if mgr != nil {
+		mgr.Delete(definitions.SessionKeyRecoveryCodes)
+		mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
+		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+			remaining := util.RemoveFromCommaSeparatedList(
+				mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
+				definitions.MFAMethodRecoveryCodes,
+			)
+
+			mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+		}
+	}
+
+	ctx.Status(http.StatusOK)
+}
+
+// PostRegisterRecoveryCodes handles the continue action after recovery codes are saved.
+func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_recovery_codes")
+	defer sp.End()
+
+	mgr := cookie.GetManager(ctx)
+	username := ""
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
+
+	if username == "" {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		h.renderErrorModal(ctx, "Failed to fetch user data")
+
+		return
+	}
+
+	if userData.NumRecoveryCodes == 0 {
+		saved := false
+		if mgr != nil {
+			saved = mgr.GetBool(definitions.SessionKeyRecoveryCodesSaved, false)
+		}
+
+		if !saved {
+			h.renderErrorModal(ctx, "Recovery codes have not been saved")
+
+			return
+		}
+	}
+
+	if mgr != nil {
+		mgr.Delete(definitions.SessionKeyRecoveryCodesSaved)
+	}
+
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		remaining := util.RemoveFromCommaSeparatedList(
+			mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
+			definitions.MFAMethodRecoveryCodes,
+		)
+
+		mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+	}
+
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyIdPFlowActive, false) {
+		if h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+			return
+		}
+
+		h.redirectToIdPEndpoint(ctx, mgr)
+
+		return
+	}
+
+	if ctx.GetHeader("HX-Request") != "" {
+		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
+		ctx.Status(http.StatusOK)
+
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/home")
+}
+
 // PostGenerateRecoveryCodes handles generating new recovery codes.
 func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_generate_recovery_codes")
@@ -1775,6 +2021,9 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New recovery codes")
 	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup these codes!")
 	data["ShownOnlyOnce"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "They will be shown only once.")
+	data["Copy"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copy")
+	data["CopiedToClipboard"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copied to clipboard")
+	data["Download"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Download")
 	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
 	data["Codes"] = codes
 

@@ -83,6 +83,12 @@ const (
 	// SessionKeyTOTPSecret temporarily holds a generated TOTP secret during flow.
 	SessionKeyTOTPSecret = "totp_secret"
 
+	// SessionKeyRecoveryCodes temporarily holds generated recovery codes during registration.
+	SessionKeyRecoveryCodes = "recovery_codes"
+
+	// SessionKeyRecoveryCodesSaved indicates the recovery codes have been persisted in the backend.
+	SessionKeyRecoveryCodesSaved = "recovery_codes_saved"
+
 	// SessionKeyProtocol stores the network protocol used during authentication.
 	SessionKeyProtocol = "protocol"
 
@@ -815,6 +821,9 @@ const (
 
 	// MFAMethodWebAuthn identifies the WebAuthn security-key method.
 	MFAMethodWebAuthn = "webauthn"
+
+	// MFAMethodRecoveryCodes identifies the recovery codes method.
+	MFAMethodRecoveryCodes = "recovery_codes"
 )
 
 const (

@@ -56,10 +56,14 @@
   "Recovery Codes": "Recovery Codes",
   "Backup codes can be used to log in if you lose access to your 2FA device.": "Backup codes can be used to log in if you lose access to your 2FA device.",
   "Generate new recovery codes": "Generate new recovery codes",
-  "Backup these codes!": "Backup these codes!",
+  "Backup these codes!": "Please keep these codes in a safe place.",
   "They will be shown only once.": "They will be shown only once.",
   "You have %d recovery codes left.": "You have %d recovery codes left.",
   "New recovery codes": "New recovery codes",
+  "Copy": "Copy",
+  "Copied to clipboard": "Copied to clipboard",
+  "Download": "Download",
+  "Continue": "Continue",
   "Close": "Close",
   "Please enter your 2FA code": "Please enter your 2FA code",
   "Please use your security key to login": "Please use your security key to login",
@@ -114,6 +118,7 @@
   "Failed to delete WebAuthn from Redis": "Failed to delete WebAuthn from Redis",
   "Failed to delete credential": "Failed to delete credential",
   "Failed to update credential": "Failed to update credential",
+  "Recovery codes have not been saved": "Recovery codes have not been saved",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.",
   "Your application requires this authentication method to be set up before you can continue": "Your application requires this authentication method to be set up before you can continue"
 }

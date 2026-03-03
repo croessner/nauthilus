@@ -43,10 +43,14 @@
   "Recovery Codes": "رموز الاسترداد",
   "Backup codes can be used to log in if you lose access to your 2FA device.": "يمكن استخدام رموز النسخ الاحتياطي لتسجيل الدخول إذا فقدت الوصول إلى جهاز 2FA الخاص بك.",
   "Generate new recovery codes": "توليد رموز استرداد جديدة",
-  "Backup these codes!": "قم بعمل نسخة احتياطية من هذه الرموز!",
+  "Backup these codes!": "يرجى حفظ هذه الرموز في مكان آمن.",
   "They will be shown only once.": "سيتم عرضها مرة واحدة فقط.",
   "You have %d recovery codes left.": "يتبقى لديك %d من رموز الاسترداد.",
   "New recovery codes": "رموز استرداد جديدة",
+  "Copy": "نسخ",
+  "Copied to clipboard": "تم النسخ إلى الحافظة",
+  "Download": "تنزيل",
+  "Continue": "متابعة",
   "Close": "إغلاق",
   "Please enter your 2FA code": "يرجى إدخال رمز 2FA الخاص بك",
   "Please use your security key to login": "يرجى استخدام مفتاح الأمان لتسجيل الدخول",
@@ -114,6 +118,7 @@
   "Failed to delete WebAuthn from Redis": "فشل حذف WebAuthn من Redis",
   "Failed to delete credential": "فشل حذف بيانات الاعتماد",
   "Failed to update credential": "فشل تحديث بيانات الاعتماد",
+  "Recovery codes have not been saved": "لم يتم حفظ رموز الاسترداد",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "هل أنت متأكد أنك تريد إنشاء رموز استرداد جديدة؟ سيتم استبدال الرموز الحالية بشكل دائم.",
   "Your application requires this authentication method to be set up before you can continue": "يتطلب تطبيقك إعداد طريقة المصادقة هذه قبل أن تتمكن من المتابعة"
 }

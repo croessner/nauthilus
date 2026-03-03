@@ -43,10 +43,14 @@
   "Recovery Codes": "恢复代码",
   "Backup codes can be used to log in if you lose access to your 2FA device.": "如果您无法访问 2FA 设备，可以使用备用代码登录。",
   "Generate new recovery codes": "生成新的恢复代码",
-  "Backup these codes!": "备份这些代码！",
+  "Backup these codes!": "请将这些代码妥善保管。",
   "They will be shown only once.": "它们只会显示一次。",
   "You have %d recovery codes left.": "您还剩 %d 个恢复代码。",
   "New recovery codes": "新的恢复代码",
+  "Copy": "复制",
+  "Copied to clipboard": "已复制到剪贴板",
+  "Download": "下载",
+  "Continue": "继续",
   "Close": "关闭",
   "Please enter your 2FA code": "请输入您的 2FA 代码",
   "Please use your security key to login": "请使用您的安全密钥登录",
@@ -114,6 +118,7 @@
   "Failed to delete WebAuthn from Redis": "从Redis删除WebAuthn失败",
   "Failed to delete credential": "删除凭据失败",
   "Failed to update credential": "更新凭据失败",
+  "Recovery codes have not been saved": "恢复代码尚未保存",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "您确定要生成新的恢复代码吗？现有代码将被永久替换。",
   "Your application requires this authentication method to be set up before you can continue": "您的应用程序要求在继续之前设置此身份验证方法"
 }

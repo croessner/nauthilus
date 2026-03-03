@@ -34,6 +34,7 @@ type MFAProvider interface {
 	VerifyAndSaveTOTP(ctx *gin.Context, username string, secret string, code string, sourceBackend uint8) error
 	DeleteTOTP(ctx *gin.Context, username string, sourceBackend uint8) error
 	GenerateRecoveryCodes(ctx *gin.Context, username string, sourceBackend uint8) ([]string, error)
+	SaveRecoveryCodes(ctx *gin.Context, username string, codes []string, sourceBackend uint8) error
 	UseRecoveryCode(ctx *gin.Context, username string, code string, sourceBackend uint8) (bool, error)
 	DeleteWebAuthnCredential(ctx *gin.Context, username string, credentialID string, sourceBackend uint8) error
 }
@@ -124,6 +125,28 @@ func (s *MFAService) GenerateRecoveryCodes(ctx *gin.Context, username string, so
 	}
 
 	return recovery.GetCodes(), nil
+}
+
+// SaveRecoveryCodes stores the provided recovery codes in the backend.
+func (s *MFAService) SaveRecoveryCodes(ctx *gin.Context, username string, codes []string, sourceBackend uint8) error {
+	authDeps := s.deps.Auth()
+	mgr, err := s.getBackendManager(sourceBackend, authDeps)
+	if err != nil {
+		return err
+	}
+
+	dummyAuth, err := s.getAuthState(ctx, username)
+	if err != nil {
+		return err
+	}
+
+	recovery := mfa.NewTOTPRecovery(codes)
+
+	if err := mgr.AddTOTPRecoveryCodes(dummyAuth, recovery); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // UseRecoveryCode verifies a recovery code and removes it from the backend if valid.
