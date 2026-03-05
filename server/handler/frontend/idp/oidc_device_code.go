@@ -855,8 +855,10 @@ func (h *OIDCHandler) buildDeviceConsentPageData(ctx *gin.Context, request *idp.
 	data["Allow"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Allow")
 	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
 
+	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, request.Scopes)
 	data["ClientID"] = request.ClientID
-	data["Scopes"] = request.Scopes
+	data["Scopes"] = scopeDescriptions
+	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, consentMsgNoAdditional)
 	data["ConsentChallenge"] = ""
 	data["State"] = ""
 	data["PostConsentEndpoint"] = ctx.Request.URL.Path

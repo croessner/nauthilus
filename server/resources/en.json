@@ -120,5 +120,10 @@
   "Failed to update credential": "Failed to update credential",
   "Recovery codes have not been saved": "Recovery codes have not been saved",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.",
-  "Your application requires this authentication method to be set up before you can continue": "Your application requires this authentication method to be set up before you can continue"
+  "Your application requires this authentication method to be set up before you can continue": "Your application requires this authentication method to be set up before you can continue",
+  "Access your basic profile information": "Access your basic profile information, such as your name and preferred language.",
+  "Access your email address": "Access your email address so the application can contact you and personalize communication.",
+  "Access your group memberships": "Access your group memberships to determine which teams, roles, or areas you can use.",
+  "Maintain access when you are offline": "Maintain access when you are offline, so you do not need to sign in every time.",
+  "No additional permissions requested.": "No additional permissions requested. You can continue without granting extra access."
 }

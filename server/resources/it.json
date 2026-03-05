@@ -120,5 +120,10 @@
   "Failed to update credential": "Aggiornamento della credenziale non riuscito",
   "Recovery codes have not been saved": "I codici di recupero non sono stati salvati",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "È sicuro di voler generare nuovi codici di recupero? I codici esistenti verranno sostituiti in modo permanente.",
-  "Your application requires this authentication method to be set up before you can continue": "L'applicazione richiede che questo metodo di autenticazione sia configurato prima di poter continuare"
+  "Your application requires this authentication method to be set up before you can continue": "L'applicazione richiede che questo metodo di autenticazione sia configurato prima di poter continuare",
+  "Access your basic profile information": "Accedere alle informazioni di base del tuo profilo, ad esempio nome e lingua preferita.",
+  "Access your email address": "Accedere al tuo indirizzo e-mail in modo che l'applicazione possa contattarti e personalizzare la comunicazione.",
+  "Access your group memberships": "Accedere alle tue appartenenze ai gruppi per determinare quali team, ruoli o aree puoi utilizzare.",
+  "Maintain access when you are offline": "Mantenere l'accesso quando sei offline, cosi non devi effettuare l'accesso ogni volta.",
+  "No additional permissions requested.": "Nessuna autorizzazione aggiuntiva richiesta. Puoi continuare senza concedere accessi extra."
 }

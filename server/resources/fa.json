@@ -120,5 +120,10 @@
   "Failed to update credential": "به‌روزرسانی اعتبارنامه ناموفق بود",
   "Recovery codes have not been saved": "کدهای بازیابی ذخیره نشده‌اند",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "آیا مطمئن هستید که می‌خواهید کدهای بازیابی جدید ایجاد کنید؟ کدهای موجود به طور دائمی جایگزین خواهند شد.",
-  "Your application requires this authentication method to be set up before you can continue": "برنامه شما الزام می‌کند که این روش احراز هویت قبل از ادامه تنظیم شود"
+  "Your application requires this authentication method to be set up before you can continue": "برنامه شما الزام می‌کند که این روش احراز هویت قبل از ادامه تنظیم شود",
+  "Access your basic profile information": "دسترسی به اطلاعات پایه پروفایل شما، مانند نام و زبان ترجیحی.",
+  "Access your email address": "دسترسی به نشانی ایمیل شما تا برنامه بتواند با شما ارتباط بگیرد و پیام ها را شخصی سازی کند.",
+  "Access your group memberships": "دسترسی به عضویت های گروهی شما برای تعیین اینکه به کدام تیم ها، نقش ها یا بخش ها دسترسی دارید.",
+  "Maintain access when you are offline": "حفظ دسترسی در زمان آفلاین بودن تا لازم نباشد هر بار دوباره وارد شوید.",
+  "No additional permissions requested.": "هیچ مجوز اضافی درخواست نشده است. می توانید بدون اعطای دسترسی بیشتر ادامه دهید."
 }

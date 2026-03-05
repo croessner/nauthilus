@@ -120,5 +120,10 @@
   "Failed to update credential": "Не удалось обновить учётные данные",
   "Recovery codes have not been saved": "Коды восстановления не были сохранены",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Вы уверены, что хотите сгенерировать новые коды восстановления? Существующие коды будут безвозвратно заменены.",
-  "Your application requires this authentication method to be set up before you can continue": "Ваше приложение требует настройки этого метода аутентификации перед продолжением"
+  "Your application requires this authentication method to be set up before you can continue": "Ваше приложение требует настройки этого метода аутентификации перед продолжением",
+  "Access your basic profile information": "Доступ к базовой информации вашего профиля, например к имени и предпочитаемому языку.",
+  "Access your email address": "Доступ к вашему адресу электронной почты, чтобы приложение могло связываться с вами и персонализировать сообщения.",
+  "Access your group memberships": "Доступ к вашим группам, чтобы определить, какие команды, роли или разделы вам доступны.",
+  "Maintain access when you are offline": "Сохранять доступ, когда вы офлайн, чтобы не входить в систему каждый раз.",
+  "No additional permissions requested.": "Дополнительные разрешения не запрошены. Вы можете продолжить без предоставления дополнительного доступа."
 }

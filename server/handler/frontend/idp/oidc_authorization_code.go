@@ -382,8 +382,10 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 		data["ReturnTo"] = ctx.Request.URL.String()
 	}
 
+	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, session.Scopes)
 	data["ClientID"] = session.ClientID
-	data["Scopes"] = session.Scopes
+	data["Scopes"] = scopeDescriptions
+	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, consentMsgNoAdditional)
 	data["ConsentChallenge"] = consentChallenge
 	data["State"] = state
 	data["PostConsentEndpoint"] = ctx.Request.URL.Path + "?state=" + url.QueryEscape(state)

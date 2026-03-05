@@ -10,9 +10,17 @@
 
             <div class="bg-base-200 p-4 rounded-lg mb-6">
                 <h3 class="font-bold mb-2">{{ .RequestedPermissions }}:</h3>
-                <ul class="list-disc list-inside">
+                <ul class="space-y-2">
+                    {{ if .Scopes }}
                     {{ range .Scopes }}
-                    <li>{{ . }}</li>
+                    <li class="rounded-md border border-base-300/70 bg-base-100 p-3 text-sm leading-relaxed">
+                        {{ . }}
+                    </li>
+                    {{ end }}
+                    {{ else }}
+                    <li class="rounded-md border border-dashed border-base-300/70 bg-base-100 p-3 text-sm leading-relaxed opacity-80">
+                        {{ .NoAdditionalPermissions }}
+                    </li>
                     {{ end }}
                 </ul>
             </div>
@@ -23,9 +31,9 @@
                 <input name="state" type="hidden" value="{{ .State }}"/>
 
                 <div class="flex gap-4">
+                    <button class="btn btn-outline flex-1" name="submit" type="submit" value="deny">{{ .Deny }}</button>
                     <button class="btn btn-primary flex-1" name="submit" type="submit" value="allow">{{ .Allow }}
                     </button>
-                    <button class="btn btn-outline flex-1" name="submit" type="submit" value="deny">{{ .Deny }}</button>
                 </div>
             </form>
         </div>

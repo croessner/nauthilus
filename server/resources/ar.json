@@ -120,5 +120,10 @@
   "Failed to update credential": "فشل تحديث بيانات الاعتماد",
   "Recovery codes have not been saved": "لم يتم حفظ رموز الاسترداد",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "هل أنت متأكد أنك تريد إنشاء رموز استرداد جديدة؟ سيتم استبدال الرموز الحالية بشكل دائم.",
-  "Your application requires this authentication method to be set up before you can continue": "يتطلب تطبيقك إعداد طريقة المصادقة هذه قبل أن تتمكن من المتابعة"
+  "Your application requires this authentication method to be set up before you can continue": "يتطلب تطبيقك إعداد طريقة المصادقة هذه قبل أن تتمكن من المتابعة",
+  "Access your basic profile information": "الوصول الى معلومات ملفك الشخصي الاساسية، مثل الاسم واللغة المفضلة.",
+  "Access your email address": "الوصول الى عنوان بريدك الالكتروني لكي يتمكن التطبيق من التواصل معك وتخصيص الرسائل.",
+  "Access your group memberships": "الوصول الى عضويات المجموعات الخاصة بك لتحديد الفرق او الادوار او الاقسام التي يمكنك استخدامها.",
+  "Maintain access when you are offline": "الاحتفاظ بالوصول اثناء عدم الاتصال، حتى لا تحتاج الى تسجيل الدخول في كل مرة.",
+  "No additional permissions requested.": "لم يتم طلب صلاحيات اضافية. يمكنك المتابعة بدون منح وصول اضافي."
 }

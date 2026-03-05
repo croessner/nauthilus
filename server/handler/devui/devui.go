@@ -397,6 +397,7 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["RequestedPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Requested permissions")
 	data["Allow"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Allow")
 	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
+	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "No additional permissions requested.")
 
 	data["WebAuthnLoginURL"] = "#"
 	data["CSRFToken"] = "dev-csrf-token"
@@ -457,7 +458,11 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["ClientID"] = "test-client"
 	data["ConsentChallenge"] = "test-challenge"
 	data["State"] = "test-state"
-	data["Scopes"] = []string{"openid", "profile", "email"}
+	data["Scopes"] = []string{
+		frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your basic profile information"),
+		frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your email address"),
+		frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your group memberships"),
+	}
 
 	// Functions used in templates
 	funcMap := template.FuncMap{

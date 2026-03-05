@@ -120,5 +120,10 @@
   "Failed to update credential": "Anmeldeinformation konnte nicht aktualisiert werden",
   "Recovery codes have not been saved": "Wiederherstellungscodes wurden nicht gespeichert",
   "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.": "Möchten Sie wirklich neue Wiederherstellungscodes generieren? Vorhandene Codes werden unwiderruflich ersetzt.",
-  "Your application requires this authentication method to be set up before you can continue": "Ihre Anwendung erfordert, dass diese Authentifizierungsmethode eingerichtet wird, bevor Sie fortfahren können"
+  "Your application requires this authentication method to be set up before you can continue": "Ihre Anwendung erfordert, dass diese Authentifizierungsmethode eingerichtet wird, bevor Sie fortfahren können",
+  "Access your basic profile information": "Zugriff auf Ihre grundlegenden Profilinformationen, z. B. Ihren Namen und Ihre bevorzugte Sprache.",
+  "Access your email address": "Zugriff auf Ihre E-Mail-Adresse, damit die Anwendung Sie kontaktieren und Mitteilungen personalisieren kann.",
+  "Access your group memberships": "Zugriff auf Ihre Gruppenzugehörigkeiten, um festzulegen, welche Teams, Rollen oder Bereiche Sie nutzen dürfen.",
+  "Maintain access when you are offline": "Zugriff auch im Offline-Betrieb beibehalten, damit Sie sich nicht bei jeder Nutzung neu anmelden müssen.",
+  "No additional permissions requested.": "Es wurden keine zusätzlichen Berechtigungen angefordert. Sie können ohne weitere Freigaben fortfahren."
 }
