@@ -173,6 +173,30 @@ body {
     color: inherit;
 }
 
+.idp-alert-error {
+    background-color: #fee2e2;
+    border-color: #ef4444;
+    color: #7f1d1d;
+}
+
+.idp-alert-error .stroke-current {
+    color: #b91c1c;
+}
+
+.idp-alert-error span {
+    color: inherit;
+}
+
+:root[data-theme='dark'] .idp-alert-error {
+    background-color: #7f1d1d;
+    border-color: #ef4444;
+    color: #fecaca;
+}
+
+:root[data-theme='dark'] .idp-alert-error .stroke-current {
+    color: #fecaca;
+}
+
 :root[data-theme='dark'] .navbar .btn-ghost {
     color: rgba(255, 255, 255, 0.92);
 }
