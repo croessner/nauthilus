@@ -818,11 +818,19 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 				// Store error message in session for display on login page
 				mgr.Set(definitions.SessionKeyLoginError, "Invalid login or password")
+				// Keep an explicit fail marker so downstream device-code completion
+				// can reliably deny the authorization.
+				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+				// Ensure no stale authenticated session survives this failure path.
+				mgr.Delete(definitions.SessionKeyAccount)
+				mgr.Delete(definitions.SessionKeyDisplayName)
+				mgr.Delete(definitions.SessionKeySubject)
+				mgr.Delete(definitions.SessionKeyMFACompleted)
+				mgr.Delete(definitions.SessionKeyMFAMethod)
 
 				// Clear MFA-related session data but keep flow and error
 				mgr.Delete(definitions.SessionKeyRegistration)
 				mgr.Delete(definitions.SessionKeyUsername)
-				mgr.Delete(definitions.SessionKeyAuthResult)
 
 				if saveErr := mgr.Save(ctx); saveErr != nil {
 					ctx.JSON(http.StatusInternalServerError, saveErr.Error())

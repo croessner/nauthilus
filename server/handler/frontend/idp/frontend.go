@@ -573,9 +573,8 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	}
 
 	// Delayed-response path: MFA may have succeeded after a failed password.
-	// In this case, the device code must be denied instead of authorized.
-	authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
-	if authResult != uint8(definitions.AuthResultOK) {
+	// Deny only when first-factor failure is explicitly present in session state.
+	if shouldDenyDeviceCodeAfterMFA(mgr) {
 		request.Status = idp.DeviceCodeStatusDenied
 		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 
@@ -650,6 +649,20 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	renderDeviceCodeSuccess(ctx, h.deps)
+}
+
+func shouldDenyDeviceCodeAfterMFA(mgr cookie.Manager) bool {
+	if mgr == nil {
+		return false
+	}
+
+	if !mgr.HasKey(definitions.SessionKeyAuthResult) {
+		return false
+	}
+
+	authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, 0)
+
+	return definitions.AuthResult(authResult) == definitions.AuthResultFail
 }
 
 func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, mgr cookie.Manager) bool {
