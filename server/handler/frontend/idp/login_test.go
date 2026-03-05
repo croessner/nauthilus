@@ -252,3 +252,28 @@ func TestIsValidIdPFlow(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldDenyDeviceCodeAfterMFA(t *testing.T) {
+	t.Run("nil manager does not deny", func(t *testing.T) {
+		assert.False(t, shouldDenyDeviceCodeAfterMFA(nil))
+	})
+
+	t.Run("missing auth result does not deny", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{}}
+		assert.False(t, shouldDenyDeviceCodeAfterMFA(mgr))
+	})
+
+	t.Run("explicit auth fail denies", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyAuthResult: uint8(definitions.AuthResultFail),
+		}}
+		assert.True(t, shouldDenyDeviceCodeAfterMFA(mgr))
+	})
+
+	t.Run("auth ok does not deny", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyAuthResult: uint8(definitions.AuthResultOK),
+		}}
+		assert.False(t, shouldDenyDeviceCodeAfterMFA(mgr))
+	})
+}
