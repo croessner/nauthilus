@@ -572,6 +572,31 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 		return
 	}
 
+	// Delayed-response path: MFA may have succeeded after a failed password.
+	// In this case, the device code must be denied instead of authorized.
+	authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+	if authResult != uint8(definitions.AuthResultOK) {
+		request.Status = idp.DeviceCodeStatusDenied
+		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+
+		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code denied after delayed-response MFA completion",
+			"client_id", request.ClientID,
+			"user_code", request.UserCode,
+		)
+
+		renderDeviceCodeError(ctx, h.deps, request.UserCode, "Invalid login or password")
+
+		return
+	}
+
 	// Check if consent is needed before authorizing
 	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
 		lang := ctx.Param("languageTag")
@@ -625,6 +650,29 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	renderDeviceCodeSuccess(ctx, h.deps)
+}
+
+func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, mgr cookie.Manager) bool {
+	if mgr == nil || mgr.GetString(definitions.SessionKeyOIDCGrantType, "") != definitions.OIDCFlowDeviceCode {
+		return false
+	}
+
+	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+	userCode := ""
+
+	if deviceCode != "" {
+		request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
+		if err == nil && request != nil {
+			request.Status = idp.DeviceCodeStatusDenied
+			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+			userCode = request.UserCode
+		}
+	}
+
+	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+	renderDeviceCodeError(ctx, h.deps, userCode, "Invalid login or password")
+
+	return true
 }
 
 // PostLogin handles the login submission.
@@ -1190,6 +1238,10 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	}
 
 	if authResult != uint8(definitions.AuthResultOK) {
+		if h.handleDeviceCodeDelayedAuthFailure(ctx, sess.mgr) {
+			return
+		}
+
 		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
 		data := h.basePageData(ctx)
@@ -1533,6 +1585,10 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 	// MFA OK. Now check if the original password was OK.
 	if authResult != uint8(definitions.AuthResultOK) {
+		if h.handleDeviceCodeDelayedAuthFailure(ctx, sess.mgr) {
+			return
+		}
+
 		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
 		data := h.basePageData(ctx)

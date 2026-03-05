@@ -386,15 +386,34 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		attribute.String("username", username),
 	)
 
-	// Authenticate the user
+	// Authenticate the user.
+	// For delayed_response clients, mirror the authorization-code behavior:
+	// if password auth fails but MFA is available, continue with MFA and defer
+	// the final decision until flow completion.
+	authResult := uint8(definitions.AuthResultOK)
 	user, err := h.idp.Authenticate(ctx, username, password, request.ClientID, "")
 	if err != nil {
-		request.Status = idp.DeviceCodeStatusDenied
-		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+		authResult = uint8(definitions.AuthResultFail)
+		user = nil
 
-		h.renderDeviceVerifyError(ctx, userCode, "Authentication failed")
+		if h.idp.IsDelayedResponse(request.ClientID, "") {
+			if delayedUser, userErr := h.idp.GetUserByUsername(ctx, username, request.ClientID, ""); userErr == nil && delayedUser != nil {
+				protocol := definitions.ProtoOIDC
+				availability := h.frontend.getMFAAvailability(ctx, delayedUser, protocol, cookie.GetManager(ctx))
+				if availability.count > 0 {
+					user = delayedUser
+				}
+			}
+		}
 
-		return
+		if user == nil {
+			request.Status = idp.DeviceCodeStatusDenied
+			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+
+			h.renderDeviceVerifyError(ctx, userCode, "Invalid login or password")
+
+			return
+		}
 	}
 
 	// Check if user has MFA configured
@@ -410,8 +429,6 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			return
 		}
 
-		// Determine auth result for delayed response behavior
-		authResult := uint8(definitions.AuthResultOK)
 		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 		oidcFlowContext := newOIDCDeviceFlowContext(mgr)
 		existingFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
@@ -675,22 +692,31 @@ func (h *OIDCHandler) buildDeviceVerifyPageData(ctx *gin.Context) gin.H {
 	data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
 	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
 	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Authorize Device")
-	data["PostDeviceVerifyEndpoint"] = "/oidc/device/verify"
+	data["PostDeviceVerifyEndpoint"] = deviceVerifyPathFromContext(ctx)
 	data["CSRFToken"] = csrf.Token(ctx)
-	data["HaveError"] = false
+
+	haveError := false
+	errorMessage := ""
+
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		if loginError := mgr.GetString(definitions.SessionKeyLoginError, ""); loginError != "" {
+			haveError = true
+			errorMessage = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, loginError)
+
+			mgr.Delete(definitions.SessionKeyLoginError)
+			_ = mgr.Save(ctx)
+		}
+	}
+
+	data["HaveError"] = haveError
+	data["ErrorMessage"] = errorMessage
 
 	return data
 }
 
 // renderDeviceVerifyError re-renders the device verify page with an error message.
 func (h *OIDCHandler) renderDeviceVerifyError(ctx *gin.Context, userCode string, errorMsg string) {
-	data := h.buildDeviceVerifyPageData(ctx)
-
-	data["HaveError"] = true
-	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, errorMsg)
-	data["UserCode"] = userCode
-
-	ctx.HTML(http.StatusOK, "idp_device_verify.html", data)
+	renderDeviceCodeError(ctx, h.deps, userCode, errorMsg)
 }
 
 // deviceCodeNeedsConsent checks whether the device code flow requires user consent for the given client.
@@ -917,4 +943,36 @@ func renderDeviceCodeSuccess(ctx *gin.Context, d *deps.Deps) {
 	data["DeviceVerifySuccessHint"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "You can close this window and return to your device.")
 
 	ctx.HTML(http.StatusOK, "idp_device_verify_success.html", data)
+}
+
+// renderDeviceCodeError is a package-level helper that renders the device
+// verification page with an error message.
+func renderDeviceCodeError(ctx *gin.Context, d *deps.Deps, userCode string, errorMsg string) {
+	data := BasePageData(ctx, d.Cfg, d.LangManager)
+
+	data["Title"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Device Authorization")
+	data["DeviceVerifyDescription"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Enter the code displayed on your device and sign in to authorize it.")
+	data["UserCodeLabel"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Device Code")
+	data["UserCodePlaceholder"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "ABCD-EFGH")
+	data["UsernameLabel"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Username")
+	data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Username")
+	data["PasswordLabel"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Password")
+	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Password")
+	data["Submit"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Authorize Device")
+	data["PostDeviceVerifyEndpoint"] = deviceVerifyPathFromContext(ctx)
+	data["CSRFToken"] = csrf.Token(ctx)
+	data["HaveError"] = true
+	data["ErrorMessage"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, errorMsg)
+	data["UserCode"] = userCode
+
+	ctx.HTML(http.StatusOK, "idp_device_verify.html", data)
+}
+
+func deviceVerifyPathFromContext(ctx *gin.Context) string {
+	lang := ctx.Param("languageTag")
+	if lang != "" {
+		return "/oidc/device/verify/" + lang
+	}
+
+	return "/oidc/device/verify"
 }
