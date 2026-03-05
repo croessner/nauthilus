@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
@@ -216,6 +217,18 @@ func TestOIDCClient_GetAllowedScopes(t *testing.T) {
 	})
 }
 
+func TestOIDCClient_GetSupportedMFA(t *testing.T) {
+	t.Run("NilClient", func(t *testing.T) {
+		var c *OIDCClient
+		assert.Nil(t, c.GetSupportedMFA())
+	})
+
+	t.Run("ConfiguredSupportedMFA", func(t *testing.T) {
+		c := &OIDCClient{SupportedMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn}}
+		assert.Equal(t, []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn}, c.GetSupportedMFA())
+	})
+}
+
 func TestOIDCConsentTTL(t *testing.T) {
 	t.Run("OIDCConfig default consent ttl", func(t *testing.T) {
 		var cfg *OIDCConfig
@@ -287,6 +300,63 @@ func TestOIDCClient_OptionalScopesValidation(t *testing.T) {
 
 		err := validate.Struct(client)
 		assert.NoError(t, err)
+	})
+}
+
+func TestValidateIdPMFASettings(t *testing.T) {
+	t.Run("oidc require_mfa subset of supported_mfa", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				OIDC: OIDCConfig{
+					Clients: []OIDCClient{
+						{
+							ClientID:     "client-1",
+							RequireMFA:   []string{definitions.MFAMethodTOTP},
+							SupportedMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn},
+						},
+					},
+				},
+			},
+		}
+
+		assert.NoError(t, cfg.validateIdPMFASettings())
+	})
+
+	t.Run("oidc require_mfa outside supported_mfa returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				OIDC: OIDCConfig{
+					Clients: []OIDCClient{
+						{
+							ClientID:     "client-1",
+							RequireMFA:   []string{definitions.MFAMethodTOTP},
+							SupportedMFA: []string{definitions.MFAMethodWebAuthn},
+						},
+					},
+				},
+			},
+		}
+
+		assert.Error(t, cfg.validateIdPMFASettings())
+	})
+
+	t.Run("saml require_mfa outside supported_mfa returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					ServiceProviders: []SAML2ServiceProvider{
+						{
+							EntityID:     "sp-1",
+							ACSURL:       "https://sp.example.com/acs",
+							RequireMFA:   []string{definitions.MFAMethodRecoveryCodes},
+							SupportedMFA: []string{definitions.MFAMethodWebAuthn},
+						},
+					},
+				},
+			},
+		}
+
+		assert.Error(t, cfg.validateIdPMFASettings())
 	})
 }
 

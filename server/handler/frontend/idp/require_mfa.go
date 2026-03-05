@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -70,6 +71,56 @@ func (h *FrontendHandler) getRequiredMFAMethods(mgr cookie.Manager) []string {
 	}
 
 	return nil
+}
+
+// getSupportedMFAMethods returns the list of MFA methods supported for the current
+// IdP client or SAML service provider. Empty means all methods are supported.
+func (h *FrontendHandler) getSupportedMFAMethods(mgr cookie.Manager) []string {
+	if mgr == nil || h.deps == nil {
+		return nil
+	}
+
+	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+
+	switch flowType {
+	case definitions.ProtoOIDC:
+		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
+		if clientID == "" {
+			return nil
+		}
+
+		client, ok := idpInstance.FindClient(clientID)
+		if !ok {
+			return nil
+		}
+
+		return client.GetSupportedMFA()
+
+	case definitions.ProtoSAML:
+		entityID := mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+		if entityID == "" {
+			return nil
+		}
+
+		sp, ok := idpInstance.FindSAMLServiceProvider(entityID)
+		if !ok {
+			return nil
+		}
+
+		return sp.GetSupportedMFA()
+	}
+
+	return nil
+}
+
+func (h *FrontendHandler) isMFAMethodSupported(mgr cookie.Manager, method string) bool {
+	supported := h.getSupportedMFAMethods(mgr)
+	if len(supported) == 0 {
+		return true
+	}
+
+	return slices.Contains(supported, method)
 }
 
 // getFlowClientIdentifiers resolves flow-specific OIDC/SAML identifiers from the current session.

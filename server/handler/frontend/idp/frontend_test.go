@@ -304,6 +304,70 @@ func TestGetFlowClientIdentifiers(t *testing.T) {
 	})
 }
 
+func TestIsMFAMethodSupported(t *testing.T) {
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{
+					IdP: &config.IdPSection{
+						OIDC: config.OIDCConfig{
+							Clients: []config.OIDCClient{
+								{
+									ClientID:     "oidc-client",
+									SupportedMFA: []string{definitions.MFAMethodWebAuthn},
+								},
+							},
+						},
+					},
+				},
+			},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIdPClientID: "oidc-client",
+	}}
+
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
+	assert.False(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP))
+}
+
+func TestIsMFAMethodSupported_DefaultsToAllWhenUnset(t *testing.T) {
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{
+					IdP: &config.IdPSection{
+						OIDC: config.OIDCConfig{
+							Clients: []config.OIDCClient{
+								{
+									ClientID: "oidc-client",
+								},
+							},
+						},
+					},
+				},
+			},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIdPClientID: "oidc-client",
+	}}
+
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP))
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes))
+}
+
 func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

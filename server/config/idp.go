@@ -26,6 +26,41 @@ import (
 	"github.com/croessner/nauthilus/server/secret"
 )
 
+func validateRequiredWithinSupported(required, supported []string) bool {
+	if len(required) == 0 || len(supported) == 0 {
+		return true
+	}
+
+	for _, method := range required {
+		if !slices.Contains(supported, method) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validateIdPMFASettings ensures require_mfa is a subset of supported_mfa when supported_mfa is configured.
+func (f *FileSettings) validateIdPMFASettings() error {
+	if f == nil || f.IdP == nil {
+		return nil
+	}
+
+	for _, client := range f.IdP.OIDC.Clients {
+		if !validateRequiredWithinSupported(client.RequireMFA, client.SupportedMFA) {
+			return fmt.Errorf("idp.oidc.clients[%s]: require_mfa must be a subset of supported_mfa", client.ClientID)
+		}
+	}
+
+	for _, sp := range f.IdP.SAML2.ServiceProviders {
+		if !validateRequiredWithinSupported(sp.RequireMFA, sp.SupportedMFA) {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: require_mfa must be a subset of supported_mfa", sp.EntityID)
+		}
+	}
+
+	return nil
+}
+
 // IdPSection represents the configuration for the internal Identity Provider.
 type IdPSection struct {
 	OIDC              OIDCConfig  `mapstructure:"oidc"`
@@ -459,6 +494,7 @@ type OIDCClient struct {
 	Scopes                            []string          `mapstructure:"scopes"`
 	GrantTypes                        []string          `mapstructure:"grant_types"`
 	RequireMFA                        []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA                      []string          `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
 	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
 	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
@@ -498,6 +534,16 @@ func (c *OIDCClient) GetRequireMFA() []string {
 	}
 
 	return c.RequireMFA
+}
+
+// GetSupportedMFA returns the list of MFA methods supported for this client.
+// An empty list means all available methods are supported.
+func (c *OIDCClient) GetSupportedMFA() []string {
+	if c == nil {
+		return nil
+	}
+
+	return c.SupportedMFA
 }
 
 // GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.
@@ -722,6 +768,7 @@ type SAML2ServiceProvider struct {
 	CertFile          string        `mapstructure:"cert_file"`
 	AllowedAttributes []string      `mapstructure:"allowed_attributes"`
 	RequireMFA        []string      `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA      []string      `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
 	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse   bool          `mapstructure:"delayed_response"`
@@ -735,6 +782,16 @@ func (s *SAML2ServiceProvider) GetRequireMFA() []string {
 	}
 
 	return s.RequireMFA
+}
+
+// GetSupportedMFA returns the list of MFA methods supported for this service provider.
+// An empty list means all available methods are supported.
+func (s *SAML2ServiceProvider) GetSupportedMFA() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.SupportedMFA
 }
 
 // GetCert returns the SP certificate content (inline or from file).

@@ -399,7 +399,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 	// Check if user has MFA configured
 	protocol := definitions.ProtoOIDC
-	availability := h.frontend.getMFAAvailability(ctx, user, protocol)
+	availability := h.frontend.getMFAAvailability(ctx, user, protocol, cookie.GetManager(ctx))
 
 	if availability.count > 0 {
 		// MFA is required - store session state and redirect to MFA flow

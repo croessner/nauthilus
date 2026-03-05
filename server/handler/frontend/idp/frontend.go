@@ -975,7 +975,7 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 		return
 	}
 
-	availability := h.getMFAAvailability(ctx, user, protocol)
+	availability := h.getMFAAvailability(ctx, user, protocol, mgr)
 	multi := availability.count > 1
 
 	if mgr != nil {
@@ -1043,6 +1043,12 @@ func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
 
 	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+
+		return
+	}
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
 
 		return
 	}
@@ -1135,6 +1141,12 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 
 	sess, user, code := h.extractMFASessionAndUser(ctx)
 	if sess == nil {
+		return
+	}
+
+	if !h.isMFAMethodSupported(sess.mgr, definitions.MFAMethodRecoveryCodes) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
+
 		return
 	}
 
@@ -1247,10 +1259,22 @@ func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
 	}
 }
 
-func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string) mfaAvailability {
+func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string, mgr cookie.Manager) mfaAvailability {
 	haveTOTP := h.hasTOTP(user)
 	haveWebAuthn := h.hasWebAuthn(ctx, user, protocolParam)
 	haveRecoveryCodes := h.hasRecoveryCodes(user)
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP) {
+		haveTOTP = false
+	}
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
+		haveWebAuthn = false
+	}
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes) {
+		haveRecoveryCodes = false
+	}
 
 	count := 0
 
@@ -1284,7 +1308,7 @@ func (h *FrontendHandler) getMFARedirectURLFromCookie(ctx *gin.Context, user *ba
 		protocolParam = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 	}
 
-	availability := h.getMFAAvailability(ctx, user, protocolParam)
+	availability := h.getMFAAvailability(ctx, user, protocolParam, mgr)
 
 	if availability.count > 1 {
 		return "", false
@@ -1382,6 +1406,12 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 		return
 	}
 
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
+
+		return
+	}
+
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 	data["WebAuthnVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please use your security key to login")
@@ -1413,6 +1443,12 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 		return
 	}
 
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
+
+		return
+	}
+
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 	data["TOTPVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your 2FA code")
@@ -1436,6 +1472,12 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 	sess, user, code := h.extractMFASessionAndUser(ctx)
 	if sess == nil {
+		return
+	}
+
+	if !h.isMFAMethodSupported(sess.mgr, definitions.MFAMethodTOTP) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
+
 		return
 	}
 
