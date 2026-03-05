@@ -92,67 +92,6 @@ func TestAuthValidation_EmptyField_JSON(t *testing.T) {
 	}
 }
 
-func TestAuthValidation_EmptyUsername_BasicAuth(t *testing.T) {
-	setupMinimalTestConfig(t)
-	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps()
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-
-	// Setup request (No Basic Auth header)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/basic", nil)
-
-	// Setup context variables
-	ctx.Set(definitions.CtxServiceKey, definitions.ServBasic)
-	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-	// Execute NewAuthStateWithSetupWithDeps
-	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
-
-	// For Basic Auth, NewAuthStateWithSetupWithDeps doesn't fail if headers are missing,
-	// because it only sets up the state. The actual extraction happens in ProcessFeatures or ProcessAuthentication.
-	assert.NotNil(t, auth)
-
-	// Now simulate the handler processing
-	authState := auth.(*AuthState)
-	abort := authState.ProcessFeatures(ctx)
-
-	assert.True(t, abort)
-	assert.True(t, ctx.IsAborted())
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestAuthValidation_EmptyCredentials_BasicAuth(t *testing.T) {
-	setupMinimalTestConfig(t)
-	gin.SetMode(gin.TestMode)
-	deps := setupAuthDeps()
-
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-
-	// Setup request with Basic Auth header but empty user/pass
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/basic", nil)
-	ctx.Request.SetBasicAuth("", "")
-
-	// Setup context variables
-	ctx.Set(definitions.CtxServiceKey, definitions.ServBasic)
-	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-	// Execute NewAuthStateWithSetupWithDeps
-	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
-	assert.NotNil(t, auth)
-
-	// Now simulate the handler processing
-	authState := auth.(*AuthState)
-	_ = authState.ProcessFeatures(ctx)
-
-	// Check if errors were registered
-	assert.Len(t, ctx.Errors, 2)
-	assert.ErrorIs(t, ctx.Errors[0].Err, errors.ErrEmptyUsername)
-	assert.ErrorIs(t, ctx.Errors[1].Err, errors.ErrEmptyPassword)
-}
-
 func TestAuthValidation_InvalidJSON(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
@@ -205,7 +144,7 @@ func TestAuthValidation_EmptyUsername_Header(t *testing.T) {
 	assert.ErrorIs(t, ctx.Errors.Last().Err, errors.ErrEmptyUsername)
 }
 
-func TestAuthValidation_EmptyUsername_SASLAuthd(t *testing.T) {
+func TestAuthValidation_EmptyUsername_Form(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
 	deps := setupAuthDeps()
@@ -215,11 +154,11 @@ func TestAuthValidation_EmptyUsername_SASLAuthd(t *testing.T) {
 
 	// Setup request (Empty username in Form)
 	body := []byte("username=&password=pass")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/saslauthd", bytes.NewBuffer(body))
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/json", bytes.NewBuffer(body))
 	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Setup context variables
-	ctx.Set(definitions.CtxServiceKey, definitions.ServSaslauthd)
+	ctx.Set(definitions.CtxServiceKey, definitions.ServJSON)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
 	// Execute

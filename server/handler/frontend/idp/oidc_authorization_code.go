@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/idp"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -34,50 +35,6 @@ import (
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
 )
-
-// hasClientConsent checks whether the user has already granted consent for the given client.
-func hasClientConsent(mgr cookie.Manager, clientID string) bool {
-	if mgr == nil {
-		return false
-	}
-
-	oidcClients := mgr.GetString(definitions.SessionKeyOIDCClients, "")
-	if oidcClients == "" {
-		return false
-	}
-
-	for id := range strings.SplitSeq(oidcClients, ",") {
-		if id == clientID {
-			return true
-		}
-	}
-
-	return false
-}
-
-// addClientToCookie persists the client ID in the session cookie so that
-// consent does not have to be requested again during the same session.
-func addClientToCookie(mgr cookie.Manager, clientID string) {
-	if mgr == nil {
-		return
-	}
-
-	oidcClients := mgr.GetString(definitions.SessionKeyOIDCClients, "")
-
-	if oidcClients != "" {
-		for id := range strings.SplitSeq(oidcClients, ",") {
-			if id == clientID {
-				return
-			}
-		}
-
-		oidcClients += "," + clientID
-	} else {
-		oidcClients = clientID
-	}
-
-	mgr.Set(definitions.SessionKeyOIDCClients, oidcClients)
-}
 
 // Authorize handles the OIDC authorization request.
 func (h *OIDCHandler) Authorize(ctx *gin.Context) {
@@ -97,11 +54,10 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	)
 
 	mgr := cookie.GetManager(ctx)
+	oidcFlowContext := newOIDCAuthorizeFlowContext(mgr)
 	account := ""
 
-	if mgr != nil {
-		account = mgr.GetString(definitions.SessionKeyAccount, "")
-	}
+	account = oidcFlowContext.Account()
 
 	clientID := ctx.Query("client_id")
 	redirectURI := ctx.Query("redirect_uri")
@@ -150,21 +106,91 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 		// User not logged in - store OIDC flow state in secure cookie and redirect to login.
 		// This prevents open redirect vulnerabilities by not passing return_to in URL.
+		redirectTarget := "/login"
+
 		if mgr != nil {
-			mgr.Set(definitions.SessionKeyIdPFlowActive, true)
-			mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoOIDC)
-			mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowAuthorizationCode)
-			mgr.Set(definitions.SessionKeyIdPClientID, clientID)
-			mgr.Set(definitions.SessionKeyIdPRedirectURI, redirectURI)
-			mgr.Set(definitions.SessionKeyIdPScope, scope)
-			mgr.Set(definitions.SessionKeyIdPState, state)
-			mgr.Set(definitions.SessionKeyIdPNonce, nonce)
-			mgr.Set(definitions.SessionKeyIdPResponseType, responseType)
-			mgr.Set(definitions.SessionKeyIdPPrompt, prompt)
-			mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoOIDC)
+			existingFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+			existingFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+			existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
+			createdFlowID := ksuid.New().String()
+
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "OIDC authorize creating flow state",
+				"http_method", ctx.Request.Method,
+				"request_uri", ctx.Request.RequestURI,
+				"request_host", ctx.Request.Host,
+				"origin", ctx.GetHeader("Origin"),
+				"referer", ctx.GetHeader("Referer"),
+				"user_agent", ctx.GetHeader("User-Agent"),
+				"x_forwarded_host", ctx.GetHeader("X-Forwarded-Host"),
+				"x_forwarded_proto", ctx.GetHeader("X-Forwarded-Proto"),
+				"prompt", prompt,
+				"account_present", account != "",
+				"existing_flow_id", existingFlowID,
+				"existing_flow_type", existingFlowType,
+				"existing_grant_type", existingGrantType,
+				"new_flow_id", createdFlowID,
+			)
+
+			controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
+			decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
+				FlowID:       createdFlowID,
+				FlowType:     flowdomain.FlowTypeOIDCAuthorization,
+				Protocol:     flowdomain.FlowProtocolOIDC,
+				CurrentStep:  flowdomain.FlowStepStart,
+				GrantType:    definitions.OIDCFlowAuthorizationCode,
+				ReturnTarget: "/login",
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataClientID:     clientID,
+					flowdomain.FlowMetadataRedirectURI:  redirectURI,
+					flowdomain.FlowMetadataScope:        scope,
+					flowdomain.FlowMetadataState:        state,
+					flowdomain.FlowMetadataNonce:        nonce,
+					flowdomain.FlowMetadataResponseType: responseType,
+					flowdomain.FlowMetadataPrompt:       prompt,
+					flowdomain.FlowMetadataResumeTarget: ctx.Request.URL.RequestURI(),
+				},
+			}, time.Now())
+			if err != nil {
+				util.DebugModuleWithCfg(
+					ctx.Request.Context(),
+					h.deps.Cfg,
+					h.deps.Logger,
+					definitions.DbgIdp,
+					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+					definitions.LogKeyMsg, "OIDC authorize flow creation failed",
+					"new_flow_id", createdFlowID,
+					"error", err,
+				)
+
+				ctx.String(http.StatusInternalServerError, "Failed to initialize flow session")
+
+				return
+			}
+
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "OIDC authorize flow creation completed",
+				"new_flow_id", createdFlowID,
+				"redirect_target", decision.RedirectURI,
+			)
+
+			redirectTarget = decision.RedirectURI
+
+			oidcFlowContext.StoreRequest(clientID, redirectURI, scope, state, nonce, responseType, prompt)
 
 			// Explicitly save cookie before redirect to ensure it's written to the response
-			if err := mgr.Save(ctx); err != nil {
+			if err := oidcFlowContext.Save(ctx); err != nil {
 				ctx.String(http.StatusInternalServerError, "Failed to save session")
 
 				return
@@ -173,7 +199,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 			mgr.Debug(ctx, h.deps.Logger, "OIDC flow state stored in cookie - redirecting to login")
 		}
 
-		ctx.Redirect(http.StatusFound, "/login")
+		ctx.Redirect(http.StatusFound, redirectTarget)
 
 		return
 	}
@@ -210,7 +236,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	// Check if consent is needed
-	needsConsent := !client.SkipConsent && !hasClientConsent(mgr, clientID)
+	needsConsent := !client.SkipConsent && !oidcFlowContext.HasClientConsent(clientID, filteredScopes)
 	if !client.SkipConsent && prompt == "consent" {
 		needsConsent = true
 	}
@@ -235,6 +261,8 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 			return
 		}
 
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepConsent)
+
 		ctx.Redirect(http.StatusFound, "/oidc/consent?consent_challenge="+consentChallenge+"&state="+url.QueryEscape(state))
 
 		return
@@ -253,8 +281,10 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
 
-	addClientToCookie(mgr, clientID)
-	CleanupIdPFlowState(mgr)
+	oidcFlowContext.AddClientConsent(clientID, filteredScopes, consentTTLForClient(h.deps.Cfg, client))
+
+	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
+	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	if mgr != nil {
 		mgr.Debug(ctx, h.deps.Logger, "OIDC authorization successful - client added to session")
@@ -352,8 +382,31 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 		data["ReturnTo"] = ctx.Request.URL.String()
 	}
 
+	client, _ := h.idp.FindClient(session.ClientID)
+	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), session.Scopes)
+	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, plan.Required)
+	optionalScopeChoices := make([]gin.H, 0, len(plan.Optional))
+	customScopes := h.deps.Cfg.GetIdP().OIDC.CustomScopes
+	lang := consentLanguage(ctx)
+
+	for _, scope := range plan.Optional {
+		description, ok := consentScopeDescription(ctx, h.deps.Cfg, h.deps.Logger, customScopes, lang, scope)
+		if !ok {
+			continue
+		}
+
+		optionalScopeChoices = append(optionalScopeChoices, gin.H{
+			"Name":        scope,
+			"Description": description,
+			"Checked":     true,
+		})
+	}
+
 	data["ClientID"] = session.ClientID
-	data["Scopes"] = session.Scopes
+	data["Scopes"] = scopeDescriptions
+	data["ConsentModeGranularOptional"] = plan.Mode == config.OIDCConsentModeGranularOptional
+	data["OptionalScopeChoices"] = optionalScopeChoices
+	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, consentMsgNoAdditional)
 	data["ConsentChallenge"] = consentChallenge
 	data["State"] = state
 	data["PostConsentEndpoint"] = ctx.Request.URL.Path + "?state=" + url.QueryEscape(state)
@@ -394,6 +447,42 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "allow").Inc()
 
+	client, ok := h.idp.FindClient(session.ClientID)
+	if !ok {
+		ctx.String(http.StatusBadRequest, "Invalid client configuration")
+
+		return
+	}
+
+	consentMode := client.GetConsentMode(h.deps.Cfg.GetIdP().OIDC.GetConsentMode())
+	if consentMode == config.OIDCConsentModeGranularOptional {
+		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), session.Scopes)
+		grantedScopes, resolveErr := plan.ResolveGranted(ctx.PostFormArray("optional_scope"))
+		if resolveErr != nil {
+			ctx.String(http.StatusBadRequest, "Invalid optional scope selection")
+
+			return
+		}
+
+		user, userErr := h.idp.GetUserByUsername(ctx, session.Username, session.ClientID, "")
+		if userErr != nil {
+			ctx.String(http.StatusInternalServerError, "Internal error loading user details")
+
+			return
+		}
+
+		idTokenClaims, accessTokenClaims, claimsErr := h.idp.GetClaims(ctx, user, client, grantedScopes)
+		if claimsErr != nil {
+			ctx.String(http.StatusInternalServerError, "Internal error mapping claims")
+
+			return
+		}
+
+		session.Scopes = grantedScopes
+		session.IdTokenClaims = idTokenClaims
+		session.AccessTokenClaims = accessTokenClaims
+	}
+
 	// Generate authorization code
 	code := ksuid.New().String()
 
@@ -414,8 +503,11 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	target := fmt.Sprintf("%s?code=%s&state=%s", session.RedirectURI, code, state)
 
 	if mgr := cookie.GetManager(ctx); mgr != nil {
-		addClientToCookie(mgr, session.ClientID)
-		CleanupIdPFlowState(mgr)
+		newOIDCAuthorizeFlowContext(mgr).AddClientConsent(session.ClientID, session.Scopes, consentTTLForClient(h.deps.Cfg, client))
+
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
+		completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
 		mgr.Debug(ctx, h.deps.Logger, "OIDC consent granted - client added to session")
 	}
 

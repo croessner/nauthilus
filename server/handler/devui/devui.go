@@ -135,26 +135,22 @@ func (h *DevUIHandler) GetVersion(ctx *gin.Context) {
 // Index renders the main dev UI page.
 func (h *DevUIHandler) Index(ctx *gin.Context) {
 	endpoints := []Endpoint{
-		{Method: "GET", Path: "/login", Template: "idp_login.html"},
-		{Method: "POST", Path: "/login", Template: "idp_login.html"},
+		{Method: "GET/POST", Path: "/login", Template: "idp_login.html"},
 		{Method: "GET", Path: "/login/mfa", Template: "idp_mfa_select.html"},
-		{Method: "GET", Path: "/login/totp", Template: "idp_totp_verify.html"},
-		{Method: "POST", Path: "/login/totp", Template: "idp_totp_verify.html"},
+		{Method: "GET/POST", Path: "/login/totp", Template: "idp_totp_verify.html"},
 		{Method: "GET", Path: "/login/webauthn", Template: "idp_webauthn_verify.html"},
-		{Method: "GET", Path: "/login/recovery", Template: "idp_recovery_login.html"},
-		{Method: "POST", Path: "/login/recovery", Template: "idp_recovery_login.html"},
+		{Method: "GET/POST", Path: "/login/recovery", Template: "idp_recovery_login.html"},
 		{Method: "GET", Path: "/mfa/register/home", Template: "idp_2fa_home.html"},
-		{Method: "GET", Path: "/mfa/totp/register", Template: "idp_totp_register.html"},
-		{Method: "POST", Path: "/mfa/totp/register", Template: "idp_totp_register.html"},
+		{Method: "GET/POST", Path: "/mfa/totp/register", Template: "idp_totp_register.html"},
 		{Method: "GET", Path: "/mfa/webauthn/register", Template: "idp_webauthn_register.html"},
 		{Method: "GET", Path: "/mfa/webauthn/devices", Template: "idp_2fa_webauthn_devices.html"},
-		{Method: "GET", Path: "/mfa/recovery/codes", Template: "idp_recovery_codes_modal.html"},
+		{Method: "GET/POST", Path: "/mfa/recovery/register", Template: "idp_recovery_codes_register.html"},
+		{Method: "POST", Path: "/mfa/recovery/generate", Template: "idp_recovery_codes_modal.html"},
 		{Method: "GET", Path: "/logged_out", Template: "idp_logged_out.html"},
 		{Method: "GET", Path: "/oidc/consent", Template: "idp_consent.html"},
 		{Method: "GET", Path: "/oidc/logout", Template: "idp_logout_frames.html"},
 		{Method: "GET", Path: "/error", Template: "idp_error_modal.html"},
-		{Method: "GET", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
-		{Method: "POST", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
+		{Method: "GET/POST", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
 		{Method: "GET", Path: "/oidc/device/verify/success", Template: "idp_device_verify_success.html"},
 	}
 
@@ -182,25 +178,26 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 <head>
     <title>Nauthilus Dev UI</title>
     <style>
-        body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
-        #sidebar { width: 300px; border-right: 1px solid #ccc; overflow-y: auto; background: #f4f4f4; }
+        body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; background: #0f172a; color: #e2e8f0; }
+        #sidebar { width: 320px; border-right: 1px solid #1f2937; overflow-y: auto; background: #111827; }
         #content { flex-grow: 1; display: flex; flex-direction: column; }
-        #toolbar { padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: flex; align-items: center; gap: 10px; }
+        #toolbar { padding: 10px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 10px; color: #e2e8f0; }
         iframe { border: none; flex-grow: 1; width: 100%; height: 100%; }
-        .endpoint { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
-        .endpoint:hover { background: #e0e0e0; }
-        .method { font-weight: bold; margin-right: 5px; min-width: 50px; display: inline-block; }
-        .path { color: #333; }
-        .template { font-size: 0.8em; color: #666; display: block; }
-        h2 { padding: 10px; margin: 0; background: #333; color: white; font-size: 1.2em; }
-        select { padding: 5px; }
+        .endpoint { padding: 10px; border-bottom: 1px solid #1f2937; cursor: pointer; transition: background-color 120ms ease, border-left-color 120ms ease; border-left: 3px solid transparent; }
+        .endpoint:hover { background: #1f2937; }
+        .endpoint.active { background: #243447; border-left-color: #38bdf8; }
+        .method { font-weight: bold; margin-right: 5px; min-width: 50px; display: inline-block; color: #93c5fd; }
+        .path { color: #e5e7eb; }
+        .template { font-size: 0.8em; color: #94a3b8; display: block; }
+        h2 { padding: 10px; margin: 0; background: #0b1220; color: #f8fafc; font-size: 1.2em; border-bottom: 1px solid #1f2937; }
+        select { padding: 5px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; }
     </style>
 </head>
 <body>
     <div id="sidebar">
         <h2>IdP Endpoints</h2>
         {{range .Endpoints}}
-        <div class="endpoint" onclick="loadTemplate('{{.Template}}')">
+        <div class="endpoint" onclick="loadTemplate('{{.Template}}', this)">
             <span class="method">{{.Method}}</span>
             <span class="path">{{.Path}}</span>
             <span class="template">{{.Template}}</span>
@@ -215,7 +212,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
                 <option value="{{.Tag}}">{{.Name}}</option>
                 {{end}}
             </select>
-            <span id="current-template" style="font-weight: bold; margin-left: 20px;"></span>
+            <span id="current-template" style="font-weight: bold; margin-left: 20px; color: #7dd3fc;"></span>
         </div>
         <iframe id="preview"></iframe>
     </div>
@@ -223,9 +220,20 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
         let currentVersion = {{.Version}};
         let currentTemplate = '';
 
-        function loadTemplate(name) {
+        function setActiveEndpoint(el) {
+            document.querySelectorAll('.endpoint').forEach(function (item) {
+                item.classList.remove('active');
+            });
+
+            if (el) {
+                el.classList.add('active');
+            }
+        }
+
+        function loadTemplate(name, el) {
             currentTemplate = name;
             document.getElementById('current-template').innerText = name;
+            setActiveEndpoint(el);
             reloadTemplate();
         }
 
@@ -339,15 +347,29 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["RecoveryVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter one of your recovery codes")
 	data["Code"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Code")
 	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
+	data["SelectMFA"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Select Multi-Factor Authentication")
+	data["ChooseMFADescription"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Choose your preferred second factor")
+	data["AuthenticatorApp"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Authenticator App")
+	data["SecurityKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Security Key")
+	data["RecoveryCode"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Code")
+	data["Recommended"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recommended")
+	data["OtherMethods"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Other methods")
 
 	data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
 	data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
 	data["FrontChannelLogoutURIs"] = []string{"https://app1.example.com/logout", "https://app2.example.com/logout"}
 	data["LogoutTarget"] = "/logged_out"
 
-	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New Recovery Codes")
-	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please backup these codes!")
+	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New recovery codes")
+	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup these codes!")
 	data["ShownOnlyOnce"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "They will be shown only once.")
+	data["Copy"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copy")
+	data["Download"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Download")
+	data["Continue"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Continue")
+	data["CopiedToClipboard"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copied to clipboard")
+	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
+	data["RequireMFAFlow"] = true
+	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
 	data["Codes"] = []string{"ABCD-1234", "EFGH-5678", "IJKL-9012", "MNOP-3456"}
 	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
 
@@ -375,6 +397,8 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["RequestedPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Requested permissions")
 	data["Allow"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Allow")
 	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
+	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "No additional permissions requested.")
+	data["ConsentModeGranularOptional"] = true
 
 	data["WebAuthnLoginURL"] = "#"
 	data["CSRFToken"] = "dev-csrf-token"
@@ -386,6 +410,8 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["QueryString"] = ""
 	data["Protocol"] = "oidc"
 	data["LastMFAMethod"] = "totp"
+	data["RecommendedMethod"] = "totp"
+	data["HasOtherMethods"] = true
 	data["HaveError"] = true
 	data["Message"] = "This is a sample error message for dev preview."
 	data["ErrorMessage"] = "This is a sample error message for dev preview."
@@ -433,7 +459,26 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["ClientID"] = "test-client"
 	data["ConsentChallenge"] = "test-challenge"
 	data["State"] = "test-state"
-	data["Scopes"] = []string{"openid", "profile", "email"}
+	data["Scopes"] = []string{
+		frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your basic profile information"),
+	}
+	data["OptionalScopeChoices"] = []gin.H{
+		{
+			"Name":        "email",
+			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your email address"),
+			"Checked":     true,
+		},
+		{
+			"Name":        "groups",
+			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your group memberships"),
+			"Checked":     true,
+		},
+		{
+			"Name":        "offline_access",
+			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Maintain access when you are offline"),
+			"Checked":     false,
+		},
+	}
 
 	// Functions used in templates
 	funcMap := template.FuncMap{

@@ -22,6 +22,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"sort"
@@ -35,13 +36,11 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
-	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/model/admin"
 	bf "github.com/croessner/nauthilus/server/model/bruteforce"
 	restdto "github.com/croessner/nauthilus/server/model/rest"
 	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -185,108 +184,14 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 
 		level.Info(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMode, ctx.Query("mode"))
 	} else {
-		if abort := a.ProcessFeatures(ctx); !abort {
-			a.ProcessAuthentication(ctx)
-		}
+		a.runAuthPipelineFSM(ctx)
 	}
 }
 
-// ProcessFeatures handles the processing of authentication-related features for a given context.
-// It determines the action to take based on various authentication results and applies the necessary response.
-func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
-	if a.Request.Service == definitions.ServBasic {
-		var httpBasicAuthOk bool
+func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
+	current := authFSMStateInputParsed
 
-		// Decode HTTP basic Auth
-		username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
-		a.Request.Username = username
-		passwordBytes := []byte(password)
-		a.Request.Password = secret.FromBytes(passwordBytes)
-		clear(passwordBytes)
-		password = ""
-		ctx.Request.Header.Del("Authorization")
-		if !httpBasicAuthOk {
-			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
-
-			return true
-		}
-
-		if a.Request.Username == "" {
-			ctx.Error(errors.ErrEmptyUsername)
-		} else if !util.ValidateUsername(a.Request.Username) {
-			ctx.Error(errors.ErrInvalidUsername)
-		}
-
-		if a.Request.Password.IsZero() {
-			ctx.Error(errors.ErrEmptyPassword)
-		}
-	}
-
-	if a.Request.Service == definitions.ServIdP {
-		a.handleMasterUserMode()
-	}
-
-	if !a.Request.NoAuth && !ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
-		switch a.HandleFeatures(ctx) {
-		case definitions.AuthResultFeatureTLS:
-			result := GetPassDBResultFromPool()
-			a.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			a.AuthTempFail(ctx, definitions.TempFailNoTLS)
-			ctx.Abort()
-
-			return true
-		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-			result := GetPassDBResultFromPool()
-			a.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			a.AuthFail(ctx)
-			ctx.Abort()
-
-			return true
-		case definitions.AuthResultUnset:
-			return true
-		case definitions.AuthResultOK:
-			return false
-		case definitions.AuthResultTempFail:
-			a.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return true
-		default:
-			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-			return true
-		}
-	}
-
-	return false
-}
-
-// ProcessAuthentication handles the authentication logic for all services.
-func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
-	if a.Request.Service == definitions.ServBasic {
-		var httpBasicAuthOk bool
-
-		if a.deps.Cfg.GetServer().GetBasicAuth().IsEnabled() {
-			if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug {
-				level.Debug(a.deps.Logger).Log(
-					definitions.LogKeyGUID, a.Runtime.GUID,
-					definitions.LogKeyUsername, a.Request.Username,
-					definitions.LogKeyMsg, "Processing HTTP Basic Auth",
-				)
-			}
-
-			httpBasicAuthOk = mdauth.CheckAndRequireBasicAuth(ctx, a.deps.Cfg)
-		} else {
-			httpBasicAuthOk = true
-		}
-
-		if httpBasicAuthOk {
-			a.AuthOK(ctx)
-		}
-
+	if abort := a.preprocessBasicEndpointInput(ctx); abort {
 		return
 	}
 
@@ -294,30 +199,232 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 		a.handleMasterUserMode()
 	}
 
-	switch a.HandlePassword(ctx) {
-	case definitions.AuthResultOK:
-		if a.deps.Tolerate != nil {
-			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, true)
-		}
-		a.AuthOK(ctx)
-	case definitions.AuthResultFail:
-		if a.deps.Tolerate != nil {
-			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, false)
-		}
-		a.AuthFail(ctx)
-		ctx.Abort()
-	case definitions.AuthResultTempFail:
-		a.AuthTempFail(ctx, definitions.TempFailDefault)
-		ctx.Abort()
-	case definitions.AuthResultEmptyUsername:
-		a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
-		ctx.Abort()
-	case definitions.AuthResultEmptyPassword:
-		a.AuthFail(ctx)
-		ctx.Abort()
-	default:
-		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+	if ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		// Local-cache hit represents a previously authenticated identity.
+		// Ensure feature predicates based on Authenticated evaluate consistently.
+		a.Runtime.Authenticated = true
 	}
+
+	featureResult := a.HandleFeatures(ctx)
+
+	event, ok := mapAuthFeatureResultToFSMEvent(featureResult)
+	if !ok {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	nextState, err := nextAuthFSMState(current, event)
+	if err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	a.auditAuthFSMTransition(current, event, nextState)
+
+	if nextState != authFSMStateFeaturesChecked {
+		a.applyFeatureFSMOutcome(ctx, nextState, featureResult)
+
+		return
+	}
+
+	current = nextState
+
+	if handled := a.handleBasicEndpointAuthPhase(ctx, current); handled {
+		return
+	}
+
+	passwordResult := a.HandlePassword(ctx)
+
+	nextState, err = nextAuthFSMState(current, authFSMEventPasswordEvaluated)
+	if err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	a.auditAuthFSMTransition(current, authFSMEventPasswordEvaluated, nextState)
+	current = nextState
+
+	event, ok = mapAuthPasswordResultToFSMEvent(passwordResult)
+	if !ok {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	nextState, err = nextAuthFSMState(current, event)
+	if err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	a.auditAuthFSMTransition(current, event, nextState)
+	a.applyPasswordFSMOutcome(ctx, nextState, passwordResult)
+}
+
+func (a *AuthState) auditAuthFSMTransition(from authFSMState, event authFSMEvent, to authFSMState) {
+	stats.GetMetrics().GetAuthFSMTransitionsTotal().WithLabelValues(string(from), string(event), string(to)).Inc()
+
+	if a.deps.Logger == nil || a.deps.Cfg == nil {
+		return
+	}
+
+	if a.deps.Cfg.GetServer().GetLog().GetLogLevel() < definitions.LogLevelDebug {
+		return
+	}
+
+	level.Debug(a.deps.Logger).Log(
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		"component", "auth_fsm",
+		"from", string(from),
+		"event", string(event),
+		"to", string(to),
+	)
+}
+
+func mapAuthFeatureResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
+	switch result {
+	case definitions.AuthResultFeatureTLS:
+		return authFSMEventFeaturesTempFail, true
+	case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
+		return authFSMEventFeaturesFail, true
+	case definitions.AuthResultUnset:
+		return authFSMEventFeaturesUnset, true
+	case definitions.AuthResultOK:
+		return authFSMEventFeaturesOK, true
+	case definitions.AuthResultTempFail:
+		return authFSMEventFeaturesTempFail, true
+	default:
+		return "", false
+	}
+}
+
+func (a *AuthState) applyFeatureFSMOutcome(ctx *gin.Context, nextState authFSMState, featureResult definitions.AuthResult) bool {
+	if nextState == authFSMStateFeaturesChecked {
+		return false
+	}
+
+	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
+		onAuthFail: func() {
+			result := GetPassDBResultFromPool()
+			a.PostLuaAction(ctx, result)
+			PutPassDBResultToPool(result)
+			a.AuthFail(ctx)
+			ctx.Abort()
+		},
+		onAuthTempFail: func() {
+			if featureResult == definitions.AuthResultFeatureTLS {
+				result := GetPassDBResultFromPool()
+				a.PostLuaAction(ctx, result)
+				PutPassDBResultToPool(result)
+				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
+				ctx.Abort()
+
+				return
+			}
+
+			a.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+		},
+		// Keep previous behavior for AuthResultUnset: stop processing without aborting context.
+		onAborted: func() {},
+		onInvalid: func() {
+			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+		},
+	})
+
+	return true
+}
+
+type authFSMTerminalHandlers struct {
+	onAuthOK       func()
+	onAuthFail     func()
+	onAuthTempFail func()
+	onAborted      func()
+	onInvalid      func()
+}
+
+func dispatchAuthFSMTerminalOutcome(nextState authFSMState, handlers authFSMTerminalHandlers) bool {
+	switch nextState {
+	case authFSMStateAuthOK:
+		if handlers.onAuthOK != nil {
+			handlers.onAuthOK()
+		}
+		return true
+	case authFSMStateAuthFail:
+		if handlers.onAuthFail != nil {
+			handlers.onAuthFail()
+		}
+		return true
+	case authFSMStateAuthTempFail:
+		if handlers.onAuthTempFail != nil {
+			handlers.onAuthTempFail()
+		}
+		return true
+	case authFSMStateAborted:
+		if handlers.onAborted != nil {
+			handlers.onAborted()
+		}
+		return true
+	default:
+		if handlers.onInvalid != nil {
+			handlers.onInvalid()
+		}
+		return false
+	}
+}
+
+func mapAuthPasswordResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
+	switch result {
+	case definitions.AuthResultOK:
+		return authFSMEventPasswordOK, true
+	case definitions.AuthResultFail:
+		return authFSMEventPasswordFail, true
+	case definitions.AuthResultTempFail:
+		return authFSMEventPasswordTempFail, true
+	case definitions.AuthResultEmptyUsername:
+		return authFSMEventPasswordEmptyUser, true
+	case definitions.AuthResultEmptyPassword:
+		return authFSMEventPasswordEmptyPass, true
+	default:
+		return "", false
+	}
+}
+
+func (a *AuthState) applyPasswordFSMOutcome(ctx *gin.Context, nextState authFSMState, passwordResult definitions.AuthResult) {
+	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
+		onAuthOK: func() {
+			if a.deps.Tolerate != nil {
+				a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, true)
+			}
+
+			a.AuthOK(ctx)
+		},
+		onAuthFail: func() {
+			if a.deps.Tolerate != nil {
+				a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, false)
+			}
+
+			a.AuthFail(ctx)
+			ctx.Abort()
+		},
+		onAuthTempFail: func() {
+			// Preserve legacy behavior: empty-username uses dedicated temp-fail reason.
+			if passwordResult == definitions.AuthResultEmptyUsername {
+				a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
+			} else {
+				a.AuthTempFail(ctx, definitions.TempFailDefault)
+			}
+
+			ctx.Abort()
+		},
+		onInvalid: func() {
+			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+		},
+	})
 }
 
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis using the
@@ -1424,6 +1531,25 @@ const (
 	jobStatusError      = "ERROR"
 )
 
+type asyncJobState string
+
+type asyncJobEvent string
+
+const (
+	asyncJobStateQueued     asyncJobState = jobStatusQueued
+	asyncJobStateInProgress asyncJobState = jobStatusInProgress
+	asyncJobStateDone       asyncJobState = jobStatusDone
+	asyncJobStateError      asyncJobState = jobStatusError
+)
+
+const (
+	asyncJobEventStart   asyncJobEvent = "start"
+	asyncJobEventSucceed asyncJobEvent = "succeed"
+	asyncJobEventFail    asyncJobEvent = "fail"
+)
+
+var errAsyncJobNotFound = stderrors.New("async job not found")
+
 // Test seams for determinism and stubbing in unit tests.
 // They preserve default behavior in production builds but can be overridden in tests.
 var (
@@ -1459,6 +1585,81 @@ func asyncJobKey(cfg config.File, jobID string) string {
 	sb.WriteString(jobID)
 
 	return sb.String()
+}
+
+func nextAsyncJobState(current asyncJobState, event asyncJobEvent) (asyncJobState, error) {
+	switch current {
+	case asyncJobStateQueued:
+		if event == asyncJobEventStart {
+			return asyncJobStateInProgress, nil
+		}
+	case asyncJobStateInProgress:
+		switch event {
+		case asyncJobEventSucceed:
+			return asyncJobStateDone, nil
+		case asyncJobEventFail:
+			return asyncJobStateError, nil
+		}
+	}
+
+	return "", fmt.Errorf("invalid async job transition: state=%s event=%s", current, event)
+}
+
+func applyAsyncJobTransition(
+	ctx context.Context,
+	deps asyncJobDeps,
+	jobID string,
+	event asyncJobEvent,
+	fields map[string]any,
+) (asyncJobState, error) {
+	key := asyncJobKey(deps.Cfg, jobID)
+
+	var nextState asyncJobState
+
+	for range 3 {
+		err := deps.Redis.GetWriteHandle().Watch(ctx, func(tx *redis.Tx) error {
+			status, err := tx.HGet(ctx, key, "status").Result()
+			if err != nil {
+				if stderrors.Is(err, redis.Nil) {
+					return errAsyncJobNotFound
+				}
+
+				return err
+			}
+
+			nextState, err = nextAsyncJobState(asyncJobState(status), event)
+			if err != nil {
+				return err
+			}
+
+			updates := make(map[string]any, len(fields)+1)
+			updates["status"] = string(nextState)
+
+			maps.Copy(updates, fields)
+
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.HSet(ctx, key, updates)
+
+				return nil
+			})
+
+			return err
+		}, key)
+
+		if err == nil {
+			stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+			return nextState, nil
+		}
+
+		if stderrors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+
+		return "", err
+	}
+
+	return "", fmt.Errorf("async job transition failed due to concurrent updates: job=%s event=%s", jobID, event)
 }
 
 // generateJobID creates a random URL-safe identifier.
@@ -1519,17 +1720,19 @@ func startAsync(deps asyncJobDeps, jobID string, guid string, fn func(context.Co
 
 		base := svcctx.Get()
 
-		key := asyncJobKey(deps.Cfg, jobID)
-
 		// Mark INPROGRESS
-		func() {
-			defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if _, err := applyAsyncJobTransition(base, deps, jobID, asyncJobEventStart, map[string]any{
+			"startedAt": now().UTC().Format(time.RFC3339Nano),
+		}); err != nil {
+			level.Error(deps.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "async job start transition failed",
+				"jobId", jobID,
+				definitions.LogKeyError, err,
+			)
 
-			_, _ = deps.Redis.GetWriteHandle().HSet(base, key, map[string]any{
-				"status":    jobStatusInProgress,
-				"startedAt": now().UTC().Format(time.RFC3339Nano),
-			}).Result()
-		}()
+			return
+		}
 
 		// Execute task
 		count, _, err := fn(base)
@@ -1540,17 +1743,26 @@ func startAsync(deps asyncJobDeps, jobID string, guid string, fn func(context.Co
 			"resultCount": count,
 		}
 
+		key := asyncJobKey(deps.Cfg, jobID)
+
+		event := asyncJobEventSucceed
 		if err != nil {
-			updates["status"] = jobStatusError
+			event = asyncJobEventFail
 			updates["error"] = err.Error()
 			level.Error(deps.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "async job failed", definitions.LogKeyError, err)
-		} else {
-			updates["status"] = jobStatusDone
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if _, transitionErr := applyAsyncJobTransition(base, deps, jobID, event, updates); transitionErr != nil {
+			level.Error(deps.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "async job completion transition failed",
+				"jobId", jobID,
+				definitions.LogKeyError, transitionErr,
+			)
 
-		_, _ = deps.Redis.GetWriteHandle().HSet(base, key, updates).Result()
+			return
+		}
+
 		_, _ = deps.Redis.GetWriteHandle().Expire(base, key, deps.Cfg.GetServer().Redis.NegCacheTTL).Result()
 		stats.GetMetrics().GetRedisWriteCounter().Inc()
 	}()

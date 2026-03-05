@@ -8,24 +8,55 @@
                 {{ .Application }} <strong>{{ .ClientID }}</strong> {{ .WantsToAccessYourAccount }}.
             </p>
 
-            <div class="bg-base-200 p-4 rounded-lg mb-6">
-                <h3 class="font-bold mb-2">{{ .RequestedPermissions }}:</h3>
-                <ul class="list-disc list-inside">
-                    {{ range .Scopes }}
-                    <li>{{ . }}</li>
-                    {{ end }}
-                </ul>
-            </div>
-
             <form action="{{ .PostConsentEndpoint }}" method="POST">
                 <input name="csrf_token" type="hidden" value="{{ .CSRFToken }}"/>
                 <input name="consent_challenge" type="hidden" value="{{ .ConsentChallenge }}"/>
                 <input name="state" type="hidden" value="{{ .State }}"/>
 
+                <div class="bg-base-200 p-4 rounded-lg mb-6">
+                    <h3 class="font-bold mb-2">{{ .RequestedPermissions }}:</h3>
+                    {{ if .ConsentModeGranularOptional }}
+                    <ul class="space-y-2">
+                        {{ range .Scopes }}
+                        <li class="rounded-md border border-base-300/70 bg-base-100 p-3 text-sm leading-relaxed">
+                            {{ . }}
+                        </li>
+                        {{ end }}
+                        {{ range .OptionalScopeChoices }}
+                        <li class="rounded-md border border-base-300/70 bg-base-100 p-3 text-sm leading-relaxed">
+                            <label class="flex items-start gap-3 cursor-pointer">
+                                <input class="checkbox checkbox-primary checkbox-sm mt-0.5" name="optional_scope" type="checkbox" value="{{ .Name }}" {{ if .Checked }}checked{{ end }}/>
+                                <span class="block">{{ .Description }}</span>
+                            </label>
+                        </li>
+                        {{ end }}
+                        {{ if and (not .Scopes) (not .OptionalScopeChoices) }}
+                        <li class="rounded-md border border-dashed border-base-300/70 bg-base-100 p-3 text-sm leading-relaxed opacity-80">
+                            {{ .NoAdditionalPermissions }}
+                        </li>
+                        {{ end }}
+                    </ul>
+                    {{ else }}
+                    <ul class="space-y-2">
+                        {{ if .Scopes }}
+                        {{ range .Scopes }}
+                        <li class="rounded-md border border-base-300/70 bg-base-100 p-3 text-sm leading-relaxed">
+                            {{ . }}
+                        </li>
+                        {{ end }}
+                        {{ else }}
+                        <li class="rounded-md border border-dashed border-base-300/70 bg-base-100 p-3 text-sm leading-relaxed opacity-80">
+                            {{ .NoAdditionalPermissions }}
+                        </li>
+                        {{ end }}
+                    </ul>
+                    {{ end }}
+                </div>
+
                 <div class="flex gap-4">
+                    <button class="btn btn-outline flex-1" name="submit" type="submit" value="deny">{{ .Deny }}</button>
                     <button class="btn btn-primary flex-1" name="submit" type="submit" value="allow">{{ .Allow }}
                     </button>
-                    <button class="btn btn-outline flex-1" name="submit" type="submit" value="deny">{{ .Deny }}</button>
                 </div>
             </form>
         </div>

@@ -18,7 +18,9 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
@@ -212,6 +214,149 @@ func TestOIDCClient_GetAllowedScopes(t *testing.T) {
 		}
 		scopes := c.GetAllowedScopes()
 		assert.Equal(t, []string{"openid", "custom"}, scopes)
+	})
+}
+
+func TestOIDCClient_GetSupportedMFA(t *testing.T) {
+	t.Run("NilClient", func(t *testing.T) {
+		var c *OIDCClient
+		assert.Nil(t, c.GetSupportedMFA())
+	})
+
+	t.Run("ConfiguredSupportedMFA", func(t *testing.T) {
+		c := &OIDCClient{SupportedMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn}}
+		assert.Equal(t, []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn}, c.GetSupportedMFA())
+	})
+}
+
+func TestOIDCConsentTTL(t *testing.T) {
+	t.Run("OIDCConfig default consent ttl", func(t *testing.T) {
+		var cfg *OIDCConfig
+		assert.Equal(t, 30*24*time.Hour, cfg.GetConsentTTL())
+
+		cfg = &OIDCConfig{}
+		assert.Equal(t, 30*24*time.Hour, cfg.GetConsentTTL())
+	})
+
+	t.Run("OIDCConfig configured consent ttl", func(t *testing.T) {
+		cfg := &OIDCConfig{ConsentTTL: 12 * time.Hour}
+		assert.Equal(t, 12*time.Hour, cfg.GetConsentTTL())
+	})
+
+	t.Run("OIDCClient inherits default consent ttl", func(t *testing.T) {
+		client := &OIDCClient{}
+		assert.Equal(t, 24*time.Hour, client.GetConsentTTL(24*time.Hour))
+	})
+
+	t.Run("OIDCClient override consent ttl", func(t *testing.T) {
+		client := &OIDCClient{ConsentTTL: 2 * time.Hour}
+		assert.Equal(t, 2*time.Hour, client.GetConsentTTL(24*time.Hour))
+	})
+}
+
+func TestOIDCConsentMode(t *testing.T) {
+	t.Run("OIDCConfig default consent mode", func(t *testing.T) {
+		var cfg *OIDCConfig
+		assert.Equal(t, OIDCConsentModeAllOrNothing, cfg.GetConsentMode())
+
+		cfg = &OIDCConfig{}
+		assert.Equal(t, OIDCConsentModeAllOrNothing, cfg.GetConsentMode())
+	})
+
+	t.Run("OIDCConfig configured consent mode", func(t *testing.T) {
+		cfg := &OIDCConfig{ConsentMode: OIDCConsentModeGranularOptional}
+		assert.Equal(t, OIDCConsentModeGranularOptional, cfg.GetConsentMode())
+	})
+
+	t.Run("OIDCClient inherits global mode", func(t *testing.T) {
+		client := &OIDCClient{}
+		assert.Equal(t, OIDCConsentModeGranularOptional, client.GetConsentMode(OIDCConsentModeGranularOptional))
+	})
+
+	t.Run("OIDCClient override mode", func(t *testing.T) {
+		client := &OIDCClient{ConsentMode: OIDCConsentModeAllOrNothing}
+		assert.Equal(t, OIDCConsentModeAllOrNothing, client.GetConsentMode(OIDCConsentModeGranularOptional))
+	})
+}
+
+func TestOIDCClient_OptionalScopesValidation(t *testing.T) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+
+	t.Run("openid in optional_scopes is rejected", func(t *testing.T) {
+		client := OIDCClient{
+			ClientID:       "client-1",
+			OptionalScopes: []string{"profile", "openid"},
+		}
+
+		err := validate.Struct(client)
+		assert.Error(t, err)
+	})
+
+	t.Run("optional_scopes without openid is valid", func(t *testing.T) {
+		client := OIDCClient{
+			ClientID:       "client-1",
+			OptionalScopes: []string{"profile", "email"},
+		}
+
+		err := validate.Struct(client)
+		assert.NoError(t, err)
+	})
+}
+
+func TestValidateIdPMFASettings(t *testing.T) {
+	t.Run("oidc require_mfa subset of supported_mfa", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				OIDC: OIDCConfig{
+					Clients: []OIDCClient{
+						{
+							ClientID:     "client-1",
+							RequireMFA:   []string{definitions.MFAMethodTOTP},
+							SupportedMFA: []string{definitions.MFAMethodTOTP, definitions.MFAMethodWebAuthn},
+						},
+					},
+				},
+			},
+		}
+
+		assert.NoError(t, cfg.validateIdPMFASettings())
+	})
+
+	t.Run("oidc require_mfa outside supported_mfa returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				OIDC: OIDCConfig{
+					Clients: []OIDCClient{
+						{
+							ClientID:     "client-1",
+							RequireMFA:   []string{definitions.MFAMethodTOTP},
+							SupportedMFA: []string{definitions.MFAMethodWebAuthn},
+						},
+					},
+				},
+			},
+		}
+
+		assert.Error(t, cfg.validateIdPMFASettings())
+	})
+
+	t.Run("saml require_mfa outside supported_mfa returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					ServiceProviders: []SAML2ServiceProvider{
+						{
+							EntityID:     "sp-1",
+							ACSURL:       "https://sp.example.com/acs",
+							RequireMFA:   []string{definitions.MFAMethodRecoveryCodes},
+							SupportedMFA: []string{definitions.MFAMethodWebAuthn},
+						},
+					},
+				},
+			},
+		}
+
+		assert.Error(t, cfg.validateIdPMFASettings())
 	})
 }
 

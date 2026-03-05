@@ -224,8 +224,20 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	// Get the roles required for this hook
 	requiredScopes := resolveRequiredScopes(location, method, cfg, logger, guid, ctx)
 
-	// If no roles are configured, this is a public hook — allow access regardless of token
+	startEvent := hookAuthzEventScopesRequired
 	if len(requiredScopes) == 0 {
+		startEvent = hookAuthzEventNoScopes
+	}
+
+	nextState, err := nextHookAuthzFSMState(hookAuthzStateStart, startEvent)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return false
+	}
+
+	// If no roles are configured, this is a public hook — allow access regardless of token.
+	if nextState == hookAuthzStateAuthorized {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
@@ -238,8 +250,15 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 		return true
 	}
 
-	// Scopes required but OIDC auth not configured — deny access
+	// Scopes required but OIDC auth not configured — deny access.
 	if validator == nil {
+		nextState, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventValidatorMissing)
+		if err != nil {
+			ctx.AbortWithStatus(http.StatusInternalServerError)
+
+			return false
+		}
+
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
@@ -249,57 +268,41 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 			definitions.LogKeyMsg, fmt.Sprintf("Hook requires scopes %v but OIDC auth is not configured, denying access", requiredScopes),
 		)
 
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required but not configured"})
+		abortOnHookAuthzState(ctx, nextState, "authentication required but not configured")
 
 		return false
 	}
 
-	// Extract bearer token from request
-	tokenString, ok := oidcbearer.ExtractBearerToken(ctx)
+	_, ok := oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
+		RequiredScopes:         requiredScopes,
+		MissingScopeMessage:    "insufficient permissions",
+		ThrottleOnMissingToken: false,
+	})
 	if !ok {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			cfg,
-			logger,
-			definitions.DbgLua,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("No bearer token but hook requires scopes %v, denying access", requiredScopes),
-		)
-
-		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
-
-		return false
-	}
-
-	// Validate token and store claims in context (aborts with 401 on failure)
-	claims := oidcbearer.ValidateAndStoreClaims(ctx, validator, cfg, tokenString)
-	if claims == nil {
-		return false
-	}
-
-	// Check if the token has any of the required scopes
-	for _, scope := range requiredScopes {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			cfg,
-			logger,
-			definitions.DbgLua,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Checking if token has scope: %s", scope),
-		)
-
-		if oidcbearer.HasScope(claims, scope) {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				cfg,
-				logger,
-				definitions.DbgLua,
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Token has required scope: %s, allowing access", scope),
-			)
-
-			return true
+		if ctx.Writer.Status() == http.StatusUnauthorized {
+			nextState, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenMissing)
+		} else {
+			nextState, err = nextHookAuthzFSMState(hookAuthzStateTokenChecked, hookAuthzEventScopeMiss)
 		}
+		if err != nil {
+			ctx.AbortWithStatus(http.StatusInternalServerError)
+		}
+
+		return false
+	}
+
+	nextState, err = nextHookAuthzFSMState(hookAuthzStateScopesChecked, hookAuthzEventTokenValid)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return false
+	}
+
+	nextState, err = nextHookAuthzFSMState(nextState, hookAuthzEventScopeMatch)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return false
 	}
 
 	util.DebugModuleWithCfg(
@@ -308,12 +311,21 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, fmt.Sprintf("Token does not have any of the required scopes: %v, denying access", requiredScopes),
+		definitions.LogKeyMsg, fmt.Sprintf("Token has required scopes %v, allowing access", requiredScopes),
 	)
 
-	ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+	return true
+}
 
-	return false
+func abortOnHookAuthzState(ctx *gin.Context, state hookAuthzFSMState, msg string) {
+	switch state {
+	case hookAuthzStateUnauthorized:
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": msg})
+	case hookAuthzStateForbidden:
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": msg})
+	default:
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+	}
 }
 
 // resolveRequiredScopes looks up the required roles for a hook, trying both with and without a leading slash.

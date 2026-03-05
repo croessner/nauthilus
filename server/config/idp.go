@@ -26,6 +26,41 @@ import (
 	"github.com/croessner/nauthilus/server/secret"
 )
 
+func validateRequiredWithinSupported(required, supported []string) bool {
+	if len(required) == 0 || len(supported) == 0 {
+		return true
+	}
+
+	for _, method := range required {
+		if !slices.Contains(supported, method) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validateIdPMFASettings ensures require_mfa is a subset of supported_mfa when supported_mfa is configured.
+func (f *FileSettings) validateIdPMFASettings() error {
+	if f == nil || f.IdP == nil {
+		return nil
+	}
+
+	for _, client := range f.IdP.OIDC.Clients {
+		if !validateRequiredWithinSupported(client.RequireMFA, client.SupportedMFA) {
+			return fmt.Errorf("idp.oidc.clients[%s]: require_mfa must be a subset of supported_mfa", client.ClientID)
+		}
+	}
+
+	for _, sp := range f.IdP.SAML2.ServiceProviders {
+		if !validateRequiredWithinSupported(sp.RequireMFA, sp.SupportedMFA) {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: require_mfa must be a subset of supported_mfa", sp.EntityID)
+		}
+	}
+
+	return nil
+}
+
 // IdPSection represents the configuration for the internal Identity Provider.
 type IdPSection struct {
 	OIDC              OIDCConfig  `mapstructure:"oidc"`
@@ -142,6 +177,8 @@ type OIDCConfig struct {
 	AccessTokenType                    string              `mapstructure:"access_token_type"`
 	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
+	ConsentTTL                         time.Duration       `mapstructure:"consent_ttl"`
+	ConsentMode                        string              `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
 	DeviceCodeExpiry                   time.Duration       `mapstructure:"device_code_expiry"`
 	DeviceCodePollingInterval          int                 `mapstructure:"device_code_polling_interval"`
 	DeviceCodeUserCodeLength           int                 `mapstructure:"device_code_user_code_length"`
@@ -303,6 +340,35 @@ func (o *OIDCConfig) GetDefaultRefreshTokenLifetime() time.Duration {
 	return 30 * 24 * time.Hour
 }
 
+// GetConsentTTL returns the default consent validity duration for OIDC clients.
+func (o *OIDCConfig) GetConsentTTL() time.Duration {
+	if o != nil && o.ConsentTTL > 0 {
+		return o.ConsentTTL
+	}
+
+	return definitions.OIDCConsentDefaultTTL
+}
+
+const (
+	// OIDCConsentModeAllOrNothing keeps the traditional behavior:
+	// user grants or denies the full requested scope set.
+	OIDCConsentModeAllOrNothing = "all_or_nothing"
+	// OIDCConsentModeGranularOptional allows opting out of optional scopes while required scopes remain mandatory.
+	OIDCConsentModeGranularOptional = "granular_optional"
+)
+
+// GetConsentMode returns the configured global consent mode.
+func (o *OIDCConfig) GetConsentMode() string {
+	if o != nil {
+		mode := strings.ToLower(strings.TrimSpace(o.ConsentMode))
+		if mode == OIDCConsentModeGranularOptional {
+			return OIDCConsentModeGranularOptional
+		}
+	}
+
+	return OIDCConsentModeAllOrNothing
+}
+
 // GetAccessTokenType returns the configured access token type (jwt or opaque).
 func (o *OIDCConfig) GetAccessTokenType() string {
 	if o.AccessTokenType == "" {
@@ -427,7 +493,8 @@ type OIDCClient struct {
 	RedirectURIs                      []string          `mapstructure:"redirect_uris"`
 	Scopes                            []string          `mapstructure:"scopes"`
 	GrantTypes                        []string          `mapstructure:"grant_types"`
-	RequireMFA                        []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn"`
+	RequireMFA                        []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA                      []string          `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
 	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
 	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
@@ -442,6 +509,10 @@ type OIDCClient struct {
 	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
 	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
 	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
+	ConsentTTL                        time.Duration     `mapstructure:"consent_ttl"`
+	ConsentMode                       string            `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
+	RequiredScopes                    []string          `mapstructure:"required_scopes"`
+	OptionalScopes                    []string          `mapstructure:"optional_scopes" validate:"omitempty,dive,ne=openid"`
 	SkipConsent                       bool              `mapstructure:"skip_consent"`
 	DelayedResponse                   bool              `mapstructure:"delayed_response"`
 	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
@@ -463,6 +534,16 @@ func (c *OIDCClient) GetRequireMFA() []string {
 	}
 
 	return c.RequireMFA
+}
+
+// GetSupportedMFA returns the list of MFA methods supported for this client.
+// An empty list means all available methods are supported.
+func (c *OIDCClient) GetSupportedMFA() []string {
+	if c == nil {
+		return nil
+	}
+
+	return c.SupportedMFA
 }
 
 // GetAllowedScopes returns the allowed scopes for this client. If no scopes are configured, a default set of scopes is returned.
@@ -491,6 +572,40 @@ func (c *OIDCClient) IsDelayedResponse() bool {
 	}
 
 	return c.DelayedResponse
+}
+
+// GetConsentTTL returns the client-specific consent validity duration.
+// When not explicitly configured at client level, the provided defaultTTL is used.
+func (c *OIDCClient) GetConsentTTL(defaultTTL time.Duration) time.Duration {
+	if c != nil && c.ConsentTTL > 0 {
+		return c.ConsentTTL
+	}
+
+	if defaultTTL > 0 {
+		return defaultTTL
+	}
+
+	return definitions.OIDCConsentDefaultTTL
+}
+
+// GetConsentMode resolves the client-specific consent mode or falls back to the global default.
+func (c *OIDCClient) GetConsentMode(defaultMode string) string {
+	mode := strings.ToLower(strings.TrimSpace(defaultMode))
+	if mode != OIDCConsentModeGranularOptional {
+		mode = OIDCConsentModeAllOrNothing
+	}
+
+	if c != nil {
+		clientMode := strings.ToLower(strings.TrimSpace(c.ConsentMode))
+		if clientMode == OIDCConsentModeGranularOptional {
+			return OIDCConsentModeGranularOptional
+		}
+		if clientMode == OIDCConsentModeAllOrNothing {
+			return OIDCConsentModeAllOrNothing
+		}
+	}
+
+	return mode
 }
 
 // GetAccessTokenType returns the configured access token type for the client (jwt or opaque).
@@ -652,7 +767,8 @@ type SAML2ServiceProvider struct {
 	Cert              string        `mapstructure:"cert"`
 	CertFile          string        `mapstructure:"cert_file"`
 	AllowedAttributes []string      `mapstructure:"allowed_attributes"`
-	RequireMFA        []string      `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn"`
+	RequireMFA        []string      `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA      []string      `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
 	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse   bool          `mapstructure:"delayed_response"`
@@ -666,6 +782,16 @@ func (s *SAML2ServiceProvider) GetRequireMFA() []string {
 	}
 
 	return s.RequireMFA
+}
+
+// GetSupportedMFA returns the list of MFA methods supported for this service provider.
+// An empty list means all available methods are supported.
+func (s *SAML2ServiceProvider) GetSupportedMFA() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.SupportedMFA
 }
 
 // GetCert returns the SP certificate content (inline or from file).

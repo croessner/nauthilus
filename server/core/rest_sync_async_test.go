@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -218,6 +219,55 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 
 // --- Async job status + executor tests ---
 
+func TestAsyncJobStateTransitions(t *testing.T) {
+	t.Run("QueuedToInProgress", func(t *testing.T) {
+		next, err := nextAsyncJobState(asyncJobStateQueued, asyncJobEventStart)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if next != asyncJobStateInProgress {
+			t.Fatalf("expected %s, got %s", asyncJobStateInProgress, next)
+		}
+	})
+
+	t.Run("InProgressToDone", func(t *testing.T) {
+		next, err := nextAsyncJobState(asyncJobStateInProgress, asyncJobEventSucceed)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if next != asyncJobStateDone {
+			t.Fatalf("expected %s, got %s", asyncJobStateDone, next)
+		}
+	})
+
+	t.Run("InProgressToError", func(t *testing.T) {
+		next, err := nextAsyncJobState(asyncJobStateInProgress, asyncJobEventFail)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if next != asyncJobStateError {
+			t.Fatalf("expected %s, got %s", asyncJobStateError, next)
+		}
+	})
+
+	t.Run("RejectInvalidTransitionFromQueued", func(t *testing.T) {
+		_, err := nextAsyncJobState(asyncJobStateQueued, asyncJobEventSucceed)
+		if err == nil {
+			t.Fatal("expected transition error, got nil")
+		}
+	})
+
+	t.Run("RejectTerminalTransitions", func(t *testing.T) {
+		_, err := nextAsyncJobState(asyncJobStateDone, asyncJobEventFail)
+		if err == nil {
+			t.Fatal("expected transition error, got nil")
+		}
+	})
+}
+
 func TestAsyncJobStatus_OK(t *testing.T) {
 	setupMinimalTestConfig(t)
 	r, mock := setupEngineWithMock(t)
@@ -245,6 +295,33 @@ func TestAsyncJobStatus_OK(t *testing.T) {
 	var payload map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid json: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestApplyAsyncJobTransition_NotFound(t *testing.T) {
+	setupMinimalTestConfig(t)
+	db, mock := redismock.NewClientMock()
+
+	jobID := "missing-job"
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "async:job:" + jobID
+	mock.ExpectWatch(key)
+	mock.ExpectHGet(key, "status").RedisNil()
+
+	deps := asyncJobDeps{
+		Cfg:    config.GetFile(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Redis:  rediscli.NewTestClient(db),
+	}
+
+	_, err := applyAsyncJobTransition(context.Background(), deps, jobID, asyncJobEventStart, map[string]any{
+		"startedAt": time.Unix(0, 0).UTC().Format(time.RFC3339Nano),
+	})
+	if !stderrors.Is(err, errAsyncJobNotFound) {
+		t.Fatalf("expected errAsyncJobNotFound, got %v", err)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -509,7 +509,6 @@ type Endpoint struct {
 	AuthJSON      bool `mapstructure:"auth_json"`
 	AuthBasic     bool `mapstructure:"auth_basic"`
 	AuthNginx     bool `mapstructure:"auth_nginx"`
-	AuthSASLAuthd bool `mapstructure:"auth_saslauthd"`
 	AuthJWT       bool `mapstructure:"auth_jwt"`
 	CustomHooks   bool `mapstructure:"custom_hooks"`
 	Configuration bool `mapstructure:"configuration"`
@@ -553,16 +552,6 @@ func (e *Endpoint) IsAuthNginxDisabled() bool {
 	}
 
 	return e.AuthNginx
-}
-
-// IsAuthSASLAuthdDisabled checks if SASL authentication is enabled for the endpoint and returns the corresponding boolean value.
-// Returns false if the Endpoint is nil.
-func (e *Endpoint) IsAuthSASLAuthdDisabled() bool {
-	if e == nil {
-		return false
-	}
-
-	return e.AuthSASLAuthd
 }
 
 // IsAuthJWTDisabled checks if JWT authentication is enabled for the endpoint and returns the corresponding boolean value.

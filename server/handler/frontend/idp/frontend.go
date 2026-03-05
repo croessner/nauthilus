@@ -20,7 +20,6 @@ import (
 	"encoding/base64"
 	stderrors "errors"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -36,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
@@ -144,9 +144,8 @@ func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
 		return false
 	}
 
-	// Check if an IdP flow is active in the cookie
-	flowActive := mgr.GetBool(definitions.SessionKeyIdPFlowActive, false)
-	if !flowActive {
+	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID == "" {
 		return false
 	}
 
@@ -158,31 +157,32 @@ func (h *FrontendHandler) isValidIdPFlow(ctx *gin.Context) bool {
 
 	// For OIDC, verify we have required parameters based on the grant type
 	if flowType == definitions.ProtoOIDC {
+		oidcFlowCtx := newOIDCAuthorizeFlowContext(mgr)
 		grantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
 		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
 
 		if grantType == definitions.OIDCFlowDeviceCode {
 			// Device Code flow requires device code and client ID
-			deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+			deviceFlowCtx := newOIDCDeviceFlowContext(mgr)
 
-			if deviceCode == "" || clientID == "" {
+			if deviceFlowCtx.DeviceCode() == "" || clientID == "" {
+				return false
+			}
+		} else if grantType == definitions.OIDCFlowAuthorizationCode {
+			// Authorization Code flow requires a reconstructable authorize URL
+			if oidcFlowCtx.ResumeAuthorizeURL() == "" {
 				return false
 			}
 		} else {
-			// Authorization Code flow requires client ID and redirect URI
-			redirectURI := mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
-
-			if clientID == "" || redirectURI == "" {
-				return false
-			}
+			return false
 		}
 	}
 
 	// For SAML, verify we have the original URL to resume
 	if flowType == definitions.ProtoSAML {
-		originalURL := mgr.GetString(definitions.SessionKeyIdPOriginalURL, "")
+		samlFlowCtx := newSAMLFlowContext(mgr)
 
-		if originalURL == "" {
+		if samlFlowCtx.OriginalURL() == "" {
 			return false
 		}
 	}
@@ -284,6 +284,12 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.GET("/webauthn/devices/:languageTag", h.WebAuthnDevices)
 	authGroup.DELETE("/webauthn/device/:id", h.DeleteWebAuthnDevice)
 	authGroup.POST("/webauthn/device/:id/name", h.UpdateWebAuthnDeviceName)
+	authGroup.GET("/recovery/register", h.RegisterRecoveryCodes)
+	authGroup.GET("/recovery/register/:languageTag", h.RegisterRecoveryCodes)
+	authGroup.POST("/recovery/register", h.PostRegisterRecoveryCodes)
+	authGroup.POST("/recovery/register/:languageTag", h.PostRegisterRecoveryCodes)
+	authGroup.POST("/recovery/register/save", h.SaveRecoveryCodes)
+	authGroup.POST("/recovery/register/save/:languageTag", h.SaveRecoveryCodes)
 
 	authGroup.POST("/recovery/generate", h.PostGenerateRecoveryCodes)
 	authGroup.POST("/recovery/generate/:languageTag", h.PostGenerateRecoveryCodes)
@@ -443,7 +449,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	// Check first whether required MFA methods still need to be registered.
 	if mgr != nil && mgr.GetString(definitions.SessionKeyAccount, "") != "" {
 		if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-			h.redirectToIdPEndpoint(ctx, mgr)
+			h.resumeIdPFlow(ctx, mgr)
 		}
 
 		return
@@ -529,71 +535,10 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 }
 
-// redirectToIdPEndpoint redirects the user back to the appropriate IdP endpoint based on the flow type.
-// For OIDC flows, it reconstructs the /oidc/authorize URL from cookie data.
-// For SAML flows, it redirects back to the original /saml/sso URL stored in the cookie.
-func (h *FrontendHandler) redirectToIdPEndpoint(ctx *gin.Context, mgr cookie.Manager) {
-	flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
-
-	// Device code flow must be checked before the general OIDC authorize redirect,
-	// because it does not use redirectURI, responseType, etc.
-	if flowType == definitions.ProtoOIDC && mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
-		h.completeDeviceCodeFlow(ctx, mgr)
-
-		return
-	}
-
-	if flowType == definitions.ProtoOIDC {
-		// Reconstruct the OIDC authorize URL from cookie parameters
-		clientID := mgr.GetString(definitions.SessionKeyIdPClientID, "")
-		redirectURI := mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
-		scope := mgr.GetString(definitions.SessionKeyIdPScope, "")
-		state := mgr.GetString(definitions.SessionKeyIdPState, "")
-		nonce := mgr.GetString(definitions.SessionKeyIdPNonce, "")
-		responseType := mgr.GetString(definitions.SessionKeyIdPResponseType, "")
-
-		authorizeURL := "/oidc/authorize?client_id=" + url.QueryEscape(clientID)
-		authorizeURL += "&redirect_uri=" + url.QueryEscape(redirectURI)
-
-		if scope != "" {
-			authorizeURL += "&scope=" + url.QueryEscape(scope)
-		}
-
-		if state != "" {
-			authorizeURL += "&state=" + url.QueryEscape(state)
-		}
-
-		if nonce != "" {
-			authorizeURL += "&nonce=" + url.QueryEscape(nonce)
-		}
-
-		if responseType != "" {
-			authorizeURL += "&response_type=" + url.QueryEscape(responseType)
-		}
-
-		ctx.Redirect(http.StatusFound, authorizeURL)
-
-		return
-	}
-
-	if flowType == definitions.ProtoSAML {
-		// Redirect back to the original SAML SSO URL
-		originalURL := mgr.GetString(definitions.SessionKeyIdPOriginalURL, "")
-		if originalURL != "" {
-			ctx.Redirect(http.StatusFound, originalURL)
-
-			return
-		}
-	}
-
-	// Fallback: redirect to root (should not happen if flow is valid)
-	ctx.Redirect(http.StatusFound, "/")
-}
-
 // deviceCodeNeedsConsent checks whether the device code flow requires user consent for the given client.
 // It mirrors the consent logic from the authorization code grant: consent is needed when
 // the client has not set skip_consent and the user has not previously consented in this session.
-func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string) bool {
+func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string, requestedScopes []string) bool {
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 
 	client, ok := idpInstance.FindClient(clientID)
@@ -607,7 +552,7 @@ func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID stri
 
 	mgr := cookie.GetManager(ctx)
 
-	return !hasClientConsent(mgr, clientID)
+	return !newOIDCAuthorizeFlowContext(mgr).HasClientConsent(clientID, requestedScopes)
 }
 
 // completeDeviceCodeFlow authorizes the device code and renders the success page.
@@ -628,7 +573,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	}
 
 	// Check if consent is needed before authorizing
-	if h.deviceCodeNeedsConsent(ctx, request.ClientID) {
+	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
 		lang := ctx.Param("languageTag")
 		consentPath := "/oidc/device/consent"
 
@@ -661,7 +606,8 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 		return
 	}
 
-	addClientToCookie(mgr, request.ClientID)
+	client, _ := idp.NewNauthilusIdP(h.deps).FindClient(request.ClientID)
+	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -675,9 +621,8 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 		"user_code", request.UserCode,
 	)
 
-	// Clean up device code flow session data
-	mgr.Delete(definitions.SessionKeyDeviceCode)
-	CleanupIdPFlowState(mgr)
+	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
+	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	renderDeviceCodeSuccess(ctx, h.deps)
 }
@@ -867,6 +812,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 			}
 
 			mgr.Debug(ctx, h.deps.Logger, "MFA required - pre-auth session data stored")
+
+			advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
+			advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepMFA)
 		}
 
 		// If user has only one MFA option, redirect directly to it
@@ -890,17 +838,19 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		mgr.Set(definitions.SessionKeyProtocol, protocol)
 
 		if rememberMeTTL > 0 {
-			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+			mgr.SetMaxAge(rememberMeTTL)
 		}
 
 		mgr.Debug(ctx, h.deps.Logger, "Login successful - session data stored")
+
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
 	}
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
 	// Redirect back to IdP endpoint; check for mandatory MFA registration first.
 	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-		h.redirectToIdPEndpoint(ctx, mgr)
+		h.resumeIdPFlow(ctx, mgr)
 	}
 }
 
@@ -971,9 +921,17 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 }
 
 func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
+	if user == nil {
+		return false
+	}
+
 	recoveryField := user.TOTPRecoveryField
 
 	if recoveryField == "" {
+		if h == nil || h.deps == nil || h.deps.Cfg == nil {
+			return false
+		}
+
 		if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
 			recoveryField = protocols[0].GetTotpRecoveryField()
 		}
@@ -1008,7 +966,8 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 
 	// Get user to check available MFA methods
 	idpInstance := idp.NewNauthilusIdP(h.deps)
-	user, err := idpInstance.GetUserByUsername(ctx, username, "", "")
+	oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
+	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
 
 	if err != nil {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
@@ -1016,7 +975,7 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 		return
 	}
 
-	availability := h.getMFAAvailability(ctx, user, protocol)
+	availability := h.getMFAAvailability(ctx, user, protocol, mgr)
 	multi := availability.count > 1
 
 	if mgr != nil {
@@ -1084,6 +1043,12 @@ func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
 
 	if mgr == nil || mgr.GetString(definitions.SessionKeyUsername, "") == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+
+		return
+	}
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
 
 		return
 	}
@@ -1179,6 +1144,12 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 		return
 	}
 
+	if !h.isMFAMethodSupported(sess.mgr, definitions.MFAMethodRecoveryCodes) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
+
+		return
+	}
+
 	// Verify Recovery Code
 	sourceBackend := uint8(definitions.BackendLDAP)
 
@@ -1211,7 +1182,69 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 		return
 	}
 
-	// MFA Success
+	// MFA OK. Now check if the original password was OK (delayed response case).
+	authResult := uint8(definitions.AuthResultFail)
+
+	if sess.mgr != nil {
+		authResult = sess.mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+	}
+
+	if authResult != uint8(definitions.AuthResultOK) {
+		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
+
+		data := h.basePageData(ctx)
+		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
+		data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+		data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
+		data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+		data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
+		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
+		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
+		data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
+
+		data["CSRFToken"] = csrf.Token(ctx)
+		lang := ctx.Param("languageTag")
+
+		if lang != "" {
+			data["PostLoginEndpoint"] = "/login/" + lang
+		} else {
+			data["PostLoginEndpoint"] = "/login"
+		}
+
+		data["HaveError"] = true
+		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+
+		// Calculate ShowRememberMe based on flow state.
+		showRememberMe := false
+		idpInstance := idp.NewNauthilusIdP(h.deps)
+
+		if sess.oidcCID != "" {
+			if client, ok := idpInstance.FindClient(sess.oidcCID); ok {
+				showRememberMe = client.RememberMeTTL > 0
+			}
+		} else if sess.samlEntityID != "" {
+			if sp, ok := idpInstance.FindSAMLServiceProvider(sess.samlEntityID); ok {
+				showRememberMe = sp.RememberMeTTL > 0
+			}
+		}
+
+		data["ShowRememberMe"] = showRememberMe
+		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
+		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+
+		// Important: clean up cookie so they start over
+		CleanupMFAState(sess.mgr)
+
+		ctx.HTML(http.StatusOK, "idp_login.html", data)
+
+		return
+	}
+
+	// All OK!
 	h.setLastMFAMethod(ctx, "recovery")
 	h.finalizeMFALogin(ctx, user)
 }
@@ -1226,10 +1259,22 @@ func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
 	}
 }
 
-func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string) mfaAvailability {
+func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string, mgr cookie.Manager) mfaAvailability {
 	haveTOTP := h.hasTOTP(user)
 	haveWebAuthn := h.hasWebAuthn(ctx, user, protocolParam)
 	haveRecoveryCodes := h.hasRecoveryCodes(user)
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP) {
+		haveTOTP = false
+	}
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
+		haveWebAuthn = false
+	}
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes) {
+		haveRecoveryCodes = false
+	}
 
 	count := 0
 
@@ -1263,7 +1308,7 @@ func (h *FrontendHandler) getMFARedirectURLFromCookie(ctx *gin.Context, user *ba
 		protocolParam = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 	}
 
-	availability := h.getMFAAvailability(ctx, user, protocolParam)
+	availability := h.getMFAAvailability(ctx, user, protocolParam, mgr)
 
 	if availability.count > 1 {
 		return "", false
@@ -1328,7 +1373,8 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 		mgr.Set(definitions.SessionKeyMFACompleted, true)
 
 		if rememberMeTTL > 0 {
-			mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
+			mgr.SetMaxAge(rememberMeTTL)
+			mgr.Delete(definitions.SessionKeyRememberTTL)
 		}
 
 		CleanupMFAState(mgr)
@@ -1340,7 +1386,7 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 
 	// Redirect back to IdP endpoint; check for mandatory MFA registration first.
 	if !h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
-		h.redirectToIdPEndpoint(ctx, mgr)
+		h.resumeIdPFlow(ctx, mgr)
 	}
 }
 
@@ -1356,6 +1402,12 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 
 	if username == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+
+		return
+	}
+
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
 
 		return
 	}
@@ -1391,6 +1443,12 @@ func (h *FrontendHandler) LoginTOTP(ctx *gin.Context) {
 		return
 	}
 
+	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
+
+		return
+	}
+
 	data := h.basePageData(ctx)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 	data["TOTPVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your 2FA code")
@@ -1414,6 +1472,12 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 	sess, user, code := h.extractMFASessionAndUser(ctx)
 	if sess == nil {
+		return
+	}
+
+	if !h.isMFAMethodSupported(sess.mgr, definitions.MFAMethodTOTP) {
+		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
+
 		return
 	}
 
@@ -1710,7 +1774,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 			definitions.MFAMethodTOTP,
 		)
 
-		mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+		flowdomain.SetRequireMFAPending(mgr, remaining)
 
 		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/continue")
 		ctx.Status(http.StatusOK)
@@ -1720,6 +1784,244 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
+}
+
+// RegisterRecoveryCodes renders the recovery codes registration page.
+func (h *FrontendHandler) RegisterRecoveryCodes(ctx *gin.Context) {
+	mgr := cookie.GetManager(ctx)
+	account := ""
+	requireFlow := false
+
+	if mgr != nil {
+		account = mgr.GetString(definitions.SessionKeyAccount, "")
+		mgr.Delete(definitions.SessionKeyRecoveryCodesSaved)
+		requireFlow = mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
+	}
+
+	if account == "" {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		h.renderErrorModal(ctx, "Failed to fetch user data")
+
+		return
+	}
+
+	if mgr != nil && !requireFlow && mgr.GetString(definitions.SessionKeyIdPFlowID, "") != "" {
+		required := h.getRequiredMFAMethods(mgr)
+
+		if len(required) > 0 {
+			missing := make([]string, 0, len(required))
+
+			for _, method := range required {
+				switch method {
+				case definitions.MFAMethodTOTP:
+					if !userData.HaveTOTP {
+						missing = append(missing, definitions.MFAMethodTOTP)
+					}
+				case definitions.MFAMethodWebAuthn:
+					if !userData.HaveWebAuthn {
+						missing = append(missing, definitions.MFAMethodWebAuthn)
+					}
+				case definitions.MFAMethodRecoveryCodes:
+					if userData.NumRecoveryCodes == 0 {
+						missing = append(missing, definitions.MFAMethodRecoveryCodes)
+					}
+				}
+			}
+
+			if len(missing) > 0 {
+				requireFlow = true
+				flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
+			}
+		}
+	}
+
+	if userData.NumRecoveryCodes > 0 {
+		if requireFlow {
+			ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
+		} else {
+			ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
+			ctx.Status(http.StatusFound)
+		}
+
+		return
+	}
+
+	recovery, err := core.GenerateBackupCodes()
+	if err != nil {
+		h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
+
+		return
+	}
+
+	codes := recovery.GetCodes()
+
+	if mgr != nil {
+		mgr.Set(definitions.SessionKeyRecoveryCodes, strings.Join(codes, ","))
+	}
+
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Recovery Codes")
+	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup these codes!")
+	data["ShownOnlyOnce"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "They will be shown only once.")
+	data["Copy"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copy")
+	data["Download"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Download")
+	data["Continue"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Continue")
+	data["CopiedToClipboard"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copied to clipboard")
+	data["Codes"] = codes
+	data["CSRFToken"] = csrf.Token(ctx)
+
+	data["RequireMFAFlow"] = requireFlow
+	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
+	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
+
+	ctx.HTML(http.StatusOK, "idp_recovery_codes_register.html", data)
+}
+
+// SaveRecoveryCodes persists the recovery codes once the user downloaded them.
+func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.save_recovery_codes")
+	defer sp.End()
+
+	mgr := cookie.GetManager(ctx)
+	username := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
+	stored := ""
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+		stored = mgr.GetString(definitions.SessionKeyRecoveryCodes, "")
+	}
+
+	if username == "" || stored == "" {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	var payload struct {
+		Codes []string `json:"codes"`
+	}
+
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	storedCodes := strings.Split(stored, ",")
+	if len(payload.Codes) > 0 && !slices.Equal(payload.Codes, storedCodes) {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	if err := h.mfa.SaveRecoveryCodes(ctx, username, storedCodes, sourceBackend); err != nil {
+		sp.RecordError(err)
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "fail").Inc()
+		h.renderErrorModalWithErr(ctx, "Failed to save recovery codes", err)
+
+		return
+	}
+
+	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("register", "recovery", "success").Inc()
+
+	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
+	if state != nil {
+		state.PurgeCacheFor(username)
+	}
+
+	if mgr != nil {
+		mgr.Delete(definitions.SessionKeyRecoveryCodes)
+		mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
+		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+			remaining := util.RemoveFromCommaSeparatedList(
+				mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
+				definitions.MFAMethodRecoveryCodes,
+			)
+
+			flowdomain.SetRequireMFAPending(mgr, remaining)
+		}
+	}
+
+	ctx.Status(http.StatusOK)
+}
+
+// PostRegisterRecoveryCodes handles the continue action after recovery codes are saved.
+func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
+	_, sp := h.tracer.Start(ctx.Request.Context(), "frontend.post_register_recovery_codes")
+	defer sp.End()
+
+	mgr := cookie.GetManager(ctx)
+	username := ""
+
+	if mgr != nil {
+		username = mgr.GetString(definitions.SessionKeyAccount, "")
+	}
+
+	if username == "" {
+		h.renderErrorModal(ctx, "Invalid request")
+
+		return
+	}
+
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil {
+		h.renderErrorModal(ctx, "Failed to fetch user data")
+
+		return
+	}
+
+	if userData.NumRecoveryCodes == 0 {
+		saved := false
+		if mgr != nil {
+			saved = mgr.GetBool(definitions.SessionKeyRecoveryCodesSaved, false)
+		}
+
+		if !saved {
+			h.renderErrorModal(ctx, "Recovery codes have not been saved")
+
+			return
+		}
+	}
+
+	if mgr != nil {
+		mgr.Delete(definitions.SessionKeyRecoveryCodesSaved)
+	}
+
+	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		remaining := util.RemoveFromCommaSeparatedList(
+			mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
+			definitions.MFAMethodRecoveryCodes,
+		)
+
+		flowdomain.SetRequireMFAPending(mgr, remaining)
+	}
+
+	if mgr != nil && mgr.GetString(definitions.SessionKeyIdPFlowID, "") != "" {
+		if h.checkRequireMFARegistrationAndRedirect(ctx, mgr) {
+			return
+		}
+
+		h.resumeIdPFlow(ctx, mgr)
+
+		return
+	}
+
+	if ctx.GetHeader("HX-Request") != "" {
+		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
+		ctx.Status(http.StatusOK)
+
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/home")
 }
 
 // PostGenerateRecoveryCodes handles generating new recovery codes.
@@ -1775,6 +2077,9 @@ func (h *FrontendHandler) PostGenerateRecoveryCodes(ctx *gin.Context) {
 	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New recovery codes")
 	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup these codes!")
 	data["ShownOnlyOnce"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "They will be shown only once.")
+	data["Copy"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copy")
+	data["CopiedToClipboard"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Copied to clipboard")
+	data["Download"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Download")
 	data["Close"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Close")
 	data["Codes"] = codes
 
@@ -1848,6 +2153,32 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 		return
 	}
 
+	userData, err := h.GetUserBackendData(ctx)
+	if err != nil || userData == nil || userData.AuthState == nil {
+		if err != nil {
+			sp.RecordError(err)
+		}
+
+		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
+		h.renderErrorModal(ctx, "Failed to load user data")
+
+		return
+	}
+
+	if userData.WebAuthnUser != nil && len(userData.WebAuthnUser.Credentials) > 0 {
+		for _, cred := range userData.WebAuthnUser.Credentials {
+			credential := cred
+
+			if err := userData.AuthState.DeleteWebAuthnCredential(&credential); err != nil {
+				sp.RecordError(err)
+				stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
+				h.renderErrorModalWithErr(ctx, "Failed to delete WebAuthn credential", err)
+
+				return
+			}
+		}
+	}
+
 	// First, clear the Redis cache
 	key := h.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + userID
 	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
@@ -1860,10 +2191,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
 
-	state := core.NewAuthStateWithSetupWithDeps(ctx, h.deps.Auth())
-	if state != nil {
-		state.PurgeCacheFor(username)
-	}
+	userData.AuthState.PurgeCacheFor(username)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)

@@ -2226,6 +2226,7 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultSecuritySettings,
 		f.setDefaultFrontendSettings,
 		f.setDefaultIdPSettings,
+		f.validateIdPMFASettings,
 		f.setDefaultTrustedProxies,
 		f.validateFrontend,
 	}

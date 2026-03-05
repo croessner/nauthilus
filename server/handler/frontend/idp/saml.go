@@ -38,10 +38,12 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
+	"github.com/segmentio/ksuid"
 )
 
 // SAMLHandler handles SAML 2.0 protocol requests.
@@ -384,16 +386,36 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	if account == "" {
 		// User not logged in - store SAML flow state in secure cookie and redirect to login.
 		// This prevents open redirect vulnerabilities by not passing return_to in URL.
+		redirectTarget := "/login"
+
 		if mgr != nil {
-			mgr.Set(definitions.SessionKeyIdPFlowActive, true)
-			mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoSAML)
-			mgr.Set(definitions.SessionKeyIdPSAMLEntityID, issuer)
-			// Store the original SAML request URL so we can resume the flow after login
-			mgr.Set(definitions.SessionKeyIdPOriginalURL, ctx.Request.URL.String())
-			mgr.Set(definitions.SessionKeyProtocol, definitions.ProtoSAML)
+			controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
+			decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
+				FlowID:       ksuid.New().String(),
+				FlowType:     flowdomain.FlowTypeSAML,
+				Protocol:     flowdomain.FlowProtocolSAML,
+				CurrentStep:  flowdomain.FlowStepStart,
+				ReturnTarget: "/login",
+				Metadata: map[string]string{
+					flowdomain.FlowMetadataSAMLEntityID: issuer,
+					flowdomain.FlowMetadataOriginalURL:  ctx.Request.URL.String(),
+					flowdomain.FlowMetadataResumeTarget: ctx.Request.URL.RequestURI(),
+				},
+			}, time.Now())
+			if err != nil {
+				ctx.String(http.StatusInternalServerError, "Failed to initialize flow session")
+
+				return
+			}
+
+			redirectTarget = decision.RedirectURI
+
+			samlFlowCtx := newSAMLFlowContext(mgr)
+			samlFlowCtx.StoreRequest(issuer, ctx.Request.URL.String())
 
 			// Explicitly save cookie before redirect to ensure it's written to the response
-			if err := mgr.Save(ctx); err != nil {
+			if err := samlFlowCtx.Save(ctx); err != nil {
 				ctx.String(http.StatusInternalServerError, "Failed to save session")
 
 				return
@@ -410,7 +432,7 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 			)
 		}
 
-		ctx.Redirect(http.StatusFound, "/login")
+		ctx.Redirect(http.StatusFound, redirectTarget)
 
 		return
 	}
@@ -482,10 +504,9 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		return
 	}
 
-	// Clean up IdP flow state after successful SAML SSO
-	if mgr != nil {
-		CleanupIdPFlowState(mgr)
-	}
+	// Complete the flow: advance to callback, delete Redis state, and clean up cookie keys
+	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
+	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	ctx.Status(http.StatusOK)

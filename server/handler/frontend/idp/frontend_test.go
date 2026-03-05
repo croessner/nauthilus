@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -249,6 +250,203 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 	assert.NotContains(t, output, "autofocus")
 	assert.Contains(t, output, "/login/totp")
 	assert.Contains(t, output, "/login/webauthn")
+}
+
+func TestGetFlowClientIdentifiers(t *testing.T) {
+	testCases := []struct {
+		name              string
+		sessionData       map[string]any
+		expectedOIDCCID   string
+		expectedSAMLEntID string
+	}{
+		{
+			name: "OIDC flow returns client ID",
+			sessionData: map[string]any{
+				definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
+				definitions.SessionKeyIdPClientID: "oidc-client",
+			},
+			expectedOIDCCID: "oidc-client",
+		},
+		{
+			name: "SAML flow returns entity ID",
+			sessionData: map[string]any{
+				definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
+				definitions.SessionKeyIdPSAMLEntityID: "sp-entity",
+			},
+			expectedSAMLEntID: "sp-entity",
+		},
+		{
+			name: "Unknown flow returns empty identifiers",
+			sessionData: map[string]any{
+				definitions.SessionKeyIdPFlowType: "invalid",
+			},
+		},
+	}
+
+	h := &FrontendHandler{}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := &mockCookieManager{data: tc.sessionData}
+
+			oidcCID, samlEntityID := h.getFlowClientIdentifiers(mgr)
+
+			assert.Equal(t, tc.expectedOIDCCID, oidcCID)
+			assert.Equal(t, tc.expectedSAMLEntID, samlEntityID)
+		})
+	}
+
+	t.Run("Nil manager returns empty identifiers", func(t *testing.T) {
+		oidcCID, samlEntityID := h.getFlowClientIdentifiers(nil)
+
+		assert.Empty(t, oidcCID)
+		assert.Empty(t, samlEntityID)
+	})
+}
+
+func TestIsMFAMethodSupported(t *testing.T) {
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{
+					IdP: &config.IdPSection{
+						OIDC: config.OIDCConfig{
+							Clients: []config.OIDCClient{
+								{
+									ClientID:     "oidc-client",
+									SupportedMFA: []string{definitions.MFAMethodWebAuthn},
+								},
+							},
+						},
+					},
+				},
+			},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIdPClientID: "oidc-client",
+	}}
+
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
+	assert.False(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP))
+}
+
+func TestIsMFAMethodSupported_DefaultsToAllWhenUnset(t *testing.T) {
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{
+					IdP: &config.IdPSection{
+						OIDC: config.OIDCConfig{
+							Clients: []config.OIDCClient{
+								{
+									ClientID: "oidc-client",
+								},
+							},
+						},
+					},
+				},
+			},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
+		definitions.SessionKeyIdPClientID: "oidc-client",
+	}}
+
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodWebAuthn))
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP))
+	assert.True(t, h.isMFAMethodSupported(mgr, definitions.MFAMethodRecoveryCodes))
+}
+
+func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/login/mfa", nil)
+
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg: &mockFrontendCfg{
+				FileSettings: config.FileSettings{
+					IdP: &config.IdPSection{
+						OIDC: config.OIDCConfig{
+							Clients: []config.OIDCClient{{
+								ClientID:     "different-client",
+								RequireMFA:   []string{definitions.MFAMethodRecoveryCodes},
+								GrantTypes:   []string{definitions.OIDCFlowAuthorizationCode},
+								RedirectURIs: []string{"https://example.invalid/callback"},
+							}},
+						},
+					},
+				},
+			},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIdPFlowID:         "flow-require-mfa",
+		definitions.SessionKeyRequireMFAFlow:    true,
+		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
+		definitions.SessionKeyIdPFlowType:       definitions.ProtoOIDC,
+		definitions.SessionKeyIdPClientID:       "stale-client",
+		definitions.SessionKeyAccount:           "testuser",
+	}}
+
+	redirected := h.checkRequireMFARegistrationAndRedirect(ctx, mgr)
+
+	assert.False(t, redirected)
+	assert.False(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
+	assert.Empty(t, mgr.GetString(definitions.SessionKeyRequireMFAPending, ""))
+	assert.Equal(t, "flow-require-mfa", mgr.GetString(definitions.SessionKeyIdPFlowID, ""))
+	assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyIdPFlowType, ""))
+	assert.Empty(t, recorder.Header().Get("Location"))
+	assert.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestHasRecoveryCodesForRequireMFASessionSavedFlag(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/recovery/register", nil)
+
+	h := &FrontendHandler{}
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyRecoveryCodesSaved: true,
+	}}
+
+	user := backend.NewUser("test-user", "", "uid-123")
+
+	assert.True(t, h.hasRecoveryCodesForRequireMFA(ctx, mgr, user))
+}
+
+func TestHasRecoveryCodesForRequireMFANoRecoveryData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/recovery/register", nil)
+
+	h := &FrontendHandler{}
+	mgr := &mockCookieManager{data: map[string]any{}}
+
+	user := backend.NewUser("test-user", "", "uid-123")
+
+	assert.False(t, h.hasRecoveryCodesForRequireMFA(ctx, mgr, user))
 }
 
 func loadMFASelectTemplate(t *testing.T) *template.Template {

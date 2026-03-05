@@ -17,6 +17,7 @@ package v1
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -28,8 +29,11 @@ import (
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	nauthilusidp "github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -143,6 +147,38 @@ func (m *mockCookieManager) HasKey(key string) bool {
 }
 
 func (m *mockCookieManager) SetMaxAge(_ int) {}
+
+type mockMFAProvider struct {
+	deleteWebAuthnErr error
+}
+
+func (m *mockMFAProvider) GenerateTOTPSecret(_ *gin.Context, _ string) (string, string, error) {
+	return "secret", "otpauth://example", nil
+}
+
+func (m *mockMFAProvider) VerifyAndSaveTOTP(_ *gin.Context, _ string, _ string, _ string, _ uint8) error {
+	return nil
+}
+
+func (m *mockMFAProvider) DeleteTOTP(_ *gin.Context, _ string, _ uint8) error {
+	return nil
+}
+
+func (m *mockMFAProvider) GenerateRecoveryCodes(_ *gin.Context, _ string, _ uint8) ([]string, error) {
+	return []string{"code1"}, nil
+}
+
+func (m *mockMFAProvider) SaveRecoveryCodes(_ *gin.Context, _ string, _ []string, _ uint8) error {
+	return nil
+}
+
+func (m *mockMFAProvider) UseRecoveryCode(_ *gin.Context, _ string, _ string, _ uint8) (bool, error) {
+	return true, nil
+}
+
+func (m *mockMFAProvider) DeleteWebAuthnCredential(_ *gin.Context, _ string, _ string, _ uint8) error {
+	return m.deleteWebAuthnErr
+}
 
 func setupTestRouterWithMockCookie(d *deps.Deps, mgr cookie.Manager) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -282,3 +318,113 @@ func TestMFAAPI_MFAManageMiddleware_SAMLValidSession(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
+
+func TestMFAAPI_DeleteWebAuthn_SuccessInvalidatesRedisCache(t *testing.T) {
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{Prefix: "nt:"},
+		},
+	}
+
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger(), Redis: redisClient}
+
+	api := NewMFAAPI(d)
+	api.mfa = &mockMFAProvider{}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:      "alice",
+		definitions.SessionKeyUniqueUserID: "uid-123",
+		definitions.SessionKeyUserBackend:  uint8(definitions.BackendLDAP),
+	}}
+
+	mock.ExpectDel("nt:webauthn:user:uid-123").SetVal(1)
+
+	r := gin.New()
+	r.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxSecureDataKey, mgr)
+		ctx.Next()
+	})
+	r.DELETE("/api/v1/mfa/webauthn/:credentialID", api.DeleteWebAuthn)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/mfa/webauthn/cred-1", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMFAAPI_DeleteWebAuthn_RedisDeleteFails(t *testing.T) {
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{Prefix: "nt:"},
+		},
+	}
+
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger(), Redis: redisClient}
+
+	api := NewMFAAPI(d)
+	api.mfa = &mockMFAProvider{}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:      "alice",
+		definitions.SessionKeyUniqueUserID: "uid-123",
+		definitions.SessionKeyUserBackend:  uint8(definitions.BackendLDAP),
+	}}
+
+	mock.ExpectDel("nt:webauthn:user:uid-123").SetErr(errors.New("redis down"))
+
+	r := gin.New()
+	r.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxSecureDataKey, mgr)
+		ctx.Next()
+	})
+	r.DELETE("/api/v1/mfa/webauthn/:credentialID", api.DeleteWebAuthn)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/mfa/webauthn/cred-1", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMFAAPI_DeleteWebAuthn_BackendDeleteFails(t *testing.T) {
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{Prefix: "nt:"},
+		},
+	}
+
+	db, _ := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	d := &deps.Deps{Cfg: cfg, Logger: log.GetLogger(), Redis: redisClient}
+
+	api := NewMFAAPI(d)
+	api.mfa = &mockMFAProvider{deleteWebAuthnErr: errors.New("backend failed")}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount:      "alice",
+		definitions.SessionKeyUniqueUserID: "uid-123",
+		definitions.SessionKeyUserBackend:  uint8(definitions.BackendLDAP),
+	}}
+
+	r := gin.New()
+	r.Use(func(ctx *gin.Context) {
+		ctx.Set(definitions.CtxSecureDataKey, mgr)
+		ctx.Next()
+	})
+	r.DELETE("/api/v1/mfa/webauthn/:credentialID", api.DeleteWebAuthn)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/mfa/webauthn/cred-1", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+var _ nauthilusidp.MFAProvider = (*mockMFAProvider)(nil)

@@ -55,6 +55,7 @@ func SessionCleaner(ctx *gin.Context) {
 	mgr.Delete(definitions.SessionKeyDisplayName)
 	mgr.Delete(definitions.SessionKeyRegistration)
 	mgr.Delete(definitions.SessionKeyOIDCClients)
+	mgr.Delete(definitions.SessionKeyOIDCConsentExpiries)
 	mgr.Delete(definitions.SessionKeyTOTPSecret)
 	mgr.Delete(definitions.SessionKeySubject)
 	mgr.Delete(definitions.SessionKeyUserBackendName)

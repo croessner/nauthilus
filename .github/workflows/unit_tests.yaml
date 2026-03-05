@@ -14,6 +14,10 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_variant: [ default, auth_basic_endpoint ]
 
     steps:
       - name: Checkout code
@@ -31,4 +35,9 @@ jobs:
         run: go env -w GOFLAGS=-mod=vendor
 
       - name: Run Unit Tests
-        run: go test $(go list ./... | grep -v /vendor/)
+        run: |
+          if [ "${{ matrix.build_variant }}" = "auth_basic_endpoint" ]; then
+            go test -tags auth_basic_endpoint $(go list ./... | grep -v /vendor/)
+          else
+            go test $(go list ./... | grep -v /vendor/)
+          fi

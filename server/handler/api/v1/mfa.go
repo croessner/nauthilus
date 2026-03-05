@@ -262,5 +262,19 @@ func (a *MFAAPI) DeleteWebAuthn(ctx *gin.Context) {
 		return
 	}
 
+	if uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); uniqueUserID != "" {
+		key := a.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID
+		if err := a.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete WebAuthn cache"})
+
+			return
+		}
+	}
+
+	state := core.NewAuthStateWithSetupWithDeps(ctx, a.deps.Auth())
+	if state != nil {
+		state.PurgeCacheFor(username)
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "WebAuthn credential deleted successfully"})
 }

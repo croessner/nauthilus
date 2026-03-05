@@ -43,8 +43,9 @@ func TestLoginRedirects(t *testing.T) {
 			// Valid OIDC flow in cookie
 			mgr := &mockCookieManager{data: map[string]any{
 				definitions.SessionKeyAccount:        "testuser",
-				definitions.SessionKeyIdPFlowActive:  true,
+				definitions.SessionKeyIdPFlowID:      "flow-oidc",
 				definitions.SessionKeyIdPFlowType:    definitions.ProtoOIDC,
+				definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
 				definitions.SessionKeyIdPClientID:    "test-client",
 				definitions.SessionKeyIdPRedirectURI: "https://example.com/callback",
 				definitions.SessionKeyIdPScope:       "openid profile",
@@ -75,10 +76,11 @@ func TestLoginRedirects(t *testing.T) {
 		r.Use(func(ctx *gin.Context) {
 			// Valid SAML2 flow in cookie
 			mgr := &mockCookieManager{data: map[string]any{
-				definitions.SessionKeyAccount:        "testuser",
-				definitions.SessionKeyIdPFlowActive:  true,
-				definitions.SessionKeyIdPFlowType:    definitions.ProtoSAML,
-				definitions.SessionKeyIdPOriginalURL: "/saml/sso?SAMLRequest=abc123",
+				definitions.SessionKeyAccount:         "testuser",
+				definitions.SessionKeyIdPFlowID:       "flow-saml",
+				definitions.SessionKeyIdPFlowType:     definitions.ProtoSAML,
+				definitions.SessionKeyIdPSAMLEntityID: "sp-1",
+				definitions.SessionKeyIdPOriginalURL:  "/saml/sso?SAMLRequest=abc123",
 			}}
 			ctx.Set(definitions.CtxSecureDataKey, mgr)
 			ctx.Next()
@@ -103,9 +105,9 @@ func TestLoginRedirects(t *testing.T) {
 		r.Use(func(ctx *gin.Context) {
 			// Invalid flow type in cookie
 			mgr := &mockCookieManager{data: map[string]any{
-				definitions.SessionKeyAccount:       "testuser",
-				definitions.SessionKeyIdPFlowActive: true,
-				definitions.SessionKeyIdPFlowType:   "invalid",
+				definitions.SessionKeyAccount:     "testuser",
+				definitions.SessionKeyIdPFlowID:   "flow-invalid",
+				definitions.SessionKeyIdPFlowType: "invalid",
 			}}
 			ctx.Set(definitions.CtxSecureDataKey, mgr)
 			ctx.Next()
@@ -141,42 +143,64 @@ func TestIsValidIdPFlow(t *testing.T) {
 		{
 			name: "Flow not active",
 			cookieData: map[string]any{
-				definitions.SessionKeyIdPFlowActive: false,
+				definitions.SessionKeyIdPFlowID: "",
 			},
 			expected: false,
 		},
 		{
-			name: "Valid OIDC flow",
+			name: "Valid OIDC authorization code flow",
 			cookieData: map[string]any{
-				definitions.SessionKeyIdPFlowActive:  true,
+				definitions.SessionKeyIdPFlowID:      "flow-oidc",
 				definitions.SessionKeyIdPFlowType:    definitions.ProtoOIDC,
+				definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
 				definitions.SessionKeyIdPClientID:    "test-client",
 				definitions.SessionKeyIdPRedirectURI: "https://example.com/callback",
 			},
 			expected: true,
 		},
 		{
+			name: "OIDC flow without grant type is invalid",
+			cookieData: map[string]any{
+				definitions.SessionKeyIdPFlowID:   "flow-oidc-no-grant",
+				definitions.SessionKeyIdPFlowType: definitions.ProtoOIDC,
+			},
+			expected: false,
+		},
+		{
+			name: "Valid OIDC device code flow",
+			cookieData: map[string]any{
+				definitions.SessionKeyIdPFlowID:     "flow-device",
+				definitions.SessionKeyIdPFlowType:   definitions.ProtoOIDC,
+				definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowDeviceCode,
+				definitions.SessionKeyIdPClientID:   "device-client",
+				definitions.SessionKeyDeviceCode:    "ABCD-1234",
+			},
+			expected: true,
+		},
+		{
 			name: "OIDC flow without client_id",
 			cookieData: map[string]any{
-				definitions.SessionKeyIdPFlowActive:  true,
+				definitions.SessionKeyIdPFlowID:      "flow-oidc",
 				definitions.SessionKeyIdPFlowType:    definitions.ProtoOIDC,
 				definitions.SessionKeyIdPRedirectURI: "https://example.com/callback",
+				definitions.SessionKeyOIDCGrantType:  definitions.OIDCFlowAuthorizationCode,
 			},
 			expected: false,
 		},
 		{
 			name: "OIDC flow without redirect_uri",
 			cookieData: map[string]any{
-				definitions.SessionKeyIdPFlowActive: true,
+				definitions.SessionKeyIdPFlowID:     "flow-oidc",
 				definitions.SessionKeyIdPFlowType:   definitions.ProtoOIDC,
 				definitions.SessionKeyIdPClientID:   "test-client",
+				definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowAuthorizationCode,
 			},
 			expected: false,
 		},
 		{
 			name: "Valid SAML2 flow",
 			cookieData: map[string]any{
-				definitions.SessionKeyIdPFlowActive:  true,
+				definitions.SessionKeyIdPFlowID:      "flow-saml",
 				definitions.SessionKeyIdPFlowType:    definitions.ProtoSAML,
 				definitions.SessionKeyIdPOriginalURL: "/saml/sso?SAMLRequest=abc",
 			},
@@ -185,16 +209,16 @@ func TestIsValidIdPFlow(t *testing.T) {
 		{
 			name: "SAML2 flow without original URL",
 			cookieData: map[string]any{
-				definitions.SessionKeyIdPFlowActive: true,
-				definitions.SessionKeyIdPFlowType:   definitions.ProtoSAML,
+				definitions.SessionKeyIdPFlowID:   "flow-saml",
+				definitions.SessionKeyIdPFlowType: definitions.ProtoSAML,
 			},
 			expected: false,
 		},
 		{
 			name: "Invalid flow type",
 			cookieData: map[string]any{
-				definitions.SessionKeyIdPFlowActive: true,
-				definitions.SessionKeyIdPFlowType:   "invalid",
+				definitions.SessionKeyIdPFlowID:   "flow-invalid",
+				definitions.SessionKeyIdPFlowType: "invalid",
 			},
 			expected: false,
 		},

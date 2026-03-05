@@ -29,6 +29,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -455,26 +456,54 @@ func TestOIDCHandler_Logout(t *testing.T) {
 	})
 }
 
-func Test_hasClientConsent(t *testing.T) {
+func Test_oidcAuthorizeFlowContext_HasClientConsent(t *testing.T) {
 	t.Run("returns false when no clients in cookie", func(t *testing.T) {
 		mgr := &mockCookieManager{data: make(map[string]any)}
-		assert.False(t, hasClientConsent(mgr, "client1"))
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		assert.False(t, flowContext.HasClientConsent("client1", []string{"openid"}))
 	})
 
 	t.Run("returns true when client is in cookie", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
 			definitions.SessionKeyOIDCClients: "client1,client2",
 		}}
-		assert.True(t, hasClientConsent(mgr, "client1"))
-		assert.True(t, hasClientConsent(mgr, "client2"))
-		assert.False(t, hasClientConsent(mgr, "client3"))
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		assert.True(t, flowContext.HasClientConsent("client1", []string{"openid"}))
+		assert.True(t, flowContext.HasClientConsent("client2", []string{"openid"}))
+		assert.False(t, flowContext.HasClientConsent("client3", []string{"openid"}))
+	})
+
+	t.Run("returns false when consent entry has expired", func(t *testing.T) {
+		expired := time.Now().Add(-time.Minute).Unix()
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyOIDCConsentExpiries: `{"client1":[{"scopes":["openid","profile"],"expiry":` + strconv.FormatInt(expired, 10) + `}]}`,
+		}}
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		assert.False(t, flowContext.HasClientConsent("client1", []string{"openid"}))
+	})
+
+	t.Run("returns true when requested scopes are covered by granted scopes", func(t *testing.T) {
+		valid := time.Now().Add(time.Minute).Unix()
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyOIDCConsentExpiries: `{"client1":[{"scopes":["email","openid","profile"],"expiry":` + strconv.FormatInt(valid, 10) + `}]}`,
+		}}
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		assert.True(t, flowContext.HasClientConsent("client1", []string{"openid", "profile"}))
+		assert.False(t, flowContext.HasClientConsent("client1", []string{"openid", "groups"}))
 	})
 }
 
-func Test_addClientToCookie(t *testing.T) {
+func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
 	t.Run("adds client to empty cookie", func(t *testing.T) {
 		mgr := &mockCookieManager{data: make(map[string]any)}
-		addClientToCookie(mgr, "client1")
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		flowContext.AddClientConsent("client1", []string{"openid", "profile"}, time.Hour)
+
 		assert.Equal(t, "client1", mgr.data[definitions.SessionKeyOIDCClients])
 	})
 
@@ -482,7 +511,10 @@ func Test_addClientToCookie(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
 			definitions.SessionKeyOIDCClients: "client1",
 		}}
-		addClientToCookie(mgr, "client2")
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		flowContext.AddClientConsent("client2", []string{"openid"}, time.Hour)
+
 		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
 	})
 
@@ -490,16 +522,52 @@ func Test_addClientToCookie(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
 			definitions.SessionKeyOIDCClients: "client1,client2",
 		}}
-		addClientToCookie(mgr, "client1")
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		flowContext.AddClientConsent("client1", []string{"openid"}, time.Hour)
+
 		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
+	})
+}
+
+func Test_oidcAuthorizeFlowContext_StoreRequest(t *testing.T) {
+	mgr := &mockCookieManager{data: make(map[string]any)}
+	flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+	flowContext.StoreRequest("my-client", "https://app.example.com/cb", "openid profile", "state-1", "nonce-1", "code", "consent")
+
+	// Flow request data is stored via FlowController metadata; context keeps protocol only.
+	assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyProtocol, ""))
+}
+
+func Test_oidcDeviceFlowContext(t *testing.T) {
+	t.Run("stores and reads device flow values", func(t *testing.T) {
+		mgr := &mockCookieManager{data: make(map[string]any)}
+		flowContext := newOIDCDeviceFlowContext(mgr)
+
+		flowContext.StoreMFAContext("alice", "uid-1", "dc-1", "client-1", definitions.ProtoOIDC, uint8(definitions.AuthResultOK), true)
+
+		assert.Equal(t, "", flowContext.DeviceCode())
+		assert.Equal(t, "uid-1", flowContext.UniqueUserID())
+		assert.Equal(t, "alice", mgr.GetString(definitions.SessionKeyUsername, ""))
+		assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyProtocol, ""))
+	})
+
+	t.Run("clear device code is a no-op in context helper", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{definitions.SessionKeyDeviceCode: "dc-1"}}
+		flowContext := newOIDCDeviceFlowContext(mgr)
+
+		flowContext.ClearDeviceCode()
+
+		assert.Equal(t, "dc-1", flowContext.DeviceCode())
 	})
 }
 
 func Test_cleanupIdPFlowState(t *testing.T) {
 	flowKeys := []string{
 		// Common IdP flow keys
-		definitions.SessionKeyIdPFlowActive,
 		definitions.SessionKeyIdPFlowType,
+		definitions.SessionKeyIdPFlowID,
 		// OIDC-specific flow keys
 		definitions.SessionKeyOIDCGrantType,
 		definitions.SessionKeyIdPClientID,
@@ -519,8 +587,8 @@ func Test_cleanupIdPFlowState(t *testing.T) {
 	t.Run("removes all IdP flow state keys including OIDC and SAML", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
 			// OIDC keys
-			definitions.SessionKeyIdPFlowActive:   true,
 			definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
+			definitions.SessionKeyIdPFlowID:       "flow-oidc-cleanup",
 			definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
 			definitions.SessionKeyIdPClientID:     "my-app",
 			definitions.SessionKeyIdPRedirectURI:  "https://app.example.com/callback",

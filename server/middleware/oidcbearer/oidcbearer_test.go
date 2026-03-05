@@ -249,7 +249,7 @@ func TestMiddleware_ValidToken_MissingAuthenticateScope(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func TestMiddleware_NoAuthMode_SkipsScopeCheck(t *testing.T) {
+func TestMiddleware_NoAuthMode_StillRequiresAuthenticateScope(t *testing.T) {
 	validator := &mockTokenValidator{
 		claims: jwt.MapClaims{
 			"sub":   "test-client",
@@ -270,7 +270,7 @@ func TestMiddleware_NoAuthMode_SkipsScopeCheck(t *testing.T) {
 
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestExtractBearerToken(t *testing.T) {
@@ -348,6 +348,58 @@ func TestValidateAndStoreClaims_ValidToken(t *testing.T) {
 
 	assert.NotNil(t, stored)
 	assert.Equal(t, "test-client", stored["sub"])
+}
+
+func TestEnforceBearerScopeAuth(t *testing.T) {
+	t.Run("missing header denies", func(t *testing.T) {
+		validator := &mockTokenValidator{}
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+
+		_, ok := EnforceBearerScopeAuth(ctx, validator, nil, EnforceBearerScopeAuthOptions{
+			RequiredScopes: []string{definitions.ScopeAuthenticate},
+		})
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("valid token with matching scope allows", func(t *testing.T) {
+		validator := &mockTokenValidator{
+			claims: jwt.MapClaims{
+				"scope": "nauthilus:authenticate",
+			},
+		}
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+		ctx.Request.Header.Set("Authorization", "Bearer token")
+
+		_, ok := EnforceBearerScopeAuth(ctx, validator, nil, EnforceBearerScopeAuthOptions{
+			RequiredScopes: []string{definitions.ScopeAuthenticate},
+		})
+		assert.True(t, ok)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("valid token with missing scope denies forbidden", func(t *testing.T) {
+		validator := &mockTokenValidator{
+			claims: jwt.MapClaims{
+				"scope": "nauthilus:security",
+			},
+		}
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+		ctx.Request.Header.Set("Authorization", "Bearer token")
+
+		_, ok := EnforceBearerScopeAuth(ctx, validator, nil, EnforceBearerScopeAuthOptions{
+			RequiredScopes:      []string{definitions.ScopeAuthenticate},
+			MissingScopeMessage: "missing required scope: " + definitions.ScopeAuthenticate,
+		})
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 }
 
 func TestValidateAndStoreClaims_InvalidToken(t *testing.T) {

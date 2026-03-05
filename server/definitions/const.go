@@ -83,18 +83,27 @@ const (
 	// SessionKeyTOTPSecret temporarily holds a generated TOTP secret during flow.
 	SessionKeyTOTPSecret = "totp_secret"
 
+	// SessionKeyRecoveryCodes temporarily holds generated recovery codes during registration.
+	SessionKeyRecoveryCodes = "recovery_codes"
+
+	// SessionKeyRecoveryCodesSaved indicates the recovery codes have been persisted in the backend.
+	SessionKeyRecoveryCodesSaved = "recovery_codes_saved"
+
 	// SessionKeyProtocol stores the network protocol used during authentication.
 	SessionKeyProtocol = "protocol"
 
 	// SessionKeyOIDCClients stores a list of OIDC client IDs the user is logged into.
 	SessionKeyOIDCClients = "oidc_clients"
 
-	// SessionKeyIdPFlowActive indicates that an IdP flow (OIDC or SAML2) is currently active.
-	// This prevents direct access to /login without a valid IdP flow.
-	SessionKeyIdPFlowActive = "idp_flow_active"
+	// SessionKeyOIDCConsentExpiries stores per-client consent expiry timestamps as JSON map.
+	// Format example: {"client-a":1735689600,"client-b":1738291200} (unix seconds).
+	SessionKeyOIDCConsentExpiries = "oidc_consent_expiries"
 
 	// SessionKeyIdPFlowType stores the type of IdP flow (oidc or saml).
 	SessionKeyIdPFlowType = "idp_flow_type"
+
+	// SessionKeyIdPFlowID stores the opaque flow identifier used as reference to external state.
+	SessionKeyIdPFlowID = "idp_flow_id"
 
 	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
 	SessionKeyIdPClientID = "idp_client_id"
@@ -149,6 +158,10 @@ const (
 	// SessionKeyRequireMFAPending holds the MFA methods still requiring registration,
 	// encoded as a comma-separated string (e.g. "totp,webauthn" or "webauthn").
 	SessionKeyRequireMFAPending = "require_mfa_pending"
+
+	// SessionKeyRequireMFAParentFlowID stores the original IdP flow id while the
+	// temporary require_mfa sub-flow is active.
+	SessionKeyRequireMFAParentFlowID = "require_mfa_parent_flow_id"
 )
 
 // FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.
@@ -661,6 +674,9 @@ const (
 	// OIDCDeviceCodeDefaultUserCodeLength is the default length for user codes (number of characters).
 	OIDCDeviceCodeDefaultUserCodeLength = 8
 
+	// OIDCConsentDefaultTTL is the default duration a granted OIDC consent remains valid.
+	OIDCConsentDefaultTTL = 30 * 24 * time.Hour
+
 	// OIDCFlowAuthorizationCode identifies the OIDC Authorization Code Grant flow.
 	OIDCFlowAuthorizationCode = "authorization_code"
 
@@ -781,9 +797,6 @@ const (
 	// ServNginx is a constant for the "nginx" service.
 	ServNginx = "nginx"
 
-	// ServSaslauthd is a constant for the "saslauthd" service.
-	ServSaslauthd = "saslauthd"
-
 	// ServHeader is a constant for the "header" service.
 	ServHeader = "header"
 
@@ -815,6 +828,9 @@ const (
 
 	// MFAMethodWebAuthn identifies the WebAuthn security-key method.
 	MFAMethodWebAuthn = "webauthn"
+
+	// MFAMethodRecoveryCodes identifies the recovery codes method.
+	MFAMethodRecoveryCodes = "recovery_codes"
 )
 
 const (

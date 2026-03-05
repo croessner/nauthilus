@@ -290,13 +290,6 @@ type State interface {
 	// HandlePassword processes the password-based authentication for a user and returns the authentication result.
 	HandlePassword(ctx *gin.Context) definitions.AuthResult
 
-	// ProcessFeatures evaluates and processes feature-related data from the request context.
-	// It returns a boolean indicating whether the process should abort further execution.
-	ProcessFeatures(ctx *gin.Context) (abort bool)
-
-	// ProcessAuthentication processes authentication requests using.
-	ProcessAuthentication(ctx *gin.Context)
-
 	// FilterLua applies Lua-based filtering logic to the provided execution context and PassDBResult.
 	// It returns an AuthResult indicating the outcome of the filtering process.
 	FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
@@ -2542,14 +2535,6 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	// so final logs include authn=true for cache hits.
 	a.Runtime.Authenticated = true
 
-	// Run features for cache hits (authenticated state).
-	// Features with when_authenticated=true will be evaluated.
-	featureResult := a.HandleFeatures(ctx)
-
-	if featureResult != definitions.AuthResultOK {
-		return featureResult
-	}
-
 	authResult := definitions.AuthResultOK
 
 	if lf := getLuaFilter(); lf != nil {
@@ -3549,8 +3534,8 @@ func (a *AuthState) InitMethodAndUserAgent() State {
 // It takes the gin context and an AuthState struct as input.
 //
 // If the service parameter is "nginx" or "header", it calls the setupHeaderBasedAuth function.
-// If the service parameter is "saslauthd", it calls the setupBodyBasedAuth function.
-// If the service parameter is "basicauth", it calls the setupHTTPBasicAuth function.
+// If the service parameter is "json" or "idp", it calls the setupBodyBasedAuth function.
+// If the service parameter is "basic", it calls the setupHTTPBasicAuth function.
 //
 // After setting up the authentication, it calls the withDefaults method on the AuthState struct.
 //
@@ -3580,7 +3565,7 @@ func setupAuth(ctx *gin.Context, auth State) {
 	switch svc {
 	case definitions.ServNginx, definitions.ServHeader:
 		setupHeaderBasedAuth(ctx, auth)
-	case definitions.ServSaslauthd, definitions.ServJSON, definitions.ServIdP:
+	case definitions.ServJSON, definitions.ServIdP:
 		setupBodyBasedAuth(ctx, auth)
 	case definitions.ServBasic:
 		setupHTTPBasicAuth(ctx, auth)
