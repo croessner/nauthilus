@@ -9,6 +9,9 @@ on:
     branches:
       - features
 
+permissions:
+  contents: read
+
 env:
   GOEXPERIMENT: runtimesecret
 
