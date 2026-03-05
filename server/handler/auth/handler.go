@@ -51,31 +51,13 @@ func (h *Handler) Register(router gin.IRouter) {
 		}
 	}
 
-	authGroup.GET("/"+definitions.ServBasic, withService(definitions.ServBasic, h.basic))
+	h.registerBasicEndpoint(authGroup, withService)
 	authGroup.GET("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
 	authGroup.POST("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
 	authGroup.GET("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.POST("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.GET("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
 	authGroup.POST("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
-}
-
-func (h *Handler) basic(ctx *gin.Context) {
-	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthBasicDisabled() {
-		ctx.AbortWithStatus(http.StatusNotFound)
-
-		return
-	}
-
-	// Minimal custom span analogous to JSON handler
-	tr := monittrace.New("nauthilus/rest")
-	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_basic")
-	defer sp.End()
-
-	// Propagate tracing context
-	ctx.Request = ctx.Request.WithContext(spanCtx)
-
-	h.process(ctx)
 }
 
 func (h *Handler) json(ctx *gin.Context) {

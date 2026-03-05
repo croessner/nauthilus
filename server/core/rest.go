@@ -36,13 +36,11 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
-	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/model/admin"
 	bf "github.com/croessner/nauthilus/server/model/bruteforce"
 	restdto "github.com/croessner/nauthilus/server/model/rest"
 	"github.com/croessner/nauthilus/server/rediscli"
-	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -193,10 +191,8 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 	current := authFSMStateInputParsed
 
-	if a.Request.Service == definitions.ServBasic {
-		if abort := a.processBasicAuthInput(ctx); abort {
-			return
-		}
+	if abort := a.preprocessBasicEndpointInput(ctx); abort {
+		return
 	}
 
 	if a.Request.Service == definitions.ServIdP {
@@ -235,46 +231,7 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 
 	current = nextState
 
-	if a.Request.Service == definitions.ServBasic {
-		var httpBasicAuthOk bool
-
-		if a.deps.Cfg.GetServer().GetBasicAuth().IsEnabled() {
-			if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug {
-				level.Debug(a.deps.Logger).Log(
-					definitions.LogKeyGUID, a.Runtime.GUID,
-					definitions.LogKeyUsername, a.Request.Username,
-					definitions.LogKeyMsg, "Processing HTTP Basic Auth",
-				)
-			}
-
-			httpBasicAuthOk = mdauth.CheckAndRequireBasicAuth(ctx, a.deps.Cfg)
-		} else {
-			httpBasicAuthOk = true
-		}
-
-		event = mapBasicAuthCheckToFSMEvent(httpBasicAuthOk)
-		nextState, err = nextAuthFSMState(current, event)
-		if err != nil {
-			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-			return
-		}
-
-		a.auditAuthFSMTransition(current, event, nextState)
-
-		// Keep previous behavior for failed basic checks: abort only (no AuthFail side effects).
-		dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
-			onAuthOK: func() {
-				a.AuthOK(ctx)
-			},
-			onAuthFail: func() {
-				ctx.Abort()
-			},
-			onInvalid: func() {
-				ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-			},
-		})
-
+	if handled := a.handleBasicEndpointAuthPhase(ctx, current); handled {
 		return
 	}
 
@@ -306,37 +263,6 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 
 	a.auditAuthFSMTransition(current, event, nextState)
 	a.applyPasswordFSMOutcome(ctx, nextState, passwordResult)
-}
-
-func (a *AuthState) processBasicAuthInput(ctx *gin.Context) (abort bool) {
-	var httpBasicAuthOk bool
-
-	// Decode HTTP basic Auth
-	username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
-	a.Request.Username = username
-	passwordBytes := []byte(password)
-	a.Request.Password = secret.FromBytes(passwordBytes)
-	clear(passwordBytes)
-	password = ""
-	ctx.Request.Header.Del("Authorization")
-	if !httpBasicAuthOk {
-		ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-		ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
-
-		return true
-	}
-
-	if a.Request.Username == "" {
-		ctx.Error(errors.ErrEmptyUsername)
-	} else if !util.ValidateUsername(a.Request.Username) {
-		ctx.Error(errors.ErrInvalidUsername)
-	}
-
-	if a.Request.Password.IsZero() {
-		ctx.Error(errors.ErrEmptyPassword)
-	}
-
-	return false
 }
 
 func (a *AuthState) auditAuthFSMTransition(from authFSMState, event authFSMEvent, to authFSMState) {
@@ -449,14 +375,6 @@ func dispatchAuthFSMTerminalOutcome(nextState authFSMState, handlers authFSMTerm
 		}
 		return false
 	}
-}
-
-func mapBasicAuthCheckToFSMEvent(ok bool) authFSMEvent {
-	if ok {
-		return authFSMEventBasicAuthOK
-	}
-
-	return authFSMEventBasicAuthFail
 }
 
 func mapAuthPasswordResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {

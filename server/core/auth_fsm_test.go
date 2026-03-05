@@ -257,13 +257,3 @@ func TestMapAuthPasswordResultToFSMEvent(t *testing.T) {
 		})
 	}
 }
-
-func TestMapBasicAuthCheckToFSMEvent(t *testing.T) {
-	if got := mapBasicAuthCheckToFSMEvent(true); got != authFSMEventBasicAuthOK {
-		t.Fatalf("expected %s, got %s", authFSMEventBasicAuthOK, got)
-	}
-
-	if got := mapBasicAuthCheckToFSMEvent(false); got != authFSMEventBasicAuthFail {
-		t.Fatalf("expected %s, got %s", authFSMEventBasicAuthFail, got)
-	}
-}
