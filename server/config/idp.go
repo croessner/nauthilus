@@ -142,6 +142,7 @@ type OIDCConfig struct {
 	AccessTokenType                    string              `mapstructure:"access_token_type"`
 	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
+	ConsentTTL                         time.Duration       `mapstructure:"consent_ttl"`
 	DeviceCodeExpiry                   time.Duration       `mapstructure:"device_code_expiry"`
 	DeviceCodePollingInterval          int                 `mapstructure:"device_code_polling_interval"`
 	DeviceCodeUserCodeLength           int                 `mapstructure:"device_code_user_code_length"`
@@ -303,6 +304,15 @@ func (o *OIDCConfig) GetDefaultRefreshTokenLifetime() time.Duration {
 	return 30 * 24 * time.Hour
 }
 
+// GetConsentTTL returns the default consent validity duration for OIDC clients.
+func (o *OIDCConfig) GetConsentTTL() time.Duration {
+	if o != nil && o.ConsentTTL > 0 {
+		return o.ConsentTTL
+	}
+
+	return definitions.OIDCConsentDefaultTTL
+}
+
 // GetAccessTokenType returns the configured access token type (jwt or opaque).
 func (o *OIDCConfig) GetAccessTokenType() string {
 	if o.AccessTokenType == "" {
@@ -442,6 +452,7 @@ type OIDCClient struct {
 	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
 	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
 	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
+	ConsentTTL                        time.Duration     `mapstructure:"consent_ttl"`
 	SkipConsent                       bool              `mapstructure:"skip_consent"`
 	DelayedResponse                   bool              `mapstructure:"delayed_response"`
 	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
@@ -491,6 +502,20 @@ func (c *OIDCClient) IsDelayedResponse() bool {
 	}
 
 	return c.DelayedResponse
+}
+
+// GetConsentTTL returns the client-specific consent validity duration.
+// When not explicitly configured at client level, the provided defaultTTL is used.
+func (c *OIDCClient) GetConsentTTL(defaultTTL time.Duration) time.Duration {
+	if c != nil && c.ConsentTTL > 0 {
+		return c.ConsentTTL
+	}
+
+	if defaultTTL > 0 {
+		return defaultTTL
+	}
+
+	return definitions.OIDCConsentDefaultTTL
 }
 
 // GetAccessTokenType returns the configured access token type for the client (jwt or opaque).

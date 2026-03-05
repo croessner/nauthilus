@@ -644,7 +644,8 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		return
 	}
 
-	newOIDCAuthorizeFlowContext(cookie.GetManager(ctx)).AddClientConsent(request.ClientID)
+	client, _ := h.idp.FindClient(request.ClientID)
+	newOIDCAuthorizeFlowContext(cookie.GetManager(ctx)).AddClientConsent(request.ClientID, consentTTLForClient(h.deps.Cfg, client))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -822,7 +823,8 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID)
+	client, _ := h.idp.FindClient(request.ClientID)
+	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, consentTTLForClient(h.deps.Cfg, client))
 
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())

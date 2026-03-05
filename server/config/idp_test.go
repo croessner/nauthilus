@@ -18,6 +18,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-playground/validator/v10"
@@ -212,6 +213,31 @@ func TestOIDCClient_GetAllowedScopes(t *testing.T) {
 		}
 		scopes := c.GetAllowedScopes()
 		assert.Equal(t, []string{"openid", "custom"}, scopes)
+	})
+}
+
+func TestOIDCConsentTTL(t *testing.T) {
+	t.Run("OIDCConfig default consent ttl", func(t *testing.T) {
+		var cfg *OIDCConfig
+		assert.Equal(t, 30*24*time.Hour, cfg.GetConsentTTL())
+
+		cfg = &OIDCConfig{}
+		assert.Equal(t, 30*24*time.Hour, cfg.GetConsentTTL())
+	})
+
+	t.Run("OIDCConfig configured consent ttl", func(t *testing.T) {
+		cfg := &OIDCConfig{ConsentTTL: 12 * time.Hour}
+		assert.Equal(t, 12*time.Hour, cfg.GetConsentTTL())
+	})
+
+	t.Run("OIDCClient inherits default consent ttl", func(t *testing.T) {
+		client := &OIDCClient{}
+		assert.Equal(t, 24*time.Hour, client.GetConsentTTL(24*time.Hour))
+	})
+
+	t.Run("OIDCClient override consent ttl", func(t *testing.T) {
+		client := &OIDCClient{ConsentTTL: 2 * time.Hour}
+		assert.Equal(t, 2*time.Hour, client.GetConsentTTL(24*time.Hour))
 	})
 }
 

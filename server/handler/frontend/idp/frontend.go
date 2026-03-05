@@ -606,7 +606,8 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 		return
 	}
 
-	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID)
+	client, _ := idp.NewNauthilusIdP(h.deps).FindClient(request.ClientID)
+	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, consentTTLForClient(h.deps.Cfg, client))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),

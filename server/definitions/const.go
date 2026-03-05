@@ -95,6 +95,10 @@ const (
 	// SessionKeyOIDCClients stores a list of OIDC client IDs the user is logged into.
 	SessionKeyOIDCClients = "oidc_clients"
 
+	// SessionKeyOIDCConsentExpiries stores per-client consent expiry timestamps as JSON map.
+	// Format example: {"client-a":1735689600,"client-b":1738291200} (unix seconds).
+	SessionKeyOIDCConsentExpiries = "oidc_consent_expiries"
+
 	// SessionKeyIdPFlowType stores the type of IdP flow (oidc or saml).
 	SessionKeyIdPFlowType = "idp_flow_type"
 
@@ -669,6 +673,9 @@ const (
 
 	// OIDCDeviceCodeDefaultUserCodeLength is the default length for user codes (number of characters).
 	OIDCDeviceCodeDefaultUserCodeLength = 8
+
+	// OIDCConsentDefaultTTL is the default duration a granted OIDC consent remains valid.
+	OIDCConsentDefaultTTL = 30 * 24 * time.Hour
 
 	// OIDCFlowAuthorizationCode identifies the OIDC Authorization Code Grant flow.
 	OIDCFlowAuthorizationCode = "authorization_code"

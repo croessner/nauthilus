@@ -29,6 +29,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -473,6 +474,16 @@ func Test_oidcAuthorizeFlowContext_HasClientConsent(t *testing.T) {
 		assert.True(t, flowContext.HasClientConsent("client2"))
 		assert.False(t, flowContext.HasClientConsent("client3"))
 	})
+
+	t.Run("returns false when consent entry has expired", func(t *testing.T) {
+		expired := time.Now().Add(-time.Minute).Unix()
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyOIDCConsentExpiries: `{"client1":` + strconv.FormatInt(expired, 10) + `}`,
+		}}
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		assert.False(t, flowContext.HasClientConsent("client1"))
+	})
 }
 
 func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
@@ -480,7 +491,7 @@ func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
 		mgr := &mockCookieManager{data: make(map[string]any)}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		flowContext.AddClientConsent("client1")
+		flowContext.AddClientConsent("client1", time.Hour)
 
 		assert.Equal(t, "client1", mgr.data[definitions.SessionKeyOIDCClients])
 	})
@@ -491,7 +502,7 @@ func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
 		}}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		flowContext.AddClientConsent("client2")
+		flowContext.AddClientConsent("client2", time.Hour)
 
 		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
 	})
@@ -502,7 +513,7 @@ func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
 		}}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		flowContext.AddClientConsent("client1")
+		flowContext.AddClientConsent("client1", time.Hour)
 
 		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
 	})

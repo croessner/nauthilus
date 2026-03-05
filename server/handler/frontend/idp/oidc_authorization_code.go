@@ -281,7 +281,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
 
-	oidcFlowContext.AddClientConsent(clientID)
+	oidcFlowContext.AddClientConsent(clientID, consentTTLForClient(h.deps.Cfg, client))
 
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
@@ -444,7 +444,8 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	target := fmt.Sprintf("%s?code=%s&state=%s", session.RedirectURI, code, state)
 
 	if mgr := cookie.GetManager(ctx); mgr != nil {
-		newOIDCAuthorizeFlowContext(mgr).AddClientConsent(session.ClientID)
+		client, _ := h.idp.FindClient(session.ClientID)
+		newOIDCAuthorizeFlowContext(mgr).AddClientConsent(session.ClientID, consentTTLForClient(h.deps.Cfg, client))
 
 		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 		completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())

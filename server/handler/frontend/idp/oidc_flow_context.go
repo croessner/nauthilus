@@ -16,8 +16,11 @@
 package idp
 
 import (
+	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -74,10 +77,34 @@ func (c *oidcAuthorizeFlowContext) HasClientConsent(clientID string) bool {
 		return false
 	}
 
-	oidcClients := c.mgr.GetString(definitions.SessionKeyOIDCClients, "")
-	if oidcClients == "" {
-		return false
+	rawExpiries := c.mgr.GetString(definitions.SessionKeyOIDCConsentExpiries, "")
+	if rawExpiries != "" {
+		expiries := c.getConsentExpiries()
+		if len(expiries) == 0 {
+			return false
+		}
+
+		now := time.Now().Unix()
+		changed := false
+
+		for cid, exp := range expiries {
+			if exp <= now {
+				delete(expiries, cid)
+				changed = true
+			}
+		}
+
+		if changed {
+			c.setConsentExpiries(expiries)
+		}
+
+		exp, ok := expiries[clientID]
+
+		return ok && exp > now
 	}
+
+	// Backward compatibility for sessions created before consent TTL support.
+	oidcClients := c.mgr.GetString(definitions.SessionKeyOIDCClients, "")
 
 	for id := range strings.SplitSeq(oidcClients, ",") {
 		if id == clientID {
@@ -89,7 +116,27 @@ func (c *oidcAuthorizeFlowContext) HasClientConsent(clientID string) bool {
 }
 
 // AddClientConsent appends a client consent marker when not already present.
-func (c *oidcAuthorizeFlowContext) AddClientConsent(clientID string) {
+func (c *oidcAuthorizeFlowContext) AddClientConsent(clientID string, ttl time.Duration) {
+	if c == nil || c.mgr == nil {
+		return
+	}
+
+	c.addClientLoginMarker(clientID)
+
+	if ttl <= 0 {
+		return
+	}
+
+	expiries := c.getConsentExpiries()
+	if expiries == nil {
+		expiries = make(map[string]int64)
+	}
+
+	expiries[clientID] = time.Now().Add(ttl).Unix()
+	c.setConsentExpiries(expiries)
+}
+
+func (c *oidcAuthorizeFlowContext) addClientLoginMarker(clientID string) {
 	if c == nil || c.mgr == nil {
 		return
 	}
@@ -109,6 +156,55 @@ func (c *oidcAuthorizeFlowContext) AddClientConsent(clientID string) {
 	}
 
 	c.mgr.Set(definitions.SessionKeyOIDCClients, oidcClients)
+}
+
+func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string]int64 {
+	raw := c.mgr.GetString(definitions.SessionKeyOIDCConsentExpiries, "")
+	if raw == "" {
+		return nil
+	}
+
+	var expiries map[string]int64
+	if err := json.Unmarshal([]byte(raw), &expiries); err == nil {
+		return expiries
+	}
+
+	// Backward compatibility: old CSV form "client=unix,client2=unix".
+	expiries = make(map[string]int64)
+	for pair := range strings.SplitSeq(raw, ",") {
+		clientID, expRaw, ok := strings.Cut(pair, "=")
+		if !ok || clientID == "" {
+			continue
+		}
+
+		exp, err := strconv.ParseInt(expRaw, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		expiries[clientID] = exp
+	}
+
+	if len(expiries) == 0 {
+		return nil
+	}
+
+	return expiries
+}
+
+func (c *oidcAuthorizeFlowContext) setConsentExpiries(expiries map[string]int64) {
+	if len(expiries) == 0 {
+		c.mgr.Delete(definitions.SessionKeyOIDCConsentExpiries)
+
+		return
+	}
+
+	raw, err := json.Marshal(expiries)
+	if err != nil {
+		return
+	}
+
+	c.mgr.Set(definitions.SessionKeyOIDCConsentExpiries, string(raw))
 }
 
 // ResumeAuthorizeURL reconstructs the /oidc/authorize URL from session cookie data
