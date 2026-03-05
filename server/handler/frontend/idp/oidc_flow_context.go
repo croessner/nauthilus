@@ -18,6 +18,7 @@ package idp
 import (
 	"encoding/json"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -72,35 +73,46 @@ func (c *oidcAuthorizeFlowContext) Account() string {
 
 // HasClientConsent reports whether consent for the given client already
 // exists in the session context.
-func (c *oidcAuthorizeFlowContext) HasClientConsent(clientID string) bool {
+func (c *oidcAuthorizeFlowContext) HasClientConsent(clientID string, requestedScopes []string) bool {
 	if c == nil || c.mgr == nil {
 		return false
 	}
 
-	rawExpiries := c.mgr.GetString(definitions.SessionKeyOIDCConsentExpiries, "")
-	if rawExpiries != "" {
-		expiries := c.getConsentExpiries()
-		if len(expiries) == 0 {
-			return false
-		}
-
+	consents := c.getConsentExpiries()
+	if len(consents) > 0 {
+		requested := normalizeScopes(requestedScopes)
 		now := time.Now().Unix()
 		changed := false
 
-		for cid, exp := range expiries {
-			if exp <= now {
-				delete(expiries, cid)
-				changed = true
+		for cid, grants := range consents {
+			filtered := grants[:0]
+			for _, grant := range grants {
+				if grant.Expiry > now {
+					filtered = append(filtered, grant)
+				} else {
+					changed = true
+				}
 			}
+
+			if len(filtered) == 0 {
+				delete(consents, cid)
+				continue
+			}
+
+			consents[cid] = filtered
 		}
 
 		if changed {
-			c.setConsentExpiries(expiries)
+			c.setConsentExpiries(consents)
 		}
 
-		exp, ok := expiries[clientID]
+		for _, grant := range consents[clientID] {
+			if grant.Covers(requested) {
+				return true
+			}
+		}
 
-		return ok && exp > now
+		return false
 	}
 
 	// Backward compatibility for sessions created before consent TTL support.
@@ -116,7 +128,7 @@ func (c *oidcAuthorizeFlowContext) HasClientConsent(clientID string) bool {
 }
 
 // AddClientConsent appends a client consent marker when not already present.
-func (c *oidcAuthorizeFlowContext) AddClientConsent(clientID string, ttl time.Duration) {
+func (c *oidcAuthorizeFlowContext) AddClientConsent(clientID string, grantedScopes []string, ttl time.Duration) {
 	if c == nil || c.mgr == nil {
 		return
 	}
@@ -127,13 +139,30 @@ func (c *oidcAuthorizeFlowContext) AddClientConsent(clientID string, ttl time.Du
 		return
 	}
 
-	expiries := c.getConsentExpiries()
-	if expiries == nil {
-		expiries = make(map[string]int64)
+	consents := c.getConsentExpiries()
+	if consents == nil {
+		consents = make(map[string][]oidcConsentGrant)
 	}
 
-	expiries[clientID] = time.Now().Add(ttl).Unix()
-	c.setConsentExpiries(expiries)
+	scopes := normalizeScopes(grantedScopes)
+	expiry := time.Now().Add(ttl).Unix()
+	grants := consents[clientID]
+
+	for i := range grants {
+		if slices.Equal(grants[i].Scopes, scopes) {
+			grants[i].Expiry = expiry
+			consents[clientID] = grants
+			c.setConsentExpiries(consents)
+
+			return
+		}
+	}
+
+	consents[clientID] = append(grants, oidcConsentGrant{
+		Scopes: scopes,
+		Expiry: expiry,
+	})
+	c.setConsentExpiries(consents)
 }
 
 func (c *oidcAuthorizeFlowContext) addClientLoginMarker(clientID string) {
@@ -158,19 +187,37 @@ func (c *oidcAuthorizeFlowContext) addClientLoginMarker(clientID string) {
 	c.mgr.Set(definitions.SessionKeyOIDCClients, oidcClients)
 }
 
-func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string]int64 {
+func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string][]oidcConsentGrant {
 	raw := c.mgr.GetString(definitions.SessionKeyOIDCConsentExpiries, "")
 	if raw == "" {
 		return nil
 	}
 
-	var expiries map[string]int64
-	if err := json.Unmarshal([]byte(raw), &expiries); err == nil {
-		return expiries
+	var consents map[string][]oidcConsentGrant
+	if err := json.Unmarshal([]byte(raw), &consents); err == nil {
+		for clientID, grants := range consents {
+			for i := range grants {
+				grants[i].Scopes = normalizeScopes(grants[i].Scopes)
+			}
+			consents[clientID] = grants
+		}
+
+		return consents
+	}
+
+	// Backward compatibility: old JSON form {"client":unix}.
+	var legacy map[string]int64
+	if err := json.Unmarshal([]byte(raw), &legacy); err == nil && len(legacy) > 0 {
+		converted := make(map[string][]oidcConsentGrant, len(legacy))
+		for clientID, expiry := range legacy {
+			converted[clientID] = []oidcConsentGrant{{Expiry: expiry}}
+		}
+
+		return converted
 	}
 
 	// Backward compatibility: old CSV form "client=unix,client2=unix".
-	expiries = make(map[string]int64)
+	consents = make(map[string][]oidcConsentGrant)
 	for pair := range strings.SplitSeq(raw, ",") {
 		clientID, expRaw, ok := strings.Cut(pair, "=")
 		if !ok || clientID == "" {
@@ -182,17 +229,17 @@ func (c *oidcAuthorizeFlowContext) getConsentExpiries() map[string]int64 {
 			continue
 		}
 
-		expiries[clientID] = exp
+		consents[clientID] = append(consents[clientID], oidcConsentGrant{Expiry: exp})
 	}
 
-	if len(expiries) == 0 {
+	if len(consents) == 0 {
 		return nil
 	}
 
-	return expiries
+	return consents
 }
 
-func (c *oidcAuthorizeFlowContext) setConsentExpiries(expiries map[string]int64) {
+func (c *oidcAuthorizeFlowContext) setConsentExpiries(expiries map[string][]oidcConsentGrant) {
 	if len(expiries) == 0 {
 		c.mgr.Delete(definitions.SessionKeyOIDCConsentExpiries)
 
@@ -205,6 +252,52 @@ func (c *oidcAuthorizeFlowContext) setConsentExpiries(expiries map[string]int64)
 	}
 
 	c.mgr.Set(definitions.SessionKeyOIDCConsentExpiries, string(raw))
+}
+
+type oidcConsentGrant struct {
+	Scopes []string `json:"scopes,omitempty"`
+	Expiry int64    `json:"expiry"`
+}
+
+func (g oidcConsentGrant) Covers(requested []string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+
+	// Legacy entries did not store scopes and therefore act as wildcard.
+	if len(g.Scopes) == 0 {
+		return true
+	}
+
+	for _, scope := range requested {
+		if !slices.Contains(g.Scopes, scope) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func normalizeScopes(scopes []string) []string {
+	unique := make([]string, 0, len(scopes))
+	seen := make(map[string]struct{}, len(scopes))
+
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+
+		seen[scope] = struct{}{}
+		unique = append(unique, scope)
+	}
+
+	slices.Sort(unique)
+
+	return unique
 }
 
 // ResumeAuthorizeURL reconstructs the /oidc/authorize URL from session cookie data

@@ -40,32 +40,41 @@ func consentScopeDescriptions(ctx *gin.Context, cfg config.File, logger *slog.Lo
 	lang := consentLanguage(ctx)
 
 	for _, scope := range scopes {
-		if scope == "" {
-			continue
-		}
-
-		// openid is technically mandatory and not user-actionable; do not show it.
-		if scope == definitions.ScopeOpenId {
-			continue
-		}
-
-		if desc, ok := localizedStandardScopeDescription(ctx, cfg, logger, scope); ok {
+		if desc, ok := consentScopeDescription(ctx, cfg, logger, customScopes, lang, scope); ok {
 			descriptions = append(descriptions, desc)
-
-			continue
 		}
-
-		if desc := localizedCustomScopeDescription(customScopes, scope, lang); desc != "" {
-			descriptions = append(descriptions, desc)
-
-			continue
-		}
-
-		// Last fallback: show raw scope name.
-		descriptions = append(descriptions, scope)
 	}
 
 	return descriptions
+}
+
+func consentScopeDescription(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	customScopes []config.Oauth2CustomScope,
+	lang string,
+	scope string,
+) (string, bool) {
+	if scope == "" {
+		return "", false
+	}
+
+	// openid is technically mandatory and not user-actionable; do not show it.
+	if scope == definitions.ScopeOpenId {
+		return "", false
+	}
+
+	if desc, ok := localizedStandardScopeDescription(ctx, cfg, logger, scope); ok {
+		return desc, true
+	}
+
+	if desc := localizedCustomScopeDescription(customScopes, scope, lang); desc != "" {
+		return desc, true
+	}
+
+	// Last fallback: show raw scope name.
+	return scope, true
 }
 
 func localizedStandardScopeDescription(ctx *gin.Context, cfg config.File, logger *slog.Logger, scope string) (string, bool) {

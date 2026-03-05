@@ -398,6 +398,7 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["Allow"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Allow")
 	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
 	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "No additional permissions requested.")
+	data["ConsentModeGranularOptional"] = true
 
 	data["WebAuthnLoginURL"] = "#"
 	data["CSRFToken"] = "dev-csrf-token"
@@ -460,8 +461,23 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["State"] = "test-state"
 	data["Scopes"] = []string{
 		frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your basic profile information"),
-		frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your email address"),
-		frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your group memberships"),
+	}
+	data["OptionalScopeChoices"] = []gin.H{
+		{
+			"Name":        "email",
+			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your email address"),
+			"Checked":     true,
+		},
+		{
+			"Name":        "groups",
+			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Access your group memberships"),
+			"Checked":     true,
+		},
+		{
+			"Name":        "offline_access",
+			"Description": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Maintain access when you are offline"),
+			"Checked":     false,
+		},
 	}
 
 	// Functions used in templates

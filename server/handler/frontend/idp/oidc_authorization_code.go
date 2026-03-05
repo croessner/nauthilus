@@ -236,7 +236,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	// Check if consent is needed
-	needsConsent := !client.SkipConsent && !oidcFlowContext.HasClientConsent(clientID)
+	needsConsent := !client.SkipConsent && !oidcFlowContext.HasClientConsent(clientID, filteredScopes)
 	if !client.SkipConsent && prompt == "consent" {
 		needsConsent = true
 	}
@@ -281,7 +281,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
 
-	oidcFlowContext.AddClientConsent(clientID, consentTTLForClient(h.deps.Cfg, client))
+	oidcFlowContext.AddClientConsent(clientID, filteredScopes, consentTTLForClient(h.deps.Cfg, client))
 
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
@@ -382,9 +382,30 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 		data["ReturnTo"] = ctx.Request.URL.String()
 	}
 
-	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, session.Scopes)
+	client, _ := h.idp.FindClient(session.ClientID)
+	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), session.Scopes)
+	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, plan.Required)
+	optionalScopeChoices := make([]gin.H, 0, len(plan.Optional))
+	customScopes := h.deps.Cfg.GetIdP().OIDC.CustomScopes
+	lang := consentLanguage(ctx)
+
+	for _, scope := range plan.Optional {
+		description, ok := consentScopeDescription(ctx, h.deps.Cfg, h.deps.Logger, customScopes, lang, scope)
+		if !ok {
+			continue
+		}
+
+		optionalScopeChoices = append(optionalScopeChoices, gin.H{
+			"Name":        scope,
+			"Description": description,
+			"Checked":     true,
+		})
+	}
+
 	data["ClientID"] = session.ClientID
 	data["Scopes"] = scopeDescriptions
+	data["ConsentModeGranularOptional"] = plan.Mode == config.OIDCConsentModeGranularOptional
+	data["OptionalScopeChoices"] = optionalScopeChoices
 	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, consentMsgNoAdditional)
 	data["ConsentChallenge"] = consentChallenge
 	data["State"] = state
@@ -426,6 +447,42 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 
 	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "allow").Inc()
 
+	client, ok := h.idp.FindClient(session.ClientID)
+	if !ok {
+		ctx.String(http.StatusBadRequest, "Invalid client configuration")
+
+		return
+	}
+
+	consentMode := client.GetConsentMode(h.deps.Cfg.GetIdP().OIDC.GetConsentMode())
+	if consentMode == config.OIDCConsentModeGranularOptional {
+		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), session.Scopes)
+		grantedScopes, resolveErr := plan.ResolveGranted(ctx.PostFormArray("optional_scope"))
+		if resolveErr != nil {
+			ctx.String(http.StatusBadRequest, "Invalid optional scope selection")
+
+			return
+		}
+
+		user, userErr := h.idp.GetUserByUsername(ctx, session.Username, session.ClientID, "")
+		if userErr != nil {
+			ctx.String(http.StatusInternalServerError, "Internal error loading user details")
+
+			return
+		}
+
+		idTokenClaims, accessTokenClaims, claimsErr := h.idp.GetClaims(ctx, user, client, grantedScopes)
+		if claimsErr != nil {
+			ctx.String(http.StatusInternalServerError, "Internal error mapping claims")
+
+			return
+		}
+
+		session.Scopes = grantedScopes
+		session.IdTokenClaims = idTokenClaims
+		session.AccessTokenClaims = accessTokenClaims
+	}
+
 	// Generate authorization code
 	code := ksuid.New().String()
 
@@ -446,8 +503,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	target := fmt.Sprintf("%s?code=%s&state=%s", session.RedirectURI, code, state)
 
 	if mgr := cookie.GetManager(ctx); mgr != nil {
-		client, _ := h.idp.FindClient(session.ClientID)
-		newOIDCAuthorizeFlowContext(mgr).AddClientConsent(session.ClientID, consentTTLForClient(h.deps.Cfg, client))
+		newOIDCAuthorizeFlowContext(mgr).AddClientConsent(session.ClientID, session.Scopes, consentTTLForClient(h.deps.Cfg, client))
 
 		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 		completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())

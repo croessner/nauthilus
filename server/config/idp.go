@@ -143,6 +143,7 @@ type OIDCConfig struct {
 	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
 	ConsentTTL                         time.Duration       `mapstructure:"consent_ttl"`
+	ConsentMode                        string              `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
 	DeviceCodeExpiry                   time.Duration       `mapstructure:"device_code_expiry"`
 	DeviceCodePollingInterval          int                 `mapstructure:"device_code_polling_interval"`
 	DeviceCodeUserCodeLength           int                 `mapstructure:"device_code_user_code_length"`
@@ -313,6 +314,26 @@ func (o *OIDCConfig) GetConsentTTL() time.Duration {
 	return definitions.OIDCConsentDefaultTTL
 }
 
+const (
+	// OIDCConsentModeAllOrNothing keeps the traditional behavior:
+	// user grants or denies the full requested scope set.
+	OIDCConsentModeAllOrNothing = "all_or_nothing"
+	// OIDCConsentModeGranularOptional allows opting out of optional scopes while required scopes remain mandatory.
+	OIDCConsentModeGranularOptional = "granular_optional"
+)
+
+// GetConsentMode returns the configured global consent mode.
+func (o *OIDCConfig) GetConsentMode() string {
+	if o != nil {
+		mode := strings.ToLower(strings.TrimSpace(o.ConsentMode))
+		if mode == OIDCConsentModeGranularOptional {
+			return OIDCConsentModeGranularOptional
+		}
+	}
+
+	return OIDCConsentModeAllOrNothing
+}
+
 // GetAccessTokenType returns the configured access token type (jwt or opaque).
 func (o *OIDCConfig) GetAccessTokenType() string {
 	if o.AccessTokenType == "" {
@@ -453,6 +474,9 @@ type OIDCClient struct {
 	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
 	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
 	ConsentTTL                        time.Duration     `mapstructure:"consent_ttl"`
+	ConsentMode                       string            `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
+	RequiredScopes                    []string          `mapstructure:"required_scopes"`
+	OptionalScopes                    []string          `mapstructure:"optional_scopes" validate:"omitempty,dive,ne=openid"`
 	SkipConsent                       bool              `mapstructure:"skip_consent"`
 	DelayedResponse                   bool              `mapstructure:"delayed_response"`
 	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
@@ -516,6 +540,26 @@ func (c *OIDCClient) GetConsentTTL(defaultTTL time.Duration) time.Duration {
 	}
 
 	return definitions.OIDCConsentDefaultTTL
+}
+
+// GetConsentMode resolves the client-specific consent mode or falls back to the global default.
+func (c *OIDCClient) GetConsentMode(defaultMode string) string {
+	mode := strings.ToLower(strings.TrimSpace(defaultMode))
+	if mode != OIDCConsentModeGranularOptional {
+		mode = OIDCConsentModeAllOrNothing
+	}
+
+	if c != nil {
+		clientMode := strings.ToLower(strings.TrimSpace(c.ConsentMode))
+		if clientMode == OIDCConsentModeGranularOptional {
+			return OIDCConsentModeGranularOptional
+		}
+		if clientMode == OIDCConsentModeAllOrNothing {
+			return OIDCConsentModeAllOrNothing
+		}
+	}
+
+	return mode
 }
 
 // GetAccessTokenType returns the configured access token type for the client (jwt or opaque).

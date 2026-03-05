@@ -241,6 +241,55 @@ func TestOIDCConsentTTL(t *testing.T) {
 	})
 }
 
+func TestOIDCConsentMode(t *testing.T) {
+	t.Run("OIDCConfig default consent mode", func(t *testing.T) {
+		var cfg *OIDCConfig
+		assert.Equal(t, OIDCConsentModeAllOrNothing, cfg.GetConsentMode())
+
+		cfg = &OIDCConfig{}
+		assert.Equal(t, OIDCConsentModeAllOrNothing, cfg.GetConsentMode())
+	})
+
+	t.Run("OIDCConfig configured consent mode", func(t *testing.T) {
+		cfg := &OIDCConfig{ConsentMode: OIDCConsentModeGranularOptional}
+		assert.Equal(t, OIDCConsentModeGranularOptional, cfg.GetConsentMode())
+	})
+
+	t.Run("OIDCClient inherits global mode", func(t *testing.T) {
+		client := &OIDCClient{}
+		assert.Equal(t, OIDCConsentModeGranularOptional, client.GetConsentMode(OIDCConsentModeGranularOptional))
+	})
+
+	t.Run("OIDCClient override mode", func(t *testing.T) {
+		client := &OIDCClient{ConsentMode: OIDCConsentModeAllOrNothing}
+		assert.Equal(t, OIDCConsentModeAllOrNothing, client.GetConsentMode(OIDCConsentModeGranularOptional))
+	})
+}
+
+func TestOIDCClient_OptionalScopesValidation(t *testing.T) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+
+	t.Run("openid in optional_scopes is rejected", func(t *testing.T) {
+		client := OIDCClient{
+			ClientID:       "client-1",
+			OptionalScopes: []string{"profile", "openid"},
+		}
+
+		err := validate.Struct(client)
+		assert.Error(t, err)
+	})
+
+	t.Run("optional_scopes without openid is valid", func(t *testing.T) {
+		client := OIDCClient{
+			ClientID:       "client-1",
+			OptionalScopes: []string{"profile", "email"},
+		}
+
+		err := validate.Struct(client)
+		assert.NoError(t, err)
+	})
+}
+
 func TestSAML2ServiceProvider_GetAllowedAttributes(t *testing.T) {
 	t.Run("NilServiceProvider", func(t *testing.T) {
 		var sp *SAML2ServiceProvider

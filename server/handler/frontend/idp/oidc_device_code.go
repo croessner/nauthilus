@@ -528,7 +528,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	}
 
 	// No MFA required - check if consent is needed before authorizing
-	if h.deviceCodeNeedsConsent(ctx, request.ClientID) {
+	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
 		mgr := cookie.GetManager(ctx)
 		if mgr == nil {
 			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
@@ -645,7 +645,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	}
 
 	client, _ := h.idp.FindClient(request.ClientID)
-	newOIDCAuthorizeFlowContext(cookie.GetManager(ctx)).AddClientConsent(request.ClientID, consentTTLForClient(h.deps.Cfg, client))
+	newOIDCAuthorizeFlowContext(cookie.GetManager(ctx)).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -696,7 +696,7 @@ func (h *OIDCHandler) renderDeviceVerifyError(ctx *gin.Context, userCode string,
 // deviceCodeNeedsConsent checks whether the device code flow requires user consent for the given client.
 // It mirrors the consent logic from the authorization code grant: consent is needed when
 // the client has not set skip_consent and the user has not previously consented in this session.
-func (h *OIDCHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string) bool {
+func (h *OIDCHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string, requestedScopes []string) bool {
 	client, ok := h.idp.FindClient(clientID)
 	if !ok {
 		return false
@@ -708,7 +708,7 @@ func (h *OIDCHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string) 
 
 	mgr := cookie.GetManager(ctx)
 
-	return !newOIDCAuthorizeFlowContext(mgr).HasClientConsent(clientID)
+	return !newOIDCAuthorizeFlowContext(mgr).HasClientConsent(clientID, requestedScopes)
 }
 
 // deviceConsentPath returns the device consent page path with optional language tag.
@@ -824,7 +824,21 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	}
 
 	client, _ := h.idp.FindClient(request.ClientID)
-	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, consentTTLForClient(h.deps.Cfg, client))
+	consentMode := client.GetConsentMode(h.deps.Cfg.GetIdP().OIDC.GetConsentMode())
+
+	if consentMode == config.OIDCConsentModeGranularOptional {
+		plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), request.Scopes)
+		grantedScopes, resolveErr := plan.ResolveGranted(ctx.PostFormArray("optional_scope"))
+		if resolveErr != nil {
+			h.renderDeviceVerifyError(ctx, request.UserCode, "Invalid optional scope selection")
+
+			return
+		}
+
+		request.Scopes = grantedScopes
+	}
+
+	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
 
 	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
 	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
@@ -855,9 +869,30 @@ func (h *OIDCHandler) buildDeviceConsentPageData(ctx *gin.Context, request *idp.
 	data["Allow"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Allow")
 	data["Deny"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Deny")
 
-	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, request.Scopes)
+	client, _ := h.idp.FindClient(request.ClientID)
+	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), request.Scopes)
+	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, plan.Required)
+	optionalScopeChoices := make([]gin.H, 0, len(plan.Optional))
+	customScopes := h.deps.Cfg.GetIdP().OIDC.CustomScopes
+	lang := consentLanguage(ctx)
+
+	for _, scope := range plan.Optional {
+		description, ok := consentScopeDescription(ctx, h.deps.Cfg, h.deps.Logger, customScopes, lang, scope)
+		if !ok {
+			continue
+		}
+
+		optionalScopeChoices = append(optionalScopeChoices, gin.H{
+			"Name":        scope,
+			"Description": description,
+			"Checked":     true,
+		})
+	}
+
 	data["ClientID"] = request.ClientID
 	data["Scopes"] = scopeDescriptions
+	data["ConsentModeGranularOptional"] = plan.Mode == config.OIDCConsentModeGranularOptional
+	data["OptionalScopeChoices"] = optionalScopeChoices
 	data["NoAdditionalPermissions"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, consentMsgNoAdditional)
 	data["ConsentChallenge"] = ""
 	data["State"] = ""

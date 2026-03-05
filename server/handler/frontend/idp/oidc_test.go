@@ -461,7 +461,7 @@ func Test_oidcAuthorizeFlowContext_HasClientConsent(t *testing.T) {
 		mgr := &mockCookieManager{data: make(map[string]any)}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		assert.False(t, flowContext.HasClientConsent("client1"))
+		assert.False(t, flowContext.HasClientConsent("client1", []string{"openid"}))
 	})
 
 	t.Run("returns true when client is in cookie", func(t *testing.T) {
@@ -470,19 +470,30 @@ func Test_oidcAuthorizeFlowContext_HasClientConsent(t *testing.T) {
 		}}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		assert.True(t, flowContext.HasClientConsent("client1"))
-		assert.True(t, flowContext.HasClientConsent("client2"))
-		assert.False(t, flowContext.HasClientConsent("client3"))
+		assert.True(t, flowContext.HasClientConsent("client1", []string{"openid"}))
+		assert.True(t, flowContext.HasClientConsent("client2", []string{"openid"}))
+		assert.False(t, flowContext.HasClientConsent("client3", []string{"openid"}))
 	})
 
 	t.Run("returns false when consent entry has expired", func(t *testing.T) {
 		expired := time.Now().Add(-time.Minute).Unix()
 		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyOIDCConsentExpiries: `{"client1":` + strconv.FormatInt(expired, 10) + `}`,
+			definitions.SessionKeyOIDCConsentExpiries: `{"client1":[{"scopes":["openid","profile"],"expiry":` + strconv.FormatInt(expired, 10) + `}]}`,
 		}}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		assert.False(t, flowContext.HasClientConsent("client1"))
+		assert.False(t, flowContext.HasClientConsent("client1", []string{"openid"}))
+	})
+
+	t.Run("returns true when requested scopes are covered by granted scopes", func(t *testing.T) {
+		valid := time.Now().Add(time.Minute).Unix()
+		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyOIDCConsentExpiries: `{"client1":[{"scopes":["email","openid","profile"],"expiry":` + strconv.FormatInt(valid, 10) + `}]}`,
+		}}
+		flowContext := newOIDCAuthorizeFlowContext(mgr)
+
+		assert.True(t, flowContext.HasClientConsent("client1", []string{"openid", "profile"}))
+		assert.False(t, flowContext.HasClientConsent("client1", []string{"openid", "groups"}))
 	})
 }
 
@@ -491,7 +502,7 @@ func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
 		mgr := &mockCookieManager{data: make(map[string]any)}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		flowContext.AddClientConsent("client1", time.Hour)
+		flowContext.AddClientConsent("client1", []string{"openid", "profile"}, time.Hour)
 
 		assert.Equal(t, "client1", mgr.data[definitions.SessionKeyOIDCClients])
 	})
@@ -502,7 +513,7 @@ func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
 		}}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		flowContext.AddClientConsent("client2", time.Hour)
+		flowContext.AddClientConsent("client2", []string{"openid"}, time.Hour)
 
 		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
 	})
@@ -513,7 +524,7 @@ func Test_oidcAuthorizeFlowContext_AddClientConsent(t *testing.T) {
 		}}
 		flowContext := newOIDCAuthorizeFlowContext(mgr)
 
-		flowContext.AddClientConsent("client1", time.Hour)
+		flowContext.AddClientConsent("client1", []string{"openid"}, time.Hour)
 
 		assert.Equal(t, "client1,client2", mgr.data[definitions.SessionKeyOIDCClients])
 	})

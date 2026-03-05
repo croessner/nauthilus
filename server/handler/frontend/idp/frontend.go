@@ -538,7 +538,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 // deviceCodeNeedsConsent checks whether the device code flow requires user consent for the given client.
 // It mirrors the consent logic from the authorization code grant: consent is needed when
 // the client has not set skip_consent and the user has not previously consented in this session.
-func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string) bool {
+func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string, requestedScopes []string) bool {
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 
 	client, ok := idpInstance.FindClient(clientID)
@@ -552,7 +552,7 @@ func (h *FrontendHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID stri
 
 	mgr := cookie.GetManager(ctx)
 
-	return !newOIDCAuthorizeFlowContext(mgr).HasClientConsent(clientID)
+	return !newOIDCAuthorizeFlowContext(mgr).HasClientConsent(clientID, requestedScopes)
 }
 
 // completeDeviceCodeFlow authorizes the device code and renders the success page.
@@ -573,7 +573,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	}
 
 	// Check if consent is needed before authorizing
-	if h.deviceCodeNeedsConsent(ctx, request.ClientID) {
+	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
 		lang := ctx.Param("languageTag")
 		consentPath := "/oidc/device/consent"
 
@@ -607,7 +607,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	}
 
 	client, _ := idp.NewNauthilusIdP(h.deps).FindClient(request.ClientID)
-	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, consentTTLForClient(h.deps.Cfg, client))
+	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
