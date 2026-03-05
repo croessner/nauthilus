@@ -58,7 +58,6 @@ func (h *Handler) Register(router gin.IRouter) {
 	authGroup.POST("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.GET("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
 	authGroup.POST("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
-	authGroup.POST("/"+definitions.ServSaslauthd, withService(definitions.ServSaslauthd, h.saslAuthd))
 }
 
 func (h *Handler) basic(ctx *gin.Context) {
@@ -134,36 +133,6 @@ func (h *Handler) nginx(ctx *gin.Context) {
 	ctx.Request = ctx.Request.WithContext(spanCtx)
 
 	h.process(ctx)
-}
-
-func (h *Handler) saslAuthd(ctx *gin.Context) {
-	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthSASLAuthdDisabled() {
-		ctx.AbortWithStatus(http.StatusNotFound)
-
-		return
-	}
-
-	// Minimal custom span for SASL/Authd path
-	tr := monittrace.New("nauthilus/rest")
-	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_saslauthd")
-	defer sp.End()
-
-	// Propagate tracing context
-	ctx.Request = ctx.Request.WithContext(spanCtx)
-
-	// Same pre-processing flow, then run the unified authentication pipeline.
-	auth := h.newAuthState(ctx)
-	if auth == nil {
-		ctx.AbortWithStatus(http.StatusBadRequest)
-
-		return
-	}
-
-	if reject := auth.PreproccessAuthRequest(ctx); reject { //nolint:gosimple // match existing signature
-		return
-	}
-
-	auth.HandleAuthentication(ctx)
 }
 
 func (h *Handler) process(ctx *gin.Context) {

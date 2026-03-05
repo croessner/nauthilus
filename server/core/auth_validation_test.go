@@ -204,7 +204,7 @@ func TestAuthValidation_EmptyUsername_Header(t *testing.T) {
 	assert.ErrorIs(t, ctx.Errors.Last().Err, errors.ErrEmptyUsername)
 }
 
-func TestAuthValidation_EmptyUsername_SASLAuthd(t *testing.T) {
+func TestAuthValidation_EmptyUsername_Form(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
 	deps := setupAuthDeps()
@@ -214,11 +214,11 @@ func TestAuthValidation_EmptyUsername_SASLAuthd(t *testing.T) {
 
 	// Setup request (Empty username in Form)
 	body := []byte("username=&password=pass")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/saslauthd", bytes.NewBuffer(body))
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/json", bytes.NewBuffer(body))
 	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Setup context variables
-	ctx.Set(definitions.CtxServiceKey, definitions.ServSaslauthd)
+	ctx.Set(definitions.CtxServiceKey, definitions.ServJSON)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
 	// Execute

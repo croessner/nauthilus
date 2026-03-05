@@ -790,9 +790,6 @@ const (
 	// ServNginx is a constant for the "nginx" service.
 	ServNginx = "nginx"
 
-	// ServSaslauthd is a constant for the "saslauthd" service.
-	ServSaslauthd = "saslauthd"
-
 	// ServHeader is a constant for the "header" service.
 	ServHeader = "header"
 

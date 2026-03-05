@@ -47,7 +47,7 @@ type Request struct {
 	// Protocol is the application protocol used by the client (e.g., imap, smtp, pop3, http).
 	Protocol string `json:"protocol,omitempty"`
 
-	// Method is the HTTP/SASL method used in the request (e.g., PLAIN, LOGIN, etc.)
+	// Method is the authentication method identifier used in the request.
 	Method string `json:"method,omitempty"`
 
 	XSSL                string `json:"ssl,omitempty"`
