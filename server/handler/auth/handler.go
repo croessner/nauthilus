@@ -151,7 +151,7 @@ func (h *Handler) saslAuthd(ctx *gin.Context) {
 	// Propagate tracing context
 	ctx.Request = ctx.Request.WithContext(spanCtx)
 
-	// Same pre-processing flow but use the specific SASL handler
+	// Same pre-processing flow, then run the unified authentication pipeline.
 	auth := h.newAuthState(ctx)
 	if auth == nil {
 		ctx.AbortWithStatus(http.StatusBadRequest)
@@ -163,7 +163,7 @@ func (h *Handler) saslAuthd(ctx *gin.Context) {
 		return
 	}
 
-	auth.ProcessAuthentication(ctx)
+	auth.HandleAuthentication(ctx)
 }
 
 func (h *Handler) process(ctx *gin.Context) {

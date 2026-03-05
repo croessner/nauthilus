@@ -38,6 +38,12 @@ type TokenValidator interface {
 	ValidateToken(ctx context.Context, tokenString string) (jwt.MapClaims, error)
 }
 
+type EnforceBearerScopeAuthOptions struct {
+	RequiredScopes         []string
+	MissingScopeMessage    string
+	ThrottleOnMissingToken bool
+}
+
 // Middleware returns a Gin middleware that extracts a Bearer token from the
 // Authorization header, validates it via the IdP, and stores the resulting
 // claims in the Gin context under definitions.CtxOIDCClaimsKey.
@@ -46,43 +52,70 @@ type TokenValidator interface {
 // scope, which is required for all backchannel API access.
 func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		tokenString, ok := ExtractBearerToken(ctx)
+		_, ok := EnforceBearerScopeAuth(ctx, validator, cfg, EnforceBearerScopeAuthOptions{
+			RequiredScopes:         []string{definitions.ScopeAuthenticate},
+			MissingScopeMessage:    "missing required scope: " + definitions.ScopeAuthenticate,
+			ThrottleOnMissingToken: true,
+		})
 		if !ok {
-			if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
-				return
-			}
-
-			mdauth.ApplyAuthBackoffOnFailure(ctx)
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				cfg,
+				logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "OIDC token missing required scope: "+definitions.ScopeAuthenticate,
+			)
 
 			return
-		}
-
-		claims := ValidateAndStoreClaims(ctx, validator, cfg, tokenString)
-		if claims == nil {
-			return
-		}
-
-		// Verify the authenticate scope is present
-		if ctx.Query("mode") != "no-auth" {
-			if !HasScope(claims, definitions.ScopeAuthenticate) {
-				util.DebugModuleWithCfg(
-					ctx.Request.Context(),
-					cfg,
-					logger,
-					definitions.DbgIdp,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, "OIDC token missing required scope: "+definitions.ScopeAuthenticate,
-				)
-
-				ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required scope: " + definitions.ScopeAuthenticate})
-
-				return
-			}
 		}
 
 		ctx.Next()
 	}
+}
+
+func EnforceBearerScopeAuth(
+	ctx *gin.Context,
+	validator TokenValidator,
+	cfg config.File,
+	options EnforceBearerScopeAuthOptions,
+) (jwt.MapClaims, bool) {
+	tokenString, ok := ExtractBearerToken(ctx)
+	if !ok {
+		if options.ThrottleOnMissingToken {
+			if mdauth.MaybeThrottleAuthByIP(ctx, cfg) {
+				return nil, false
+			}
+
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
+		}
+
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
+
+		return nil, false
+	}
+
+	claims := ValidateAndStoreClaims(ctx, validator, cfg, tokenString)
+	if claims == nil {
+		return nil, false
+	}
+
+	if len(options.RequiredScopes) == 0 {
+		return claims, true
+	}
+
+	if !HasAnyScope(claims, options.RequiredScopes...) {
+		msg := options.MissingScopeMessage
+		if msg == "" {
+			msg = "insufficient permissions"
+		}
+
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": msg})
+
+		return nil, false
+	}
+
+	return claims, true
 }
 
 // ValidateAndStoreClaims validates the given bearer token, stores the resulting

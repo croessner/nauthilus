@@ -111,14 +111,13 @@ func TestAuthValidation_EmptyUsername_BasicAuth(t *testing.T) {
 	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
 
 	// For Basic Auth, NewAuthStateWithSetupWithDeps doesn't fail if headers are missing,
-	// because it only sets up the state. The actual extraction happens in ProcessFeatures or ProcessAuthentication.
+	// because it only sets up the state. The actual extraction happens in HandleAuthentication.
 	assert.NotNil(t, auth)
 
 	// Now simulate the handler processing
 	authState := auth.(*AuthState)
-	abort := authState.ProcessFeatures(ctx)
+	authState.HandleAuthentication(ctx)
 
-	assert.True(t, abort)
 	assert.True(t, ctx.IsAborted())
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
@@ -145,7 +144,7 @@ func TestAuthValidation_EmptyCredentials_BasicAuth(t *testing.T) {
 
 	// Now simulate the handler processing
 	authState := auth.(*AuthState)
-	_ = authState.ProcessFeatures(ctx)
+	authState.HandleAuthentication(ctx)
 
 	// Check if errors were registered
 	assert.Len(t, ctx.Errors, 2)

@@ -296,6 +296,9 @@ type Metrics interface {
 
 	// GetIdpMfaOperationsTotal tracks the total number of IdP MFA operations.
 	GetIdpMfaOperationsTotal() *prometheus.CounterVec
+
+	// GetAuthFSMTransitionsTotal tracks auth FSM transitions labeled by from/event/to.
+	GetAuthFSMTransitionsTotal() *prometheus.CounterVec
 }
 
 type metricsImpl struct {
@@ -355,6 +358,7 @@ type metricsImpl struct {
 	idpTokensIssuedTotal      *prometheus.CounterVec
 	idpConsentTotal           *prometheus.CounterVec
 	idpMfaOperationsTotal     *prometheus.CounterVec
+	authFSMTransitionsTotal   *prometheus.CounterVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -630,6 +634,11 @@ func (m *metricsImpl) GetIdpConsentTotal() *prometheus.CounterVec {
 // GetIdpMfaOperationsTotal returns the idpMfaOperationsTotal field.
 func (m *metricsImpl) GetIdpMfaOperationsTotal() *prometheus.CounterVec {
 	return m.idpMfaOperationsTotal
+}
+
+// GetAuthFSMTransitionsTotal returns the authFSMTransitionsTotal field.
+func (m *metricsImpl) GetAuthFSMTransitionsTotal() *prometheus.CounterVec {
+	return m.authFSMTransitionsTotal
 }
 
 func NewMetrics() Metrics {
@@ -981,6 +990,13 @@ func NewMetrics() Metrics {
 				Name: "idp_mfa_operations_total",
 				Help: "The total number of IdP MFA operations",
 			}, []string{"type", "method", "status"},
+		),
+		authFSMTransitionsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "auth_fsm_transitions_total",
+				Help: "Total number of auth FSM transitions",
+			},
+			[]string{"from", "event", "to"},
 		),
 	}
 }

@@ -22,6 +22,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"sort"
@@ -185,41 +186,16 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 
 		level.Info(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMode, ctx.Query("mode"))
 	} else {
-		if abort := a.ProcessFeatures(ctx); !abort {
-			a.ProcessAuthentication(ctx)
-		}
+		a.runAuthPipelineFSM(ctx)
 	}
 }
 
-// ProcessFeatures handles the processing of authentication-related features for a given context.
-// It determines the action to take based on various authentication results and applies the necessary response.
-func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
+func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
+	current := authFSMStateInputParsed
+
 	if a.Request.Service == definitions.ServBasic {
-		var httpBasicAuthOk bool
-
-		// Decode HTTP basic Auth
-		username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
-		a.Request.Username = username
-		passwordBytes := []byte(password)
-		a.Request.Password = secret.FromBytes(passwordBytes)
-		clear(passwordBytes)
-		password = ""
-		ctx.Request.Header.Del("Authorization")
-		if !httpBasicAuthOk {
-			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
-
-			return true
-		}
-
-		if a.Request.Username == "" {
-			ctx.Error(errors.ErrEmptyUsername)
-		} else if !util.ValidateUsername(a.Request.Username) {
-			ctx.Error(errors.ErrInvalidUsername)
-		}
-
-		if a.Request.Password.IsZero() {
-			ctx.Error(errors.ErrEmptyPassword)
+		if abort := a.processBasicAuthInput(ctx); abort {
+			return
 		}
 	}
 
@@ -227,45 +203,38 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 		a.handleMasterUserMode()
 	}
 
-	if !a.Request.NoAuth && !ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
-		switch a.HandleFeatures(ctx) {
-		case definitions.AuthResultFeatureTLS:
-			result := GetPassDBResultFromPool()
-			a.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			a.AuthTempFail(ctx, definitions.TempFailNoTLS)
-			ctx.Abort()
-
-			return true
-		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-			result := GetPassDBResultFromPool()
-			a.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			a.AuthFail(ctx)
-			ctx.Abort()
-
-			return true
-		case definitions.AuthResultUnset:
-			return true
-		case definitions.AuthResultOK:
-			return false
-		case definitions.AuthResultTempFail:
-			a.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return true
-		default:
-			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-
-			return true
-		}
+	if ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		// Local-cache hit represents a previously authenticated identity.
+		// Ensure feature predicates based on Authenticated evaluate consistently.
+		a.Runtime.Authenticated = true
 	}
 
-	return false
-}
+	featureResult := a.HandleFeatures(ctx)
 
-// ProcessAuthentication handles the authentication logic for all services.
-func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
+	event, ok := mapAuthFeatureResultToFSMEvent(featureResult)
+	if !ok {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	nextState, err := nextAuthFSMState(current, event)
+	if err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	a.auditAuthFSMTransition(current, event, nextState)
+
+	if nextState != authFSMStateFeaturesChecked {
+		a.applyFeatureFSMOutcome(ctx, nextState, featureResult)
+
+		return
+	}
+
+	current = nextState
+
 	if a.Request.Service == definitions.ServBasic {
 		var httpBasicAuthOk bool
 
@@ -283,41 +252,261 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 			httpBasicAuthOk = true
 		}
 
-		if httpBasicAuthOk {
-			a.AuthOK(ctx)
+		event = mapBasicAuthCheckToFSMEvent(httpBasicAuthOk)
+		nextState, err = nextAuthFSMState(current, event)
+		if err != nil {
+			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+			return
 		}
+
+		a.auditAuthFSMTransition(current, event, nextState)
+
+		// Keep previous behavior for failed basic checks: abort only (no AuthFail side effects).
+		dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
+			onAuthOK: func() {
+				a.AuthOK(ctx)
+			},
+			onAuthFail: func() {
+				ctx.Abort()
+			},
+			onInvalid: func() {
+				ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+			},
+		})
 
 		return
 	}
 
-	if a.Request.Service == definitions.ServIdP {
-		a.handleMasterUserMode()
+	passwordResult := a.HandlePassword(ctx)
+
+	nextState, err = nextAuthFSMState(current, authFSMEventPasswordEvaluated)
+	if err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
 	}
 
-	switch a.HandlePassword(ctx) {
-	case definitions.AuthResultOK:
-		if a.deps.Tolerate != nil {
-			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, true)
-		}
-		a.AuthOK(ctx)
-	case definitions.AuthResultFail:
-		if a.deps.Tolerate != nil {
-			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, false)
-		}
-		a.AuthFail(ctx)
-		ctx.Abort()
-	case definitions.AuthResultTempFail:
-		a.AuthTempFail(ctx, definitions.TempFailDefault)
-		ctx.Abort()
-	case definitions.AuthResultEmptyUsername:
-		a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
-		ctx.Abort()
-	case definitions.AuthResultEmptyPassword:
-		a.AuthFail(ctx)
-		ctx.Abort()
-	default:
+	a.auditAuthFSMTransition(current, authFSMEventPasswordEvaluated, nextState)
+	current = nextState
+
+	event, ok = mapAuthPasswordResultToFSMEvent(passwordResult)
+	if !ok {
 		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
 	}
+
+	nextState, err = nextAuthFSMState(current, event)
+	if err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	a.auditAuthFSMTransition(current, event, nextState)
+	a.applyPasswordFSMOutcome(ctx, nextState, passwordResult)
+}
+
+func (a *AuthState) processBasicAuthInput(ctx *gin.Context) (abort bool) {
+	var httpBasicAuthOk bool
+
+	// Decode HTTP basic Auth
+	username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
+	a.Request.Username = username
+	passwordBytes := []byte(password)
+	a.Request.Password = secret.FromBytes(passwordBytes)
+	clear(passwordBytes)
+	password = ""
+	ctx.Request.Header.Del("Authorization")
+	if !httpBasicAuthOk {
+		ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
+
+		return true
+	}
+
+	if a.Request.Username == "" {
+		ctx.Error(errors.ErrEmptyUsername)
+	} else if !util.ValidateUsername(a.Request.Username) {
+		ctx.Error(errors.ErrInvalidUsername)
+	}
+
+	if a.Request.Password.IsZero() {
+		ctx.Error(errors.ErrEmptyPassword)
+	}
+
+	return false
+}
+
+func (a *AuthState) auditAuthFSMTransition(from authFSMState, event authFSMEvent, to authFSMState) {
+	stats.GetMetrics().GetAuthFSMTransitionsTotal().WithLabelValues(string(from), string(event), string(to)).Inc()
+
+	if a.deps.Logger == nil || a.deps.Cfg == nil {
+		return
+	}
+
+	if a.deps.Cfg.GetServer().GetLog().GetLogLevel() < definitions.LogLevelDebug {
+		return
+	}
+
+	level.Debug(a.deps.Logger).Log(
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		"component", "auth_fsm",
+		"from", string(from),
+		"event", string(event),
+		"to", string(to),
+	)
+}
+
+func mapAuthFeatureResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
+	switch result {
+	case definitions.AuthResultFeatureTLS:
+		return authFSMEventFeaturesTempFail, true
+	case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
+		return authFSMEventFeaturesFail, true
+	case definitions.AuthResultUnset:
+		return authFSMEventFeaturesUnset, true
+	case definitions.AuthResultOK:
+		return authFSMEventFeaturesOK, true
+	case definitions.AuthResultTempFail:
+		return authFSMEventFeaturesTempFail, true
+	default:
+		return "", false
+	}
+}
+
+func (a *AuthState) applyFeatureFSMOutcome(ctx *gin.Context, nextState authFSMState, featureResult definitions.AuthResult) bool {
+	if nextState == authFSMStateFeaturesChecked {
+		return false
+	}
+
+	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
+		onAuthFail: func() {
+			result := GetPassDBResultFromPool()
+			a.PostLuaAction(ctx, result)
+			PutPassDBResultToPool(result)
+			a.AuthFail(ctx)
+			ctx.Abort()
+		},
+		onAuthTempFail: func() {
+			if featureResult == definitions.AuthResultFeatureTLS {
+				result := GetPassDBResultFromPool()
+				a.PostLuaAction(ctx, result)
+				PutPassDBResultToPool(result)
+				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
+				ctx.Abort()
+
+				return
+			}
+
+			a.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+		},
+		// Keep previous behavior for AuthResultUnset: stop processing without aborting context.
+		onAborted: func() {},
+		onInvalid: func() {
+			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+		},
+	})
+
+	return true
+}
+
+type authFSMTerminalHandlers struct {
+	onAuthOK       func()
+	onAuthFail     func()
+	onAuthTempFail func()
+	onAborted      func()
+	onInvalid      func()
+}
+
+func dispatchAuthFSMTerminalOutcome(nextState authFSMState, handlers authFSMTerminalHandlers) bool {
+	switch nextState {
+	case authFSMStateAuthOK:
+		if handlers.onAuthOK != nil {
+			handlers.onAuthOK()
+		}
+		return true
+	case authFSMStateAuthFail:
+		if handlers.onAuthFail != nil {
+			handlers.onAuthFail()
+		}
+		return true
+	case authFSMStateAuthTempFail:
+		if handlers.onAuthTempFail != nil {
+			handlers.onAuthTempFail()
+		}
+		return true
+	case authFSMStateAborted:
+		if handlers.onAborted != nil {
+			handlers.onAborted()
+		}
+		return true
+	default:
+		if handlers.onInvalid != nil {
+			handlers.onInvalid()
+		}
+		return false
+	}
+}
+
+func mapBasicAuthCheckToFSMEvent(ok bool) authFSMEvent {
+	if ok {
+		return authFSMEventBasicAuthOK
+	}
+
+	return authFSMEventBasicAuthFail
+}
+
+func mapAuthPasswordResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
+	switch result {
+	case definitions.AuthResultOK:
+		return authFSMEventPasswordOK, true
+	case definitions.AuthResultFail:
+		return authFSMEventPasswordFail, true
+	case definitions.AuthResultTempFail:
+		return authFSMEventPasswordTempFail, true
+	case definitions.AuthResultEmptyUsername:
+		return authFSMEventPasswordEmptyUser, true
+	case definitions.AuthResultEmptyPassword:
+		return authFSMEventPasswordEmptyPass, true
+	default:
+		return "", false
+	}
+}
+
+func (a *AuthState) applyPasswordFSMOutcome(ctx *gin.Context, nextState authFSMState, passwordResult definitions.AuthResult) {
+	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
+		onAuthOK: func() {
+			if a.deps.Tolerate != nil {
+				a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, true)
+			}
+
+			a.AuthOK(ctx)
+		},
+		onAuthFail: func() {
+			if a.deps.Tolerate != nil {
+				a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, false)
+			}
+
+			a.AuthFail(ctx)
+			ctx.Abort()
+		},
+		onAuthTempFail: func() {
+			// Preserve legacy behavior: empty-username uses dedicated temp-fail reason.
+			if passwordResult == definitions.AuthResultEmptyUsername {
+				a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
+			} else {
+				a.AuthTempFail(ctx, definitions.TempFailDefault)
+			}
+
+			ctx.Abort()
+		},
+		onInvalid: func() {
+			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+		},
+	})
 }
 
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis using the
@@ -1528,9 +1717,7 @@ func applyAsyncJobTransition(
 			updates := make(map[string]any, len(fields)+1)
 			updates["status"] = string(nextState)
 
-			for k, v := range fields {
-				updates[k] = v
-			}
+			maps.Copy(updates, fields)
 
 			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 				pipe.HSet(ctx, key, updates)

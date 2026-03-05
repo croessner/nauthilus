@@ -290,13 +290,6 @@ type State interface {
 	// HandlePassword processes the password-based authentication for a user and returns the authentication result.
 	HandlePassword(ctx *gin.Context) definitions.AuthResult
 
-	// ProcessFeatures evaluates and processes feature-related data from the request context.
-	// It returns a boolean indicating whether the process should abort further execution.
-	ProcessFeatures(ctx *gin.Context) (abort bool)
-
-	// ProcessAuthentication processes authentication requests using.
-	ProcessAuthentication(ctx *gin.Context)
-
 	// FilterLua applies Lua-based filtering logic to the provided execution context and PassDBResult.
 	// It returns an AuthResult indicating the outcome of the filtering process.
 	FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
@@ -2541,14 +2534,6 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	// the PassDB stage has already decided previously. Reflect that in AuthState
 	// so final logs include authn=true for cache hits.
 	a.Runtime.Authenticated = true
-
-	// Run features for cache hits (authenticated state).
-	// Features with when_authenticated=true will be evaluated.
-	featureResult := a.HandleFeatures(ctx)
-
-	if featureResult != definitions.AuthResultOK {
-		return featureResult
-	}
 
 	authResult := definitions.AuthResultOK
 
