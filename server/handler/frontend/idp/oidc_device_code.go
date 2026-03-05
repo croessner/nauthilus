@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/stats"
@@ -411,19 +412,94 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 		// Determine auth result for delayed response behavior
 		authResult := uint8(definitions.AuthResultOK)
+		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+		oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+		existingFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+		existingFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
+		createdFlowID := ksuid.New().String()
 
-		mgr.Set(definitions.SessionKeyUsername, username)
-		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-		mgr.Set(definitions.SessionKeyAuthResult, authResult)
-		mgr.Set(definitions.SessionKeyProtocol, protocol)
-		mgr.Set(definitions.SessionKeyIdPFlowActive, true)
-		mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoOIDC)
-		mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowDeviceCode)
-		mgr.Set(definitions.SessionKeyIdPClientID, request.ClientID)
-		mgr.Set(definitions.SessionKeyDeviceCode, deviceCode)
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC device flow creating flow state",
+			"flow_branch", "device_verify_mfa",
+			"http_method", ctx.Request.Method,
+			"request_uri", ctx.Request.RequestURI,
+			"request_host", ctx.Request.Host,
+			"origin", ctx.GetHeader("Origin"),
+			"referer", ctx.GetHeader("Referer"),
+			"user_agent", ctx.GetHeader("User-Agent"),
+			"x_forwarded_host", ctx.GetHeader("X-Forwarded-Host"),
+			"x_forwarded_proto", ctx.GetHeader("X-Forwarded-Proto"),
+			"account_present", mgr.GetString(definitions.SessionKeyAccount, "") != "",
+			"existing_flow_id", existingFlowID,
+			"existing_flow_type", existingFlowType,
+			"existing_grant_type", existingGrantType,
+			"new_flow_id", createdFlowID,
+			"client_id", request.ClientID,
+			"device_code", deviceCode,
+		)
 
-		multi := availability.count > 1
-		mgr.Set(definitions.SessionKeyMFAMulti, multi)
+		decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
+			FlowID:       createdFlowID,
+			FlowType:     flowdomain.FlowTypeOIDCDeviceCode,
+			Protocol:     flowdomain.FlowProtocolOIDC,
+			CurrentStep:  flowdomain.FlowStepStart,
+			GrantType:    definitions.OIDCFlowDeviceCode,
+			ReturnTarget: h.frontend.getMFASelectPath(ctx),
+			Metadata: map[string]string{
+				flowdomain.FlowMetadataClientID:     request.ClientID,
+				flowdomain.FlowMetadataDeviceCode:   deviceCode,
+				flowdomain.FlowMetadataResumeTarget: flowdomain.FlowMetadataResumeTargetDeviceCodeComplete,
+			},
+		}, time.Now())
+		if err != nil {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "OIDC device flow creation failed",
+				"flow_branch", "device_verify_mfa",
+				"new_flow_id", createdFlowID,
+				"error", err,
+			)
+
+			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+			return
+		}
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC device flow creation completed",
+			"flow_branch", "device_verify_mfa",
+			"new_flow_id", createdFlowID,
+			"redirect_target", decision.RedirectURI,
+		)
+
+		oidcFlowContext.StoreMFAContext(
+			username,
+			user.Id,
+			deviceCode,
+			request.ClientID,
+			protocol,
+			authResult,
+			availability.count > 1,
+		)
+
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepDeviceVerification)
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepMFA)
 
 		mgr.Debug(ctx, h.deps.Logger, "Device code MFA required - session data stored")
 
@@ -439,15 +515,14 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			"mfa_count", availability.count,
 		)
 
+		redirectTarget := decision.RedirectURI
+
 		// Redirect to the appropriate MFA page
 		if redirectURL, ok := h.frontend.getMFARedirectURLFromCookie(ctx, user); ok {
-			ctx.Redirect(http.StatusFound, redirectURL)
-
-			return
+			redirectTarget = redirectURL
 		}
 
-		// Multiple MFA options - redirect to selection page
-		ctx.Redirect(http.StatusFound, h.frontend.getMFASelectPath(ctx))
+		ctx.Redirect(http.StatusFound, redirectTarget)
 
 		return
 	}
@@ -461,12 +536,83 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			return
 		}
 
-		mgr.Set(definitions.SessionKeyIdPFlowActive, true)
-		mgr.Set(definitions.SessionKeyIdPFlowType, definitions.ProtoOIDC)
-		mgr.Set(definitions.SessionKeyOIDCGrantType, definitions.OIDCFlowDeviceCode)
-		mgr.Set(definitions.SessionKeyIdPClientID, request.ClientID)
-		mgr.Set(definitions.SessionKeyDeviceCode, deviceCode)
-		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
+		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+		existingFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+		existingFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+		existingGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
+		createdFlowID := ksuid.New().String()
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC device flow creating flow state",
+			"flow_branch", "device_verify_consent",
+			"http_method", ctx.Request.Method,
+			"request_uri", ctx.Request.RequestURI,
+			"request_host", ctx.Request.Host,
+			"origin", ctx.GetHeader("Origin"),
+			"referer", ctx.GetHeader("Referer"),
+			"user_agent", ctx.GetHeader("User-Agent"),
+			"x_forwarded_host", ctx.GetHeader("X-Forwarded-Host"),
+			"x_forwarded_proto", ctx.GetHeader("X-Forwarded-Proto"),
+			"account_present", mgr.GetString(definitions.SessionKeyAccount, "") != "",
+			"existing_flow_id", existingFlowID,
+			"existing_flow_type", existingFlowType,
+			"existing_grant_type", existingGrantType,
+			"new_flow_id", createdFlowID,
+			"client_id", request.ClientID,
+			"device_code", deviceCode,
+		)
+
+		decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
+			FlowID:       createdFlowID,
+			FlowType:     flowdomain.FlowTypeOIDCDeviceCode,
+			Protocol:     flowdomain.FlowProtocolOIDC,
+			CurrentStep:  flowdomain.FlowStepStart,
+			GrantType:    definitions.OIDCFlowDeviceCode,
+			ReturnTarget: h.deviceConsentPath(ctx),
+			Metadata: map[string]string{
+				flowdomain.FlowMetadataClientID:     request.ClientID,
+				flowdomain.FlowMetadataDeviceCode:   deviceCode,
+				flowdomain.FlowMetadataResumeTarget: flowdomain.FlowMetadataResumeTargetDeviceCodeComplete,
+			},
+		}, time.Now())
+		if err != nil {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "OIDC device flow creation failed",
+				"flow_branch", "device_verify_consent",
+				"new_flow_id", createdFlowID,
+				"error", err,
+			)
+
+			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+			return
+		}
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC device flow creation completed",
+			"flow_branch", "device_verify_consent",
+			"new_flow_id", createdFlowID,
+			"redirect_target", decision.RedirectURI,
+		)
+
+		oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+
+		oidcFlowContext.StoreConsentContext(deviceCode, request.ClientID, user.Id)
 
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -479,7 +625,11 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			"username", username,
 		)
 
-		ctx.Redirect(http.StatusFound, h.deviceConsentPath(ctx))
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepDeviceVerification)
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
+		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepConsent)
+
+		ctx.Redirect(http.StatusFound, decision.RedirectURI)
 
 		return
 	}
@@ -494,7 +644,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		return
 	}
 
-	addClientToCookie(cookie.GetManager(ctx), request.ClientID)
+	newOIDCAuthorizeFlowContext(cookie.GetManager(ctx)).AddClientConsent(request.ClientID)
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -557,7 +707,7 @@ func (h *OIDCHandler) deviceCodeNeedsConsent(ctx *gin.Context, clientID string) 
 
 	mgr := cookie.GetManager(ctx)
 
-	return !hasClientConsent(mgr, clientID)
+	return !newOIDCAuthorizeFlowContext(mgr).HasClientConsent(clientID)
 }
 
 // deviceConsentPath returns the device consent page path with optional language tag.
@@ -582,7 +732,8 @@ func (h *OIDCHandler) DeviceConsentGET(ctx *gin.Context) {
 		return
 	}
 
-	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+	oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+	deviceCode := oidcFlowContext.DeviceCode()
 	if deviceCode == "" {
 		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
 
@@ -615,7 +766,8 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
+	oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+	deviceCode := oidcFlowContext.DeviceCode()
 	if deviceCode == "" {
 		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
 
@@ -640,9 +792,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 
 		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
 
-		// Clean up device code flow session data
-		mgr.Delete(definitions.SessionKeyDeviceCode)
-		CleanupIdPFlowState(mgr)
+		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -664,7 +814,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "allow").Inc()
 
 	request.Status = idp.DeviceCodeStatusAuthorized
-	request.UserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	request.UserID = oidcFlowContext.UniqueUserID()
 
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
@@ -672,11 +822,10 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	addClientToCookie(mgr, request.ClientID)
+	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID)
 
-	// Clean up device code flow session data
-	mgr.Delete(definitions.SessionKeyDeviceCode)
-	CleanupIdPFlowState(mgr)
+	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepCallback)
+	completeFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),

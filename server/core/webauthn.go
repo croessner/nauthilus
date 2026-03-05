@@ -880,6 +880,8 @@ func buildAuthenticatorSelection(cfg config.File) protocol.AuthenticatorSelectio
 	}
 
 	switch webAuthnCfg.GetAuthenticatorAttachment() {
+	case "":
+		// Do not select an authenticator attachment. Let the browser make the decision.
 	case "platform":
 		authSelect.AuthenticatorAttachment = protocol.Platform
 	case "cross-platform":

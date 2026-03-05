@@ -95,12 +95,11 @@ const (
 	// SessionKeyOIDCClients stores a list of OIDC client IDs the user is logged into.
 	SessionKeyOIDCClients = "oidc_clients"
 
-	// SessionKeyIdPFlowActive indicates that an IdP flow (OIDC or SAML2) is currently active.
-	// This prevents direct access to /login without a valid IdP flow.
-	SessionKeyIdPFlowActive = "idp_flow_active"
-
 	// SessionKeyIdPFlowType stores the type of IdP flow (oidc or saml).
 	SessionKeyIdPFlowType = "idp_flow_type"
+
+	// SessionKeyIdPFlowID stores the opaque flow identifier used as reference to external state.
+	SessionKeyIdPFlowID = "idp_flow_id"
 
 	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
 	SessionKeyIdPClientID = "idp_client_id"
@@ -155,6 +154,10 @@ const (
 	// SessionKeyRequireMFAPending holds the MFA methods still requiring registration,
 	// encoded as a comma-separated string (e.g. "totp,webauthn" or "webauthn").
 	SessionKeyRequireMFAPending = "require_mfa_pending"
+
+	// SessionKeyRequireMFAParentFlowID stores the original IdP flow id while the
+	// temporary require_mfa sub-flow is active.
+	SessionKeyRequireMFAParentFlowID = "require_mfa_parent_flow_id"
 )
 
 // FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.

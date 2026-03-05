@@ -334,7 +334,7 @@ func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testin
 	}
 
 	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyIdPFlowActive:     true,
+		definitions.SessionKeyIdPFlowID:         "flow-require-mfa",
 		definitions.SessionKeyRequireMFAFlow:    true,
 		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
 		definitions.SessionKeyIdPFlowType:       definitions.ProtoOIDC,
@@ -347,6 +347,8 @@ func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testin
 	assert.False(t, redirected)
 	assert.False(t, mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false))
 	assert.Empty(t, mgr.GetString(definitions.SessionKeyRequireMFAPending, ""))
+	assert.Equal(t, "flow-require-mfa", mgr.GetString(definitions.SessionKeyIdPFlowID, ""))
+	assert.Equal(t, definitions.ProtoOIDC, mgr.GetString(definitions.SessionKeyIdPFlowType, ""))
 	assert.Empty(t, recorder.Header().Get("Location"))
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }

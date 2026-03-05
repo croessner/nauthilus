@@ -48,11 +48,80 @@ func registerAuthorizationCodeRoutes(
 
 	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, oauth2Config.RedirectURL, oauth2Config.Scopes)
 
-	http.HandleFunc("/", handleAuthCodeLogin(&oauth2Config))
+	http.HandleFunc("/", handleAuthCodeHome())
+	http.HandleFunc("/start", handleAuthCodeLogin(&oauth2Config))
 	http.HandleFunc("/oauth2", handleAuthCodeCallback(ctx, provider, &oauth2Config, providerClaims, verifier, tmpl, scopes))
 	http.HandleFunc("/frontchannel-logout", handleFrontChannelLogout)
 	http.HandleFunc("/backchannel-logout", handleBackChannelLogout(ctx, verifier))
 	http.HandleFunc("/logout-callback", handleLogoutCallback)
+}
+
+// handleAuthCodeHome renders a small landing page so that incidental GET / requests
+// do not implicitly start a fresh OIDC authorization flow.
+func handleAuthCodeHome() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+
+		_, _ = fmt.Fprint(w, `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OIDC Test Client</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; line-height: 1.5; background-color: #f9f9f9; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 2em; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        h2 { color: #555; margin-top: 1.5em; border-bottom: 2px solid #eee; padding-bottom: 0.3em; }
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.8em;
+        }
+        .status-info { background-color: #e7f3fe; color: #1f4f7a; border: 1px solid #b9dfff; }
+        .start-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #5cb85c;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+        .start-btn:hover { background-color: #4cae4c; }
+        .section { margin-bottom: 2em; }
+        .info-box {
+            background-color: #e7f3fe;
+            border-left: 6px solid #2196F3;
+            margin-bottom: 15px;
+            padding: 4px 12px;
+        }
+        code { background: #f4f4f4; padding: 0.2em 0.35em; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OIDC Test Client</h1>
+
+        <div class="section">
+            <h2>Flow Status</h2>
+            <span class="status-badge status-info">Ready to Start</span>
+        </div>
+
+        <div class="section">
+            <h2>Authorization Code Flow</h2>
+            <p>Use the button below to begin the login flow.</p>
+            <a class="start-btn" href="/start">Start Login</a>
+        </div>
+    </div>
+</body>
+</html>
+`)
+	}
 }
 
 // handleAuthCodeLogin returns the handler that initiates the Authorization Code flow

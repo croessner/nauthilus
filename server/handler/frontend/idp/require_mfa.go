@@ -16,14 +16,17 @@
 package idp
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/idp"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/gin-gonic/gin"
 )
 
@@ -93,8 +96,37 @@ func (h *FrontendHandler) clearRequireMFARegistrationState(mgr cookie.Manager) {
 		return
 	}
 
-	mgr.Delete(definitions.SessionKeyRequireMFAFlow)
-	mgr.Delete(definitions.SessionKeyRequireMFAPending)
+	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID != "require-mfa-flow" {
+		flowdomain.ClearRequireMFAContext(mgr)
+
+		return
+	}
+
+	// Preserve the original IdP flow type and grant type before aborting the
+	// require-mfa sub-flow, because Abort → Delete removes SessionKeyIdPFlowType
+	// from the cookie. Without restoring these keys, the resumed parent flow loses
+	// protocol context and cannot be continued deterministically.
+	savedFlowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
+	savedGrantType := mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
+	savedParentFlowID := mgr.GetString(definitions.SessionKeyRequireMFAParentFlowID, "")
+
+	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
+	if _, err := controller.Abort(context.Background(), "require-mfa-flow"); err != nil {
+		flowdomain.ClearRequireMFAContext(mgr)
+
+		return
+	}
+
+	// Restore the original IdP flow context so that the caller can still
+	// redirect back to the correct IdP endpoint (OIDC authorize, SAML SSO, etc.).
+	flowdomain.RestoreFlowCookieContext(mgr, savedFlowType, savedGrantType)
+	if savedParentFlowID != "" {
+		mgr.Set(definitions.SessionKeyIdPFlowID, savedParentFlowID)
+	}
+
+	flowdomain.SetRequireMFAPending(mgr, "")
 }
 
 // checkRequireMFARegistrationAndRedirect compares the mandatory MFA methods for the
@@ -110,7 +142,7 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 		return false
 	}
 
-	if !mgr.GetBool(definitions.SessionKeyIdPFlowActive, false) {
+	if mgr.GetString(definitions.SessionKeyIdPFlowID, "") == "" {
 		return false
 	}
 
@@ -171,16 +203,82 @@ func (h *FrontendHandler) checkRequireMFARegistrationAndRedirect(ctx *gin.Contex
 		return false
 	}
 
-	mgr.Set(definitions.SessionKeyRequireMFAFlow, true)
-	mgr.Set(definitions.SessionKeyRequireMFAPending, strings.Join(missing, ","))
+	flowdomain.SetRequireMFAPending(mgr, strings.Join(missing, ","))
 
-	if !h.redirectToNextRequiredMFARegistration(ctx, mgr) {
+	flowProtocol := flowdomain.FlowProtocolUnknown
+
+	switch protocol {
+	case definitions.ProtoOIDC:
+		flowProtocol = flowdomain.FlowProtocolOIDC
+	case definitions.ProtoSAML:
+		flowProtocol = flowdomain.FlowProtocolSAML
+	}
+
+	controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+	parentFlowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if parentFlowID != "" && parentFlowID != "require-mfa-flow" {
+		mgr.Set(definitions.SessionKeyRequireMFAParentFlowID, parentFlowID)
+	}
+
+	nextTarget := h.nextRequiredMFARegistrationTarget(mgr)
+	if nextTarget == "" {
 		h.clearRequireMFARegistrationState(mgr)
 
 		return false
 	}
 
+	decision, err := controller.Start(ctx.Request.Context(), &flowdomain.State{
+		FlowID:       "require-mfa-flow",
+		FlowType:     flowdomain.FlowTypeRequireMFA,
+		Protocol:     flowProtocol,
+		CurrentStep:  flowdomain.FlowStepStart,
+		ReturnTarget: nextTarget,
+		PendingMFA:   true,
+		Metadata: map[string]string{
+			"require_mfa": strings.Join(missing, ","),
+		},
+	}, time.Now())
+	if err != nil {
+		h.clearRequireMFARegistrationState(mgr)
+
+		return false
+	}
+
+	if decision.RedirectURI == "" {
+		h.clearRequireMFARegistrationState(mgr)
+
+		return false
+	}
+
+	advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepRequireMFAChallenge)
+
+	ctx.Redirect(http.StatusFound, decision.RedirectURI)
+
 	return true
+}
+
+func (h *FrontendHandler) nextRequiredMFARegistrationTarget(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	pending := mgr.GetString(definitions.SessionKeyRequireMFAPending, "")
+	if pending == "" {
+		return ""
+	}
+
+	parts := strings.SplitN(pending, ",", 2)
+
+	switch parts[0] {
+	case definitions.MFAMethodTOTP:
+		return definitions.MFARoot + "/totp/register"
+	case definitions.MFAMethodWebAuthn:
+		return definitions.MFARoot + "/webauthn/register"
+	case definitions.MFAMethodRecoveryCodes:
+		return definitions.MFARoot + "/recovery/register"
+	}
+
+	return ""
 }
 
 func (h *FrontendHandler) hasRecoveryCodesForRequireMFA(ctx *gin.Context, mgr cookie.Manager, user *backend.User) bool {
@@ -229,35 +327,14 @@ func (h *FrontendHandler) purgeCachedAuthenticationForUser(ctx *gin.Context, use
 // SessionKeyRequireMFAPending list and issues a 302 redirect to the corresponding
 // registration page.  Returns true when a redirect was issued, false otherwise.
 func (h *FrontendHandler) redirectToNextRequiredMFARegistration(ctx *gin.Context, mgr cookie.Manager) bool {
-	if mgr == nil {
+	nextTarget := h.nextRequiredMFARegistrationTarget(mgr)
+	if nextTarget == "" {
 		return false
 	}
 
-	pending := mgr.GetString(definitions.SessionKeyRequireMFAPending, "")
-	if pending == "" {
-		return false
-	}
+	ctx.Redirect(http.StatusFound, nextTarget)
 
-	parts := strings.SplitN(pending, ",", 2)
-
-	switch parts[0] {
-	case definitions.MFAMethodTOTP:
-		ctx.Redirect(http.StatusFound, definitions.MFARoot+"/totp/register")
-
-		return true
-
-	case definitions.MFAMethodWebAuthn:
-		ctx.Redirect(http.StatusFound, definitions.MFARoot+"/webauthn/register")
-
-		return true
-
-	case definitions.MFAMethodRecoveryCodes:
-		ctx.Redirect(http.StatusFound, definitions.MFARoot+"/recovery/register")
-
-		return true
-	}
-
-	return false
+	return true
 }
 
 // ContinueRequiredMFARegistration is the GET handler for /mfa/register/continue.
@@ -278,7 +355,7 @@ func (h *FrontendHandler) ContinueRequiredMFARegistration(ctx *gin.Context) {
 	if pending == "" {
 		// All required methods registered — clean up and resume the IdP flow.
 		h.clearRequireMFARegistrationState(mgr)
-		h.redirectToIdPEndpoint(ctx, mgr)
+		h.resumeIdPFlow(ctx, mgr)
 
 		return
 	}

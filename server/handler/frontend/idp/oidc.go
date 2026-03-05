@@ -38,6 +38,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/idp/clientauth"
+	"github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
@@ -863,46 +864,12 @@ func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {
 // and should be cleaned up after the flow completes successfully.
 // This covers OIDC (authorization code, device code) and SAML flows.
 func CleanupIdPFlowState(mgr cookie.Manager) {
-	if mgr == nil {
-		return
-	}
-
-	// Common IdP flow keys
-	mgr.Delete(definitions.SessionKeyIdPFlowActive)
-	mgr.Delete(definitions.SessionKeyIdPFlowType)
-
-	// OIDC-specific flow keys
-	mgr.Delete(definitions.SessionKeyOIDCGrantType)
-	mgr.Delete(definitions.SessionKeyIdPClientID)
-	mgr.Delete(definitions.SessionKeyIdPRedirectURI)
-	mgr.Delete(definitions.SessionKeyIdPScope)
-	mgr.Delete(definitions.SessionKeyIdPState)
-	mgr.Delete(definitions.SessionKeyIdPNonce)
-	mgr.Delete(definitions.SessionKeyIdPResponseType)
-	mgr.Delete(definitions.SessionKeyIdPPrompt)
-
-	// SAML-specific flow keys
-	mgr.Delete(definitions.SessionKeyIdPSAMLRequest)
-	mgr.Delete(definitions.SessionKeyIdPSAMLRelayState)
-	mgr.Delete(definitions.SessionKeyIdPSAMLEntityID)
-	mgr.Delete(definitions.SessionKeyIdPOriginalURL)
-
-	// Forced MFA-registration flow keys
-	mgr.Delete(definitions.SessionKeyRequireMFAFlow)
-	mgr.Delete(definitions.SessionKeyRequireMFAPending)
+	flow.CleanupIdPState(mgr)
 }
 
 // CleanupMFAState removes all temporary MFA flow keys from the cookie.
 // These keys are only needed during MFA verification and should be cleaned up
 // after the MFA flow completes successfully (in finalizeMFALogin).
 func CleanupMFAState(mgr cookie.Manager) {
-	if mgr == nil {
-		return
-	}
-
-	mgr.Delete(definitions.SessionKeyUsername)
-	mgr.Delete(definitions.SessionKeyAuthResult)
-	mgr.Delete(definitions.SessionKeyMFAMulti)
-	mgr.Delete(definitions.SessionKeyMFAMethod)
-	mgr.Delete(definitions.SessionKeyMFACompleted)
+	flow.CleanupMFAState(mgr)
 }
