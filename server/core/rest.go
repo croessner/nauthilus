@@ -1424,6 +1424,25 @@ const (
 	jobStatusError      = "ERROR"
 )
 
+type asyncJobState string
+
+type asyncJobEvent string
+
+const (
+	asyncJobStateQueued     asyncJobState = jobStatusQueued
+	asyncJobStateInProgress asyncJobState = jobStatusInProgress
+	asyncJobStateDone       asyncJobState = jobStatusDone
+	asyncJobStateError      asyncJobState = jobStatusError
+)
+
+const (
+	asyncJobEventStart   asyncJobEvent = "start"
+	asyncJobEventSucceed asyncJobEvent = "succeed"
+	asyncJobEventFail    asyncJobEvent = "fail"
+)
+
+var errAsyncJobNotFound = stderrors.New("async job not found")
+
 // Test seams for determinism and stubbing in unit tests.
 // They preserve default behavior in production builds but can be overridden in tests.
 var (
@@ -1459,6 +1478,83 @@ func asyncJobKey(cfg config.File, jobID string) string {
 	sb.WriteString(jobID)
 
 	return sb.String()
+}
+
+func nextAsyncJobState(current asyncJobState, event asyncJobEvent) (asyncJobState, error) {
+	switch current {
+	case asyncJobStateQueued:
+		if event == asyncJobEventStart {
+			return asyncJobStateInProgress, nil
+		}
+	case asyncJobStateInProgress:
+		switch event {
+		case asyncJobEventSucceed:
+			return asyncJobStateDone, nil
+		case asyncJobEventFail:
+			return asyncJobStateError, nil
+		}
+	}
+
+	return "", fmt.Errorf("invalid async job transition: state=%s event=%s", current, event)
+}
+
+func applyAsyncJobTransition(
+	ctx context.Context,
+	deps asyncJobDeps,
+	jobID string,
+	event asyncJobEvent,
+	fields map[string]any,
+) (asyncJobState, error) {
+	key := asyncJobKey(deps.Cfg, jobID)
+
+	var nextState asyncJobState
+
+	for range 3 {
+		err := deps.Redis.GetWriteHandle().Watch(ctx, func(tx *redis.Tx) error {
+			status, err := tx.HGet(ctx, key, "status").Result()
+			if err != nil {
+				if stderrors.Is(err, redis.Nil) {
+					return errAsyncJobNotFound
+				}
+
+				return err
+			}
+
+			nextState, err = nextAsyncJobState(asyncJobState(status), event)
+			if err != nil {
+				return err
+			}
+
+			updates := make(map[string]any, len(fields)+1)
+			updates["status"] = string(nextState)
+
+			for k, v := range fields {
+				updates[k] = v
+			}
+
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.HSet(ctx, key, updates)
+
+				return nil
+			})
+
+			return err
+		}, key)
+
+		if err == nil {
+			stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+			return nextState, nil
+		}
+
+		if stderrors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+
+		return "", err
+	}
+
+	return "", fmt.Errorf("async job transition failed due to concurrent updates: job=%s event=%s", jobID, event)
 }
 
 // generateJobID creates a random URL-safe identifier.
@@ -1519,17 +1615,19 @@ func startAsync(deps asyncJobDeps, jobID string, guid string, fn func(context.Co
 
 		base := svcctx.Get()
 
-		key := asyncJobKey(deps.Cfg, jobID)
-
 		// Mark INPROGRESS
-		func() {
-			defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if _, err := applyAsyncJobTransition(base, deps, jobID, asyncJobEventStart, map[string]any{
+			"startedAt": now().UTC().Format(time.RFC3339Nano),
+		}); err != nil {
+			level.Error(deps.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "async job start transition failed",
+				"jobId", jobID,
+				definitions.LogKeyError, err,
+			)
 
-			_, _ = deps.Redis.GetWriteHandle().HSet(base, key, map[string]any{
-				"status":    jobStatusInProgress,
-				"startedAt": now().UTC().Format(time.RFC3339Nano),
-			}).Result()
-		}()
+			return
+		}
 
 		// Execute task
 		count, _, err := fn(base)
@@ -1540,17 +1638,26 @@ func startAsync(deps asyncJobDeps, jobID string, guid string, fn func(context.Co
 			"resultCount": count,
 		}
 
+		key := asyncJobKey(deps.Cfg, jobID)
+
+		event := asyncJobEventSucceed
 		if err != nil {
-			updates["status"] = jobStatusError
+			event = asyncJobEventFail
 			updates["error"] = err.Error()
 			level.Error(deps.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "async job failed", definitions.LogKeyError, err)
-		} else {
-			updates["status"] = jobStatusDone
 		}
 
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		if _, transitionErr := applyAsyncJobTransition(base, deps, jobID, event, updates); transitionErr != nil {
+			level.Error(deps.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "async job completion transition failed",
+				"jobId", jobID,
+				definitions.LogKeyError, transitionErr,
+			)
 
-		_, _ = deps.Redis.GetWriteHandle().HSet(base, key, updates).Result()
+			return
+		}
+
 		_, _ = deps.Redis.GetWriteHandle().Expire(base, key, deps.Cfg.GetServer().Redis.NegCacheTTL).Result()
 		stats.GetMetrics().GetRedisWriteCounter().Inc()
 	}()
