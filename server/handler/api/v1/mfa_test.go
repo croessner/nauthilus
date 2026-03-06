@@ -16,6 +16,8 @@
 package v1
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -147,6 +149,13 @@ func (m *mockCookieManager) HasKey(key string) bool {
 }
 
 func (m *mockCookieManager) SetMaxAge(_ int) {}
+
+func (m *mockCookieManager) ComputeHMAC(data []byte) []byte {
+	h := hmac.New(sha256.New, []byte("test-key"))
+	_, _ = h.Write(data)
+
+	return h.Sum(nil)
+}
 
 type mockMFAProvider struct {
 	deleteWebAuthnErr error
