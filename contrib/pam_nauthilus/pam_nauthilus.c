@@ -184,7 +184,7 @@ static int run_device_flow(pam_handle_t *pamh, const pam_settings *settings,
             http_client_cleanup(&hc);
 
             return pam_rc;
-        }≤
+        }
     } else {
         pam_syslog(pamh, LOG_DEBUG,
                    "pam_nauthilus: opaque access token, skipping JWKS verification");
