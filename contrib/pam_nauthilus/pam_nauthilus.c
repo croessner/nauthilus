@@ -39,10 +39,26 @@ static void show_device_instruction(pam_handle_t *pamh, const device_auth *auth)
 
     if (uri[0] != '\0' && auth->user_code[0] != '\0' && auth->verification_uri_complete[0] == '\0') {
         const char *sep = strchr(uri, '?') != NULL ? "&" : "?";
+        size_t uri_len = strlen(uri);
+        size_t sep_len = strlen(sep);
+        size_t code_len = strlen(auth->user_code);
+        size_t suffix_len = strlen("user_code=");
+        size_t need = uri_len + sep_len + suffix_len + code_len + 1;
 
-        snprintf(uri_with_code, sizeof(uri_with_code), "%s%suser_code=%s",
-                 uri, sep, auth->user_code);
-        uri = uri_with_code;
+        if (need <= sizeof(uri_with_code)) {
+            size_t pos = 0;
+
+            memcpy(uri_with_code + pos, uri, uri_len);
+            pos += uri_len;
+            memcpy(uri_with_code + pos, sep, sep_len);
+            pos += sep_len;
+            memcpy(uri_with_code + pos, "user_code=", suffix_len);
+            pos += suffix_len;
+            memcpy(uri_with_code + pos, auth->user_code, code_len);
+            pos += code_len;
+            uri_with_code[pos] = '\0';
+            uri = uri_with_code;
+        }
     }
 
     if (uri[0] != '\0') {
