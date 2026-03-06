@@ -109,6 +109,10 @@ const (
 	// SessionKeyIdPFlowID stores the opaque flow identifier used as reference to external state.
 	SessionKeyIdPFlowID = "idp_flow_id"
 
+	// SessionKeyIdPAuthOutcome stores the first-factor outcome for the active IdP flow.
+	// Values are managed by the flow FSM (e.g. unknown, ok, fail_latched).
+	SessionKeyIdPAuthOutcome = "idp_auth_outcome"
+
 	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
 	SessionKeyIdPClientID = "idp_client_id"
 

@@ -58,6 +58,7 @@ func (a *FlowReferenceAdapter) Load(_ context.Context, _ string) (*State, error)
 		FlowType:    a.resolveFlowType(),
 		Protocol:    a.resolveProtocol(),
 		CurrentStep: a.resolveCurrentStep(),
+		AuthOutcome: a.resolveAuthOutcome(),
 		PendingMFA:  a.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false),
 		Metadata: map[string]string{
 			FlowMetadataResumeTarget: a.resolveResumeTarget(),
@@ -85,6 +86,12 @@ func (a *FlowReferenceAdapter) Save(_ context.Context, state *State) error {
 	a.mgr.Set(definitions.SessionKeyIdPFlowType, a.flowTypeToSession(state.Protocol))
 	a.mgr.Set(definitions.SessionKeyIdPFlowID, state.FlowID)
 	a.mgr.Set(definitions.SessionKeyRequireMFAFlow, state.PendingMFA)
+	authOutcome := state.AuthOutcome
+	if !authOutcome.Valid() {
+		authOutcome = AuthOutcomeUnknown
+	}
+
+	a.mgr.Set(definitions.SessionKeyIdPAuthOutcome, string(authOutcome))
 
 	if state.GrantType != "" {
 		a.mgr.Set(definitions.SessionKeyOIDCGrantType, state.GrantType)
@@ -112,6 +119,7 @@ func (a *FlowReferenceAdapter) Delete(_ context.Context, _ string) error {
 
 	a.mgr.Delete(definitions.SessionKeyIdPFlowType)
 	a.mgr.Delete(definitions.SessionKeyIdPFlowID)
+	a.mgr.Delete(definitions.SessionKeyIdPAuthOutcome)
 	a.mgr.Delete(definitions.SessionKeyRequireMFAFlow)
 
 	return nil
@@ -178,6 +186,15 @@ func (a *FlowReferenceAdapter) resolveCurrentStep() FlowStep {
 	default:
 		return FlowStepStart
 	}
+}
+
+func (a *FlowReferenceAdapter) resolveAuthOutcome() AuthOutcome {
+	outcome := AuthOutcome(a.mgr.GetString(definitions.SessionKeyIdPAuthOutcome, ""))
+	if !outcome.Valid() {
+		return AuthOutcomeUnknown
+	}
+
+	return outcome
 }
 
 func (a *FlowReferenceAdapter) resolveResumeTarget() string {

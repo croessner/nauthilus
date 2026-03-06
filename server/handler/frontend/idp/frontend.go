@@ -573,8 +573,8 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	}
 
 	// Delayed-response path: MFA may have succeeded after a failed password.
-	// Deny only when first-factor failure is explicitly present in session state.
-	if shouldDenyDeviceCodeAfterMFA(mgr) {
+	// Deny when first-factor authentication is fail-latched in the flow state.
+	if h.shouldDenyDeviceCodeAfterMFA(ctx, mgr) {
 		request.Status = idp.DeviceCodeStatusDenied
 		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 
@@ -591,7 +591,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 			"user_code", request.UserCode,
 		)
 
-		renderDeviceCodeError(ctx, h.deps, request.UserCode, "Invalid login or password")
+		renderDeviceCodeFailed(ctx, h.deps, "Invalid login or password")
 
 		return
 	}
@@ -654,7 +654,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 // shouldDenyDeviceCodeAfterMFA checks whether a device-code flow should be denied
 // because the original password authentication failed (delayed response case).
 // Uses HMAC-verified auth result for default-deny behavior.
-func shouldDenyDeviceCodeAfterMFA(mgr cookie.Manager) bool {
+func (h *FrontendHandler) shouldDenyDeviceCodeAfterMFA(ctx *gin.Context, mgr cookie.Manager) bool {
 	if mgr == nil {
 		return false
 	}
@@ -662,6 +662,12 @@ func shouldDenyDeviceCodeAfterMFA(mgr cookie.Manager) bool {
 	username := mgr.GetString(definitions.SessionKeyUsername, "")
 	if username == "" {
 		return false
+	}
+
+	if h != nil && h.deps != nil {
+		if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()); ok {
+			return outcome == flowdomain.AuthOutcomeFailLatched
+		}
 	}
 
 	result, ok := cookie.VerifyAuthResult(mgr, username)
@@ -679,19 +685,17 @@ func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, m
 	}
 
 	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
-	userCode := ""
 
 	if deviceCode != "" {
 		request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
 		if err == nil && request != nil {
 			request.Status = idp.DeviceCodeStatusDenied
 			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-			userCode = request.UserCode
 		}
 	}
 
 	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-	renderDeviceCodeError(ctx, h.deps, userCode, "Invalid login or password")
+	renderDeviceCodeFailed(ctx, h.deps, "Invalid login or password")
 
 	return true
 }
@@ -703,6 +707,14 @@ func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, m
 // Default-deny: if the HMAC verification fails, mgr is nil, or auth_result is missing,
 // the login is rejected.
 func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *mfaSessionState, mfaMethod string) bool {
+	if h != nil && h.deps != nil && sess != nil {
+		if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), sess.mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()); ok {
+			if outcome == flowdomain.AuthOutcomeOK {
+				return false
+			}
+		}
+	}
+
 	result, ok := cookie.VerifyAuthResult(sess.mgr, sess.username)
 	if ok && result == definitions.AuthResultOK {
 		return false
@@ -836,6 +848,8 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	)
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
+	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeUnknown)
 
 	var rememberMeTTL int
 
@@ -885,6 +899,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 						mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
 						cookie.SetAuthResult(mgr, username, definitions.AuthResultFail)
 						mgr.Set(definitions.SessionKeyProtocol, protocol)
+						_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
 
 						if rememberMeTTL > 0 {
 							mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
@@ -957,6 +972,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
 			cookie.SetAuthResult(mgr, username, definitions.AuthResultOK)
 			mgr.Set(definitions.SessionKeyProtocol, protocol)
+			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
 
 			if rememberMeTTL > 0 {
 				mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
@@ -987,6 +1003,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
 		mgr.Set(definitions.SessionKeySubject, user.Id)
 		mgr.Set(definitions.SessionKeyProtocol, protocol)
+		_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
 
 		if rememberMeTTL > 0 {
 			mgr.SetMaxAge(rememberMeTTL)

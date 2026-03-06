@@ -845,8 +845,17 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 					return
 				}
 
-				// Return JSON with redirect signal - JavaScript will redirect to /login
-				ctx.JSON(http.StatusUnauthorized, gin.H{"redirect": "/login"})
+				// Return JSON with redirect signal.
+				// Device-code flows terminate on their dedicated failure page.
+				redirectTarget := "/login"
+				if mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
+					redirectTarget = "/oidc/device/verify/failed"
+					if languageTag := ctx.Param("languageTag"); languageTag != "" {
+						redirectTarget += "/" + languageTag
+					}
+				}
+
+				ctx.JSON(http.StatusUnauthorized, gin.H{"redirect": redirectTarget})
 
 				return
 			}
@@ -980,6 +989,15 @@ func hashCredentialID(credentialID []byte) string {
 // Default-deny: returns false if mgr is nil, auth_result is missing/corrupt, HMAC
 // verification fails, or auth_result is anything other than AuthResultOK.
 func isMFAAuthResultValid(mgr cookie.Manager, username string) bool {
+	if mgr != nil {
+		switch flow.AuthOutcome(mgr.GetString(definitions.SessionKeyIdPAuthOutcome, "")) {
+		case flow.AuthOutcomeFailLatched:
+			return false
+		case flow.AuthOutcomeOK:
+			return true
+		}
+	}
+
 	result, ok := cookie.VerifyAuthResult(mgr, username)
 	if !ok {
 		return false

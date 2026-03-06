@@ -152,6 +152,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 		{Method: "GET", Path: "/error", Template: "idp_error_modal.html"},
 		{Method: "GET/POST", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
 		{Method: "GET", Path: "/oidc/device/verify/success", Template: "idp_device_verify_success.html"},
+		{Method: "GET", Path: "/oidc/device/verify/failed", Template: "idp_device_verify_failed.html"},
 	}
 
 	// Sort by path, then method
@@ -391,6 +392,8 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["UserCode"] = "ABCD-EFGH"
 	data["DeviceVerifySuccessMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your device has been successfully authorized.")
 	data["DeviceVerifySuccessHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You can close this window and return to your device.")
+	data["DeviceVerifyFailedMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Authorization denied")
+	data["DeviceVerifyFailedHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "This code can no longer be used. Please start again on your device.")
 
 	data["Application"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Application")
 	data["WantsToAccessYourAccount"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "wants to access your account")

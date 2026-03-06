@@ -24,6 +24,7 @@ type keyManager interface {
 var idPFlowStateKeys = [...]string{
 	definitions.SessionKeyIdPFlowType,
 	definitions.SessionKeyIdPFlowID,
+	definitions.SessionKeyIdPAuthOutcome,
 	definitions.SessionKeyOIDCGrantType,
 	definitions.SessionKeyIdPClientID,
 	definitions.SessionKeyIdPRedirectURI,

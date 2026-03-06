@@ -111,6 +111,8 @@
   "Device Authorized": "دستگاه مجاز شد",
   "Your device has been successfully authorized.": "دستگاه شما با موفقیت مجاز شد.",
   "You can close this window and return to your device.": "می‌توانید این پنجره را ببندید و به دستگاه خود بازگردید.",
+  "Device Authorization Failed": "مجوز دستگاه ناموفق بود",
+  "This code can no longer be used. Please start again on your device.": "این کد دیگر قابل استفاده نیست. لطفاً روی دستگاه خود دوباره شروع کنید.",
   "Missing required permission for MFA management": "مجوز لازم برای مدیریت MFA وجود ندارد",
   "Failed to register TOTP": "ثبت TOTP ناموفق بود",
   "Failed to generate recovery codes": "ایجاد کدهای بازیابی ناموفق بود",

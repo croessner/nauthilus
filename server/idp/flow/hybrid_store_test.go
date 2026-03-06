@@ -70,10 +70,11 @@ func TestFlowReferenceAdapterRoundtrip(t *testing.T) {
 	adapter := NewFlowReferenceAdapter(session)
 
 	state := &State{
-		FlowID:     "flow-123",
-		FlowType:   FlowTypeOIDCAuthorization,
-		Protocol:   FlowProtocolOIDC,
-		PendingMFA: true,
+		FlowID:      "flow-123",
+		FlowType:    FlowTypeOIDCAuthorization,
+		Protocol:    FlowProtocolOIDC,
+		AuthOutcome: AuthOutcomeFailLatched,
+		PendingMFA:  true,
 	}
 
 	if err := adapter.Save(t.Context(), state); err != nil {
@@ -87,6 +88,10 @@ func TestFlowReferenceAdapterRoundtrip(t *testing.T) {
 
 	if loaded == nil || loaded.FlowID != state.FlowID {
 		t.Fatalf("unexpected loaded flow: %+v", loaded)
+	}
+
+	if loaded.AuthOutcome != state.AuthOutcome {
+		t.Fatalf("unexpected auth outcome: got=%s want=%s", loaded.AuthOutcome, state.AuthOutcome)
 	}
 
 	if session.GetString(definitions.SessionKeyIdPFlowID, "") != state.FlowID {

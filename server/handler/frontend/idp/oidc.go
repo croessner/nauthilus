@@ -113,6 +113,8 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	router.POST("/oidc/device", h.DeviceAuthorization)
 	router.GET("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
 	router.GET("/oidc/device/verify/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
+	router.GET("/oidc/device/verify/failed", csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
+	router.GET("/oidc/device/verify/failed/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
 	router.POST("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerify)
 	router.POST("/oidc/device/verify/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerify)
 	router.GET("/oidc/device/consent", csrfMW, secureMW, i18nMW, h.DeviceConsentGET)

@@ -255,27 +255,29 @@ func TestIsValidIdPFlow(t *testing.T) {
 }
 
 func TestShouldDenyDeviceCodeAfterMFA(t *testing.T) {
+	handler := &FrontendHandler{}
+
 	t.Run("nil manager does not deny", func(t *testing.T) {
-		assert.False(t, shouldDenyDeviceCodeAfterMFA(nil))
+		assert.False(t, handler.shouldDenyDeviceCodeAfterMFA(nil, nil))
 	})
 
 	t.Run("missing auth result does not deny", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{}}
-		assert.False(t, shouldDenyDeviceCodeAfterMFA(mgr))
+		assert.False(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
 	})
 
 	t.Run("explicit auth fail with valid HMAC denies", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{}}
 		mgr.Set(definitions.SessionKeyUsername, "testuser")
 		cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultFail)
-		assert.True(t, shouldDenyDeviceCodeAfterMFA(mgr))
+		assert.True(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
 	})
 
 	t.Run("auth ok with valid HMAC does not deny", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{}}
 		mgr.Set(definitions.SessionKeyUsername, "testuser")
 		cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultOK)
-		assert.False(t, shouldDenyDeviceCodeAfterMFA(mgr))
+		assert.False(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
 	})
 
 	t.Run("tampered auth result (raw set without HMAC) denies", func(t *testing.T) {
@@ -284,6 +286,6 @@ func TestShouldDenyDeviceCodeAfterMFA(t *testing.T) {
 			definitions.SessionKeyAuthResult: uint8(definitions.AuthResultOK),
 		}}
 		// No HMAC set — should be treated as tampered and denied
-		assert.True(t, shouldDenyDeviceCodeAfterMFA(mgr))
+		assert.True(t, handler.shouldDenyDeviceCodeAfterMFA(nil, mgr))
 	})
 }

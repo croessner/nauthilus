@@ -73,6 +73,7 @@ func TestCleanupIdPState(t *testing.T) {
 		mgr := &mockKeyManager{data: map[string]bool{
 			definitions.SessionKeyIdPFlowType:       true,
 			definitions.SessionKeyIdPFlowID:         true,
+			definitions.SessionKeyIdPAuthOutcome:    true,
 			definitions.SessionKeyOIDCGrantType:     true,
 			definitions.SessionKeyIdPClientID:       true,
 			definitions.SessionKeyIdPRedirectURI:    true,

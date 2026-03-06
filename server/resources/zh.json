@@ -111,6 +111,8 @@
   "Device Authorized": "设备已授权",
   "Your device has been successfully authorized.": "您的设备已成功授权。",
   "You can close this window and return to your device.": "您可以关闭此窗口并返回您的设备。",
+  "Device Authorization Failed": "设备授权失败",
+  "This code can no longer be used. Please start again on your device.": "此代码已无法使用。请在您的设备上重新开始。",
   "Missing required permission for MFA management": "缺少MFA管理所需的权限",
   "Failed to register TOTP": "TOTP注册失败",
   "Failed to generate recovery codes": "生成恢复代码失败",

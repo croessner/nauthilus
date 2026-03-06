@@ -35,6 +35,7 @@ func TestStateValidate(t *testing.T) {
 				FlowType:    FlowTypeOIDCAuthorization,
 				Protocol:    FlowProtocolOIDC,
 				CurrentStep: FlowStepLogin,
+				AuthOutcome: AuthOutcomeUnknown,
 			},
 			errWant: nil,
 		},
@@ -74,8 +75,20 @@ func TestStateValidate(t *testing.T) {
 				FlowType:    FlowTypeOIDCAuthorization,
 				Protocol:    FlowProtocolOIDC,
 				CurrentStep: FlowStep("invalid"),
+				AuthOutcome: AuthOutcomeUnknown,
 			},
 			errWant: ErrInvalidStep,
+		},
+		{
+			name: "invalid auth outcome",
+			state: &State{
+				FlowID:      "f-1",
+				FlowType:    FlowTypeOIDCAuthorization,
+				Protocol:    FlowProtocolOIDC,
+				CurrentStep: FlowStepLogin,
+				AuthOutcome: AuthOutcome("bad"),
+			},
+			errWant: ErrInvalidAuthOutcome,
 		},
 	}
 
@@ -110,6 +123,10 @@ func TestStateNormalize(t *testing.T) {
 	if state.UpdatedAt != now {
 		t.Fatalf("expected updated_at=%s, got %s", now, state.UpdatedAt)
 	}
+
+	if state.AuthOutcome != AuthOutcomeUnknown {
+		t.Fatalf("expected auth_outcome=%s, got %s", AuthOutcomeUnknown, state.AuthOutcome)
+	}
 }
 
 func TestStateJSONRoundTrip(t *testing.T) {
@@ -126,6 +143,7 @@ func TestStateJSONRoundTrip(t *testing.T) {
 		FlowType:    FlowTypeOIDCAuthorization,
 		Protocol:    FlowProtocolOIDC,
 		CurrentStep: FlowStepConsent,
+		AuthOutcome: AuthOutcomeFailLatched,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		PendingMFA:  true,
@@ -145,7 +163,45 @@ func TestStateJSONRoundTrip(t *testing.T) {
 		t.Fatalf("decoded core values mismatch: got %+v want %+v", decoded, state)
 	}
 
+	if decoded.AuthOutcome != state.AuthOutcome {
+		t.Fatalf("auth_outcome mismatch: got %s want %s", decoded.AuthOutcome, state.AuthOutcome)
+	}
+
 	if decoded.Metadata["client_id"] != "nauthilus" {
 		t.Fatalf("metadata mismatch: %+v", decoded.Metadata)
+	}
+}
+
+func TestStateUpdateAuthOutcome(t *testing.T) {
+	state := &State{
+		FlowID:      "f-1",
+		FlowType:    FlowTypeOIDCAuthorization,
+		Protocol:    FlowProtocolOIDC,
+		CurrentStep: FlowStepLogin,
+		AuthOutcome: AuthOutcomeUnknown,
+	}
+
+	if err := state.UpdateAuthOutcome(AuthOutcomeOK); err != nil {
+		t.Fatalf("unexpected update error: %v", err)
+	}
+
+	if state.AuthOutcome != AuthOutcomeOK {
+		t.Fatalf("expected auth_outcome=%s, got %s", AuthOutcomeOK, state.AuthOutcome)
+	}
+
+	if err := state.UpdateAuthOutcome(AuthOutcomeFailLatched); err != nil {
+		t.Fatalf("unexpected update error: %v", err)
+	}
+
+	if state.AuthOutcome != AuthOutcomeFailLatched {
+		t.Fatalf("expected auth_outcome=%s, got %s", AuthOutcomeFailLatched, state.AuthOutcome)
+	}
+
+	if err := state.UpdateAuthOutcome(AuthOutcomeOK); err != nil {
+		t.Fatalf("unexpected update error from fail_latched: %v", err)
+	}
+
+	if state.AuthOutcome != AuthOutcomeFailLatched {
+		t.Fatalf("expected fail_latched to remain sticky, got %s", state.AuthOutcome)
 	}
 }

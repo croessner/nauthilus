@@ -335,6 +335,31 @@ func (h *OIDCHandler) DeviceVerifyPage(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "idp_device_verify.html", data)
 }
 
+// DeviceVerifyFailedPage renders a terminal failure page for processed device codes.
+func (h *OIDCHandler) DeviceVerifyFailedPage(ctx *gin.Context) {
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		if deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, ""); deviceCode != "" {
+			request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
+			if err == nil && request != nil {
+				request.Status = idp.DeviceCodeStatusDenied
+				_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+			}
+		}
+
+		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+	}
+
+	errorMessage := "Invalid login or password"
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		if loginError := mgr.GetString(definitions.SessionKeyLoginError, ""); loginError != "" {
+			errorMessage = loginError
+			mgr.Delete(definitions.SessionKeyLoginError)
+		}
+	}
+
+	h.renderDeviceVerifyFailed(ctx, errorMessage)
+}
+
 // DeviceVerify handles the user verification of a device code (RFC 8628 §3.3).
 // The user submits the user code along with their credentials to authorize or deny the device.
 func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
@@ -376,7 +401,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 	// Verify the request is still pending
 	if request.Status != idp.DeviceCodeStatusPending {
-		h.renderDeviceVerifyError(ctx, userCode, "Device code has already been processed")
+		h.renderDeviceVerifyFailed(ctx, "Device code has already been processed")
 
 		return
 	}
@@ -385,6 +410,18 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		attribute.String("client_id", request.ClientID),
 		attribute.String("username", username),
 	)
+
+	mgr := cookie.GetManager(ctx)
+	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+	if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix); ok && outcome == flowdomain.AuthOutcomeFailLatched {
+		request.Status = idp.DeviceCodeStatusDenied
+		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
+
+		h.renderDeviceVerifyFailed(ctx, "Invalid login or password")
+
+		return
+	}
 
 	// Authenticate the user.
 	// For delayed_response clients, mirror the authorization-code behavior:
@@ -409,8 +446,9 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		if user == nil {
 			request.Status = idp.DeviceCodeStatusDenied
 			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+			abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
 
-			h.renderDeviceVerifyError(ctx, userCode, "Invalid login or password")
+			h.renderDeviceVerifyFailed(ctx, "Invalid login or password")
 
 			return
 		}
@@ -422,11 +460,16 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 	if availability.count > 0 {
 		// MFA is required - store session state and redirect to MFA flow
-		mgr := cookie.GetManager(ctx)
 		if mgr == nil {
 			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
 
 			return
+		}
+
+		if authResult == definitions.AuthResultFail {
+			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
+		} else {
+			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
 		}
 
 		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
@@ -546,7 +589,6 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 	// No MFA required - check if consent is needed before authorizing
 	if h.deviceCodeNeedsConsent(ctx, request.ClientID, request.Scopes) {
-		mgr := cookie.GetManager(ctx)
 		if mgr == nil {
 			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
 
@@ -832,7 +874,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 			"user_code", request.UserCode,
 		)
 
-		h.renderDeviceVerifyError(ctx, request.UserCode, "Authorization denied")
+		h.renderDeviceVerifyFailed(ctx, "Authorization denied")
 
 		return
 	}
@@ -933,6 +975,11 @@ func (h *OIDCHandler) renderDeviceVerifySuccess(ctx *gin.Context) {
 	renderDeviceCodeSuccess(ctx, h.deps)
 }
 
+// renderDeviceVerifyFailed renders the terminal failure page after device authorization fails.
+func (h *OIDCHandler) renderDeviceVerifyFailed(ctx *gin.Context, errorMsg string) {
+	renderDeviceCodeFailed(ctx, h.deps, errorMsg)
+}
+
 // renderDeviceCodeSuccess is a package-level helper that renders the device authorization success page.
 // It is used by both OIDCHandler and FrontendHandler to avoid code duplication.
 func renderDeviceCodeSuccess(ctx *gin.Context, d *deps.Deps) {
@@ -943,6 +990,18 @@ func renderDeviceCodeSuccess(ctx *gin.Context, d *deps.Deps) {
 	data["DeviceVerifySuccessHint"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "You can close this window and return to your device.")
 
 	ctx.HTML(http.StatusOK, "idp_device_verify_success.html", data)
+}
+
+// renderDeviceCodeFailed is a package-level helper that renders the terminal
+// failure page for device authorization attempts.
+func renderDeviceCodeFailed(ctx *gin.Context, d *deps.Deps, errorMsg string) {
+	data := BasePageData(ctx, d.Cfg, d.LangManager)
+
+	data["Title"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "Device Authorization Failed")
+	data["DeviceVerifyFailedMessage"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, errorMsg)
+	data["DeviceVerifyFailedHint"] = frontend.GetLocalized(ctx, d.Cfg, d.Logger, "This code can no longer be used. Please start again on your device.")
+
+	ctx.HTML(http.StatusOK, "idp_device_verify_failed.html", data)
 }
 
 // renderDeviceCodeError is a package-level helper that renders the device
@@ -975,4 +1034,13 @@ func deviceVerifyPathFromContext(ctx *gin.Context) string {
 	}
 
 	return "/oidc/device/verify"
+}
+
+func deviceVerifyFailedPathFromContext(ctx *gin.Context) string {
+	lang := ctx.Param("languageTag")
+	if lang != "" {
+		return "/oidc/device/verify/failed/" + lang
+	}
+
+	return "/oidc/device/verify/failed"
 }

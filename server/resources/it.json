@@ -111,6 +111,8 @@
   "Device Authorized": "Dispositivo autorizzato",
   "Your device has been successfully authorized.": "Il tuo dispositivo è stato autorizzato con successo.",
   "You can close this window and return to your device.": "Puoi chiudere questa finestra e tornare al tuo dispositivo.",
+  "Device Authorization Failed": "Autorizzazione del dispositivo non riuscita",
+  "This code can no longer be used. Please start again on your device.": "Questo codice non può più essere utilizzato. Avvia di nuovo la procedura sul tuo dispositivo.",
   "Missing required permission for MFA management": "Autorizzazione richiesta mancante per la gestione MFA",
   "Failed to register TOTP": "Registrazione TOTP non riuscita",
   "Failed to generate recovery codes": "Generazione dei codici di recupero non riuscita",

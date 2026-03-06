@@ -111,6 +111,8 @@
   "Device Authorized": "تم تفويض الجهاز",
   "Your device has been successfully authorized.": "تم تفويض جهازك بنجاح.",
   "You can close this window and return to your device.": "يمكنك إغلاق هذه النافذة والعودة إلى جهازك.",
+  "Device Authorization Failed": "فشل تفويض الجهاز",
+  "This code can no longer be used. Please start again on your device.": "لم يعد من الممكن استخدام هذا الرمز. يرجى البدء من جديد على جهازك.",
   "Missing required permission for MFA management": "الإذن المطلوب لإدارة MFA مفقود",
   "Failed to register TOTP": "فشل تسجيل TOTP",
   "Failed to generate recovery codes": "فشل إنشاء رموز الاسترداد",

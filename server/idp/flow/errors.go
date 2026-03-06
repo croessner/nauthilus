@@ -18,12 +18,13 @@ package flow
 import "errors"
 
 var (
-	ErrEmptyFlowID     = errors.New("empty flow id")
-	ErrFlowNotFound    = errors.New("flow not found")
-	ErrInvalidFlowType = errors.New("invalid flow type")
-	ErrInvalidProtocol = errors.New("invalid protocol")
-	ErrInvalidStep     = errors.New("invalid step")
-	ErrInvalidAction   = errors.New("invalid action")
+	ErrEmptyFlowID        = errors.New("empty flow id")
+	ErrFlowNotFound       = errors.New("flow not found")
+	ErrInvalidFlowType    = errors.New("invalid flow type")
+	ErrInvalidProtocol    = errors.New("invalid protocol")
+	ErrInvalidStep        = errors.New("invalid step")
+	ErrInvalidAction      = errors.New("invalid action")
+	ErrInvalidAuthOutcome = errors.New("invalid auth outcome")
 )
 
 // TransitionError reports invalid transitions for a specific flow/step pair.

@@ -51,6 +51,7 @@ func TestFlowReferenceAdapterLoadOIDCResumeTarget(t *testing.T) {
 	mgr := &testSessionManager{data: map[string]any{
 		definitions.SessionKeyIdPFlowID:       "flow-1",
 		definitions.SessionKeyIdPFlowType:     definitions.ProtoOIDC,
+		definitions.SessionKeyIdPAuthOutcome:  "fail_latched",
 		definitions.SessionKeyOIDCGrantType:   definitions.OIDCFlowAuthorizationCode,
 		definitions.SessionKeyIdPClientID:     "client-1",
 		definitions.SessionKeyIdPRedirectURI:  "https://rp.example/cb",
@@ -71,6 +72,10 @@ func TestFlowReferenceAdapterLoadOIDCResumeTarget(t *testing.T) {
 
 	if state.Metadata[FlowMetadataResumeTarget] == "" {
 		t.Fatal("expected resume target metadata")
+	}
+
+	if state.AuthOutcome != AuthOutcomeFailLatched {
+		t.Fatalf("unexpected auth outcome: %s", state.AuthOutcome)
 	}
 
 	expected := "/oidc/authorize?client_id=client-1&nonce=nonce-1&redirect_uri=https%3A%2F%2Frp.example%2Fcb&response_type=code&scope=openid+profile&state=abc"
