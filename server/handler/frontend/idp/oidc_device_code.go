@@ -406,6 +406,14 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		return
 	}
 
+	// Single-use verification semantics: once first-factor evaluation started
+	// for this device code, no additional verify attempts are allowed.
+	if request.VerificationLocked {
+		h.renderDeviceVerifyFailed(ctx, "Device code has already been processed")
+
+		return
+	}
+
 	sp.SetAttributes(
 		attribute.String("client_id", request.ClientID),
 		attribute.String("username", username),
@@ -470,6 +478,13 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
 		} else {
 			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
+		}
+
+		request.VerificationLocked = true
+		if err = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+			return
 		}
 
 		controller := newFlowController(mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
@@ -670,6 +685,13 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		)
 
 		oidcFlowContext := newOIDCDeviceFlowContext(mgr)
+
+		request.VerificationLocked = true
+		if err = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+			h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+			return
+		}
 
 		oidcFlowContext.StoreConsentContext(deviceCode, request.ClientID, user.Id)
 
@@ -1034,13 +1056,4 @@ func deviceVerifyPathFromContext(ctx *gin.Context) string {
 	}
 
 	return "/oidc/device/verify"
-}
-
-func deviceVerifyFailedPathFromContext(ctx *gin.Context) string {
-	lang := ctx.Param("languageTag")
-	if lang != "" {
-		return "/oidc/device/verify/failed/" + lang
-	}
-
-	return "/oidc/device/verify/failed"
 }
