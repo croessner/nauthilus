@@ -65,17 +65,19 @@ func (a *FlowReferenceAdapter) Load(_ context.Context, _ string) (*State, error)
 		AuthOutcome: a.resolveAuthOutcome(),
 		PendingMFA:  a.mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false),
 		Metadata: map[string]string{
-			FlowMetadataResumeTarget: a.resolveResumeTarget(),
-			FlowMetadataClientID:     a.mgr.GetString(definitions.SessionKeyIdPClientID, ""),
-			FlowMetadataRedirectURI:  a.mgr.GetString(definitions.SessionKeyIdPRedirectURI, ""),
-			FlowMetadataScope:        a.mgr.GetString(definitions.SessionKeyIdPScope, ""),
-			FlowMetadataState:        a.mgr.GetString(definitions.SessionKeyIdPState, ""),
-			FlowMetadataNonce:        a.mgr.GetString(definitions.SessionKeyIdPNonce, ""),
-			FlowMetadataResponseType: a.mgr.GetString(definitions.SessionKeyIdPResponseType, ""),
-			FlowMetadataPrompt:       a.mgr.GetString(definitions.SessionKeyIdPPrompt, ""),
-			FlowMetadataSAMLEntityID: a.mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, ""),
-			FlowMetadataOriginalURL:  a.mgr.GetString(definitions.SessionKeyIdPOriginalURL, ""),
-			FlowMetadataDeviceCode:   a.mgr.GetString(definitions.SessionKeyDeviceCode, ""),
+			FlowMetadataResumeTarget:        a.resolveResumeTarget(),
+			FlowMetadataClientID:            a.mgr.GetString(definitions.SessionKeyIdPClientID, ""),
+			FlowMetadataRedirectURI:         a.mgr.GetString(definitions.SessionKeyIdPRedirectURI, ""),
+			FlowMetadataScope:               a.mgr.GetString(definitions.SessionKeyIdPScope, ""),
+			FlowMetadataState:               a.mgr.GetString(definitions.SessionKeyIdPState, ""),
+			FlowMetadataNonce:               a.mgr.GetString(definitions.SessionKeyIdPNonce, ""),
+			FlowMetadataResponseType:        a.mgr.GetString(definitions.SessionKeyIdPResponseType, ""),
+			FlowMetadataPrompt:              a.mgr.GetString(definitions.SessionKeyIdPPrompt, ""),
+			FlowMetadataCodeChallenge:       a.mgr.GetString(definitions.SessionKeyIdPCodeChallenge, ""),
+			FlowMetadataCodeChallengeMethod: a.mgr.GetString(definitions.SessionKeyIdPCodeChallengeMethod, ""),
+			FlowMetadataSAMLEntityID:        a.mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, ""),
+			FlowMetadataOriginalURL:         a.mgr.GetString(definitions.SessionKeyIdPOriginalURL, ""),
+			FlowMetadataDeviceCode:          a.mgr.GetString(definitions.SessionKeyDeviceCode, ""),
 		},
 	}, nil
 }
@@ -109,6 +111,8 @@ func (a *FlowReferenceAdapter) Save(_ context.Context, state *State) error {
 	a.setStringIfNonEmpty(definitions.SessionKeyIdPNonce, state.metadataValue(FlowMetadataNonce))
 	a.setStringIfNonEmpty(definitions.SessionKeyIdPResponseType, state.metadataValue(FlowMetadataResponseType))
 	a.setStringIfNonEmpty(definitions.SessionKeyIdPPrompt, state.metadataValue(FlowMetadataPrompt))
+	a.setStringIfNonEmpty(definitions.SessionKeyIdPCodeChallenge, state.metadataValue(FlowMetadataCodeChallenge))
+	a.setStringIfNonEmpty(definitions.SessionKeyIdPCodeChallengeMethod, state.metadataValue(FlowMetadataCodeChallengeMethod))
 	a.setStringIfNonEmpty(definitions.SessionKeyIdPSAMLEntityID, state.metadataValue(FlowMetadataSAMLEntityID))
 	a.setStringIfNonEmpty(definitions.SessionKeyIdPOriginalURL, state.metadataValue(FlowMetadataOriginalURL))
 	a.setStringIfNonEmpty(definitions.SessionKeyDeviceCode, state.metadataValue(FlowMetadataDeviceCode))
@@ -254,6 +258,14 @@ func (a *FlowReferenceAdapter) oidcAuthorizeResumeTarget() string {
 
 	if prompt := a.mgr.GetString(definitions.SessionKeyIdPPrompt, ""); prompt != "" {
 		values.Set("prompt", prompt)
+	}
+
+	if codeChallenge := a.mgr.GetString(definitions.SessionKeyIdPCodeChallenge, ""); codeChallenge != "" {
+		values.Set("code_challenge", codeChallenge)
+	}
+
+	if codeChallengeMethod := a.mgr.GetString(definitions.SessionKeyIdPCodeChallengeMethod, ""); codeChallengeMethod != "" {
+		values.Set("code_challenge_method", codeChallengeMethod)
 	}
 
 	return "/oidc/authorize?" + values.Encode()

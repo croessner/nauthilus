@@ -138,6 +138,12 @@ const (
 	// SessionKeyIdPPrompt stores the OIDC prompt parameter.
 	SessionKeyIdPPrompt = "idp_prompt"
 
+	// SessionKeyIdPCodeChallenge stores the OIDC PKCE code_challenge parameter.
+	SessionKeyIdPCodeChallenge = "idp_code_challenge"
+
+	// SessionKeyIdPCodeChallengeMethod stores the OIDC PKCE code_challenge_method parameter.
+	SessionKeyIdPCodeChallengeMethod = "idp_code_challenge_method"
+
 	// SessionKeyIdPSAMLRequest stores the serialized SAML AuthnRequest for SAML flows.
 	SessionKeyIdPSAMLRequest = "idp_saml_request"
 

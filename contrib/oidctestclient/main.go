@@ -52,6 +52,7 @@ func main() {
 
 	ctx := context.Background()
 	flowType := parseFlowTypeFromEnv()
+	pkceMode := parsePKCEModeFromEnv()
 	scopes := parseScopesFromEnv()
 
 	provider, providerClaims := initProvider(ctx)
@@ -63,12 +64,13 @@ func main() {
 	verifier := provider.Verifier(oidcConfig)
 
 	log.Printf("Selected flow type: %s", flowType)
+	log.Printf("PKCE mode: %s", pkceMode)
 
 	switch flowType {
 	case FlowAuthorizationCode:
 		tmpl := parseSuccessTemplate()
 
-		registerAuthorizationCodeRoutes(ctx, provider, providerClaims, verifier, tmpl, scopes)
+		registerAuthorizationCodeRoutes(ctx, provider, providerClaims, verifier, tmpl, scopes, pkceMode)
 
 	case FlowDeviceCode:
 		// Device Code flow runs entirely on the console and terminates.

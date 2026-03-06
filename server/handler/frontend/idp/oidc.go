@@ -158,6 +158,7 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 		"id_token_signing_alg_values_supported":         oidcCfg.GetIDTokenSigningAlgValuesSupported(),
 		"scopes_supported":                              scopesSupported,
 		"token_endpoint_auth_methods_supported":         oidcCfg.GetTokenEndpointAuthMethodsSupported(),
+		"code_challenge_methods_supported":              oidcCfg.GetCodeChallengeMethodsSupported(),
 		"introspection_endpoint_auth_methods_supported": oidcCfg.GetTokenEndpointAuthMethodsSupported(),
 		"claims_supported":                              oidcCfg.GetClaimsSupported(),
 	})
