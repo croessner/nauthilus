@@ -1476,6 +1476,10 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 		protocol = mgr.GetString(definitions.SessionKeyProtocol, "")
 		rememberMeTTL = mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
 
+		// Remove temporary MFA flow state first, then write the final login session
+		// keys so they are not wiped by CleanupMFAState.
+		CleanupMFAState(mgr)
+
 		mgr.Set(definitions.SessionKeyAccount, user.Name)
 		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
 		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
@@ -1487,8 +1491,6 @@ func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User)
 			mgr.SetMaxAge(rememberMeTTL)
 			mgr.Delete(definitions.SessionKeyRememberTTL)
 		}
-
-		CleanupMFAState(mgr)
 
 		mgr.Debug(ctx, h.deps.Logger, "MFA login finalized - session data stored")
 	}
@@ -2255,7 +2257,23 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 
-	if mgr == nil || mgr.GetString(definitions.SessionKeyUniqueUserID, "") == "" {
+	if mgr == nil {
+		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
+
+		return
+	}
+
+	uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	if uniqueUserID == "" {
+		// Defensive recovery: older/partial sessions can miss unique_userid even
+		// when account is present. Try to reconstruct backend identity once.
+		if userData, err := h.GetUserBackendData(ctx); err == nil && userData != nil && userData.UniqueUserID != "" {
+			mgr.Set(definitions.SessionKeyUniqueUserID, userData.UniqueUserID)
+			uniqueUserID = userData.UniqueUserID
+		}
+	}
+
+	if uniqueUserID == "" {
 		ctx.Redirect(http.StatusFound, h.getLoginURL(ctx))
 
 		return
