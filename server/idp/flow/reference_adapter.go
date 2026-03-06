@@ -17,6 +17,8 @@ package flow
 
 import (
 	"context"
+	"crypto/hmac"
+	"encoding/binary"
 	"net/url"
 	"time"
 
@@ -33,6 +35,8 @@ type sessionManager interface {
 	Delete(key string)
 	GetString(key string, defaultValue string) string
 	GetBool(key string, defaultValue bool) bool
+	GetBytes(key string, defaultValue []byte) []byte
+	ComputeHMAC(data []byte) []byte
 }
 
 // NewFlowReferenceAdapter creates an adapter that stores only flow reference
@@ -92,6 +96,7 @@ func (a *FlowReferenceAdapter) Save(_ context.Context, state *State) error {
 	}
 
 	a.mgr.Set(definitions.SessionKeyIdPAuthOutcome, string(authOutcome))
+	a.mgr.Set(definitions.SessionKeyIdPAuthOutcomeHMAC, buildAuthOutcomeHMACPayload(a.mgr, state.FlowID, authOutcome))
 
 	if state.GrantType != "" {
 		a.mgr.Set(definitions.SessionKeyOIDCGrantType, state.GrantType)
@@ -120,6 +125,7 @@ func (a *FlowReferenceAdapter) Delete(_ context.Context, _ string) error {
 	a.mgr.Delete(definitions.SessionKeyIdPFlowType)
 	a.mgr.Delete(definitions.SessionKeyIdPFlowID)
 	a.mgr.Delete(definitions.SessionKeyIdPAuthOutcome)
+	a.mgr.Delete(definitions.SessionKeyIdPAuthOutcomeHMAC)
 	a.mgr.Delete(definitions.SessionKeyRequireMFAFlow)
 
 	return nil
@@ -189,8 +195,17 @@ func (a *FlowReferenceAdapter) resolveCurrentStep() FlowStep {
 }
 
 func (a *FlowReferenceAdapter) resolveAuthOutcome() AuthOutcome {
+	flowID := a.mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID == "" {
+		return AuthOutcomeUnknown
+	}
+
 	outcome := AuthOutcome(a.mgr.GetString(definitions.SessionKeyIdPAuthOutcome, ""))
 	if !outcome.Valid() {
+		return AuthOutcomeUnknown
+	}
+
+	if !verifyAuthOutcome(a.mgr, flowID, outcome) {
 		return AuthOutcomeUnknown
 	}
 
@@ -250,6 +265,46 @@ func (a *FlowReferenceAdapter) oidcDeviceResumeTarget() string {
 	}
 
 	return FlowMetadataResumeTargetDeviceCodeComplete
+}
+
+func buildAuthOutcomeHMACPayload(mgr sessionManager, flowID string, outcome AuthOutcome) []byte {
+	ts := time.Now().Unix()
+	data := authOutcomeHMACData(flowID, outcome, ts)
+	tag := mgr.ComputeHMAC(data)
+
+	payload := make([]byte, 8+len(tag))
+	binary.BigEndian.PutUint64(payload[:8], uint64(ts))
+	copy(payload[8:], tag)
+
+	return payload
+}
+
+func verifyAuthOutcome(mgr sessionManager, flowID string, outcome AuthOutcome) bool {
+	if outcome == AuthOutcomeUnknown {
+		return true
+	}
+
+	payload := mgr.GetBytes(definitions.SessionKeyIdPAuthOutcomeHMAC, nil)
+	if len(payload) < 8+32 {
+		return false
+	}
+
+	ts := int64(binary.BigEndian.Uint64(payload[:8]))
+	storedTag := payload[8:]
+	expectedTag := mgr.ComputeHMAC(authOutcomeHMACData(flowID, outcome, ts))
+
+	return hmac.Equal(storedTag, expectedTag)
+}
+
+func authOutcomeHMACData(flowID string, outcome AuthOutcome, ts int64) []byte {
+	outcomeBytes := []byte(outcome)
+	buf := make([]byte, 8+len(flowID)+1+len(outcomeBytes))
+	binary.BigEndian.PutUint64(buf[:8], uint64(ts))
+	copy(buf[8:], flowID)
+	buf[8+len(flowID)] = 0
+	copy(buf[8+len(flowID)+1:], outcomeBytes)
+
+	return buf
 }
 
 func (s *State) metadataValue(key string) string {

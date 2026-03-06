@@ -113,6 +113,10 @@ const (
 	// Values are managed by the flow FSM (e.g. unknown, ok, fail_latched).
 	SessionKeyIdPAuthOutcome = "idp_auth_outcome"
 
+	// SessionKeyIdPAuthOutcomeHMAC stores the HMAC-SHA256 integrity tag for idp_auth_outcome.
+	// Binds auth_outcome to flow_id and timestamp to prevent tampering.
+	SessionKeyIdPAuthOutcomeHMAC = "idp_auth_outcome_hmac"
+
 	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
 	SessionKeyIdPClientID = "idp_client_id"
 

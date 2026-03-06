@@ -117,12 +117,14 @@ type SecureManager struct {
 
 // sensitiveKeys lists keys whose values should be masked in debug output unless developer mode is enabled.
 var sensitiveKeys = map[string]bool{
-	"totp_secret":      true,
-	"totp_url":         true,
-	"auth_result":      true,
-	"auth_result_hmac": true,
-	"password":         true,
-	"secret":           true,
+	"totp_secret":           true,
+	"totp_url":              true,
+	"auth_result":           true,
+	"auth_result_hmac":      true,
+	"idp_auth_outcome":      true,
+	"idp_auth_outcome_hmac": true,
+	"password":              true,
+	"secret":                true,
 }
 
 // NewSecureManager creates a new encrypted cookie manager.

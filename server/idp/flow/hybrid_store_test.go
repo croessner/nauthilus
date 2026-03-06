@@ -16,6 +16,8 @@
 package flow
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -63,6 +65,27 @@ func (m *mapSessionManager) GetBool(key string, defaultValue bool) bool {
 	}
 
 	return value
+}
+
+func (m *mapSessionManager) GetBytes(key string, defaultValue []byte) []byte {
+	raw, ok := m.values[key]
+	if !ok {
+		return defaultValue
+	}
+
+	value, ok := raw.([]byte)
+	if !ok {
+		return defaultValue
+	}
+
+	return value
+}
+
+func (m *mapSessionManager) ComputeHMAC(data []byte) []byte {
+	mac := hmac.New(sha256.New, []byte("flow-hybrid-test-key"))
+	_, _ = mac.Write(data)
+
+	return mac.Sum(nil)
 }
 
 func TestFlowReferenceAdapterRoundtrip(t *testing.T) {
