@@ -111,6 +111,8 @@
   "Device Authorized": "デバイス認可完了",
   "Your device has been successfully authorized.": "デバイスが正常に認可されました。",
   "You can close this window and return to your device.": "このウィンドウを閉じてデバイスに戻ることができます。",
+  "Device Authorization Failed": "デバイス認可に失敗しました",
+  "This code can no longer be used. Please start again on your device.": "このコードはもう使用できません。デバイスで最初からやり直してください。",
   "Missing required permission for MFA management": "MFA管理に必要な権限がありません",
   "Failed to register TOTP": "TOTPの登録に失敗しました",
   "Failed to generate recovery codes": "リカバリーコードの生成に失敗しました",

@@ -168,3 +168,50 @@ func TestControllerRecoverStaleFlowID(t *testing.T) {
 		t.Fatalf("unexpected recovery reason: %s", recoveryDecision.Reason)
 	}
 }
+
+func TestControllerSetAuthOutcomeIsSticky(t *testing.T) {
+	store := &memoryStore{state: &State{
+		FlowID:      "f-1",
+		FlowType:    FlowTypeOIDCAuthorization,
+		Protocol:    FlowProtocolOIDC,
+		CurrentStep: FlowStepLogin,
+	}}
+	controller := NewController(store)
+
+	if err := controller.SetAuthOutcome(t.Context(), "f-1", AuthOutcomeFailLatched, time.Now()); err != nil {
+		t.Fatalf("unexpected error setting fail_latched: %v", err)
+	}
+
+	if store.state.AuthOutcome != AuthOutcomeFailLatched {
+		t.Fatalf("expected auth_outcome=%s, got %s", AuthOutcomeFailLatched, store.state.AuthOutcome)
+	}
+
+	if err := controller.SetAuthOutcome(t.Context(), "f-1", AuthOutcomeOK, time.Now()); err != nil {
+		t.Fatalf("unexpected error updating from fail_latched: %v", err)
+	}
+
+	if store.state.AuthOutcome != AuthOutcomeFailLatched {
+		t.Fatalf("expected sticky auth_outcome=%s, got %s", AuthOutcomeFailLatched, store.state.AuthOutcome)
+	}
+}
+
+func TestControllerAdvanceRejectsSuccessPathWhenFailLatched(t *testing.T) {
+	store := &memoryStore{state: &State{
+		FlowID:      "f-1",
+		FlowType:    FlowTypeOIDCAuthorization,
+		Protocol:    FlowProtocolOIDC,
+		CurrentStep: FlowStepMFA,
+		AuthOutcome: AuthOutcomeFailLatched,
+	}}
+	controller := NewController(store)
+
+	_, err := controller.Advance(t.Context(), "f-1", FlowStepCallback, time.Now())
+	if err == nil {
+		t.Fatal("expected transition error")
+	}
+
+	var transitionErr TransitionError
+	if !errors.As(err, &transitionErr) {
+		t.Fatalf("expected transition error, got: %v", err)
+	}
+}

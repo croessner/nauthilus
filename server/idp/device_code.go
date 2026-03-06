@@ -45,14 +45,15 @@ const (
 
 // DeviceCodeRequest represents the stored data for a device authorization request.
 type DeviceCodeRequest struct {
-	ClientID  string           `json:"client_id"`
-	Scopes    []string         `json:"scopes"`
-	UserCode  string           `json:"user_code"`
-	Status    DeviceCodeStatus `json:"status"`
-	UserID    string           `json:"user_id,omitempty"`
-	ExpiresAt time.Time        `json:"expires_at"`
-	Interval  int              `json:"interval"`
-	LastPoll  time.Time        `json:"last_poll,omitzero"`
+	ClientID           string           `json:"client_id"`
+	Scopes             []string         `json:"scopes"`
+	UserCode           string           `json:"user_code"`
+	Status             DeviceCodeStatus `json:"status"`
+	UserID             string           `json:"user_id,omitempty"`
+	ExpiresAt          time.Time        `json:"expires_at"`
+	Interval           int              `json:"interval"`
+	LastPoll           time.Time        `json:"last_poll,omitzero"`
+	VerificationLocked bool             `json:"verification_locked"`
 }
 
 // DeviceCodeStore defines the interface for device code persistence.

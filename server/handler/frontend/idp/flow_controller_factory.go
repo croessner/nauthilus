@@ -120,6 +120,40 @@ func resumeFlow(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Cl
 	return recoveryDecision, nil
 }
 
+func getFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string) (flowdomain.AuthOutcome, bool) {
+	if mgr == nil {
+		return flowdomain.AuthOutcomeUnknown, false
+	}
+
+	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID == "" {
+		return flowdomain.AuthOutcomeUnknown, false
+	}
+
+	controller := newFlowController(mgr, redisClient, redisPrefix)
+	state, err := controller.State(ctx, flowID)
+	if err != nil || state == nil {
+		return flowdomain.AuthOutcomeUnknown, false
+	}
+
+	return state.AuthOutcome, true
+}
+
+func setFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string, outcome flowdomain.AuthOutcome) bool {
+	if mgr == nil {
+		return false
+	}
+
+	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID == "" {
+		return false
+	}
+
+	controller := newFlowController(mgr, redisClient, redisPrefix)
+
+	return controller.SetAuthOutcome(ctx, flowID, outcome, time.Now()) == nil
+}
+
 // resumeIdPFlow resumes an interrupted IdP flow and performs the redirect
 // implied by the flow decision.
 func (h *FrontendHandler) resumeIdPFlow(ctx *gin.Context, mgr cookie.Manager) {

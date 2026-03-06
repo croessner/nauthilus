@@ -24,6 +24,8 @@ type keyManager interface {
 var idPFlowStateKeys = [...]string{
 	definitions.SessionKeyIdPFlowType,
 	definitions.SessionKeyIdPFlowID,
+	definitions.SessionKeyIdPAuthOutcome,
+	definitions.SessionKeyIdPAuthOutcomeHMAC,
 	definitions.SessionKeyOIDCGrantType,
 	definitions.SessionKeyIdPClientID,
 	definitions.SessionKeyIdPRedirectURI,
@@ -43,10 +45,13 @@ var idPFlowStateKeys = [...]string{
 
 var mfaStateKeys = [...]string{
 	definitions.SessionKeyUsername,
+	definitions.SessionKeyUniqueUserID,
 	definitions.SessionKeyAuthResult,
+	definitions.SessionKeyAuthResultHMAC,
 	definitions.SessionKeyMFAMulti,
 	definitions.SessionKeyMFAMethod,
 	definitions.SessionKeyMFACompleted,
+	definitions.SessionKeyRegistration,
 }
 
 // CleanupIdPState removes all temporary IdP flow keys from session storage.

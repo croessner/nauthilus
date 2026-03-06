@@ -137,6 +137,10 @@ func (c *Controller) Complete(ctx context.Context, flowID string) (Decision, err
 		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionComplete}
 	}
 
+	if state.AuthOutcome == AuthOutcomeFailLatched {
+		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: state.CurrentStep, Action: FlowActionComplete}
+	}
+
 	if err := c.store.Delete(ctx, flowID); err != nil {
 		return Decision{}, err
 	}
@@ -174,6 +178,44 @@ func (c *Controller) Abort(ctx context.Context, flowID string) (Decision, error)
 	}
 
 	return Decision{Type: DecisionTypeError, Reason: string(FlowActionAbort)}, nil
+}
+
+// State returns the currently persisted flow state.
+func (c *Controller) State(ctx context.Context, flowID string) (*State, error) {
+	if c == nil || c.store == nil {
+		return nil, fmt.Errorf("flow controller: missing store")
+	}
+
+	state, err := c.store.Load(ctx, flowID)
+	if err != nil {
+		return nil, err
+	}
+
+	if state == nil {
+		return nil, fmt.Errorf("flow controller: %w", ErrFlowNotFound)
+	}
+
+	return state, nil
+}
+
+// SetAuthOutcome updates the persisted first-factor outcome for a flow.
+func (c *Controller) SetAuthOutcome(ctx context.Context, flowID string, outcome AuthOutcome, now time.Time) error {
+	state, err := c.State(ctx, flowID)
+	if err != nil {
+		return err
+	}
+
+	if err = state.UpdateAuthOutcome(outcome); err != nil {
+		return err
+	}
+
+	state.Normalize(now)
+
+	if err = c.store.Save(ctx, state); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Recover handles recovery for transition violations and stale flow IDs.
@@ -225,6 +267,10 @@ func (c *Controller) transition(ctx context.Context, flowID string, to FlowStep,
 	}
 
 	if !policy.AllowsAction(state.CurrentStep, action) || !policy.CanTransition(state.CurrentStep, to) {
+		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: to, Action: action}
+	}
+
+	if state.AuthOutcome == AuthOutcomeFailLatched && to != FlowStepLogin {
 		return Decision{}, TransitionError{FlowType: state.FlowType, From: state.CurrentStep, To: to, Action: action}
 	}
 

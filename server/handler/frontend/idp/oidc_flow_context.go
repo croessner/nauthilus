@@ -360,7 +360,7 @@ func newOIDCDeviceFlowContext(mgr cookie.Manager) *oidcDeviceFlowContext {
 // StoreMFAContext stores MFA-relevant session data for a device-code flow.
 func (c *oidcDeviceFlowContext) StoreMFAContext(
 	username, userID, deviceCode, clientID, protocol string,
-	authResult uint8,
+	authResult definitions.AuthResult,
 	multi bool,
 ) {
 	if c == nil || c.mgr == nil {
@@ -369,7 +369,7 @@ func (c *oidcDeviceFlowContext) StoreMFAContext(
 
 	c.mgr.Set(definitions.SessionKeyUsername, username)
 	c.mgr.Set(definitions.SessionKeyUniqueUserID, userID)
-	c.mgr.Set(definitions.SessionKeyAuthResult, authResult)
+	cookie.SetAuthResult(c.mgr, username, authResult)
 	c.mgr.Set(definitions.SessionKeyProtocol, protocol)
 	c.mgr.Set(definitions.SessionKeyMFAMulti, multi)
 	_ = clientID

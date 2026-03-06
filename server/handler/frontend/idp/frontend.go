@@ -573,8 +573,8 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	}
 
 	// Delayed-response path: MFA may have succeeded after a failed password.
-	// Deny only when first-factor failure is explicitly present in session state.
-	if shouldDenyDeviceCodeAfterMFA(mgr) {
+	// Deny when first-factor authentication is fail-latched in the flow state.
+	if h.shouldDenyDeviceCodeAfterMFA(ctx, mgr) {
 		request.Status = idp.DeviceCodeStatusDenied
 		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 
@@ -591,7 +591,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 			"user_code", request.UserCode,
 		)
 
-		renderDeviceCodeError(ctx, h.deps, request.UserCode, "Invalid login or password")
+		renderDeviceCodeFailed(ctx, h.deps, "Invalid login or password")
 
 		return
 	}
@@ -651,18 +651,32 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	renderDeviceCodeSuccess(ctx, h.deps)
 }
 
-func shouldDenyDeviceCodeAfterMFA(mgr cookie.Manager) bool {
+// shouldDenyDeviceCodeAfterMFA checks whether a device-code flow should be denied
+// because the original password authentication failed (delayed response case).
+// Uses HMAC-verified auth result for default-deny behavior.
+func (h *FrontendHandler) shouldDenyDeviceCodeAfterMFA(ctx *gin.Context, mgr cookie.Manager) bool {
 	if mgr == nil {
 		return false
 	}
 
-	if !mgr.HasKey(definitions.SessionKeyAuthResult) {
+	username := mgr.GetString(definitions.SessionKeyUsername, "")
+	if username == "" {
 		return false
 	}
 
-	authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, 0)
+	if h != nil && h.deps != nil {
+		if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()); ok {
+			return outcome == flowdomain.AuthOutcomeFailLatched
+		}
+	}
 
-	return definitions.AuthResult(authResult) == definitions.AuthResultFail
+	result, ok := cookie.VerifyAuthResult(mgr, username)
+	if !ok {
+		// HMAC verification failed or auth_result missing — deny to be safe.
+		return mgr.HasKey(definitions.SessionKeyAuthResult)
+	}
+
+	return result == definitions.AuthResultFail
 }
 
 func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, mgr cookie.Manager) bool {
@@ -671,19 +685,107 @@ func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, m
 	}
 
 	deviceCode := mgr.GetString(definitions.SessionKeyDeviceCode, "")
-	userCode := ""
 
 	if deviceCode != "" {
 		request, err := h.deviceStore.GetDeviceCode(ctx.Request.Context(), deviceCode)
 		if err == nil && request != nil {
 			request.Status = idp.DeviceCodeStatusDenied
 			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
-			userCode = request.UserCode
 		}
 	}
 
 	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-	renderDeviceCodeError(ctx, h.deps, userCode, "Invalid login or password")
+	renderDeviceCodeFailed(ctx, h.deps, "Invalid login or password")
+
+	return true
+}
+
+// handleDelayedResponseFailure checks whether the original password authentication failed
+// (delayed response case) and, if so, renders the login page with an error message.
+// Returns true if the failure was handled (caller should return), false if auth was OK.
+//
+// Default-deny: if the HMAC verification fails, mgr is nil, or auth_result is missing,
+// the login is rejected.
+func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *mfaSessionState, mfaMethod string) bool {
+	if h != nil && h.deps != nil && sess != nil {
+		if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), sess.mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()); ok {
+			if outcome == flowdomain.AuthOutcomeOK {
+				return false
+			}
+		}
+	}
+
+	result, ok := cookie.VerifyAuthResult(sess.mgr, sess.username)
+	if ok && result == definitions.AuthResultOK {
+		return false
+	}
+
+	// Device code flow has its own failure path.
+	if h.handleDeviceCodeDelayedAuthFailure(ctx, sess.mgr) {
+		return true
+	}
+
+	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "Delayed-response login rejected after MFA",
+		"mfa_method", mfaMethod,
+		"username", sess.username,
+	)
+
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
+	data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+	data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
+	data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
+	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+	data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
+	data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
+	data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
+
+	data["CSRFToken"] = csrf.Token(ctx)
+	lang := ctx.Param("languageTag")
+
+	if lang != "" {
+		data["PostLoginEndpoint"] = "/login/" + lang
+	} else {
+		data["PostLoginEndpoint"] = "/login"
+	}
+
+	data["HaveError"] = true
+	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+
+	// Calculate ShowRememberMe based on flow state.
+	showRememberMe := false
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+
+	if sess.oidcCID != "" {
+		if client, ok := idpInstance.FindClient(sess.oidcCID); ok {
+			showRememberMe = client.RememberMeTTL > 0
+		}
+	} else if sess.samlEntityID != "" {
+		if sp, ok := idpInstance.FindSAMLServiceProvider(sess.samlEntityID); ok {
+			showRememberMe = sp.RememberMeTTL > 0
+		}
+	}
+
+	data["ShowRememberMe"] = showRememberMe
+	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
+	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+
+	// Clean up cookie so they start over.
+	CleanupMFAState(sess.mgr)
+
+	ctx.HTML(http.StatusOK, "idp_login.html", data)
 
 	return true
 }
@@ -746,6 +848,8 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	)
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
+	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeUnknown)
 
 	var rememberMeTTL int
 
@@ -793,8 +897,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 					if mgr != nil {
 						mgr.Set(definitions.SessionKeyUsername, username)
 						mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-						mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+						cookie.SetAuthResult(mgr, username, definitions.AuthResultFail)
 						mgr.Set(definitions.SessionKeyProtocol, protocol)
+						_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
 
 						if rememberMeTTL > 0 {
 							mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
@@ -865,8 +970,9 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		if mgr != nil {
 			mgr.Set(definitions.SessionKeyUsername, username)
 			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-			mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
+			cookie.SetAuthResult(mgr, username, definitions.AuthResultOK)
 			mgr.Set(definitions.SessionKeyProtocol, protocol)
+			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
 
 			if rememberMeTTL > 0 {
 				mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
@@ -897,6 +1003,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
 		mgr.Set(definitions.SessionKeySubject, user.Id)
 		mgr.Set(definitions.SessionKeyProtocol, protocol)
+		_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
 
 		if rememberMeTTL > 0 {
 			mgr.SetMaxAge(rememberMeTTL)
@@ -1244,68 +1351,7 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	}
 
 	// MFA OK. Now check if the original password was OK (delayed response case).
-	authResult := uint8(definitions.AuthResultFail)
-
-	if sess.mgr != nil {
-		authResult = sess.mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
-	}
-
-	if authResult != uint8(definitions.AuthResultOK) {
-		if h.handleDeviceCodeDelayedAuthFailure(ctx, sess.mgr) {
-			return
-		}
-
-		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
-
-		data := h.basePageData(ctx)
-		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-		data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
-		data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
-		data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
-		data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
-		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
-		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
-		data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
-
-		data["CSRFToken"] = csrf.Token(ctx)
-		lang := ctx.Param("languageTag")
-
-		if lang != "" {
-			data["PostLoginEndpoint"] = "/login/" + lang
-		} else {
-			data["PostLoginEndpoint"] = "/login"
-		}
-
-		data["HaveError"] = true
-		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
-
-		// Calculate ShowRememberMe based on flow state.
-		showRememberMe := false
-		idpInstance := idp.NewNauthilusIdP(h.deps)
-
-		if sess.oidcCID != "" {
-			if client, ok := idpInstance.FindClient(sess.oidcCID); ok {
-				showRememberMe = client.RememberMeTTL > 0
-			}
-		} else if sess.samlEntityID != "" {
-			if sp, ok := idpInstance.FindSAMLServiceProvider(sess.samlEntityID); ok {
-				showRememberMe = sp.RememberMeTTL > 0
-			}
-		}
-
-		data["ShowRememberMe"] = showRememberMe
-		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
-		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
-		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
-		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
-		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
-
-		// Important: clean up cookie so they start over
-		CleanupMFAState(sess.mgr)
-
-		ctx.HTML(http.StatusOK, "idp_login.html", data)
-
+	if h.handleDelayedResponseFailure(ctx, sess, "recovery") {
 		return
 	}
 
@@ -1546,12 +1592,6 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
-	authResult := uint8(definitions.AuthResultFail)
-
-	if sess.mgr != nil {
-		authResult = sess.mgr.GetUint8(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
-	}
-
 	// Verify TOTP
 	authDeps := h.deps.Auth()
 	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
@@ -1596,63 +1636,8 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
-	// MFA OK. Now check if the original password was OK.
-	if authResult != uint8(definitions.AuthResultOK) {
-		if h.handleDeviceCodeDelayedAuthFailure(ctx, sess.mgr) {
-			return
-		}
-
-		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
-
-		data := h.basePageData(ctx)
-		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
-		data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
-		data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
-		data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
-		data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
-		data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
-		data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
-		data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
-		data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
-
-		data["CSRFToken"] = csrf.Token(ctx)
-		lang := ctx.Param("languageTag")
-
-		if lang != "" {
-			data["PostLoginEndpoint"] = "/login/" + lang
-		} else {
-			data["PostLoginEndpoint"] = "/login"
-		}
-
-		data["HaveError"] = true
-		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
-
-		// Calculate ShowRememberMe based on flow state.
-		showRememberMe := false
-		idpInstance := idp.NewNauthilusIdP(h.deps)
-
-		if sess.oidcCID != "" {
-			if client, ok := idpInstance.FindClient(sess.oidcCID); ok {
-				showRememberMe = client.RememberMeTTL > 0
-			}
-		} else if sess.samlEntityID != "" {
-			if sp, ok := idpInstance.FindSAMLServiceProvider(sess.samlEntityID); ok {
-				showRememberMe = sp.RememberMeTTL > 0
-			}
-		}
-
-		data["ShowRememberMe"] = showRememberMe
-		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
-		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
-		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
-		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
-		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
-
-		// Important: clean up cookie so they start over
-		CleanupMFAState(sess.mgr)
-
-		ctx.HTML(http.StatusOK, "idp_login.html", data)
-
+	// MFA OK. Now check if the original password was OK (delayed response case).
+	if h.handleDelayedResponseFailure(ctx, sess, "totp") {
 		return
 	}
 

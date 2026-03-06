@@ -16,6 +16,8 @@
 package flow
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -65,15 +67,37 @@ func (m *mapSessionManager) GetBool(key string, defaultValue bool) bool {
 	return value
 }
 
+func (m *mapSessionManager) GetBytes(key string, defaultValue []byte) []byte {
+	raw, ok := m.values[key]
+	if !ok {
+		return defaultValue
+	}
+
+	value, ok := raw.([]byte)
+	if !ok {
+		return defaultValue
+	}
+
+	return value
+}
+
+func (m *mapSessionManager) ComputeHMAC(data []byte) []byte {
+	mac := hmac.New(sha256.New, []byte("flow-hybrid-test-key"))
+	_, _ = mac.Write(data)
+
+	return mac.Sum(nil)
+}
+
 func TestFlowReferenceAdapterRoundtrip(t *testing.T) {
 	session := newMapSessionManager()
 	adapter := NewFlowReferenceAdapter(session)
 
 	state := &State{
-		FlowID:     "flow-123",
-		FlowType:   FlowTypeOIDCAuthorization,
-		Protocol:   FlowProtocolOIDC,
-		PendingMFA: true,
+		FlowID:      "flow-123",
+		FlowType:    FlowTypeOIDCAuthorization,
+		Protocol:    FlowProtocolOIDC,
+		AuthOutcome: AuthOutcomeFailLatched,
+		PendingMFA:  true,
 	}
 
 	if err := adapter.Save(t.Context(), state); err != nil {
@@ -87,6 +111,10 @@ func TestFlowReferenceAdapterRoundtrip(t *testing.T) {
 
 	if loaded == nil || loaded.FlowID != state.FlowID {
 		t.Fatalf("unexpected loaded flow: %+v", loaded)
+	}
+
+	if loaded.AuthOutcome != state.AuthOutcome {
+		t.Fatalf("unexpected auth outcome: got=%s want=%s", loaded.AuthOutcome, state.AuthOutcome)
 	}
 
 	if session.GetString(definitions.SessionKeyIdPFlowID, "") != state.FlowID {

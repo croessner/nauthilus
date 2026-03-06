@@ -64,6 +64,10 @@ const (
 	// SessionKeyAuthResult stores the authentication outcome (uint8 AuthResult).
 	SessionKeyAuthResult = "auth_result"
 
+	// SessionKeyAuthResultHMAC stores the HMAC-SHA256 integrity tag for the auth result.
+	// Binds auth_result to username and timestamp to prevent internal tampering.
+	SessionKeyAuthResultHMAC = "auth_result_hmac"
+
 	// SessionKeyLoginError stores a login error message to be displayed on the login page.
 	// Used when redirecting back to /login after MFA verification fails due to wrong initial credentials.
 	SessionKeyLoginError = "login_error"
@@ -104,6 +108,14 @@ const (
 
 	// SessionKeyIdPFlowID stores the opaque flow identifier used as reference to external state.
 	SessionKeyIdPFlowID = "idp_flow_id"
+
+	// SessionKeyIdPAuthOutcome stores the first-factor outcome for the active IdP flow.
+	// Values are managed by the flow FSM (e.g. unknown, ok, fail_latched).
+	SessionKeyIdPAuthOutcome = "idp_auth_outcome"
+
+	// SessionKeyIdPAuthOutcomeHMAC stores the HMAC-SHA256 integrity tag for idp_auth_outcome.
+	// Binds auth_outcome to flow_id and timestamp to prevent tampering.
+	SessionKeyIdPAuthOutcomeHMAC = "idp_auth_outcome_hmac"
 
 	// SessionKeyIdPClientID stores the OIDC client_id for the current flow.
 	SessionKeyIdPClientID = "idp_client_id"

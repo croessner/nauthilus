@@ -111,6 +111,8 @@
   "Device Authorized": "Устройство авторизовано",
   "Your device has been successfully authorized.": "Ваше устройство было успешно авторизовано.",
   "You can close this window and return to your device.": "Вы можете закрыть это окно и вернуться к вашему устройству.",
+  "Device Authorization Failed": "Ошибка авторизации устройства",
+  "This code can no longer be used. Please start again on your device.": "Этот код больше нельзя использовать. Пожалуйста, начните заново на вашем устройстве.",
   "Missing required permission for MFA management": "Отсутствует необходимое разрешение для управления MFA",
   "Failed to register TOTP": "Не удалось зарегистрировать TOTP",
   "Failed to generate recovery codes": "Не удалось сгенерировать коды восстановления",

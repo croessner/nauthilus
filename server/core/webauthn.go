@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
@@ -813,24 +814,30 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			// If the initial credentials were wrong, we must reject the login even if MFA succeeded.
 			// This implements "Fall B Punkt 1" from the IdP login flow specification:
 			// User is redirected back to /login/:languageTag with error message, session is reset.
-			if !isMFAAuthResultValid(mgr) {
+			if !isMFAAuthResultValid(mgr, user.Name) {
 				stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
-				// Store error message in session for display on login page
-				mgr.Set(definitions.SessionKeyLoginError, "Invalid login or password")
-				// Keep an explicit fail marker so downstream device-code completion
-				// can reliably deny the authorization.
-				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+				util.DebugModuleWithCfg(
+					ctx.Request.Context(),
+					authState.Cfg(),
+					authState.Logger(),
+					definitions.DbgIdp,
+					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+					definitions.LogKeyMsg, "Delayed-response login rejected after MFA",
+					"mfa_method", "webauthn",
+					"username", user.Name,
+				)
+
 				// Ensure no stale authenticated session survives this failure path.
 				mgr.Delete(definitions.SessionKeyAccount)
 				mgr.Delete(definitions.SessionKeyDisplayName)
 				mgr.Delete(definitions.SessionKeySubject)
-				mgr.Delete(definitions.SessionKeyMFACompleted)
-				mgr.Delete(definitions.SessionKeyMFAMethod)
 
-				// Clear MFA-related session data but keep flow and error
-				mgr.Delete(definitions.SessionKeyRegistration)
-				mgr.Delete(definitions.SessionKeyUsername)
+				// Clear MFA-related session data (includes auth_result, username, registration, etc.)
+				flow.CleanupMFAState(mgr)
+
+				// Store error message in session for display on login page (after cleanup to persist it).
+				mgr.Set(definitions.SessionKeyLoginError, "Invalid login or password")
 
 				if saveErr := mgr.Save(ctx); saveErr != nil {
 					ctx.JSON(http.StatusInternalServerError, saveErr.Error())
@@ -838,8 +845,17 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 					return
 				}
 
-				// Return JSON with redirect signal - JavaScript will redirect to /login
-				ctx.JSON(http.StatusUnauthorized, gin.H{"redirect": "/login"})
+				// Return JSON with redirect signal.
+				// Device-code flows terminate on their dedicated failure page.
+				redirectTarget := "/login"
+				if mgr.GetString(definitions.SessionKeyOIDCGrantType, "") == definitions.OIDCFlowDeviceCode {
+					redirectTarget = "/oidc/device/verify/failed"
+					if languageTag := ctx.Param("languageTag"); languageTag != "" {
+						redirectTarget += "/" + languageTag
+					}
+				}
+
+				ctx.JSON(http.StatusUnauthorized, gin.H{"redirect": redirectTarget})
 
 				return
 			}
@@ -970,13 +986,22 @@ func hashCredentialID(credentialID []byte) string {
 // the IdP login flow specification: if the initial credentials were wrong (delayed response),
 // the user must be rejected after successful MFA verification.
 //
-// Returns false if AuthResult is AuthResultFail, true otherwise (including if no AuthResult is set).
-func isMFAAuthResultValid(mgr cookie.Manager) bool {
-	if mgr == nil {
-		return true
+// Default-deny: returns false if mgr is nil, auth_result is missing/corrupt, HMAC
+// verification fails, or auth_result is anything other than AuthResultOK.
+func isMFAAuthResultValid(mgr cookie.Manager, username string) bool {
+	if mgr != nil {
+		switch flow.AuthOutcome(mgr.GetString(definitions.SessionKeyIdPAuthOutcome, "")) {
+		case flow.AuthOutcomeFailLatched:
+			return false
+		case flow.AuthOutcomeOK:
+			return true
+		}
 	}
 
-	authResult := mgr.GetUint8(definitions.SessionKeyAuthResult, 0)
+	result, ok := cookie.VerifyAuthResult(mgr, username)
+	if !ok {
+		return false
+	}
 
-	return definitions.AuthResult(authResult) != definitions.AuthResultFail
+	return result == definitions.AuthResultOK
 }

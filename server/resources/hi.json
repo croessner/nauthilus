@@ -111,6 +111,8 @@
   "Device Authorized": "डिवाइस अधिकृत",
   "Your device has been successfully authorized.": "आपका डिवाइस सफलतापूर्वक अधिकृत किया गया है।",
   "You can close this window and return to your device.": "आप इस विंडो को बंद कर सकते हैं और अपने डिवाइस पर वापस जा सकते हैं।",
+  "Device Authorization Failed": "डिवाइस प्राधिकरण विफल",
+  "This code can no longer be used. Please start again on your device.": "इस कोड का अब उपयोग नहीं किया जा सकता। कृपया अपने डिवाइस पर फिर से शुरू करें।",
   "Missing required permission for MFA management": "MFA प्रबंधन के लिए आवश्यक अनुमति नहीं है",
   "Failed to register TOTP": "TOTP पंजीकरण विफल",
   "Failed to generate recovery codes": "पुनर्प्राप्ति कोड उत्पन्न करना विफल",
