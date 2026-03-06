@@ -18,6 +18,8 @@
 package cookie
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/gob"
 	"fmt"
 	"log/slog"
@@ -96,6 +98,10 @@ type Manager interface {
 
 	// SetMaxAge sets the maximum age of the cookie in seconds.
 	SetMaxAge(maxAge int)
+
+	// ComputeHMAC returns an HMAC-SHA256 tag for the given data using the codec's auth key.
+	// Used for defense-in-depth integrity checks on security-critical session values.
+	ComputeHMAC(data []byte) []byte
 }
 
 // SecureManager implements Manager using ChaCha20-Poly1305 for encryption.
@@ -111,11 +117,12 @@ type SecureManager struct {
 
 // sensitiveKeys lists keys whose values should be masked in debug output unless developer mode is enabled.
 var sensitiveKeys = map[string]bool{
-	"totp_secret": true,
-	"totp_url":    true,
-	"auth_result": true,
-	"password":    true,
-	"secret":      true,
+	"totp_secret":      true,
+	"totp_url":         true,
+	"auth_result":      true,
+	"auth_result_hmac": true,
+	"password":         true,
+	"secret":           true,
 }
 
 // NewSecureManager creates a new encrypted cookie manager.
@@ -430,6 +437,14 @@ func (m *SecureManager) Keys() []string {
 	}
 
 	return keys
+}
+
+// ComputeHMAC returns an HMAC-SHA256 tag for the given data using the codec's auth key.
+func (m *SecureManager) ComputeHMAC(data []byte) []byte {
+	mac := hmac.New(sha256.New, m.codec.authKey)
+	mac.Write(data)
+
+	return mac.Sum(nil)
 }
 
 // Compile-time interface verification.

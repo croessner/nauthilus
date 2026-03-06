@@ -390,10 +390,10 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	// For delayed_response clients, mirror the authorization-code behavior:
 	// if password auth fails but MFA is available, continue with MFA and defer
 	// the final decision until flow completion.
-	authResult := uint8(definitions.AuthResultOK)
+	authResult := definitions.AuthResultOK
 	user, err := h.idp.Authenticate(ctx, username, password, request.ClientID, "")
 	if err != nil {
-		authResult = uint8(definitions.AuthResultFail)
+		authResult = definitions.AuthResultFail
 		user = nil
 
 		if h.idp.IsDelayedResponse(request.ClientID, "") {

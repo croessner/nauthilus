@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -35,39 +36,52 @@ func TestLoginWebAuthnBeginUsesSessionUniqueUserID(t *testing.T) {
 // This test ensures that "Fall B Punkt 1" from the IdP login flow specification is correctly
 // implemented: if the initial credentials were wrong (delayed response), the user must be
 // rejected even after successful MFA verification.
+//
+// Default-deny: all cases without a valid HMAC-verified AuthResultOK must return false.
 func TestIsMFAAuthResultValid(t *testing.T) {
+	const testUser = "testuser"
+
 	tests := []struct {
 		name     string
 		setup    func(mgr *mockCookieManager)
 		expected bool
 	}{
 		{
-			name: "AuthResultOK should allow login",
+			name: "AuthResultOK with valid HMAC should allow login",
 			setup: func(mgr *mockCookieManager) {
-				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
+				cookie.SetAuthResult(mgr, testUser, definitions.AuthResultOK)
 			},
 			expected: true,
 		},
 		{
-			name: "AuthResultFail should reject login (Fall B Punkt 1 - wrong initial credentials)",
+			name: "AuthResultFail with valid HMAC should reject login (Fall B Punkt 1)",
 			setup: func(mgr *mockCookieManager) {
-				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+				cookie.SetAuthResult(mgr, testUser, definitions.AuthResultFail)
 			},
 			expected: false,
 		},
 		{
-			name: "No AuthResult set should allow login (non-delayed response case)",
+			name: "No AuthResult set should reject login (default-deny)",
 			setup: func(mgr *mockCookieManager) {
-				// No AuthResult set
+				// No AuthResult set at all
 			},
-			expected: true,
+			expected: false,
 		},
 		{
-			name: "AuthResultTempFail should allow login (temporary failures are not credential errors)",
+			name: "AuthResult without HMAC should reject login (tampered)",
 			setup: func(mgr *mockCookieManager) {
-				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultTempFail))
+				// Raw set without HMAC — simulates tampering
+				mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
 			},
-			expected: true,
+			expected: false,
+		},
+		{
+			name: "AuthResult with wrong username in HMAC should reject login",
+			setup: func(mgr *mockCookieManager) {
+				// Set with different username than what we verify with
+				cookie.SetAuthResult(mgr, "otheruser", definitions.AuthResultOK)
+			},
+			expected: false,
 		},
 	}
 
@@ -76,18 +90,16 @@ func TestIsMFAAuthResultValid(t *testing.T) {
 			mgr := &mockCookieManager{data: make(map[string]any)}
 			tt.setup(mgr)
 
-			result := isMFAAuthResultValid(mgr)
+			result := isMFAAuthResultValid(mgr, testUser)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-// TestIsMFAAuthResultValidNilManager tests that a nil manager allows login.
-// This case occurs when the cookie manager is not available.
+// TestIsMFAAuthResultValidNilManager tests that a nil manager denies login (default-deny).
 func TestIsMFAAuthResultValidNilManager(t *testing.T) {
-	// Passing nil directly as the interface value
-	result := isMFAAuthResultValid(nil)
-	assert.True(t, result, "Nil manager should allow login")
+	result := isMFAAuthResultValid(nil, "testuser")
+	assert.False(t, result, "Nil manager must deny login (default-deny)")
 }
 
 // TestDelayedResponseWithWrongCredentialsRejectAfterMFA documents the expected behavior
@@ -97,17 +109,14 @@ func TestIsMFAAuthResultValidNilManager(t *testing.T) {
 // 2. After successful MFA, reject the login because initial credentials were wrong
 // This prevents attackers from using MFA bypass techniques to circumvent password verification.
 func TestDelayedResponseWithWrongCredentialsRejectAfterMFA(t *testing.T) {
-	// This is a documentation test that verifies the expected behavior
-	// The actual implementation is in LoginWebAuthnFinish and PostLoginTOTP
-
 	mgr := &mockCookieManager{data: make(map[string]any)}
 
-	// Simulate delayed response with wrong credentials
-	mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultFail))
+	// Simulate delayed response with wrong credentials (using HMAC-protected setter)
+	cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultFail)
 	mgr.Set(definitions.SessionKeyUsername, "testuser")
 
 	// After MFA verification, the auth result should still be checked
-	isValid := isMFAAuthResultValid(mgr)
+	isValid := isMFAAuthResultValid(mgr, "testuser")
 
 	// User should be rejected because initial credentials were wrong
 	assert.False(t, isValid, "User with wrong initial credentials must be rejected after MFA")
@@ -118,12 +127,12 @@ func TestDelayedResponseWithWrongCredentialsRejectAfterMFA(t *testing.T) {
 func TestDelayedResponseWithCorrectCredentialsAllowAfterMFA(t *testing.T) {
 	mgr := &mockCookieManager{data: make(map[string]any)}
 
-	// Simulate delayed response with correct credentials
-	mgr.Set(definitions.SessionKeyAuthResult, uint8(definitions.AuthResultOK))
+	// Simulate delayed response with correct credentials (using HMAC-protected setter)
+	cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultOK)
 	mgr.Set(definitions.SessionKeyUsername, "testuser")
 
 	// After MFA verification, the auth result should allow login
-	isValid := isMFAAuthResultValid(mgr)
+	isValid := isMFAAuthResultValid(mgr, "testuser")
 
 	// User should be allowed because initial credentials were correct
 	assert.True(t, isValid, "User with correct initial credentials must be allowed after MFA")

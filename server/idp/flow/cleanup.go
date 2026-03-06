@@ -43,10 +43,13 @@ var idPFlowStateKeys = [...]string{
 
 var mfaStateKeys = [...]string{
 	definitions.SessionKeyUsername,
+	definitions.SessionKeyUniqueUserID,
 	definitions.SessionKeyAuthResult,
+	definitions.SessionKeyAuthResultHMAC,
 	definitions.SessionKeyMFAMulti,
 	definitions.SessionKeyMFAMethod,
 	definitions.SessionKeyMFACompleted,
+	definitions.SessionKeyRegistration,
 }
 
 // CleanupIdPState removes all temporary IdP flow keys from session storage.

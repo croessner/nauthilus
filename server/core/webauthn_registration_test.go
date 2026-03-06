@@ -16,6 +16,8 @@
 package core
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"log/slog"
 	"testing"
 	"time"
@@ -136,6 +138,13 @@ func (m *mockCookieManager) HasKey(key string) bool {
 }
 
 func (m *mockCookieManager) SetMaxAge(_ int) {}
+
+func (m *mockCookieManager) ComputeHMAC(data []byte) []byte {
+	h := hmac.New(sha256.New, []byte("test-hmac-key-for-mock"))
+	h.Write(data)
+
+	return h.Sum(nil)
+}
 
 // Verify mockCookieManager implements cookie.Manager
 var _ cookie.Manager = (*mockCookieManager)(nil)

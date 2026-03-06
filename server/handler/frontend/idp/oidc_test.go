@@ -17,8 +17,10 @@ package idp
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -545,7 +547,7 @@ func Test_oidcDeviceFlowContext(t *testing.T) {
 		mgr := &mockCookieManager{data: make(map[string]any)}
 		flowContext := newOIDCDeviceFlowContext(mgr)
 
-		flowContext.StoreMFAContext("alice", "uid-1", "dc-1", "client-1", definitions.ProtoOIDC, uint8(definitions.AuthResultOK), true)
+		flowContext.StoreMFAContext("alice", "uid-1", "dc-1", "client-1", definitions.ProtoOIDC, definitions.AuthResultOK, true)
 
 		assert.Equal(t, "", flowContext.DeviceCode())
 		assert.Equal(t, "uid-1", flowContext.UniqueUserID())
@@ -794,6 +796,14 @@ func (m *mockCookieManager) GetBytes(key string, defaultValue []byte) []byte {
 }
 
 func (m *mockCookieManager) SetMaxAge(_ int) {}
+
+func (m *mockCookieManager) ComputeHMAC(data []byte) []byte {
+	// Deterministic mock HMAC for testing: SHA256 of data with a fixed test key.
+	h := hmac.New(sha256.New, []byte("test-hmac-key-for-mock"))
+	h.Write(data)
+
+	return h.Sum(nil)
+}
 
 func TestOIDCHandler_Consent(t *testing.T) {
 	t.Run("Authorize redirects to consent when not authorized", func(t *testing.T) {

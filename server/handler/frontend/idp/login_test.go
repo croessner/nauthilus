@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -263,17 +264,26 @@ func TestShouldDenyDeviceCodeAfterMFA(t *testing.T) {
 		assert.False(t, shouldDenyDeviceCodeAfterMFA(mgr))
 	})
 
-	t.Run("explicit auth fail denies", func(t *testing.T) {
-		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyAuthResult: uint8(definitions.AuthResultFail),
-		}}
+	t.Run("explicit auth fail with valid HMAC denies", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{}}
+		mgr.Set(definitions.SessionKeyUsername, "testuser")
+		cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultFail)
 		assert.True(t, shouldDenyDeviceCodeAfterMFA(mgr))
 	})
 
-	t.Run("auth ok does not deny", func(t *testing.T) {
+	t.Run("auth ok with valid HMAC does not deny", func(t *testing.T) {
+		mgr := &mockCookieManager{data: map[string]any{}}
+		mgr.Set(definitions.SessionKeyUsername, "testuser")
+		cookie.SetAuthResult(mgr, "testuser", definitions.AuthResultOK)
+		assert.False(t, shouldDenyDeviceCodeAfterMFA(mgr))
+	})
+
+	t.Run("tampered auth result (raw set without HMAC) denies", func(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
+			definitions.SessionKeyUsername:   "testuser",
 			definitions.SessionKeyAuthResult: uint8(definitions.AuthResultOK),
 		}}
-		assert.False(t, shouldDenyDeviceCodeAfterMFA(mgr))
+		// No HMAC set — should be treated as tampered and denied
+		assert.True(t, shouldDenyDeviceCodeAfterMFA(mgr))
 	})
 }
