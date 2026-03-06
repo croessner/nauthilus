@@ -74,3 +74,62 @@ func TestParseScopesFromEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePKCEModeFromEnv(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue string
+		expected PKCEMode
+	}{
+		{
+			name:     "unset returns disabled",
+			envValue: "",
+			expected: PKCEModeDisabled,
+		},
+		{
+			name:     "explicit disabled",
+			envValue: "disabled",
+			expected: PKCEModeDisabled,
+		},
+		{
+			name:     "off alias",
+			envValue: "off",
+			expected: PKCEModeDisabled,
+		},
+		{
+			name:     "s256 lowercase",
+			envValue: "s256",
+			expected: PKCEModeS256,
+		},
+		{
+			name:     "s256 uppercase",
+			envValue: "S256",
+			expected: PKCEModeS256,
+		},
+		{
+			name:     "true alias",
+			envValue: "true",
+			expected: PKCEModeS256,
+		},
+		{
+			name:     "plain",
+			envValue: "plain",
+			expected: PKCEModePlain,
+		},
+		{
+			name:     "unknown falls back to disabled",
+			envValue: "abc",
+			expected: PKCEModeDisabled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OAUTH2_PKCE", tt.envValue)
+
+			result := parsePKCEModeFromEnv()
+
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

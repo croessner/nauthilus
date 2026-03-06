@@ -30,6 +30,8 @@ const (
 	FlowMetadataNonce                          = "nonce"
 	FlowMetadataResponseType                   = "response_type"
 	FlowMetadataPrompt                         = "prompt"
+	FlowMetadataCodeChallenge                  = "code_challenge"
+	FlowMetadataCodeChallengeMethod            = "code_challenge_method"
 	FlowMetadataSAMLEntityID                   = "saml_entity_id"
 	FlowMetadataOriginalURL                    = "original_url"
 	FlowMetadataDeviceCode                     = "device_code"

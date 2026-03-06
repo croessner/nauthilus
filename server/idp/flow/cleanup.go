@@ -34,6 +34,8 @@ var idPFlowStateKeys = [...]string{
 	definitions.SessionKeyIdPNonce,
 	definitions.SessionKeyIdPResponseType,
 	definitions.SessionKeyIdPPrompt,
+	definitions.SessionKeyIdPCodeChallenge,
+	definitions.SessionKeyIdPCodeChallengeMethod,
 	definitions.SessionKeyDeviceCode,
 	definitions.SessionKeyIdPSAMLRequest,
 	definitions.SessionKeyIdPSAMLRelayState,

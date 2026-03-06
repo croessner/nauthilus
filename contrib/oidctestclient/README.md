@@ -14,13 +14,14 @@ grant types that can be selected via the `OAUTH2_FLOW` environment variable.
 ## Client Configuration
 The client is configured via environment variables:
 
-| Variable               | Description                                        | Default Value        |
-|------------------------|----------------------------------------------------|----------------------|
-| `OPENID_PROVIDER`      | The issuer URL of Nauthilus                        | (required)           |
-| `OAUTH2_CLIENT_ID`     | The client ID as configured in Nauthilus           | (required)           |
-| `OAUTH2_CLIENT_SECRET` | The client secret as configured in Nauthilus       | (required)           |
-| `OAUTH2_FLOW`          | Grant type to use (see table above)                | `authorization_code` |
-| `OAUTH2_SCOPES`        | Comma or space separated list of scopes to request | (sensible defaults)  |
+| Variable               | Description                                               | Default Value        |
+|------------------------|-----------------------------------------------------------|----------------------|
+| `OPENID_PROVIDER`      | The issuer URL of Nauthilus                               | (required)           |
+| `OAUTH2_CLIENT_ID`     | The client ID as configured in Nauthilus                  | (required)           |
+| `OAUTH2_CLIENT_SECRET` | The client secret as configured in Nauthilus              | (required)           |
+| `OAUTH2_FLOW`          | Grant type to use (see table above)                       | `authorization_code` |
+| `OAUTH2_SCOPES`        | Comma or space separated list of scopes to request        | (sensible defaults)  |
+| `OAUTH2_PKCE`          | PKCE mode for auth code flow: `disabled`, `S256`, `plain` | `disabled`           |
 
 Example:
 ```bash
@@ -28,9 +29,16 @@ export OPENID_PROVIDER=http://127.0.0.1:8080
 export OAUTH2_CLIENT_ID=test-client
 export OAUTH2_CLIENT_SECRET=test-secret
 export OAUTH2_FLOW=authorization_code
+export OAUTH2_PKCE=S256
 ./nauthilus/bin/oidctestclient
 ```
 By default, the client listens on `http://127.0.0.1:9094`.
+
+PKCE notes:
+
+- `OAUTH2_PKCE=disabled`: no PKCE parameters are sent.
+- `OAUTH2_PKCE=S256`: sends `code_challenge_method=S256` and `code_verifier` at token exchange.
+- `OAUTH2_PKCE=plain`: sends `code_challenge_method=plain` and matching `code_verifier`.
 ## Server Configuration (Nauthilus)
 The OIDC IdP must be enabled and the client registered in `nauthilus.yaml`:
 ```yaml

@@ -37,6 +37,7 @@ func registerAuthorizationCodeRoutes(
 	verifier *oidc.IDTokenVerifier,
 	tmpl *template.Template,
 	scopes []string,
+	pkceMode PKCEMode,
 ) {
 	oauth2Config := oauth2.Config{
 		ClientID:     clientID,
@@ -49,8 +50,8 @@ func registerAuthorizationCodeRoutes(
 	log.Printf("Client configuration: ID=%s, RedirectURL=%s, Scopes=%v", clientID, oauth2Config.RedirectURL, oauth2Config.Scopes)
 
 	http.HandleFunc("/", handleAuthCodeHome())
-	http.HandleFunc("/start", handleAuthCodeLogin(&oauth2Config))
-	http.HandleFunc("/oauth2", handleAuthCodeCallback(ctx, provider, &oauth2Config, providerClaims, verifier, tmpl, scopes))
+	http.HandleFunc("/start", handleAuthCodeLogin(&oauth2Config, pkceMode))
+	http.HandleFunc("/oauth2", handleAuthCodeCallback(ctx, provider, &oauth2Config, providerClaims, verifier, tmpl, scopes, pkceMode))
 	http.HandleFunc("/frontchannel-logout", handleFrontChannelLogout)
 	http.HandleFunc("/backchannel-logout", handleBackChannelLogout(ctx, verifier))
 	http.HandleFunc("/logout-callback", handleLogoutCallback)
@@ -126,7 +127,7 @@ func handleAuthCodeHome() http.HandlerFunc {
 
 // handleAuthCodeLogin returns the handler that initiates the Authorization Code flow
 // by generating state/nonce cookies and redirecting the user to the authorization endpoint.
-func handleAuthCodeLogin(oauth2Config *oauth2.Config) http.HandlerFunc {
+func handleAuthCodeLogin(oauth2Config *oauth2.Config, pkceMode PKCEMode) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Received request on '/' - Starting OIDC flow")
 
@@ -151,7 +152,23 @@ func handleAuthCodeLogin(oauth2Config *oauth2.Config) http.HandlerFunc {
 		setCallbackCookie(w, "state", state)
 		setCallbackCookie(w, "nonce", nonce)
 
-		authURL := oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce))
+		opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce)}
+
+		if pkceMode != PKCEModeDisabled {
+			verifier, pkceOpts, err := buildPKCEAuthOptions(pkceMode)
+			if err != nil {
+				log.Printf("Error generating PKCE verifier: %v", err)
+				http.Error(w, "Internal error", http.StatusInternalServerError)
+
+				return
+			}
+
+			setCallbackCookie(w, "pkce_verifier", verifier)
+			opts = append(opts, pkceOpts...)
+			log.Printf("PKCE enabled for authorization request with method=%s", pkceMode)
+		}
+
+		authURL := oauth2Config.AuthCodeURL(state, opts...)
 		log.Printf("Redirecting to: %s", authURL)
 
 		http.Redirect(w, r, authURL, http.StatusFound)
@@ -168,17 +185,19 @@ func handleAuthCodeCallback(
 	verifier *oidc.IDTokenVerifier,
 	tmpl *template.Template,
 	scopes []string,
+	pkceMode PKCEMode,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Received callback on '/oauth2'")
 
-		rawIDToken, signatureVerified, resp, ok := exchangeAndVerify(ctx, w, r, oauth2Config, verifier, scopes)
+		rawIDToken, signatureVerified, resp, ok := exchangeAndVerify(ctx, w, r, oauth2Config, verifier, scopes, pkceMode)
 		if !ok {
 			return
 		}
 
 		deleteCallbackCookie(w, "state")
 		deleteCallbackCookie(w, "nonce")
+		deleteCallbackCookie(w, "pkce_verifier")
 
 		resp.IntrospectionResult = performIntrospection(providerClaims.IntrospectionEndpoint, resp.OAuth2Token.AccessToken)
 		resp.UserinfoResult = fetchUserinfo(ctx, provider, resp.OAuth2Token.AccessToken)
@@ -198,6 +217,7 @@ func exchangeAndVerify(
 	oauth2Config *oauth2.Config,
 	verifier *oidc.IDTokenVerifier,
 	scopes []string,
+	pkceMode PKCEMode,
 ) (string, bool, *tokenResponse, bool) {
 	if ok := validateState(w, r); !ok {
 		return "", false, nil, false
@@ -207,7 +227,20 @@ func exchangeAndVerify(
 
 	log.Println("Exchanging authorization code for tokens...")
 
-	oauth2Token, err := oauth2Config.Exchange(ctx, queryCode)
+	exchangeOpts := []oauth2.AuthCodeOption{}
+	if pkceMode != PKCEModeDisabled {
+		pkceVerifier, err := getRequiredCookie(r, "pkce_verifier")
+		if err != nil {
+			log.Printf("PKCE verifier cookie missing: %v", err)
+			http.Error(w, "pkce verifier not found", http.StatusBadRequest)
+
+			return "", false, nil, false
+		}
+
+		exchangeOpts = append(exchangeOpts, oauth2.VerifierOption(pkceVerifier))
+	}
+
+	oauth2Token, err := oauth2Config.Exchange(ctx, queryCode, exchangeOpts...)
 	if err != nil {
 		log.Printf("Token exchange failed: %v", err)
 		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
@@ -237,6 +270,38 @@ func exchangeAndVerify(
 	}
 
 	return rawIDToken, signatureVerified, resp, true
+}
+
+func buildPKCEAuthOptions(pkceMode PKCEMode) (string, []oauth2.AuthCodeOption, error) {
+	verifier, err := randString(64)
+	if err != nil {
+		return "", nil, err
+	}
+
+	switch pkceMode {
+	case PKCEModeS256:
+		return verifier, []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}, nil
+	case PKCEModePlain:
+		return verifier, []oauth2.AuthCodeOption{
+			oauth2.SetAuthURLParam("code_challenge", verifier),
+			oauth2.SetAuthURLParam("code_challenge_method", "plain"),
+		}, nil
+	default:
+		return "", nil, nil
+	}
+}
+
+func getRequiredCookie(r *http.Request, cookieName string) (string, error) {
+	cookie, err := r.Cookie(cookieName)
+	if err != nil {
+		return "", err
+	}
+
+	if cookie.Value == "" {
+		return "", fmt.Errorf("%s cookie empty", cookieName)
+	}
+
+	return cookie.Value, nil
 }
 
 // validateState checks that the state query parameter matches the state cookie.

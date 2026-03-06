@@ -48,6 +48,15 @@ const (
 	// FlowClientCredentials is the Client Credentials Grant flow.
 	FlowClientCredentials FlowType = "client_credentials"
 
+	// PKCEModeDisabled disables PKCE for Authorization Code flow.
+	PKCEModeDisabled PKCEMode = "disabled"
+
+	// PKCEModeS256 enables PKCE with code_challenge_method=S256.
+	PKCEModeS256 PKCEMode = "S256"
+
+	// PKCEModePlain enables PKCE with code_challenge_method=plain.
+	PKCEModePlain PKCEMode = "plain"
+
 	// listenAddr is the default address the test client listens on.
 	listenAddr = "127.0.0.1:9094"
 )
@@ -60,6 +69,9 @@ var (
 	clientID       = os.Getenv("OAUTH2_CLIENT_ID")
 	clientSecret   = os.Getenv("OAUTH2_CLIENT_SECRET")
 )
+
+// PKCEMode controls whether and how PKCE is used for authorization code flow.
+type PKCEMode string
 
 // ProviderClaims holds selected endpoints discovered from the OIDC provider metadata.
 type ProviderClaims struct {
@@ -146,6 +158,29 @@ func parseFlowTypeFromEnv() FlowType {
 		}
 
 		return FlowAuthorizationCode
+	}
+}
+
+// parsePKCEModeFromEnv reads the OAUTH2_PKCE environment variable and returns
+// the selected PKCE mode. Valid values are "disabled" (default), "S256", and "plain".
+// Additionally, "true" maps to "S256" and "false" maps to "disabled".
+func parsePKCEModeFromEnv() PKCEMode {
+	raw := strings.TrimSpace(os.Getenv("OAUTH2_PKCE"))
+	if raw == "" {
+		return PKCEModeDisabled
+	}
+
+	switch strings.ToLower(raw) {
+	case "disabled", "off", "false", "0", "none":
+		return PKCEModeDisabled
+	case "s256", "true", "1":
+		return PKCEModeS256
+	case "plain":
+		return PKCEModePlain
+	default:
+		log.Printf("Warning: unknown OAUTH2_PKCE %q, falling back to %s", raw, PKCEModeDisabled)
+
+		return PKCEModeDisabled
 	}
 }
 

@@ -274,6 +274,9 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Contains(t, scopes, "offline_access")
 	assert.Contains(t, scopes, "groups")
 	assert.Contains(t, scopes, "openid")
+	codeChallengeMethods := resp["code_challenge_methods_supported"].([]any)
+	assert.Contains(t, codeChallengeMethods, "S256")
+	assert.Contains(t, codeChallengeMethods, "plain")
 }
 
 func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
@@ -1128,5 +1131,110 @@ func TestOIDCHandler_Token(t *testing.T) {
 		var resp map[string]any
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.Equal(t, "invalid_client", resp["error"])
+	})
+
+	t.Run("Token request with PKCE S256 (valid verifier)", func(t *testing.T) {
+		code := "pkce-s256-code"
+		verifier := strings.Repeat("a", 43)
+		sum := sha256.Sum256([]byte(verifier))
+		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+		oidcSession := &idp.OIDCSession{
+			ClientID:            "test-client",
+			UserID:              "user123",
+			Scopes:              []string{definitions.ScopeOpenId},
+			RedirectURI:         "https://app.com/callback",
+			CodeChallenge:       challenge,
+			CodeChallengeMethod: "S256",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", code)
+		form.Add("code_verifier", verifier)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Token request with PKCE S256 (missing verifier should fail)", func(t *testing.T) {
+		code := "pkce-s256-missing-verifier"
+		oidcSession := &idp.OIDCSession{
+			ClientID:            "test-client",
+			UserID:              "user123",
+			Scopes:              []string{definitions.ScopeOpenId},
+			RedirectURI:         "https://app.com/callback",
+			CodeChallenge:       "dummy",
+			CodeChallengeMethod: "S256",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", code)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, "invalid_grant", resp["error"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Token request with PKCE plain (valid verifier)", func(t *testing.T) {
+		code := "pkce-plain-code"
+		verifier := strings.Repeat("b", 43)
+		oidcSession := &idp.OIDCSession{
+			ClientID:            "test-client",
+			UserID:              "user123",
+			Scopes:              []string{definitions.ScopeOpenId},
+			RedirectURI:         "https://app.com/callback",
+			CodeChallenge:       verifier,
+			CodeChallengeMethod: "plain",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("code", code)
+		form.Add("code_verifier", verifier)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

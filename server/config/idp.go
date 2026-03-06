@@ -169,6 +169,7 @@ type OIDCConfig struct {
 	SubjectTypesSupported              []string            `mapstructure:"subject_types_supported"`
 	IDTokenSigningAlgValuesSupported   []string            `mapstructure:"id_token_signing_alg_values_supported"`
 	TokenEndpointAuthMethodsSupported  []string            `mapstructure:"token_endpoint_auth_methods_supported"`
+	CodeChallengeMethodsSupported      []string            `mapstructure:"code_challenge_methods_supported"`
 	ClaimsSupported                    []string            `mapstructure:"claims_supported"`
 	FrontChannelLogoutSupported        *bool               `mapstructure:"front_channel_logout_supported"`
 	FrontChannelLogoutSessionSupported *bool               `mapstructure:"front_channel_logout_session_supported"`
@@ -275,6 +276,37 @@ func (o *OIDCConfig) GetTokenEndpointAuthMethodsSupported() []string {
 	}
 
 	return []string{"client_secret_post", "client_secret_basic"}
+}
+
+// GetCodeChallengeMethodsSupported returns the supported PKCE code challenge methods.
+func (o *OIDCConfig) GetCodeChallengeMethodsSupported() []string {
+	if len(o.CodeChallengeMethodsSupported) > 0 {
+		methods := make([]string, 0, len(o.CodeChallengeMethodsSupported))
+		seen := map[string]struct{}{}
+
+		for _, method := range o.CodeChallengeMethodsSupported {
+			switch strings.ToLower(strings.TrimSpace(method)) {
+			case "s256":
+				if _, ok := seen["S256"]; ok {
+					continue
+				}
+				methods = append(methods, "S256")
+				seen["S256"] = struct{}{}
+			case "plain":
+				if _, ok := seen["plain"]; ok {
+					continue
+				}
+				methods = append(methods, "plain")
+				seen["plain"] = struct{}{}
+			}
+		}
+
+		if len(methods) > 0 {
+			return methods
+		}
+	}
+
+	return []string{"S256", "plain"}
 }
 
 // GetClaimsSupported returns the supported claims.
@@ -470,6 +502,15 @@ func (o *OIDCConfig) warnUnsupported() []string {
 		for _, alg := range o.IDTokenSigningAlgValuesSupported {
 			if alg != "RS256" && alg != "EdDSA" {
 				warnings = append(warnings, fmt.Sprintf("oidc.id_token_signing_alg_values_supported: '%s' is currently not supported (only 'RS256' and 'EdDSA' are supported)", alg))
+			}
+		}
+	}
+
+	if len(o.CodeChallengeMethodsSupported) > 0 {
+		for _, method := range o.CodeChallengeMethodsSupported {
+			method = strings.TrimSpace(method)
+			if !strings.EqualFold(method, "S256") && !strings.EqualFold(method, "plain") {
+				warnings = append(warnings, fmt.Sprintf("oidc.code_challenge_methods_supported: '%s' is currently not supported (only 'S256' and 'plain' are supported)", method))
 			}
 		}
 	}

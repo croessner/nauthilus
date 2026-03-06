@@ -16,6 +16,9 @@
 package idp
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -66,6 +69,13 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	nonce := ctx.Query("nonce")
 	responseType := ctx.Query("response_type")
 	prompt := ctx.Query("prompt")
+	codeChallenge := ctx.Query("code_challenge")
+	codeChallengeMethod, pkceErr := normalizeCodeChallengeMethod(codeChallenge, ctx.Query("code_challenge_method"))
+	if pkceErr != nil {
+		ctx.String(http.StatusBadRequest, pkceErr.Error())
+
+		return
+	}
 
 	sp.SetAttributes(
 		attribute.String("client_id", clientID),
@@ -147,14 +157,16 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 				GrantType:    definitions.OIDCFlowAuthorizationCode,
 				ReturnTarget: "/login",
 				Metadata: map[string]string{
-					flowdomain.FlowMetadataClientID:     clientID,
-					flowdomain.FlowMetadataRedirectURI:  redirectURI,
-					flowdomain.FlowMetadataScope:        scope,
-					flowdomain.FlowMetadataState:        state,
-					flowdomain.FlowMetadataNonce:        nonce,
-					flowdomain.FlowMetadataResponseType: responseType,
-					flowdomain.FlowMetadataPrompt:       prompt,
-					flowdomain.FlowMetadataResumeTarget: ctx.Request.URL.RequestURI(),
+					flowdomain.FlowMetadataClientID:            clientID,
+					flowdomain.FlowMetadataRedirectURI:         redirectURI,
+					flowdomain.FlowMetadataScope:               scope,
+					flowdomain.FlowMetadataState:               state,
+					flowdomain.FlowMetadataNonce:               nonce,
+					flowdomain.FlowMetadataResponseType:        responseType,
+					flowdomain.FlowMetadataPrompt:              prompt,
+					flowdomain.FlowMetadataCodeChallenge:       codeChallenge,
+					flowdomain.FlowMetadataCodeChallengeMethod: codeChallengeMethod,
+					flowdomain.FlowMetadataResumeTarget:        ctx.Request.URL.RequestURI(),
 				},
 			}, time.Now())
 			if err != nil {
@@ -223,16 +235,18 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	oidcSession := &idp.OIDCSession{
-		ClientID:          clientID,
-		UserID:            user.Id,
-		Username:          user.Name,
-		DisplayName:       user.DisplayName,
-		Scopes:            filteredScopes,
-		RedirectURI:       redirectURI,
-		AuthTime:          time.Now(),
-		Nonce:             nonce,
-		IdTokenClaims:     idTokenClaims,
-		AccessTokenClaims: accessTokenClaims,
+		ClientID:            clientID,
+		UserID:              user.Id,
+		Username:            user.Name,
+		DisplayName:         user.DisplayName,
+		Scopes:              filteredScopes,
+		RedirectURI:         redirectURI,
+		AuthTime:            time.Now(),
+		Nonce:               nonce,
+		CodeChallenge:       codeChallenge,
+		CodeChallengeMethod: codeChallengeMethod,
+		IdTokenClaims:       idTokenClaims,
+		AccessTokenClaims:   accessTokenClaims,
 	}
 
 	// Check if consent is needed
@@ -316,6 +330,12 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 	_ = h.storage.DeleteSession(ctx.Request.Context(), code)
 
 	if session.ClientID != clientID {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+
+		return
+	}
+
+	if pkceErr := validatePKCEVerifier(session.CodeChallenge, session.CodeChallengeMethod, formValue(ctx, "code_verifier")); pkceErr != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 
 		return
@@ -512,4 +532,90 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	}
 
 	ctx.Redirect(http.StatusFound, target)
+}
+
+func normalizeCodeChallengeMethod(codeChallenge, codeChallengeMethod string) (string, error) {
+	method := strings.TrimSpace(codeChallengeMethod)
+	challenge := strings.TrimSpace(codeChallenge)
+	if challenge == "" {
+		if method != "" {
+			return "", fmt.Errorf("code_challenge_method requires code_challenge")
+		}
+
+		return "", nil
+	}
+
+	if method == "" {
+		return "plain", nil
+	}
+
+	switch strings.ToLower(method) {
+	case "plain":
+		return "plain", nil
+	case "s256":
+		return "S256", nil
+	default:
+		return "", fmt.Errorf("unsupported code_challenge_method")
+	}
+}
+
+func validatePKCEVerifier(codeChallenge, codeChallengeMethod, codeVerifier string) error {
+	challenge := strings.TrimSpace(codeChallenge)
+	if challenge == "" {
+		return nil
+	}
+
+	verifier := strings.TrimSpace(codeVerifier)
+	if !isValidCodeVerifier(verifier) {
+		return fmt.Errorf("invalid code_verifier")
+	}
+
+	method := codeChallengeMethod
+	if method == "" {
+		method = "plain"
+	}
+
+	switch method {
+	case "plain":
+		if subtle.ConstantTimeCompare([]byte(challenge), []byte(verifier)) != 1 {
+			return fmt.Errorf("code_verifier mismatch")
+		}
+	case "S256":
+		sum := sha256.Sum256([]byte(verifier))
+		expected := base64.RawURLEncoding.EncodeToString(sum[:])
+		if subtle.ConstantTimeCompare([]byte(challenge), []byte(expected)) != 1 {
+			return fmt.Errorf("code_verifier mismatch")
+		}
+	default:
+		return fmt.Errorf("unsupported code_challenge_method")
+	}
+
+	return nil
+}
+
+func isValidCodeVerifier(verifier string) bool {
+	if len(verifier) < 43 || len(verifier) > 128 {
+		return false
+	}
+
+	for _, char := range verifier {
+		if char >= 'A' && char <= 'Z' {
+			continue
+		}
+		if char >= 'a' && char <= 'z' {
+			continue
+		}
+		if char >= '0' && char <= '9' {
+			continue
+		}
+
+		switch char {
+		case '-', '.', '_', '~':
+			continue
+		default:
+			return false
+		}
+	}
+
+	return true
 }

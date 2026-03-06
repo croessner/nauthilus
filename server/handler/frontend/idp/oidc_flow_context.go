@@ -333,6 +333,14 @@ func (c *oidcAuthorizeFlowContext) ResumeAuthorizeURL() string {
 		authorizeURL += "&response_type=" + url.QueryEscape(responseType)
 	}
 
+	if codeChallenge := c.mgr.GetString(definitions.SessionKeyIdPCodeChallenge, ""); codeChallenge != "" {
+		authorizeURL += "&code_challenge=" + url.QueryEscape(codeChallenge)
+	}
+
+	if codeChallengeMethod := c.mgr.GetString(definitions.SessionKeyIdPCodeChallengeMethod, ""); codeChallengeMethod != "" {
+		authorizeURL += "&code_challenge_method=" + url.QueryEscape(codeChallengeMethod)
+	}
+
 	return authorizeURL
 }
 
