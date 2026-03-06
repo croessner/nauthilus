@@ -30,10 +30,19 @@
  */
 static void show_device_instruction(pam_handle_t *pamh, const device_auth *auth)
 {
-    const char *uri = auth->verification_uri;
+    const char *uri = auth->verification_uri_complete;
+    char uri_with_code[CONFIG_MAX_STR + 256] = {0};
 
     if (uri[0] == '\0') {
-        uri = auth->verification_uri_complete;
+        uri = auth->verification_uri;
+    }
+
+    if (uri[0] != '\0' && auth->user_code[0] != '\0' && auth->verification_uri_complete[0] == '\0') {
+        const char *sep = strchr(uri, '?') != NULL ? "&" : "?";
+
+        snprintf(uri_with_code, sizeof(uri_with_code), "%s%suser_code=%s",
+                 uri, sep, auth->user_code);
+        uri = uri_with_code;
     }
 
     if (uri[0] != '\0') {
