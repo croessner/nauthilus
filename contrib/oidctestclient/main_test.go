@@ -112,9 +112,9 @@ func TestParsePKCEModeFromEnv(t *testing.T) {
 			expected: PKCEModeS256,
 		},
 		{
-			name:     "plain",
+			name:     "plain falls back to disabled",
 			envValue: "plain",
-			expected: PKCEModePlain,
+			expected: PKCEModeDisabled,
 		},
 		{
 			name:     "unknown falls back to disabled",

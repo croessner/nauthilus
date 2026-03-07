@@ -102,6 +102,12 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
+	if client.IsPublicClient() && codeChallenge == "" {
+		ctx.String(http.StatusBadRequest, "PKCE is required for public clients")
+
+		return
+	}
+
 	if account == "" {
 		if prompt == "none" {
 			target := fmt.Sprintf("%s?error=login_required", redirectURI)
@@ -335,6 +341,12 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 		return
 	}
 
+	if formValue(ctx, "redirect_uri") != session.RedirectURI {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+
+		return
+	}
+
 	if pkceErr := validatePKCEVerifier(session.CodeChallenge, session.CodeChallengeMethod, formValue(ctx, "code_verifier")); pkceErr != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 
@@ -545,18 +557,11 @@ func normalizeCodeChallengeMethod(codeChallenge, codeChallengeMethod string) (st
 		return "", nil
 	}
 
-	if method == "" {
-		return "plain", nil
+	if !strings.EqualFold(method, "s256") {
+		return "", fmt.Errorf("unsupported code_challenge_method: only S256 is allowed")
 	}
 
-	switch strings.ToLower(method) {
-	case "plain":
-		return "plain", nil
-	case "s256":
-		return "S256", nil
-	default:
-		return "", fmt.Errorf("unsupported code_challenge_method")
-	}
+	return "S256", nil
 }
 
 func validatePKCEVerifier(codeChallenge, codeChallengeMethod, codeVerifier string) error {
@@ -570,24 +575,15 @@ func validatePKCEVerifier(codeChallenge, codeChallengeMethod, codeVerifier strin
 		return fmt.Errorf("invalid code_verifier")
 	}
 
-	method := codeChallengeMethod
-	if method == "" {
-		method = "plain"
+	if codeChallengeMethod != "S256" {
+		return fmt.Errorf("unsupported code_challenge_method: only S256 is allowed")
 	}
 
-	switch method {
-	case "plain":
-		if subtle.ConstantTimeCompare([]byte(challenge), []byte(verifier)) != 1 {
-			return fmt.Errorf("code_verifier mismatch")
-		}
-	case "S256":
-		sum := sha256.Sum256([]byte(verifier))
-		expected := base64.RawURLEncoding.EncodeToString(sum[:])
-		if subtle.ConstantTimeCompare([]byte(challenge), []byte(expected)) != 1 {
-			return fmt.Errorf("code_verifier mismatch")
-		}
-	default:
-		return fmt.Errorf("unsupported code_challenge_method")
+	sum := sha256.Sum256([]byte(verifier))
+	expected := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	if subtle.ConstantTimeCompare([]byte(challenge), []byte(expected)) != 1 {
+		return fmt.Errorf("code_verifier mismatch")
 	}
 
 	return nil

@@ -54,9 +54,6 @@ const (
 	// PKCEModeS256 enables PKCE with code_challenge_method=S256.
 	PKCEModeS256 PKCEMode = "S256"
 
-	// PKCEModePlain enables PKCE with code_challenge_method=plain.
-	PKCEModePlain PKCEMode = "plain"
-
 	// listenAddr is the default address the test client listens on.
 	listenAddr = "127.0.0.1:9094"
 )
@@ -162,7 +159,7 @@ func parseFlowTypeFromEnv() FlowType {
 }
 
 // parsePKCEModeFromEnv reads the OAUTH2_PKCE environment variable and returns
-// the selected PKCE mode. Valid values are "disabled" (default), "S256", and "plain".
+// the selected PKCE mode. Valid values are "disabled" (default) and "S256".
 // Additionally, "true" maps to "S256" and "false" maps to "disabled".
 func parsePKCEModeFromEnv() PKCEMode {
 	raw := strings.TrimSpace(os.Getenv("OAUTH2_PKCE"))
@@ -175,8 +172,6 @@ func parsePKCEModeFromEnv() PKCEMode {
 		return PKCEModeDisabled
 	case "s256", "true", "1":
 		return PKCEModeS256
-	case "plain":
-		return PKCEModePlain
 	default:
 		log.Printf("Warning: unknown OAUTH2_PKCE %q, falling back to %s", raw, PKCEModeDisabled)
 
