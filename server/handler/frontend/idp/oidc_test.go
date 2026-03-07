@@ -965,6 +965,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		form := url.Values{}
 		form.Add("grant_type", "authorization_code")
 		form.Add("code", code)
+		form.Add("redirect_uri", "https://app.com/callback")
 
 		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1031,6 +1032,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 		form := url.Values{}
 		form.Add("grant_type", "authorization_code")
 		form.Add("code", code)
+		form.Add("redirect_uri", "https://app.com/callback")
 
 		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
