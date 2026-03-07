@@ -184,7 +184,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			clientSecret = hClientSecret
 		}
 
-		authSource = "client_secret_basic"
+		authSource = clientauth.MethodClientSecretBasic
 	}
 
 	// 2. Try Body
@@ -200,7 +200,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 				definitions.DbgIdp,
 				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 				definitions.LogKeyMsg, "Multiple OIDC client authentication methods used",
-				"methods", authSource+",client_secret_post",
+				"methods", authSource+","+clientauth.MethodClientSecretPost,
 			)
 
 			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
@@ -210,7 +210,11 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 
 		clientID = bClientID
 		clientSecret = bClientSecret
-		authSource = "client_secret_post"
+		authSource = clientauth.MethodClientSecretPost
+	}
+
+	if authSource != "" {
+		ctx.Set(definitions.CtxAuthMethodKey, authSource)
 	}
 
 	if clientID == "" {
@@ -240,12 +244,12 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	if client.TokenEndpointAuthMethod != "" {
 		allowed := false
 		switch client.TokenEndpointAuthMethod {
-		case "client_secret_basic":
-			if authSource == "client_secret_basic" {
+		case clientauth.MethodClientSecretBasic:
+			if authSource == clientauth.MethodClientSecretBasic {
 				allowed = true
 			}
-		case "client_secret_post":
-			if authSource == "client_secret_post" {
+		case clientauth.MethodClientSecretPost:
+			if authSource == clientauth.MethodClientSecretPost {
 				allowed = true
 			}
 		case "none":
@@ -254,7 +258,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			}
 		default:
 			// If unknown, default to allowing existing behavior (basic or post)
-			allowed = authSource == "client_secret_basic" || authSource == "client_secret_post"
+			allowed = authSource == clientauth.MethodClientSecretBasic || authSource == clientauth.MethodClientSecretPost
 		}
 
 		if !allowed {
@@ -328,6 +332,8 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 	if assertionType == "" || assertion == "" {
 		return nil, false
 	}
+
+	ctx.Set(definitions.CtxAuthMethodKey, clientauth.MethodPrivateKeyJWT)
 
 	if assertionType != clientauth.AssertionTypeJWTBearer {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client", "error_description": "unsupported client_assertion_type"})

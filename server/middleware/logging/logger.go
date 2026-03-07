@@ -74,11 +74,17 @@ func LoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
 			cipherSuiteName = tls.CipherSuiteName(ctx.Request.TLS.CipherSuite)
 		}
 
-		// Determine authentication information
+		// Determine authentication information.
 		authType := "none"
 
-		// Check if authentication was attempted
-		if ctx.Request.Header.Get("Authorization") != "" {
+		// Allow handlers to override with protocol-specific auth semantics
+		// (e.g. OIDC client_secret_basic/client_secret_post/private_key_jwt).
+		if authMethod, exists := ctx.Get(definitions.CtxAuthMethodKey); exists {
+			if method, ok := authMethod.(string); ok && method != "" {
+				authType = method
+			}
+		} else if ctx.Request.Header.Get("Authorization") != "" {
+			// Fallback: infer from Authorization header if no explicit override exists.
 			if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Basic ") {
 				authType = "basic"
 			} else if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Bearer ") {

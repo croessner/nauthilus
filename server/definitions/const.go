@@ -906,6 +906,9 @@ const (
 	// rejected the request before password authentication could take place.
 	// When set to true, RWP must not record the password hash because the password was never verified.
 	CtxFeatureRejectedKey = "feature_rejected"
+
+	// CtxAuthMethodKey stores a request-scoped authentication method override for access logs.
+	CtxAuthMethodKey = "auth_method"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.
