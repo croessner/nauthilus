@@ -279,34 +279,9 @@ func (o *OIDCConfig) GetTokenEndpointAuthMethodsSupported() []string {
 }
 
 // GetCodeChallengeMethodsSupported returns the supported PKCE code challenge methods.
+// Only S256 is supported; plain is rejected as it provides no additional security.
 func (o *OIDCConfig) GetCodeChallengeMethodsSupported() []string {
-	if len(o.CodeChallengeMethodsSupported) > 0 {
-		methods := make([]string, 0, len(o.CodeChallengeMethodsSupported))
-		seen := map[string]struct{}{}
-
-		for _, method := range o.CodeChallengeMethodsSupported {
-			switch strings.ToLower(strings.TrimSpace(method)) {
-			case "s256":
-				if _, ok := seen["S256"]; ok {
-					continue
-				}
-				methods = append(methods, "S256")
-				seen["S256"] = struct{}{}
-			case "plain":
-				if _, ok := seen["plain"]; ok {
-					continue
-				}
-				methods = append(methods, "plain")
-				seen["plain"] = struct{}{}
-			}
-		}
-
-		if len(methods) > 0 {
-			return methods
-		}
-	}
-
-	return []string{"S256", "plain"}
+	return []string{"S256"}
 }
 
 // GetClaimsSupported returns the supported claims.
@@ -509,8 +484,8 @@ func (o *OIDCConfig) warnUnsupported() []string {
 	if len(o.CodeChallengeMethodsSupported) > 0 {
 		for _, method := range o.CodeChallengeMethodsSupported {
 			method = strings.TrimSpace(method)
-			if !strings.EqualFold(method, "S256") && !strings.EqualFold(method, "plain") {
-				warnings = append(warnings, fmt.Sprintf("oidc.code_challenge_methods_supported: '%s' is currently not supported (only 'S256' and 'plain' are supported)", method))
+			if !strings.EqualFold(method, "S256") {
+				warnings = append(warnings, fmt.Sprintf("oidc.code_challenge_methods_supported: '%s' is not supported (only 'S256' is allowed)", method))
 			}
 		}
 	}
@@ -557,6 +532,18 @@ type OIDCClient struct {
 	SkipConsent                       bool              `mapstructure:"skip_consent"`
 	DelayedResponse                   bool              `mapstructure:"delayed_response"`
 	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
+}
+
+// IsPublicClient reports whether the client is a public client, i.e. it has no
+// client secret and uses the "none" token endpoint auth method. Public clients
+// cannot keep credentials confidential and MUST use PKCE for the authorization
+// code flow (RFC 9700).
+func (c *OIDCClient) IsPublicClient() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.ClientSecret.IsZero() || c.TokenEndpointAuthMethod == "none"
 }
 
 func (c *OIDCClient) String() string {

@@ -281,11 +281,6 @@ func buildPKCEAuthOptions(pkceMode PKCEMode) (string, []oauth2.AuthCodeOption, e
 	switch pkceMode {
 	case PKCEModeS256:
 		return verifier, []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}, nil
-	case PKCEModePlain:
-		return verifier, []oauth2.AuthCodeOption{
-			oauth2.SetAuthURLParam("code_challenge", verifier),
-			oauth2.SetAuthURLParam("code_challenge_method", "plain"),
-		}, nil
 	default:
 		return "", nil, nil
 	}
@@ -530,7 +525,7 @@ func handleBackChannelLogout(ctx context.Context, verifier *oidc.IDTokenVerifier
 }
 
 // handleLogoutCallback handles the post-logout redirect from the IdP.
-func handleLogoutCallback(w http.ResponseWriter, r *http.Request) {
+func handleLogoutCallback(w http.ResponseWriter, _ *http.Request) {
 	log.Println("Received request on '/logout-callback'")
 
 	clearSessionCookies(w)
