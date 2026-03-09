@@ -51,6 +51,8 @@ COPY --from=builder ["/build/contrib/smtp-server/fakesmtp", "./"]
 COPY --from=builder ["/build/contrib/imap-server/fakeimap", "./"]
 COPY --from=builder ["/build/static/", "./static/"]
 
+RUN ln -s ./server/lua-plugins.d ./lua-plugins.d
+
 COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
 
 # set up nsswitch.conf for Go's "netgo" implementation
