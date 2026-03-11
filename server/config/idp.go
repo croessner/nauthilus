@@ -63,11 +63,12 @@ func (f *FileSettings) validateIdPMFASettings() error {
 
 // IdPSection represents the configuration for the internal Identity Provider.
 type IdPSection struct {
-	OIDC              OIDCConfig  `mapstructure:"oidc"`
-	SAML2             SAML2Config `mapstructure:"saml2"`
-	WebAuthn          WebAuthn    `mapstructure:"webauthn"`
-	TermsOfServiceURL string      `mapstructure:"terms_of_service_url"`
-	PrivacyPolicyURL  string      `mapstructure:"privacy_policy_url"`
+	OIDC              OIDCConfig    `mapstructure:"oidc"`
+	SAML2             SAML2Config   `mapstructure:"saml2"`
+	WebAuthn          WebAuthn      `mapstructure:"webauthn"`
+	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
+	TermsOfServiceURL string        `mapstructure:"terms_of_service_url"`
+	PrivacyPolicyURL  string        `mapstructure:"privacy_policy_url"`
 }
 
 func (i *IdPSection) String() string {
@@ -75,7 +76,24 @@ func (i *IdPSection) String() string {
 		return "IdPSection: <nil>"
 	}
 
-	return fmt.Sprintf("IdPSection: {OIDC:%s SAML2:%s WebAuthn:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s}", i.OIDC.String(), i.SAML2.String(), i.WebAuthn.String(), i.TermsOfServiceURL, i.PrivacyPolicyURL)
+	return fmt.Sprintf(
+		"IdPSection: {OIDC:%s SAML2:%s WebAuthn:%s RememberMeTTL:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s}",
+		i.OIDC.String(),
+		i.SAML2.String(),
+		i.WebAuthn.String(),
+		i.RememberMeTTL,
+		i.TermsOfServiceURL,
+		i.PrivacyPolicyURL,
+	)
+}
+
+// GetRememberMeTTL returns the global "remember me" session TTL for IdP logins.
+func (i *IdPSection) GetRememberMeTTL() time.Duration {
+	if i == nil {
+		return 0
+	}
+
+	return i.RememberMeTTL
 }
 
 // warnUnsupported returns a list of warnings for unsupported Identity Provider configuration parameters.
@@ -503,35 +521,36 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 // OIDCClient represents an OIDC client configuration.
 type OIDCClient struct {
-	Name                              string            `mapstructure:"name"`
-	ClientID                          string            `mapstructure:"client_id" validate:"required"`
-	ClientSecret                      secret.Value      `mapstructure:"client_secret"`
-	RedirectURIs                      []string          `mapstructure:"redirect_uris"`
-	Scopes                            []string          `mapstructure:"scopes"`
-	GrantTypes                        []string          `mapstructure:"grant_types"`
-	RequireMFA                        []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	SupportedMFA                      []string          `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	PostLogoutRedirectURIs            []string          `mapstructure:"post_logout_redirect_uris"`
-	BackChannelLogoutURI              string            `mapstructure:"backchannel_logout_uri"`
-	FrontChannelLogoutURI             string            `mapstructure:"frontchannel_logout_uri"`
-	LogoutRedirectURI                 string            `mapstructure:"logout_redirect_uri"`
-	AccessTokenType                   string            `mapstructure:"access_token_type"`
-	TokenEndpointAuthMethod           string            `mapstructure:"token_endpoint_auth_method"`
-	ClientPublicKey                   string            `mapstructure:"client_public_key"`
-	ClientPublicKeyFile               string            `mapstructure:"client_public_key_file"`
-	ClientPublicKeyAlgorithm          string            `mapstructure:"client_public_key_algorithm"`
-	IdTokenClaims                     IdTokenClaims     `mapstructure:"id_token_claims"`
-	AccessTokenClaims                 AccessTokenClaims `mapstructure:"access_token_claims"`
-	RememberMeTTL                     time.Duration     `mapstructure:"remember_me_ttl"`
-	AccessTokenLifetime               time.Duration     `mapstructure:"access_token_lifetime"`
-	RefreshTokenLifetime              time.Duration     `mapstructure:"refresh_token_lifetime"`
-	ConsentTTL                        time.Duration     `mapstructure:"consent_ttl"`
-	ConsentMode                       string            `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
-	RequiredScopes                    []string          `mapstructure:"required_scopes"`
-	OptionalScopes                    []string          `mapstructure:"optional_scopes" validate:"omitempty,dive,ne=openid"`
-	SkipConsent                       bool              `mapstructure:"skip_consent"`
-	DelayedResponse                   bool              `mapstructure:"delayed_response"`
-	FrontChannelLogoutSessionRequired bool              `mapstructure:"frontchannel_logout_session_required"`
+	Name                     string            `mapstructure:"name"`
+	ClientID                 string            `mapstructure:"client_id" validate:"required"`
+	ClientSecret             secret.Value      `mapstructure:"client_secret"`
+	RedirectURIs             []string          `mapstructure:"redirect_uris"`
+	Scopes                   []string          `mapstructure:"scopes"`
+	GrantTypes               []string          `mapstructure:"grant_types"`
+	RequireMFA               []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA             []string          `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	PostLogoutRedirectURIs   []string          `mapstructure:"post_logout_redirect_uris"`
+	BackChannelLogoutURI     string            `mapstructure:"backchannel_logout_uri"`
+	FrontChannelLogoutURI    string            `mapstructure:"frontchannel_logout_uri"`
+	LogoutRedirectURI        string            `mapstructure:"logout_redirect_uri"`
+	AccessTokenType          string            `mapstructure:"access_token_type"`
+	TokenEndpointAuthMethod  string            `mapstructure:"token_endpoint_auth_method"`
+	ClientPublicKey          string            `mapstructure:"client_public_key"`
+	ClientPublicKeyFile      string            `mapstructure:"client_public_key_file"`
+	ClientPublicKeyAlgorithm string            `mapstructure:"client_public_key_algorithm"`
+	IdTokenClaims            IdTokenClaims     `mapstructure:"id_token_claims"`
+	AccessTokenClaims        AccessTokenClaims `mapstructure:"access_token_claims"`
+	// Deprecated: use idp.remember_me_ttl instead.
+	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
+	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
+	RefreshTokenLifetime              time.Duration `mapstructure:"refresh_token_lifetime"`
+	ConsentTTL                        time.Duration `mapstructure:"consent_ttl"`
+	ConsentMode                       string        `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
+	RequiredScopes                    []string      `mapstructure:"required_scopes"`
+	OptionalScopes                    []string      `mapstructure:"optional_scopes" validate:"omitempty,dive,ne=openid"`
+	SkipConsent                       bool          `mapstructure:"skip_consent"`
+	DelayedResponse                   bool          `mapstructure:"delayed_response"`
+	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
 }
 
 // IsPublicClient reports whether the client is a public client, i.e. it has no
@@ -788,18 +807,19 @@ func GetContent(raw any, path string) (string, error) {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
-	Name              string        `mapstructure:"name"`
-	EntityID          string        `mapstructure:"entity_id" validate:"required"`
-	ACSURL            string        `mapstructure:"acs_url" validate:"required"`
-	SLOURL            string        `mapstructure:"slo_url"`
-	Cert              string        `mapstructure:"cert"`
-	CertFile          string        `mapstructure:"cert_file"`
-	AllowedAttributes []string      `mapstructure:"allowed_attributes"`
-	RequireMFA        []string      `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	SupportedMFA      []string      `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	LogoutRedirectURI string        `mapstructure:"logout_redirect_uri"`
-	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
-	DelayedResponse   bool          `mapstructure:"delayed_response"`
+	Name              string   `mapstructure:"name"`
+	EntityID          string   `mapstructure:"entity_id" validate:"required"`
+	ACSURL            string   `mapstructure:"acs_url" validate:"required"`
+	SLOURL            string   `mapstructure:"slo_url"`
+	Cert              string   `mapstructure:"cert"`
+	CertFile          string   `mapstructure:"cert_file"`
+	AllowedAttributes []string `mapstructure:"allowed_attributes"`
+	RequireMFA        []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA      []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	LogoutRedirectURI string   `mapstructure:"logout_redirect_uri"`
+	// Deprecated: use idp.remember_me_ttl instead.
+	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
+	DelayedResponse bool          `mapstructure:"delayed_response"`
 }
 
 // GetRequireMFA returns the list of MFA methods required for this service provider.
