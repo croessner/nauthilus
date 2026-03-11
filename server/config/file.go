@@ -2355,6 +2355,9 @@ func (f *FileSettings) warnDeprecatedConfig() {
 			warnDeprecatedRBL(i, &rbl.Lists[i])
 		}
 	}
+
+	// IdP remember_me_ttl moved from per-client/per-SP settings to a global IdP setting.
+	warnDeprecatedIdPRememberMe(f.GetIdP())
 }
 
 // warnUnsupportedConfig logs warnings for unsupported configuration parameters.
@@ -2540,6 +2543,46 @@ func warnDeprecatedTimeout(t *Timeouts) {
 			"location", "server.timeouts",
 			"deprecated", "timeouts.singleflight_work",
 			"msg", "'server.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
+		)
+	}
+}
+
+func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
+	if idpCfg == nil {
+		return
+	}
+
+	globalSet := idpCfg.RememberMeTTL > 0
+	msg := "'remember_me_ttl' is deprecated at client/service-provider level – please use 'idp.remember_me_ttl'"
+	if globalSet {
+		msg += " (legacy value is ignored because global idp.remember_me_ttl is set)"
+	}
+
+	for _, client := range idpCfg.OIDC.Clients {
+		if client.RememberMeTTL <= 0 {
+			continue
+		}
+
+		safeWarn(
+			"component", "config",
+			"location", "idp.oidc.clients",
+			"client_id", client.ClientID,
+			"deprecated", "idp.oidc.clients[].remember_me_ttl",
+			"msg", msg,
+		)
+	}
+
+	for _, sp := range idpCfg.SAML2.ServiceProviders {
+		if sp.RememberMeTTL <= 0 {
+			continue
+		}
+
+		safeWarn(
+			"component", "config",
+			"location", "idp.saml2.service_providers",
+			"entity_id", sp.EntityID,
+			"deprecated", "idp.saml2.service_providers[].remember_me_ttl",
+			"msg", msg,
 		)
 	}
 }

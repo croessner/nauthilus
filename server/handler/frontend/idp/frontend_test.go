@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -301,6 +302,106 @@ func TestGetFlowClientIdentifiers(t *testing.T) {
 
 		assert.Empty(t, oidcCID)
 		assert.Empty(t, samlEntityID)
+	})
+}
+
+func TestGetRememberMeTTL(t *testing.T) {
+	t.Run("Global setting overrides legacy client and service provider values", func(t *testing.T) {
+		h := &FrontendHandler{
+			deps: &deps.Deps{
+				Cfg: &mockFrontendCfg{
+					FileSettings: config.FileSettings{
+						IdP: &config.IdPSection{
+							RememberMeTTL: 2 * time.Hour,
+							OIDC: config.OIDCConfig{
+								Clients: []config.OIDCClient{
+									{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
+								},
+							},
+							SAML2: config.SAML2Config{
+								ServiceProviders: []config.SAML2ServiceProvider{
+									{EntityID: "sp-entity", RememberMeTTL: 45 * time.Minute},
+								},
+							},
+						},
+					},
+				},
+				Env:         config.NewTestEnvironmentConfig(),
+				LangManager: &mockLangManager{},
+				Logger:      slog.Default(),
+			},
+		}
+
+		assert.Equal(t, 2*time.Hour, h.getRememberMeTTL("oidc-client", ""))
+		assert.Equal(t, 2*time.Hour, h.getRememberMeTTL("", "sp-entity"))
+		assert.Equal(t, 2*time.Hour, h.getRememberMeTTL("", ""))
+		assert.True(t, h.shouldShowRememberMe("", ""))
+	})
+
+	t.Run("Legacy OIDC client value is used as fallback", func(t *testing.T) {
+		h := &FrontendHandler{
+			deps: &deps.Deps{
+				Cfg: &mockFrontendCfg{
+					FileSettings: config.FileSettings{
+						IdP: &config.IdPSection{
+							OIDC: config.OIDCConfig{
+								Clients: []config.OIDCClient{
+									{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
+								},
+							},
+						},
+					},
+				},
+				Env:         config.NewTestEnvironmentConfig(),
+				LangManager: &mockLangManager{},
+				Logger:      slog.Default(),
+			},
+		}
+
+		assert.Equal(t, 30*time.Minute, h.getRememberMeTTL("oidc-client", ""))
+		assert.True(t, h.shouldShowRememberMe("oidc-client", ""))
+	})
+
+	t.Run("Legacy SAML service provider value is used as fallback", func(t *testing.T) {
+		h := &FrontendHandler{
+			deps: &deps.Deps{
+				Cfg: &mockFrontendCfg{
+					FileSettings: config.FileSettings{
+						IdP: &config.IdPSection{
+							SAML2: config.SAML2Config{
+								ServiceProviders: []config.SAML2ServiceProvider{
+									{EntityID: "sp-entity", RememberMeTTL: time.Hour},
+								},
+							},
+						},
+					},
+				},
+				Env:         config.NewTestEnvironmentConfig(),
+				LangManager: &mockLangManager{},
+				Logger:      slog.Default(),
+			},
+		}
+
+		assert.Equal(t, time.Hour, h.getRememberMeTTL("", "sp-entity"))
+		assert.True(t, h.shouldShowRememberMe("", "sp-entity"))
+	})
+
+	t.Run("Unset values disable remember me", func(t *testing.T) {
+		h := &FrontendHandler{
+			deps: &deps.Deps{
+				Cfg: &mockFrontendCfg{
+					FileSettings: config.FileSettings{
+						IdP: &config.IdPSection{},
+					},
+				},
+				Env:         config.NewTestEnvironmentConfig(),
+				LangManager: &mockLangManager{},
+				Logger:      slog.Default(),
+			},
+		}
+
+		assert.Equal(t, time.Duration(0), h.getRememberMeTTL("missing", ""))
+		assert.False(t, h.shouldShowRememberMe("missing", ""))
 	})
 }
 

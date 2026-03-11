@@ -142,6 +142,41 @@ func (h *FrontendHandler) getFlowClientIdentifiers(mgr cookie.Manager) (string, 
 	}
 }
 
+// getRememberMeTTL returns the effective remember-me TTL for the current flow.
+// Resolution order:
+// 1. Global idp.remember_me_ttl
+// 2. Deprecated per-client/per-SP remember_me_ttl (legacy fallback)
+func (h *FrontendHandler) getRememberMeTTL(oidcCID, samlEntityID string) time.Duration {
+	if h == nil || h.deps == nil || h.deps.Cfg == nil {
+		return 0
+	}
+
+	globalTTL := h.deps.Cfg.GetIdP().GetRememberMeTTL()
+	if globalTTL > 0 {
+		return globalTTL
+	}
+
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+
+	if oidcCID != "" {
+		if client, ok := idpInstance.FindClient(oidcCID); ok {
+			return client.RememberMeTTL
+		}
+	}
+
+	if samlEntityID != "" {
+		if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
+			return sp.RememberMeTTL
+		}
+	}
+
+	return 0
+}
+
+func (h *FrontendHandler) shouldShowRememberMe(oidcCID, samlEntityID string) bool {
+	return h.getRememberMeTTL(oidcCID, samlEntityID) > 0
+}
+
 func (h *FrontendHandler) clearRequireMFARegistrationState(mgr cookie.Manager) {
 	if mgr == nil {
 		return

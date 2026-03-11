@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -512,20 +511,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["HaveError"] = haveError
 	data["ErrorMessage"] = errorMessage
 
-	idpInstance := idp.NewNauthilusIdP(h.deps)
-	showRememberMe := false
-
-	if oidcCID != "" {
-		if client, ok := idpInstance.FindClient(oidcCID); ok {
-			showRememberMe = client.RememberMeTTL > 0
-		}
-	} else if samlEntityID != "" {
-		if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
-			showRememberMe = sp.RememberMeTTL > 0
-		}
-	}
-
-	data["ShowRememberMe"] = showRememberMe
+	data["ShowRememberMe"] = h.shouldShowRememberMe(oidcCID, samlEntityID)
 	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
 	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
 	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
@@ -761,21 +747,7 @@ func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *m
 	data["HaveError"] = true
 	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-	// Calculate ShowRememberMe based on flow state.
-	showRememberMe := false
-	idpInstance := idp.NewNauthilusIdP(h.deps)
-
-	if sess.oidcCID != "" {
-		if client, ok := idpInstance.FindClient(sess.oidcCID); ok {
-			showRememberMe = client.RememberMeTTL > 0
-		}
-	} else if sess.samlEntityID != "" {
-		if sp, ok := idpInstance.FindSAMLServiceProvider(sess.samlEntityID); ok {
-			showRememberMe = sp.RememberMeTTL > 0
-		}
-	}
-
-	data["ShowRememberMe"] = showRememberMe
+	data["ShowRememberMe"] = h.shouldShowRememberMe(sess.oidcCID, sess.samlEntityID)
 	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
 	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
 	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
@@ -854,18 +826,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	var rememberMeTTL int
 
 	if rememberMe {
-		var ttl time.Duration
-
-		if oidcCID != "" {
-			if client, ok := idpInstance.FindClient(oidcCID); ok {
-				ttl = client.RememberMeTTL
-			}
-		} else if samlEntityID != "" {
-			if spConfig, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
-				ttl = spConfig.RememberMeTTL
-			}
-		}
-
+		ttl := h.getRememberMeTTL(oidcCID, samlEntityID)
 		rememberMeTTL = int(ttl.Seconds())
 	}
 
@@ -939,21 +900,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-		// Calculate ShowRememberMe based on flow state.
-		showRememberMe := false
-		idpInstance := idp.NewNauthilusIdP(h.deps)
-
-		if oidcCID != "" {
-			if client, ok := idpInstance.FindClient(oidcCID); ok {
-				showRememberMe = client.RememberMeTTL > 0
-			}
-		} else if samlEntityID != "" {
-			if sp, ok := idpInstance.FindSAMLServiceProvider(samlEntityID); ok {
-				showRememberMe = sp.RememberMeTTL > 0
-			}
-		}
-
-		data["ShowRememberMe"] = showRememberMe
+		data["ShowRememberMe"] = h.shouldShowRememberMe(oidcCID, samlEntityID)
 		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
 		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
 		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
