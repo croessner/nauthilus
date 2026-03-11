@@ -21,15 +21,17 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"
 )
+
+const languageCookieMaxAgeSeconds = 365 * 24 * 60 * 60
 
 // WithLanguage is a middleware function that handles the language setup for the application.
 func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Manager) gin.HandlerFunc {
@@ -45,10 +47,9 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 		// Try to get language tag from URL
 		langFromURL = ctx.Param("languageTag")
 
-		// Try to get language tag from secure cookie
-		mgr := cookie.GetManager(ctx)
-		if mgr != nil {
-			langFromCookie = mgr.GetString(definitions.SessionKeyLang, "")
+		// Try to get language tag from dedicated language cookie.
+		if cookieLang, err := ctx.Cookie(definitions.LanguageCookieName); err == nil {
+			langFromCookie = strings.TrimSpace(cookieLang)
 		}
 
 		// Get Accept-Language header for browser language detection
@@ -76,12 +77,20 @@ func WithLanguage(cfg config.File, logger *slog.Logger, langManager corelang.Man
 
 		localizer := i18n.NewLocalizer(langManager.GetBundle(), lang, accept)
 
-		if needCookie && mgr != nil {
-			mgr.Set(definitions.SessionKeyLang, baseName.String())
-			// Cookie is automatically saved by the cookie.Middleware after the handler chain.
+		if needCookie {
+			ctx.SetCookie(
+				definitions.LanguageCookieName,
+				baseName.String(),
+				languageCookieMaxAgeSeconds,
+				"/",
+				"",
+				util.ShouldSetSecureCookie(),
+				true,
+			)
+
 			level.Debug(logger).Log(
 				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Language preference saved to secure cookie",
+				definitions.LogKeyMsg, "Language preference saved to language cookie",
 				"lang", baseName.String(),
 			)
 		}

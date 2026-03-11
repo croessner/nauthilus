@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -216,6 +217,67 @@ func TestSecureManager_SaveLoad(t *testing.T) {
 	assert.Equal(t, true, mgr2.GetBool("authenticated", false))
 }
 
+func TestSecureManager_Save_SkipsCookieWhenEmptyAndNoIncomingCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	mgr := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	err := mgr.Save(ctx)
+	assert.NoError(t, err)
+	assert.Len(t, w.Result().Cookies(), 0)
+}
+
+func TestSecureManager_Save_DeletesCookieWhenEmptyAndIncomingCookieExists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	mgr1 := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+	mgr1.Set("account", "user@example.com")
+
+	w1 := httptest.NewRecorder()
+	ctx1, _ := gin.CreateTestContext(w1)
+	ctx1.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	err := mgr1.Save(ctx1)
+	assert.NoError(t, err)
+
+	cookies1 := w1.Result().Cookies()
+	if !assert.NotEmpty(t, cookies1) {
+		return
+	}
+
+	mgr2 := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.AddCookie(cookies1[0])
+
+	ctx2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx2.Request = req2
+
+	err = mgr2.Load(ctx2)
+	assert.NoError(t, err)
+
+	mgr2.Clear()
+
+	w3 := httptest.NewRecorder()
+	ctx3, _ := gin.CreateTestContext(w3)
+	ctx3.Request = req2
+
+	err = mgr2.Save(ctx3)
+	assert.NoError(t, err)
+
+	cookies3 := w3.Result().Cookies()
+	if assert.Len(t, cookies3, 1) {
+		assert.Equal(t, definitions.SecureDataCookieName, cookies3[0].Name)
+		assert.Equal(t, -1, cookies3[0].MaxAge)
+		assert.Equal(t, "", cookies3[0].Value)
+	}
+}
+
 func TestSecureManager_LoadNoCookie(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -289,6 +351,12 @@ func TestSecureManager_SetMaxAge(t *testing.T) {
 	mgr.SetMaxAge(3600)
 
 	assert.Equal(t, 3600, mgr.maxAge)
+	assert.Equal(t, 3600, mgr.GetInt(cookieMetaMaxAgeKey, 0))
+
+	mgr.SetMaxAge(0)
+
+	assert.Equal(t, 0, mgr.maxAge)
+	assert.False(t, mgr.HasKey(cookieMetaMaxAgeKey))
 }
 
 func TestSecureManager_SetPath(t *testing.T) {
@@ -486,4 +554,139 @@ func TestManagerInterface(t *testing.T) {
 
 	assert.True(t, ok)
 	assert.Equal(t, "value", val)
+}
+
+func TestSecureManager_SetMaxAge_PersistsAcrossLoadAndSave(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	mgr1 := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+	mgr1.Set("account", "user@example.com")
+	mgr1.SetMaxAge(3600)
+
+	w1 := httptest.NewRecorder()
+	ctx1, _ := gin.CreateTestContext(w1)
+	ctx1.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	err := mgr1.Save(ctx1)
+	assert.NoError(t, err)
+
+	cookies1 := w1.Result().Cookies()
+	if assert.Len(t, cookies1, 1) {
+		assert.Equal(t, 3600, cookies1[0].MaxAge)
+	}
+
+	mgr2 := NewSecureManager(testSecret, definitions.SecureDataCookieName, nil, &testEnv{devMode: true})
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.AddCookie(cookies1[0])
+
+	ctx2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx2.Request = req2
+
+	err = mgr2.Load(ctx2)
+	assert.NoError(t, err)
+	assert.Equal(t, 3600, mgr2.maxAge)
+	assert.Equal(t, 3600, mgr2.codec.maxAge)
+	assert.NotContains(t, mgr2.Keys(), cookieMetaMaxAgeKey)
+
+	w3 := httptest.NewRecorder()
+	ctx3, _ := gin.CreateTestContext(w3)
+	ctx3.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	err = mgr2.Save(ctx3)
+	assert.NoError(t, err)
+
+	cookies3 := w3.Result().Cookies()
+	if assert.Len(t, cookies3, 1) {
+		assert.Equal(t, 3600, cookies3[0].MaxAge)
+	}
+}
+
+func TestMiddleware_PreservesRememberMaxAgeOnSubsequentRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	router := gin.New()
+	router.Use(Middleware(testSecret, nil, &testEnv{devMode: true}))
+	router.GET("/set", func(ctx *gin.Context) {
+		mgr := MustGetManager(ctx)
+		mgr.Set("account", "user@example.com")
+		mgr.SetMaxAge(86400)
+		ctx.Status(http.StatusOK)
+	})
+	router.GET("/touch", func(ctx *gin.Context) {
+		mgr := MustGetManager(ctx)
+		mgr.Set("last_seen", "now")
+		ctx.Status(http.StatusOK)
+	})
+
+	w1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "/set", nil)
+	router.ServeHTTP(w1, req1)
+
+	cookies1 := w1.Result().Cookies()
+	if !assert.NotEmpty(t, cookies1) {
+		return
+	}
+
+	var secureCookie *http.Cookie
+
+	for _, c := range cookies1 {
+		if c.Name == definitions.SecureDataCookieName {
+			secureCookie = c
+
+			break
+		}
+	}
+
+	if !assert.NotNil(t, secureCookie) {
+		return
+	}
+
+	assert.Equal(t, 86400, secureCookie.MaxAge)
+
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/touch", nil)
+	req2.AddCookie(secureCookie)
+	router.ServeHTTP(w2, req2)
+
+	cookies2 := w2.Result().Cookies()
+	if !assert.NotEmpty(t, cookies2) {
+		return
+	}
+
+	var secureCookie2 *http.Cookie
+
+	for _, c := range cookies2 {
+		if c.Name == definitions.SecureDataCookieName {
+			secureCookie2 = c
+
+			break
+		}
+	}
+
+	if !assert.NotNil(t, secureCookie2) {
+		return
+	}
+
+	assert.Equal(t, 86400, secureCookie2.MaxAge)
+}
+
+func TestMiddleware_DoesNotCreateSecureDataCookieWhenNoStateExists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	router := gin.New()
+	router.Use(Middleware(testSecret, nil, &testEnv{devMode: true}))
+	router.GET("/logged_out", func(ctx *gin.Context) {
+		ctx.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/logged_out", nil)
+	router.ServeHTTP(w, req)
+
+	for _, c := range w.Result().Cookies() {
+		assert.NotEqual(t, definitions.SecureDataCookieName, c.Name)
+	}
 }

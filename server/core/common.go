@@ -60,6 +60,7 @@ func SessionCleaner(ctx *gin.Context) {
 	mgr.Delete(definitions.SessionKeySubject)
 	mgr.Delete(definitions.SessionKeyUserBackendName)
 	mgr.Delete(definitions.SessionKeyProtocol)
+	mgr.Delete(definitions.SessionKeyLang)
 	mgr.Delete(definitions.SessionKeyRememberTTL)
 	mgr.Delete(definitions.SessionKeyLoginError)
 
@@ -68,7 +69,6 @@ func SessionCleaner(ctx *gin.Context) {
 	mgr.Delete(definitions.SessionKeyMFAMethod)
 	mgr.Delete(definitions.SessionKeyMFACompleted)
 
-	// Note: SessionKeyLang is intentionally preserved for UX.
 	// Cookie is automatically saved by the cookie.Middleware after the handler chain.
 }
 

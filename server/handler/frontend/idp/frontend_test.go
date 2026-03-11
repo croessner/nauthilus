@@ -31,6 +31,7 @@ import (
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
@@ -74,7 +75,6 @@ func TestBasePageData(t *testing.T) {
 		r.GET("/test", func(c *gin.Context) {
 			mgr := &mockCookieManager{data: map[string]any{
 				definitions.SessionKeyAccount: "testuser",
-				definitions.SessionKeyLang:    "de",
 			}}
 			c.Set(definitions.CtxSecureDataKey, mgr)
 
@@ -90,6 +90,7 @@ func TestBasePageData(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		req.AddCookie(&http.Cookie{Name: definitions.LanguageCookieName, Value: "de"})
 		r.ServeHTTP(w, req)
 	})
 
@@ -595,7 +596,6 @@ func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
 		mgr := &mockCookieManager{data: map[string]any{
 			definitions.SessionKeyUniqueUserID: "uid-123",
 			definitions.SessionKeyAccount:      "testuser",
-			definitions.SessionKeyLang:         "en",
 		}}
 		c.Set(definitions.CtxSecureDataKey, mgr)
 
@@ -638,4 +638,41 @@ func TestRegisterWebAuthnRedirectsWithoutSession(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, resp.Code)
 	assert.Equal(t, "/login", resp.Header().Get("Location"))
+}
+
+func TestLoggedOutRoute_DoesNotSetSecureDataCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	r := gin.New()
+	r.SetHTMLTemplate(template.Must(template.New("idp_logged_out.html").Parse("ok")))
+
+	d := &deps.Deps{
+		Cfg:         &mockFrontendCfg{},
+		Env:         config.NewTestEnvironmentConfig(),
+		LangManager: &mockLangManager{},
+		Logger:      slog.Default(),
+	}
+
+	h := NewFrontendHandler(d)
+	h.Register(r)
+
+	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/logged_out/en", nil)
+	r.ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	seenLanguageCookie := false
+
+	for _, c := range resp.Result().Cookies() {
+		assert.NotEqual(t, definitions.SecureDataCookieName, c.Name)
+		if c.Name == definitions.LanguageCookieName {
+			seenLanguageCookie = true
+			assert.Equal(t, "en", c.Value)
+			assert.Greater(t, c.MaxAge, 0)
+		}
+	}
+
+	assert.True(t, seenLanguageCookie)
 }
