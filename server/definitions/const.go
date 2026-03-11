@@ -23,6 +23,10 @@ const (
 	// This is the primary cookie used for all session data storage.
 	SecureDataCookieName = "nauthilus_secure_data"
 
+	// LanguageCookieName is the name of the plain language preference cookie.
+	// It stores only the selected language tag (e.g. "en", "de").
+	LanguageCookieName = "nauthilus_lang"
+
 	// DevCookieName is the name of the cookie used by the DevUI for development purposes.
 	DevCookieName = "nauthilus_dev"
 
@@ -55,7 +59,8 @@ const (
 	// SessionKeyDisplayName stores a human-friendly display name for the user.
 	SessionKeyDisplayName = "display_name"
 
-	// SessionKeyLang stores the UI language preference selected during login/consent.
+	// SessionKeyLang is deprecated and kept only for cleanup of old session data.
+	// New language persistence uses LanguageCookieName exclusively.
 	SessionKeyLang = "lang"
 
 	// SessionKeyUsername stores the supplied username during the login flow.

@@ -34,6 +34,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const cookieMetaMaxAgeKey = "__nauthilus_meta_max_age"
+
 func init() {
 	// Register types that will be stored in the cookie map.
 	gob.Register(map[string]any{})
@@ -112,6 +114,7 @@ type SecureManager struct {
 	data       map[string]any
 	path       string
 	maxAge     int
+	hadCookie  bool
 	env        config.Environment
 }
 
@@ -168,12 +171,31 @@ func (m *SecureManager) Clear() {
 
 // Save persists the encrypted cookie to the response.
 func (m *SecureManager) Save(ctx *gin.Context) error {
+	secure := util.ShouldSetSecureCookie()
+
+	// If no user-visible session data exists, don't create a new cookie.
+	// When a cookie existed on request (or an explicit delete was requested),
+	// emit a deletion cookie to remove stale state client-side.
+	if m.maxAge < 0 || !m.hasUserData() {
+		if m.hadCookie || m.maxAge < 0 {
+			http.SetCookie(ctx.Writer, &http.Cookie{
+				Name:     m.cookieName,
+				Value:    "",
+				Path:     m.path,
+				MaxAge:   -1,
+				Secure:   secure,
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+		}
+
+		return nil
+	}
+
 	encoded, err := m.codec.Encode(m.cookieName, m.data)
 	if err != nil {
 		return fmt.Errorf("failed to encode cookie: %w", err)
 	}
-
-	secure := util.ShouldSetSecureCookie()
 
 	http.SetCookie(ctx.Writer, &http.Cookie{
 		Name:     m.cookieName,
@@ -192,11 +214,13 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 func (m *SecureManager) Load(ctx *gin.Context) error {
 	cookie, err := ctx.Request.Cookie(m.cookieName)
 	if err != nil {
+		m.hadCookie = false
 		// No cookie exists, start with empty data.
 		m.data = make(map[string]any)
 
 		return nil
 	}
+	m.hadCookie = true
 
 	var data map[string]any
 
@@ -208,6 +232,7 @@ func (m *SecureManager) Load(ctx *gin.Context) error {
 	}
 
 	m.data = data
+	m.restoreCookieMeta()
 
 	return nil
 }
@@ -381,6 +406,10 @@ func (m *SecureManager) maskSensitiveValues(devMode bool) map[string]any {
 	result := make(map[string]any, len(m.data))
 
 	for k, v := range m.data {
+		if m.isInternalKey(k) {
+			continue
+		}
+
 		if !devMode && m.isSensitiveKey(k) {
 			result[k] = "<hidden>"
 		} else {
@@ -416,6 +445,14 @@ func (m *SecureManager) isSensitiveKey(key string) bool {
 func (m *SecureManager) SetMaxAge(maxAge int) {
 	m.maxAge = maxAge
 	m.codec.SetMaxAge(maxAge)
+
+	if maxAge > 0 {
+		m.data[cookieMetaMaxAgeKey] = maxAge
+
+		return
+	}
+
+	delete(m.data, cookieMetaMaxAgeKey)
 }
 
 // SetPath sets the cookie path.
@@ -435,10 +472,40 @@ func (m *SecureManager) Keys() []string {
 	keys := make([]string, 0, len(m.data))
 
 	for k := range m.data {
+		if m.isInternalKey(k) {
+			continue
+		}
+
 		keys = append(keys, k)
 	}
 
 	return keys
+}
+
+func (m *SecureManager) restoreCookieMeta() {
+	maxAge := m.GetInt(cookieMetaMaxAgeKey, 0)
+	if maxAge > 0 {
+		m.maxAge = maxAge
+		m.codec.SetMaxAge(maxAge)
+
+		return
+	}
+
+	delete(m.data, cookieMetaMaxAgeKey)
+}
+
+func (m *SecureManager) isInternalKey(key string) bool {
+	return key == cookieMetaMaxAgeKey
+}
+
+func (m *SecureManager) hasUserData() bool {
+	for key := range m.data {
+		if !m.isInternalKey(key) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ComputeHMAC returns an HMAC-SHA256 tag for the given data using the codec's auth key.

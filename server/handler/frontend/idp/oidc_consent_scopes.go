@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/gin-gonic/gin"
@@ -140,8 +139,8 @@ func consentLanguage(ctx *gin.Context) string {
 		return tag
 	}
 
-	if mgr := cookie.GetManager(ctx); mgr != nil {
-		if tag := strings.TrimSpace(mgr.GetString(definitions.SessionKeyLang, "")); tag != "" {
+	if tag, err := ctx.Cookie(definitions.LanguageCookieName); err == nil {
+		if tag = strings.TrimSpace(tag); tag != "" {
 			return tag
 		}
 	}

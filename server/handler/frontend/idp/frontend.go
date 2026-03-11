@@ -298,8 +298,10 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	authGroup.GET("/register/cancel", h.CancelRequiredMFARegistration)
 	authGroup.GET("/register/cancel/:languageTag", h.CancelRequiredMFARegistration)
 
-	router.GET("/logged_out", csrfMW, secureMW, i18nMW, h.LoggedOut)
-	router.GET("/logged_out/:languageTag", csrfMW, secureMW, i18nMW, h.LoggedOut)
+	// Keep logged_out pages cookie-free for secure session state.
+	// Language is resolved via URL/Accept-Language, but no secure_data cookie is written here.
+	router.GET("/logged_out", csrfMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out/:languageTag", csrfMW, i18nMW, h.LoggedOut)
 }
 
 // AuthMiddleware ensures the user is logged in for protected pages like 2FA Self-Service.
@@ -339,14 +341,19 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 // BasePageData returns the common data for all IdP frontend pages.
 func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manager) gin.H {
 	mgr := cookie.GetManager(ctx)
-	lang := "en"
+	lang := strings.TrimSpace(ctx.Param("languageTag"))
 	username := ""
 	flowType := ""
 	oidcClientID := ""
 	samlEntityID := ""
 
+	if lang == "" {
+		if cookieLang, err := ctx.Cookie(definitions.LanguageCookieName); err == nil {
+			lang = strings.TrimSpace(cookieLang)
+		}
+	}
+
 	if mgr != nil {
-		lang = mgr.GetString(definitions.SessionKeyLang, "en")
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
 		flowType = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 
@@ -356,6 +363,10 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		case definitions.ProtoSAML:
 			samlEntityID = mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
 		}
+	}
+
+	if lang == "" {
+		lang = "en"
 	}
 
 	tag := language.Make(lang)

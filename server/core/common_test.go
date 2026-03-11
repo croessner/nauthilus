@@ -111,3 +111,23 @@ func TestClearBrowserCookies(t *testing.T) {
 		}
 	})
 }
+
+func TestSessionCleaner_RemovesLegacyLanguageFromSecureSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyLang:    "de",
+		definitions.SessionKeyAccount: "user@example.com",
+	}}
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+
+	SessionCleaner(ctx)
+
+	if _, ok := mgr.Get(definitions.SessionKeyLang); ok {
+		t.Fatalf("expected %q to be removed from secure session", definitions.SessionKeyLang)
+	}
+}
