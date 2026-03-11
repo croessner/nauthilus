@@ -3,6 +3,12 @@ changelog:
     authors:
       - github-actions[bot]
       - dependabot[bot]
+      - github-copilot[bot]
+      - codex[bot]
+      - openai-codex[bot]
+      - claude[bot]
+      - Claude
+      - cursor[bot]
   categories:
     - title: Breaking Changes
       labels:
