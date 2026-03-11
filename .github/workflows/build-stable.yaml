@@ -12,20 +12,23 @@ env:
   APP_NAME: 'nauthilus'
   MAINTAINER: 'croessner'
   DESC: 'Multi purpose authentication server'
-  CHGELOG_VERSION: '0.15.4'
   GOEXPERIMENT: runtimesecret
   SYFT_VERSION: 'v1.16.0'
 
 jobs:
   build-artifact:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
     strategy:
       matrix:
         goos: [linux]
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version: 1.26.x
       - run: |
@@ -67,15 +70,26 @@ jobs:
             --syft-version "${{ env.SYFT_VERSION }}"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             dist/*.tar.gz
             dist/*/*.spdx.json
 
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*/*.spdx.json
+
   build-linux-packages:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
     strategy:
       matrix:
         include:
@@ -87,8 +101,8 @@ jobs:
             goarch: arm64
             build_rpm: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version: 1.26.x
       - run: |
@@ -125,7 +139,7 @@ jobs:
           done
 
       - name: Build DEB
-        uses: jiro4989/build-deb-action@v3
+        uses: jiro4989/build-deb-action@a883c65147d80579cb359548b9a902ff0a35ae5b # v4.3.0
         with:
           package: ${{ env.APP_NAME }}
           package_root: .debpkg
@@ -135,7 +149,7 @@ jobs:
           desc: '${{ env.DESC }}'
 
       - name: Build RPM
-        uses: jiro4989/build-rpm-action@v2
+        uses: jiro4989/build-rpm-action@f11474937f502aaa8bb36d8c1a8ec6f8de536a0c # v2.5.0
         if: ${{ matrix.build_rpm }}
         with:
           package: ${{ env.APP_NAME }}
@@ -161,7 +175,7 @@ jobs:
           done
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
           path: |
@@ -169,86 +183,102 @@ jobs:
             ./*.rpm
             dist/sbom/*.spdx.json
 
+      - name: Attest package artifacts
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            ./*.deb
+            dist/sbom/*.spdx.json
+
+      - name: Attest RPM artifacts
+        if: ${{ matrix.build_rpm }}
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: ./*.rpm
+
   create-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs:
       - build-artifact
       - build-linux-packages
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Generate changelog
-        run: |
-          wget https://github.com/git-chglog/git-chglog/releases/download/v${{ env.CHGELOG_VERSION }}/git-chglog_${{ env.CHGELOG_VERSION }}_linux_amd64.tar.gz
-          tar xzf git-chglog_${{ env.CHGELOG_VERSION }}_linux_amd64.tar.gz
-          chmod +x git-chglog
-          ./git-chglog --output ./changelog $(git describe --tags $(git rev-list --tags --max-count=1))
-
-      - name: Install GitHub CLI
-        run: sudo apt update && sudo apt install -y gh
-
-      - name: Create Release
+      - name: Create release with generated notes
         env:
-          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh release create ${{ github.ref_name }} ./changelog --title "Release ${{ github.ref_name }}" --notes-file ./changelog --draft=false --prerelease=false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "Release ${{ github.ref_name }} already exists."
+            exit 0
+          fi
+
+          gh release create "${{ github.ref_name }}" \
+            --verify-tag \
+            --generate-notes \
+            --fail-on-no-commits \
+            --latest
 
   upload-release:
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
     needs: create-release
     strategy:
+      fail-fast: false
       matrix:
         goos: [ linux ]
         goarch: [ amd64, arm64 ]
-        include:
-          - os: ubuntu-latest
-            asset_suffix: .tar.gz
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install GitHub CLI
-        run: sudo apt update && sudo apt install -y gh
-
       - name: Download Artifact
-        env:
-          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh run download --name artifact-${{ matrix.goos }}-${{ matrix.goarch }}
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist
 
       - name: Upload Asset
         env:
-          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
-          gh release upload ${{ github.ref_name }} "dist/${assets}${{ matrix.asset_suffix }}" "dist/${assets}/${assets}-source.spdx.json"
+          gh release upload "${{ github.ref_name }}" \
+            --clobber \
+            "dist/${assets}.tar.gz" \
+            "dist/${assets}/${assets}-source.spdx.json"
 
   upload-linux-packages:
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
     needs: create-release
     strategy:
+      fail-fast: false
       matrix:
-        goos: [ linux ]
-        goarch: [ amd64, arm64 ]
-        pkg: [ deb, rpm ]
+        include:
+          - goos: linux
+            goarch: amd64
+            pkg: deb
+          - goos: linux
+            goarch: amd64
+            pkg: rpm
+          - goos: linux
+            goarch: arm64
+            pkg: deb
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install GitHub CLI
-        run: sudo apt update && sudo apt install -y gh
-
       - name: Download Artifact
-        env:
-          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
-        run: gh run download --name artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
 
       - run: echo "ASSET_NAME=$(ls *.${{ matrix.pkg }} | head -n 1)" >> "$GITHUB_ENV"
 
       - name: Upload Asset
         env:
-          GITHUB_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.ref_name }} "$ASSET_NAME" "dist/sbom/${ASSET_NAME}.spdx.json"
+          gh release upload "${{ github.ref_name }}" \
+            --clobber \
+            "$ASSET_NAME" \
+            "dist/sbom/${ASSET_NAME}.spdx.json"

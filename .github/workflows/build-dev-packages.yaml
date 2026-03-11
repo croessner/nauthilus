@@ -29,8 +29,8 @@ jobs:
             goarch: arm64
             build_rpm: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version: 1.26.x
       - run: |
@@ -65,7 +65,7 @@ jobs:
           done
 
       - name: Build DEB
-        uses: jiro4989/build-deb-action@v3
+        uses: jiro4989/build-deb-action@a883c65147d80579cb359548b9a902ff0a35ae5b # v4.3.0
         with:
           package: ${{ env.APP_NAME }}
           package_root: .debpkg
@@ -75,7 +75,7 @@ jobs:
           desc: '${{ env.DESC }}'
 
       - name: Build RPM
-        uses: jiro4989/build-rpm-action@v2
+        uses: jiro4989/build-rpm-action@f11474937f502aaa8bb36d8c1a8ec6f8de536a0c # v2.5.0
         if: ${{ matrix.build_rpm }}
         with:
           package: ${{ env.APP_NAME }}
@@ -87,7 +87,7 @@ jobs:
           summary: '${{ env.DESC }}'
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: dev-artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
           path: |
