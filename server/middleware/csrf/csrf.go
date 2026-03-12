@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"slices"
 
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -95,17 +96,21 @@ type DefaultHandler struct {
 // Option is a function that configures a DefaultHandler.
 type Option func(*DefaultHandler)
 
+func defaultBaseCookie(secure bool) http.Cookie {
+	return http.Cookie{
+		MaxAge:   MaxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		Path:     "/",
+	}
+}
+
 // NewHandler creates a new CSRF handler with the given options.
 func NewHandler(opts ...Option) *DefaultHandler {
 	h := &DefaultHandler{
-		failureHandler: defaultFailureHandler,
-		baseCookie: http.Cookie{
-			MaxAge:   MaxAge,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   true,
-			Path:     "/",
-		},
+		failureHandler:  defaultFailureHandler,
+		baseCookie:      defaultBaseCookie(true),
 		generator:       NewTokenGenerator(),
 		masker:          NewTokenMasker(),
 		validator:       NewTokenValidator(),
@@ -472,7 +477,9 @@ func sameOrigin(u1, u2 *url.URL) bool {
 // New creates a new CSRF middleware with default settings.
 // This is a convenience function for simple usage.
 func New() gin.HandlerFunc {
-	return NewHandler().Middleware()
+	return NewHandler(
+		WithBaseCookie(defaultBaseCookie(util.ShouldSetSecureCookie())),
+	).Middleware()
 }
 
 // Global handler instance for Token function.
