@@ -22,11 +22,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 )
 
 func init() {
 	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 }
 
 func TestNewHandler(t *testing.T) {
@@ -353,6 +356,59 @@ func TestNew(t *testing.T) {
 
 	if mw == nil {
 		t.Fatal("New() returned nil")
+	}
+}
+
+func TestNew_RespectsDeveloperModeForSecureCookie(t *testing.T) {
+	tests := []struct {
+		name         string
+		devMode      bool
+		expectSecure bool
+	}{
+		{
+			name:         "production mode uses secure cookie",
+			devMode:      false,
+			expectSecure: true,
+		},
+		{
+			name:         "developer mode disables secure cookie",
+			devMode:      true,
+			expectSecure: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			util.SetDefaultEnvironment(&config.EnvironmentSettings{DevMode: tt.devMode})
+
+			router := gin.New()
+			router.Use(New())
+			router.GET("/test", func(ctx *gin.Context) {
+				ctx.String(http.StatusOK, "OK")
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			var csrfCookie *http.Cookie
+
+			for _, c := range w.Result().Cookies() {
+				if c.Name == CookieName {
+					csrfCookie = c
+
+					break
+				}
+			}
+
+			if csrfCookie == nil {
+				t.Fatal("expected CSRF cookie to be set")
+			}
+
+			if csrfCookie.Secure != tt.expectSecure {
+				t.Fatalf("csrf cookie secure = %v, want %v", csrfCookie.Secure, tt.expectSecure)
+			}
+		})
 	}
 }
 
