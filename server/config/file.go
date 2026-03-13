@@ -2421,6 +2421,168 @@ func (f *FileSettings) warnUnsupportedConfig() {
 	}
 }
 
+// unknownConfigParameters returns unknown configuration keys collected during decoding.
+// This includes unknown root-level keys (captured via FileSettings.Other) and unknown
+// fields inside OIDC custom scopes (captured via Oauth2CustomScope.Other).
+func (f *FileSettings) unknownConfigParameters() []string {
+	if f == nil {
+		return nil
+	}
+
+	unknown := make([]string, 0)
+
+	for key, value := range f.Other {
+		if isSupportedRootExtraKey(key) {
+			continue
+		}
+
+		collectUnknownParameterPaths(key, value, &unknown, 0, make(map[uintptr]struct{}))
+	}
+
+	if idpCfg := f.GetIdP(); idpCfg != nil {
+		for idx := range idpCfg.OIDC.CustomScopes {
+			scope := idpCfg.OIDC.CustomScopes[idx]
+			prefix := fmt.Sprintf("idp.oidc.custom_scopes[%d]", idx)
+			for key, value := range scope.Other {
+				if isSupportedCustomScopeExtraKey(key) {
+					continue
+				}
+
+				collectUnknownParameterPaths(prefix+"."+key, value, &unknown, 0, make(map[uintptr]struct{}))
+			}
+		}
+	}
+
+	if len(unknown) == 0 {
+		return nil
+	}
+
+	slices.Sort(unknown)
+
+	return slices.Compact(unknown)
+}
+
+const maxUnknownConfigTraversalDepth = 64
+
+func collectUnknownParameterPaths(prefix string, value any, out *[]string, depth int, visited map[uintptr]struct{}) {
+	if out == nil || value == nil {
+		return
+	}
+
+	if depth >= maxUnknownConfigTraversalDepth {
+		if prefix != "" {
+			*out = append(*out, prefix)
+		}
+
+		return
+	}
+
+	switch typed := value.(type) {
+	case map[string]any:
+		ptr := reflect.ValueOf(typed).Pointer()
+		if _, ok := visited[ptr]; ok {
+			if prefix != "" {
+				*out = append(*out, prefix)
+			}
+
+			return
+		}
+
+		visited[ptr] = struct{}{}
+		defer delete(visited, ptr)
+
+		if len(typed) == 0 && prefix != "" {
+			*out = append(*out, prefix)
+
+			return
+		}
+
+		for key, nested := range typed {
+			next := key
+			if prefix != "" {
+				next = prefix + "." + key
+			}
+
+			collectUnknownParameterPaths(next, nested, out, depth+1, visited)
+		}
+
+	case map[any]any:
+		ptr := reflect.ValueOf(typed).Pointer()
+		if _, ok := visited[ptr]; ok {
+			if prefix != "" {
+				*out = append(*out, prefix)
+			}
+
+			return
+		}
+
+		visited[ptr] = struct{}{}
+		defer delete(visited, ptr)
+
+		if len(typed) == 0 && prefix != "" {
+			*out = append(*out, prefix)
+
+			return
+		}
+
+		for key, nested := range typed {
+			keyStr := fmt.Sprintf("%v", key)
+			next := keyStr
+			if prefix != "" {
+				next = prefix + "." + keyStr
+			}
+
+			collectUnknownParameterPaths(next, nested, out, depth+1, visited)
+		}
+
+	default:
+		if prefix != "" {
+			*out = append(*out, prefix)
+		}
+	}
+}
+
+func isSupportedCustomScopeExtraKey(key string) bool {
+	const localizedDescriptionPrefix = "description_"
+
+	if !strings.HasPrefix(key, localizedDescriptionPrefix) {
+		return false
+	}
+
+	locale := strings.TrimSpace(strings.TrimPrefix(key, localizedDescriptionPrefix))
+	if locale == "" {
+		return false
+	}
+
+	for _, char := range locale {
+		if char >= 'a' && char <= 'z' {
+			continue
+		}
+
+		if char >= 'A' && char <= 'Z' {
+			continue
+		}
+
+		if char >= '0' && char <= '9' {
+			continue
+		}
+
+		if char == '-' || char == '_' {
+			continue
+		}
+
+		return false
+	}
+
+	return true
+}
+
+func isSupportedRootExtraKey(key string) bool {
+	// Environment settings are provided via config/env.go and may appear in
+	// merged Viper settings although they are intentionally not part of FileSettings.
+	return key == "developer_mode"
+}
+
 // safeWarn logs a warning using go-kit logger when available; otherwise falls back to slog.
 func safeWarn(keyvals ...any) {
 	var msg string
@@ -2948,6 +3110,10 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	if err = viper.UnmarshalExact(f, createDecoderOption()); err != nil {
 		return err
+	}
+
+	if unknown := f.unknownConfigParameters(); len(unknown) > 0 {
+		return fmt.Errorf("unknown configuration parameter(s): %s", strings.Join(unknown, ", "))
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
