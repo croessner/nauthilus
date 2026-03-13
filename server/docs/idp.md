@@ -224,6 +224,43 @@ const response = await fetch("/mfa/webauthn/register/finish", {
 });
 ```
 
+### 3.1.3 Frontend Security Headers & CSP Nonce
+
+Frontend routes support strict configurable browser security headers via:
+
+- `server.frontend.security_headers`
+
+Default behavior:
+
+- Headers are enabled when omitted.
+- A per-request CSP nonce is generated.
+- `{{nonce}}` in `content_security_policy` is replaced with the generated nonce.
+- Templates use `nonce="{{ cspNonce . }}"` for inline scripts.
+
+Example:
+
+```yaml
+server:
+    frontend:
+        security_headers:
+            enabled: true
+            content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+            content_security_policy_report_only: false
+            strict_transport_security: "max-age=31536000; includeSubDomains"
+            x_content_type_options: "nosniff"
+            x_frame_options: "DENY"
+            referrer_policy: "no-referrer"
+            permissions_policy: "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+            cross_origin_opener_policy: "same-origin"
+            cross_origin_resource_policy: "same-origin"
+            cross_origin_embedder_policy: "unsafe-none"
+            x_permitted_cross_domain_policies: "none"
+            x_dns_prefetch_control: "off"
+```
+
+If external redirect chains are required, widen `form-action` intentionally (for example:
+`form-action 'self' https: http:`).
+
 ## 4. MFA Management API (/api/v1/mfa)
 
 The IdP provides a JSON API for managing Multi-Factor Authentication. This API is used internally by the HTMX frontend
@@ -1192,6 +1229,14 @@ same session skip the consent page (unless `skip_consent` is configured on the c
 #### 9.3.4 Token Endpoint (Device Code Grant)
 
 **`POST /oidc/token`**
+
+`GET /oidc/token` is optional and disabled by default. Enable only when needed via:
+
+```yaml
+idp:
+    oidc:
+        token_endpoint_allow_get: true
+```
 
 The device polls this endpoint until the user completes authorization.
 

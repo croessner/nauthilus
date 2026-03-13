@@ -37,7 +37,7 @@
     </div>
 </div>
 
-<script>
+<script nonce="{{ cspNonce . }}">
     const ab_to_b64 = bin => {
         const uint8array = new Uint8Array(bin)
         const str = btoa(String.fromCharCode(...uint8array))

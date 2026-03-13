@@ -49,22 +49,46 @@ import (
 )
 
 type mockOIDCCfg struct {
-	issuer       string
-	signingKey   secret.Value
-	signingKeyID string
-	clients      []config.OIDCClient
+	issuer                string
+	signingKey            secret.Value
+	signingKeyID          string
+	clients               []config.OIDCClient
+	tokenEndpointAllowGET bool
 }
 
 func (m *mockOIDCCfg) GetIdP() *config.IdPSection {
 	return &config.IdPSection{
 		OIDC: config.OIDCConfig{
-			Issuer: m.issuer,
+			Issuer:                m.issuer,
+			TokenEndpointAllowGET: m.tokenEndpointAllowGET,
 			SigningKeys: []config.OIDCKey{
 				{ID: m.signingKeyID, Key: m.signingKey, Active: true},
 			},
 			Clients: m.clients,
 		},
 	}
+}
+
+func TestFormValue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("post does not use query string", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/token?client_id=query-client", strings.NewReader("grant_type=client_credentials"))
+		ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		assert.Equal(t, "", formValue(ctx, "client_id"))
+		assert.Equal(t, "client_credentials", formValue(ctx, "grant_type"))
+	})
+
+	t.Run("get reads query string", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/token?client_id=query-client", nil)
+
+		assert.Equal(t, "query-client", formValue(ctx, "client_id"))
+	})
 }
 
 func generateTestKey() string {
@@ -308,6 +332,48 @@ func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
 
 	assert.True(t, hasRoute(http.MethodGet, "/oidc/device/verify/:languageTag"))
 	assert.True(t, hasRoute(http.MethodPost, "/oidc/device/verify/:languageTag"))
+}
+
+func TestOIDCHandler_Register_TokenGETRouteConfigurable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newHandler := func(allowGET bool) *gin.Engine {
+		cfg := &mockOIDCCfg{
+			issuer:                "https://auth.example.com",
+			signingKey:            secret.New(generateTestKey()),
+			tokenEndpointAllowGET: allowGET,
+		}
+		db, _ := redismock.NewClientMock()
+		rClient := rediscli.NewTestClient(db)
+
+		d := &deps.Deps{
+			Cfg:         cfg,
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Redis:       rClient,
+		}
+
+		h := NewOIDCHandler(d, idp.NewNauthilusIdP(d), nil)
+		r := gin.New()
+		h.Register(r)
+
+		return r
+	}
+
+	hasRoute := func(routes []gin.RouteInfo, method, path string) bool {
+		return slices.IndexFunc(routes, func(route gin.RouteInfo) bool {
+			return route.Method == method && route.Path == path
+		}) >= 0
+	}
+
+	rStrict := newHandler(false)
+	assert.True(t, hasRoute(rStrict.Routes(), http.MethodPost, "/oidc/token"))
+	assert.False(t, hasRoute(rStrict.Routes(), http.MethodGet, "/oidc/token"))
+
+	rLegacy := newHandler(true)
+	assert.True(t, hasRoute(rLegacy.Routes(), http.MethodPost, "/oidc/token"))
+	assert.True(t, hasRoute(rLegacy.Routes(), http.MethodGet, "/oidc/token"))
 }
 
 func TestOIDCHandler_JWKS(t *testing.T) {

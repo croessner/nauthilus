@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/croessner/nauthilus/server/app/configfx"
@@ -326,6 +327,14 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	cfg := snap.File
 	env := store.env
 
+	if err := validateDeveloperModeBindAddress(env.GetDevMode(), cfg.GetServer().GetListenAddress()); err != nil {
+		return err
+	}
+
+	if err := handlerbackchannel.ValidateAuthConfiguration(cfg, env.GetDevMode()); err != nil {
+		return fmt.Errorf("invalid backchannel authentication configuration: %w", err)
+	}
+
 	// Configure response/header behavior via DI instead of globals.
 	core.SetDefaultResponseWriter(core.NewDefaultResponseWriter(core.ResponseDeps{Cfg: cfg, Env: env, Logger: logger}))
 
@@ -470,7 +479,9 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 			TokenFlusher: tokenStorage,
 		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
-		handlerbackchannel.Setup(e, deps)
+		if err := handlerbackchannel.Setup(e, deps); err != nil {
+			level.Error(logger).Log(definitions.LogKeyMsg, "Backchannel route setup failed", definitions.LogKeyError, err)
+		}
 	}
 
 	app := core.NewDefaultHTTPApp(core.HTTPDeps{
@@ -484,4 +495,21 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupIdP, setupBackchannel, signals)
 
 	return nil
+}
+
+func validateDeveloperModeBindAddress(devMode bool, listenAddress string) error {
+	if !devMode {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(listenAddress)
+	if err != nil {
+		return fmt.Errorf("developer mode requires loopback listen address (127.0.0.1 or ::1), invalid server.address %q: %w", listenAddress, err)
+	}
+
+	if host == definitions.Localhost4 || host == definitions.Localhost6 {
+		return nil
+	}
+
+	return fmt.Errorf("developer mode requires loopback listen address (127.0.0.1 or ::1), got %q", listenAddress)
 }

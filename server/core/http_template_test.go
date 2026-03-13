@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -47,6 +48,9 @@ func TestTemplateLoading(t *testing.T) {
 		},
 		"upper": func(s string) string {
 			return strings.ToUpper(s)
+		},
+		"cspNonce": func(data any) string {
+			return securityheaders.NonceFromTemplateData(data)
 		},
 	})
 

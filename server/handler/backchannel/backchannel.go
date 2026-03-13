@@ -16,6 +16,9 @@
 package backchannel
 
 import (
+	"errors"
+
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/handler/asyncjobs"
 	"github.com/croessner/nauthilus/server/handler/auth"
 	"github.com/croessner/nauthilus/server/handler/bruteforce"
@@ -34,13 +37,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var errBackchannelAuthNotConfigured = errors.New("backchannel setup requires at least one configured authentication method: server.basic_auth.enabled=true or server.oidc_auth.enabled=true")
+
+func ensureBackchannelAuthConfigured(cfg config.File, developerMode bool) error {
+	if developerMode {
+		return nil
+	}
+
+	if cfg.GetServer().GetBasicAuth().IsEnabled() || cfg.GetServer().GetOIDCAuth().IsEnabled() {
+		return nil
+	}
+
+	return errBackchannelAuthNotConfigured
+}
+
+// ValidateAuthConfiguration validates required authentication settings for backchannel endpoints.
+func ValidateAuthConfiguration(cfg config.File, developerMode bool) error {
+	return ensureBackchannelAuthConfigured(cfg, developerMode)
+}
+
 // Setup registers backchannel API endpoints with explicit dependencies.
 // Authentication uses Basic Auth and/or OIDC Bearer tokens (client_credentials flow).
 // The legacy HS256 JWT mechanism (/api/v1/jwt/token, /api/v1/jwt/refresh) has been
 // removed in favor of the standard OIDC /oidc/token endpoint.
-func Setup(router *gin.Engine, deps *handlerdeps.Deps) {
+func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	if deps == nil || deps.Cfg == nil || deps.Logger == nil {
-		panic("backchannel.Setup requires non-nil deps (Cfg, Logger)")
+		return errors.New("backchannel setup requires non-nil deps (Cfg, Logger)")
 	}
 
 	if deps.Svc == nil {
@@ -48,6 +70,10 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) {
 	}
 
 	cfg := deps.Cfg
+	developerMode := deps.Env != nil && deps.Env.GetDevMode()
+	if err := ensureBackchannelAuthConfigured(cfg, developerMode); err != nil {
+		return err
+	}
 
 	// Main API group with configured authentication (mandatory token)
 	group := router.Group("/api/v1")
@@ -89,4 +115,6 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) {
 	if deps.Env != nil && deps.Env.GetDevMode() {
 		devui.New(deps).Register(group)
 	}
+
+	return nil
 }

@@ -7,9 +7,9 @@
     <title>{{ .Title }} - Nauthilus</title>
     <link href="/static/css/daisyui.min.css" rel="stylesheet" type="text/css"/>
     <link href="/static/css/idp-theme.css" rel="stylesheet" type="text/css"/>
-    <script src="/static/js/tailwind.min.js"></script>
-    <script src="/static/js/htmx.min.js"></script>
-    <script>
+    <script nonce="{{ cspNonce . }}" src="/static/js/tailwind.min.js"></script>
+    <script nonce="{{ cspNonce . }}" src="/static/js/htmx.min.js"></script>
+    <script nonce="{{ cspNonce . }}">
         (function () {
             const getPreferredTheme = () => localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
             const setTheme = (theme) => document.documentElement.setAttribute('data-theme', theme);
@@ -170,7 +170,7 @@
             display: block;
         }
     </style>
-    <script>
+    <script nonce="{{ cspNonce . }}">
         function toggleLangDropdown(event) {
             event.stopPropagation();
 
@@ -202,7 +202,7 @@
         }
     </script>
     {{ if .DevMode }}
-    <script>
+    <script nonce="{{ cspNonce . }}">
         htmx.logAll();
     </script>
     {{ end }}

@@ -43,6 +43,7 @@ import (
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
+	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -51,10 +52,19 @@ import (
 )
 
 // formValue retrieves a request parameter from either the POST body or the URL
-// query string. This allows token-endpoint handlers to work with both POST and
-// GET requests (some OIDC clients, e.g. Roundcube, use GET for /oidc/token).
+// query string depending on request method.
+// For POST it reads only form body values, for GET it reads query values.
+// GET support on /oidc/token is optional and controlled via idp.oidc.token_endpoint_allow_get.
 func formValue(ctx *gin.Context, key string) string {
-	return ctx.Request.FormValue(key)
+	if ctx == nil || ctx.Request == nil {
+		return ""
+	}
+
+	if ctx.Request.Method == http.MethodGet {
+		return ctx.Query(key)
+	}
+
+	return ctx.PostForm(key)
 }
 
 // OIDCHandler handles OIDC protocol requests.
@@ -101,32 +111,35 @@ func (h *OIDCHandler) Register(router gin.IRouter) {
 	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 	csrfMW := csrf.New()
+	securityMW := securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler()
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
-	router.GET("/oidc/authorize", secureMW, i18nMW, h.Authorize)
-	router.GET("/oidc/authorize/:languageTag", secureMW, i18nMW, h.Authorize)
+	router.GET("/oidc/authorize", securityMW, secureMW, i18nMW, h.Authorize)
+	router.GET("/oidc/authorize/:languageTag", securityMW, secureMW, i18nMW, h.Authorize)
 	router.POST("/oidc/token", h.Token)
-	router.GET("/oidc/token", h.Token)
+	if h.deps.Cfg.GetIdP().OIDC.IsTokenEndpointGETAllowed() {
+		router.GET("/oidc/token", h.Token)
+	}
 	router.GET("/oidc/userinfo", h.UserInfo)
 	router.POST("/oidc/introspect", h.Introspect)
 	router.GET("/oidc/jwks", h.JWKS)
 	router.POST("/oidc/device", h.DeviceAuthorization)
-	router.GET("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
-	router.GET("/oidc/device/verify/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
-	router.GET("/oidc/device/verify/failed", csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
-	router.GET("/oidc/device/verify/failed/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
-	router.POST("/oidc/device/verify", csrfMW, secureMW, i18nMW, h.DeviceVerify)
-	router.POST("/oidc/device/verify/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceVerify)
-	router.GET("/oidc/device/consent", csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
-	router.GET("/oidc/device/consent/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
-	router.POST("/oidc/device/consent", csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
-	router.POST("/oidc/device/consent/:languageTag", csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
-	router.GET("/oidc/logout", secureMW, h.Logout)
-	router.GET("/logout", secureMW, h.Logout)
-	router.GET("/oidc/consent", csrfMW, secureMW, i18nMW, h.ConsentGET)
-	router.GET("/oidc/consent/:languageTag", csrfMW, secureMW, i18nMW, h.ConsentGET)
-	router.POST("/oidc/consent", csrfMW, secureMW, i18nMW, h.ConsentPOST)
-	router.POST("/oidc/consent/:languageTag", csrfMW, secureMW, i18nMW, h.ConsentPOST)
+	router.GET("/oidc/device/verify", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
+	router.GET("/oidc/device/verify/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyPage)
+	router.GET("/oidc/device/verify/failed", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
+	router.GET("/oidc/device/verify/failed/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerifyFailedPage)
+	router.POST("/oidc/device/verify", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
+	router.POST("/oidc/device/verify/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceVerify)
+	router.GET("/oidc/device/consent", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
+	router.GET("/oidc/device/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentGET)
+	router.POST("/oidc/device/consent", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
+	router.POST("/oidc/device/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.DeviceConsentPOST)
+	router.GET("/oidc/logout", securityMW, secureMW, h.Logout)
+	router.GET("/logout", securityMW, secureMW, h.Logout)
+	router.GET("/oidc/consent", securityMW, csrfMW, secureMW, i18nMW, h.ConsentGET)
+	router.GET("/oidc/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.ConsentGET)
+	router.POST("/oidc/consent", securityMW, csrfMW, secureMW, i18nMW, h.ConsentPOST)
+	router.POST("/oidc/consent/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.ConsentPOST)
 }
 
 // Discovery returns the OIDC discovery document.

@@ -264,6 +264,35 @@ Nauthilus uses [HTMX](https://htmx.org/) to update parts of the page. If you ext
 - **Login**: `/login` (Supports `return_to` parameter)
 - **MFA Portal**: `/mfa/register/home` (User security hub)
 
+### Frontend Security Headers (`server.frontend.security_headers`)
+
+The frontend can enforce strict browser security headers with configuration under `server.frontend.security_headers`.
+Defaults are strict and enabled by default.
+
+```yaml
+server:
+    frontend:
+        security_headers:
+            enabled: true
+            content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+            content_security_policy_report_only: false
+            strict_transport_security: "max-age=31536000; includeSubDomains"
+            x_content_type_options: "nosniff"
+            x_frame_options: "DENY"
+            referrer_policy: "no-referrer"
+            permissions_policy: "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+            cross_origin_opener_policy: "same-origin"
+            cross_origin_resource_policy: "same-origin"
+            cross_origin_embedder_policy: "unsafe-none"
+            x_permitted_cross_domain_policies: "none"
+            x_dns_prefetch_control: "off"
+```
+
+If you need external HTTP(S) redirect chains (for example during local development), widen `form-action` explicitly:
+`form-action 'self' https: http:`.
+
+The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
+
 ---
 
 ## 7. MFA Self-Service (TOTP & WebAuthn)
@@ -347,6 +376,9 @@ Nauthilus calls specific functions when a user changes their MFA:
 | `/oidc/jwks`                        | GET      | Public Keys for Token Verification |
 | `/oidc/logout`                      | GET      | Logout Endpoint (RP-initiated)     |
 | `/oidc/consent`                     | GET/POST | Obtaining User Consent             |
+
+Legacy compatibility: `GET /oidc/token` can be enabled via `idp.oidc.token_endpoint_allow_get: true` (disabled by
+default).
 
 ### SAML 2.0
 

@@ -81,10 +81,12 @@ func TestBasePageData(t *testing.T) {
 			lm := &mockLangManager{}
 			localizer := i18n.NewLocalizer(lm.GetBundle(), "de")
 			c.Set(definitions.CtxLocalizedKey, localizer)
+			c.Set(definitions.CtxCSPNonceKey, "nonce-123")
 
 			data := BasePageData(c, cfg, lm)
 			assert.Equal(t, "de", data["LanguageTag"])
 			assert.Equal(t, "testuser", data["Username"])
+			assert.Equal(t, "nonce-123", data["CSPNonce"])
 			c.Status(http.StatusOK)
 		})
 

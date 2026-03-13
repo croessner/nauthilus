@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
+	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
 )
@@ -503,6 +504,9 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 		},
 		"upper": func(s string) string {
 			return strings.ToUpper(s)
+		},
+		"cspNonce": func(data any) string {
+			return securityheaders.NonceFromTemplateData(data)
 		},
 	}
 
