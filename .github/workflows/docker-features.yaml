@@ -5,6 +5,9 @@ on:
     branches:
       - features
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
