@@ -38,6 +38,7 @@ import (
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
+	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
@@ -240,30 +241,31 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
 	i18nMW := i18n.WithLanguage(h.deps.Cfg, h.deps.Logger, h.deps.LangManager)
 	csrfMW := csrf.New()
+	securityMW := securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler()
 
-	router.GET("/login", csrfMW, secureMW, i18nMW, h.Login)
-	router.GET("/login/:languageTag", csrfMW, secureMW, i18nMW, h.Login)
-	router.POST("/login", csrfMW, secureMW, i18nMW, h.PostLogin)
-	router.POST("/login/:languageTag", csrfMW, secureMW, i18nMW, h.PostLogin)
-	router.GET("/login/totp", csrfMW, secureMW, i18nMW, h.LoginTOTP)
-	router.GET("/login/totp/:languageTag", csrfMW, secureMW, i18nMW, h.LoginTOTP)
-	router.POST("/login/totp", csrfMW, secureMW, i18nMW, h.PostLoginTOTP)
-	router.POST("/login/totp/:languageTag", csrfMW, secureMW, i18nMW, h.PostLoginTOTP)
-	router.GET("/login/webauthn", csrfMW, secureMW, i18nMW, h.LoginWebAuthn)
-	router.GET("/login/webauthn/:languageTag", csrfMW, secureMW, i18nMW, h.LoginWebAuthn)
-	router.GET("/login/webauthn/begin", csrfMW, secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
-	router.GET("/login/webauthn/begin/:languageTag", csrfMW, secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
-	router.POST("/login/webauthn/finish", csrfMW, secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
-	router.POST("/login/webauthn/finish/:languageTag", csrfMW, secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
-	router.GET("/login/mfa", csrfMW, secureMW, i18nMW, h.LoginMFASelect)
-	router.GET("/login/mfa/:languageTag", csrfMW, secureMW, i18nMW, h.LoginMFASelect)
-	router.GET("/login/recovery", csrfMW, secureMW, i18nMW, h.LoginRecovery)
-	router.GET("/login/recovery/:languageTag", csrfMW, secureMW, i18nMW, h.LoginRecovery)
-	router.POST("/login/recovery", csrfMW, secureMW, i18nMW, h.PostLoginRecovery)
-	router.POST("/login/recovery/:languageTag", csrfMW, secureMW, i18nMW, h.PostLoginRecovery)
+	router.GET("/login", securityMW, csrfMW, secureMW, i18nMW, h.Login)
+	router.GET("/login/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.Login)
+	router.POST("/login", securityMW, csrfMW, secureMW, i18nMW, h.PostLogin)
+	router.POST("/login/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.PostLogin)
+	router.GET("/login/totp", securityMW, csrfMW, secureMW, i18nMW, h.LoginTOTP)
+	router.GET("/login/totp/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.LoginTOTP)
+	router.POST("/login/totp", securityMW, csrfMW, secureMW, i18nMW, h.PostLoginTOTP)
+	router.POST("/login/totp/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.PostLoginTOTP)
+	router.GET("/login/webauthn", securityMW, csrfMW, secureMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.LoginWebAuthn)
+	router.GET("/login/webauthn/begin", securityMW, csrfMW, secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.GET("/login/webauthn/begin/:languageTag", securityMW, csrfMW, secureMW, i18nMW, core.LoginWebAuthnBegin(h.deps.Auth()))
+	router.POST("/login/webauthn/finish", securityMW, csrfMW, secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.POST("/login/webauthn/finish/:languageTag", securityMW, csrfMW, secureMW, i18nMW, core.LoginWebAuthnFinish(h.deps.Auth()))
+	router.GET("/login/mfa", securityMW, csrfMW, secureMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/mfa/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.LoginMFASelect)
+	router.GET("/login/recovery", securityMW, csrfMW, secureMW, i18nMW, h.LoginRecovery)
+	router.GET("/login/recovery/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.LoginRecovery)
+	router.POST("/login/recovery", securityMW, csrfMW, secureMW, i18nMW, h.PostLoginRecovery)
+	router.POST("/login/recovery/:languageTag", securityMW, csrfMW, secureMW, i18nMW, h.PostLoginRecovery)
 
 	// Auth protected routes
-	authGroup := router.Group(definitions.MFARoot, csrfMW, secureMW, i18nMW, h.AuthMiddleware())
+	authGroup := router.Group(definitions.MFARoot, securityMW, csrfMW, secureMW, i18nMW, h.AuthMiddleware())
 	authGroup.GET("/register/home", h.TwoFAHome)
 	authGroup.GET("/register/home/:languageTag", h.TwoFAHome)
 	authGroup.GET("/totp/register", h.RegisterTOTP)
@@ -300,8 +302,8 @@ func (h *FrontendHandler) Register(router gin.IRouter) {
 
 	// Keep logged_out pages cookie-free for secure session state.
 	// Language is resolved via URL/Accept-Language, but no secure_data cookie is written here.
-	router.GET("/logged_out", csrfMW, i18nMW, h.LoggedOut)
-	router.GET("/logged_out/:languageTag", csrfMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out", securityMW, csrfMW, i18nMW, h.LoggedOut)
+	router.GET("/logged_out/:languageTag", securityMW, csrfMW, i18nMW, h.LoggedOut)
 }
 
 // AuthMiddleware ensures the user is logged in for protected pages like 2FA Self-Service.
@@ -395,6 +397,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		"LanguageCurrentName": currentName,
 		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, path, langManager.GetTags(), currentName),
 		"Username":            username,
+		"CSPNonce":            securityheaders.NonceFromContext(ctx),
 		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
 		"ConfirmYes":          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
 		"ConfirmNo":           frontend.GetLocalized(ctx, cfg, nil, "Cancel"),

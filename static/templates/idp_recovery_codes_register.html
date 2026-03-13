@@ -59,7 +59,7 @@
     </div>
 </div>
 
-<script>
+<script nonce="{{ cspNonce . }}">
     // Collect codes from the grid for clipboard and download operations.
     function getRecoveryCodes() {
         const cells = document.querySelectorAll('#recovery-codes-grid > div');

@@ -39,7 +39,7 @@
         </div>
     </div>
 </div>
-<script>
+<script nonce="{{ cspNonce . }}">
     function getRecoveryCodes() {
         const cells = document.querySelectorAll('#recovery-codes-grid > div');
         const codes = [];

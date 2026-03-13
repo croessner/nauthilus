@@ -46,6 +46,10 @@ var templateFuncs = template.FuncMap{
 	"upper": func(s string) string {
 		return strings.ToUpper(s)
 	},
+	// Stubbed for syntax validation only; runtime value comes from middleware.
+	"cspNonce": func(data any) string {
+		return ""
+	},
 }
 
 func main() {

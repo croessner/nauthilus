@@ -43,6 +43,14 @@ This document captures practical, project-specific details to build, configure, 
   - Redis is mocked using github.com/go-redis/redismock/v9 in unit tests. Avoid hitting real Redis in unit tests; prefer rediscli.NewTestClient(...) with a redismock client when the code path touches Redis.
   - Lua: Lua-related tests use github.com/yuin/gopher-lua and preload modules via lualib.LoaderModX. Keep tests hermetic by constructing an L state and PreloadModule calls. Example: L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(ctx)).
   - HTTP and Gin: tests use httptest/httptest.ResponseRecorder where applicable. Prefer JSON-iter used in the project if encoding/decoding is under test.
+  - Browser E2E (Playwright/MCP) with WebAuthn:
+      - Do not rely on platform authenticators (e.g., Touch ID) for automated flows.
+      - Always create a CDP VirtualAuthenticator (`WebAuthn.enable` + `WebAuthn.addVirtualAuthenticator`) at test start
+        and use it for both registration and login.
+      - Keep E2E deterministic: clear cookies between flows, register a dedicated virtual key name, and assert the
+        virtual credential/sign counter via `WebAuthn.getCredentials` when validating usage.
+      - This is the default strategy for automating `/mfa/webauthn/register` and `/login/webauthn` without manual OTP
+        assistance.
 - Golden and table-driven tests
   - The codebase uses table-driven tests extensively and a few golden comparisons (e.g., response JSON). Keep JSON iteration deterministic; when tests fail due to ordering, use maps with stable encoding or compare unmarshaled structures.
 - Adding a new test

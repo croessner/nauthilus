@@ -2138,6 +2138,56 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		f.Server.Frontend.TotpIssuer = "Nauthilus"
 	}
 
+	headers := &f.Server.Frontend.SecurityHeaders
+	if headers.Enabled == nil {
+		enabled := true
+		headers.Enabled = &enabled
+	}
+
+	if headers.ContentSecurityPolicy == "" {
+		headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	}
+
+	if headers.StrictTransportSecurity == "" {
+		headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains"
+	}
+
+	if headers.XContentTypeOptions == "" {
+		headers.XContentTypeOptions = "nosniff"
+	}
+
+	if headers.XFrameOptions == "" {
+		headers.XFrameOptions = "DENY"
+	}
+
+	if headers.ReferrerPolicy == "" {
+		headers.ReferrerPolicy = "no-referrer"
+	}
+
+	if headers.PermissionsPolicy == "" {
+		headers.PermissionsPolicy = "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+	}
+
+	if headers.CrossOriginOpenerPolicy == "" {
+		headers.CrossOriginOpenerPolicy = "same-origin"
+	}
+
+	if headers.CrossOriginResourcePolicy == "" {
+		headers.CrossOriginResourcePolicy = "same-origin"
+	}
+
+	if headers.CrossOriginEmbedderPolicy == "" {
+		headers.CrossOriginEmbedderPolicy = "unsafe-none"
+	}
+
+	if headers.XPermittedCrossDomainPolicies == "" {
+		headers.XPermittedCrossDomainPolicies = "none"
+	}
+
+	if headers.XDNSPrefetchControl == "" {
+		headers.XDNSPrefetchControl = "off"
+	}
+
 	return nil
 }
 

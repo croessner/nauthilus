@@ -40,6 +40,7 @@ import (
 	"github.com/croessner/nauthilus/server/idp"
 	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
+	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -280,11 +281,12 @@ func (h *SAMLHandler) Register(router gin.IRouter) {
 		frontendSecret = bytes.Clone(value)
 	})
 	secureMW := cookie.Middleware(frontendSecret, h.deps.Cfg, h.deps.Env)
+	securityMW := securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler()
 
-	router.GET("/saml/metadata", h.Metadata)
-	router.GET("/saml/sso", secureMW, h.SSO)
-	router.GET("/saml/slo", secureMW, h.SLO)
-	router.POST("/saml/slo", secureMW, h.SLO)
+	router.GET("/saml/metadata", securityMW, h.Metadata)
+	router.GET("/saml/sso", securityMW, secureMW, h.SSO)
+	router.GET("/saml/slo", securityMW, secureMW, h.SLO)
+	router.POST("/saml/slo", securityMW, secureMW, h.SLO)
 }
 
 // Metadata returns the SAML IdP metadata.

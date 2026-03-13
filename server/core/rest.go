@@ -803,7 +803,6 @@ func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 
 	// Check if OIDC Bearer token has the required scope
 	claims := oidcbearer.GetClaimsFromContext(ctx)
-
 	if claims != nil {
 		if !oidcbearer.HasAnyScope(claims, definitions.ScopeSecurity, definitions.ScopeAdmin) {
 			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required scope: " + definitions.ScopeSecurity + " or " + definitions.ScopeAdmin})
@@ -847,9 +846,10 @@ func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 	})
 }
 
-// HandleConfigLoad handles loading the server configuration with OIDC scope checks.
-// If an OIDC Bearer token is present, it verifies the security or admin scope.
-// On success, it retrieves the server configuration as JSON and returns it.
+// HandleConfigLoad handles loading the server configuration with strict auth checks.
+// If OIDC backchannel auth is enabled, a valid Bearer token with security/admin
+// scope is required. If only Basic auth is enabled, the request must have passed
+// Basic auth middleware. On success, the configuration is returned as JSON.
 func (deps restAdminDeps) HandleConfigLoad(ctx *gin.Context) {
 	if err := deps.validate(); err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
@@ -860,12 +860,37 @@ func (deps restAdminDeps) HandleConfigLoad(ctx *gin.Context) {
 	cfg := deps.effectiveCfg()
 	logger := deps.effectiveLogger()
 
-	// Check if OIDC Bearer token has the required scope
-	claims := oidcbearer.GetClaimsFromContext(ctx)
+	basicAuthEnabled := cfg.GetServer().GetBasicAuth().IsEnabled()
+	oidcAuthEnabled := cfg.GetServer().GetOIDCAuth().IsEnabled()
+	developerMode := getDefaultEnvironment().GetDevMode()
 
-	if claims != nil {
+	// Backchannel config endpoint must never be reachable without at least one auth mechanism.
+	if !developerMode && !basicAuthEnabled && !oidcAuthEnabled {
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "backchannel authentication is not configured"})
+
+		return
+	}
+
+	basicAuthValidated, _ := ctx.Get(definitions.CtxBasicAuthValidatedKey)
+
+	// Check if OIDC Bearer token has the required scope.
+	claims := oidcbearer.GetClaimsFromContext(ctx)
+	if oidcAuthEnabled {
+		if claims == nil {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
+
+			return
+		}
+
 		if !oidcbearer.HasAnyScope(claims, definitions.ScopeSecurity, definitions.ScopeAdmin) {
 			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required scope: " + definitions.ScopeSecurity + " or " + definitions.ScopeAdmin})
+
+			return
+		}
+	} else if basicAuthEnabled {
+		authenticated, ok := basicAuthValidated.(bool)
+		if !ok || !authenticated {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
 
 			return
 		}

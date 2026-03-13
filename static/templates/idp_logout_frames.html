@@ -18,7 +18,7 @@
 
             <div data-logout-target="{{ .LogoutTarget }}" id="logout-config"></div>
 
-            <script>
+            <script nonce="{{ cspNonce . }}">
                 // Redirect after a short delay to allow iFrames to load
                 setTimeout(function () {
                     const config = document.getElementById('logout-config');

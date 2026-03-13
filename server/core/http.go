@@ -37,6 +37,7 @@ import (
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
 	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
+	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/rediscli"
 	approuter "github.com/croessner/nauthilus/server/router"
@@ -239,6 +240,9 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 			},
 			"upper": func(s string) string {
 				return strings.ToUpper(s)
+			},
+			"cspNonce": func(data any) string {
+				return securityheaders.NonceFromTemplateData(data)
 			},
 		})
 

@@ -198,6 +198,7 @@ type OIDCConfig struct {
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
 	ConsentTTL                         time.Duration       `mapstructure:"consent_ttl"`
 	ConsentMode                        string              `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
+	TokenEndpointAllowGET              bool                `mapstructure:"token_endpoint_allow_get"`
 	DeviceCodeExpiry                   time.Duration       `mapstructure:"device_code_expiry"`
 	DeviceCodePollingInterval          int                 `mapstructure:"device_code_polling_interval"`
 	DeviceCodeUserCodeLength           int                 `mapstructure:"device_code_user_code_length"`
@@ -230,8 +231,8 @@ func (o *OIDCConfig) String() string {
 		return "OIDCConfig: <nil>"
 	}
 
-	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s SigningKeys:%v AutoKeyRotation:%t KeyRotationInterval:%s KeyMaxAge:%s}",
-		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime, o.SigningKeys, o.AutoKeyRotation, o.KeyRotationInterval, o.KeyMaxAge)
+	return fmt.Sprintf("OIDCConfig: {Enabled:%t Issuer:%s Clients:%+v ScopesSupported:%v ResponseTypesSupported:%v SubjectTypesSupported:%v IDTokenSigningAlgValuesSupported:%v TokenEndpointAuthMethodsSupported:%v ClaimsSupported:%v FrontChannelLogoutSupported:%v FrontChannelLogoutSessionSupported:%v BackChannelLogoutSupported:%v BackChannelLogoutSessionSupported:%v DefaultAccessTokenLifetime:%s DefaultRefreshTokenLifetime:%s SigningKeys:%v AutoKeyRotation:%t KeyRotationInterval:%s KeyMaxAge:%s TokenEndpointAllowGET:%t}",
+		o.Enabled, o.Issuer, o.Clients, o.ScopesSupported, o.ResponseTypesSupported, o.SubjectTypesSupported, o.IDTokenSigningAlgValuesSupported, o.TokenEndpointAuthMethodsSupported, o.ClaimsSupported, o.FrontChannelLogoutSupported, o.FrontChannelLogoutSessionSupported, o.BackChannelLogoutSupported, o.BackChannelLogoutSessionSupported, o.DefaultAccessTokenLifetime, o.DefaultRefreshTokenLifetime, o.SigningKeys, o.AutoKeyRotation, o.KeyRotationInterval, o.KeyMaxAge, o.TokenEndpointAllowGET)
 }
 
 // GetSigningKey returns the signing key content.
@@ -436,6 +437,16 @@ func (o *OIDCConfig) GetDeviceCodeUserCodeLength() int {
 	}
 
 	return definitions.OIDCDeviceCodeDefaultUserCodeLength
+}
+
+// IsTokenEndpointGETAllowed reports whether GET requests are accepted on /oidc/token.
+// Defaults to false (POST only) for stricter handling of secrets and grant data.
+func (o *OIDCConfig) IsTokenEndpointGETAllowed() bool {
+	if o == nil {
+		return false
+	}
+
+	return o.TokenEndpointAllowGET
 }
 
 // GetKeyRotationInterval returns the interval for auto key rotation.

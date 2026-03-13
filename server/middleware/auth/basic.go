@@ -229,6 +229,9 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	})
 
 	if ok && secureCompare(username, cfg.GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, expectedPassword) {
+		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+		ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
+
 		return true
 	}
 

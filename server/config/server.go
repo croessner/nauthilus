@@ -1852,14 +1852,15 @@ func (m *MasterUser) GetDelimiter() string {
 
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
-	Enabled               bool         `mapstructure:"enabled"`
-	EncryptionSecret      secret.Value `mapstructure:"encryption_secret" validate:"secret_required_if_enabled,secret_min=16,alphanumsymbol,secret_excludesall= "`
-	HTMLStaticContentPath string       `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
-	LanguageResources     string       `mapstructure:"language_resources" validate:"omitempty,dir"`
-	Languages             []string     `mapstructure:"languages" validate:"omitempty"`
-	DefaultLanguage       string       `mapstructure:"default_language" validate:"omitempty"`
-	TotpIssuer            string       `mapstructure:"totp_issuer" validate:"omitempty"`
-	TotpSkew              uint         `mapstructure:"totp_skew" validate:"omitempty"`
+	Enabled               bool                    `mapstructure:"enabled"`
+	EncryptionSecret      secret.Value            `mapstructure:"encryption_secret" validate:"secret_required_if_enabled,secret_min=16,alphanumsymbol,secret_excludesall= "`
+	HTMLStaticContentPath string                  `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
+	LanguageResources     string                  `mapstructure:"language_resources" validate:"omitempty,dir"`
+	Languages             []string                `mapstructure:"languages" validate:"omitempty"`
+	DefaultLanguage       string                  `mapstructure:"default_language" validate:"omitempty"`
+	TotpIssuer            string                  `mapstructure:"totp_issuer" validate:"omitempty"`
+	TotpSkew              uint                    `mapstructure:"totp_skew" validate:"omitempty"`
+	SecurityHeaders       FrontendSecurityHeaders `mapstructure:"security_headers" validate:"omitempty"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -1936,6 +1937,152 @@ func (f *Frontend) GetEncryptionSecret() secret.Value {
 	}
 
 	return f.EncryptionSecret
+}
+
+// GetSecurityHeaders retrieves the frontend security header configuration.
+func (f *Frontend) GetSecurityHeaders() *FrontendSecurityHeaders {
+	if f == nil {
+		return &FrontendSecurityHeaders{}
+	}
+
+	return &f.SecurityHeaders
+}
+
+// FrontendSecurityHeaders configures browser security headers for frontend routes.
+//
+// All header values are configurable as plain strings. If Enabled is nil, headers are enabled by default.
+type FrontendSecurityHeaders struct {
+	Enabled                         *bool  `mapstructure:"enabled" validate:"omitempty"`
+	ContentSecurityPolicy           string `mapstructure:"content_security_policy" validate:"omitempty,printascii"`
+	ContentSecurityPolicyReportOnly bool   `mapstructure:"content_security_policy_report_only" validate:"omitempty"`
+	StrictTransportSecurity         string `mapstructure:"strict_transport_security" validate:"omitempty,printascii"`
+	XContentTypeOptions             string `mapstructure:"x_content_type_options" validate:"omitempty,printascii"`
+	XFrameOptions                   string `mapstructure:"x_frame_options" validate:"omitempty,printascii"`
+	ReferrerPolicy                  string `mapstructure:"referrer_policy" validate:"omitempty,printascii"`
+	PermissionsPolicy               string `mapstructure:"permissions_policy" validate:"omitempty,printascii"`
+	CrossOriginOpenerPolicy         string `mapstructure:"cross_origin_opener_policy" validate:"omitempty,printascii"`
+	CrossOriginResourcePolicy       string `mapstructure:"cross_origin_resource_policy" validate:"omitempty,printascii"`
+	CrossOriginEmbedderPolicy       string `mapstructure:"cross_origin_embedder_policy" validate:"omitempty,printascii"`
+	XPermittedCrossDomainPolicies   string `mapstructure:"x_permitted_cross_domain_policies" validate:"omitempty,printascii"`
+	XDNSPrefetchControl             string `mapstructure:"x_dns_prefetch_control" validate:"omitempty,printascii"`
+}
+
+// IsEnabled indicates whether frontend security headers are enabled.
+// Defaults to true when omitted.
+func (h *FrontendSecurityHeaders) IsEnabled() bool {
+	if h == nil {
+		return true
+	}
+
+	return boolOrDefaultTrue(h.Enabled)
+}
+
+// GetContentSecurityPolicy returns the CSP value.
+func (h *FrontendSecurityHeaders) GetContentSecurityPolicy() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.ContentSecurityPolicy
+}
+
+// IsContentSecurityPolicyReportOnly returns true when CSP should be emitted in report-only mode.
+func (h *FrontendSecurityHeaders) IsContentSecurityPolicyReportOnly() bool {
+	if h == nil {
+		return false
+	}
+
+	return h.ContentSecurityPolicyReportOnly
+}
+
+// GetStrictTransportSecurity returns Strict-Transport-Security header value.
+func (h *FrontendSecurityHeaders) GetStrictTransportSecurity() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.StrictTransportSecurity
+}
+
+// GetXContentTypeOptions returns X-Content-Type-Options header value.
+func (h *FrontendSecurityHeaders) GetXContentTypeOptions() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.XContentTypeOptions
+}
+
+// GetXFrameOptions returns X-Frame-Options header value.
+func (h *FrontendSecurityHeaders) GetXFrameOptions() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.XFrameOptions
+}
+
+// GetReferrerPolicy returns Referrer-Policy header value.
+func (h *FrontendSecurityHeaders) GetReferrerPolicy() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.ReferrerPolicy
+}
+
+// GetPermissionsPolicy returns Permissions-Policy header value.
+func (h *FrontendSecurityHeaders) GetPermissionsPolicy() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.PermissionsPolicy
+}
+
+// GetCrossOriginOpenerPolicy returns Cross-Origin-Opener-Policy header value.
+func (h *FrontendSecurityHeaders) GetCrossOriginOpenerPolicy() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.CrossOriginOpenerPolicy
+}
+
+// GetCrossOriginResourcePolicy returns Cross-Origin-Resource-Policy header value.
+func (h *FrontendSecurityHeaders) GetCrossOriginResourcePolicy() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.CrossOriginResourcePolicy
+}
+
+// GetCrossOriginEmbedderPolicy returns Cross-Origin-Embedder-Policy header value.
+func (h *FrontendSecurityHeaders) GetCrossOriginEmbedderPolicy() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.CrossOriginEmbedderPolicy
+}
+
+// GetXPermittedCrossDomainPolicies returns X-Permitted-Cross-Domain-Policies header value.
+func (h *FrontendSecurityHeaders) GetXPermittedCrossDomainPolicies() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.XPermittedCrossDomainPolicies
+}
+
+// GetXDNSPrefetchControl returns X-DNS-Prefetch-Control header value.
+func (h *FrontendSecurityHeaders) GetXDNSPrefetchControl() string {
+	if h == nil {
+		return ""
+	}
+
+	return h.XDNSPrefetchControl
 }
 
 var secretValueType = reflect.TypeFor[secret.Value]()

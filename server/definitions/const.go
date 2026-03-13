@@ -914,6 +914,12 @@ const (
 
 	// CtxAuthMethodKey stores a request-scoped authentication method override for access logs.
 	CtxAuthMethodKey = "auth_method"
+
+	// CtxBasicAuthValidatedKey marks that HTTP Basic authentication succeeded for this request.
+	CtxBasicAuthValidatedKey = "basic_auth_validated"
+
+	// CtxCSPNonceKey stores the per-request CSP nonce for template rendering and header generation.
+	CtxCSPNonceKey = "csp_nonce"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

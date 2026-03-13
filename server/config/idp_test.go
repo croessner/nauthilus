@@ -279,6 +279,21 @@ func TestOIDCConsentMode(t *testing.T) {
 	})
 }
 
+func TestOIDCTokenEndpointAllowGET(t *testing.T) {
+	t.Run("default is disabled", func(t *testing.T) {
+		var cfg *OIDCConfig
+		assert.False(t, cfg.IsTokenEndpointGETAllowed())
+
+		cfg = &OIDCConfig{}
+		assert.False(t, cfg.IsTokenEndpointGETAllowed())
+	})
+
+	t.Run("can be enabled explicitly", func(t *testing.T) {
+		cfg := &OIDCConfig{TokenEndpointAllowGET: true}
+		assert.True(t, cfg.IsTokenEndpointGETAllowed())
+	})
+}
+
 func TestOIDCClient_OptionalScopesValidation(t *testing.T) {
 	validate := validator.New(validator.WithRequiredStructEnabled())
 

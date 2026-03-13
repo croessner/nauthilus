@@ -48,8 +48,8 @@
     </div>
 </div>
 
-<script src="/static/js/qrcode.min.js"></script>
-<script>
+<script nonce="{{ cspNonce . }}" src="/static/js/qrcode.min.js"></script>
+<script nonce="{{ cspNonce . }}">
     new QRCode(document.getElementById("qrcode"), {
         text: "{{ .QRCode }}",
         width: 200,

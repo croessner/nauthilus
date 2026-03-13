@@ -14,9 +14,26 @@ server:
     languages:
       - "en"
     default_language: "en"
+    security_headers:
+      enabled: true
+      content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+      # If your consent/login flow must redirect via external HTTP(S) chains, widen form-action intentionally:
+      # content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https: http:"
+      strict_transport_security: "max-age=31536000; includeSubDomains"
+      x_content_type_options: "nosniff"
+      x_frame_options: "DENY"
+      referrer_policy: "no-referrer"
+      permissions_policy: "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+      cross_origin_opener_policy: "same-origin"
+      cross_origin_resource_policy: "same-origin"
+      cross_origin_embedder_policy: "unsafe-none"
+      x_permitted_cross_domain_policies: "none"
+      x_dns_prefetch_control: "off"
   backends:
     - "cache"
     - "ldap"
+  oidc_auth:
+    enabled: true
   redis:
     master:
       address: "valkey:6379"
@@ -61,6 +78,8 @@ idp:
   oidc:
     enabled: true
     issuer: "http://localhost:8080"
+    # Keep disabled unless you explicitly need legacy clients that call /oidc/token with GET.
+    token_endpoint_allow_get: false
     signing_keys:
       - id: "demo"
         key_file: "/etc/nauthilus/idp-signing-key.pem"
