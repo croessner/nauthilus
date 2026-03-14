@@ -184,7 +184,7 @@
         });
     }
 
-    document.addEventListener('DOMContentLoaded', function () {
+    (function () {
         var copyBtn = document.getElementById('copy-btn');
         if (copyBtn) {
             copyBtn.addEventListener('click', function () {
@@ -198,6 +198,6 @@
                 downloadRecoveryCodesAsPng();
             });
         }
-    });
+    })();
 </script>
 {{ template "idp_footer.html" . }}

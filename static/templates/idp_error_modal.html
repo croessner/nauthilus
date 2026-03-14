@@ -14,14 +14,14 @@
     </div>
 </div>
 <script nonce="{{ cspNonce . }}">
-    document.addEventListener('DOMContentLoaded', function () {
+    (function () {
         var closeBtn = document.getElementById('error-modal-close');
         if (closeBtn) {
             closeBtn.addEventListener('click', function () {
                 document.getElementById('error-modal').remove();
             });
         }
-    });
+    })();
 </script>
 {{ if not .HXRequest }}
 {{ template "idp_footer.html" . }}
