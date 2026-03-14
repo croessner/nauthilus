@@ -170,52 +170,6 @@
             display: block;
         }
     </style>
-    <script nonce="{{ cspNonce . }}">
-        document.addEventListener('DOMContentLoaded', function () {
-            const themeToggle = document.getElementById('theme-toggle');
-            if (themeToggle) {
-                themeToggle.addEventListener('click', function () {
-                    toggleTheme();
-                });
-            }
-
-            const langToggle = document.getElementById('lang-toggle');
-            if (langToggle) {
-                langToggle.addEventListener('click', function (event) {
-                    event.stopPropagation();
-
-                    const dropdown = document.getElementById('lang-dropdown');
-
-                    dropdown.classList.toggle('dropdown-open');
-                });
-            }
-
-            const burgerToggle = document.getElementById('burger-toggle');
-            if (burgerToggle) {
-                burgerToggle.addEventListener('click', function (event) {
-                    event.stopPropagation();
-
-                    const dropdown = document.getElementById('burger-dropdown');
-
-                    dropdown.classList.toggle('dropdown-open');
-                });
-            }
-        });
-
-        document.addEventListener('click', function (event) {
-            const langDropdown = document.getElementById('lang-dropdown');
-
-            if (langDropdown && !langDropdown.contains(event.target)) {
-                langDropdown.classList.remove('dropdown-open');
-            }
-
-            const burgerDropdown = document.getElementById('burger-dropdown');
-
-            if (burgerDropdown && !burgerDropdown.contains(event.target)) {
-                burgerDropdown.classList.remove('dropdown-open');
-            }
-        });
-    </script>
     {{ if .DevMode }}
     <script nonce="{{ cspNonce . }}">
         htmx.logAll();
@@ -292,5 +246,52 @@
         {{ end }}
     </div>
 </div>
+
+<script nonce="{{ cspNonce . }}">
+    (function () {
+        var themeToggle = document.getElementById('theme-toggle');
+        if (themeToggle) {
+            themeToggle.addEventListener('click', function () {
+                toggleTheme();
+            });
+        }
+
+        var langToggle = document.getElementById('lang-toggle');
+        if (langToggle) {
+            langToggle.addEventListener('click', function (event) {
+                event.stopPropagation();
+
+                var dropdown = document.getElementById('lang-dropdown');
+
+                dropdown.classList.toggle('dropdown-open');
+            });
+        }
+
+        var burgerToggle = document.getElementById('burger-toggle');
+        if (burgerToggle) {
+            burgerToggle.addEventListener('click', function (event) {
+                event.stopPropagation();
+
+                var dropdown = document.getElementById('burger-dropdown');
+
+                dropdown.classList.toggle('dropdown-open');
+            });
+        }
+
+        document.addEventListener('click', function (event) {
+            var langDropdown = document.getElementById('lang-dropdown');
+
+            if (langDropdown && !langDropdown.contains(event.target)) {
+                langDropdown.classList.remove('dropdown-open');
+            }
+
+            var burgerDropdown = document.getElementById('burger-dropdown');
+
+            if (burgerDropdown && !burgerDropdown.contains(event.target)) {
+                burgerDropdown.classList.remove('dropdown-open');
+            }
+        });
+    })();
+</script>
 
 <main class="container mx-auto p-4 md:p-8">
