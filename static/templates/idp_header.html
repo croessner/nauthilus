@@ -66,7 +66,7 @@
             }
         });
     </script>
-    <style>
+    <style nonce="{{ cspNonce . }}">
         [data-theme='dark'] .theme-icon-light {
             display: block;
         }
@@ -171,13 +171,36 @@
         }
     </style>
     <script nonce="{{ cspNonce . }}">
-        function toggleLangDropdown(event) {
-            event.stopPropagation();
+        document.addEventListener('DOMContentLoaded', function () {
+            const themeToggle = document.getElementById('theme-toggle');
+            if (themeToggle) {
+                themeToggle.addEventListener('click', function () {
+                    toggleTheme();
+                });
+            }
 
-            const dropdown = document.getElementById('lang-dropdown');
+            const langToggle = document.getElementById('lang-toggle');
+            if (langToggle) {
+                langToggle.addEventListener('click', function (event) {
+                    event.stopPropagation();
 
-            dropdown.classList.toggle('dropdown-open');
-        }
+                    const dropdown = document.getElementById('lang-dropdown');
+
+                    dropdown.classList.toggle('dropdown-open');
+                });
+            }
+
+            const burgerToggle = document.getElementById('burger-toggle');
+            if (burgerToggle) {
+                burgerToggle.addEventListener('click', function (event) {
+                    event.stopPropagation();
+
+                    const dropdown = document.getElementById('burger-dropdown');
+
+                    dropdown.classList.toggle('dropdown-open');
+                });
+            }
+        });
 
         document.addEventListener('click', function (event) {
             const langDropdown = document.getElementById('lang-dropdown');
@@ -192,14 +215,6 @@
                 burgerDropdown.classList.remove('dropdown-open');
             }
         });
-
-        function toggleBurgerDropdown(event) {
-            event.stopPropagation();
-
-            const dropdown = document.getElementById('burger-dropdown');
-
-            dropdown.classList.toggle('dropdown-open');
-        }
     </script>
     {{ if .DevMode }}
     <script nonce="{{ cspNonce . }}">
@@ -223,7 +238,7 @@
     <div class="flex-none navbar-controls">
         {{ if .Username }}
         <div class="navbar-burger" id="burger-dropdown">
-            <button class="btn btn-ghost btn-circle" onclick="toggleBurgerDropdown(event)" title="Menu">
+            <button class="btn btn-ghost btn-circle" id="burger-toggle" title="Menu">
                 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
                     <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
@@ -236,7 +251,7 @@
             </ul>
         </div>
         {{ end }}
-        <button class="btn btn-ghost btn-circle mr-2" onclick="toggleTheme()" title="Toggle Theme">
+        <button class="btn btn-ghost btn-circle mr-2" id="theme-toggle" title="Toggle Theme">
             <svg class="theme-icon-dark h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                  xmlns="http://www.w3.org/2000/svg">
                 <path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
@@ -249,7 +264,7 @@
             </svg>
         </button>
         <div class="dropdown dropdown-end mr-4" id="lang-dropdown">
-            <label class="btn btn-ghost" onclick="toggleLangDropdown(event)" tabindex="0">
+            <label class="btn btn-ghost" id="lang-toggle" tabindex="0">
                 {{ .LanguageCurrentName }}
                 <svg class="fill-current" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
                     <path d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>

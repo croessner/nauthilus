@@ -21,7 +21,7 @@
             </div>
 
             <!-- Clipboard copy button -->
-            <button class="btn btn-ghost btn-sm gap-2 mb-4" id="copy-btn" onclick="copyRecoveryCodes()" type="button">
+            <button class="btn btn-ghost btn-sm gap-2 mb-4" id="copy-btn" type="button">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
                     <path
@@ -32,7 +32,7 @@
             </button>
 
             <!-- Download as PNG -->
-            <button class="btn btn-secondary w-full mb-3" id="download-btn" onclick="downloadRecoveryCodesAsPng()"
+            <button class="btn btn-secondary w-full mb-3" id="download-btn"
                     type="button">
                 <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
@@ -183,5 +183,21 @@
             btn.disabled = false;
         });
     }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var copyBtn = document.getElementById('copy-btn');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function () {
+                copyRecoveryCodes();
+            });
+        }
+
+        var downloadBtn = document.getElementById('download-btn');
+        if (downloadBtn) {
+            downloadBtn.addEventListener('click', function () {
+                downloadRecoveryCodesAsPng();
+            });
+        }
+    });
 </script>
 {{ template "idp_footer.html" . }}

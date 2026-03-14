@@ -8,11 +8,21 @@
         {{ if .Detail }}<p class="text-sm opacity-70 break-all">{{ .Detail }}</p>{{ end }}
         <div class="modal-action">
             <form method="dialog">
-                <button class="btn" onclick="document.getElementById('error-modal').remove()">{{ .Close }}</button>
+                <button class="btn" id="error-modal-close" type="button">{{ .Close }}</button>
             </form>
         </div>
     </div>
 </div>
+<script nonce="{{ cspNonce . }}">
+    document.addEventListener('DOMContentLoaded', function () {
+        var closeBtn = document.getElementById('error-modal-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function () {
+                document.getElementById('error-modal').remove();
+            });
+        }
+    });
+</script>
 {{ if not .HXRequest }}
 {{ template "idp_footer.html" . }}
 {{ end }}
