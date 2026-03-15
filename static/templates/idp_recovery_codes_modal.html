@@ -12,7 +12,9 @@
             {{ end }}
         </div>
         <div class="flex flex-col items-center gap-3 mt-4">
-            <button class="btn btn-ghost btn-sm gap-2" id="copy-btn" onclick="copyRecoveryCodes()" type="button">
+            <button class="btn btn-ghost btn-sm gap-2" data-action="recovery-copy"
+                    data-copied-label="{{ .CopiedToClipboard }}" data-recovery-scope="#recovery-modal" id="copy-btn"
+                    type="button">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
                     <path
@@ -22,7 +24,8 @@
                 <span id="copy-label">{{ .Copy }}</span>
             </button>
             {{ if .Download }}
-            <button class="btn btn-secondary" id="download-btn" onclick="downloadRecoveryCodesAsPng()" type="button">
+            <button class="btn btn-secondary" data-action="recovery-download" data-recovery-scope="#recovery-modal"
+                    id="download-btn" type="button">
                 <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
                     <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
@@ -33,97 +36,12 @@
             {{ end }}
         </div>
         <div class="modal-action">
-            <button class="btn" hx-get="/mfa/register/home"
-                    hx-target="body" onclick="document.getElementById('recovery-modal').remove()">{{ .Close }}
+            <button class="btn" hx-get="/mfa/register/home" hx-swap="innerHTML" hx-target="#idp-main-content"
+                    id="recovery-modal-close" type="button">{{ .Close }}
             </button>
         </div>
     </div>
 </div>
-<script nonce="{{ cspNonce . }}">
-    function getRecoveryCodes() {
-        const cells = document.querySelectorAll('#recovery-codes-grid > div');
-        const codes = [];
-
-        cells.forEach(function (cell) {
-            codes.push(cell.textContent.trim());
-        });
-
-        return codes;
-    }
-
-    function copyRecoveryCodes() {
-        const codes = getRecoveryCodes();
-        const text = codes.join('\n');
-
-        navigator.clipboard.writeText(text).then(function () {
-            const label = document.getElementById('copy-label');
-            const original = label.textContent;
-
-            label.textContent = '{{ .CopiedToClipboard }}';
-
-            setTimeout(function () {
-                label.textContent = original;
-            }, 2000);
-        });
-    }
-
-    function buildRecoveryCodesPngDataURL(codes) {
-        const lineHeight = 32;
-        const colWidth = 220;
-        const cols = 2;
-        const rows = Math.ceil(codes.length / cols);
-        const padding = 40;
-        const titleHeight = 50;
-        const width = cols * colWidth + padding * 2;
-        const height = titleHeight + rows * lineHeight + padding * 2;
-
-        const canvas = document.createElement('canvas');
-
-        canvas.width = width;
-        canvas.height = height;
-
-        const c = canvas.getContext('2d');
-
-        c.fillStyle = '#ffffff';
-        c.fillRect(0, 0, width, height);
-
-        c.fillStyle = '#000000';
-        c.font = 'bold 18px monospace';
-        c.textAlign = 'center';
-        c.fillText('Recovery Codes', width / 2, padding);
-
-        c.font = '16px monospace';
-        c.textAlign = 'left';
-
-        for (let i = 0; i < codes.length; i++) {
-            const col = i % cols;
-            const row = Math.floor(i / cols);
-            const x = padding + col * colWidth;
-            const y = titleHeight + padding + row * lineHeight;
-
-            c.fillText(codes[i], x, y);
-        }
-
-        return canvas.toDataURL('image/png');
-    }
-
-    function downloadRecoveryCodesAsPng() {
-        const codes = getRecoveryCodes();
-
-        if (codes.length === 0) {
-            return;
-        }
-
-        const dataURL = buildRecoveryCodesPngDataURL(codes);
-        const a = document.createElement('a');
-
-        a.href = dataURL;
-        a.download = 'recovery-codes.png';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-    }
-</script>
 {{ if not .HXRequest }}
 {{ template "idp_footer.html" . }}
 {{ end }}
