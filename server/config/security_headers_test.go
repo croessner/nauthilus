@@ -36,7 +36,7 @@ func TestSetDefaultFrontendSettings_SecurityHeaders(t *testing.T) {
 	assert.Contains(t, headers.ContentSecurityPolicy, "script-src 'self' 'nonce-{{nonce}}'")
 	assert.Contains(t, headers.ContentSecurityPolicy, "style-src 'self' 'unsafe-inline'")
 	assert.NotContains(t, headers.ContentSecurityPolicy, "style-src 'self' 'nonce-{{nonce}}'")
-	assert.Contains(t, headers.ContentSecurityPolicy, "form-action 'self'")
+	assert.Contains(t, headers.ContentSecurityPolicy, "form-action 'self' https:")
 	assert.Equal(t, "max-age=31536000; includeSubDomains", headers.StrictTransportSecurity)
 	assert.Equal(t, "nosniff", headers.XContentTypeOptions)
 	assert.Equal(t, "DENY", headers.XFrameOptions)

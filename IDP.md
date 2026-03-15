@@ -274,7 +274,7 @@ server:
     frontend:
         security_headers:
             enabled: true
-            content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+            content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
             content_security_policy_report_only: false
             strict_transport_security: "max-age=31536000; includeSubDomains"
             x_content_type_options: "nosniff"
@@ -288,7 +288,7 @@ server:
             x_dns_prefetch_control: "off"
 ```
 
-If you need external HTTP(S) redirect chains (for example during local development), widen `form-action` explicitly:
+If you need external HTTP redirect chains (for example during local development), widen `form-action` explicitly:
 `form-action 'self' https: http:`.
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
