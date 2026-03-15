@@ -38,7 +38,13 @@
                 <span id="error-text"></span>
             </div>
 
-            <button class="btn btn-primary btn-lg w-full" id="register-button">
+            <button class="btn btn-primary btn-lg w-full" data-action="webauthn-register"
+                    data-webauthn-begin="/mfa/webauthn/register/begin"
+                    data-webauthn-completing="{{ .JSCompletingRegistration }}" data-webauthn-csrf="{{ .CSRFToken }}"
+                    data-webauthn-device-input="#device-name" data-webauthn-device-required="{{ .JSDeviceNameRequired }}"
+                    data-webauthn-finish="/mfa/webauthn/register/finish"
+                    data-webauthn-next-url="{{if .RequireMFAFlow}}/mfa/register/continue{{else}}/mfa/register/home{{end}}"
+                    data-webauthn-unknown-error="{{ .JSUnknownError }}" id="register-button" type="button">
                 {{ .Submit }}
             </button>
 
@@ -51,115 +57,4 @@
     </div>
 </div>
 
-<script nonce="{{ cspNonce . }}">
-    const ab_to_b64 = bin => {
-        const uint8array = new Uint8Array(bin)
-        const str = btoa(String.fromCharCode(...uint8array))
-
-        return str
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=/g, "")
-    }
-
-    const b64_to_uint8array = b64str => {
-        const len = b64str.length
-
-        b64str = b64str
-            .replace(/-/g, "+")
-            .replace(/_/g, "/")
-            .padEnd(len + ((4 - len % 4) % 4), "=")
-
-        return new Uint8Array([...atob(b64str)].map((e) => e.charCodeAt(0)))
-    }
-
-    document.getElementById('register-button').addEventListener('click', async () => {
-        const statusDiv = document.getElementById('webauthn-status');
-        const statusText = document.getElementById('status-text');
-        const errorDiv = document.getElementById('webauthn-error');
-        const errorText = document.getElementById('error-text');
-        const button = document.getElementById('register-button');
-        const deviceNameInput = document.getElementById('device-name');
-
-        statusDiv.classList.remove('hidden');
-        errorDiv.classList.add('hidden');
-        button.disabled = true;
-
-        const deviceName = deviceNameInput.value.trim();
-        if (!deviceName) {
-            errorDiv.classList.remove('hidden');
-            errorText.innerText = "{{ .JSDeviceNameRequired }}";
-            statusDiv.classList.add('hidden');
-            button.disabled = false;
-
-            return;
-        }
-
-        try {
-            // 1. Begin Registration
-            const response = await fetch("/mfa/webauthn/register/begin");
-            if (!response.ok) {
-                throw new Error(await response.text());
-            }
-
-            const options = await response.json();
-
-            // Prepare options for navigator.credentials.create
-            options.publicKey.challenge = b64_to_uint8array(options.publicKey.challenge);
-            options.publicKey.user.id = b64_to_uint8array(options.publicKey.user.id);
-            if (options.publicKey.excludeCredentials) {
-                options.publicKey.excludeCredentials.forEach(c => {
-                    c.id = b64_to_uint8array(c.id);
-                });
-            }
-
-            // 2. Create Credential
-            const credential = await navigator.credentials.create({
-                publicKey: options.publicKey
-            });
-
-            // 3. Finish Registration
-            statusText.innerText = "{{ .JSCompletingRegistration }}";
-
-            const finishResponse = await fetch("/mfa/webauthn/register/finish", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRF-Token": "{{ .CSRFToken }}"
-                },
-                body: JSON.stringify({
-                    name: deviceName,
-                    credential: {
-                        id: credential.id,
-                        rawId: ab_to_b64(credential.rawId),
-                        type: credential.type,
-                        response: {
-                            attestationObject: ab_to_b64(credential.response.attestationObject),
-                            clientDataJSON: ab_to_b64(credential.response.clientDataJSON),
-                        }
-                    }
-                })
-            });
-
-            if (!finishResponse.ok) {
-                throw new Error(await finishResponse.text());
-            }
-
-            // Success! In a forced-registration flow continue to the next required
-            // method; in self-service mode return to the 2FA overview.
-            {{if .RequireMFAFlow}}
-            window.location.href = "/mfa/register/continue";
-            {{else}}
-            window.location.href = "/mfa/register/home";
-            {{end}}
-
-        } catch (err) {
-            console.error(err);
-            errorDiv.classList.remove('hidden');
-            errorText.innerText = err.message || "{{ .JSUnknownError }}";
-            statusDiv.classList.add('hidden');
-            button.disabled = false;
-        }
-    });
-</script>
 {{ template "idp_footer.html" . }}

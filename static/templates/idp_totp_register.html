@@ -12,7 +12,7 @@
 
             <p class="mb-6">{{ .TOTPMessage }}</p>
 
-            <div class="bg-white p-4 rounded-lg mb-6 shadow-inner" id="qrcode">
+            <div class="bg-white p-4 rounded-lg mb-6 shadow-inner" data-qrcode-text="{{ .QRCode }}" id="qrcode">
                 <!-- QR Code will be rendered here by JavaScript -->
             </div>
 
@@ -49,14 +49,4 @@
 </div>
 
 <script nonce="{{ cspNonce . }}" src="/static/js/qrcode.min.js"></script>
-<script nonce="{{ cspNonce . }}">
-    new QRCode(document.getElementById("qrcode"), {
-        text: "{{ .QRCode }}",
-        width: 200,
-        height: 200,
-        colorDark: "#000000",
-        colorLight: "#ffffff",
-        correctLevel: QRCode.CorrectLevel.H
-    });
-</script>
 {{ template "idp_footer.html" . }}

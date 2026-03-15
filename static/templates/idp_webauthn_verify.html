@@ -24,7 +24,11 @@
                 <span id="error-text"></span>
             </div>
 
-            <button class="btn btn-primary btn-lg w-full" id="login-button">
+            <button class="btn btn-primary btn-lg w-full" data-action="webauthn-login"
+                    data-webauthn-begin="{{ .WebAuthnBeginEndpoint }}" data-webauthn-completing="{{ .JSCompletingLogin }}"
+                    data-webauthn-csrf="{{ .CSRFToken }}" data-webauthn-finish="{{ .WebAuthnFinishEndpoint }}"
+                    data-webauthn-next-url="/login" data-webauthn-unknown-error="{{ .JSUnknownError }}"
+                    id="login-button" type="button">
                 {{ .Submit }}
             </button>
 
@@ -37,131 +41,4 @@
     </div>
 </div>
 
-<script nonce="{{ cspNonce . }}">
-    const ab_to_b64 = bin => {
-        const uint8array = new Uint8Array(bin)
-        const str = btoa(String.fromCharCode(...uint8array))
-
-        return str
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=/g, "")
-    }
-
-    const b64_to_uint8array = b64str => {
-        const len = b64str.length
-
-        b64str = b64str
-            .replace(/-/g, "+")
-            .replace(/_/g, "/")
-            .padEnd(len + ((4 - len % 4) % 4), "=")
-
-        return new Uint8Array([...atob(b64str)].map((e) => e.charCodeAt(0)))
-    }
-
-    document.getElementById('login-button').addEventListener('click', async () => {
-        const statusDiv = document.getElementById('webauthn-status');
-        const statusText = document.getElementById('status-text');
-        const errorDiv = document.getElementById('webauthn-error');
-        const errorText = document.getElementById('error-text');
-        const button = document.getElementById('login-button');
-
-        statusDiv.classList.remove('hidden');
-        errorDiv.classList.add('hidden');
-        button.disabled = true;
-
-        try {
-            // 1. Begin Login
-            const response = await fetch("{{ .WebAuthnBeginEndpoint }}");
-            if (!response.ok) {
-                throw new Error(await response.text());
-            }
-
-            const options = await response.json();
-
-            // Prepare options for navigator.credentials.get
-            options.publicKey.challenge = b64_to_uint8array(options.publicKey.challenge);
-            if (options.publicKey.allowCredentials) {
-                options.publicKey.allowCredentials.forEach(c => {
-                    c.id = b64_to_uint8array(c.id);
-                });
-            }
-
-            // 2. Get Assertion
-            const assertion = await navigator.credentials.get({
-                publicKey: options.publicKey
-            });
-
-            // 3. Finish Login
-            statusText.innerText = "{{ .JSCompletingLogin }}";
-
-            const finishResponse = await fetch("{{ .WebAuthnFinishEndpoint }}", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRF-Token": "{{ .CSRFToken }}"
-                },
-                body: JSON.stringify({
-                    id: assertion.id,
-                    rawId: ab_to_b64(assertion.rawId),
-                    type: assertion.type,
-                    response: {
-                        authenticatorData: ab_to_b64(assertion.response.authenticatorData),
-                        clientDataJSON: ab_to_b64(assertion.response.clientDataJSON),
-                        signature: ab_to_b64(assertion.response.signature),
-                        userHandle: assertion.response.userHandle ? ab_to_b64(assertion.response.userHandle) : null,
-                    }
-                })
-            });
-
-            if (!finishResponse.ok) {
-                // Check for redirect response (Fall B Punkt 1: wrong initial credentials)
-                if (finishResponse.status === 401) {
-                    try {
-                        const errorData = await finishResponse.json();
-
-                        if (errorData.redirect) {
-                            // Defense-in-depth: Only allow safe relative paths to prevent open redirects
-                            const redirect = errorData.redirect;
-
-                            if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
-                                window.location.href = redirect;
-
-                                return;
-                            }
-                        }
-                    } catch {
-                        // If JSON parsing fails, fall through to error display
-                    }
-                }
-
-                throw new Error(await finishResponse.text());
-            }
-
-            // Success! Redirect to /login which will read the flow state from cookie
-            // and redirect to the appropriate IdP endpoint
-            window.location.href = '/login';
-
-        } catch (err) {
-            console.error(err);
-            errorDiv.classList.remove('hidden');
-            errorText.innerText = err.message || "{{ .JSUnknownError }}";
-            statusDiv.classList.add('hidden');
-            button.disabled = false;
-        }
-    });
-
-    document.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') {
-            return;
-        }
-
-        const button = document.getElementById('login-button');
-        if (button.disabled) {
-            return;
-        }
-
-        button.click();
-    });
-</script>
 {{ template "idp_footer.html" . }}
