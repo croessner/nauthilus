@@ -16,8 +16,8 @@ server:
     default_language: "en"
     security_headers:
       enabled: true
-      content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-      # If your consent/login flow must redirect via external HTTP(S) chains, widen form-action intentionally:
+      content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
+      # If your consent/login flow must redirect via external HTTP chains, widen form-action intentionally:
       # content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https: http:"
       strict_transport_security: "max-age=31536000; includeSubDomains"
       x_content_type_options: "nosniff"

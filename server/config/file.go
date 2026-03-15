@@ -2145,7 +2145,7 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 	}
 
 	if headers.ContentSecurityPolicy == "" {
-		headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+		headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
 	}
 
 	if headers.StrictTransportSecurity == "" {
