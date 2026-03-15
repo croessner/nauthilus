@@ -8,7 +8,8 @@
         {{ if .Detail }}<p class="text-sm opacity-70 break-all">{{ .Detail }}</p>{{ end }}
         <div class="modal-action">
             <form method="dialog">
-                <button class="btn" onclick="document.getElementById('error-modal').remove()">{{ .Close }}</button>
+                <button class="btn" data-action="modal-close" data-modal-target="#error-modal" id="error-modal-close"
+                        type="button">{{ .Close }}</button>
             </form>
         </div>
     </div>
