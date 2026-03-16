@@ -285,7 +285,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			globals.RawSet(lua.LString(definitions.LuaFeatureResultOk), lua.LNumber(0))
 			globals.RawSet(lua.LString(definitions.LuaFeatureResultFail), lua.LNumber(1))
 
-			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.LoaderModLogging(ctx, cfg, logger, localLogs)))
+			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.NewLoggingManager(ctx, cfg, logger, localLogs).AddCustomLog))
 			globals.RawSetString(definitions.LuaFnSetStatusMessage, Llocal.NewFunction(lualib.SetStatusMessage(&localStatus)))
 
 			Llocal.SetGlobal(definitions.LuaDefaultTable, globals)
