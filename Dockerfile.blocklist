@@ -1,5 +1,8 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.22 AS builder
 
+ARG TARGETOS
+ARG TARGETARCH
+
 WORKDIR /build
 
 COPY . ./
@@ -9,9 +12,9 @@ ENV CGO_ENABLED=0
 ENV GOEXPERIMENT=runtimesecret
 
 RUN pwd && ls -a
-RUN cd blocklist && go build -mod=vendor -trimpath -ldflags="-s" -o blocklist .
+RUN cd blocklist && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s" -o blocklist .
 
-FROM --platform=$BUILDPLATFORM alpine:3
+FROM alpine:3
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
