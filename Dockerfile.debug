@@ -1,10 +1,7 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.22 AS builder
 
-LABEL org.opencontainers.image.authors="christian@roessner.email"
-LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
-LABEL org.opencontainers.image.description="Multi purpose authentication server"
-LABEL org.opencontainers.image.licenses=GPL3
-LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /usr/app
 
@@ -15,19 +12,36 @@ ENV CGO_ENABLED=0
 ENV GOEXPERIMENT=runtimesecret
 RUN apk add --no-cache build-base git
 
-RUN cd server && go build -mod=vendor -tags="netgo" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg" -o nauthilus .
-RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s" -o healthcheck .
-RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .
-RUN cd contrib/imap-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakeimap .
+RUN cd server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg" -o nauthilus .
+RUN cd docker-healthcheck && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s" -o healthcheck .
+RUN cd contrib/smtp-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .
+RUN cd contrib/imap-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s" -o fakeimap .
 
-RUN ln -s ./server/lua-plugins.d .
-RUN ln -s ./server/resources .
-RUN ln -s ./docker-healthcheck/healthcheck .
+FROM alpine:3
+
+LABEL org.opencontainers.image.authors="christian@roessner.email"
+LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
+LABEL org.opencontainers.image.description="Multi purpose authentication server"
+LABEL org.opencontainers.image.licenses=GPL3
+LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
+
+WORKDIR /usr/app
 
 RUN addgroup -S nauthilus; \
     adduser -S nauthilus -G nauthilus -D -H -s /bin/nologin
 
 RUN apk --no-cache --upgrade add ca-certificates bash curl
+
+COPY --from=builder ["/usr/app/server/nauthilus", "./server/"]
+COPY --from=builder ["/usr/app/server/resources/", "./server/resources/"]
+COPY --from=builder ["/usr/app/server/lua-plugins.d/", "./server/lua-plugins.d/"]
+COPY --from=builder ["/usr/app/docker-healthcheck/healthcheck", "./"]
+COPY --from=builder ["/usr/app/contrib/smtp-server/fakesmtp", "./"]
+COPY --from=builder ["/usr/app/contrib/imap-server/fakeimap", "./"]
+COPY --from=builder ["/usr/app/static/", "./static/"]
+
+RUN ln -s ./server/lua-plugins.d ./lua-plugins.d
+RUN ln -s ./server/resources ./resources
 
 # set up nsswitch.conf for Go's "netgo" implementation
 # - https://github.com/golang/go/blob/go1.9.1/src/net/conf.go#L194-L275
