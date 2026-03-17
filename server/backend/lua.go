@@ -52,6 +52,10 @@ func LoaderModLDAP(ctx context.Context, cfg config.File) lua.LGFunction {
 			definitions.LuaFnLDAPEndpoint: LDAPEndpointWithCtx(cfg),
 		})
 
+		if ctx != nil {
+			lualib.BindRequestRuntimeContext(L, mod, ctx)
+		}
+
 		L.Push(mod)
 
 		return 1

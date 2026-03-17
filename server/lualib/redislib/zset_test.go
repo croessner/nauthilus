@@ -108,6 +108,7 @@ func TestRedisZAdd(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -255,6 +256,7 @@ func TestRedisZRange(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -372,6 +374,7 @@ func TestRedisZRevRange(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -531,6 +534,7 @@ func TestRedisZRangeByScore(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -697,6 +701,7 @@ func TestRedisZRem(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -804,6 +809,7 @@ func TestRedisZRemRangeByScore(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -916,6 +922,7 @@ func TestRedisZRemRangeByRank(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1012,6 +1019,7 @@ func TestRedisZRank(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1125,6 +1133,7 @@ func TestRedisZCount(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1228,6 +1237,7 @@ func TestRedisZIncrBy(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1326,6 +1336,7 @@ func TestRedisZScore(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1422,6 +1433,7 @@ func TestRedisZRevRank(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			rediscli.NewTestClient(db)
@@ -1488,6 +1500,7 @@ func TestRedisZScoreWithCustomHandle(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			// Create a userdata with the Redis client
@@ -1558,6 +1571,7 @@ func TestRedisZRevRankWithCustomHandle(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			// Create a userdata with the Redis client

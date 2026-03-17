@@ -49,6 +49,10 @@ func NewBruteForceManager(ctx context.Context, cfg config.File, logger *slog.Log
 	}
 }
 
+func (m *BruteForceManager) currentContext(L *lua.LState) context.Context {
+	return lualib.RequireRuntimeContext(L, definitions.LuaModBruteForce)
+}
+
 // SetCustomTolerations sets custom toleration configurations for IP-based limits from a Lua table parameter.
 func (m *BruteForceManager) SetCustomTolerations(L *lua.LState) int {
 	stack := luastack.NewManager(L)
@@ -153,8 +157,9 @@ func (m *BruteForceManager) GetCustomTolerations(L *lua.LState) int {
 func (m *BruteForceManager) GetTolerateMap(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	ipAddress := stack.CheckString(1)
+	ctx := m.currentContext(L)
 
-	mapping := m.tolerate.GetTolerateMap(m.Ctx, ipAddress)
+	mapping := m.tolerate.GetTolerateMap(ctx, ipAddress)
 	resultTable := L.NewTable()
 
 	for label, value := range mapping {
@@ -168,10 +173,11 @@ func (m *BruteForceManager) GetTolerateMap(L *lua.LState) int {
 func (m *BruteForceManager) IsIPAddressBlocked(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	var guid string
+	ctx := m.currentContext(L)
 
 	ipAddress := stack.CheckString(1)
 
-	if ginCtx, ok := m.Ctx.(*gin.Context); ok {
+	if ginCtx, ok := ctx.(*gin.Context); ok {
 		guid = ginCtx.GetString(definitions.CtxGUIDKey)
 	}
 
@@ -179,7 +185,7 @@ func (m *BruteForceManager) IsIPAddressBlocked(L *lua.LState) int {
 		guid = definitions.NotAvailable
 	}
 
-	bm := bruteforce.NewBucketManagerWithDeps(m.Ctx, guid, ipAddress, bruteforce.BucketManagerDeps{
+	bm := bruteforce.NewBucketManagerWithDeps(ctx, guid, ipAddress, bruteforce.BucketManagerDeps{
 		Cfg:      m.Cfg,
 		Logger:   m.Logger,
 		Redis:    m.redis,
@@ -213,6 +219,10 @@ func LoaderModBruteForce(ctx context.Context, cfg config.File, logger *slog.Logg
 			definitions.LuaFnBfGetTolerateMap:         manager.GetTolerateMap,
 			definitions.LuaFnBfIsIPAddressBlocked:     manager.IsIPAddressBlocked,
 		})
+
+		if ctx != nil {
+			lualib.BindRequestRuntimeContext(L, mod, ctx)
+		}
 
 		return stack.PushResult(mod)
 	}
