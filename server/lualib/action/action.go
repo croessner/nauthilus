@@ -379,7 +379,7 @@ func (aw *Worker) setupGlobals(ctx context.Context, L *lua.LState, logs *lualib.
 	globals.RawSet(lua.LString(definitions.LuaActionResultOk), lua.LNumber(0))
 	globals.RawSet(lua.LString(definitions.LuaActionResultFail), lua.LNumber(1))
 
-	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.LoaderModLogging(ctx, aw.cfg, aw.logger, logs)))
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.NewLoggingManager(ctx, aw.cfg, aw.logger, logs).AddCustomLog))
 
 	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }

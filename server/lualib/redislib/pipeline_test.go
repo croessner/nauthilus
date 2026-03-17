@@ -37,6 +37,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 	SetDefaultClient(client)
 	L := lua.NewState()
 	defer L.Close()
+	bindRedisRuntimeContextForTest(L, context.Background())
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
@@ -171,6 +172,7 @@ func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
 	SetDefaultClient(client)
 	L := lua.NewState()
 	defer L.Close()
+	bindRedisRuntimeContextForTest(L, context.Background())
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
@@ -213,6 +215,7 @@ func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
 	SetDefaultClient(client)
 	L := lua.NewState()
 	defer L.Close()
+	bindRedisRuntimeContextForTest(L, context.Background())
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
@@ -256,6 +259,7 @@ func TestRedisPipeline_HMGET(t *testing.T) {
 	SetDefaultClient(client)
 	L := lua.NewState()
 	defer L.Close()
+	bindRedisRuntimeContextForTest(L, context.Background())
 	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 

@@ -229,6 +229,7 @@ func TestRedisLRange(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -314,6 +315,7 @@ func TestRedisLLen(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)

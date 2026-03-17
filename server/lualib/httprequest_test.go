@@ -16,13 +16,19 @@
 package lualib
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/yuin/gopher-lua"
 )
+
+func bindTestHTTPRequestMeta(L *lua.LState, request *http.Request) {
+	reqEnv := L.NewTable()
+	L.SetGlobal(luaRequestEnvKey, reqEnv)
+
+	bindRequestValue(L, reqEnv, luaHTTPRequestMetaKey, NewHTTPMetaFromRequest(request))
+}
 
 func TestGetAllHTTPRequestHeaders(t *testing.T) {
 	testCases := []struct {
@@ -63,7 +69,9 @@ func TestGetAllHTTPRequestHeaders(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			manager := NewHTTPRequestManager(context.TODO(), nil, nil, NewHTTPMetaFromRequest(httpRequest))
+			bindTestHTTPRequestMeta(L, httpRequest)
+
+			manager := NewHTTPRequestManager()
 			manager.GetAllHTTPRequestHeaders(L)
 
 			lTable := L.CheckTable(-2)
@@ -152,7 +160,9 @@ func TestGetHTTPRequestHeader(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			manager := NewHTTPRequestManager(context.TODO(), nil, nil, NewHTTPMetaFromRequest(httpRequest))
+			bindTestHTTPRequestMeta(L, httpRequest)
+
+			manager := NewHTTPRequestManager()
 			manager.GetHTTPRequestHeader(L)
 
 			lTable := L.CheckTable(-2)

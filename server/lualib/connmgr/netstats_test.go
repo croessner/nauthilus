@@ -25,6 +25,9 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+const luaRequestEnvKey = "__NAUTH_REQ_ENV"
+const luaRuntimeContextKey = "__NAUTH_REQ_RUNTIME_CONTEXT"
+
 func TestConnectionManager(t *testing.T) {
 	ctx := context.Background()
 
@@ -72,11 +75,20 @@ func TestConnectionManager(t *testing.T) {
 		L := lua.NewState()
 
 		defer L.Close()
+		reqEnv := L.NewTable()
+		L.SetGlobal(luaRequestEnvKey, reqEnv)
 
 		m := NewPsnetManager(ctx, config.GetFile(), nil)
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			"register": m.luaRegisterTarget,
+			"count":    m.luaCountOpenConnections,
+		})
 
-		L.SetGlobal("register", L.NewFunction(m.luaRegisterTarget))
-		L.SetGlobal("count", L.NewFunction(m.luaCountOpenConnections))
+		userData := L.NewUserData()
+		userData.Value = ctx
+		L.SetField(reqEnv, luaRuntimeContextKey, userData)
+		L.SetGlobal("register", mod.RawGetString("register"))
+		L.SetGlobal("count", mod.RawGetString("count"))
 
 		if err := L.DoString(`register("127.0.0.1:9000", "remote", "test")`); err != nil {
 			t.Errorf("Lua register failed: %v", err)

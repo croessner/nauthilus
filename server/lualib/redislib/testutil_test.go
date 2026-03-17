@@ -29,6 +29,21 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+const (
+	luaRequestEnvKey     = "__NAUTH_REQ_ENV"
+	luaRuntimeContextKey = "__NAUTH_REQ_RUNTIME_CONTEXT"
+)
+
+func bindRedisRuntimeContextForTest(L *lua.LState, ctx context.Context) {
+	reqEnv := L.NewTable()
+	L.SetGlobal(luaRequestEnvKey, reqEnv)
+
+	userData := L.NewUserData()
+	userData.Value = ctx
+
+	L.SetField(reqEnv, luaRuntimeContextKey, userData)
+}
+
 // simpleKeyRedisTest defines a test case for Redis commands that take only a key argument.
 type simpleKeyRedisTest struct {
 	name             string
@@ -60,6 +75,7 @@ func runSimpleKeyRedisTests(t *testing.T, luaCmd string, tests []simpleKeyRedisT
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -111,6 +127,7 @@ func runMultiValueRedisTests(t *testing.T, luaCmd string, tests []multiValueRedi
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 			tt.prepareMockRedis(mock)
