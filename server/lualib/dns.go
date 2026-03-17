@@ -45,19 +45,24 @@ func NewDNSManager(ctx context.Context, cfg config.File, logger *slog.Logger) *D
 	}
 }
 
+func (m *DNSManager) currentContext(L *lua.LState) context.Context {
+	return RequireRuntimeContext(L, definitions.LuaModDNS)
+}
+
 // Resolve performs a DNS record lookup for the specified domain and record type using Lua and the provided context.
 // It supports record types such as A, AAAA, MX, NS, TXT, CNAME, and PTR and returns the result or an error to Lua.
 func (m *DNSManager) Resolve(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	domain := stack.CheckString(1)
 	recordType := strings.ToUpper(stack.OptString(2, "A"))
+	ctx := m.currentContext(L)
 
-	util.DebugModuleWithCfg(m.Ctx, m.Cfg, m.Logger, definitions.DbgLua,
+	util.DebugModuleWithCfg(ctx, m.Cfg, m.Logger, definitions.DbgLua,
 		"domain", domain,
 		"kind", recordType,
 	)
 
-	result, err := lookupRecord(m.Ctx, m.Cfg, L, domain, recordType)
+	result, err := lookupRecord(ctx, m.Cfg, L, domain, recordType)
 	if err != nil {
 		return stack.PushError(err)
 	}
@@ -264,6 +269,10 @@ func LoaderModDNS(ctx context.Context, cfg config.File, logger *slog.Logger) lua
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			"resolve": manager.Resolve,
 		})
+
+		if ctx != nil {
+			BindRequestRuntimeContext(L, mod, ctx)
+		}
 
 		return stack.PushResult(mod)
 	}

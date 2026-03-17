@@ -156,6 +156,8 @@ func bindModuleIntoReq(L *lua.LState, req *lua.LTable, name string, mod *lua.LTa
 	// 1) Visible in the request env (direct global access in reqEnv)
 	L.SetField(req, name, mod)
 
+	lualib.BindRequestValuesToEnv(L, req, mod)
+
 	// 2) Visible to require()
 	pkg := L.GetGlobal("package")
 
@@ -174,10 +176,16 @@ func resetRequestEnv(L *lua.LState) {
 	L.SetTop(0)
 	L.SetContext(nil)
 
-	// Clear request env
-	if v := L.GetGlobal(reqEnvKey); v.Type() == lua.LTTable {
-		req := v.(*lua.LTable)
+	var req *lua.LTable
 
+	if v := L.GetGlobal(reqEnvKey); v.Type() == lua.LTTable {
+		req = v.(*lua.LTable)
+	}
+
+	lualib.ScrubRequestBindings(L, req)
+
+	// Clear request env
+	if req != nil {
 		// Replace with a new empty table while preserving the metatable
 		mt := L.GetMetatable(req)
 		newReq := L.NewTable()

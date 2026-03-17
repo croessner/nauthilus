@@ -90,6 +90,7 @@ func TestRedisHGet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
@@ -171,6 +172,7 @@ func TestRedisHSet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
@@ -268,6 +270,7 @@ func TestRedisHDel(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
@@ -351,6 +354,7 @@ func TestRedisHLen(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -431,6 +435,7 @@ func TestRedisHGetAll(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -530,6 +535,7 @@ func TestRedisHIncrBy(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -622,6 +628,7 @@ func TestRedisHIncrByFloat(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -710,6 +717,7 @@ func TestRedisHExists(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -751,9 +759,9 @@ func TestRedisHMGet(t *testing.T) {
 			key:    "hashKey",
 			fields: []string{"f1", "f2", "f3"},
 			expectedResult: map[string]*string{
-				"f1": ptr("v1"),
-				"f2": ptr("v2"),
-				"f3": ptr("v3"),
+				"f1": new("v1"),
+				"f2": new("v2"),
+				"f3": new("v3"),
 			},
 			expectedErr: lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -765,9 +773,9 @@ func TestRedisHMGet(t *testing.T) {
 			key:    "hashKey",
 			fields: []string{"f1", "missing", "f3"},
 			expectedResult: map[string]*string{
-				"f1":      ptr("v1"),
+				"f1":      new("v1"),
 				"missing": nil,
-				"f3":      ptr("v3"),
+				"f3":      new("v3"),
 			},
 			expectedErr: lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -796,6 +804,7 @@ func TestRedisHMGet(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.prepareMockRedis(mock)
@@ -847,6 +856,3 @@ func TestRedisHMGet(t *testing.T) {
 		})
 	}
 }
-
-// ptr is a small helper for test expected values
-func ptr(s string) *string { return &s }

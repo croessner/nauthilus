@@ -90,6 +90,7 @@ func TestRedisSAdd(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -172,6 +173,7 @@ func TestRedisSIsMember(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -246,6 +248,7 @@ func TestRedisSMembers(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -335,6 +338,7 @@ func TestRedisSRem(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -413,6 +417,7 @@ func TestRedisSCard(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)

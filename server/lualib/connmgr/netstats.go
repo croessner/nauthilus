@@ -370,6 +370,10 @@ func NewPsnetManager(ctx context.Context, cfg config.File, logger *slog.Logger) 
 	}
 }
 
+func (m *PsnetManager) currentContext(L *lua.LState) context.Context {
+	return lualib.RequireRuntimeContext(L, definitions.LuaModPsnet)
+}
+
 // luaCountOpenConnections returns the number of open connections for a given target. If the target is not registered,
 // it returns nil and an error message.
 func (m *PsnetManager) luaCountOpenConnections(L *lua.LState) int {
@@ -391,7 +395,7 @@ func (m *PsnetManager) luaRegisterTarget(L *lua.LState) int {
 	direction := stack.CheckString(2)
 	description := stack.CheckString(3)
 
-	manager.Register(m.Ctx, m.Cfg, target, direction, description)
+	manager.Register(m.currentContext(L), m.Cfg, target, direction, description)
 
 	return 0
 }
@@ -406,6 +410,10 @@ func LoaderModPsnet(ctx context.Context, cfg config.File, logger *slog.Logger) l
 			definitions.LuaFnRegisterConnectionTarget: m.luaRegisterTarget,
 			definitions.LuaFnGetConnectionTarget:      m.luaCountOpenConnections,
 		})
+
+		if ctx != nil {
+			lualib.BindRequestRuntimeContext(L, mod, ctx)
+		}
 
 		return stack.PushResult(mod)
 	}

@@ -81,6 +81,7 @@ func TestRedisPFAdd(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -157,6 +158,7 @@ func TestRedisPFCount(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
@@ -233,6 +235,7 @@ func TestRedisPFMerge(t *testing.T) {
 			SetDefaultClient(client)
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)

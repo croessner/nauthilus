@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/yuin/gopher-lua"
@@ -231,7 +232,9 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 // LuaLDAPSearch initializes and registers an LDAP search function for Lua, handling inputs, validation, and processing.
 func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		callCtx := ctx
+		_ = ctx
+
+		callCtx := lualib.RequireRuntimeContext(L, definitions.LuaModLDAP)
 		cancel := func() {}
 
 		if callCtx != nil {
@@ -277,7 +280,9 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 // The function returns results via Lua stack, "OK" on success, or an error message if the operation fails.
 func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		callCtx := ctx
+		_ = ctx
+
+		callCtx := lualib.RequireRuntimeContext(L, definitions.LuaModLDAP)
 		cancel := func() {}
 
 		if callCtx != nil {

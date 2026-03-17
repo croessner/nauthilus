@@ -704,7 +704,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 			// Bind request-scoped modules into reqEnv so that require() resolves correctly.
 			// 1) nauthilus_context
-			if loader := lualib.LoaderModContext(ctx, cfg, logger, r.Context); loader != nil {
+			if loader := lualib.LoaderModContext(r.Context); loader != nil {
 				_ = loader(Llocal)
 
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
@@ -717,7 +717,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 			// 2) nauthilus_http_request
 			if ctx != nil && ctx.Request != nil {
-				loader := lualib.LoaderModHTTP(ctx, cfg, logger, lualib.NewHTTPMetaFromRequest(ctx.Request))
+				loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
 				_ = loader(Llocal)
 
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
@@ -730,7 +730,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 			// 3) nauthilus_http_response
 			if ctx != nil {
-				loader := lualib.LoaderModHTTPResponse(ctx, cfg, logger, ctx)
+				loader := lualib.LoaderModHTTPResponse(ctx)
 				_ = loader(Llocal)
 
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {

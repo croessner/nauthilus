@@ -42,10 +42,10 @@ func (rm *RedisManager) RedisPipeline(L *lua.LState) int {
 
 	if mode == "read" {
 		fallback = rm.client.GetReadHandle()
-		dCtx, cancel = util.GetCtxWithDeadlineRedisRead(rm.ctx, rm.cfg)
+		dCtx, cancel = util.GetCtxWithDeadlineRedisRead(rm.currentContext(L), rm.cfg)
 	} else {
 		fallback = rm.client.GetWriteHandle()
-		dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(rm.ctx, rm.cfg)
+		dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(rm.currentContext(L), rm.cfg)
 	}
 
 	defer cancel()

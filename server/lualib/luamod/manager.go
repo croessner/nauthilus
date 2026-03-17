@@ -68,7 +68,7 @@ func (mm *ModuleManager) BindModule(L *lua.LState, moduleName string, loader lua
 
 // BindContext binds the nauthilus_context module.
 func (mm *ModuleManager) BindContext(L *lua.LState, requestCtx *lualib.Context) {
-	loader := lualib.LoaderModContext(mm.ctx, mm.cfg, mm.logger, requestCtx)
+	loader := lualib.LoaderModContext(requestCtx)
 
 	mm.BindModule(L, definitions.LuaModContext, loader)
 }
@@ -79,7 +79,7 @@ func (mm *ModuleManager) BindHTTP(L *lua.LState, httpMeta lualib.HTTPRequestMeta
 		return
 	}
 
-	loader := lualib.LoaderModHTTP(mm.ctx, mm.cfg, mm.logger, httpMeta)
+	loader := lualib.LoaderModHTTP(httpMeta)
 
 	mm.BindModule(L, definitions.LuaModHTTPRequest, loader)
 }
@@ -90,7 +90,7 @@ func (mm *ModuleManager) BindHTTPResponse(L *lua.LState, ginCtx *gin.Context) {
 		return
 	}
 
-	loader := lualib.LoaderModHTTPResponse(mm.ctx, mm.cfg, mm.logger, ginCtx)
+	loader := lualib.LoaderModHTTPResponse(ginCtx)
 
 	mm.BindModule(L, definitions.LuaModHTTPResponse, loader)
 }

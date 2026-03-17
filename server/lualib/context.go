@@ -16,12 +16,9 @@
 package lualib
 
 import (
-	"context"
-	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
@@ -29,17 +26,15 @@ import (
 )
 
 // ContextManager manages Lua context operations.
-type ContextManager struct {
-	*BaseManager
-	context *Context
-}
+type ContextManager struct{}
 
 // NewContextManager creates a new ContextManager.
-func NewContextManager(ctx context.Context, cfg config.File, logger *slog.Logger, luaCtx *Context) *ContextManager {
-	return &ContextManager{
-		BaseManager: NewBaseManager(ctx, cfg, logger),
-		context:     luaCtx,
-	}
+func NewContextManager() *ContextManager {
+	return &ContextManager{}
+}
+
+func (m *ContextManager) currentContext(L *lua.LState) *Context {
+	return RequireLuaContext(L)
 }
 
 // ContextSet is a wrapper function to Context.Set(...).
@@ -48,7 +43,9 @@ func (m *ContextManager) ContextSet(L *lua.LState) int {
 	key := stack.CheckString(1)
 	value := stack.CheckAny(2)
 
-	m.context.Set(key, convert.LuaValueToGo(value))
+	if luaCtx := m.currentContext(L); luaCtx != nil {
+		luaCtx.Set(key, convert.LuaValueToGo(value))
+	}
 
 	return 0
 }
@@ -57,7 +54,11 @@ func (m *ContextManager) ContextSet(L *lua.LState) int {
 func (m *ContextManager) ContextGet(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	key := stack.CheckString(1)
-	value := m.context.Get(key)
+	var value any
+
+	if luaCtx := m.currentContext(L); luaCtx != nil {
+		value = luaCtx.Get(key)
+	}
 
 	return stack.PushResult(convert.GoToLuaValue(L, value))
 }
@@ -67,22 +68,28 @@ func (m *ContextManager) ContextDelete(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	key := stack.CheckString(1)
 
-	m.context.Delete(key)
+	if luaCtx := m.currentContext(L); luaCtx != nil {
+		luaCtx.Delete(key)
+	}
 
 	return 0
 }
 
 // LoaderModContext initializes and loads the context module for Lua.
-func LoaderModContext(ctx context.Context, cfg config.File, logger *slog.Logger, luaCtx *Context) lua.LGFunction {
+func LoaderModContext(luaCtx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewContextManager(ctx, cfg, logger, luaCtx)
+		manager := NewContextManager()
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnCtxSet:    manager.ContextSet,
 			definitions.LuaFnCtxGet:    manager.ContextGet,
 			definitions.LuaFnCtxDelete: manager.ContextDelete,
 		})
+
+		if luaCtx != nil {
+			bindRequestValue(L, mod, luaRequestContextKey, luaCtx)
+		}
 
 		return stack.PushResult(mod)
 	}
