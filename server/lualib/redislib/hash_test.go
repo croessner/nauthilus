@@ -759,9 +759,9 @@ func TestRedisHMGet(t *testing.T) {
 			key:    "hashKey",
 			fields: []string{"f1", "f2", "f3"},
 			expectedResult: map[string]*string{
-				"f1": new("v1"),
-				"f2": new("v2"),
-				"f3": new("v3"),
+				"f1": ptr("v1"),
+				"f2": ptr("v2"),
+				"f3": ptr("v3"),
 			},
 			expectedErr: lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -773,9 +773,9 @@ func TestRedisHMGet(t *testing.T) {
 			key:    "hashKey",
 			fields: []string{"f1", "missing", "f3"},
 			expectedResult: map[string]*string{
-				"f1":      new("v1"),
+				"f1":      ptr("v1"),
 				"missing": nil,
-				"f3":      new("v3"),
+				"f3":      ptr("v3"),
 			},
 			expectedErr: lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -856,3 +856,5 @@ func TestRedisHMGet(t *testing.T) {
 		})
 	}
 }
+
+func ptr(s string) *string { return &s }
