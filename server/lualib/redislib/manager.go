@@ -19,6 +19,7 @@ import (
 	"context"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -29,18 +30,20 @@ import (
 
 // RedisManager encapsulates the logic for executing Redis commands from Lua.
 type RedisManager struct {
-	ctx    context.Context
 	cfg    config.File
 	client rediscli.Client
 }
 
 // NewRedisManager creates a new RedisManager.
-func NewRedisManager(ctx context.Context, cfg config.File, client rediscli.Client) *RedisManager {
+func NewRedisManager(cfg config.File, client rediscli.Client) *RedisManager {
 	return &RedisManager{
-		ctx:    ctx,
 		cfg:    cfg,
 		client: client,
 	}
+}
+
+func (rm *RedisManager) currentContext(L *lua.LState) context.Context {
+	return lualib.RequireRuntimeContext(L, "nauthilus_redis")
 }
 
 // getConn retrieves the Redis connection from the Lua stack or falls back to the default handle.
@@ -70,7 +73,7 @@ func (rm *RedisManager) ExecuteRead(L *lua.LState, fn func(ctx context.Context, 
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(rm.ctx, rm.cfg)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(rm.currentContext(L), rm.cfg)
 	defer cancel()
 
 	return fn(dCtx, conn, stack)
@@ -83,7 +86,7 @@ func (rm *RedisManager) ExecuteWrite(L *lua.LState, fn func(ctx context.Context,
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(rm.ctx, rm.cfg)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(rm.currentContext(L), rm.cfg)
 	defer cancel()
 
 	return fn(dCtx, conn, stack)

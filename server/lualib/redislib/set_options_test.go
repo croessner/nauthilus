@@ -151,6 +151,7 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("k", lua.LString("k"))
@@ -203,6 +204,7 @@ func TestRedisSet_WithOptionsTable_NilSemantics(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("k", lua.LString("k"))

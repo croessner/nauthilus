@@ -17,14 +17,11 @@ package lualib
 
 import (
 	"bytes"
-	"context"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
 
@@ -92,17 +89,16 @@ func (m *httpRequestMeta) SetBody(r io.ReadCloser) {
 var _ HTTPRequestMeta = (*httpRequestMeta)(nil)
 
 // HTTPRequestManager manages HTTP request data needed by Lua.
-type HTTPRequestManager struct {
-	*BaseManager
-	meta HTTPRequestMeta
-}
+type HTTPRequestManager struct{}
 
 // NewHTTPRequestManager creates a new HTTPRequestManager.
-func NewHTTPRequestManager(ctx context.Context, cfg config.File, logger *slog.Logger, meta HTTPRequestMeta) *HTTPRequestManager {
-	return &HTTPRequestManager{
-		BaseManager: NewBaseManager(ctx, cfg, logger),
-		meta:        meta,
-	}
+func NewHTTPRequestManager() *HTTPRequestManager {
+
+	return &HTTPRequestManager{}
+}
+
+func (m *HTTPRequestManager) currentMeta(L *lua.LState) HTTPRequestMeta {
+	return RequireHTTPRequestMeta(L)
 }
 
 // GetAllHTTPRequestHeaders retrieves all headers from an HTTP request.
@@ -110,8 +106,9 @@ func NewHTTPRequestManager(ctx context.Context, cfg config.File, logger *slog.Lo
 func (m *HTTPRequestManager) GetAllHTTPRequestHeaders(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	headerTable := L.NewTable()
+	meta := m.currentMeta(L)
 
-	for headerName, headerValues := range m.meta.Header() {
+	for headerName, headerValues := range meta.Header() {
 		headerName = strings.ToLower(headerName)
 
 		headerList := L.NewTable()
@@ -133,8 +130,9 @@ func (m *HTTPRequestManager) GetHTTPRequestHeader(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	reqzestedHeader := strings.ToLower(stack.CheckString(1))
 	headerValueTable := L.NewTable()
+	meta := m.currentMeta(L)
 
-	for headerName, headerValues := range m.meta.Header() {
+	for headerName, headerValues := range meta.Header() {
 		headerName = strings.ToLower(headerName)
 
 		if headerName != reqzestedHeader {
@@ -155,15 +153,16 @@ func (m *HTTPRequestManager) GetHTTPRequestHeader(L *lua.LState) int {
 // The returned function reads the HTTP request body, resets it for potential later use, and pushes it as a string to Lua.
 func (m *HTTPRequestManager) GetHTTPRequestBody(L *lua.LState) int {
 	stack := luastack.NewManager(L)
+	meta := m.currentMeta(L)
 
 	// Read the HTTP body
-	bodyBytes, err := io.ReadAll(m.meta.Body())
+	bodyBytes, err := io.ReadAll(meta.Body())
 	if err != nil {
 		return stack.PushResults(lua.LNil, lua.LString(err.Error()))
 	}
 
 	// Make sure the body is readable for the next handler...
-	m.meta.SetBody(io.NopCloser(bytes.NewBuffer(bodyBytes)))
+	meta.SetBody(io.NopCloser(bytes.NewBuffer(bodyBytes)))
 
 	return stack.PushResults(lua.LString(bodyBytes), lua.LNil)
 }
@@ -172,14 +171,14 @@ func (m *HTTPRequestManager) GetHTTPRequestBody(L *lua.LState) int {
 func (m *HTTPRequestManager) GetHTTPMethod(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 
-	return stack.PushResults(lua.LString(m.meta.Method()), lua.LNil)
+	return stack.PushResults(lua.LString(m.currentMeta(L).Method()), lua.LNil)
 }
 
 // GetHTTPPath pushes the HTTP request URL path onto the Lua stack when invoked.
 func (m *HTTPRequestManager) GetHTTPPath(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 
-	return stack.PushResults(lua.LString(m.meta.URL().Path), lua.LNil)
+	return stack.PushResults(lua.LString(m.currentMeta(L).URL().Path), lua.LNil)
 }
 
 // GetHTTPQueryParam fetches a query parameter from the provided HTTP request.
@@ -187,14 +186,14 @@ func (m *HTTPRequestManager) GetHTTPQueryParam(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	paramName := stack.CheckString(1)
 
-	return stack.PushResults(lua.LString(m.meta.URL().Query().Get(paramName)), lua.LNil)
+	return stack.PushResults(lua.LString(m.currentMeta(L).URL().Query().Get(paramName)), lua.LNil)
 }
 
 // LoaderModHTTP loads Lua functions based on an HTTPRequestMeta provider.
-func LoaderModHTTP(ctx context.Context, cfg config.File, logger *slog.Logger, meta HTTPRequestMeta) lua.LGFunction {
+func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewHTTPRequestManager(ctx, cfg, logger, meta)
+		manager := NewHTTPRequestManager()
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnGetAllHTTPRequestHeaders: manager.GetAllHTTPRequestHeaders,
@@ -204,6 +203,10 @@ func LoaderModHTTP(ctx context.Context, cfg config.File, logger *slog.Logger, me
 			definitions.LuaFnGetHTTPQueryParam:        manager.GetHTTPQueryParam,
 			definitions.LuaFnGetHTTPPath:              manager.GetHTTPPath,
 		})
+
+		if meta != nil {
+			bindRequestValue(L, mod, luaHTTPRequestMetaKey, meta)
+		}
 
 		return stack.PushResult(mod)
 	}

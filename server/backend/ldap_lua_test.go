@@ -14,6 +14,16 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
+func bindLDAPRuntimeContextForTest(L *lua.LState, ctx context.Context) {
+	reqEnv := L.NewTable()
+	L.SetGlobal("__NAUTH_REQ_ENV", reqEnv)
+
+	userData := L.NewUserData()
+	userData.Value = ctx
+
+	L.SetField(reqEnv, "__NAUTH_REQ_RUNTIME_CONTEXT", userData)
+}
+
 type testLDAPEnqueuer struct {
 	t        *testing.T
 	reply    *bktype.LDAPReply
@@ -70,6 +80,7 @@ func newModifyTable(L *lua.LState) *lua.LTable {
 func TestLuaLDAPSearch_RawResult(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
+	bindLDAPRuntimeContextForTest(L, context.Background())
 
 	entry := &ldap.Entry{
 		DN: "uid=jdoe,dc=example,dc=org",
@@ -132,6 +143,7 @@ func TestLuaLDAPSearch_RawResult(t *testing.T) {
 func TestLuaLDAPSearch_ErrorReply(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
+	bindLDAPRuntimeContextForTest(L, context.Background())
 
 	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{Err: errors.New("boom")}}
 	SetLuaLDAPQueue(enqueuer)
@@ -151,6 +163,7 @@ func TestLuaLDAPSearch_ErrorReply(t *testing.T) {
 func TestLuaLDAPModify_OK(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
+	bindLDAPRuntimeContextForTest(L, context.Background())
 
 	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{}}
 	SetLuaLDAPQueue(enqueuer)

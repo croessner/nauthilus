@@ -81,6 +81,7 @@ func TestRedisRunScript(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("script", lua.LString(tc.script))
@@ -166,6 +167,7 @@ func TestRedisUploadScript(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("script", lua.LString(tc.script))

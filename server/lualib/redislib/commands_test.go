@@ -78,6 +78,7 @@ func TestRedisGet(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -165,6 +166,7 @@ func TestRedisSet(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -249,6 +251,7 @@ func TestRedisExpire(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -328,6 +331,7 @@ func TestRedisIncr(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -406,6 +410,7 @@ func TestRedisDel(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("key", lua.LString(tt.key))
@@ -488,6 +493,7 @@ func TestRedisRename(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
@@ -558,6 +564,7 @@ func TestPing(t *testing.T) {
 
 			L := lua.NewState()
 			defer L.Close()
+			bindRedisRuntimeContextForTest(L, context.Background())
 			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), testFile, client))
 
 			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_ping("default")`)

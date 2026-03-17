@@ -16,12 +16,18 @@
 package lualib
 
 import (
-	"context"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	lua "github.com/yuin/gopher-lua"
 )
+
+func bindTestLuaContext(L *lua.LState, luaCtx *Context) {
+	reqEnv := L.NewTable()
+	L.SetGlobal(luaRequestEnvKey, reqEnv)
+
+	bindRequestValue(L, reqEnv, luaRequestContextKey, luaCtx)
+}
 
 func TestContextSet(t *testing.T) {
 	t.Parallel()
@@ -64,11 +70,12 @@ func TestContextSet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+			bindTestLuaContext(L, ctx)
 
 			L.Push(tc.key)
 			L.Push(tc.value)
 
-			manager := NewContextManager(context.TODO(), nil, nil, ctx)
+			manager := NewContextManager()
 			manager.ContextSet(L)
 
 			val := convert.GoToLuaValue(L, ctx.Get(lua.LVAsString(tc.key)))
@@ -117,18 +124,19 @@ func TestContextGet(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+			bindTestLuaContext(L, ctx)
 
 			if tt.name != "Non-existent Key" {
 				L.Push(tt.key)
 				L.Push(tt.value)
 
-				manager := NewContextManager(context.TODO(), nil, nil, ctx)
+				manager := NewContextManager()
 				manager.ContextSet(L)
 			}
 
 			L.Push(tt.key)
 
-			manager := NewContextManager(context.TODO(), nil, nil, ctx)
+			manager := NewContextManager()
 			manager.ContextGet(L)
 
 			val := L.Get(-1)
@@ -179,6 +187,7 @@ func TestContextDelete(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+			bindTestLuaContext(L, ctx)
 
 			for key, value := range tt.preSets {
 				ctx.Set(lua.LVAsString(key), value)
@@ -186,7 +195,7 @@ func TestContextDelete(t *testing.T) {
 
 			L.Push(tt.key)
 
-			manager := NewContextManager(context.TODO(), nil, nil, ctx)
+			manager := NewContextManager()
 			manager.ContextDelete(L)
 
 			for key, expectedValue := range tt.postSets {

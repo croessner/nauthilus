@@ -20,6 +20,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/rediscli"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -28,7 +29,7 @@ import (
 // It creates a new Lua table, sets the exported Redis functions, and pushes the table onto the stack.
 func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		rm := NewRedisManager(ctx, cfg, client)
+		rm := NewRedisManager(cfg, client)
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
@@ -96,6 +97,10 @@ func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client
 			definitions.LuaFnRedisSRem:      rm.RedisSRem,
 			definitions.LuaFnRedisSCard:     rm.RedisSCard,
 		})
+
+		if ctx != nil {
+			lualib.BindRequestRuntimeContext(L, mod, ctx)
+		}
 
 		L.Push(mod)
 
