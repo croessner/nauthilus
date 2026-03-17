@@ -155,6 +155,34 @@ func bindModuleIntoReq(L *lua.LState, req *lua.LTable, name string, mod *lua.LTa
 	}
 }
 
+func clearRequestBoundLoadedModules(L *lua.LState) {
+	pkg, ok := L.GetGlobal("package").(*lua.LTable)
+	if !ok {
+		return
+	}
+
+	loaded, ok := L.GetField(pkg, "loaded").(*lua.LTable)
+	if !ok {
+		return
+	}
+
+	// Request-bound modules must not survive pooled state reuse.
+	for _, modName := range []string{
+		definitions.LuaModContext,
+		definitions.LuaModHTTPRequest,
+		definitions.LuaModHTTPResponse,
+		definitions.LuaModRedis,
+		definitions.LuaModLDAP,
+		definitions.LuaModPsnet,
+		definitions.LuaModDNS,
+		definitions.LuaModBruteForce,
+		definitions.LuaModOpenTelemetry,
+		definitions.LuaModBackend,
+	} {
+		L.SetField(loaded, modName, lua.LNil)
+	}
+}
+
 // resetRequestEnv clears only the request env and some transient globals; keeps baseEnv and package.loaded warm.
 func resetRequestEnv(L *lua.LState) {
 	// Clear stack and context
@@ -182,6 +210,9 @@ func resetRequestEnv(L *lua.LState) {
 	L.SetGlobal(definitions.LuaFnCallAction, lua.LNil)
 	L.SetGlobal(definitions.LuaDefaultTable, lua.LNil)
 	L.SetGlobal(definitions.LuaBackendResultTypeName, lua.LNil)
+
+	// Request-bound modules are re-bound per request and must not leak.
+	clearRequestBoundLoadedModules(L)
 
 	// Recreate dynamic_loader stub per request
 	ensureDynamicLoaderStub(L)
