@@ -1870,7 +1870,7 @@ func checkAllBackends(configErrors map[definitions.Backend]error, passDBs []*Pas
 func collectConfigErrorDetails(configErrors map[definitions.Backend]error) string {
 	var parts []string
 
-	for backend, cfgErr := range configErrors {
+	for configIndex, cfgErr := range configErrors {
 		if cfgErr == nil {
 			continue
 		}
@@ -1883,7 +1883,7 @@ func collectConfigErrorDetails(configErrors map[definitions.Backend]error) strin
 			}
 		}
 
-		parts = append(parts, fmt.Sprintf("%s: %s", backend, detail))
+		parts = append(parts, fmt.Sprintf("%s: %s", configIndex, detail))
 	}
 
 	sort.Strings(parts)
@@ -3244,14 +3244,17 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	}
 
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	username := ctx.GetHeader(cfg.GetUsername())
-	password := ctx.GetHeader(cfg.GetPassword())
-	if password != "" {
-		ctx.Request.Header.Del(cfg.GetPassword())
+	usernameValue := ctx.GetHeader(cfg.GetUsername())
+	if strings.Contains(usernameValue, "%") {
+		if decodedUsername, err := url.PathUnescape(usernameValue); err == nil {
+			usernameValue = decodedUsername
+		}
 	}
 
-	passwordValue := password
-	password = ""
+	passwordValue := ctx.GetHeader(cfg.GetPassword())
+	if passwordValue != "" {
+		ctx.Request.Header.Del(cfg.GetPassword())
+	}
 
 	if strings.Contains(passwordValue, "%") {
 		if decodedPassword, err := url.PathUnescape(passwordValue); err == nil {
@@ -3287,7 +3290,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
 		// Apply credentials and header-derived context in a consolidated manner
 		a.ApplyCredentials(NewCredentials(
-			WithUsername(username),
+			WithUsername(usernameValue),
 			WithPassword(secret.FromBytes(passwordBytes)),
 		))
 
@@ -3628,18 +3631,6 @@ func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
 	}
 
 	return auth
-}
-
-// NewAuthStateFromContext initializes and returns an AuthState using the provided gin.Context.
-func NewAuthStateFromContext(ctx *gin.Context) State {
-	return NewAuthStateFromContextWithDeps(ctx, AuthDeps{
-		Cfg:          getDefaultConfigFile(),
-		Env:          getDefaultEnvironment(),
-		Logger:       getDefaultLogger(),
-		Redis:        getDefaultRedisClient(),
-		AccountCache: getDefaultAccountCache(),
-		Channel:      getDefaultChannel(),
-	})
 }
 
 // NewAuthStateFromContextWithDeps initializes and returns an AuthState using the provided gin.Context and explicit deps.
