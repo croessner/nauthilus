@@ -491,6 +491,7 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 			Name: k,
 			Values: []saml.AttributeValue{
 				{
+					Type:  "xs:string",
 					Value: fmt.Sprintf("%v", v[0]),
 				},
 			},
