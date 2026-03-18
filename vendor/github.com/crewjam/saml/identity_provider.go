@@ -15,11 +15,13 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
+	"github.com/russellhaering/goxmldsig/etreeutils"
 
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
@@ -408,32 +410,6 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 	idpSsoDescriptor := req.IDP.Metadata().IDPSSODescriptors[0]
 
-	// TODO(ross): support signed authn requests
-	// For now we do the safe thing and fail in the case where we think
-	// requests might be signed.
-	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
-		return fmt.Errorf("authn request signature checking is not currently supported")
-	}
-
-	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
-	// we get a description of the Destination attribute:
-	//
-	//   If the message is signed, the Destination XML attribute in the root SAML
-	//   element of the protocol message MUST contain the URL to which the sender
-	//   has instructed the user agent to deliver the message. The recipient MUST
-	//   then verify that the value matches the location at which the message has
-	//   been received.
-	//
-	// We require the destination be correct either (a) if signing is enabled or
-	// (b) if it was provided.
-	mustHaveDestination := idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned
-	mustHaveDestination = mustHaveDestination || req.Request.Destination != ""
-	if mustHaveDestination {
-		if req.Request.Destination != req.IDP.SSOURL.String() {
-			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
-		}
-	}
-
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
 		return fmt.Errorf("request expired at %s",
 			req.Request.IssueInstant.Add(MaxIssueDelay))
@@ -457,7 +433,282 @@ func (req *IdpAuthnRequest) Validate() error {
 		return fmt.Errorf("cannot find assertion consumer service: %v", err)
 	}
 
+	authnRequestSignatureRequired := false
+	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
+		authnRequestSignatureRequired = true
+	}
+	if req.SPSSODescriptor != nil && req.SPSSODescriptor.AuthnRequestsSigned != nil && *req.SPSSODescriptor.AuthnRequestsSigned {
+		authnRequestSignatureRequired = true
+	}
+
+	authnRequestSigned, err := req.validateAuthnRequestSignature(authnRequestSignatureRequired)
+	if err != nil {
+		return err
+	}
+
+	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
+	// we get a description of the Destination attribute:
+	//
+	//   If the message is signed, the Destination XML attribute in the root SAML
+	//   element of the protocol message MUST contain the URL to which the sender
+	//   has instructed the user agent to deliver the message. The recipient MUST
+	//   then verify that the value matches the location at which the message has
+	//   been received.
+	//
+	// We require the destination be correct either (a) if the request is signed or
+	// (b) if it was provided.
+	mustHaveDestination := authnRequestSigned || req.Request.Destination != ""
+	if mustHaveDestination {
+		if req.Request.Destination != req.IDP.SSOURL.String() {
+			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
+		}
+	}
+
 	return nil
+}
+
+func (req *IdpAuthnRequest) validateAuthnRequestSignature(required bool) (bool, error) {
+	if req.HTTPRequest.Method == http.MethodGet {
+		signed, err := req.validateRedirectAuthnRequestSignature()
+		if err != nil {
+			return false, err
+		}
+		if signed {
+			return true, nil
+		}
+	}
+
+	if req.Request.Signature != nil {
+		if err := req.validateAuthnRequestXMLSignature(); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	if required {
+		return false, fmt.Errorf("authn request signature required but not present")
+	}
+
+	return false, nil
+}
+
+func (req *IdpAuthnRequest) validateRedirectAuthnRequestSignature() (bool, error) {
+	rawSignature, hasSignature := rawQueryParameter(req.HTTPRequest.URL.RawQuery, "Signature")
+	rawSigAlg, hasSigAlg := rawQueryParameter(req.HTTPRequest.URL.RawQuery, "SigAlg")
+
+	if hasSignature != hasSigAlg {
+		return false, fmt.Errorf("redirect binding signature is malformed: require both Signature and SigAlg")
+	}
+	if !hasSignature {
+		return false, nil
+	}
+
+	rawSAMLRequest, ok := rawQueryParameter(req.HTTPRequest.URL.RawQuery, "SAMLRequest")
+	if !ok || rawSAMLRequest == "" {
+		return false, fmt.Errorf("redirect binding signature is malformed: missing SAMLRequest")
+	}
+
+	signedContent := "SAMLRequest=" + rawSAMLRequest
+	if rawRelayState, hasRelayState := rawQueryParameter(req.HTTPRequest.URL.RawQuery, "RelayState"); hasRelayState {
+		signedContent += "&RelayState=" + rawRelayState
+	}
+	signedContent += "&SigAlg=" + rawSigAlg
+
+	sigAlgValue, err := url.QueryUnescape(rawSigAlg)
+	if err != nil {
+		return false, fmt.Errorf("cannot decode SigAlg: %w", err)
+	}
+
+	sigB64, err := url.QueryUnescape(rawSignature)
+	if err != nil {
+		return false, fmt.Errorf("cannot decode Signature: %w", err)
+	}
+
+	signature, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return false, fmt.Errorf("cannot decode Signature base64: %w", err)
+	}
+
+	algorithm, ok := signatureAlgorithmForRedirect(sigAlgValue)
+	if !ok {
+		return false, fmt.Errorf("unsupported redirect signature algorithm %q", sigAlgValue)
+	}
+
+	certs, err := req.getSPSigningCerts()
+	if err != nil {
+		return false, err
+	}
+
+	var verifyErr error
+	for _, cert := range certs {
+		if cert == nil {
+			continue
+		}
+		if err := cert.CheckSignature(algorithm, []byte(signedContent), signature); err == nil {
+			return true, nil
+		} else {
+			verifyErr = err
+		}
+	}
+
+	if verifyErr == nil {
+		verifyErr = fmt.Errorf("no usable signing certificate")
+	}
+
+	return false, fmt.Errorf("invalid redirect authn request signature: %w", verifyErr)
+}
+
+func (req *IdpAuthnRequest) validateAuthnRequestXMLSignature() error {
+	certs, err := req.getSPSigningCerts()
+	if err != nil {
+		return err
+	}
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(req.RequestBuffer); err != nil {
+		return fmt.Errorf("cannot parse authn request xml: %w", err)
+	}
+	if doc.Root() == nil {
+		return fmt.Errorf("authn request XML does not have a root element")
+	}
+	el := doc.Root()
+
+	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
+	if err != nil {
+		return err
+	}
+	if sigEl == nil {
+		return errSignatureElementNotPresent
+	}
+
+	certificateStore := dsig.MemoryX509CertificateStore{
+		Roots: certs,
+	}
+	validationContext := dsig.NewDefaultValidationContext(&certificateStore)
+	validationContext.IdAttribute = "ID"
+	if Clock != nil {
+		validationContext.Clock = Clock
+	}
+
+	// If no X509 cert is provided in KeyInfo, force trust roots from metadata.
+	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
+		if sigEl := el.FindElement("./Signature"); sigEl != nil {
+			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
+				sigEl.RemoveChild(keyInfo)
+			}
+		}
+	}
+
+	ctx, err := etreeutils.NSBuildParentContext(el)
+	if err != nil {
+		return fmt.Errorf("cannot validate authn request signature: %v", err)
+	}
+	ctx, err = ctx.SubContext(el)
+	if err != nil {
+		return fmt.Errorf("cannot validate authn request signature: %v", err)
+	}
+	el, err = etreeutils.NSDetatch(ctx, el)
+	if err != nil {
+		return fmt.Errorf("cannot validate authn request signature: %v", err)
+	}
+
+	if _, err := validationContext.Validate(el); err != nil {
+		return fmt.Errorf("cannot validate authn request signature: %v", err)
+	}
+
+	return nil
+}
+
+func (req *IdpAuthnRequest) getSPSigningCerts() ([]*x509.Certificate, error) {
+	var certStrs []string
+
+	if req.SPSSODescriptor != nil {
+		for _, keyDescriptor := range req.SPSSODescriptor.KeyDescriptors {
+			if len(keyDescriptor.KeyInfo.X509Data.X509Certificates) == 0 {
+				continue
+			}
+			switch keyDescriptor.Use {
+			case "", "signing":
+				for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
+					certStrs = append(certStrs, certificate.Data)
+				}
+			}
+		}
+	}
+
+	if len(certStrs) == 0 {
+		for _, spSSODescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
+			for _, keyDescriptor := range spSSODescriptor.KeyDescriptors {
+				if len(keyDescriptor.KeyInfo.X509Data.X509Certificates) == 0 {
+					continue
+				}
+				switch keyDescriptor.Use {
+				case "", "signing":
+					for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
+						certStrs = append(certStrs, certificate.Data)
+					}
+				}
+			}
+		}
+	}
+
+	if len(certStrs) == 0 {
+		return nil, fmt.Errorf("cannot find any signing certificate in the SP SSO descriptor")
+	}
+
+	certs := make([]*x509.Certificate, len(certStrs))
+	regex := regexp.MustCompile(`\s+`)
+	for i, certStr := range certStrs {
+		certStr = regex.ReplaceAllString(certStr, "")
+		certBytes, err := base64.StdEncoding.DecodeString(certStr)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse certificate: %w", err)
+		}
+
+		parsedCert, err := x509.ParseCertificate(certBytes)
+		if err != nil {
+			return nil, err
+		}
+		certs[i] = parsedCert
+	}
+
+	return certs, nil
+}
+
+func signatureAlgorithmForRedirect(identifier string) (x509.SignatureAlgorithm, bool) {
+	switch identifier {
+	case dsig.RSASHA1SignatureMethod:
+		return x509.SHA1WithRSA, true
+	case dsig.RSASHA256SignatureMethod:
+		return x509.SHA256WithRSA, true
+	case dsig.RSASHA384SignatureMethod:
+		return x509.SHA384WithRSA, true
+	case dsig.RSASHA512SignatureMethod:
+		return x509.SHA512WithRSA, true
+	case dsig.ECDSASHA1SignatureMethod:
+		return x509.ECDSAWithSHA1, true
+	case dsig.ECDSASHA256SignatureMethod:
+		return x509.ECDSAWithSHA256, true
+	case dsig.ECDSASHA384SignatureMethod:
+		return x509.ECDSAWithSHA384, true
+	case dsig.ECDSASHA512SignatureMethod:
+		return x509.ECDSAWithSHA512, true
+	default:
+		return x509.UnknownSignatureAlgorithm, false
+	}
+}
+
+func rawQueryParameter(rawQuery, key string) (string, bool) {
+	for _, part := range strings.Split(rawQuery, "&") {
+		if part == key {
+			return "", true
+		}
+		if strings.HasPrefix(part, key+"=") {
+			return strings.TrimPrefix(part, key+"="), true
+		}
+	}
+
+	return "", false
 }
 
 func (req *IdpAuthnRequest) getACSEndpoint() error {

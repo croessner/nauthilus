@@ -818,16 +818,17 @@ func GetContent(raw any, path string) (string, error) {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
-	Name              string   `mapstructure:"name"`
-	EntityID          string   `mapstructure:"entity_id" validate:"required"`
-	ACSURL            string   `mapstructure:"acs_url" validate:"required"`
-	SLOURL            string   `mapstructure:"slo_url"`
-	Cert              string   `mapstructure:"cert"`
-	CertFile          string   `mapstructure:"cert_file"`
-	AllowedAttributes []string `mapstructure:"allowed_attributes"`
-	RequireMFA        []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	SupportedMFA      []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	LogoutRedirectURI string   `mapstructure:"logout_redirect_uri"`
+	Name                string   `mapstructure:"name"`
+	EntityID            string   `mapstructure:"entity_id" validate:"required"`
+	ACSURL              string   `mapstructure:"acs_url" validate:"required"`
+	SLOURL              string   `mapstructure:"slo_url"`
+	Cert                string   `mapstructure:"cert"`
+	CertFile            string   `mapstructure:"cert_file"`
+	AuthnRequestsSigned bool     `mapstructure:"authn_requests_signed"`
+	AllowedAttributes   []string `mapstructure:"allowed_attributes"`
+	RequireMFA          []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA        []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	LogoutRedirectURI   string   `mapstructure:"logout_redirect_uri"`
 	// Deprecated: use idp.remember_me_ttl instead.
 	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse bool          `mapstructure:"delayed_response"`
@@ -860,6 +861,15 @@ func (s *SAML2ServiceProvider) GetCert() (string, error) {
 	}
 
 	return GetContent(s.Cert, s.CertFile)
+}
+
+// AreAuthnRequestsSigned returns whether this SP signs AuthnRequests.
+func (s *SAML2ServiceProvider) AreAuthnRequestsSigned() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.AuthnRequestsSigned
 }
 
 // GetAllowedAttributes returns the allowed attributes for this SP.

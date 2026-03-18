@@ -143,6 +143,11 @@ func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID stri
 		},
 	}
 
+	if sp.AreAuthnRequestsSigned() {
+		authnRequestsSigned := true
+		ssoDescriptor.AuthnRequestsSigned = &authnRequestsSigned
+	}
+
 	// If SP certificate is configured, add KeyDescriptor for signature
 	// verification and assertion encryption.
 	keyDescriptors, err := buildSPKeyDescriptors(sp)

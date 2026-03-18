@@ -441,6 +441,7 @@ idp:
     saml2:
         service_providers:
             -   entity_id: "https://sp.example.com"
+                authn_requests_signed: true
                 require_mfa:
                     - totp
                     - recovery_codes
