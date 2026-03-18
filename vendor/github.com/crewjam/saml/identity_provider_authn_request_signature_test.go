@@ -163,6 +163,70 @@ func TestIdpAuthnRequestValidateRedirectTamperedSignatureFails(t *testing.T) {
 	}
 }
 
+func TestIdpAuthnRequestValidateRedirectDuplicateSignatureParameterFails(t *testing.T) {
+	idp := newTestIdentityProvider(t)
+	sp := newTestServiceProvider(t, idp.Metadata(), dsig.RSASHA256SignatureMethod)
+
+	spMetadata := sp.Metadata()
+	idp.ServiceProviderProvider = staticSPProvider{
+		descriptors: map[string]*EntityDescriptor{
+			spMetadata.EntityID: spMetadata,
+		},
+	}
+
+	redirectURL, err := sp.MakeRedirectAuthenticationRequest("relay-state")
+	if err != nil {
+		t.Fatalf("failed to create redirect authn request: %v", err)
+	}
+
+	redirectURL.RawQuery += "&Signature=AAAA"
+
+	httpRequest := httptest.NewRequest(http.MethodGet, redirectURL.String(), nil)
+	authnRequest, err := NewIdpAuthnRequest(idp, httpRequest)
+	if err != nil {
+		t.Fatalf("failed to parse idp authn request: %v", err)
+	}
+
+	err = authnRequest.Validate()
+	if err == nil {
+		t.Fatal("expected duplicate Signature parameter to fail validation")
+	}
+	if !strings.Contains(err.Error(), "duplicate parameter") {
+		t.Fatalf("expected duplicate parameter error, got: %v", err)
+	}
+}
+
+func TestIdpAuthnRequestValidateRedirectSHA1Rejected(t *testing.T) {
+	idp := newTestIdentityProvider(t)
+	sp := newTestServiceProvider(t, idp.Metadata(), dsig.RSASHA1SignatureMethod)
+
+	spMetadata := sp.Metadata()
+	idp.ServiceProviderProvider = staticSPProvider{
+		descriptors: map[string]*EntityDescriptor{
+			spMetadata.EntityID: spMetadata,
+		},
+	}
+
+	redirectURL, err := sp.MakeRedirectAuthenticationRequest("relay-state")
+	if err != nil {
+		t.Fatalf("failed to create redirect authn request: %v", err)
+	}
+
+	httpRequest := httptest.NewRequest(http.MethodGet, redirectURL.String(), nil)
+	authnRequest, err := NewIdpAuthnRequest(idp, httpRequest)
+	if err != nil {
+		t.Fatalf("failed to parse idp authn request: %v", err)
+	}
+
+	err = authnRequest.Validate()
+	if err == nil {
+		t.Fatal("expected SHA-1 redirect signature to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unsupported redirect signature algorithm") {
+		t.Fatalf("expected SHA-1 rejection error, got: %v", err)
+	}
+}
+
 func TestIdpAuthnRequestValidateRedirectUnsignedButRequiredFails(t *testing.T) {
 	idp := newTestIdentityProvider(t)
 	sp := newTestServiceProvider(t, idp.Metadata(), "")
@@ -235,5 +299,89 @@ func TestIdpAuthnRequestValidatePostSignedRequest(t *testing.T) {
 
 	if err := authnRequest.Validate(); err != nil {
 		t.Fatalf("expected signed post authn request to validate, got: %v", err)
+	}
+}
+
+func TestIdpAuthnRequestValidatePostSHA1Rejected(t *testing.T) {
+	idp := newTestIdentityProvider(t)
+	sp := newTestServiceProvider(t, idp.Metadata(), dsig.RSASHA1SignatureMethod)
+
+	spMetadata := sp.Metadata()
+	idp.ServiceProviderProvider = staticSPProvider{
+		descriptors: map[string]*EntityDescriptor{
+			spMetadata.EntityID: spMetadata,
+		},
+	}
+
+	postRequest, err := sp.MakeAuthenticationRequest(
+		sp.GetSSOBindingLocation(HTTPPostBinding),
+		HTTPPostBinding,
+		HTTPPostBinding,
+	)
+	if err != nil {
+		t.Fatalf("failed to create post authn request: %v", err)
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(postRequest.Element())
+	postRequestXML, err := doc.WriteToBytes()
+	if err != nil {
+		t.Fatalf("failed to serialize post authn request: %v", err)
+	}
+
+	formBody := "SAMLRequest=" + url.QueryEscape(base64.StdEncoding.EncodeToString(postRequestXML))
+	httpRequest := httptest.NewRequest(http.MethodPost, idp.SSOURL.String(), strings.NewReader(formBody))
+	httpRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	authnRequest, err := NewIdpAuthnRequest(idp, httpRequest)
+	if err != nil {
+		t.Fatalf("failed to parse idp authn request: %v", err)
+	}
+
+	err = authnRequest.Validate()
+	if err == nil {
+		t.Fatal("expected SHA-1 XML signature to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unsupported XML signature algorithm") {
+		t.Fatalf("expected SHA-1 rejection error, got: %v", err)
+	}
+}
+
+func TestIdpAuthnRequestValidateReplayRequestIDFails(t *testing.T) {
+	idp := newTestIdentityProvider(t)
+	sp := newTestServiceProvider(t, idp.Metadata(), dsig.RSASHA256SignatureMethod)
+
+	spMetadata := sp.Metadata()
+	idp.ServiceProviderProvider = staticSPProvider{
+		descriptors: map[string]*EntityDescriptor{
+			spMetadata.EntityID: spMetadata,
+		},
+	}
+
+	redirectURL, err := sp.MakeRedirectAuthenticationRequest("relay-state")
+	if err != nil {
+		t.Fatalf("failed to create redirect authn request: %v", err)
+	}
+
+	httpRequest1 := httptest.NewRequest(http.MethodGet, redirectURL.String(), nil)
+	authnRequest1, err := NewIdpAuthnRequest(idp, httpRequest1)
+	if err != nil {
+		t.Fatalf("failed to parse first idp authn request: %v", err)
+	}
+	if err := authnRequest1.Validate(); err != nil {
+		t.Fatalf("expected first request to validate, got: %v", err)
+	}
+
+	httpRequest2 := httptest.NewRequest(http.MethodGet, redirectURL.String(), nil)
+	authnRequest2, err := NewIdpAuthnRequest(idp, httpRequest2)
+	if err != nil {
+		t.Fatalf("failed to parse second idp authn request: %v", err)
+	}
+	err = authnRequest2.Validate()
+	if err == nil {
+		t.Fatal("expected replayed AuthnRequest ID to fail")
+	}
+	if !strings.Contains(err.Error(), "replay detected") {
+		t.Fatalf("expected replay detection error, got: %v", err)
 	}
 }

@@ -16,6 +16,8 @@
 package config
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"slices"
@@ -59,6 +61,49 @@ func (f *FileSettings) validateIdPMFASettings() error {
 	}
 
 	return nil
+}
+
+// validateIdPSAMLSigningSettings ensures SAML SP signing requirements have the
+// required certificate material available and parseable at startup.
+func (f *FileSettings) validateIdPSAMLSigningSettings() error {
+	if f == nil || f.IdP == nil || !f.IdP.SAML2.Enabled {
+		return nil
+	}
+
+	for _, sp := range f.IdP.SAML2.ServiceProviders {
+		if !sp.AuthnRequestsSigned {
+			continue
+		}
+
+		certStr, err := sp.GetCert()
+		if err != nil {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: failed to read cert: %w", sp.EntityID, err)
+		}
+
+		if strings.TrimSpace(certStr) == "" {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: authn_requests_signed requires cert or cert_file", sp.EntityID)
+		}
+
+		if _, err := parseFirstPEMCertificate(certStr); err != nil {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: invalid cert for authn request signature validation: %w", sp.EntityID, err)
+		}
+	}
+
+	return nil
+}
+
+func parseFirstPEMCertificate(certPEM string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil, fmt.Errorf("failed to parse certificate PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse x509 certificate: %w", err)
+	}
+
+	return cert, nil
 }
 
 // IdPSection represents the configuration for the internal Identity Provider.

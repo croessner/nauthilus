@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beevik/etree"
@@ -112,6 +113,8 @@ type IdentityProvider struct {
 	SignatureMethod         string
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
+	authnRequestReplayMu    sync.Mutex
+	authnRequestReplaySeen  map[string]time.Time
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -464,6 +467,10 @@ func (req *IdpAuthnRequest) Validate() error {
 		}
 	}
 
+	if err := req.IDP.checkAndRememberAuthnRequestID(req.Request.ID, req.Request.IssueInstant.Add(MaxIssueDelay), req.Now); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -493,19 +500,28 @@ func (req *IdpAuthnRequest) validateAuthnRequestSignature(required bool) (bool, 
 }
 
 func (req *IdpAuthnRequest) validateRedirectAuthnRequestSignature() (bool, error) {
-	rawSignature, hasSignature := rawQueryParameter(req.HTTPRequest.URL.RawQuery, "Signature")
-	rawSigAlg, hasSigAlg := rawQueryParameter(req.HTTPRequest.URL.RawQuery, "SigAlg")
+	rawSAMLRequest, hasSAMLRequest, err := rawQueryParameterStrict(req.HTTPRequest.URL.RawQuery, "SAMLRequest")
+	if err != nil {
+		return false, err
+	}
+	if !hasSAMLRequest || rawSAMLRequest == "" {
+		return false, fmt.Errorf("redirect binding signature is malformed: missing SAMLRequest")
+	}
+
+	rawSignature, hasSignature, err := rawQueryParameterStrict(req.HTTPRequest.URL.RawQuery, "Signature")
+	if err != nil {
+		return false, err
+	}
+	rawSigAlg, hasSigAlg, err := rawQueryParameterStrict(req.HTTPRequest.URL.RawQuery, "SigAlg")
+	if err != nil {
+		return false, err
+	}
 
 	if hasSignature != hasSigAlg {
 		return false, fmt.Errorf("redirect binding signature is malformed: require both Signature and SigAlg")
 	}
 	if !hasSignature {
 		return false, nil
-	}
-
-	rawSAMLRequest, ok := rawQueryParameter(req.HTTPRequest.URL.RawQuery, "SAMLRequest")
-	if !ok || rawSAMLRequest == "" {
-		return false, fmt.Errorf("redirect binding signature is malformed: missing SAMLRequest")
 	}
 
 	signedContent := "SAMLRequest=" + rawSAMLRequest
@@ -572,6 +588,11 @@ func (req *IdpAuthnRequest) validateAuthnRequestXMLSignature() error {
 		return fmt.Errorf("authn request XML does not have a root element")
 	}
 	el := doc.Root()
+
+	signatureMethod := xmlSignatureMethod(el)
+	if isWeakSHA1SignatureMethod(signatureMethod) {
+		return fmt.Errorf("unsupported XML signature algorithm %q", signatureMethod)
+	}
 
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
@@ -677,16 +698,12 @@ func (req *IdpAuthnRequest) getSPSigningCerts() ([]*x509.Certificate, error) {
 
 func signatureAlgorithmForRedirect(identifier string) (x509.SignatureAlgorithm, bool) {
 	switch identifier {
-	case dsig.RSASHA1SignatureMethod:
-		return x509.SHA1WithRSA, true
 	case dsig.RSASHA256SignatureMethod:
 		return x509.SHA256WithRSA, true
 	case dsig.RSASHA384SignatureMethod:
 		return x509.SHA384WithRSA, true
 	case dsig.RSASHA512SignatureMethod:
 		return x509.SHA512WithRSA, true
-	case dsig.ECDSASHA1SignatureMethod:
-		return x509.ECDSAWithSHA1, true
 	case dsig.ECDSASHA256SignatureMethod:
 		return x509.ECDSAWithSHA256, true
 	case dsig.ECDSASHA384SignatureMethod:
@@ -696,6 +713,65 @@ func signatureAlgorithmForRedirect(identifier string) (x509.SignatureAlgorithm, 
 	default:
 		return x509.UnknownSignatureAlgorithm, false
 	}
+}
+
+func xmlSignatureMethod(sigEl *etree.Element) string {
+	if sigEl == nil {
+		return ""
+	}
+
+	for _, child := range sigEl.FindElements(".//*") {
+		tagName := child.Tag
+		if idx := strings.LastIndex(tagName, ":"); idx >= 0 && idx < len(tagName)-1 {
+			tagName = tagName[idx+1:]
+		}
+
+		if tagName == "SignatureMethod" {
+			return child.SelectAttrValue("Algorithm", "")
+		}
+	}
+
+	return ""
+}
+
+func isWeakSHA1SignatureMethod(signatureMethod string) bool {
+	switch signatureMethod {
+	case dsig.RSASHA1SignatureMethod, dsig.ECDSASHA1SignatureMethod:
+		return true
+	default:
+		return false
+	}
+}
+
+func rawQueryParameterStrict(rawQuery, key string) (string, bool, error) {
+	found := false
+	value := ""
+
+	for _, part := range strings.Split(rawQuery, "&") {
+		if part == "" {
+			continue
+		}
+
+		if part == key {
+			if found {
+				return "", false, fmt.Errorf("redirect binding query contains duplicate parameter %q", key)
+			}
+			found = true
+			value = ""
+
+			continue
+		}
+
+		if strings.HasPrefix(part, key+"=") {
+			if found {
+				return "", false, fmt.Errorf("redirect binding query contains duplicate parameter %q", key)
+			}
+			found = true
+			value = strings.TrimPrefix(part, key+"=")
+		}
+	}
+
+	return value, found, nil
 }
 
 func rawQueryParameter(rawQuery, key string) (string, bool) {
@@ -709,6 +785,33 @@ func rawQueryParameter(rawQuery, key string) (string, bool) {
 	}
 
 	return "", false
+}
+
+func (idp *IdentityProvider) checkAndRememberAuthnRequestID(id string, expiresAt, now time.Time) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("authn request is missing ID")
+	}
+
+	idp.authnRequestReplayMu.Lock()
+	defer idp.authnRequestReplayMu.Unlock()
+
+	if idp.authnRequestReplaySeen == nil {
+		idp.authnRequestReplaySeen = make(map[string]time.Time)
+	}
+
+	for existingID, expiry := range idp.authnRequestReplaySeen {
+		if !expiry.After(now) {
+			delete(idp.authnRequestReplaySeen, existingID)
+		}
+	}
+
+	if expiry, exists := idp.authnRequestReplaySeen[id]; exists && expiry.After(now) {
+		return fmt.Errorf("authn request replay detected for id %q", id)
+	}
+
+	idp.authnRequestReplaySeen[id] = expiresAt
+
+	return nil
 }
 
 func (req *IdpAuthnRequest) getACSEndpoint() error {

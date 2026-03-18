@@ -16,6 +16,12 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"testing"
 	"time"
@@ -373,6 +379,124 @@ func TestValidateIdPMFASettings(t *testing.T) {
 
 		assert.Error(t, cfg.validateIdPMFASettings())
 	})
+}
+
+func TestValidateIdPSAMLSigningSettings(t *testing.T) {
+	t.Run("nil config", func(t *testing.T) {
+		var cfg *FileSettings
+		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+	})
+
+	t.Run("disabled saml", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{Enabled: false},
+			},
+		}
+		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+	})
+
+	t.Run("authn request signing disabled does not require cert", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled: true,
+					ServiceProviders: []SAML2ServiceProvider{
+						{
+							EntityID: "https://sp.example.com/metadata",
+							ACSURL:   "https://sp.example.com/acs",
+						},
+					},
+				},
+			},
+		}
+		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+	})
+
+	t.Run("missing cert with authn request signing enabled returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled: true,
+					ServiceProviders: []SAML2ServiceProvider{
+						{
+							EntityID:            "https://sp.example.com/metadata",
+							ACSURL:              "https://sp.example.com/acs",
+							AuthnRequestsSigned: true,
+						},
+					},
+				},
+			},
+		}
+
+		err := cfg.validateIdPSAMLSigningSettings()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "authn_requests_signed requires cert or cert_file")
+	})
+
+	t.Run("invalid cert with authn request signing enabled returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled: true,
+					ServiceProviders: []SAML2ServiceProvider{
+						{
+							EntityID:            "https://sp.example.com/metadata",
+							ACSURL:              "https://sp.example.com/acs",
+							AuthnRequestsSigned: true,
+							Cert:                "not-a-certificate",
+						},
+					},
+				},
+			},
+		}
+
+		err := cfg.validateIdPSAMLSigningSettings()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid cert for authn request signature validation")
+	})
+
+	t.Run("valid inline cert with authn request signing enabled", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled: true,
+					ServiceProviders: []SAML2ServiceProvider{
+						{
+							EntityID:            "https://sp.example.com/metadata",
+							ACSURL:              "https://sp.example.com/acs",
+							AuthnRequestsSigned: true,
+							Cert:                testCertificatePEM(t),
+						},
+					},
+				},
+			},
+		}
+
+		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
+	})
+}
+
+func testCertificatePEM(t *testing.T) string {
+	t.Helper()
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.NoError(t, err)
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Test SP"},
+		},
+		NotBefore: time.Now().Add(-time.Minute),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	assert.NoError(t, err)
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}))
 }
 
 func TestSAML2ServiceProvider_GetAllowedAttributes(t *testing.T) {
