@@ -1,0 +1,19 @@
+{
+  "context": {
+    "username": "unknown-user@example.com",
+    "client_ip": "192.0.2.44",
+    "protocol": "imap",
+    "session": "failed-login-tracker-session",
+    "no_auth": false,
+    "authenticated": false,
+    "account": ""
+  },
+  "expected_output": {
+    "action_result": true,
+    "logs_contain": [
+      "write:2",
+      "Failed login tracked for username: unknown-user@example.com"
+    ],
+    "error_expected": false
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "context": {
+    "username": "chain@example.com",
+    "client_ip": "198.51.100.55",
+    "protocol": "imap",
+    "session": "context-chain-session",
+    "no_auth": false,
+    "debug": false
+  },
+  "expected_output": {
+    "filter_result": 0,
+    "error_expected": false
+  }
+}

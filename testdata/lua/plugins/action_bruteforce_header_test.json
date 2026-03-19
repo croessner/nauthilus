@@ -1,0 +1,18 @@
+{
+  "context": {
+    "username": "bob@example.com",
+    "client_ip": "198.51.100.20",
+    "protocol": "smtp",
+    "session": "bruteforce-header-session",
+    "no_auth": false,
+    "authenticated": false
+  },
+  "expected_output": {
+    "action_result": true,
+    "logs_contain": [
+      "X-Nauthilus-Bruteforce=true",
+      "X-Nauthilus-Bruteforce-Bucket=smtp"
+    ],
+    "error_expected": false
+  }
+}

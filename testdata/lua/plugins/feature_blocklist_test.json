@@ -1,0 +1,17 @@
+{
+  "context": {
+    "username": "eve@example.com",
+    "client_ip": "203.0.113.99",
+    "protocol": "imap",
+    "session": "blocklist-session",
+    "no_auth": false
+  },
+  "expected_output": {
+    "feature_result": true,
+    "logs_contain": [
+      "blocklist_ip",
+      "IP address blocked"
+    ],
+    "error_expected": false
+  }
+}

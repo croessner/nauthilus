@@ -1,0 +1,20 @@
+{
+  "context": {
+    "username": "alice@example.com",
+    "password": "irrelevant",
+    "client_ip": "203.0.113.10",
+    "protocol": "imap",
+    "session": "analytics-session",
+    "no_auth": false,
+    "authenticated": false
+  },
+  "expected_output": {
+    "action_result": true,
+    "logs_contain": [
+      "analytics_count:blocklist",
+      "analytics_count:geoip",
+      "analytics_count:failed_login_hotspot"
+    ],
+    "error_expected": false
+  }
+}
