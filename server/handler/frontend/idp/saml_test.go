@@ -425,7 +425,6 @@ func TestRouteSLOInboundMessage(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -799,7 +798,6 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_FieldValidation(t *tes
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			request := baseRequest()
@@ -931,7 +929,6 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_RegistryAndReplay(t *t
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
@@ -1055,7 +1052,6 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect(t *testing.T
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
@@ -1150,7 +1146,6 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_POST(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/saml/slo", strings.NewReader(tc.body))

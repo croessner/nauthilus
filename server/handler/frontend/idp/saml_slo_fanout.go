@@ -492,10 +492,7 @@ func (h *SAMLHandler) newBackChannelSLOHTTPClient(requestTimeout time.Duration) 
 		requestTimeout = 3 * time.Second
 	}
 
-	tlsHandshakeTimeout := requestTimeout / 2
-	if tlsHandshakeTimeout < time.Second {
-		tlsHandshakeTimeout = time.Second
-	}
+	tlsHandshakeTimeout := max(requestTimeout/2, time.Second)
 
 	return &http.Client{
 		Transport: &http.Transport{

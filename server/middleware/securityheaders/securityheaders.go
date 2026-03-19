@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -179,13 +180,7 @@ func normalizeDirective(fields []string) []string {
 		return fields
 	}
 
-	hasUnsafeInline := false
-	for _, source := range fields[1:] {
-		if source == "'unsafe-inline'" {
-			hasUnsafeInline = true
-			break
-		}
-	}
+	hasUnsafeInline := slices.Contains(fields[1:], "'unsafe-inline'")
 
 	if !hasUnsafeInline {
 		return fields

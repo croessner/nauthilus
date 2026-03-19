@@ -681,7 +681,7 @@ func rawQueryParameterStrictSLO(rawQuery, key string) (string, bool, error) {
 	found := false
 	value := ""
 
-	for _, part := range strings.Split(rawQuery, "&") {
+	for part := range strings.SplitSeq(rawQuery, "&") {
 		if part == "" {
 			continue
 		}

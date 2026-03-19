@@ -109,7 +109,6 @@ func TestNewSLOFanoutTransactionState(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			state, err := newSLOFanoutTransactionState(tc.transaction, tc.result, now)
@@ -169,7 +168,6 @@ func TestAggregateSLOFanoutTerminalStatus(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			status := aggregateSLOFanoutTerminalStatus(tc.successCount, tc.failureCount)

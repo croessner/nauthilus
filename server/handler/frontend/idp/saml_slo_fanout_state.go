@@ -144,10 +144,7 @@ func newSLOFanoutTransactionState(
 		state.Pending[requestID] = dispatch.Participant
 	}
 
-	preSuccessCount := len(transaction.Participants) - len(result.Dispatches)
-	if preSuccessCount < 0 {
-		preSuccessCount = 0
-	}
+	preSuccessCount := max(len(transaction.Participants)-len(result.Dispatches), 0)
 
 	state.PreSuccessCount = preSuccessCount
 	state.PreFailureCount = len(result.Failures)

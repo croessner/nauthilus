@@ -100,7 +100,6 @@ func TestSAMLHandler_validateInboundLogoutResponseSignature_Redirect(t *testing.
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
@@ -196,7 +195,6 @@ func TestSAMLHandler_validateInboundLogoutResponseProtocol_FieldValidation(t *te
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			response := baseResponse()
@@ -294,7 +292,6 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()

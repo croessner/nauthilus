@@ -68,7 +68,6 @@ func TestDecodeLogoutRequestXML(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			decoded, err := decodeLogoutRequestXML(tc.binding, tc.payload)
@@ -189,7 +188,6 @@ func TestRawQueryParameterStrictSLO(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			value, found, err := rawQueryParameterStrictSLO(tc.rawQuery, tc.key)
