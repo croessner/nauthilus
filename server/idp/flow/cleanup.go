@@ -43,6 +43,7 @@ var idPFlowStateKeys = [...]string{
 	definitions.SessionKeyIdPOriginalURL,
 	definitions.SessionKeyRequireMFAFlow,
 	definitions.SessionKeyRequireMFAPending,
+	definitions.SessionKeyRequireMFAParentFlowID,
 }
 
 var mfaStateKeys = [...]string{

@@ -25,6 +25,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -40,6 +42,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	slodomain "github.com/croessner/nauthilus/server/idp/slo"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
@@ -525,6 +528,100 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		assert.Equal(t, http.StatusFound, w.Code)
 		assert.Equal(t, "https://custom-logout.com", w.Header().Get("Location"))
 	})
+
+	t.Run("Logout with front-channel task renders orchestration page", func(t *testing.T) {
+		clientWithFrontChannel := config.OIDCClient{
+			ClientID:               "frontchannel-client",
+			FrontChannelLogoutURI:  "https://frontchannel.example.com/logout",
+			PostLogoutRedirectURIs: []string{"https://app.com/post-logout"},
+		}
+		cfg.clients = append(cfg.clients, clientWithFrontChannel)
+
+		w := httptest.NewRecorder()
+		r := gin.New()
+		r.SetHTMLTemplate(template.Must(template.New("idp_logout_frames.html").Parse("{{ .LogoutTarget }}|{{ .FrontChannelLogoutTaskConfig }}")))
+		r.GET("/logout", func(c *gin.Context) {
+			mgr := &mockCookieManager{data: map[string]any{
+				definitions.SessionKeyOIDCClients: "frontchannel-client",
+			}}
+			c.Set(definitions.CtxSecureDataKey, mgr)
+			h.Logout(c)
+		})
+
+		idToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
+			ClientID: "frontchannel-client",
+			UserID:   "user-front",
+			Scopes:   []string{definitions.ScopeOpenId},
+			AuthTime: time.Now(),
+		})
+
+		userKey := "test:oidc:user_refresh_tokens:user-front"
+		mock.ExpectSMembers(userKey).SetVal([]string{})
+
+		req, _ := http.NewRequest(
+			http.MethodGet,
+			"/logout?id_token_hint="+url.QueryEscape(idToken)+"&post_logout_redirect_uri="+url.QueryEscape("https://app.com/post-logout")+"&state=s-1",
+			nil,
+		)
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "https://app.com/post-logout?state=s-1")
+		assert.Contains(t, w.Body.String(), "frontchannel.example.com/logout")
+		assert.Contains(t, w.Body.String(), "\"protocol\":\"oidc\"")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestBuildSAMLFrontChannelLogoutTasks(t *testing.T) {
+	postBody := "<html><body><form id=\"SAMLRequestForm\"></form></body></html>"
+	result := &sloFanoutResult{
+		Dispatches: []sloFanoutDispatch{
+			{
+				Participant: slodomain.SLOParticipant{
+					EntityID: "https://sp-a.example.com/metadata",
+				},
+				RedirectURL: "https://sp-a.example.com/saml/slo?SAMLRequest=req-a",
+			},
+			{
+				Participant: slodomain.SLOParticipant{
+					EntityID: "https://sp-b.example.com/metadata",
+				},
+				PostBody: postBody,
+			},
+		},
+		Failures: []sloFanoutFailure{
+			{
+				EntityID: "https://sp-c.example.com/metadata",
+				Err:      fmt.Errorf("missing endpoint"),
+			},
+		},
+	}
+
+	tasks := buildSAMLFrontChannelLogoutTasks(result)
+	if assert.Len(t, tasks, 3) {
+		assert.Equal(t, frontChannelLogoutTaskProtocolSAML, tasks[0].Protocol)
+		assert.Equal(t, frontChannelLogoutTaskMethodGET, tasks[0].Method)
+		assert.Equal(t, "https://sp-a.example.com/saml/slo?SAMLRequest=req-a", tasks[0].URL)
+
+		assert.Equal(t, frontChannelLogoutTaskMethodPOST, tasks[1].Method)
+		rawPayload, err := base64.StdEncoding.DecodeString(tasks[1].PayloadBase64)
+		if assert.NoError(t, err) {
+			assert.Equal(t, postBody, string(rawPayload))
+		}
+
+		assert.Equal(t, frontChannelLogoutTaskMethodNone, tasks[2].Method)
+		assert.Equal(t, frontChannelLogoutTaskStatusError, tasks[2].InitialStatus)
+		assert.Contains(t, tasks[2].InitialDetail, "missing endpoint")
+	}
+}
+
+func TestAppendStateToLogoutTarget(t *testing.T) {
+	assert.Equal(t, "https://app.example.com/logout?state=abc", appendStateToLogoutTarget("https://app.example.com/logout", "abc"))
+	assert.Equal(t, "https://app.example.com/logout?foo=bar&state=abc", appendStateToLogoutTarget("https://app.example.com/logout?foo=bar", "abc"))
+	assert.Equal(t, "/logged_out?state=abc", appendStateToLogoutTarget("/logged_out", "abc"))
+	assert.Equal(t, "not a url", appendStateToLogoutTarget("not a url", "abc"))
+	assert.Equal(t, "https://app.example.com/logout", appendStateToLogoutTarget("https://app.example.com/logout", ""))
 }
 
 func Test_oidcAuthorizeFlowContext_HasClientConsent(t *testing.T) {
@@ -653,6 +750,7 @@ func Test_cleanupIdPFlowState(t *testing.T) {
 		definitions.SessionKeyIdPSAMLRelayState,
 		definitions.SessionKeyIdPSAMLEntityID,
 		definitions.SessionKeyIdPOriginalURL,
+		definitions.SessionKeyRequireMFAParentFlowID,
 	}
 
 	t.Run("removes all IdP flow state keys including OIDC and SAML", func(t *testing.T) {
@@ -669,10 +767,11 @@ func Test_cleanupIdPFlowState(t *testing.T) {
 			definitions.SessionKeyIdPResponseType: "code",
 			definitions.SessionKeyIdPPrompt:       "consent",
 			// SAML keys
-			definitions.SessionKeyIdPSAMLRequest:    "<saml-request>",
-			definitions.SessionKeyIdPSAMLRelayState: "relay-state",
-			definitions.SessionKeyIdPSAMLEntityID:   "https://sp.example.com",
-			definitions.SessionKeyIdPOriginalURL:    "/saml/sso?SAMLRequest=abc",
+			definitions.SessionKeyIdPSAMLRequest:         "<saml-request>",
+			definitions.SessionKeyIdPSAMLRelayState:      "relay-state",
+			definitions.SessionKeyIdPSAMLEntityID:        "https://sp.example.com",
+			definitions.SessionKeyIdPOriginalURL:         "/saml/sso?SAMLRequest=abc",
+			definitions.SessionKeyRequireMFAParentFlowID: "flow-parent",
 			// Non-flow keys (must survive)
 			definitions.SessionKeyAccount:     "user@example.com",
 			definitions.SessionKeyOIDCClients: "my-app",

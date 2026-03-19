@@ -52,6 +52,221 @@
         return typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//');
     }
 
+    function isSafeAbsoluteRedirect(redirect) {
+        if (typeof redirect !== 'string' || redirect.startsWith('//')) {
+            return false;
+        }
+
+        try {
+            const parsed = new URL(redirect);
+            return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+        } catch {
+            return false;
+        }
+    }
+
+    function resolveLogoutTarget(config) {
+        const rawTarget = (config.getAttribute('data-logout-target') || '').trim();
+        if (isSafeRelativeRedirect(rawTarget) || isSafeAbsoluteRedirect(rawTarget)) {
+            return rawTarget;
+        }
+
+        return '/logged_out';
+    }
+
+    function parsePositiveInteger(value, fallback) {
+        const parsed = Number.parseInt(value || '', 10);
+        if (Number.isNaN(parsed) || parsed < 0) {
+            return fallback;
+        }
+
+        return parsed;
+    }
+
+    function parseLogoutTasks(config) {
+        const raw = config.getAttribute('data-logout-tasks');
+        if (!raw) {
+            return [];
+        }
+
+        try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function logoutStateLabels(config) {
+        return {
+            pending: config.getAttribute('data-logout-status-pending') || 'Pending',
+            running: config.getAttribute('data-logout-status-running') || 'Running',
+            success: config.getAttribute('data-logout-status-success') || 'Success',
+            timeout: config.getAttribute('data-logout-status-timeout') || 'Timeout',
+            error: config.getAttribute('data-logout-status-error') || 'Error',
+            skipped: config.getAttribute('data-logout-status-skipped') || 'Skipped',
+            retrying: config.getAttribute('data-logout-retrying-text') || 'Retrying',
+            attempt: config.getAttribute('data-logout-attempt-text') || 'Attempt',
+            summaryDone: config.getAttribute('data-logout-summary-done') || 'Logout completed successfully.',
+            summaryPartial: config.getAttribute('data-logout-summary-partial') || 'Logout completed with partial failures.',
+        };
+    }
+
+    function statusClassForLogout(state) {
+        switch (state) {
+            case 'running':
+                return 'badge-info';
+            case 'success':
+                return 'badge-success';
+            case 'timeout':
+                return 'badge-warning';
+            case 'error':
+                return 'badge-error';
+            case 'skipped':
+                return 'badge-ghost';
+            default:
+                return 'badge-neutral';
+        }
+    }
+
+    function stateLabelForLogout(state, labels) {
+        switch (state) {
+            case 'running':
+                return labels.running;
+            case 'success':
+                return labels.success;
+            case 'timeout':
+                return labels.timeout;
+            case 'error':
+                return labels.error;
+            case 'skipped':
+                return labels.skipped;
+            default:
+                return labels.pending;
+        }
+    }
+
+    function setLogoutStatus(node, state, detail, labels) {
+        if (!node) {
+            return;
+        }
+
+        const badge = node.querySelector('[data-logout-status-badge]');
+        const detailNode = node.querySelector('[data-logout-status-detail]');
+
+        if (badge) {
+            badge.className = `badge ${statusClassForLogout(state)}`;
+            badge.textContent = stateLabelForLogout(state, labels);
+        }
+
+        if (detailNode) {
+            detailNode.textContent = detail || '';
+            detailNode.classList.toggle('hidden', !detail);
+        }
+    }
+
+    function makeLogoutStatusNode(task, labels) {
+        const item = document.createElement('li');
+        item.className = 'flex items-center justify-between gap-2 bg-base-100 rounded px-3 py-2';
+        item.setAttribute('data-logout-task-id', task.id || '');
+
+        const title = document.createElement('span');
+        title.className = 'text-sm truncate';
+        title.textContent = task.display_name || task.id || 'task';
+
+        const badge = document.createElement('span');
+        badge.setAttribute('data-logout-status-badge', '1');
+        badge.className = `badge ${statusClassForLogout('pending')}`;
+        badge.textContent = labels.pending;
+
+        const detail = document.createElement('p');
+        detail.setAttribute('data-logout-status-detail', '1');
+        detail.className = 'text-xs opacity-70 mt-1 hidden';
+
+        const left = document.createElement('div');
+        left.className = 'min-w-0';
+        left.appendChild(title);
+        left.appendChild(detail);
+
+        item.appendChild(left);
+        item.appendChild(badge);
+
+        return item;
+    }
+
+    function withRetryHint(urlValue, attempt) {
+        if (attempt <= 1) {
+            return urlValue;
+        }
+
+        try {
+            const parsed = new URL(urlValue, window.location.origin);
+            parsed.searchParams.set('_nauthilus_retry', String(attempt));
+            return parsed.toString();
+        } catch {
+            return urlValue;
+        }
+    }
+
+    function executeLogoutTaskAttempt(task, timeoutMs, attempt) {
+        return new Promise((resolve) => {
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.style.width = '0';
+            iframe.style.height = '0';
+            iframe.style.border = '0';
+
+            let settled = false;
+            let loadEvents = 0;
+            const expectsDoubleLoad = task.method === 'POST';
+
+            const timer = window.setTimeout(() => {
+                finalize('timeout', `request timed out after ${timeoutMs}ms`);
+            }, timeoutMs);
+
+            function finalize(state, detail) {
+                if (settled) {
+                    return;
+                }
+
+                settled = true;
+                window.clearTimeout(timer);
+                iframe.remove();
+                resolve({state, detail});
+            }
+
+            iframe.onload = () => {
+                loadEvents += 1;
+                if (expectsDoubleLoad && loadEvents < 2) {
+                    return;
+                }
+
+                finalize('success', '');
+            };
+
+            iframe.onerror = () => finalize('error', 'iframe load failed');
+
+            document.body.appendChild(iframe);
+
+            if (task.method === 'GET' && task.url) {
+                iframe.src = withRetryHint(task.url, attempt);
+                return;
+            }
+
+            if (task.method === 'POST' && task.payload_base64) {
+                try {
+                    iframe.srcdoc = atob(task.payload_base64);
+                } catch {
+                    finalize('error', 'invalid POST payload');
+                }
+
+                return;
+            }
+
+            finalize('error', 'unsupported front-channel task');
+        });
+    }
+
     function getWebAuthnUIElements() {
         return {
             statusDiv: document.getElementById('webauthn-status'),
@@ -270,6 +485,45 @@
         qrcodeTarget.setAttribute('data-qrcode-initialized', '1');
     }
 
+    async function runLogoutTask(task, maxRetries, timeoutMs, labels, statusNode) {
+        if (task.initial_status === 'error') {
+            setLogoutStatus(statusNode, 'error', task.initial_detail || 'task initialization failed', labels);
+            return 'error';
+        }
+
+        if (task.method === 'NONE') {
+            const state = task.initial_status === 'skipped' ? 'skipped' : 'error';
+            setLogoutStatus(statusNode, state, task.initial_detail || 'task skipped', labels);
+            return state;
+        }
+
+        setLogoutStatus(statusNode, 'running', '', labels);
+
+        for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+            const result = await executeLogoutTaskAttempt(task, timeoutMs, attempt);
+            if (result.state === 'success') {
+                setLogoutStatus(statusNode, 'success', '', labels);
+                return 'success';
+            }
+
+            if (attempt <= maxRetries) {
+                setLogoutStatus(
+                    statusNode,
+                    'running',
+                    `${labels.retrying} (${labels.attempt} ${attempt + 1}/${maxRetries + 1})`,
+                    labels,
+                );
+                continue;
+            }
+
+            setLogoutStatus(statusNode, result.state, result.detail, labels);
+            return result.state;
+        }
+
+        setLogoutStatus(statusNode, 'error', 'unexpected orchestration state', labels);
+        return 'error';
+    }
+
     function initLogoutRedirect() {
         const config = document.getElementById('logout-config');
         if (!config || config.getAttribute('data-logout-initialized') === '1') {
@@ -278,14 +532,86 @@
 
         config.setAttribute('data-logout-initialized', '1');
 
-        setTimeout(() => {
-            let target = config.getAttribute('data-logout-target') || '/logged_out';
-            if (!isSafeRelativeRedirect(target)) {
-                target = '/logged_out';
+        const target = resolveLogoutTarget(config);
+        const tasks = parseLogoutTasks(config);
+        const labels = logoutStateLabels(config);
+        const timeoutMs = parsePositiveInteger(config.getAttribute('data-logout-timeout-ms'), 4000);
+        const maxRetries = parsePositiveInteger(config.getAttribute('data-logout-max-retries'), 1);
+        const redirectDelayMs = parsePositiveInteger(config.getAttribute('data-logout-redirect-delay-ms'), 1500);
+        const statusList = document.getElementById('logout-status-list');
+        const progressBar = document.getElementById('logout-progress-bar');
+        const progressCount = document.getElementById('logout-progress-count');
+        const summary = document.getElementById('logout-summary');
+
+        if (!Array.isArray(tasks) || tasks.length === 0) {
+            window.setTimeout(() => {
+                window.location.href = target;
+            }, redirectDelayMs);
+
+            return;
+        }
+
+        const statusNodes = new Map();
+        let completed = 0;
+        let failures = 0;
+
+        if (statusList) {
+            statusList.innerHTML = '';
+            tasks.forEach((task) => {
+                const node = makeLogoutStatusNode(task, labels);
+                statusList.appendChild(node);
+                statusNodes.set(task.id, node);
+            });
+        }
+
+        function updateProgress() {
+            if (progressBar) {
+                progressBar.max = tasks.length;
+                progressBar.value = completed;
             }
 
-            window.location.href = target;
-        }, 2000);
+            if (progressCount) {
+                progressCount.textContent = `${completed} / ${tasks.length}`;
+            }
+        }
+
+        updateProgress();
+
+        (async () => {
+            for (const task of tasks) {
+                const statusNode = statusNodes.get(task.id);
+                const state = await runLogoutTask(task, maxRetries, timeoutMs, labels, statusNode);
+                completed += 1;
+                if (state === 'error' || state === 'timeout') {
+                    failures += 1;
+                }
+
+                updateProgress();
+            }
+
+            if (summary) {
+                summary.textContent = failures === 0 ? labels.summaryDone : labels.summaryPartial;
+            }
+
+            window.setTimeout(() => {
+                window.location.href = target;
+            }, redirectDelayMs);
+        })();
+    }
+
+    function initSAMLPostBinding() {
+        const form = document.getElementById('SAMLResponseForm');
+        if (!form || form.getAttribute('data-saml-autosubmit-initialized') === '1') {
+            return;
+        }
+
+        form.setAttribute('data-saml-autosubmit-initialized', '1');
+
+        if (form.getAttribute('data-autosubmit') === '0') {
+            return;
+        }
+
+        form.submit();
     }
 
     function initDevHtmxLogging() {
@@ -616,12 +942,14 @@
     document.addEventListener('htmx:afterSwap', () => {
         initTotpQRCode();
         initLogoutRedirect();
+        initSAMLPostBinding();
         initDevHtmxLogging();
     });
 
     document.addEventListener('DOMContentLoaded', () => {
         initTotpQRCode();
         initLogoutRedirect();
+        initSAMLPostBinding();
         initDevHtmxLogging();
     });
 

@@ -40,6 +40,7 @@ import (
 	"github.com/croessner/nauthilus/server/idp/clientauth"
 	"github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/idp/signing"
+	slodomain "github.com/croessner/nauthilus/server/idp/slo"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
@@ -76,6 +77,31 @@ type OIDCHandler struct {
 	userCodeGen idp.UserCodeGenerator
 	frontend    *FrontendHandler
 	tracer      monittrace.Tracer
+}
+
+const (
+	frontChannelLogoutTaskProtocolOIDC = "oidc"
+	frontChannelLogoutTaskProtocolSAML = "saml"
+	frontChannelLogoutTaskMethodGET    = "GET"
+	frontChannelLogoutTaskMethodPOST   = "POST"
+	frontChannelLogoutTaskMethodNone   = "NONE"
+	frontChannelLogoutTaskStatusError  = "error"
+	frontChannelLogoutTaskStatusSkip   = "skipped"
+
+	frontChannelLogoutTimeout       = 4 * time.Second
+	frontChannelLogoutMaxRetries    = 1
+	frontChannelLogoutRedirectDelay = 1500 * time.Millisecond
+)
+
+type frontChannelLogoutTask struct {
+	ID            string `json:"id"`
+	DisplayName   string `json:"display_name"`
+	Protocol      string `json:"protocol"`
+	Method        string `json:"method"`
+	URL           string `json:"url,omitzero"`
+	PayloadBase64 string `json:"payload_base64,omitzero"`
+	InitialStatus string `json:"initial_status,omitzero"`
+	InitialDetail string `json:"initial_detail,omitzero"`
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
@@ -728,6 +754,197 @@ func (h *OIDCHandler) calculateLogoutTarget(client *config.OIDCClient, sessionCl
 	return "/logged_out"
 }
 
+func appendStateToLogoutTarget(target, state string) string {
+	target = strings.TrimSpace(target)
+	state = strings.TrimSpace(state)
+	if target == "" || state == "" {
+		return target
+	}
+
+	parsedTarget, err := url.Parse(target)
+	if err != nil {
+		return target
+	}
+
+	query := parsedTarget.Query()
+	query.Set("state", state)
+	parsedTarget.RawQuery = query.Encode()
+
+	return parsedTarget.String()
+}
+
+func encodeFrontChannelLogoutTasks(tasks []frontChannelLogoutTask) string {
+	rawTasks, err := json.Marshal(tasks)
+	if err != nil {
+		return "[]"
+	}
+
+	return string(rawTasks)
+}
+
+func buildSAMLFrontChannelLogoutTasks(result *sloFanoutResult) []frontChannelLogoutTask {
+	if result == nil {
+		return nil
+	}
+
+	tasks := make([]frontChannelLogoutTask, 0, len(result.Dispatches)+len(result.Failures))
+
+	for index, dispatch := range result.Dispatches {
+		task := frontChannelLogoutTask{
+			ID:          fmt.Sprintf("saml-%d", index+1),
+			DisplayName: strings.TrimSpace(dispatch.Participant.EntityID),
+			Protocol:    frontChannelLogoutTaskProtocolSAML,
+		}
+
+		if task.DisplayName == "" {
+			task.DisplayName = fmt.Sprintf("saml-participant-%d", index+1)
+		}
+
+		switch {
+		case dispatch.RedirectURL != "":
+			task.Method = frontChannelLogoutTaskMethodGET
+			task.URL = dispatch.RedirectURL
+		case dispatch.PostBody != "":
+			task.Method = frontChannelLogoutTaskMethodPOST
+			task.PayloadBase64 = base64.StdEncoding.EncodeToString([]byte(dispatch.PostBody))
+		default:
+			task.Method = frontChannelLogoutTaskMethodNone
+			task.InitialStatus = frontChannelLogoutTaskStatusError
+			task.InitialDetail = "missing front-channel payload"
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	offset := len(tasks)
+
+	for index, failure := range result.Failures {
+		entityID := strings.TrimSpace(failure.EntityID)
+		if entityID == "" {
+			entityID = fmt.Sprintf("saml-participant-failed-%d", index+1)
+		}
+
+		task := frontChannelLogoutTask{
+			ID:            fmt.Sprintf("saml-%d", offset+index+1),
+			DisplayName:   entityID,
+			Protocol:      frontChannelLogoutTaskProtocolSAML,
+			Method:        frontChannelLogoutTaskMethodNone,
+			InitialStatus: frontChannelLogoutTaskStatusError,
+			InitialDetail: "fanout planning failed",
+		}
+		if failure.Err != nil {
+			task.InitialDetail = failure.Err.Error()
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	return tasks
+}
+
+func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account string) []frontChannelLogoutTask {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return nil
+	}
+
+	samlHandler := NewSAMLHandler(h.deps, h.idp)
+	if !samlHandler.sloEnabled() {
+		_ = samlHandler.deleteSLOParticipantSessionsByAccount(ctx, account)
+
+		return nil
+	}
+
+	sloTransaction, err := samlHandler.newIDPInitiatedSLOTransaction(account, slodomain.SLOBindingRedirect)
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx,
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyMsg, "Failed to initialize SAML SLO fanout transaction",
+			"account", util.WithNotAvailable(account),
+			"error", err.Error(),
+		)
+
+		return nil
+	}
+
+	if err = sloTransaction.TransitionTo(slodomain.SLOStatusLocalDone, time.Now().UTC()); err != nil {
+		util.DebugModuleWithCfg(
+			ctx,
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyMsg, "Failed to transition SAML SLO fanout transaction to local_done",
+			"transaction_id", sloTransaction.TransactionID,
+			"error", err.Error(),
+		)
+
+		return nil
+	}
+
+	result, err := samlHandler.orchestrateIDPInitiatedSLOFanout(ctx, sloTransaction, account)
+
+	if err == nil {
+		if stateErr := samlHandler.storeSLOFanoutTransactionState(ctx, sloTransaction, result); stateErr != nil {
+			util.DebugModuleWithCfg(
+				ctx,
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyMsg, "Failed to persist SAML SLO fanout transaction state",
+				"transaction_id", sloTransaction.TransactionID,
+				"error", stateErr.Error(),
+			)
+
+			return nil
+		}
+	}
+
+	if cleanupErr := samlHandler.deleteSLOParticipantSessionsByAccount(ctx, account); cleanupErr != nil {
+		util.DebugModuleWithCfg(
+			ctx,
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyMsg, "Failed to cleanup SAML SLO participant sessions after fanout planning",
+			"transaction_id", sloTransaction.TransactionID,
+			"account", util.WithNotAvailable(account),
+			"error", cleanupErr.Error(),
+		)
+	}
+
+	if err != nil {
+		util.DebugModuleWithCfg(
+			ctx,
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyMsg, "Failed to orchestrate SAML SLO fanout",
+			"transaction_id", sloTransaction.TransactionID,
+			"error", err.Error(),
+		)
+
+		return nil
+	}
+
+	util.DebugModuleWithCfg(
+		ctx,
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyMsg, "Prepared SAML SLO fanout requests",
+		"transaction_id", sloTransaction.TransactionID,
+		"transaction_status", sloTransaction.Status,
+		"participants_total", len(result.Dispatches)+len(result.Failures),
+		"participants_planned", len(result.Dispatches),
+		"participants_failed", len(result.Failures),
+	)
+
+	return buildSAMLFrontChannelLogoutTasks(result)
+}
+
 // Logout handles the OIDC logout request.
 func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.logout")
@@ -788,7 +1005,7 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 		clientIDs = strings.Split(oidcClients, ",")
 	}
 
-	var frontChannelURIs []string
+	frontChannelTasks := make([]frontChannelLogoutTask, 0)
 
 	for _, cid := range clientIDs {
 		c, ok := h.idp.FindClient(cid)
@@ -803,41 +1020,66 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 
 		// Front-channel logout
 		if c.FrontChannelLogoutURI != "" {
-			uri := c.FrontChannelLogoutURI
-			// In a real implementation, we could add sid here if required
-			frontChannelURIs = append(frontChannelURIs, uri)
-		}
-	}
+			parsedURI, parseErr := parseAbsoluteURL(c.FrontChannelLogoutURI)
+			if parseErr != nil {
+				util.DebugModuleWithCfg(
+					ctx.Request.Context(),
+					h.deps.Cfg,
+					h.deps.Logger,
+					definitions.DbgIdp,
+					definitions.LogKeyMsg, "Skipping invalid OIDC front-channel logout URI",
+					"client_id", util.WithNotAvailable(cid),
+					"uri", util.WithNotAvailable(c.FrontChannelLogoutURI),
+					"error", parseErr.Error(),
+				)
 
-	// Redirect or show logout page
-	if client != nil && postLogoutRedirectURI != "" {
-		if h.idp.ValidatePostLogoutRedirectURI(client, postLogoutRedirectURI) {
-			target := postLogoutRedirectURI
-
-			if state != "" {
-				if strings.Contains(target, "?") {
-					target += "&state=" + url.QueryEscape(state)
-				} else {
-					target += "?state=" + url.QueryEscape(state)
-				}
+				continue
 			}
 
-			core.SessionCleaner(ctx)
-			core.ClearBrowserCookies(ctx)
-
-			ctx.Redirect(http.StatusFound, target)
-
-			return
+			// In a real implementation, we could add sid here if required.
+			frontChannelTasks = append(frontChannelTasks, frontChannelLogoutTask{
+				ID:          fmt.Sprintf("oidc-%d", len(frontChannelTasks)+1),
+				DisplayName: cid,
+				Protocol:    frontChannelLogoutTaskProtocolOIDC,
+				Method:      frontChannelLogoutTaskMethodGET,
+				URL:         parsedURI.String(),
+			})
 		}
 	}
 
-	if len(frontChannelURIs) > 0 {
+	frontChannelTasks = append(frontChannelTasks, h.samlFrontChannelLogoutTasks(ctx.Request.Context(), account)...)
+	logoutTarget := h.calculateLogoutTarget(client, clientIDs)
+
+	if client != nil && postLogoutRedirectURI != "" {
+		if h.idp.ValidatePostLogoutRedirectURI(client, postLogoutRedirectURI) {
+			logoutTarget = appendStateToLogoutTarget(postLogoutRedirectURI, state)
+		}
+	}
+
+	if len(frontChannelTasks) > 0 {
 		data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
 		data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
 		data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
-		data["FrontChannelLogoutURIs"] = frontChannelURIs
-		data["LogoutTarget"] = h.calculateLogoutTarget(client, clientIDs)
+		data["FrontChannelLogoutTasks"] = frontChannelTasks
+		data["FrontChannelLogoutTaskConfig"] = encodeFrontChannelLogoutTasks(frontChannelTasks)
+		data["FrontChannelLogoutTimeoutMS"] = int(frontChannelLogoutTimeout / time.Millisecond)
+		data["FrontChannelLogoutMaxRetries"] = frontChannelLogoutMaxRetries
+		data["FrontChannelLogoutRedirectDelayMS"] = int(frontChannelLogoutRedirectDelay / time.Millisecond)
+		data["LogoutTarget"] = logoutTarget
+		data["LogoutProgress"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout progress")
+		data["LogoutStatusPerApplication"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout status per application")
+		data["LogoutSummaryPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout is in progress.")
+		data["LogoutSummaryDone"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed successfully.")
+		data["LogoutSummaryPartial"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed with partial failures.")
+		data["LogoutStatusPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Pending")
+		data["LogoutStatusRunning"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Running")
+		data["LogoutStatusSuccess"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Success")
+		data["LogoutStatusTimeout"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Timeout")
+		data["LogoutStatusError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
+		data["LogoutStatusSkipped"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Skipped")
+		data["LogoutRetrying"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Retrying")
+		data["LogoutAttempt"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Attempt")
 
 		core.SessionCleaner(ctx)
 		core.ClearBrowserCookies(ctx)
@@ -850,7 +1092,7 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	core.SessionCleaner(ctx)
 	core.ClearBrowserCookies(ctx)
 
-	ctx.Redirect(http.StatusFound, h.calculateLogoutTarget(client, clientIDs))
+	ctx.Redirect(http.StatusFound, logoutTarget)
 }
 
 func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {

@@ -150,6 +150,7 @@ func (h *DevUIHandler) Index(ctx *gin.Context) {
 		{Method: "GET", Path: "/logged_out", Template: "idp_logged_out.html"},
 		{Method: "GET", Path: "/oidc/consent", Template: "idp_consent.html"},
 		{Method: "GET", Path: "/oidc/logout", Template: "idp_logout_frames.html"},
+		{Method: "GET", Path: "/saml/sso", Template: "idp_saml_post.html"},
 		{Method: "GET", Path: "/error", Template: "idp_error_modal.html"},
 		{Method: "GET/POST", Path: "/oidc/device/verify", Template: "idp_device_verify.html"},
 		{Method: "GET", Path: "/oidc/device/verify/success", Template: "idp_device_verify_success.html"},
@@ -359,8 +360,47 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 
 	data["LoggingOutFromAllApplications"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logging out from all applications...")
 	data["PleaseWaitWhileLogoutProcessIsCompleted"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please wait while the logout process is completed.")
-	data["FrontChannelLogoutURIs"] = []string{"https://app1.example.com/logout", "https://app2.example.com/logout"}
+	data["LogoutProgress"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout progress")
+	data["LogoutStatusPerApplication"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout status per application")
+	data["LogoutSummaryPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout is in progress.")
+	data["LogoutSummaryDone"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed successfully.")
+	data["LogoutSummaryPartial"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout completed with partial failures.")
+	data["LogoutStatusPending"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Pending")
+	data["LogoutStatusRunning"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Running")
+	data["LogoutStatusSuccess"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Success")
+	data["LogoutStatusTimeout"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Timeout")
+	data["LogoutStatusError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Error")
+	data["LogoutStatusSkipped"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Skipped")
+	data["LogoutRetrying"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Retrying")
+	data["LogoutAttempt"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Attempt")
+	data["FrontChannelLogoutTasks"] = []map[string]string{
+		{
+			"id":           "oidc-1",
+			"display_name": "OIDC app 1",
+			"protocol":     "oidc",
+			"method":       "GET",
+			"url":          "https://app1.example.com/logout",
+		},
+		{
+			"id":             "saml-1",
+			"display_name":   "SAML SP 1",
+			"protocol":       "saml",
+			"method":         "POST",
+			"payload_base64": "PGh0bWw+PGJvZHk+U0FNTCBQT1NUIHBheWxvYWQ8L2JvZHk+PC9odG1sPg==",
+		},
+	}
+	data["FrontChannelLogoutTaskConfig"] = `[{"id":"oidc-1","display_name":"OIDC app 1","protocol":"oidc","method":"GET","url":"https://app1.example.com/logout"},{"id":"saml-1","display_name":"SAML SP 1","protocol":"saml","method":"POST","payload_base64":"PGh0bWw+PGJvZHk+U0FNTCBQT1NUIHBheWxvYWQ8L2JvZHk+PC9odG1sPg=="}]`
+	data["FrontChannelLogoutTimeoutMS"] = 4000
+	data["FrontChannelLogoutMaxRetries"] = 1
+	data["FrontChannelLogoutRedirectDelayMS"] = 1500
 	data["LogoutTarget"] = "/logged_out"
+	data["SAMLPostTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Signing you in")
+	data["SAMLPostMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "You are being redirected to the application.")
+	data["SAMLPostHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "If this does not happen automatically, click Continue.")
+	data["SAMLPostURL"] = "https://sp.example.com/saml/acs"
+	data["SAMLResponse"] = "PHNhbWxwOlJlc3BvbnNlPkRldiBwcmV2aWV3PC9zYW1scDpSZXNwb25zZT4="
+	data["RelayState"] = "dev-relay-state"
+	data["AutoSubmitSAMLForm"] = false
 
 	data["NewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "New recovery codes")
 	data["BackupTheseCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Backup these codes!")

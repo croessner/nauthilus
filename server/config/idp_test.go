@@ -139,6 +139,134 @@ func TestSAML2Config_GetCertAndKey(t *testing.T) {
 	})
 }
 
+func TestSAML2Config_SLOSettings(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg := &SAML2Config{}
+
+		assert.True(t, cfg.GetSLOEnabled())
+		assert.True(t, cfg.GetSLOFrontChannelEnabled())
+		assert.False(t, cfg.GetSLOBackChannelEnabled())
+		assert.Equal(t, 3*time.Second, cfg.GetSLORequestTimeout())
+		assert.Equal(t, 64, cfg.GetSLOMaxParticipants())
+		assert.Equal(t, 1, cfg.GetSLOBackChannelMaxRetries())
+	})
+
+	t.Run("nested configured values", func(t *testing.T) {
+		sloEnabled := false
+		frontChannelEnabled := false
+		enabled := true
+		cfg := &SAML2Config{
+			SLO: SAML2SLOConfig{
+				Enabled:               &sloEnabled,
+				FrontChannelEnabled:   &frontChannelEnabled,
+				BackChannelEnabled:    &enabled,
+				RequestTimeout:        7 * time.Second,
+				MaxParticipants:       77,
+				BackChannelMaxRetries: 3,
+			},
+		}
+
+		assert.False(t, cfg.GetSLOEnabled())
+		assert.False(t, cfg.GetSLOFrontChannelEnabled())
+		assert.True(t, cfg.GetSLOBackChannelEnabled())
+		assert.Equal(t, 7*time.Second, cfg.GetSLORequestTimeout())
+		assert.Equal(t, 77, cfg.GetSLOMaxParticipants())
+		assert.Equal(t, 3, cfg.GetSLOBackChannelMaxRetries())
+	})
+
+	t.Run("legacy fallback values", func(t *testing.T) {
+		sloEnabled := false
+		frontChannelEnabled := false
+		backChannelEnabled := true
+		cfg := &SAML2Config{
+			SLOEnabled:               &sloEnabled,
+			SLOFrontChannelEnabled:   &frontChannelEnabled,
+			SLOBackChannelEnabled:    &backChannelEnabled,
+			SLOBackChannelTimeout:    9 * time.Second,
+			SLOBackChannelMaxRetries: 4,
+		}
+
+		assert.False(t, cfg.GetSLOEnabled())
+		assert.False(t, cfg.GetSLOFrontChannelEnabled())
+		assert.True(t, cfg.GetSLOBackChannelEnabled())
+		assert.Equal(t, 9*time.Second, cfg.GetSLORequestTimeout())
+		assert.Equal(t, 4, cfg.GetSLOBackChannelMaxRetries())
+	})
+
+	t.Run("negative retries clamp to zero", func(t *testing.T) {
+		cfg := &SAML2Config{
+			SLO: SAML2SLOConfig{
+				BackChannelMaxRetries: -2,
+			},
+		}
+
+		assert.Equal(t, 0, cfg.GetSLOBackChannelMaxRetries())
+	})
+}
+
+func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
+	t.Run("accepts defaults and zero values", func(t *testing.T) {
+		fileCfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled: true,
+				},
+			},
+		}
+
+		assert.NoError(t, fileCfg.validateIdPSAML2SLOSettings())
+	})
+
+	t.Run("rejects negative nested timeout", func(t *testing.T) {
+		fileCfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled: true,
+					SLO: SAML2SLOConfig{
+						RequestTimeout: -1 * time.Second,
+					},
+				},
+			},
+		}
+
+		err := fileCfg.validateIdPSAML2SLOSettings()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "idp.saml2.slo.request_timeout")
+	})
+
+	t.Run("rejects negative max participants", func(t *testing.T) {
+		fileCfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled: true,
+					SLO: SAML2SLOConfig{
+						MaxParticipants: -5,
+					},
+				},
+			},
+		}
+
+		err := fileCfg.validateIdPSAML2SLOSettings()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "idp.saml2.slo.max_participants")
+	})
+
+	t.Run("rejects negative legacy timeout", func(t *testing.T) {
+		fileCfg := &FileSettings{
+			IdP: &IdPSection{
+				SAML2: SAML2Config{
+					Enabled:               true,
+					SLOBackChannelTimeout: -1 * time.Second,
+				},
+			},
+		}
+
+		err := fileCfg.validateIdPSAML2SLOSettings()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "idp.saml2.slo_back_channel_timeout")
+	})
+}
+
 func TestIdPConfig_Validation(t *testing.T) {
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
