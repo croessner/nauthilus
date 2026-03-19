@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"html"
 	"html/template"
 	"io"
 	"log/slog"
@@ -566,9 +567,10 @@ func TestOIDCHandler_Logout(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), "https://app.com/post-logout?state=s-1")
-		assert.Contains(t, w.Body.String(), "frontchannel.example.com/logout")
-		assert.Contains(t, w.Body.String(), "\"protocol\":\"oidc\"")
+		body := html.UnescapeString(w.Body.String())
+		assert.Contains(t, body, "https://app.com/post-logout?state=s-1")
+		assert.Contains(t, body, "frontchannel.example.com/logout")
+		assert.Contains(t, body, "\"protocol\":\"oidc\"")
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

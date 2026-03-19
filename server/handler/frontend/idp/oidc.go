@@ -761,7 +761,7 @@ func appendStateToLogoutTarget(target, state string) string {
 		return target
 	}
 
-	parsedTarget, err := url.Parse(target)
+	parsedTarget, err := url.ParseRequestURI(target)
 	if err != nil {
 		return target
 	}

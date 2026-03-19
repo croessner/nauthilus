@@ -28,14 +28,14 @@ func TestConcurrentExecUnordered(t *testing.T) {
 
 	const calls = 16
 
-	for i := 0; i < calls; i++ {
+	for i := range calls {
 		mock.ExpectExec("UPDATE users SET enabled = ? WHERE id = ?", true, i).WillReturnResult(1, 0)
 	}
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, calls)
 
-	for i := 0; i < calls; i++ {
+	for i := range calls {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -65,7 +65,7 @@ func TestConcurrentQueueEnqueue(t *testing.T) {
 	const total = 32
 
 	var wg sync.WaitGroup
-	for i := 0; i < total; i++ {
+	for i := range total {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()

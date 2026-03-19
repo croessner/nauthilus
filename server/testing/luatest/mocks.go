@@ -576,7 +576,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			if len(rowsResult.Columns) == 0 && len(rowsResult.Data) > 0 {
 				columnCount := len(rowsResult.Data[0])
 				columns := make([]string, 0, columnCount)
-				for idx := 0; idx < columnCount; idx++ {
+				for idx := range columnCount {
 					columns = append(columns, fmt.Sprintf("col_%d", idx+1))
 				}
 				filled := dbmock.NewRows(columns...)
@@ -644,7 +644,7 @@ func LoaderModDBMock(mockData *DBMock) lua.LGFunction {
 			if len(rowsResult.Columns) == 0 && len(rowsResult.Data) > 0 {
 				columnCount := len(rowsResult.Data[0])
 				columns := make([]string, 0, columnCount)
-				for idx := 0; idx < columnCount; idx++ {
+				for idx := range columnCount {
 					columns = append(columns, fmt.Sprintf("col_%d", idx+1))
 				}
 				filled := dbmock.NewRows(columns...)

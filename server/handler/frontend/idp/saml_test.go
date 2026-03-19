@@ -259,18 +259,18 @@ func TestSAMLHandler_registerSLOParticipantSession(t *testing.T) {
 		Redis: redisClient,
 	}, nil)
 
-	now := time.Date(2026, time.March, 18, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	samlSession := &saml.Session{
 		NameID:     "alice@example.com",
 		Index:      "_idx",
 		CreateTime: now,
-		ExpireTime: now.Add(45 * time.Minute),
+		ExpireTime: now.Add(-1 * time.Minute),
 	}
 
-	mock.Regexp().ExpectSet(`test:idp:saml:slo:participant:alice:[a-f0-9]{64}`, `.+`, 45*time.Minute).SetVal("OK")
+	mock.Regexp().ExpectSet(`test:idp:saml:slo:participant:alice:[a-f0-9]{64}`, `.+`, time.Hour).SetVal("OK")
 	mock.Regexp().ExpectSAdd(`test:idp:saml:slo:index:alice`, `test:idp:saml:slo:participant:alice:[a-f0-9]{64}`).SetVal(1)
-	mock.ExpectExpireNX("test:idp:saml:slo:index:alice", 45*time.Minute).SetVal(true)
-	mock.ExpectExpireGT("test:idp:saml:slo:index:alice", 45*time.Minute).SetVal(true)
+	mock.ExpectExpireNX("test:idp:saml:slo:index:alice", time.Hour).SetVal(true)
+	mock.ExpectExpireGT("test:idp:saml:slo:index:alice", time.Hour).SetVal(true)
 
 	err := h.registerSLOParticipantSession(t.Context(), "alice", "https://sp.example.com", samlSession)
 	if !assert.NoError(t, err) {

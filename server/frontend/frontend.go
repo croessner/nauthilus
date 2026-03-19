@@ -40,7 +40,15 @@ type Language struct {
 
 // GetLocalized is a function that returns the localized message based on the message ID and the context provided.
 func GetLocalized(ctx *gin.Context, cfg config.File, logger *slog.Logger, messageID string) string {
-	localizer := ctx.MustGet(definitions.CtxLocalizedKey).(*i18n.Localizer)
+	localizedValue, found := ctx.Get(definitions.CtxLocalizedKey)
+	if !found {
+		return messageID
+	}
+
+	localizer, ok := localizedValue.(*i18n.Localizer)
+	if !ok || localizer == nil {
+		return messageID
+	}
 
 	localizeConfig := i18n.LocalizeConfig{
 		MessageID: messageID,
