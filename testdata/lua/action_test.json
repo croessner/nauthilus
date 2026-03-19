@@ -1,0 +1,37 @@
+{
+  "context": {
+    "username": "admin@example.com",
+    "password": "AdminPass123!",
+    "client_ip": "10.1.1.1",
+    "service": "imap",
+    "protocol": "plain",
+    "session": "action-test-session",
+    "authenticated": true,
+    "user_found": true,
+    "account": "admin@example.com",
+    "unique_user_id": "uid-admin",
+    "display_name": "Admin User"
+  },
+  "redis": {
+    "responses": {
+      "action:notify": "enabled",
+      "admin:sessions": "3"
+    }
+  },
+  "backend_result": {
+    "authenticated": true,
+    "user_found": true,
+    "account_field": "admin@example.com",
+    "unique_user_id": "uid-admin",
+    "display_name": "Admin User",
+    "attributes": {
+      "role": "administrator",
+      "permissions": "all"
+    }
+  },
+  "expected_output": {
+    "action_result": true,
+    "logs_contain": [],
+    "error_expected": false
+  }
+}

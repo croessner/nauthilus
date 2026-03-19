@@ -1,0 +1,30 @@
+{
+  "context": {
+    "username": "ldapuser@example.com",
+    "password": "LdapPass123!",
+    "client_ip": "192.168.10.15",
+    "service": "imap",
+    "protocol": "plain",
+    "session": "backend-ldap-test-session"
+  },
+  "ldap": {
+    "search_result": {
+      "uid": [
+        "uid-ldap-001"
+      ],
+      "mail": [
+        "ldapuser@example.com"
+      ],
+      "displayName": [
+        "LDAP Test User"
+      ]
+    },
+    "modify_ok": true,
+    "endpoint_host": "ldap.example.internal",
+    "endpoint_port": 389
+  },
+  "expected_output": {
+    "backend_result": true,
+    "error_expected": false
+  }
+}

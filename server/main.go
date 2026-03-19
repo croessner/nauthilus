@@ -17,8 +17,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	stdlog "log"
 	"log/slog"
+	"os"
 
 	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/envfx"
@@ -32,6 +34,7 @@ import (
 	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/svcctx"
+	"github.com/croessner/nauthilus/server/testing/luatest"
 
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
@@ -68,6 +71,13 @@ func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option
 // main is the entry point of the application.
 func main() {
 	bootfx.ParseFlagsAndPrintVersion(version)
+
+	// Check if we're in Lua test mode
+	if bootfx.IsLuaTestMode() {
+		runLuaTest()
+
+		return
+	}
 
 	if err := bootfx.SetupConfiguration(); err != nil {
 		stdlog.Fatalln("unable to load config file:", err)
@@ -118,4 +128,54 @@ func main() {
 	if err := fApp.Stop(stopCtx); err != nil {
 		stdlog.Printf("Unable to stop fx app. Error: %v", err)
 	}
+}
+
+// runLuaTest executes the Lua script test and exits.
+func runLuaTest() {
+	flags := bootfx.GetLuaTestFlags()
+
+	// Validate flags
+	if flags.ScriptPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: --test-lua flag requires a script path")
+		os.Exit(1)
+	}
+
+	if flags.CallbackType == "" {
+		fmt.Fprintln(os.Stderr, "Error: --test-callback flag is required (filter, feature, action, backend, hook)")
+		os.Exit(1)
+	}
+
+	// Validate callback type
+	validCallbacks := map[string]bool{
+		"filter":  true,
+		"feature": true,
+		"action":  true,
+		"backend": true,
+		"hook":    true,
+	}
+
+	if !validCallbacks[flags.CallbackType] {
+		fmt.Fprintf(os.Stderr, "Error: invalid callback type '%s'. Valid types: filter, feature, action, backend, hook\n", flags.CallbackType)
+		os.Exit(1)
+	}
+
+	// Create test runner
+	runner, err := luatest.NewTestRunner(flags.ScriptPath, flags.CallbackType, flags.MockDataPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating test runner: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Run the test
+	result, err := runner.Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error running test: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Print results
+	runner.PrintResult(result)
+
+	// Exit with appropriate code
+	os.Exit(runner.GetExitCode(result))
 }

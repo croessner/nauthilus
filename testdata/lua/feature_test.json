@@ -1,0 +1,35 @@
+{
+  "context": {
+    "username": "suspicious@example.com",
+    "password": "password",
+    "client_ip": "1.2.3.4",
+    "client_port": "12345",
+    "service": "smtp",
+    "protocol": "plain",
+    "session": "feature-test-session",
+    "debug": false,
+    "brute_force_count": 5,
+    "authenticated": true,
+    "user_found": true,
+    "account": "suspicious@example.com"
+  },
+  "redis": {
+    "responses": {
+      "bruteforce:suspicious@example.com": "5",
+      "blocklist:1.2.3.4": "1",
+      "feature:test": "enabled"
+    }
+  },
+  "backend_result": {
+    "authenticated": true,
+    "user_found": true,
+    "account_field": "suspicious@example.com",
+    "unique_user_id": "uid-suspicious",
+    "display_name": "Suspicious User"
+  },
+  "expected_output": {
+    "feature_result": true,
+    "logs_contain": [],
+    "error_expected": false
+  }
+}

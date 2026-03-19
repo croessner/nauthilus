@@ -1,0 +1,40 @@
+{
+  "context": {
+    "username": "backenduser@example.com",
+    "password": "BackendPass456!",
+    "client_ip": "192.168.100.50",
+    "service": "smtp",
+    "protocol": "plain",
+    "session": "backend-test-session",
+    "debug": false,
+    "no_auth": false
+  },
+  "redis": {
+    "responses": {
+      "backend:cache:backenduser@example.com": "{\"cached\":true}",
+      "user:backenduser@example.com:last_login": "2025-03-19T10:00:00Z"
+    }
+  },
+  "backend_result": {
+    "authenticated": true,
+    "user_found": true,
+    "account_field": "backenduser@example.com",
+    "totp_secret": "JBSWY3DPEHPK3PXP",
+    "totp_recovery": [
+      "RECOVERY1",
+      "RECOVERY2"
+    ],
+    "unique_user_id": "uid-backend-123",
+    "display_name": "Backend Test User",
+    "attributes": {
+      "email": "backenduser@example.com",
+      "account_status": "active",
+      "2fa_enabled": "true"
+    }
+  },
+  "expected_output": {
+    "backend_result": true,
+    "logs_contain": [],
+    "error_expected": false
+  }
+}

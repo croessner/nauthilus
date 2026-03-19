@@ -1,0 +1,60 @@
+{
+  "context": {
+    "username": "dbuser@example.com",
+    "password": "DbPass123!",
+    "client_ip": "10.10.20.30",
+    "service": "smtp",
+    "protocol": "plain",
+    "session": "backend-db-test-session"
+  },
+  "db": {
+    "expected_calls": [
+      {
+        "method": "open"
+      },
+      {
+        "method": "exec",
+        "query_contains": "create table test_users"
+      },
+      {
+        "method": "exec",
+        "query_contains": "insert into test_users"
+      },
+      {
+        "method": "query",
+        "query_contains": "select display_name from test_users",
+        "columns": [
+          "display_name"
+        ],
+        "rows": [
+          [
+            "DB Test User Initial"
+          ]
+        ]
+      },
+      {
+        "method": "exec",
+        "query_contains": "update test_users set"
+      },
+      {
+        "method": "query",
+        "query_contains": "select display_name from test_users",
+        "columns": [
+          "display_name"
+        ],
+        "rows": [
+          [
+            "DB Test User Updated"
+          ]
+        ]
+      },
+      {
+        "method": "close"
+      }
+    ]
+  },
+  "expected_output": {
+    "backend_result": true,
+    "error_expected": false
+  }
+}

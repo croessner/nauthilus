@@ -50,6 +50,15 @@ func (w *slogStdWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// LuaTestFlags holds parsed command-line flags for Lua script testing.
+type LuaTestFlags struct {
+	ScriptPath   string
+	CallbackType string
+	MockDataPath string
+}
+
+var luaTestFlags LuaTestFlags
+
 // ParseFlagsAndPrintVersion parses command-line flags, configures viper/config paths,
 // and prints the version information if the `-version` flag is set.
 func ParseFlagsAndPrintVersion(version string) {
@@ -61,7 +70,17 @@ func ParseFlagsAndPrintVersion(version string) {
 	keyBits := flag.Int("key-bits", 4096, "bits for the generated RSA key")
 	certYears := flag.Int("cert-years", 10, "validity in years for the generated certificate")
 
+	// Lua testing flags
+	testLuaScript := flag.String("test-lua", "", "path to Lua script to test")
+	testCallback := flag.String("test-callback", "", "callback type: filter, feature, action, backend")
+	testMockData := flag.String("test-mock", "", "path to JSON file with mock data")
+
 	flag.Parse()
+
+	// Store Lua test flags
+	luaTestFlags.ScriptPath = *testLuaScript
+	luaTestFlags.CallbackType = *testCallback
+	luaTestFlags.MockDataPath = *testMockData
 
 	if *versionFlag {
 		fmt.Println("Version: ", version)
@@ -100,6 +119,16 @@ func ParseFlagsAndPrintVersion(version string) {
 
 	config.ConfigFileType = *configFormatFlag
 	viper.SetConfigType(*configFormatFlag)
+}
+
+// GetLuaTestFlags returns the parsed Lua test flags.
+func GetLuaTestFlags() LuaTestFlags {
+	return luaTestFlags
+}
+
+// IsLuaTestMode returns true if Lua test mode is enabled.
+func IsLuaTestMode() bool {
+	return luaTestFlags.ScriptPath != ""
 }
 
 // SetupConfiguration initializes the environment, loads the configuration file,

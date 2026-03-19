@@ -1,0 +1,30 @@
+{
+  "context": {
+    "username": "hookuser@example.com",
+    "password": "HookPassword789!",
+    "client_ip": "192.168.50.50",
+    "service": "http",
+    "protocol": "https",
+    "session": "hook-test-session-456",
+    "debug": false
+  },
+  "redis": {
+    "responses": {
+      "hook:enabled": "true"
+    }
+  },
+  "http_request": {
+    "method": "GET",
+    "path": "/test-hook",
+    "headers": {
+      "User-Agent": "TestClient/1.0",
+      "Accept": "text/html"
+    },
+    "body": ""
+  },
+  "expected_output": {
+    "action_result": true,
+    "logs_contain": [],
+    "error_expected": false
+  }
+}
