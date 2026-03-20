@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrs "errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -338,8 +339,17 @@ func selectBackendServer(server **string, port **int) lua.LGFunction {
 		serverValue := L.CheckString(1)
 		portValue := L.CheckInt(2)
 
-		*server = &serverValue
-		*port = &portValue
+		if *server != nil {
+			**server = serverValue
+		} else {
+			*server = &serverValue
+		}
+
+		if *port != nil {
+			**port = portValue
+		} else {
+			*port = &portValue
+		}
 
 		return 0
 	}
@@ -531,6 +541,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	// Structure to collect per-filter results
 	type filtResult struct {
 		name            string
+		scriptIdx       int
 		action          bool
 		ret             int
 		err             error
@@ -538,6 +549,9 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		statusText      **string
 		backendResult   *lualib.LuaBackendResult
 		removeAttrsList []string
+		selectedAddress *string
+		selectedPort    *int
+		selectedSet     bool
 	}
 
 	var (
@@ -553,7 +567,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	pstartCtx, pstart := tr.Start(fctx, "filters.parallel.start", attribute.Int("runnable", len(scripts)))
 	_ = pstartCtx
 
-	for _, script := range scripts {
+	for scriptIdx, script := range scripts {
+		idx := scriptIdx
 		sc := script
 		g.Go(func() error {
 			// Per-script span
@@ -594,6 +609,36 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			// Local backend result and remove-attributes that this filter may set
 			localBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
 			localRemoveAttrs := make([]string, 0)
+			var localUsedBackendAddress *string
+			var localUsedBackendPort *int
+
+			if r.UsedBackendAddress != nil {
+				addrValue := *r.UsedBackendAddress
+				localUsedBackendAddress = &addrValue
+			}
+
+			if r.UsedBackendPort != nil {
+				portValue := *r.UsedBackendPort
+				localUsedBackendPort = &portValue
+			}
+
+			localRequest := *r
+			localRequest.UsedBackendAddress = localUsedBackendAddress
+			localRequest.UsedBackendPort = localUsedBackendPort
+			originalBackendAddrPtr := localRequest.UsedBackendAddress
+			originalBackendPortPtr := localRequest.UsedBackendPort
+			originalBackendAddrSet := localRequest.UsedBackendAddress != nil
+			originalBackendPortSet := localRequest.UsedBackendPort != nil
+			originalBackendAddrValue := ""
+			originalBackendPortValue := 0
+
+			if originalBackendAddrSet {
+				originalBackendAddrValue = *localRequest.UsedBackendAddress
+			}
+
+			if originalBackendPortSet {
+				originalBackendPortValue = *localRequest.UsedBackendPort
+			}
 
 			// Environment preparation span
 			envCtx, envSpan := tr.Start(fctx, "filters.env.prepare",
@@ -759,7 +804,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 			envSpan.End()
 
-			fr := &filtResult{name: sc.Name, statusText: &localStatus, backendResult: localBackendResult}
+			fr := &filtResult{name: sc.Name, scriptIdx: idx, statusText: &localStatus, backendResult: localBackendResult}
 
 			// Execute script
 			execCtx, execSpan := tr.Start(fctx, "filters.execute",
@@ -823,6 +868,23 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			fr.logs = *localLogs
 			fr.removeAttrsList = localRemoveAttrs
 
+			selectedChanged := localRequest.UsedBackendAddress != originalBackendAddrPtr || localRequest.UsedBackendPort != originalBackendPortPtr
+			if !selectedChanged {
+				if localRequest.UsedBackendAddress != nil {
+					selectedChanged = !originalBackendAddrSet || *localRequest.UsedBackendAddress != originalBackendAddrValue
+				}
+
+				if !selectedChanged && localRequest.UsedBackendPort != nil {
+					selectedChanged = !originalBackendPortSet || *localRequest.UsedBackendPort != originalBackendPortValue
+				}
+			}
+
+			if selectedChanged {
+				fr.selectedSet = true
+				fr.selectedAddress = localRequest.UsedBackendAddress
+				fr.selectedPort = localRequest.UsedBackendPort
+			}
+
 			// Emit debug log for this filter
 			logs := []any{definitions.LogKeyGUID, r.Session, "name", sc.Name, definitions.LogKeyMsg, "Lua filter finished", "action", fr.action, "result", func() string {
 				if fr.ret == 0 {
@@ -871,6 +933,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	wspan.SetAttributes(attribute.Int("completed", len(results)))
 	wspan.End()
 
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].scriptIdx < results[j].scriptIdx
+	})
+
 	// Aggregate results
 	mctx, mspan := tr.Start(fctx, "filters.merge")
 	_ = mctx
@@ -891,6 +957,12 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 		for _, attr := range fr.removeAttrsList {
 			mergedRemoveAttributes.Set(attr)
+		}
+
+		// Persist selected backend from filters in deterministic script order.
+		if fr.selectedSet {
+			r.UsedBackendAddress = fr.selectedAddress
+			r.UsedBackendPort = fr.selectedPort
 		}
 
 		// Merge per-filter status message and logs via common helper
