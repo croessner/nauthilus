@@ -10,10 +10,13 @@ SBOM_OUTPUT_PREFIX ?= nauthilus
 SBOM_DOCKER_IMAGE ?= ghcr.io/croessner/nauthilus:latest
 SBOM_DOCKER_PULL ?= true
 SBOM_SYFT_VERSION ?= v1.16.0
+PROMPT_SOURCE ?= .junie/guidelines.md
+PROMPT_TARGET ?= AGENTS.md
+GOLANGCI_NEW_FROM_REV ?= HEAD
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
 
@@ -85,3 +88,22 @@ validate-templates: ## Validate Go HTML templates for syntax errors
 
 install-hooks: ## Install Git hooks for development
 	./scripts/install-hooks.sh
+
+sync-prompts: ## Sync Junie prompt guidelines into AGENTS.md
+	@test -f "$(PROMPT_SOURCE)" || { echo "Source file not found: $(PROMPT_SOURCE)"; exit 1; }
+	cp "$(PROMPT_SOURCE)" "$(PROMPT_TARGET)"
+	@echo "Synced $(PROMPT_SOURCE) -> $(PROMPT_TARGET)"
+
+sync-prompts-check: ## Verify that AGENTS.md is in sync with .junie/guidelines.md
+	@test -f "$(PROMPT_SOURCE)" || { echo "Source file not found: $(PROMPT_SOURCE)"; exit 1; }
+	@test -f "$(PROMPT_TARGET)" || { echo "Target file not found: $(PROMPT_TARGET)"; exit 1; }
+	@cmp -s "$(PROMPT_SOURCE)" "$(PROMPT_TARGET)" || { echo "$(PROMPT_TARGET) is out of sync with $(PROMPT_SOURCE). Run: make sync-prompts"; exit 1; }
+	@echo "Prompt files are in sync"
+
+policy-check: ## Validate mandatory policy documents and text markers
+	./scripts/check-policy-docs.sh
+
+guardrails: sync-prompts-check policy-check ## Run mandatory local quality gates
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
+	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
+	go test -short $$(go list ./... | grep -v /vendor/)

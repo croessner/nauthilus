@@ -1,0 +1,75 @@
+name: Guardrails
+
+on:
+  push:
+    branches:
+      - main
+      - features
+      - release/**
+  pull_request:
+    branches:
+      - main
+      - features
+      - release/**
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  GOEXPERIMENT: runtimesecret
+
+jobs:
+  pr-checklist:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate mandatory PR checklist
+        run: |
+          printf '%s\n' "${{ github.event.pull_request.body }}" > /tmp/pr-body.md
+          ./scripts/check-pr-guardrails.sh /tmp/pr-body.md
+
+  quality-gates:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version: 1.26.x
+
+      - name: Enable Go Modules
+        run: go env -w GO111MODULE=on
+
+      - name: Use Vendored Dependencies
+        run: go env -w GOFLAGS=-mod=vendor
+
+      - name: Ensure prompt files are synchronized
+        run: make sync-prompts-check
+
+      - name: Validate policy documents
+        run: make policy-check
+
+      - name: Enforce repro-test policy for changed code
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          ./scripts/check-repro-tests.sh "origin/${{ github.base_ref }}"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          args: --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
+          only-new-issues: true
+
+      - name: Run short unit tests
+        run: go test -short $(go list ./... | grep -v /vendor/)
