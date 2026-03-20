@@ -2225,6 +2225,61 @@ func (f *FileSettings) setDefaultTrustedProxies() error {
 	return nil
 }
 
+// setDefaultAdminUISettings sets defaults for admin UI settings.
+func (f *FileSettings) setDefaultAdminUISettings() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	adminUI := f.GetServer().GetAdminUI()
+
+	if adminUI.BasePath == "" {
+		f.Server.AdminUI.BasePath = "/admin"
+	}
+
+	if adminUI.AuthMode == "" {
+		f.Server.AdminUI.AuthMode = "idp_session"
+	}
+
+	return nil
+}
+
+// validateAdminUI validates cross-field admin UI settings that are not covered by struct tags.
+func (f *FileSettings) validateAdminUI() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	adminUI := f.GetServer().GetAdminUI()
+	if !adminUI.IsEnabled() {
+		return nil
+	}
+
+	authz := adminUI.GetAuthorization()
+
+	if adminUI.GetAuthMode() == "idp_session" && len(authz.RequiredRoleValues) == 0 {
+		return errors.ErrWrongConfig.WithDetail("server.admin_ui.authorization.required_role_values must not be empty when auth_mode=idp_session")
+	}
+
+	if adminUI.GetAPIOIDC().Enabled && len(authz.RequiredScopes) == 0 {
+		return errors.ErrWrongConfig.WithDetail("server.admin_ui.authorization.required_scopes must not be empty when api_oidc_internal.enabled=true")
+	}
+
+	if adminUI.GetAuthMode() == "local_admin" {
+		network := adminUI.GetNetwork()
+
+		if !network.EnforceForLocalAdmin {
+			return errors.ErrWrongConfig.WithDetail("server.admin_ui.network.enforce_for_local_admin must be true when auth_mode=local_admin")
+		}
+
+		if len(network.SourceIPAllowlist) == 0 {
+			return errors.ErrWrongConfig.WithDetail("server.admin_ui.network.source_ip_allowlist must not be empty when auth_mode=local_admin")
+		}
+	}
+
+	return nil
+}
+
 // validateFrontend checks if the frontend-related directories exist.
 func (f *FileSettings) validateFrontend() error {
 	if f == nil || f.Server == nil {
@@ -2275,11 +2330,13 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultBackendServerSettings,
 		f.setDefaultSecuritySettings,
 		f.setDefaultFrontendSettings,
+		f.setDefaultAdminUISettings,
 		f.setDefaultIdPSettings,
 		f.validateIdPMFASettings,
 		f.validateIdPSAMLSigningSettings,
 		f.validateIdPSAML2SLOSettings,
 		f.setDefaultTrustedProxies,
+		f.validateAdminUI,
 		f.validateFrontend,
 	}
 

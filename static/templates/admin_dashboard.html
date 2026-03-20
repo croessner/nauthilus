@@ -1,0 +1,19 @@
+<div class="grid grid-cols-1 gap-6">
+    <section class="card bg-base-100 border border-base-300 shadow-sm"
+             hx-get="{{ .AdminBasePath }}/partial/bruteforce"
+             hx-swap="innerHTML"
+             hx-trigger="load">
+    </section>
+
+    <section class="card bg-base-100 border border-base-300 shadow-sm"
+             hx-get="{{ .AdminBasePath }}/partial/clickhouse"
+             hx-swap="innerHTML"
+             hx-trigger="load">
+    </section>
+
+    <section class="card bg-base-100 border border-base-300 shadow-sm"
+             hx-get="{{ .AdminBasePath }}/partial/hooktester"
+             hx-swap="innerHTML"
+             hx-trigger="load">
+    </section>
+</div>

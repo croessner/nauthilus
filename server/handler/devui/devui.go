@@ -104,6 +104,8 @@ type Endpoint struct {
 	Template string
 }
 
+const devUIAdminPartialPreviewTemplate = "devui_admin_partial_preview.html"
+
 // Register adds the dev UI routes to the router.
 func (h *DevUIHandler) Register(router gin.IRouter) {
 	// DevUI uses its own cookie (nauthilus_dev) for development purposes
@@ -136,6 +138,12 @@ func (h *DevUIHandler) GetVersion(ctx *gin.Context) {
 // Index renders the main dev UI page.
 func (h *DevUIHandler) Index(ctx *gin.Context) {
 	endpoints := []Endpoint{
+		{Method: "GET", Path: "/admin/login", Template: "admin_login.html"},
+		{Method: "GET", Path: "/admin", Template: "admin_layout.html"},
+		{Method: "GET", Path: "/admin/partial/dashboard", Template: "admin_dashboard.html"},
+		{Method: "GET", Path: "/admin/partial/bruteforce", Template: "partials_bruteforce.html"},
+		{Method: "GET", Path: "/admin/partial/clickhouse", Template: "partials_clickhouse.html"},
+		{Method: "GET", Path: "/admin/partial/hooktester", Template: "partials_hooktester.html"},
 		{Method: "GET/POST", Path: "/login", Template: "idp_login.html"},
 		{Method: "GET", Path: "/login/mfa", Template: "idp_mfa_select.html"},
 		{Method: "GET/POST", Path: "/login/totp", Template: "idp_totp_verify.html"},
@@ -445,7 +453,64 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["ConsentModeGranularOptional"] = true
 
 	data["WebAuthnLoginURL"] = "#"
+	data["CSPNonce"] = "dev-csp-nonce"
 	data["CSRFToken"] = "dev-csrf-token"
+	data["AdminBasePath"] = "/admin"
+	data["AdminShowLogout"] = true
+	data["AdminLogoutLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Nauthilus Admin")
+	data["AdminLoginTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
+	data["AdminLoginUsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+	data["AdminLoginPasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+	data["AdminLoginSubmit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+	data["AdminLoginError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+	data["AdminDashboardTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Admin Dashboard")
+	data["AdminDashboardHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Operate local Nauthilus runtime features with HTMX.")
+	data["AdminBruteForceTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Brute Force")
+	data["AdminBruteForceHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Inspect and clear blocked IPs or accounts.")
+	data["AdminBruteForceTabIPs"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "IP Addresses")
+	data["AdminBruteForceTabAccounts"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Accounts")
+	data["AdminBruteForceSearch"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Search")
+	data["AdminBruteForceSearchPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Search by IP, account or protocol")
+	data["AdminBruteForceRefresh"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Refresh")
+	data["AdminBruteForceFreeIP"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Free IP")
+	data["AdminBruteForceFreeUser"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Free User")
+	data["AdminClickHouseTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "ClickHouse Runtime")
+	data["AdminClickHouseHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Query internal runtime hooks with server-side pagination.")
+	data["AdminClickHouseAction"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Action")
+	data["AdminClickHouseStatus"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Status")
+	data["AdminClickHouseFilter"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Filter")
+	data["AdminClickHouseSearchPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Search in result rows")
+	data["AdminClickHouseRun"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Run Query")
+	data["AdminClickHouseMap"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Geo Map")
+	data["AdminClickHouseCountries"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Countries")
+	data["AdminClickHouseResults"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Results")
+	data["AdminHookTesterTitle"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Hook Tester")
+	data["AdminHookTesterHint"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Send internal requests to /api/v1/custom/*hook with preview-limited response.")
+	data["AdminHookTesterMethod"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Method")
+	data["AdminHookTesterEndpointPath"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Endpoint Path")
+	data["AdminHookTesterQuery"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Query Params (JSON object)")
+	data["AdminHookTesterHeaders"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Headers (JSON object)")
+	data["AdminHookTesterContentType"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Content-Type")
+	data["AdminHookTesterBody"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Body")
+	data["AdminHookTesterSend"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Send Request")
+	data["AdminHookTesterReset"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Reset")
+	data["AdminHookTesterResponse"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Response")
+	data["AdminHookTesterHTTPStatus"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "HTTP Status")
+	data["AdminHookTesterResponseHeaders"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Response Headers")
+	data["AdminHookTesterResponseBody"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Response Body (preview-limited)")
+	data["AdminTableColumnUsername"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+	data["AdminTableColumnAccount"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Account")
+	data["AdminTableColumnIP"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "IP Address")
+	data["AdminTableColumnProtocol"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Protocol")
+	data["AdminTableColumnStatus"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Status")
+	data["AdminTableColumnTimestamp"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Timestamp")
+	data["AdminNoData"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "No data yet.")
+	data["Modules"] = []gin.H{
+		{"ID": "bruteforce", "Title": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Brute Force"), "Route": "/admin/partial/bruteforce"},
+		{"ID": "clickhouse", "Title": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "ClickHouse Runtime"), "Route": "/admin/partial/clickhouse"},
+		{"ID": "hooktester", "Title": frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Hook Tester"), "Route": "/admin/partial/hooktester"},
+	}
 	data["PostLoginEndpoint"] = "#"
 	data["PostTOTPVerifyEndpoint"] = "#"
 	data["PostConsentEndpoint"] = "#"
@@ -562,11 +627,44 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 		return
 	}
 
+	executeTemplateName := templateName
+	if isAdminPartialTemplate(templateName) {
+		data["DevUIPartialTemplate"] = templateName
+
+		tmpl, err = tmpl.Parse(`{{ define "` + devUIAdminPartialPreviewTemplate + `" }}
+{{ template "idp_header.html" . }}
+<div class="max-w-7xl mx-auto space-y-6">
+    <section class="card bg-base-100 border border-base-300 shadow-sm">
+        {{ if eq .DevUIPartialTemplate "partials_bruteforce.html" }}
+            {{ template "partials_bruteforce.html" . }}
+        {{ else if eq .DevUIPartialTemplate "partials_clickhouse.html" }}
+            {{ template "partials_clickhouse.html" . }}
+        {{ else if eq .DevUIPartialTemplate "partials_hooktester.html" }}
+            {{ template "partials_hooktester.html" . }}
+        {{ end }}
+    </section>
+</div>
+<script nonce="{{ cspNonce . }}" src="/static/js/admin_ui.js"></script>
+{{ template "idp_footer.html" . }}
+{{ end }}`)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Template wrapper parse error: %v", err)
+
+			return
+		}
+
+		executeTemplateName = devUIAdminPartialPreviewTemplate
+	}
+
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 
-	err = tmpl.ExecuteTemplate(ctx.Writer, templateName, data)
+	err = tmpl.ExecuteTemplate(ctx.Writer, executeTemplateName, data)
 
 	if err != nil {
 		_ = ctx.Error(err)
 	}
+}
+
+func isAdminPartialTemplate(templateName string) bool {
+	return strings.HasPrefix(templateName, "partials_")
 }

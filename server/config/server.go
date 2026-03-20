@@ -63,6 +63,7 @@ type ServerSection struct {
 	Redis                     Redis                    `mapstructure:"redis" validate:"required"`
 	MasterUser                MasterUser               `mapstructure:"master_user" validate:"omitempty"`
 	Frontend                  Frontend                 `mapstructure:"frontend" validate:"omitempty"`
+	AdminUI                   AdminUI                  `mapstructure:"admin_ui" validate:"omitempty"`
 	Dedup                     Dedup                    `mapstructure:"dedup" validate:"omitempty"`
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
 	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header" validate:"omitempty"`
@@ -503,6 +504,15 @@ func (s *ServerSection) GetFrontend() *Frontend {
 	return &s.Frontend
 }
 
+// GetAdminUI retrieves the admin UI configuration from the ServerSection.
+func (s *ServerSection) GetAdminUI() *AdminUI {
+	if s == nil {
+		return &AdminUI{}
+	}
+
+	return &s.AdminUI
+}
+
 // Endpoint defines a structure for configuring various types of authentication and custom hooks.
 type Endpoint struct {
 	AuthHeader    bool `mapstructure:"auth_header"`
@@ -512,6 +522,111 @@ type Endpoint struct {
 	AuthJWT       bool `mapstructure:"auth_jwt"`
 	CustomHooks   bool `mapstructure:"custom_hooks"`
 	Configuration bool `mapstructure:"configuration"`
+}
+
+// AdminUI controls the internal admin interface and its authentication model.
+type AdminUI struct {
+	Authorization AdminUIAuthorization `mapstructure:"authorization" validate:"omitempty"`
+	LocalAdmin    AdminUILocalAdmin    `mapstructure:"local_admin" validate:"omitempty"`
+	Network       AdminUINetwork       `mapstructure:"network" validate:"omitempty"`
+	APIOIDC       AdminUIAPIOIDC       `mapstructure:"api_oidc_internal" validate:"omitempty"`
+	Enabled       bool                 `mapstructure:"enabled"`
+	AuthMode      string               `mapstructure:"auth_mode" validate:"omitempty,oneof=idp_session local_admin"`
+	BasePath      string               `mapstructure:"base_path" validate:"omitempty,startswith=/"`
+}
+
+const adminUIAuthModeIDPSession = "idp_session"
+
+// AdminUIAuthorization defines role and scope requirements for admin access.
+type AdminUIAuthorization struct {
+	RequiredRoleValues []string `mapstructure:"required_role_values" validate:"omitempty,dive,required"`
+	RequiredScopes     []string `mapstructure:"required_scopes" validate:"omitempty,dive,required"`
+}
+
+// AdminUILocalAdmin holds local admin account configuration.
+type AdminUILocalAdmin struct {
+	Users   []AdminUILocalUser `mapstructure:"users" validate:"omitempty,dive"`
+	Enabled bool               `mapstructure:"enabled"`
+}
+
+// AdminUILocalUser defines one local admin credential record.
+type AdminUILocalUser struct {
+	Username     string `mapstructure:"username" validate:"required,printascii,excludesall= "`
+	PasswordHash string `mapstructure:"password_hash" validate:"required,printascii,excludesall= "`
+}
+
+// AdminUINetwork defines source network restrictions for admin access.
+type AdminUINetwork struct {
+	SourceIPAllowlist    []string `mapstructure:"source_ip_allowlist" validate:"omitempty,dive,cidr"`
+	EnforceForLocalAdmin bool     `mapstructure:"enforce_for_local_admin"`
+}
+
+// AdminUIAPIOIDC enables additional bearer-token access for /admin/api/* routes.
+type AdminUIAPIOIDC struct {
+	Enabled bool `mapstructure:"enabled"`
+}
+
+// IsEnabled reports whether the admin UI is enabled.
+func (a *AdminUI) IsEnabled() bool {
+	if a == nil {
+		return false
+	}
+
+	return a.Enabled
+}
+
+// GetBasePath returns the admin UI base path and defaults to /admin.
+func (a *AdminUI) GetBasePath() string {
+	if a == nil || a.BasePath == "" {
+		return "/admin"
+	}
+
+	return a.BasePath
+}
+
+// GetAuthMode returns the configured admin UI mode and defaults to idp_session.
+func (a *AdminUI) GetAuthMode() string {
+	if a == nil || a.AuthMode == "" {
+		return adminUIAuthModeIDPSession
+	}
+
+	return a.AuthMode
+}
+
+// GetAuthorization returns authorization settings or an empty value object.
+func (a *AdminUI) GetAuthorization() *AdminUIAuthorization {
+	if a == nil {
+		return &AdminUIAuthorization{}
+	}
+
+	return &a.Authorization
+}
+
+// GetLocalAdmin returns local admin settings or an empty value object.
+func (a *AdminUI) GetLocalAdmin() *AdminUILocalAdmin {
+	if a == nil {
+		return &AdminUILocalAdmin{}
+	}
+
+	return &a.LocalAdmin
+}
+
+// GetNetwork returns network settings or an empty value object.
+func (a *AdminUI) GetNetwork() *AdminUINetwork {
+	if a == nil {
+		return &AdminUINetwork{}
+	}
+
+	return &a.Network
+}
+
+// GetAPIOIDC returns API OIDC settings or an empty value object.
+func (a *AdminUI) GetAPIOIDC() *AdminUIAPIOIDC {
+	if a == nil {
+		return &AdminUIAPIOIDC{}
+	}
+
+	return &a.APIOIDC
 }
 
 // IsAuthHeaderDisabled checks if header-based authentication is enabled for the endpoint and returns the corresponding boolean value.

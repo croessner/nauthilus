@@ -121,6 +121,7 @@ var (
 var (
 	ErrNoLDAPSection       = errors.New("no 'ldap:' section found")
 	ErrNoLDAPSearchSection = errors.New("no 'ldap::search:' section found")
+	ErrWrongConfig         = NewDetailedError("wrong_config")
 )
 
 // ldap.

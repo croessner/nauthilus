@@ -204,12 +204,13 @@ func (c DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
 }
 
 // RegisterRoutes wires health and metrics routes, then (if enabled) the frontend
-// routes (IdP) and finally the backchannel routes. The
+// routes (IdP), optional admin routes, and finally the backchannel routes. The
 // order is kept to preserve exact behavior of the legacy implementation.
 func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
 	setupIdP func(*gin.Engine),
+	setupAdmin func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 ) {
 	if setupHealth != nil {
@@ -252,6 +253,10 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 		rb.Engine = r
 
 		rb.WithFrontend(setupIdP)
+	}
+
+	if setupAdmin != nil {
+		setupAdmin(r)
 	}
 
 	rb := approuter.NewRouter(c.cfg)
@@ -628,6 +633,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
 	setupIdP func(*gin.Engine),
+	setupAdmin func(*gin.Engine),
 	setupBackchannel func(*gin.Engine),
 	signals ServerSignals,
 ) {
@@ -652,7 +658,7 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	srv := a.HTTPServerFactory.New(router)
 
 	a.RouterComposer.ApplyCoreMiddlewares(router)
-	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupIdP, setupBackchannel)
+	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupIdP, setupAdmin, setupBackchannel)
 
 	proxy := a.ProxyProvider.Get()
 	if proxy != nil {
