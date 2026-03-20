@@ -3,6 +3,8 @@ package protocol
 import "encoding/asn1"
 
 const (
+	stmtAttStmt   = "attStmt"
+	stmtFmt       = "fmt"
 	stmtX5C       = "x5c"
 	stmtSignature = "sig"
 	stmtAlgorithm = "alg"
@@ -10,6 +12,10 @@ const (
 	stmtECDAAKID  = "ecdaaKeyId"
 	stmtCertInfo  = "certInfo"
 	stmtPubArea   = "pubArea"
+)
+
+const (
+	versionTPM20 = "2.0"
 )
 
 const (
@@ -211,10 +217,10 @@ var (
 	oidExtensionSubjectAltName            = asn1.ObjectIdentifier{2, 5, 29, 17}
 	oidExtensionExtendedKeyUsage          = asn1.ObjectIdentifier{2, 5, 29, 37}
 	oidExtensionBasicConstraints          = asn1.ObjectIdentifier{2, 5, 29, 19}
-	oidFIDOGenCeAAGUID      = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 45724, 1, 1, 4}
-	oidMicrosoftKpPrivacyCA = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 36}
-	oidTCGKpAIKCertificate  = asn1.ObjectIdentifier{2, 23, 133, 8, 3}
-	oidTCGAtTpmManufacturer = asn1.ObjectIdentifier{2, 23, 133, 2, 1}
-	oidTCGAtTpmModel        = asn1.ObjectIdentifier{2, 23, 133, 2, 2}
-	oidTCGAtTPMVersion      = asn1.ObjectIdentifier{2, 23, 133, 2, 3}
+	oidFIDOGenCeAAGUID                    = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 45724, 1, 1, 4}
+	oidMicrosoftKpPrivacyCA               = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 36}
+	oidTCGKpAIKCertificate                = asn1.ObjectIdentifier{2, 23, 133, 8, 3}
+	oidTCGAtTpmManufacturer               = asn1.ObjectIdentifier{2, 23, 133, 2, 1}
+	oidTCGAtTpmModel                      = asn1.ObjectIdentifier{2, 23, 133, 2, 2}
+	oidTCGAtTPMVersion                    = asn1.ObjectIdentifier{2, 23, 133, 2, 3}
 )

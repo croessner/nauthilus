@@ -2,7 +2,6 @@ package webauthn
 
 import (
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/go-webauthn/webauthn/metadata"
@@ -102,8 +101,8 @@ func (config *Config) validate() (err error) {
 	}
 
 	if len(config.RPID) != 0 {
-		if _, err = url.Parse(config.RPID); err != nil {
-			return fmt.Errorf(errFmtFieldNotValidURI, "RPID", err)
+		if err = protocol.ValidateRPID(config.RPID); err != nil {
+			return fmt.Errorf(errFmtFieldNotValidDomainString, "RPID", err)
 		}
 	}
 
@@ -130,13 +129,8 @@ func (config *Config) validate() (err error) {
 		return fmt.Errorf("must provide at least one value to the 'RPOrigins' field")
 	}
 
-	switch config.RPTopOriginVerificationMode {
-	case protocol.TopOriginDefaultVerificationMode:
+	if config.RPTopOriginVerificationMode == protocol.TopOriginDefaultVerificationMode {
 		config.RPTopOriginVerificationMode = protocol.TopOriginIgnoreVerificationMode
-	case protocol.TopOriginExplicitVerificationMode:
-		if len(config.RPTopOrigins) == 0 {
-			return fmt.Errorf("must provide at least one value to the 'RPTopOrigins' field when 'RPTopOriginVerificationMode' field is set to protocol.TopOriginExplicitVerificationMode")
-		}
 	}
 
 	config.validated = true
@@ -186,9 +180,9 @@ type User interface {
 	// Specification: §5.4.3. User Account Parameters for Credential Generation (https://w3c.github.io/webauthn/#dom-publickeycredentialuserentity-id)
 	WebAuthnID() []byte
 
-	// WebAuthnName provides the name attribute of the user account during registration and is a human-palatable name for the user
-	// account, intended only for display. For example, "Alex Müller" or "田中倫". The Relying Party SHOULD let the user
-	// choose this, and SHOULD NOT restrict the choice more than necessary.
+	// WebAuthnName provides the name attribute of the user account during registration and is a human-palatable name
+	// for the user account, intended only for display. For example, "Alex Müller" or "田中倫". The Relying Party SHOULD
+	// let the user choose this, and SHOULD NOT restrict the choice more than necessary.
 	//
 	// Specification: §5.4.3. User Account Parameters for Credential Generation (https://w3c.github.io/webauthn/#dictdef-publickeycredentialuserentity)
 	WebAuthnName() string
@@ -200,7 +194,8 @@ type User interface {
 	// Specification: §5.4.3. User Account Parameters for Credential Generation (https://www.w3.org/TR/webauthn/#dom-publickeycredentialuserentity-displayname)
 	WebAuthnDisplayName() string
 
-	// WebAuthnCredentials provides the list of Credential objects owned by the user.
+	// WebAuthnCredentials provides the slice of [Credential] objects owned by the user. This generally should be all
+	// the [Credential] objects owned by the user regardless of which flow is being used.
 	WebAuthnCredentials() []Credential
 }
 
