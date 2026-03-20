@@ -401,14 +401,231 @@ sequenceDiagram
 
 ### 3.5 SAML 2.0 SLO (Single Logout)
 
-Nauthilus provides a basic SAML Single Logout (SLO) endpoint.
+Nauthilus stellt einen protokollbewussten SAML-SLO-Endpunkt unter `/saml/slo` bereit, inklusive:
 
-1. **Logout Initiation**: The SP or user redirects the browser to `/idp/saml/slo`.
-2. **Local Session Termination**: The IdP clears the local user session cookies.
-3. **Redirection**: The user is redirected to a logout confirmation page (`/logged_out`).
+1. Eingangsrouting fuer `LogoutRequest` und `LogoutResponse` (Redirect/POST).
+2. Signatur- und Protokollvalidierung vor jeder Statusaenderung.
+3. Lokalem Cleanup plus orchestriertem Fanout (Front-Channel, optional Back-Channel).
+4. Korrelation ueber Transaktions- und Request-IDs.
 
-Currently, the SAML SLO implementation focuses on local session termination and does not yet support complex
-asynchronous SLO propagation to other Service Providers.
+#### SLO-001 Domainmodell (Lifecycle + Korrelation)
+
+Als Grundlage fuer die naechsten SLO-Schritte definiert Nauthilus ein dediziertes Domainmodell unter
+`server/idp/slo`:
+
+- `SLOTransaction`: End-to-end Logout-Transaktion.
+- `SLOParticipant`: Ein betroffener Service Provider innerhalb einer Transaktion.
+- `SLOStatus`: Lebenszyklusstatus der Transaktion.
+- `SLOBinding`: Verwendetes SAML Binding (`redirect`, `post`).
+- `SLODirection`: Richtung der Initiierung (`sp_initiated`, `idp_initiated`).
+
+Die Request-Korrelation ist explizit festgelegt:
+
+- `TransactionID`: Eindeutige interne ID pro Logout-Lauf.
+- `RootRequestID`: Eingehende SAML LogoutRequest-ID, die die Transaktion startet.
+- `SLOParticipant.RequestID`: Pro Teilnehmer eindeutige ausgehende Request-ID (innerhalb derselben Transaktion).
+
+Der erlaubte Status-Lifecycle ist streng und wird durch Code und Tests erzwungen:
+
+`received -> validated -> local_done -> fanout_running -> done | partial | failed`
+
+#### SLO-002 Session/Participant-Registry fuer SAML
+
+Um SLO-Fanout vorzubereiten, persistiert Nauthilus beim erfolgreichen SAML-SSO pro Account und SP eine
+Teilnehmer-Session in Redis:
+
+- `account`
+- `sp_entity_id`
+- `name_id`
+- `session_index`
+- `authn_instant`
+- TTL auf Basis der SAML Session-Laufzeit (`default_expire_time` bzw. Assertion-Expire-Time)
+
+Redis-Key-Schema:
+
+- Prefix: `<redis_prefix>idp:saml:slo`
+- Account-Index: `...:index:<url-escaped-account>`
+- Teilnehmer-Sessions: `...:participant:<url-escaped-account>:<sha256(sp_entity_id)>`
+
+Cleanup-Strategie:
+
+- Bei SAML-Logout (`/saml/slo`) werden alle Teilnehmer-Sessions des Accounts aktiv entfernt.
+- Bei Session-Ablauf erfolgt Cleanup automatisch ueber Redis-TTL (inkl. Index-Handling).
+
+#### SLO-003 Eingangsrouter fuer SLO-Nachrichten
+
+Der Endpunkt `/saml/slo` unterscheidet nun explizit zwischen SAML-`LogoutRequest` und SAML-`LogoutResponse`
+anstatt nur einen lokalen Logout auszufuehren:
+
+- `GET` wird als Redirect-Binding behandelt.
+- `POST` wird als Form-POST-Binding behandelt.
+- Der Handler dispatcht verbindlich auf `handleLogoutRequest` bzw. `handleLogoutResponse`.
+
+Validierungsregeln fuer eingehende Parameter:
+
+- Genau einer von `SAMLRequest` oder `SAMLResponse` muss vorhanden sein.
+- Beide gleichzeitig werden als inkonsistent mit `400 Bad Request` abgewiesen.
+- Fehlende Payloads werden mit `400 Bad Request` abgewiesen.
+- Doppelte oder leere kritische Parameter (`SAMLRequest`, `SAMLResponse`, `RelayState`) werden mit `400 Bad Request`
+  abgewiesen.
+
+Der bisherige lokale Logout-Cleanup bleibt als Fallback in den Dispatch-Handlern erhalten, bis die naechsten
+SLO-Schritte (`SLO-004+`) Signatur- und Protokollvalidierung sowie Response-Erzeugung aktivieren.
+
+#### SLO-004 Signaturvalidierung fuer eingehende LogoutRequest(s)
+
+Eingehende `LogoutRequest`-Nachrichten werden nun vor jedem lokalen Logout-Cleanup auf gueltige Signaturen
+geprueft:
+
+- Redirect-Binding:
+    - Strikte Pruefung der signierten Query-Basis `SAMLRequest` + optional `RelayState` + `SigAlg`.
+    - `Signature` und `SigAlg` muessen konsistent gemeinsam vorhanden sein.
+    - Doppelte kritische Query-Parameter (`SAMLRequest`, `RelayState`, `SigAlg`, `Signature`) werden verworfen.
+- POST-Binding:
+    - XML-Signaturpruefung gegen vertrauenswuerdige SP-Zertifikate.
+    - Zertifikate werden pro `Issuer` aus der SP-Konfiguration (`idp.saml2.service_providers[*].cert|cert_file`)
+      geladen.
+- SHA-1 bleibt auf beiden Pfaden blockiert:
+    - Redirect: SHA-1 `SigAlg` wird als unsupported abgelehnt.
+    - POST: SHA-1 XML SignatureMethod wird als unsupported abgelehnt.
+
+Fehlschlaege in der Signaturvalidierung werden mit `400 Bad Request` beantwortet; ein lokaler Logout wird dann
+nicht ausgefuehrt.
+
+#### SLO-005 Protokollvalidierung fuer eingehende LogoutRequest(s)
+
+Nach erfolgreicher Signaturvalidierung folgt nun eine verbindliche SAML-Protokollpruefung vor jedem Logout-Cleanup:
+
+- Gepruefte Pflichtfelder:
+    - `ID`
+    - `Issuer`
+    - `Destination`
+    - `IssueInstant`
+- Optional geprueft:
+    - `NotOnOrAfter` (falls vorhanden)
+- `NameID` ist fuer die Session-Korrelation erforderlich.
+
+Validierungslogik:
+
+- `Destination` muss exakt zur konfigurierten IdP-SLO-Endpoint-URL passen.
+- `IssueInstant` darf nicht zu alt sein (`MaxIssueDelay`) und nicht unzulaessig in der Zukunft liegen
+  (`MaxClockSkew`).
+- `NotOnOrAfter` wird inklusive Clock-Skew-Toleranz auf Ablauf geprueft.
+- `NameID` plus optionaler `SessionIndex` werden gegen die SAML-SLO-Participant-Registry in Redis korreliert:
+    - `LookupParticipants(NameID)`
+    - Match auf `sp_entity_id == Issuer`
+    - Falls `SessionIndex` gesetzt ist, zusaetzlich exakter Match auf `session_index`.
+- Replay-Schutz:
+    - Jede verarbeitete `LogoutRequest.ID` wird per `SETNX` im Redis-Prefix
+      `<redis_prefix>idp:saml:slo:replay:<sha256(request_id)>` gespeichert.
+    - Bereits bekannte IDs werden als Replay mit `400 Bad Request` verworfen.
+
+Fehlschlaege in der Protokollvalidierung werden mit `400 Bad Request` beantwortet; ein lokaler Logout wird dann
+nicht ausgefuehrt.
+
+#### SLO-009 Front-Channel Orchestrierung (Browser)
+
+Fuer IdP-initiiertes Logout wurde die Browser-Orchestrierung fuer mehrere Front-Channel-Teilnehmer vervollstaendigt.
+
+Umsetzung:
+
+- OIDC Front-Channel-RPs und SAML-SLO-Fanout-Teilnehmer werden als einheitliche Logout-Tasks modelliert.
+- SAML-Dispatches unterstuetzen beide Browserpfade:
+    - Redirect-Binding (`GET` URL)
+    - POST-Binding (HTML-Form-Payload, im versteckten iFrame ausgefuehrt)
+- Die Logout-Seite (`idp_logout_frames.html`) fuehrt Tasks sequenziell aus und zeigt pro Teilnehmer den Laufstatus.
+- Definierte Retry/Timeout-Policy:
+    - Timeout pro Task: `4s`
+    - Retries pro Task: `1` zusaetzlicher Versuch
+- Ergebniserfassung pro Teilnehmer: `success`, `timeout`, `error` (zusaetzlich `skipped` fuer nicht ausfuehrbare Tasks).
+- Klarer Abschlusszustand in der UI:
+    - Fortschrittsanzeige (`x / n`)
+    - Ergebnisliste pro Teilnehmer
+    - Finales Summary (`done` oder `partial`)
+    - anschliessender Redirect zum validierten Logout-Ziel.
+
+#### SLO-012 Observability, Audit, Security-Hardening
+
+Die SLO-Verarbeitung ist mit dedizierter Betriebsbeobachtung und Security-Haertung instrumentiert:
+
+- Metriken:
+    - `idp_saml_slo_requests_total{binding,message_type,outcome}`
+    - `idp_saml_slo_validation_errors_total{binding,message_type,stage}`
+    - `idp_saml_slo_terminal_status_total{direction,status}` (u. a. fuer Partial-Logout-Rate)
+    - `idp_saml_slo_duration_seconds{binding,message_type,outcome}`
+    - `idp_saml_slo_abuse_rejections_total{reason,binding}`
+- Audit-Logs:
+    - Einheitliche Audit-Events auf Info-Level mit Korrelationsfeldern:
+      `transaction_id`, `request_id`, `sp_entity_id`.
+    - Erfasst werden u. a. Validierungsfehler, Local-Cleanup, Fanout-Abschluss und Response-Verarbeitung.
+- Security-Hardening:
+    - Endpoint-spezifischer IP-Rate-Limiter fuer `/saml/slo` (zusatzlich zu globalen Guards).
+    - Groessenlimits fuer `SAMLRequest`/`SAMLResponse` sowie POST-Body-Limit am Endpunkt.
+
+#### SLO-013 Konfigurationsoberflaeche
+
+Die SLO-Konfiguration ist unter `idp.saml2.slo` gebuendelt und steuert Endpunkt-Verhalten,
+Front-/Back-Channel-Fanout sowie Schutzlimits:
+
+```yaml
+idp:
+    saml2:
+        slo:
+            enabled: true
+            front_channel_enabled: true
+            back_channel_enabled: false
+            request_timeout: 3s
+            max_participants: 64
+            back_channel_max_retries: 1
+```
+
+Defaults:
+
+- `idp.saml2.slo.enabled`: `true`
+- `idp.saml2.slo.front_channel_enabled`: `true`
+- `idp.saml2.slo.back_channel_enabled`: `false`
+- `idp.saml2.slo.request_timeout`: `3s`
+- `idp.saml2.slo.max_participants`: `64`
+- `idp.saml2.slo.back_channel_max_retries`: `1`
+
+Validierungsregeln:
+
+- `idp.saml2.slo.request_timeout >= 0` (`0` bedeutet: Default verwenden)
+- `idp.saml2.slo.max_participants >= 0` (`0` bedeutet: Default verwenden)
+- `idp.saml2.slo.back_channel_max_retries >= 0` (`0` bedeutet: Default verwenden)
+- Wenn `idp.saml2.slo.enabled=false`, sind `front_channel_enabled` und `back_channel_enabled` wirkungslos.
+
+Migrationshinweise (kompatible Alias-Felder, falls vorhanden):
+
+| Alias-Feld                               | Bevorzugtes Feld                         |
+|------------------------------------------|------------------------------------------|
+| `idp.saml2.slo_enabled`                  | `idp.saml2.slo.enabled`                  |
+| `idp.saml2.slo_front_channel_enabled`    | `idp.saml2.slo.front_channel_enabled`    |
+| `idp.saml2.slo_back_channel_enabled`     | `idp.saml2.slo.back_channel_enabled`     |
+| `idp.saml2.slo_back_channel_timeout`     | `idp.saml2.slo.request_timeout`          |
+| `idp.saml2.slo_back_channel_max_retries` | `idp.saml2.slo.back_channel_max_retries` |
+
+#### SLO-014 Teststrategie und Interop-Abnahme
+
+Die Teststrategie fuer SAML-SLO ist nun als eigene Matrix dokumentiert:
+
+- Dokument: `server/docs/saml_slo_test_strategy.md`
+- Abgedeckte Ebenen:
+    - Unit (`Parser`, `Validator`, `Replay`, `Fanout-StateMachine`)
+    - Integration (`/saml/slo` End-to-End mit signierten Test-SP-Nachrichten)
+    - Interop (reale SP-Abnahme-Szenarien fuer Zabbix und Nextcloud)
+
+Ergaenzte automatische Nachweise in der Codebasis:
+
+- Parser-/Decoder-Unit-Tests fuer Redirect/POST Payload-Decoding, Strict-Query-Parsing und Flate-Limits.
+- Fanout-StateMachine-Unit-Tests fuer Guard-Conditions, Pre-Counts und Terminalstatus-Aggregation.
+- Integrationsfall fuer eingehende `LogoutResponse` im POST-Binding (`/saml/slo`) inkl. Fanout-Korrelation.
+
+Die Exit-Kriterien fuer SLO-014 sind in der Matrix als DoD verankert:
+
+1. Unit-Matrix gruen.
+2. Integrationsmatrix gruen.
+3. Interop-Szenarien mit Evidenz dokumentiert (`passed`).
 
 ## 3.6 Forced MFA Registration Flow (`require_mfa`)
 
@@ -441,6 +658,7 @@ idp:
     saml2:
         service_providers:
             -   entity_id: "https://sp.example.com"
+                authn_requests_signed: true
                 require_mfa:
                     - totp
                     - recovery_codes

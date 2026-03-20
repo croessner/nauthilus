@@ -1,0 +1,57 @@
+{
+  "context": {
+    "username": "hookuser@example.com",
+    "password": "HookPassword789!",
+    "client_ip": "192.168.50.50",
+    "service": "http",
+    "protocol": "https",
+    "session": "hook-test-session-456",
+    "debug": false
+  },
+  "redis": {
+    "responses": {
+      "hook:enabled": "true"
+    }
+  },
+  "http_request": {
+    "method": "GET",
+    "path": "/test-hook",
+    "headers": {
+      "User-Agent": "TestClient/1.0",
+      "Accept": "text/html"
+    },
+    "body": "",
+    "expected_calls": [
+      {
+        "method": "get_http_method"
+      },
+      {
+        "method": "get_http_path"
+      }
+    ]
+  },
+  "http_response": {
+    "expected_calls": [
+      {
+        "method": "set_http_response_header",
+        "arg_contains": "Content-Type"
+      },
+      {
+        "method": "html",
+        "arg_contains": "200"
+      }
+    ]
+  },
+  "util": {
+    "expected_calls": [
+      {
+        "method": "print_result"
+      }
+    ]
+  },
+  "expected_output": {
+    "action_result": true,
+    "logs_contain": [],
+    "error_expected": false
+  }
+}

@@ -1,0 +1,41 @@
+name: Lua Plugin Unit Tests
+
+on:
+  push:
+    branches:
+      - main
+      - features
+      - release/**
+  pull_request:
+    branches:
+      - main
+      - features
+      - release/**
+
+permissions:
+  contents: read
+
+env:
+  GOEXPERIMENT: runtimesecret
+
+jobs:
+  lua-plugin-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version: 1.26.x
+
+      - name: Enable Go Modules
+        run: go env -w GO111MODULE=on
+
+      - name: Use Vendored Dependencies
+        run: go env -w GOFLAGS=-mod=vendor
+
+      - name: Run Lua Plugin Tests
+        run: ./scripts/run-lua-plugin-tests.sh

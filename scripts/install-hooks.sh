@@ -17,7 +17,7 @@ echo "Installing Git hooks..."
 cat > "${HOOKS_DIR}/pre-commit" << 'HOOKEOF'
 #!/bin/bash
 # Pre-commit hook for Nauthilus
-# This hook validates Go HTML templates before allowing a commit.
+# This hook validates mandatory policy/prompt guardrails and staged Go HTML templates before allowing a commit.
 #
 # Installation:
 #   Run: ./scripts/install-hooks.sh
@@ -38,14 +38,23 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Running pre-commit checks...${NC}"
 
+# Keep AGENTS.md aligned with .junie/guidelines.md even if IDE formatting touched AGENTS.md.
+cd "$GIT_ROOT"
+if ! make sync-prompts-check >/dev/null 2>&1; then
+    echo -e "${YELLOW}AGENTS.md is out of sync; auto-syncing from .junie/guidelines.md...${NC}"
+    make sync-prompts
+    git add AGENTS.md
+fi
+
+# Ensure mandatory prompt and policy guardrails are respected.
+make sync-prompts-check
+make policy-check
+
 # Check if any template files are staged for commit
 STAGED_TEMPLATES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^static/templates/.*\.html$' || true)
 
 if [ -n "$STAGED_TEMPLATES" ]; then
     echo -e "${YELLOW}Validating staged HTML templates...${NC}"
-
-    # Change to the repository root
-    cd "$GIT_ROOT"
 
     # Validate only the staged template files
     VALIDATION_FAILED=0
@@ -83,7 +92,7 @@ chmod +x "${HOOKS_DIR}/pre-commit"
 echo "✓ Pre-commit hook installed successfully"
 echo ""
 echo "The following hooks are now active:"
-echo "  - pre-commit: Validates Go HTML templates before commit"
+echo "  - pre-commit: Validates policy/prompt guardrails and staged Go HTML templates"
 echo ""
 echo "To manually validate all templates, run:"
 echo "  ./scripts/validate-templates.sh"

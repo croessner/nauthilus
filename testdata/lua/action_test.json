@@ -1,0 +1,65 @@
+{
+  "context": {
+    "username": "admin@example.com",
+    "password": "AdminPass123!",
+    "client_ip": "10.1.1.1",
+    "service": "imap",
+    "protocol": "plain",
+    "session": "action-test-session",
+    "authenticated": true,
+    "user_found": true,
+    "account": "admin@example.com",
+    "unique_user_id": "uid-admin",
+    "display_name": "Admin User",
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "username"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "client_ip"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "service"
+      }
+    ]
+  },
+  "redis": {
+    "responses": {
+      "action:notify": "enabled",
+      "admin:sessions": "3"
+    },
+    "expected_calls": [
+      {
+        "method": "incr",
+        "arg_contains": "login:count:admin@example.com"
+      },
+      {
+        "method": "expire",
+        "arg_contains": "login:count:admin@example.com"
+      },
+      {
+        "method": "set",
+        "arg_contains": "login:last_ip:admin@example.com"
+      }
+    ]
+  },
+  "backend_result": {
+    "authenticated": true,
+    "user_found": true,
+    "account_field": "admin@example.com",
+    "unique_user_id": "uid-admin",
+    "display_name": "Admin User",
+    "attributes": {
+      "role": "administrator",
+      "permissions": "all"
+    }
+  },
+  "expected_output": {
+    "action_result": true,
+    "logs_contain": [],
+    "error_expected": false
+  }
+}

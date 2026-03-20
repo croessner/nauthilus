@@ -73,6 +73,13 @@ type CredentialDescriptor struct {
 	AttestationType string `json:"-"`
 }
 
+func (c CredentialDescriptor) SignalUnknownCredential(rpid string) *SignalUnknownCredential {
+	return &SignalUnknownCredential{
+		CredentialID: c.CredentialID,
+		RPID:         rpid,
+	}
+}
+
 // CredentialParameter is the credential type and algorithm
 // that the relying party wants the authenticator to create.
 type CredentialParameter struct {
@@ -218,6 +225,9 @@ const (
 	// AttestationFormatApple is the attestation statement format that is used with Apple devices' platform
 	// authenticators.
 	AttestationFormatApple AttestationFormat = "apple"
+
+	// AttestationFormatCompound is used to pass multiple, self-contained attestation statements in a single ceremony.
+	AttestationFormatCompound AttestationFormat = "compound"
 
 	// AttestationFormatNone is the attestation statement format that is used to replace any authenticator-provided
 	// attestation statement when a WebAuthn Relying Party indicates it does not wish to receive attestation information.

@@ -1,0 +1,75 @@
+{
+  "context": {
+    "username": "testuser@example.com",
+    "password": "SecurePassword123!",
+    "client_ip": "192.168.1.100",
+    "client_port": "54321",
+    "client_host": "client.example.com",
+    "client_id": "test-client-id",
+    "local_ip": "10.0.0.1",
+    "local_port": "143",
+    "service": "imap",
+    "protocol": "plain",
+    "user_agent": "Mozilla/5.0",
+    "session": "test-session-123",
+    "debug": true,
+    "no_auth": false,
+    "authenticated": false,
+    "user_found": false,
+    "account": "",
+    "unique_user_id": "",
+    "display_name": "",
+    "status_message": "",
+    "brute_force_count": 0,
+    "attributes": {
+      "custom_field": "custom_value"
+    },
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "username"
+      }
+    ]
+  },
+  "redis": {
+    "responses": {
+      "geoip:192.168.1.100": "{\"country\":\"DE\",\"city\":\"Berlin\"}",
+      "bruteforce:testuser@example.com": "0",
+      "account:testuser@example.com": "{\"status\":\"active\"}"
+    },
+    "expected_calls": [
+      {
+        "method": "exists",
+        "arg_contains": "blocklist:testuser@example.com"
+      }
+    ]
+  },
+  "backend_result": {
+    "authenticated": true,
+    "user_found": true,
+    "account_field": "testuser@example.com",
+    "totp_secret": "",
+    "totp_recovery": [],
+    "unique_user_id": "uid-12345",
+    "display_name": "Test User",
+    "attributes": {
+      "department": "Engineering",
+      "role": "Developer"
+    }
+  },
+  "http_request": {
+    "method": "POST",
+    "path": "/auth",
+    "headers": {
+      "Content-Type": "application/json",
+      "User-Agent": "TestClient/1.0"
+    },
+    "body": "{\"test\":\"data\"}"
+  },
+  "expected_output": {
+    "filter_result": 0,
+    "logs_contain": [],
+    "logs_not_contain": [],
+    "error_expected": false
+  }
+}

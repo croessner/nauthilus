@@ -1,0 +1,40 @@
+{
+  "context": {
+    "username": "chain@example.com",
+    "client_ip": "198.51.100.55",
+    "protocol": "imap",
+    "session": "context-chain-session",
+    "no_auth": false,
+    "debug": false,
+    "expected_calls": [
+      {
+        "method": "context_set",
+        "arg_contains": "test_stage_feature"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "test_marker_feature"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_feature"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_feature"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "test_stage_filter"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "test_marker_filter"
+      }
+    ]
+  },
+  "expected_output": {
+    "filter_result": 0,
+    "error_expected": false
+  }
+}

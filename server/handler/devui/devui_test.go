@@ -106,5 +106,6 @@ func TestDevUIHandler_Index(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Nauthilus Dev UI")
 	assert.Contains(t, w.Body.String(), "idp_login.html")
+	assert.Contains(t, w.Body.String(), "idp_saml_post.html")
 	assert.Contains(t, w.Body.String(), "12345")
 }

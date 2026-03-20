@@ -1,0 +1,44 @@
+{
+  "context": {
+    "username": "db-user@example.com",
+    "password": "Password123",
+    "client_ip": "203.0.113.40",
+    "protocol": "imap",
+    "session": "backend-dbmock-session",
+    "no_auth": false
+  },
+  "db": {
+    "expected_calls": [
+      {
+        "method": "open"
+      },
+      {
+        "method": "query",
+        "query_contains": "from nauthilus where username",
+        "columns": [
+          "account",
+          "password",
+          "totp_secret",
+          "uniqueid",
+          "display_name"
+        ],
+        "rows": [
+          [
+            "acc-1001",
+            "Password123",
+            "JBSWY3DPEHPK3PXP",
+            "uid-1001",
+            "Demo User"
+          ]
+        ]
+      }
+    ]
+  },
+  "expected_output": {
+    "backend_result": true,
+    "backend_authenticated": true,
+    "backend_user_found": true,
+    "backend_account_field": "account",
+    "error_expected": false
+  }
+}

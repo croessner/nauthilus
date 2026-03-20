@@ -7,14 +7,15 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"hash"
 	"math"
 	"math/big"
 
-	"github.com/google/go-tpm/legacy/tpm2"
+	"github.com/go-webauthn/x/encoding/asn1"
+
+	"github.com/google/go-tpm/tpm2"
 
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
 )
@@ -28,7 +29,7 @@ import (
 // Specification: §6.4.1.1. Examples of credentialPublicKey Values Encoded in COSE_Key Format (https://www.w3.org/TR/webauthn/#sctn-encoded-credPubKey-examples)
 type PublicKeyData struct {
 	// Decode the results to int by default.
-	_struct bool `cbor:",keyasint" json:"public_key"` //nolint:unused,govet
+	_struct bool `cbor:",keyasint" json:"public_key"` //nolint:govet
 
 	// The type of key created. Should be OKP, EC2, or RSA.
 	KeyType int64 `cbor:"1,keyasint" json:"kty"`
@@ -73,6 +74,10 @@ type OKPPublicKeyData struct {
 
 // Verify Octet Key Pair (OKP) Public Key Signature.
 func (k *OKPPublicKeyData) Verify(data []byte, sig []byte) (bool, error) {
+	if err := validateOKPPublicKey(k); err != nil {
+		return false, err
+	}
+
 	var key ed25519.PublicKey = make([]byte, ed25519.PublicKeySize)
 
 	copy(key, k.XCoord)
@@ -81,14 +86,13 @@ func (k *OKPPublicKeyData) Verify(data []byte, sig []byte) (bool, error) {
 }
 
 // Verify Elliptic Curve Public Key Signature.
-func (k *EC2PublicKeyData) Verify(data []byte, sig []byte) (bool, error) {
-	curve := ec2AlgCurve(k.Algorithm)
-	if curve == nil {
-		return false, ErrUnsupportedAlgorithm
+func (k *EC2PublicKeyData) Verify(data []byte, sig []byte) (valid bool, err error) {
+	if err = validateEC2PublicKey(k); err != nil {
+		return false, err
 	}
 
 	pubkey := &ecdsa.PublicKey{
-		Curve: curve,
+		Curve: ec2AlgCurve(k.Algorithm),
 		X:     big.NewInt(0).SetBytes(k.XCoord),
 		Y:     big.NewInt(0).SetBytes(k.YCoord),
 	}
@@ -98,8 +102,13 @@ func (k *EC2PublicKeyData) Verify(data []byte, sig []byte) (bool, error) {
 
 	e := &ECDSASignature{}
 
-	_, err := asn1.Unmarshal(sig, e)
-	if err != nil {
+	var opts []asn1.UnmarshalOpt
+
+	if allowBERIntegers.Load() {
+		opts = append(opts, asn1.WithUnmarshalAllowBERIntegers(true))
+	}
+
+	if _, err = asn1.Unmarshal(sig, e, opts...); err != nil {
 		return false, ErrSigNotProvidedOrInvalid
 	}
 
@@ -108,14 +117,12 @@ func (k *EC2PublicKeyData) Verify(data []byte, sig []byte) (bool, error) {
 
 // ToECDSA converts the EC2PublicKeyData to an ecdsa.PublicKey.
 func (k *EC2PublicKeyData) ToECDSA() (key *ecdsa.PublicKey, err error) {
-	curve := ec2AlgCurve(k.Algorithm)
-
-	if curve == nil {
-		return nil, ErrUnsupportedAlgorithm
+	if err = validateEC2PublicKey(k); err != nil {
+		return nil, err
 	}
 
 	return &ecdsa.PublicKey{
-		Curve: curve,
+		Curve: ec2AlgCurve(k.Algorithm),
 		X:     big.NewInt(0).SetBytes(k.XCoord),
 		Y:     big.NewInt(0).SetBytes(k.YCoord),
 	}, nil
@@ -123,11 +130,11 @@ func (k *EC2PublicKeyData) ToECDSA() (key *ecdsa.PublicKey, err error) {
 
 // Verify RSA Public Key Signature.
 func (k *RSAPublicKeyData) Verify(data []byte, sig []byte) (valid bool, err error) {
-	var e int
-
-	if e, err = parseRSAPublicKeyDataExponent(k); err != nil {
-		return false, ErrUnsupportedKey
+	if err = validateRSAPublicKey(k); err != nil {
+		return false, err
 	}
+
+	e, _ := parseRSAPublicKeyDataExponent(k)
 
 	pubkey := &rsa.PublicKey{
 		N: big.NewInt(0).SetBytes(k.Modulus),
@@ -147,11 +154,11 @@ func (k *RSAPublicKeyData) Verify(data []byte, sig []byte) (valid bool, err erro
 
 	switch coseAlg {
 	case AlgPS256, AlgPS384, AlgPS512:
-		err := rsa.VerifyPSS(pubkey, hash, h.Sum(nil), sig, nil)
+		err = rsa.VerifyPSS(pubkey, hash, h.Sum(nil), sig, nil)
 
 		return err == nil, err
 	case AlgRS1, AlgRS256, AlgRS384, AlgRS512:
-		err := rsa.VerifyPKCS1v15(pubkey, hash, h.Sum(nil), sig)
+		err = rsa.VerifyPKCS1v15(pubkey, hash, h.Sum(nil), sig)
 
 		return err == nil, err
 	default:
@@ -177,6 +184,10 @@ func ParsePublicKey(keyBytes []byte) (publicKey any, err error) {
 
 		o.PublicKeyData = pk
 
+		if err = validateOKPPublicKey(&o); err != nil {
+			return nil, err
+		}
+
 		return o, nil
 	case EllipticKey:
 		var e EC2PublicKeyData
@@ -187,6 +198,10 @@ func ParsePublicKey(keyBytes []byte) (publicKey any, err error) {
 
 		e.PublicKeyData = pk
 
+		if err = validateEC2PublicKey(&e); err != nil {
+			return nil, err
+		}
+
 		return e, nil
 	case RSAKey:
 		var r RSAPublicKeyData
@@ -196,6 +211,10 @@ func ParsePublicKey(keyBytes []byte) (publicKey any, err error) {
 		}
 
 		r.PublicKeyData = pk
+
+		if err = validateRSAPublicKey(&r); err != nil {
+			return nil, err
+		}
 
 		return r, nil
 	default:
@@ -213,8 +232,10 @@ func ParseFIDOPublicKey(keyBytes []byte) (data EC2PublicKeyData, err error) {
 
 	return EC2PublicKeyData{
 		PublicKeyData: PublicKeyData{
+			KeyType:   int64(EllipticKey),
 			Algorithm: int64(AlgES256),
 		},
+		Curve:  int64(P256),
 		XCoord: x.FillBytes(make([]byte, ecCoordSize)),
 		YCoord: y.FillBytes(make([]byte, ecCoordSize)),
 	}, nil
@@ -239,6 +260,8 @@ func DisplayPublicKey(cpk []byte) string {
 		return keyCannotDisplay
 	}
 
+	var data []byte
+
 	switch k := parsedKey.(type) {
 	case RSAPublicKeyData:
 		var e int
@@ -252,17 +275,9 @@ func DisplayPublicKey(cpk []byte) string {
 			E: e,
 		}
 
-		data, err := x509.MarshalPKIXPublicKey(rKey)
-		if err != nil {
+		if data, err = x509.MarshalPKIXPublicKey(rKey); err != nil {
 			return keyCannotDisplay
 		}
-
-		pemBytes := pem.EncodeToMemory(&pem.Block{
-			Type:  "RSA PUBLIC KEY",
-			Bytes: data,
-		})
-
-		return string(pemBytes)
 	case EC2PublicKeyData:
 		curve := ec2AlgCurve(k.Algorithm)
 		if curve == nil {
@@ -275,17 +290,9 @@ func DisplayPublicKey(cpk []byte) string {
 			Y:     big.NewInt(0).SetBytes(k.YCoord),
 		}
 
-		data, err := x509.MarshalPKIXPublicKey(eKey)
-		if err != nil {
+		if data, err = x509.MarshalPKIXPublicKey(eKey); err != nil {
 			return keyCannotDisplay
 		}
-
-		pemBytes := pem.EncodeToMemory(&pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: data,
-		})
-
-		return string(pemBytes)
 	case OKPPublicKeyData:
 		if len(k.XCoord) != ed25519.PublicKeySize {
 			return keyCannotDisplay
@@ -295,21 +302,19 @@ func DisplayPublicKey(cpk []byte) string {
 
 		copy(oKey, k.XCoord)
 
-		data, err := marshalEd25519PublicKey(oKey)
-		if err != nil {
+		if data, err = marshalEd25519PublicKey(oKey); err != nil {
 			return keyCannotDisplay
 		}
-
-		pemBytes := pem.EncodeToMemory(&pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: data,
-		})
-
-		return string(pemBytes)
-
 	default:
 		return "Cannot display key of this type"
 	}
+
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: data,
+	})
+
+	return string(pemBytes)
 }
 
 // COSEAlgorithmIdentifier is a number identifying a cryptographic algorithm. The algorithm identifiers SHOULD be values
@@ -414,16 +419,16 @@ const (
 	Secp256k1
 )
 
-func (k *EC2PublicKeyData) TPMCurveID() tpm2.EllipticCurve {
+func (k *EC2PublicKeyData) TPMCurveID() tpm2.TPMECCCurve {
 	switch COSEEllipticCurve(k.Curve) {
 	case P256:
-		return tpm2.CurveNISTP256 // TPM_ECC_NIST_P256.
+		return tpm2.TPMECCNistP256 // TPM_ECC_NIST_P256.
 	case P384:
-		return tpm2.CurveNISTP384 // TPM_ECC_NIST_P384.
+		return tpm2.TPMECCNistP384 // TPM_ECC_NIST_P384.
 	case P521:
-		return tpm2.CurveNISTP521 // TPM_ECC_NIST_P521.
+		return tpm2.TPMECCNistP521 // TPM_ECC_NIST_P521.
 	default:
-		return tpm2.EllipticCurve(0) // TPM_ECC_NONE.
+		return tpm2.TPMECCNone // TPM_ECC_NONE.
 	}
 }
 
@@ -514,6 +519,49 @@ func (passedError *Error) WithDetails(details string) *Error {
 	err.Details = details
 
 	return &err
+}
+
+func validateOKPPublicKey(k *OKPPublicKeyData) error {
+	if len(k.XCoord) != ed25519.PublicKeySize {
+		return ErrUnsupportedKey.WithDetails(fmt.Sprintf("OKP key x coordinate has invalid length %d, expected %d", len(k.XCoord), ed25519.PublicKeySize))
+	}
+
+	return nil
+}
+
+func validateEC2PublicKey(k *EC2PublicKeyData) error {
+	curve := ec2AlgCurve(k.Algorithm)
+	if curve == nil {
+		return ErrUnsupportedAlgorithm.WithDetails("Unsupported EC2 algorithm")
+	}
+
+	byteLen := (curve.Params().BitSize + 7) / 8
+
+	if len(k.XCoord) != byteLen || len(k.YCoord) != byteLen {
+		return ErrUnsupportedKey.WithDetails("EC2 key x or y coordinate has invalid length")
+	}
+
+	x := new(big.Int).SetBytes(k.XCoord)
+	y := new(big.Int).SetBytes(k.YCoord)
+
+	if !curve.IsOnCurve(x, y) {
+		return ErrUnsupportedKey.WithDetails("EC2 key point is not on curve")
+	}
+
+	return nil
+}
+
+func validateRSAPublicKey(k *RSAPublicKeyData) error {
+	n := new(big.Int).SetBytes(k.Modulus)
+	if n.Sign() <= 0 {
+		return ErrUnsupportedKey.WithDetails("RSA key contains zero or empty modulus")
+	}
+
+	if _, err := parseRSAPublicKeyDataExponent(k); err != nil {
+		return ErrUnsupportedKey.WithDetails(fmt.Sprintf("RSA key contains invalid exponent: %v", err))
+	}
+
+	return nil
 }
 
 func parseRSAPublicKeyDataExponent(k *RSAPublicKeyData) (exp int, err error) {

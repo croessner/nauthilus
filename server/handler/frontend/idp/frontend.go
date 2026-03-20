@@ -348,6 +348,11 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 	flowType := ""
 	oidcClientID := ""
 	samlEntityID := ""
+	languageTags := []language.Tag{}
+
+	if langManager != nil {
+		languageTags = langManager.GetTags()
+	}
 
 	if lang == "" {
 		if cookieLang, err := ctx.Cookie(definitions.LanguageCookieName); err == nil {
@@ -380,7 +385,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 
 	if len(parts) > 1 {
 		lastPart := parts[len(parts)-1]
-		for _, t := range langManager.GetTags() {
+		for _, t := range languageTags {
 			b, _ := t.Base()
 			if b.String() == lastPart {
 				path = strings.Join(parts[:len(parts)-1], "/")
@@ -395,7 +400,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 	return gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
-		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, path, langManager.GetTags(), currentName),
+		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, path, languageTags, currentName),
 		"Username":            username,
 		"CSPNonce":            securityheaders.NonceFromContext(ctx),
 		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),

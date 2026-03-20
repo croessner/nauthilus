@@ -11,35 +11,54 @@ import (
 // Credential contains all needed information about a WebAuthn credential for storage. This struct is effectively the
 // Credential Record as described in the specification.
 //
+// Providing this data structure is preserved properly this Credential can be properly verified using the
+// [Credential.Verify] function when provided a [metadata.Provider].
+//
+// It is strongly recommended for the best security that a [Credential] is encrypted at rest with the exception of the
+// ID and the value you use to lookup the user. This prevents a person with access to the database being able to
+// compromise privacy by being able to view this data, as well as prevents them being able to compromise security by
+// adding or modifying a Credential without them also having access to the encryption key.
+//
 // See: §4. Terminology: Credential Record (https://www.w3.org/TR/webauthn-3/#credential-record)
 type Credential struct {
-	// The Credential ID of the public key credential source. Described by the Credential Record 'id' field.
+	// The ID is the ID of the public key credential source. Described by the Credential Record 'id' field.
 	ID []byte `json:"id"`
 
-	// The credential public key of the public key credential source. Described by the Credential Record 'publicKey field.
+	// The credential public key of the public key credential source. Described by the Credential Record 'publicKey'
+	// field.
 	PublicKey []byte `json:"publicKey"`
 
-	// The attestation format used (if any) by the authenticator when creating the credential.
+	// The AttestationType stores the attestation format used (if any) by the authenticator when creating the
+	// Credential.
+	//
+	// Important Note: This field is named attestationType but this is actually the attestation format.
 	AttestationType string `json:"attestationType"`
 
-	// The transport types the authenticator supports.
+	// Transport types the authenticator supports. Described by the Credential Record 'transports' field.
 	Transport []protocol.AuthenticatorTransport `json:"transport"`
 
-	// The commonly stored flags.
+	// Flags represent the commonly stored flags.
 	Flags CredentialFlags `json:"flags"`
 
-	// The Authenticator information for a given certificate.
+	// The Authenticator information for a given Credential.
 	Authenticator Authenticator `json:"authenticator"`
 
-	// The attestation values that can be used to validate this credential via the MDS3 at a later date.
+	// The attestation values that can be used to validate this Credential via the MDS3 at a later date.
 	Attestation CredentialAttestation `json:"attestation"`
 }
 
-// Credentials is a decorator type which allows easily converting a []Credential to []protocol.CredentialDescriptor.
-// This will be the type used globally for the library in a future release.
+// SignalUnknownCredential creates a struct that can easily be marshaled to JSON which indicates this is an unknown
+// Credential.
+func (c Credential) SignalUnknownCredential(rpid string) *protocol.SignalUnknownCredential {
+	return c.Descriptor().SignalUnknownCredential(rpid)
+}
+
+// Credentials is a decorator type which allows easily converting a [Credential] slice into a
+// [protocol.CredentialDescriptor] slice by utilizing the [Credentials.CredentialDescriptors] method. This will be the
+// type used globally for the library in a future release.
 type Credentials []Credential
 
-// CredentialDescriptors returns the []protocol.CredentialDescriptor for this Credentials type.
+// CredentialDescriptors returns the [protocol.CredentialDescriptor] slice for this [Credentials] type.
 func (c Credentials) CredentialDescriptors() (descriptors []protocol.CredentialDescriptor) {
 	descriptors = make([]protocol.CredentialDescriptor, len(c))
 
@@ -50,9 +69,10 @@ func (c Credentials) CredentialDescriptors() (descriptors []protocol.CredentialD
 	return descriptors
 }
 
-// NewCredentialFlags is a utility function that is used to derive the Credential's Flags field. This allows
-// implementers to solely save the Raw field of the CredentialFlags to restore them appropriately for appropriate
-// processing without concern that changes forced upon implementers by the W3C will introduce breaking changes.
+// NewCredentialFlags is a utility function that is used to derive the [Credential]'s Flags field given a
+// [protocol.AuthenticatorFlags]. This allows implementers to solely save the Raw field of the [CredentialFlags] to
+// restore them appropriately for appropriate processing without concern that changes forced upon implementers by the
+// W3C will introduce breaking changes.
 func NewCredentialFlags(flags protocol.AuthenticatorFlags) CredentialFlags {
 	return CredentialFlags{
 		UserPresent:    flags.HasUserPresent(),
@@ -63,6 +83,7 @@ func NewCredentialFlags(flags protocol.AuthenticatorFlags) CredentialFlags {
 	}
 }
 
+// CredentialFlags is a JSON representation of the flags.
 type CredentialFlags struct {
 	// Flag UP indicates the users presence.
 	UserPresent bool `json:"userPresent"`
@@ -80,12 +101,14 @@ type CredentialFlags struct {
 	raw protocol.AuthenticatorFlags
 }
 
-// ProtocolValue returns the underlying protocol.AuthenticatorFlags provided this CredentialFlags was created using
+// ProtocolValue returns the underlying [protocol.AuthenticatorFlags] provided this [CredentialFlags] was created using
 // NewCredentialFlags.
 func (f CredentialFlags) ProtocolValue() protocol.AuthenticatorFlags {
 	return f.raw
 }
 
+// CredentialAttestation is a decoded representation of the [protocol.AuthenticatorAttestationResponse] in a format that
+// can easily be serialized.
 type CredentialAttestation struct {
 	ClientDataJSON     []byte `json:"clientDataJSON"`
 	ClientDataHash     []byte `json:"clientDataHash"`
@@ -94,7 +117,7 @@ type CredentialAttestation struct {
 	Object             []byte `json:"object"`
 }
 
-// Descriptor converts a Credential into a protocol.CredentialDescriptor.
+// Descriptor converts a [Credential] into a [protocol.CredentialDescriptor].
 func (c Credential) Descriptor() (descriptor protocol.CredentialDescriptor) {
 	return protocol.CredentialDescriptor{
 		Type:            protocol.PublicKeyCredentialType,

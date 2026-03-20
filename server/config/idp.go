@@ -16,6 +16,8 @@
 package config
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"slices"
@@ -59,6 +61,80 @@ func (f *FileSettings) validateIdPMFASettings() error {
 	}
 
 	return nil
+}
+
+// validateIdPSAMLSigningSettings ensures SAML SP signing requirements have the
+// required certificate material available and parseable at startup.
+func (f *FileSettings) validateIdPSAMLSigningSettings() error {
+	if f == nil || f.IdP == nil || !f.IdP.SAML2.Enabled {
+		return nil
+	}
+
+	for _, sp := range f.IdP.SAML2.ServiceProviders {
+		if !sp.AuthnRequestsSigned {
+			continue
+		}
+
+		certStr, err := sp.GetCert()
+		if err != nil {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: failed to read cert: %w", sp.EntityID, err)
+		}
+
+		if strings.TrimSpace(certStr) == "" {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: authn_requests_signed requires cert or cert_file", sp.EntityID)
+		}
+
+		if _, err := parseFirstPEMCertificate(certStr); err != nil {
+			return fmt.Errorf("idp.saml2.service_providers[%s]: invalid cert for authn request signature validation: %w", sp.EntityID, err)
+		}
+	}
+
+	return nil
+}
+
+// validateIdPSAML2SLOSettings ensures SAML SLO configuration values are within safe ranges.
+func (f *FileSettings) validateIdPSAML2SLOSettings() error {
+	if f == nil || f.IdP == nil || !f.IdP.SAML2.Enabled {
+		return nil
+	}
+
+	samlCfg := f.IdP.SAML2
+
+	if samlCfg.SLO.RequestTimeout < 0 {
+		return fmt.Errorf("idp.saml2.slo.request_timeout must be >= 0")
+	}
+
+	if samlCfg.SLOBackChannelTimeout < 0 {
+		return fmt.Errorf("idp.saml2.slo_back_channel_timeout must be >= 0")
+	}
+
+	if samlCfg.SLO.MaxParticipants < 0 {
+		return fmt.Errorf("idp.saml2.slo.max_participants must be >= 0")
+	}
+
+	if samlCfg.SLO.BackChannelMaxRetries < 0 {
+		return fmt.Errorf("idp.saml2.slo.back_channel_max_retries must be >= 0")
+	}
+
+	if samlCfg.SLOBackChannelMaxRetries < 0 {
+		return fmt.Errorf("idp.saml2.slo_back_channel_max_retries must be >= 0")
+	}
+
+	return nil
+}
+
+func parseFirstPEMCertificate(certPEM string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil, fmt.Errorf("failed to parse certificate PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse x509 certificate: %w", err)
+	}
+
+	return cert, nil
 }
 
 // IdPSection represents the configuration for the internal Identity Provider.
@@ -729,7 +805,36 @@ type SAML2Config struct {
 	SignatureMethod   string                 `mapstructure:"signature_method"`
 	DefaultExpireTime time.Duration          `mapstructure:"default_expire_time"`
 	NameIDFormat      string                 `mapstructure:"name_id_format"`
+	SLO               SAML2SLOConfig         `mapstructure:"slo"`
+	// Deprecated: use `slo.enabled`.
+	SLOEnabled *bool `mapstructure:"slo_enabled"`
+	// Deprecated: use `slo.front_channel_enabled`.
+	SLOFrontChannelEnabled *bool `mapstructure:"slo_front_channel_enabled"`
+	// Deprecated: use `slo.back_channel_enabled`.
+	SLOBackChannelEnabled *bool `mapstructure:"slo_back_channel_enabled"`
+	// Deprecated: use `slo.request_timeout`.
+	SLOBackChannelTimeout time.Duration `mapstructure:"slo_back_channel_timeout"`
+	// Deprecated: use `slo.back_channel_max_retries`.
+	SLOBackChannelMaxRetries int `mapstructure:"slo_back_channel_max_retries"`
 }
+
+type SAML2SLOConfig struct {
+	Enabled               *bool         `mapstructure:"enabled"`
+	FrontChannelEnabled   *bool         `mapstructure:"front_channel_enabled"`
+	BackChannelEnabled    *bool         `mapstructure:"back_channel_enabled"`
+	RequestTimeout        time.Duration `mapstructure:"request_timeout"`
+	MaxParticipants       int           `mapstructure:"max_participants"`
+	BackChannelMaxRetries int           `mapstructure:"back_channel_max_retries"`
+}
+
+const (
+	defaultSLOEnabled            = true
+	defaultSLOFrontChannel       = true
+	defaultSLOBackChannel        = false
+	defaultSLORequestTimeout     = 3 * time.Second
+	defaultSLOMaxParticipants    = 64
+	defaultSLOBackChannelRetries = 1
+)
 
 func (s *SAML2Config) String() string {
 	if s == nil {
@@ -777,6 +882,110 @@ func (s *SAML2Config) GetNameIDFormat() string {
 	return "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 }
 
+// GetSLOEnabled returns true when protocol-aware SAML SLO handling is enabled.
+func (s *SAML2Config) GetSLOEnabled() bool {
+	if s == nil {
+		return defaultSLOEnabled
+	}
+
+	if s.SLO.Enabled != nil {
+		return *s.SLO.Enabled
+	}
+
+	if s.SLOEnabled != nil {
+		return *s.SLOEnabled
+	}
+
+	return defaultSLOEnabled
+}
+
+// GetSLOFrontChannelEnabled returns true when browser-based SLO fanout is enabled.
+func (s *SAML2Config) GetSLOFrontChannelEnabled() bool {
+	if s == nil {
+		return defaultSLOFrontChannel
+	}
+
+	if s.SLO.FrontChannelEnabled != nil {
+		return *s.SLO.FrontChannelEnabled
+	}
+
+	if s.SLOFrontChannelEnabled != nil {
+		return *s.SLOFrontChannelEnabled
+	}
+
+	return defaultSLOFrontChannel
+}
+
+// GetSLOBackChannelEnabled returns true when server-side SAML SLO back-channel delivery is enabled.
+func (s *SAML2Config) GetSLOBackChannelEnabled() bool {
+	if s == nil {
+		return defaultSLOBackChannel
+	}
+
+	if s.SLO.BackChannelEnabled != nil {
+		return *s.SLO.BackChannelEnabled
+	}
+
+	if s.SLOBackChannelEnabled != nil {
+		return *s.SLOBackChannelEnabled
+	}
+
+	return defaultSLOBackChannel
+}
+
+// GetSLORequestTimeout returns the request timeout used by SLO HTTP dispatches.
+func (s *SAML2Config) GetSLORequestTimeout() time.Duration {
+	if s == nil {
+		return defaultSLORequestTimeout
+	}
+
+	if s.SLO.RequestTimeout > 0 {
+		return s.SLO.RequestTimeout
+	}
+
+	if s.SLOBackChannelTimeout > 0 {
+		return s.SLOBackChannelTimeout
+	}
+
+	return defaultSLORequestTimeout
+}
+
+// GetSLOMaxParticipants returns the maximum number of participants processed per fanout run.
+func (s *SAML2Config) GetSLOMaxParticipants() int {
+	if s == nil || s.SLO.MaxParticipants <= 0 {
+		return defaultSLOMaxParticipants
+	}
+
+	return s.SLO.MaxParticipants
+}
+
+// GetSLOBackChannelTimeout returns the request timeout for SAML SLO back-channel delivery.
+func (s *SAML2Config) GetSLOBackChannelTimeout() time.Duration {
+	return s.GetSLORequestTimeout()
+}
+
+// GetSLOBackChannelMaxRetries returns the number of retry attempts after the first back-channel request.
+func (s *SAML2Config) GetSLOBackChannelMaxRetries() int {
+	if s == nil {
+		return defaultSLOBackChannelRetries
+	}
+
+	retries := s.SLO.BackChannelMaxRetries
+	if retries == 0 {
+		retries = s.SLOBackChannelMaxRetries
+	}
+
+	if retries == 0 {
+		return defaultSLOBackChannelRetries
+	}
+
+	if retries < 0 {
+		return 0
+	}
+
+	return retries
+}
+
 // warnUnsupported returns a list of warnings for unsupported SAML2 configuration parameters.
 func (s *SAML2Config) warnUnsupported() []string {
 	if !s.Enabled {
@@ -787,6 +996,10 @@ func (s *SAML2Config) warnUnsupported() []string {
 
 	if s.SignatureMethod != "" && s.SignatureMethod != "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" {
 		warnings = append(warnings, fmt.Sprintf("saml2.signature_method: '%s' is currently not supported (only 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256' is supported)", s.SignatureMethod))
+	}
+
+	if !s.GetSLOEnabled() && (s.GetSLOFrontChannelEnabled() || s.GetSLOBackChannelEnabled()) {
+		warnings = append(warnings, "saml2.slo.enabled: set to 'false' disables front_channel_enabled and back_channel_enabled")
 	}
 
 	return warnings
@@ -818,16 +1031,18 @@ func GetContent(raw any, path string) (string, error) {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
-	Name              string   `mapstructure:"name"`
-	EntityID          string   `mapstructure:"entity_id" validate:"required"`
-	ACSURL            string   `mapstructure:"acs_url" validate:"required"`
-	SLOURL            string   `mapstructure:"slo_url"`
-	Cert              string   `mapstructure:"cert"`
-	CertFile          string   `mapstructure:"cert_file"`
-	AllowedAttributes []string `mapstructure:"allowed_attributes"`
-	RequireMFA        []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	SupportedMFA      []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	LogoutRedirectURI string   `mapstructure:"logout_redirect_uri"`
+	Name                string   `mapstructure:"name"`
+	EntityID            string   `mapstructure:"entity_id" validate:"required"`
+	ACSURL              string   `mapstructure:"acs_url" validate:"required"`
+	SLOURL              string   `mapstructure:"slo_url"`
+	SLOBackChannelURL   string   `mapstructure:"slo_back_channel_url"`
+	Cert                string   `mapstructure:"cert"`
+	CertFile            string   `mapstructure:"cert_file"`
+	AuthnRequestsSigned bool     `mapstructure:"authn_requests_signed"`
+	AllowedAttributes   []string `mapstructure:"allowed_attributes"`
+	RequireMFA          []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA        []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	LogoutRedirectURI   string   `mapstructure:"logout_redirect_uri"`
 	// Deprecated: use idp.remember_me_ttl instead.
 	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse bool          `mapstructure:"delayed_response"`
@@ -862,6 +1077,15 @@ func (s *SAML2ServiceProvider) GetCert() (string, error) {
 	return GetContent(s.Cert, s.CertFile)
 }
 
+// AreAuthnRequestsSigned returns whether this SP signs AuthnRequests.
+func (s *SAML2ServiceProvider) AreAuthnRequestsSigned() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.AuthnRequestsSigned
+}
+
 // GetAllowedAttributes returns the allowed attributes for this SP.
 // If empty, all attributes are allowed.
 func (s *SAML2ServiceProvider) GetAllowedAttributes() []string {
@@ -870,6 +1094,15 @@ func (s *SAML2ServiceProvider) GetAllowedAttributes() []string {
 	}
 
 	return s.AllowedAttributes
+}
+
+// GetSLOBackChannelURL returns the optional SAML SLO back-channel endpoint for this SP.
+func (s *SAML2ServiceProvider) GetSLOBackChannelURL() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.SLOBackChannelURL
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this service provider.

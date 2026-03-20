@@ -1,22 +1,55 @@
 {{ template "idp_header.html" . }}
 <div class="flex justify-center items-center mt-10">
-    <div class="card w-96 bg-base-100 shadow-xl">
+    <div class="card w-full max-w-2xl bg-base-100 shadow-xl">
         <div class="card-body">
             <h2 class="card-title justify-center text-2xl mb-4">{{ .Title }}</h2>
             <p class="text-center mb-6">{{ .LoggingOutFromAllApplications }}</p>
 
-            <div class="hidden" id="logout-frames">
-                {{ range .FrontChannelLogoutURIs }}
-                <iframe src="{{ . }}" style="display:none; width:0; height:0; border:0;"></iframe>
-                {{ end }}
+            <div class="mb-4">
+                <div class="flex justify-between items-center text-sm">
+                    <span>{{ .LogoutProgress }}</span>
+                    <span id="logout-progress-count">0 / {{ len .FrontChannelLogoutTasks }}</span>
+                </div>
+                <progress class="progress progress-primary w-full mt-2" id="logout-progress-bar"
+                          max="{{ len .FrontChannelLogoutTasks }}" value="0"></progress>
             </div>
 
-            <div class="flex flex-col items-center">
-                <span class="loading loading-spinner loading-lg text-primary mb-4"></span>
-                <p class="text-sm opacity-70">{{ .PleaseWaitWhileLogoutProcessIsCompleted }}</p>
+            <div class="rounded-lg border border-base-300 p-4 bg-base-200 mb-4">
+                <p class="font-medium mb-2">{{ .LogoutStatusPerApplication }}</p>
+                <ul class="space-y-2" id="logout-status-list"></ul>
             </div>
 
-            <div data-logout-target="{{ .LogoutTarget }}" id="logout-config"></div>
+            <div class="flex flex-col items-center mb-4">
+                <span class="loading loading-spinner loading-lg text-primary mb-3"></span>
+                <p class="text-sm opacity-70 text-center">{{ .PleaseWaitWhileLogoutProcessIsCompleted }}</p>
+            </div>
+
+            <p class="text-sm text-center opacity-80" id="logout-summary">{{ .LogoutSummaryPending }}</p>
+
+            <noscript>
+                <div class="alert alert-warning mt-4 text-sm">
+                    JavaScript is required for sequential front-channel logout orchestration.
+                </div>
+            </noscript>
+
+            <div
+                data-logout-attempt-text="{{ .LogoutAttempt }}"
+                data-logout-max-retries="{{ .FrontChannelLogoutMaxRetries }}"
+                data-logout-redirect-delay-ms="{{ .FrontChannelLogoutRedirectDelayMS }}"
+                data-logout-retrying-text="{{ .LogoutRetrying }}"
+                data-logout-status-error="{{ .LogoutStatusError }}"
+                data-logout-status-pending="{{ .LogoutStatusPending }}"
+                data-logout-status-running="{{ .LogoutStatusRunning }}"
+                data-logout-status-skipped="{{ .LogoutStatusSkipped }}"
+                data-logout-status-success="{{ .LogoutStatusSuccess }}"
+                data-logout-status-timeout="{{ .LogoutStatusTimeout }}"
+                data-logout-summary-done="{{ .LogoutSummaryDone }}"
+                data-logout-summary-partial="{{ .LogoutSummaryPartial }}"
+                data-logout-target="{{ .LogoutTarget }}"
+                data-logout-tasks='{{ .FrontChannelLogoutTaskConfig }}'
+                data-logout-timeout-ms="{{ .FrontChannelLogoutTimeoutMS }}"
+                id="logout-config"
+            ></div>
         </div>
     </div>
 </div>

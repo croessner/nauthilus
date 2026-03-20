@@ -198,6 +198,10 @@ idp:
       - entity_id: "https://sp.example.com/metadata"
         acs_url: "https://sp.example.com/saml/acs"
         slo_url: "https://sp.example.com/saml/slo"
+        # SP certificate used for assertion encryption and signature validation
+        cert_file: "/etc/nauthilus/sp.crt"
+        # Require signed AuthnRequests from this SP (Redirect or POST)
+        authn_requests_signed: true
         delayed_response: true
 ```
 
@@ -210,6 +214,8 @@ The IdP metadata can be retrieved at `https://<domain>/saml/metadata`.
 - **Metadata**: IdP metadata is provided at `/saml/metadata`.
 - **Dynamic Attribute Mapping**: User attributes from the backend (LDAP/Lua) are automatically included in the SAML
   assertion.
+- **AuthnRequest Signature Validation**: Redirect and POST-bound AuthnRequests are validated when signed, and can be
+  required per SP.
 - **Delayed-Response**: Also available for SAML Service Providers to make account enumeration harder.
 
 ### 4.1 SAML Attribute Mapping
