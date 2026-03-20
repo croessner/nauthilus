@@ -6,7 +6,31 @@
     "protocol": "imap",
     "session": "analytics-session",
     "no_auth": false,
-    "authenticated": false
+    "authenticated": false,
+    "expected_calls": [
+      {
+        "method": "context_set",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "rt"
+      }
+    ]
+  },
+  "util": {
+    "expected_calls": [
+      {
+        "method": "is_table"
+      },
+      {
+        "method": "table_length"
+      }
+    ]
   },
   "expected_output": {
     "action_result": true,

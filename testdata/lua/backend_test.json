@@ -7,13 +7,29 @@
     "protocol": "plain",
     "session": "backend-test-session",
     "debug": false,
-    "no_auth": false
+    "no_auth": false,
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "username"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "password"
+      }
+    ]
   },
   "redis": {
     "responses": {
       "backend:cache:backenduser@example.com": "{\"cached\":true}",
       "user:backenduser@example.com:last_login": "2025-03-19T10:00:00Z"
-    }
+    },
+    "expected_calls": [
+      {
+        "method": "get",
+        "arg_contains": "backend:cache:backenduser@example.com"
+      }
+    ]
   },
   "backend_result": {
     "authenticated": true,
@@ -30,10 +46,20 @@
       "email": "backenduser@example.com",
       "account_status": "active",
       "2fa_enabled": "true"
-    }
+    },
+    "expected_calls": [
+      {
+        "method": "new"
+      }
+    ]
   },
   "expected_output": {
     "backend_result": true,
+    "backend_authenticated": true,
+    "backend_user_found": true,
+    "backend_account_field": "backenduser@example.com",
+    "backend_display_name": "Cached User",
+    "backend_unique_user_id": "uid-backenduser@example.com",
     "logs_contain": [],
     "error_expected": false
   }

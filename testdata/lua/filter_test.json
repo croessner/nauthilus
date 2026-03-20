@@ -23,14 +23,26 @@
     "brute_force_count": 0,
     "attributes": {
       "custom_field": "custom_value"
-    }
+    },
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "username"
+      }
+    ]
   },
   "redis": {
     "responses": {
       "geoip:192.168.1.100": "{\"country\":\"DE\",\"city\":\"Berlin\"}",
       "bruteforce:testuser@example.com": "0",
       "account:testuser@example.com": "{\"status\":\"active\"}"
-    }
+    },
+    "expected_calls": [
+      {
+        "method": "exists",
+        "arg_contains": "blocklist:testuser@example.com"
+      }
+    ]
   },
   "backend_result": {
     "authenticated": true,

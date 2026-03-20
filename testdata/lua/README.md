@@ -166,10 +166,43 @@ Defines expected test results for validation:
 {
     "expected_output": {
         "backend_result": true,
+        "used_backend_address": "10.1.1.1",
+        "used_backend_port": 993,
         "error_expected": false
     }
 }
 ```
+
+### Module `expected_calls` (order-sensitive)
+
+Most module mocks support strict order validation via `expected_calls`:
+
+```json
+{
+    "redis": {
+        "responses": {
+            "k1": "v1"
+        },
+        "expected_calls": [
+            {
+                "method": "redis_get",
+                "arg_contains": "k1"
+            },
+            {
+                "method": "redis_set",
+                "arg_contains": "k2"
+            }
+        ]
+    }
+}
+```
+
+Validation fails if:
+
+- a call is missing
+- a call happens in the wrong order
+- `method` differs
+- `arg_contains` is configured but not found in the call argument snapshot
 
 ## Available Mock Modules
 
@@ -177,6 +210,7 @@ The test environment provides mock implementations of these Nauthilus modules:
 
 - `nauthilus_context`
 - `nauthilus_redis`
+- `nauthilus_backend`
 - `nauthilus_backend_result`
 - `nauthilus_http_request`
 - `nauthilus_http_response`
@@ -185,9 +219,14 @@ The test environment provides mock implementations of these Nauthilus modules:
 - `nauthilus_opentelemetry`
 - `nauthilus_brute_force`
 - `nauthilus_psnet`
+- `nauthilus_misc`
+- `nauthilus_password`
+- `nauthilus_soft_whitelist`
+- `nauthilus_mail`
 - `nauthilus_util`
 - `nauthilus_cache`
 - `nauthilus_log`
+- `nauthilus_prometheus`
 
 Additionally, test mode preloads the same core Lua extras as runtime for script compatibility:
 

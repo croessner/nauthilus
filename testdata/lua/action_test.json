@@ -10,13 +10,41 @@
     "user_found": true,
     "account": "admin@example.com",
     "unique_user_id": "uid-admin",
-    "display_name": "Admin User"
+    "display_name": "Admin User",
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "username"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "client_ip"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "service"
+      }
+    ]
   },
   "redis": {
     "responses": {
       "action:notify": "enabled",
       "admin:sessions": "3"
-    }
+    },
+    "expected_calls": [
+      {
+        "method": "incr",
+        "arg_contains": "login:count:admin@example.com"
+      },
+      {
+        "method": "expire",
+        "arg_contains": "login:count:admin@example.com"
+      },
+      {
+        "method": "set",
+        "arg_contains": "login:last_ip:admin@example.com"
+      }
+    ]
   },
   "backend_result": {
     "authenticated": true,

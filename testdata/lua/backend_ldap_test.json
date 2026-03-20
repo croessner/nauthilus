@@ -5,7 +5,13 @@
     "client_ip": "192.168.10.15",
     "service": "imap",
     "protocol": "plain",
-    "session": "backend-ldap-test-session"
+    "session": "backend-ldap-test-session",
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "username"
+      }
+    ]
   },
   "ldap": {
     "search_result": {
@@ -21,10 +27,33 @@
     },
     "modify_ok": true,
     "endpoint_host": "ldap.example.internal",
-    "endpoint_port": 389
+    "endpoint_port": 389,
+    "expected_calls": [
+      {
+        "method": "ldap_endpoint"
+      },
+      {
+        "method": "ldap_search"
+      },
+      {
+        "method": "ldap_modify"
+      }
+    ]
+  },
+  "backend_result": {
+    "expected_calls": [
+      {
+        "method": "new"
+      }
+    ]
   },
   "expected_output": {
     "backend_result": true,
+    "backend_authenticated": true,
+    "backend_user_found": true,
+    "backend_account_field": "ldapuser@example.com",
+    "backend_display_name": "LDAP Test User",
+    "backend_unique_user_id": "uid-ldap-001",
     "error_expected": false
   }
 }

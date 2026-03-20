@@ -5,7 +5,28 @@
     "protocol": "smtp",
     "session": "bruteforce-header-session",
     "no_auth": false,
-    "authenticated": false
+    "authenticated": false,
+    "expected_calls": [
+      {
+        "method": "context_set",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "rt"
+      }
+    ]
+  },
+  "util": {
+    "expected_calls": [
+      {
+        "method": "getenv",
+        "arg_contains": "BRUTEFORCE_HEADER_NAME"
+      },
+      {
+        "method": "is_table"
+      }
+    ]
   },
   "expected_output": {
     "action_result": true,

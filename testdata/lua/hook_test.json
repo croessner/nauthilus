@@ -20,7 +20,34 @@
       "User-Agent": "TestClient/1.0",
       "Accept": "text/html"
     },
-    "body": ""
+    "body": "",
+    "expected_calls": [
+      {
+        "method": "get_http_method"
+      },
+      {
+        "method": "get_http_path"
+      }
+    ]
+  },
+  "http_response": {
+    "expected_calls": [
+      {
+        "method": "set_http_response_header",
+        "arg_contains": "Content-Type"
+      },
+      {
+        "method": "html",
+        "arg_contains": "200"
+      }
+    ]
+  },
+  "util": {
+    "expected_calls": [
+      {
+        "method": "print_result"
+      }
+    ]
   },
   "expected_output": {
     "action_result": true,

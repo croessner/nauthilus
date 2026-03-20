@@ -6,7 +6,28 @@
     "session": "failed-login-tracker-session",
     "no_auth": false,
     "authenticated": false,
-    "account": ""
+    "account": "",
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "rt"
+      }
+    ]
+  },
+  "util": {
+    "expected_calls": [
+      {
+        "method": "getenv",
+        "arg_contains": "CUSTOM_REDIS_POOL_NAME"
+      },
+      {
+        "method": "is_table"
+      }
+    ]
   },
   "expected_output": {
     "action_result": true,

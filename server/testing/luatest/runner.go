@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -96,11 +97,151 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 		result.Logs = tr.logger.Logs
 	}
 
+	// Capture runtime backend-selection state when the backend mock is active.
+	if tr.mockData != nil && tr.mockData.Backend != nil {
+		if tr.mockData.Backend.RuntimeSelectedHost != "" {
+			selectedHost := tr.mockData.Backend.RuntimeSelectedHost
+			result.UsedBackendAddress = &selectedHost
+		}
+
+		if tr.mockData.Backend.RuntimeSelectedPort != nil {
+			selectedPort := *tr.mockData.Backend.RuntimeSelectedPort
+			result.UsedBackendPort = &selectedPort
+		}
+	}
+
 	// Validate DB mock call expectations when configured.
 	if tr.mockData != nil && tr.mockData.DB != nil {
 		if err = tr.mockData.DB.ValidateComplete(); err != nil {
 			result.Success = false
 			result.Errors = append(result.Errors, err)
+		}
+	}
+
+	// Validate expected_calls for all module mocks.
+	if tr.mockData != nil {
+		validators := []func() error{
+			func() error {
+				if tr.mockData.Context != nil {
+					return tr.mockData.Context.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Redis != nil {
+					return tr.mockData.Redis.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.LDAP != nil {
+					return tr.mockData.LDAP.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Backend != nil {
+					return tr.mockData.Backend.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.BackendResult != nil {
+					return tr.mockData.BackendResult.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.HTTPRequest != nil {
+					return tr.mockData.HTTPRequest.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.HTTPResponse != nil {
+					return tr.mockData.HTTPResponse.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.DNS != nil {
+					return tr.mockData.DNS.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.OpenTelemetry != nil {
+					return tr.mockData.OpenTelemetry.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.BruteForce != nil {
+					return tr.mockData.BruteForce.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Psnet != nil {
+					return tr.mockData.Psnet.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Prometheus != nil {
+					return tr.mockData.Prometheus.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Util != nil {
+					return tr.mockData.Util.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Cache != nil {
+					return tr.mockData.Cache.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Log != nil {
+					return tr.mockData.Log.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Misc != nil {
+					return tr.mockData.Misc.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Password != nil {
+					return tr.mockData.Password.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.SoftWhitelist != nil {
+					return tr.mockData.SoftWhitelist.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
+				if tr.mockData.Mail != nil {
+					return tr.mockData.Mail.ValidateComplete()
+				}
+				return nil
+			},
+		}
+
+		for _, validate := range validators {
+			if vErr := validate(); vErr != nil {
+				result.Success = false
+				result.Errors = append(result.Errors, vErr)
+			}
 		}
 	}
 
@@ -367,6 +508,53 @@ func (tr *TestRunner) executeBackend(L *lua.LState) (*TestResult, error) {
 		backendResult := true
 		result.BackendResult = &backendResult
 		result.Success = true
+
+		switch v := ret.(type) {
+		case *lua.LTable:
+			authenticatedVal := v.RawGetString(definitions.LuaBackendResultAuthenticated)
+			if authenticatedVal.Type() == lua.LTBool {
+				authenticated := lua.LVAsBool(authenticatedVal)
+				result.BackendAuthenticated = &authenticated
+			}
+
+			userFoundVal := v.RawGetString(definitions.LuaBackendResultUserFound)
+			if userFoundVal.Type() == lua.LTBool {
+				userFound := lua.LVAsBool(userFoundVal)
+				result.BackendUserFound = &userFound
+			}
+
+			accountFieldVal := v.RawGetString(definitions.LuaBackendResultAccountField)
+			if accountFieldVal.Type() == lua.LTString {
+				accountField := lua.LVAsString(accountFieldVal)
+				result.BackendAccountField = &accountField
+			}
+
+			displayNameVal := v.RawGetString(definitions.LuaBackendResultDisplayNameField)
+			if displayNameVal.Type() == lua.LTString {
+				displayName := lua.LVAsString(displayNameVal)
+				result.BackendDisplayName = &displayName
+			}
+
+			uniqueUserIDVal := v.RawGetString(definitions.LuaBAckendResultUniqueUserIDField)
+			if uniqueUserIDVal.Type() == lua.LTString {
+				uniqueUserID := lua.LVAsString(uniqueUserIDVal)
+				result.BackendUniqueUserID = &uniqueUserID
+			}
+		case *lua.LUserData:
+			if backendResultObj, ok := v.Value.(*backendResultMockValue); ok && backendResultObj != nil {
+				authenticated := backendResultObj.Authenticated
+				userFound := backendResultObj.UserFound
+				accountField := backendResultObj.AccountField
+				displayName := backendResultObj.DisplayNameField
+				uniqueUserID := backendResultObj.UniqueUserIDField
+
+				result.BackendAuthenticated = &authenticated
+				result.BackendUserFound = &userFound
+				result.BackendAccountField = &accountField
+				result.BackendDisplayName = &displayName
+				result.BackendUniqueUserID = &uniqueUserID
+			}
+		}
 	} else if ret.Type() == lua.LTNil {
 		backendResult := false
 		result.BackendResult = &backendResult
@@ -460,6 +648,106 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 		}
 	}
 
+	// Validate selected backend address
+	if expected.UsedBackendAddress != nil {
+		if result.UsedBackendAddress == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("used backend address mismatch: expected %s, got <nil>",
+					*expected.UsedBackendAddress))
+		} else if *expected.UsedBackendAddress != *result.UsedBackendAddress {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("used backend address mismatch: expected %s, got %s",
+					*expected.UsedBackendAddress, *result.UsedBackendAddress))
+		}
+	}
+
+	if expected.BackendAuthenticated != nil {
+		if result.BackendAuthenticated == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend authenticated mismatch: expected %t, got <nil>",
+					*expected.BackendAuthenticated))
+		} else if *expected.BackendAuthenticated != *result.BackendAuthenticated {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend authenticated mismatch: expected %t, got %t",
+					*expected.BackendAuthenticated, *result.BackendAuthenticated))
+		}
+	}
+
+	if expected.BackendUserFound != nil {
+		if result.BackendUserFound == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend user_found mismatch: expected %t, got <nil>",
+					*expected.BackendUserFound))
+		} else if *expected.BackendUserFound != *result.BackendUserFound {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend user_found mismatch: expected %t, got %t",
+					*expected.BackendUserFound, *result.BackendUserFound))
+		}
+	}
+
+	if expected.BackendAccountField != nil {
+		if result.BackendAccountField == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend account_field mismatch: expected %s, got <nil>",
+					*expected.BackendAccountField))
+		} else if *expected.BackendAccountField != *result.BackendAccountField {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend account_field mismatch: expected %s, got %s",
+					*expected.BackendAccountField, *result.BackendAccountField))
+		}
+	}
+
+	if expected.BackendDisplayName != nil {
+		if result.BackendDisplayName == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend display_name mismatch: expected %s, got <nil>",
+					*expected.BackendDisplayName))
+		} else if *expected.BackendDisplayName != *result.BackendDisplayName {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend display_name mismatch: expected %s, got %s",
+					*expected.BackendDisplayName, *result.BackendDisplayName))
+		}
+	}
+
+	if expected.BackendUniqueUserID != nil {
+		if result.BackendUniqueUserID == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend unique_user_id mismatch: expected %s, got <nil>",
+					*expected.BackendUniqueUserID))
+		} else if *expected.BackendUniqueUserID != *result.BackendUniqueUserID {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend unique_user_id mismatch: expected %s, got %s",
+					*expected.BackendUniqueUserID, *result.BackendUniqueUserID))
+		}
+	}
+
+	// Validate selected backend port
+	if expected.UsedBackendPort != nil {
+		if result.UsedBackendPort == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("used backend port mismatch: expected %d, got <nil>",
+					*expected.UsedBackendPort))
+		} else if *expected.UsedBackendPort != *result.UsedBackendPort {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("used backend port mismatch: expected %d, got %d",
+					*expected.UsedBackendPort, *result.UsedBackendPort))
+		}
+	}
+
 	// Validate logs contain expected strings
 	if expected.LogsContain != nil {
 		for _, expectedLog := range expected.LogsContain {
@@ -519,6 +807,27 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 	}
 	if result.BackendResult != nil {
 		fmt.Printf("Backend Result: %t\n", *result.BackendResult)
+	}
+	if result.BackendAuthenticated != nil {
+		fmt.Printf("Backend Authenticated: %t\n", *result.BackendAuthenticated)
+	}
+	if result.BackendUserFound != nil {
+		fmt.Printf("Backend User Found: %t\n", *result.BackendUserFound)
+	}
+	if result.BackendAccountField != nil {
+		fmt.Printf("Backend Account Field: %s\n", *result.BackendAccountField)
+	}
+	if result.BackendDisplayName != nil {
+		fmt.Printf("Backend Display Name: %s\n", *result.BackendDisplayName)
+	}
+	if result.BackendUniqueUserID != nil {
+		fmt.Printf("Backend Unique User ID: %s\n", *result.BackendUniqueUserID)
+	}
+	if result.UsedBackendAddress != nil {
+		fmt.Printf("Used Backend Address: %s\n", *result.UsedBackendAddress)
+	}
+	if result.UsedBackendPort != nil {
+		fmt.Printf("Used Backend Port: %d\n", *result.UsedBackendPort)
 	}
 
 	if len(result.Logs) > 0 {
