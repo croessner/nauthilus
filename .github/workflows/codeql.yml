@@ -50,6 +50,10 @@ jobs:
         with:
           go-version: 1.26.x
 
+      - name: Enable runtimesecret experiment for Go 1.26
+        if: ${{ matrix.language == 'go' }}
+        run: echo "GOEXPERIMENT=runtimesecret" >> "$GITHUB_ENV"
+
       - name: Autobuild
         if: ${{ matrix.build-mode == 'autobuild' }}
         uses: github/codeql-action/autobuild@0d579ffd059c29b07949a3cce3983f0780820c98 # v4.32.6
