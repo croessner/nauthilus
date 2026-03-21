@@ -12,6 +12,8 @@ A task is incomplete if any mandatory rule is not satisfied.
 - MUST: Apply DRY strictly; avoid duplicated logic and copy-paste implementations.
 - MUST: Follow OOP-oriented design with small responsibilities, clear boundaries, and composition-first structure.
 - MUST: Write code comments and technical docs in English.
+- MUST (CRITICAL, Go 1.26): Always run Go tests with `GEXPERIMENT=runtimesecret` as prefix.
+    - Required command pattern: `GEXPERIMENT=runtimesecret go test ...`
 
 ## Definition Of Done (Required)
 
