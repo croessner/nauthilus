@@ -31,7 +31,6 @@ type HTTPApplication interface {
 		setupHealth func(*gin.Engine),
 		setupMetrics func(*gin.Engine),
 		setupIdP func(*gin.Engine),
-		setupAdmin func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 		signals ServerSignals,
 	)
@@ -46,7 +45,6 @@ type RouterComposer interface {
 		setupHealth func(*gin.Engine),
 		setupMetrics func(*gin.Engine),
 		setupIdP func(*gin.Engine),
-		setupAdmin func(*gin.Engine),
 		setupBackchannel func(*gin.Engine),
 	)
 }

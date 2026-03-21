@@ -33,7 +33,6 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
-	handleradminui "github.com/croessner/nauthilus/server/handler/adminui"
 	handlerapiv1 "github.com/croessner/nauthilus/server/handler/api/v1"
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
@@ -396,7 +395,6 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	var setupHealth func(*gin.Engine)
 	var setupMetrics func(*gin.Engine)
 	var setupIdP func(*gin.Engine)
-	var setupAdmin func(*gin.Engine)
 	var setupBackchannel func(*gin.Engine)
 
 	// Health endpoint (always register)
@@ -470,24 +468,6 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	// Backchannel API
 	tokenStorage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
 
-	// Admin UI
-	setupAdmin = func(e *gin.Engine) {
-		deps := &handlerdeps.Deps{
-			Cfg:          cfg,
-			CfgProvider:  store.cfgProvider,
-			Env:          env,
-			Logger:       logger,
-			Redis:        store.redisClient,
-			LangManager:  store.langManager,
-			TokenFlusher: tokenStorage,
-		}
-		deps.Svc = handlerdeps.NewDefaultServices(deps)
-
-		if err := handleradminui.Setup(e, deps); err != nil {
-			_ = level.Error(logger).Log(definitions.LogKeyMsg, "Admin UI route setup failed", definitions.LogKeyError, err)
-		}
-	}
-
 	setupBackchannel = func(e *gin.Engine) {
 		deps := &handlerdeps.Deps{
 			Cfg:          cfg,
@@ -512,7 +492,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		AccountCache: store.accountCache,
 	})
 
-	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupIdP, setupAdmin, setupBackchannel, signals)
+	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupIdP, setupBackchannel, signals)
 
 	return nil
 }

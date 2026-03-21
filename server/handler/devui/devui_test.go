@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -107,59 +105,7 @@ func TestDevUIHandler_Index(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Nauthilus Dev UI")
-	assert.Contains(t, w.Body.String(), "admin_login.html")
-	assert.Contains(t, w.Body.String(), "admin_layout.html")
-	assert.Contains(t, w.Body.String(), "admin_dashboard.html")
-	assert.Contains(t, w.Body.String(), "partials_bruteforce.html")
-	assert.Contains(t, w.Body.String(), "partials_clickhouse.html")
-	assert.Contains(t, w.Body.String(), "partials_hooktester.html")
 	assert.Contains(t, w.Body.String(), "idp_login.html")
 	assert.Contains(t, w.Body.String(), "idp_saml_post.html")
 	assert.Contains(t, w.Body.String(), "12345")
-}
-
-func TestDevUIHandler_RenderTemplate_AdminPartialWrapped(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-
-	templatePath, err := testTemplatePath()
-	assert.NoError(t, err)
-
-	r := gin.New()
-
-	env := config.NewTestEnvironmentConfig()
-	h := &DevUIHandler{
-		deps: &deps.Deps{
-			Cfg: &config.FileSettings{
-				Server: &config.ServerSection{
-					Frontend: config.Frontend{
-						HTMLStaticContentPath: templatePath,
-					},
-				},
-			},
-			Env:         env,
-			LangManager: &mockLangManager{},
-		},
-		version: 12345,
-	}
-
-	h.Register(r)
-
-	req := httptest.NewRequest(http.MethodGet, "/dev/ui/render/partials_bruteforce.html/en", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "/static/css/daisyui.min.css")
-	assert.Contains(t, w.Body.String(), "/static/js/admin_ui.js")
-}
-
-func testTemplatePath() (string, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Clean(filepath.Join(wd, "../../../static/templates")), nil
 }
