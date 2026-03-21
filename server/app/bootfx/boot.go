@@ -16,10 +16,7 @@
 package bootfx
 
 import (
-	"bytes"
 	"context"
-	"crypto/subtle"
-	"errors"
 	"flag"
 	"fmt"
 	stdlog "log"
@@ -41,7 +38,6 @@ import (
 	"github.com/croessner/nauthilus/server/util/keygen"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/simia-tech/crypt"
 	"github.com/spf13/viper"
 )
 
@@ -63,8 +59,6 @@ type LuaTestFlags struct {
 
 var luaTestFlags LuaTestFlags
 
-const adminUILocalPasswordHashSettings = "$argon2id$v=19$m=65536,t=2,p=1"
-
 // ParseFlagsAndPrintVersion parses command-line flags, configures viper/config paths,
 // and prints the version information if the `-version` flag is set.
 func ParseFlagsAndPrintVersion(version string) {
@@ -73,7 +67,6 @@ func ParseFlagsAndPrintVersion(version string) {
 	configFormatFlag := flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
 	genOIDCKey := flag.Bool("gen-oidc-key", false, "generate a new RSA key for OIDC signing")
 	genSAMLCert := flag.String("gen-saml-cert", "", "generate a self-signed certificate for SAML (provide common name)")
-	genAdminPasswordHash := flag.Bool("gen-admin-password-hash", false, "generate an Argon2id password hash for server.admin_ui.local_admin.users[].password_hash")
 	keyBits := flag.Int("key-bits", 4096, "bits for the generated RSA key")
 	certYears := flag.Int("cert-years", 10, "validity in years for the generated certificate")
 
@@ -119,15 +112,6 @@ func ParseFlagsAndPrintVersion(version string) {
 		os.Exit(0)
 	}
 
-	if *genAdminPasswordHash {
-		if err := GenerateLocalAdminPasswordHash(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to generate admin password hash: %v\n", err)
-			os.Exit(1)
-		}
-
-		os.Exit(0)
-	}
-
 	if *configFlag != "" {
 		config.ConfigFilePath = *configFlag
 		viper.SetConfigFile(*configFlag)
@@ -135,52 +119,6 @@ func ParseFlagsAndPrintVersion(version string) {
 
 	config.ConfigFileType = *configFormatFlag
 	viper.SetConfigType(*configFormatFlag)
-}
-
-// GenerateLocalAdminPasswordHash asks for a local admin password and prints a compatible Argon2id hash.
-func GenerateLocalAdminPasswordHash() error {
-	password, err := readPasswordPrompt("Password: ")
-	if err != nil {
-		return err
-	}
-	defer clear(password)
-
-	retypedPassword, err := readPasswordPrompt("Re-type password: ")
-	if err != nil {
-		return err
-	}
-	defer clear(retypedPassword)
-
-	hash, err := GenerateAdminPasswordHash(password, retypedPassword)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintln(os.Stdout, hash)
-
-	return nil
-}
-
-// GenerateAdminPasswordHash creates an Argon2id hash compatible with local admin password verification.
-func GenerateAdminPasswordHash(password []byte, retypedPassword []byte) (string, error) {
-	if len(password) == 0 {
-		return "", errors.New("password must not be empty")
-	}
-
-	if subtle.ConstantTimeCompare(password, retypedPassword) != 1 {
-		return "", errors.New("passwords do not match")
-	}
-
-	if len(bytes.TrimSpace(password)) == 0 {
-		return "", errors.New("password must not be blank")
-	}
-
-	hash, err := crypt.Crypt(string(password), adminUILocalPasswordHashSettings)
-	if err != nil {
-		return "", err
-	}
-
-	return hash, nil
 }
 
 // GetLuaTestFlags returns the parsed Lua test flags.
