@@ -87,6 +87,7 @@ func TestBasePageData(t *testing.T) {
 			assert.Equal(t, "de", data["LanguageTag"])
 			assert.Equal(t, "testuser", data["Username"])
 			assert.Equal(t, "nonce-123", data["CSPNonce"])
+			assert.Equal(t, "Logout", data["Logout"])
 			c.Status(http.StatusOK)
 		})
 
@@ -551,6 +552,72 @@ func TestHasRecoveryCodesForRequireMFANoRecoveryData(t *testing.T) {
 	user := backend.NewUser("test-user", "", "uid-123")
 
 	assert.False(t, h.hasRecoveryCodesForRequireMFA(ctx, mgr, user))
+}
+
+func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:         &mockFrontendCfg{},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	tmpl := template.Must(template.New("mfa-login-templates").Parse(`
+{{ define "idp_webauthn_verify.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
+{{ define "idp_totp_verify.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
+{{ define "idp_recovery_login.html" }}{{ if .Username }}2FA Verwaltung{{ end }}{{ end }}
+`))
+
+	testCases := []struct {
+		name    string
+		path    string
+		handler gin.HandlerFunc
+	}{
+		{
+			name:    "WebAuthn verify page",
+			path:    "/login/webauthn/de",
+			handler: h.LoginWebAuthn,
+		},
+		{
+			name:    "TOTP verify page",
+			path:    "/login/totp/de",
+			handler: h.LoginTOTP,
+		},
+		{
+			name:    "Recovery verify page",
+			path:    "/login/recovery/de",
+			handler: h.LoginRecovery,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := gin.New()
+			r.SetHTMLTemplate(tmpl)
+			r.Use(func(c *gin.Context) {
+				localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "de")
+				c.Set(definitions.CtxLocalizedKey, localizer)
+				c.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+					definitions.SessionKeyUsername: "alice",
+				}})
+				c.Next()
+			})
+
+			r.GET(tc.path, tc.handler)
+
+			resp := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, tc.path, nil)
+
+			r.ServeHTTP(resp, req)
+
+			assert.Equal(t, http.StatusOK, resp.Code)
+			assert.NotContains(t, resp.Body.String(), "2FA Verwaltung")
+		})
+	}
 }
 
 func loadMFASelectTemplate(t *testing.T) *template.Template {

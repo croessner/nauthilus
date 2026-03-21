@@ -136,7 +136,7 @@
             <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52"
                 id="burger-menu">
                 <li><a href="/mfa/register/home">2FA Verwaltung</a></li>
-                <li><a href="/oidc/logout">Logout</a></li>
+                <li><a href="/oidc/logout">{{ .Logout }}</a></li>
             </ul>
         </div>
         {{ end }}
@@ -176,7 +176,7 @@
             </label>
             <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52" tabindex="0">
                 <li><a href="/mfa/register/home">2FA Verwaltung</a></li>
-                <li><a href="/oidc/logout">Logout</a></li>
+                <li><a href="/oidc/logout">{{ .Logout }}</a></li>
             </ul>
         </div>
         {{ end }}
