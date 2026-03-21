@@ -106,7 +106,6 @@ type MockData struct {
 	Prometheus     *PrometheusMock     `json:"prometheus"`
 	Util           *UtilMock           `json:"util"`
 	Cache          *CacheMock          `json:"cache"`
-	Log            *LogMock            `json:"log"`
 	DB             *DBMock             `json:"db"`
 	BackendResult  *BackendResultMock  `json:"backend_result"`
 	HTTPRequest    *HTTPRequestMock    `json:"http_request"`
@@ -160,7 +159,9 @@ func (m *ContextMock) ValidateComplete() error {
 
 // RedisMock contains mock responses for nauthilus_redis module.
 type RedisMock struct {
+	// Responses is kept for fixture compatibility and is converted into Redis seed data.
 	Responses     map[string]any       `json:"responses"`
+	InitialData   *RedisInitialData    `json:"initial_data"`
 	ExpectedCalls []ModuleExpectedCall `json:"expected_calls"`
 
 	callIndex  int    `json:"-"`
@@ -179,6 +180,23 @@ func (m *RedisMock) ValidateComplete() error {
 		return nil
 	}
 	return validateModuleCalls("redis", m.ExpectedCalls, m.callIndex, m.runtimeErr)
+}
+
+// RedisInitialData defines miniredis seed content for Lua test runtime.
+type RedisInitialData struct {
+	Strings      map[string]string            `json:"strings"`
+	Hashes       map[string]map[string]string `json:"hashes"`
+	Sets         map[string][]string          `json:"sets"`
+	Lists        map[string][]string          `json:"lists"`
+	ZSets        map[string][]RedisZSetMember `json:"zsets"`
+	HyperLogLogs map[string][]string          `json:"hyperloglogs"`
+	TTLSeconds   map[string]int64             `json:"ttl_seconds"`
+}
+
+// RedisZSetMember is one sorted-set member entry used for fixture seed data.
+type RedisZSetMember struct {
+	Member string  `json:"member"`
+	Score  float64 `json:"score"`
 }
 
 // LDAPMock contains mock data for nauthilus_ldap module.
@@ -517,28 +535,6 @@ func (m *CacheMock) ValidateComplete() error {
 	return validateModuleCalls("cache", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
-// LogMock contains mock data for nauthilus_log module.
-type LogMock struct {
-	ExpectedCalls []ModuleExpectedCall `json:"expected_calls"`
-
-	callIndex  int    `json:"-"`
-	runtimeErr string `json:"-"`
-}
-
-func (m *LogMock) ResetRuntimeState() { resetCallState(&m.callIndex, &m.runtimeErr) }
-func (m *LogMock) RecordCall(method, args string) error {
-	if m == nil {
-		return nil
-	}
-	return recordModuleCall("log", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
-}
-func (m *LogMock) ValidateComplete() error {
-	if m == nil {
-		return nil
-	}
-	return validateModuleCalls("log", m.ExpectedCalls, m.callIndex, m.runtimeErr)
-}
-
 // DBMock contains mock data for db module.
 type DBMock struct {
 	OpenError       string           `json:"open_error"`
@@ -745,20 +741,22 @@ func (m *HTTPResponseMock) ValidateComplete() error {
 
 // ExpectedOutputMock defines expected test results.
 type ExpectedOutputMock struct {
-	FilterResult         *int     `json:"filter_result,omitempty"`
-	FeatureResult        *bool    `json:"feature_result,omitempty"`
-	ActionResult         *bool    `json:"action_result,omitempty"`
-	BackendResult        *bool    `json:"backend_result,omitempty"`
-	BackendAuthenticated *bool    `json:"backend_authenticated,omitempty"`
-	BackendUserFound     *bool    `json:"backend_user_found,omitempty"`
-	BackendAccountField  *string  `json:"backend_account_field,omitempty"`
-	BackendDisplayName   *string  `json:"backend_display_name,omitempty"`
-	BackendUniqueUserID  *string  `json:"backend_unique_user_id,omitempty"`
-	UsedBackendAddress   *string  `json:"used_backend_address,omitempty"`
-	UsedBackendPort      *int     `json:"used_backend_port,omitempty"`
-	LogsContain          []string `json:"logs_contain,omitempty"`
-	LogsNotContain       []string `json:"logs_not_contain,omitempty"`
-	ErrorExpected        bool     `json:"error_expected"`
+	FilterResult            *int     `json:"filter_result,omitempty"`
+	FeatureResult           *bool    `json:"feature_result,omitempty"`
+	ActionResult            *bool    `json:"action_result,omitempty"`
+	BackendResult           *bool    `json:"backend_result,omitempty"`
+	BackendAuthenticated    *bool    `json:"backend_authenticated,omitempty"`
+	BackendUserFound        *bool    `json:"backend_user_found,omitempty"`
+	BackendAccountField     *string  `json:"backend_account_field,omitempty"`
+	BackendDisplayName      *string  `json:"backend_display_name,omitempty"`
+	BackendUniqueUserID     *string  `json:"backend_unique_user_id,omitempty"`
+	UsedBackendAddress      *string  `json:"used_backend_address,omitempty"`
+	UsedBackendPort         *int     `json:"used_backend_port,omitempty"`
+	StatusMessageContain    []string `json:"status_message_contain,omitempty"`
+	StatusMessageNotContain []string `json:"status_message_not_contain,omitempty"`
+	LogsContain             []string `json:"logs_contain,omitempty"`
+	LogsNotContain          []string `json:"logs_not_contain,omitempty"`
+	ErrorExpected           bool     `json:"error_expected"`
 }
 
 // TestResult contains the results of a Lua script test.
@@ -775,6 +773,7 @@ type TestResult struct {
 	BackendUniqueUserID  *string
 	UsedBackendAddress   *string
 	UsedBackendPort      *int
+	StatusMessages       []string
 	Logs                 []string
 	Errors               []error
 }

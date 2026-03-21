@@ -17,7 +17,6 @@ package luatest
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	stdhttp "net/http"
@@ -65,287 +64,6 @@ func LoaderModContextMock(mockData *ContextMock) lua.LGFunction {
 				return 0
 			}
 			return manager.ContextDelete(L)
-		}))
-
-		L.Push(mod)
-
-		return 1
-	}
-}
-
-// LoaderModRedisMock creates a mock nauthilus_redis module.
-func LoaderModRedisMock(mockData *RedisMock) lua.LGFunction {
-	return func(L *lua.LState) int {
-		mod := L.NewTable()
-
-		responses := make(map[string]any)
-		if mockData != nil && mockData.Responses != nil {
-			responses = mockData.Responses
-		}
-
-		var toLuaValue func(val any) lua.LValue
-		toLuaValue = func(val any) lua.LValue {
-			switch v := val.(type) {
-			case nil:
-				return lua.LNil
-			case string:
-				return lua.LString(v)
-			case float64:
-				return lua.LNumber(v)
-			case int:
-				return lua.LNumber(v)
-			case bool:
-				return lua.LBool(v)
-			case map[string]string:
-				tbl := L.NewTable()
-				for key, value := range v {
-					tbl.RawSetString(key, lua.LString(value))
-				}
-				return tbl
-			case map[string]any:
-				tbl := L.NewTable()
-				for key, value := range v {
-					tbl.RawSetString(key, toLuaValue(value))
-				}
-				return tbl
-			default:
-				if jsonBytes, err := json.Marshal(v); err == nil {
-					return lua.LString(string(jsonBytes))
-				}
-				return lua.LNil
-			}
-		}
-
-		// Mock GET
-		L.SetField(mod, "get", L.NewFunction(func(L *lua.LState) int {
-			key := L.CheckString(1)
-			if err := mockData.RecordCall("get", key); err != nil {
-				L.Push(lua.LNil)
-				return 1
-			}
-			if val, ok := responses[key]; ok {
-				L.Push(toLuaValue(val))
-			} else {
-				L.Push(lua.LNil)
-			}
-
-			return 1
-		}))
-
-		// Mock SET
-		L.SetField(mod, "set", L.NewFunction(func(L *lua.LState) int {
-			key := L.CheckString(1)
-			value := L.CheckAny(2)
-			if err := mockData.RecordCall("set", key); err != nil {
-				L.Push(lua.LBool(false))
-				return 1
-			}
-			responses[key] = convert.LuaValueToGo(value)
-			L.Push(lua.LBool(true))
-
-			return 1
-		}))
-
-		// Mock DEL
-		L.SetField(mod, "del", L.NewFunction(func(L *lua.LState) int {
-			key := L.CheckString(1)
-			if err := mockData.RecordCall("del", key); err != nil {
-				L.Push(lua.LNumber(0))
-				return 1
-			}
-			_, existed := responses[key]
-			delete(responses, key)
-			if existed {
-				L.Push(lua.LNumber(1))
-			} else {
-				L.Push(lua.LNumber(0))
-			}
-
-			return 1
-		}))
-
-		// Mock EXISTS
-		L.SetField(mod, "exists", L.NewFunction(func(L *lua.LState) int {
-			key := L.CheckString(1)
-			if err := mockData.RecordCall("exists", key); err != nil {
-				L.Push(lua.LNumber(0))
-				return 1
-			}
-			if _, ok := responses[key]; ok {
-				L.Push(lua.LNumber(1))
-			} else {
-				L.Push(lua.LNumber(0))
-			}
-
-			return 1
-		}))
-
-		// Mock INCR
-		L.SetField(mod, "incr", L.NewFunction(func(L *lua.LState) int {
-			key := L.CheckString(1)
-			if err := mockData.RecordCall("incr", key); err != nil {
-				L.Push(lua.LNumber(0))
-				return 1
-			}
-			current := 0.0
-			if val, ok := responses[key]; ok {
-				switch num := val.(type) {
-				case float64:
-					current = num
-				case int:
-					current = float64(num)
-				case string:
-					if parsed, err := strconv.ParseFloat(num, 64); err == nil {
-						current = parsed
-					}
-				}
-			}
-			current++
-			responses[key] = current
-			L.Push(lua.LNumber(current))
-
-			return 1
-		}))
-
-		// Mock EXPIRE
-		L.SetField(mod, "expire", L.NewFunction(func(L *lua.LState) int {
-			key := L.CheckString(1)
-			if err := mockData.RecordCall("expire", key); err != nil {
-				L.Push(lua.LBool(false))
-				return 1
-			}
-			// In mock mode, just return success
-			L.Push(lua.LBool(true))
-
-			return 1
-		}))
-
-		L.SetField(mod, definitions.LuaFnRedisGet, L.NewFunction(func(L *lua.LState) int {
-			_ = L.CheckString(1) // pool
-			key := L.CheckString(2)
-			if err := mockData.RecordCall(definitions.LuaFnRedisGet, key); err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
-				return 2
-			}
-
-			if val, ok := responses[key]; ok {
-				L.Push(toLuaValue(val))
-				L.Push(lua.LNil)
-				return 2
-			}
-
-			L.Push(lua.LNil)
-			L.Push(lua.LString("redis: nil"))
-			return 2
-		}))
-
-		L.SetField(mod, definitions.LuaFnRedisSet, L.NewFunction(func(L *lua.LState) int {
-			_ = L.CheckString(1) // pool
-			key := L.CheckString(2)
-			if err := mockData.RecordCall(definitions.LuaFnRedisSet, key); err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
-				return 2
-			}
-			value := convert.LuaValueToGo(L.CheckAny(3))
-
-			if L.GetTop() >= 4 {
-				if options, ok := L.Get(4).(*lua.LTable); ok {
-					nxVal := options.RawGetString("nx")
-					if lua.LVAsBool(nxVal) {
-						if _, exists := responses[key]; exists {
-							L.Push(lua.LNil)
-							L.Push(lua.LNil)
-							return 2
-						}
-					}
-				}
-			}
-
-			responses[key] = value
-			L.Push(lua.LBool(true))
-			L.Push(lua.LNil)
-			return 2
-		}))
-
-		L.SetField(mod, definitions.LuaFnRedisExpire, L.NewFunction(func(L *lua.LState) int {
-			_ = L.CheckString(1)    // pool
-			key := L.CheckString(2) // key
-			_ = L.CheckInt(3)       // expiration
-			if err := mockData.RecordCall(definitions.LuaFnRedisExpire, key); err != nil {
-				L.Push(lua.LBool(false))
-				L.Push(lua.LString(err.Error()))
-				return 2
-			}
-			L.Push(lua.LBool(true))
-			L.Push(lua.LNil)
-			return 2
-		}))
-
-		L.SetField(mod, definitions.LuaFnRedisHSet, L.NewFunction(func(L *lua.LState) int {
-			_ = L.CheckString(1) // pool
-			key := L.CheckString(2)
-			if err := mockData.RecordCall(definitions.LuaFnRedisHSet, key); err != nil {
-				L.Push(lua.LBool(false))
-				L.Push(lua.LString(err.Error()))
-				return 2
-			}
-
-			hash, _ := responses[key].(map[string]any)
-			if hash == nil {
-				hash = map[string]any{}
-			}
-
-			for i := 3; i+1 <= L.GetTop(); i += 2 {
-				field := L.CheckString(i)
-				hash[field] = convert.LuaValueToGo(L.CheckAny(i + 1))
-			}
-			responses[key] = hash
-
-			L.Push(lua.LBool(true))
-			L.Push(lua.LNil)
-			return 2
-		}))
-
-		L.SetField(mod, definitions.LuaFnRedisHGetAll, L.NewFunction(func(L *lua.LState) int {
-			_ = L.CheckString(1) // pool
-			key := L.CheckString(2)
-			if err := mockData.RecordCall(definitions.LuaFnRedisHGetAll, key); err != nil {
-				L.Push(lua.LNil)
-				L.Push(lua.LString(err.Error()))
-				return 2
-			}
-
-			raw, ok := responses[key]
-			if !ok {
-				L.Push(lua.LNil)
-				L.Push(lua.LString("redis: nil"))
-				return 2
-			}
-
-			switch v := raw.(type) {
-			case map[string]string:
-				tbl := L.NewTable()
-				for field, value := range v {
-					tbl.RawSetString(field, lua.LString(value))
-				}
-				L.Push(tbl)
-				L.Push(lua.LNil)
-				return 2
-			case map[string]any:
-				tbl := L.NewTable()
-				for field, value := range v {
-					tbl.RawSetString(field, toLuaValue(value))
-				}
-				L.Push(tbl)
-				L.Push(lua.LNil)
-				return 2
-			default:
-				L.Push(lua.LNil)
-				L.Push(lua.LString("wrongtype"))
-				return 2
-			}
 		}))
 
 		L.Push(mod)
@@ -2201,7 +1919,8 @@ const luaRequestContextKey = "__NAUTH_REQ_CONTEXT"
 
 // MockLogger captures log output for testing.
 type MockLogger struct {
-	Logs []string
+	Logs           []string
+	StatusMessages []string
 }
 
 // Log adds a log message.
@@ -2209,31 +1928,10 @@ func (m *MockLogger) Log(msg string) {
 	m.Logs = append(m.Logs, msg)
 }
 
-// LoaderModLogMock creates a mock logging module that captures output.
-func LoaderModLogMock(logger *MockLogger, mockData *LogMock) lua.LGFunction {
-	return func(L *lua.LState) int {
-		mod := L.NewTable()
-
-		logFunc := func(level string) lua.LGFunction {
-			return func(L *lua.LState) int {
-				msg := L.CheckString(1)
-				_ = mockData.RecordCall(strings.ToLower(level), msg)
-				logMsg := fmt.Sprintf("[%s] %s", level, msg)
-				logger.Log(logMsg)
-
-				return 0
-			}
-		}
-
-		L.SetField(mod, "debug", L.NewFunction(logFunc("DEBUG")))
-		L.SetField(mod, "info", L.NewFunction(logFunc("INFO")))
-		L.SetField(mod, "warn", L.NewFunction(logFunc("WARN")))
-		L.SetField(mod, "error", L.NewFunction(logFunc("ERROR")))
-
-		L.Push(mod)
-
-		return 1
-	}
+// LogStatus adds a status message and mirrors it into the generic log stream.
+func (m *MockLogger) LogStatus(msg string) {
+	m.StatusMessages = append(m.StatusMessages, msg)
+	m.Log(fmt.Sprintf("[STATUS] %s", msg))
 }
 
 // SetupBuiltinTable configures the global nauthilus_builtin table used by real scripts.
@@ -2267,13 +1965,35 @@ func SetupBuiltinTable(L *lua.LState, logger *MockLogger) {
 		return 0
 	}))
 
+	// Match runtime behavior where scripts can set a user-facing status message
+	// via nauthilus_builtin.status_message_set(...).
+	builtin.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(func(L *lua.LState) int {
+		status := L.CheckString(1)
+
+		if logger != nil {
+			logger.LogStatus(status)
+		}
+
+		return 0
+	}))
+
 	L.SetGlobal(definitions.LuaDefaultTable, builtin)
 }
 
 // SetupMockModules configures all mock modules in the Lua state.
-func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) {
+// It returns a cleanup function that must be called by the caller to release runtime resources.
+func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (func(), error) {
 	if mockData == nil {
 		mockData = &MockData{}
+	}
+
+	cleanupFns := make([]func(), 0, 2)
+	cleanup := func() {
+		for i := len(cleanupFns) - 1; i >= 0; i-- {
+			if cleanupFns[i] != nil {
+				cleanupFns[i]()
+			}
+		}
 	}
 
 	// Match production Lua preloads so scripts can use gopher-lua-libs in test mode.
@@ -2309,6 +2029,14 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) {
 	}
 	mockData.Redis = redisMock
 	redisMock.ResetRuntimeState()
+
+	redisRuntime, err := newRedisRuntime(redisMock)
+	if err != nil {
+		cleanup()
+
+		return nil, fmt.Errorf("failed to setup miniredis runtime: %w", err)
+	}
+	cleanupFns = append(cleanupFns, redisRuntime.Close)
 
 	ldapMock := mockData.LDAP
 	if ldapMock == nil {
@@ -2387,13 +2115,6 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) {
 	mockData.Cache = cacheMock
 	cacheMock.ResetRuntimeState()
 
-	logMock := mockData.Log
-	if logMock == nil {
-		logMock = &LogMock{}
-	}
-	mockData.Log = logMock
-	logMock.ResetRuntimeState()
-
 	miscMock := mockData.Misc
 	if miscMock == nil {
 		miscMock = &MiscMock{}
@@ -2465,7 +2186,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) {
 
 	// Preload mock modules
 	L.PreloadModule(definitions.LuaModContext, LoaderModContextMock(contextMock))
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedisMock(redisMock))
+	L.PreloadModule(definitions.LuaModRedis, redisRuntime.Loader(context.Background(), resolveLuaTestConfig(), redisMock))
 	L.PreloadModule(definitions.LuaModBackend, LoaderModBackendMock(backendMock))
 	L.PreloadModule(definitions.LuaBackendResultTypeName, LoaderModBackendResultMock(backendResultMock))
 	L.PreloadModule(definitions.LuaModHTTPRequest, LoaderModHTTPRequestMock(httpRequestMock))
@@ -2483,10 +2204,6 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) {
 	L.PreloadModule("nauthilus_util", LoaderModUtilMock(utilMock))
 	L.PreloadModule("nauthilus_cache", LoaderModCacheMock(cacheMock))
 
-	if logger != nil {
-		L.PreloadModule("nauthilus_log", LoaderModLogMock(logger, logMock))
-	}
-
 	SetupBuiltinTable(L, logger)
 
 	// Set up global context if needed
@@ -2494,4 +2211,6 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) {
 		ctx := context.Background()
 		L.SetGlobal("__test_context", convert.GoToLuaValue(L, ctx))
 	}
+
+	return cleanup, nil
 }

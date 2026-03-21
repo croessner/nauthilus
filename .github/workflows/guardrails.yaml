@@ -66,10 +66,12 @@ jobs:
           ./scripts/check-repro-tests.sh "origin/${{ github.base_ref }}"
 
       - name: Run golangci-lint
+        if: github.event_name == 'pull_request'
         uses: golangci/golangci-lint-action@v8
         with:
           args: --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
           only-new-issues: true
 
       - name: Run short unit tests
+        if: github.event_name == 'pull_request'
         run: go test -short $(go list ./... | grep -v /vendor/)

@@ -41,7 +41,7 @@ func NewTestRunner(scriptPath, callbackType, mockDataPath string) (*TestRunner, 
 		scriptPath:   scriptPath,
 		callbackType: callbackType,
 		mockDataPath: mockDataPath,
-		logger:       &MockLogger{Logs: []string{}},
+		logger:       &MockLogger{Logs: []string{}, StatusMessages: []string{}},
 	}
 
 	if mockDataPath != "" {
@@ -78,10 +78,14 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 	tr.configureLuaPackagePath(L)
 
 	// Setup mock modules
-	SetupMockModules(L, tr.mockData, tr.logger)
+	cleanup, err := SetupMockModules(L, tr.mockData, tr.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup Lua test modules: %w", err)
+	}
+	defer cleanup()
 
 	// Load and execute the script
-	if err := L.DoFile(tr.scriptPath); err != nil {
+	if err = L.DoFile(tr.scriptPath); err != nil {
 		return nil, fmt.Errorf("failed to load Lua script: %w", err)
 	}
 
@@ -89,12 +93,14 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 	result, err := tr.executeCallback(L)
 	if err != nil {
 		result = &TestResult{
-			Success: false,
-			Logs:    tr.logger.Logs,
-			Errors:  []error{err},
+			Success:        false,
+			Logs:           tr.logger.Logs,
+			StatusMessages: tr.logger.StatusMessages,
+			Errors:         []error{err},
 		}
 	} else {
 		result.Logs = tr.logger.Logs
+		result.StatusMessages = tr.logger.StatusMessages
 	}
 
 	// Capture runtime backend-selection state when the backend mock is active.
@@ -202,12 +208,6 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 			func() error {
 				if tr.mockData.Cache != nil {
 					return tr.mockData.Cache.ValidateComplete()
-				}
-				return nil
-			},
-			func() error {
-				if tr.mockData.Log != nil {
-					return tr.mockData.Log.ValidateComplete()
 				}
 				return nil
 			},
@@ -748,6 +748,37 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 		}
 	}
 
+	if expected.StatusMessageContain != nil {
+		for _, expectedStatus := range expected.StatusMessageContain {
+			found := false
+			for _, status := range result.StatusMessages {
+				if strings.Contains(status, expectedStatus) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				result.Success = false
+				result.Errors = append(result.Errors,
+					fmt.Errorf("expected status message not found: %s", expectedStatus))
+			}
+		}
+	}
+
+	if expected.StatusMessageNotContain != nil {
+		for _, unexpectedStatus := range expected.StatusMessageNotContain {
+			for _, status := range result.StatusMessages {
+				if strings.Contains(status, unexpectedStatus) {
+					result.Success = false
+					result.Errors = append(result.Errors,
+						fmt.Errorf("unexpected status message found: %s", unexpectedStatus))
+					break
+				}
+			}
+		}
+	}
+
 	// Validate logs contain expected strings
 	if expected.LogsContain != nil {
 		for _, expectedLog := range expected.LogsContain {
@@ -828,6 +859,12 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 	}
 	if result.UsedBackendPort != nil {
 		fmt.Printf("Used Backend Port: %d\n", *result.UsedBackendPort)
+	}
+	if len(result.StatusMessages) > 0 {
+		fmt.Println("\nStatus Messages:")
+		for _, status := range result.StatusMessages {
+			fmt.Printf("  [STATUS] %s\n", status)
+		}
 	}
 
 	if len(result.Logs) > 0 {

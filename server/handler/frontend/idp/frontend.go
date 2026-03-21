@@ -406,6 +406,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		"ConfirmTitle":        frontend.GetLocalized(ctx, cfg, nil, "Confirmation"),
 		"ConfirmYes":          frontend.GetLocalized(ctx, cfg, nil, "Yes"),
 		"ConfirmNo":           frontend.GetLocalized(ctx, cfg, nil, "Cancel"),
+		"Logout":              frontend.GetLocalized(ctx, cfg, nil, "Logout"),
 		"IdPClientName":       idpClientName,
 	}
 }
@@ -1506,7 +1507,6 @@ func (h *FrontendHandler) LoginWebAuthn(ctx *gin.Context) {
 	data["JSInteractWithKey"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please interact with your security key...")
 	data["JSCompletingLogin"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Completing login...")
 	data["JSUnknownError"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "An unknown error occurred")
-	data["Username"] = username
 
 	ctx.HTML(http.StatusOK, "idp_webauthn_verify.html", data)
 }
@@ -1644,7 +1644,6 @@ func (h *FrontendHandler) TwoFAHome(ctx *gin.Context) {
 	data["GenerateNewRecoveryCodes"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Generate new recovery codes")
 	data["GenerateRecoveryCodesConfirm"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Are you sure you want to generate new recovery codes? Any existing codes will be permanently replaced.")
 	data["Home"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Home")
-	data["Logout"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Logout")
 
 	userData, err := h.GetUserBackendData(ctx)
 	if err != nil || userData == nil {

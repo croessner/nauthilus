@@ -12,6 +12,9 @@ This document captures practical, project-specific details to build, configure, 
 - MUST: Apply DRY strictly; avoid duplicated logic and copy-paste implementations.
 - MUST: Follow OOP-oriented design with small responsibilities, clear boundaries, and composition-first structure.
 - MUST: Write code comments and technical docs in English.
+- MUST (CRITICAL, GO 1.26): ALWAYS prefix Go test commands with `GEXPERIMENT=runtimesecret`.
+    - Required form: `GEXPERIMENT=runtimesecret go test ...`
+    - This is mandatory for every Go 1.26 test run and must never be skipped.
 - Definition Of Done (required for every coding task):
     - [ ] Reproducer test added first for bugfixes (or explicit reason documented in PR).
     - [ ] DRY check completed; duplicate logic removed or intentionally shared.
@@ -47,15 +50,16 @@ This document captures practical, project-specific details to build, configure, 
 2. Testing
 
 - Running tests
+    - CRITICAL (Go 1.26): Always run tests with `GEXPERIMENT=runtimesecret`.
   - Repository-wide unit tests (short):
-    - make test or go test -short ./...
+      - `GEXPERIMENT=runtimesecret make test` or `GEXPERIMENT=runtimesecret go test -short ./...`
   - With the race detector:
-    - make race or go test -race -short ./...
+      - `GEXPERIMENT=runtimesecret make race` or `GEXPERIMENT=runtimesecret go test -race -short ./...`
   - With MSAN (platform-dependent):
-    - make msan or go test -msan -short ./...
+      - `GEXPERIMENT=runtimesecret make msan` or `GEXPERIMENT=runtimesecret go test -msan -short ./...`
   - Package-scoped runs (useful while iterating):
-    - go test -v ./server/util
-    - go test -run <Regex> ./server/lualib/redislib
+      - `GEXPERIMENT=runtimesecret go test -v ./server/util`
+      - `GEXPERIMENT=runtimesecret go test -run <Regex> ./server/lualib/redislib`
 - External dependencies and isolation
   - Redis is mocked using github.com/go-redis/redismock/v9 in unit tests. Avoid hitting real Redis in unit tests; prefer rediscli.NewTestClient(...) with a redismock client when the code path touches Redis.
   - Lua: Lua-related tests use github.com/yuin/gopher-lua and preload modules via lualib.LoaderModX. Keep tests hermetic by constructing an L state and PreloadModule calls. Example: L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(ctx)).

@@ -3,6 +3,7 @@ module github.com/croessner/nauthilus
 go 1.26
 
 require (
+	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/andybalholm/brotli v1.2.0
 	github.com/beevik/etree v1.6.0
 	github.com/biter777/countries v1.7.5
@@ -14,7 +15,7 @@ require (
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/emersion/go-smtp v0.24.0
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gin-contrib/gzip v1.2.5
 	github.com/gin-contrib/pprof v1.5.3
@@ -26,7 +27,7 @@ require (
 	github.com/go-webauthn/webauthn v0.16.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/json-iterator/go v1.1.12
-	github.com/klauspost/compress v1.18.4
+	github.com/klauspost/compress v1.18.5
 	github.com/mackerelio/go-osstat v0.2.7
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/mattn/go-isatty v0.0.20
