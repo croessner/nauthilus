@@ -1532,7 +1532,14 @@ The device authorization endpoint is advertised in the OpenID Connect Discovery 
 
 ```json
 {
-    "device_authorization_endpoint": "https://issuer.example.com/oidc/device"
+    "device_authorization_endpoint": "https://issuer.example.com/oidc/device",
+    "response_types_supported": ["code"],
+    "grant_types_supported": [
+        "authorization_code",
+        "refresh_token",
+        "client_credentials",
+        "urn:ietf:params:oauth:grant-type:device_code"
+    ]
 }
 ```
 

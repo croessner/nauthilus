@@ -174,12 +174,8 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	issuer := oidcCfg.Issuer
 
 	scopesSupported := oidcCfg.GetScopesSupported()
-
-	for _, customScope := range oidcCfg.CustomScopes {
-		scopesSupported = append(scopesSupported, customScope.Name)
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{
+	tokenEndpointAuthMethodsSupported := oidcCfg.GetTokenEndpointAuthMethodsSupported()
+	discoveryDocument := gin.H{
 		"issuer":                                        issuer,
 		"authorization_endpoint":                        issuer + "/oidc/authorize",
 		"token_endpoint":                                issuer + "/oidc/token",
@@ -193,14 +189,27 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 		"backchannel_logout_supported":                  oidcCfg.GetBackChannelLogoutSupported(),
 		"backchannel_logout_session_supported":          oidcCfg.GetBackChannelLogoutSessionSupported(),
 		"response_types_supported":                      oidcCfg.GetResponseTypesSupported(),
+		"grant_types_supported":                         oidcCfg.GetGrantTypesSupported(),
 		"subject_types_supported":                       oidcCfg.GetSubjectTypesSupported(),
 		"id_token_signing_alg_values_supported":         oidcCfg.GetIDTokenSigningAlgValuesSupported(),
 		"scopes_supported":                              scopesSupported,
-		"token_endpoint_auth_methods_supported":         oidcCfg.GetTokenEndpointAuthMethodsSupported(),
+		"token_endpoint_auth_methods_supported":         tokenEndpointAuthMethodsSupported,
 		"code_challenge_methods_supported":              oidcCfg.GetCodeChallengeMethodsSupported(),
-		"introspection_endpoint_auth_methods_supported": oidcCfg.GetTokenEndpointAuthMethodsSupported(),
+		"introspection_endpoint_auth_methods_supported": oidcCfg.GetIntrospectionEndpointAuthMethodsSupported(),
 		"claims_supported":                              oidcCfg.GetClaimsSupported(),
-	})
+	}
+
+	for _, customScope := range oidcCfg.CustomScopes {
+		scopesSupported = append(scopesSupported, customScope.Name)
+	}
+
+	discoveryDocument["scopes_supported"] = scopesSupported
+
+	if signingAlgs := oidcCfg.GetTokenEndpointAuthSigningAlgValuesSupported(); len(signingAlgs) > 0 {
+		discoveryDocument["token_endpoint_auth_signing_alg_values_supported"] = signingAlgs
+	}
+
+	ctx.JSON(http.StatusOK, discoveryDocument)
 }
 
 // authenticateClient extracts and authenticates the OIDC client.
@@ -247,13 +256,10 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			return nil, false
 		}
 
-		clientID = bClientID
+		if bClientID != "" {
+			clientID = bClientID
+		}
 		clientSecret = bClientSecret
-		authSource = clientauth.MethodClientSecretPost
-	}
-
-	if authSource != "" {
-		ctx.Set(definitions.CtxAuthMethodKey, authSource)
 	}
 
 	if clientID == "" {
@@ -279,6 +285,18 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 		return nil, false
 	}
 
+	if authSource == "" && bClientSecret != "" {
+		authSource = clientauth.MethodClientSecretPost
+	}
+
+	if authSource == "" && bClientID != "" && (client.TokenEndpointAuthMethod == "none" || client.IsPublicClient()) {
+		authSource = "none"
+	}
+
+	if authSource != "" {
+		ctx.Set(definitions.CtxAuthMethodKey, authSource)
+	}
+
 	// Enforce TokenEndpointAuthMethod if configured
 	if client.TokenEndpointAuthMethod != "" {
 		allowed := false
@@ -292,7 +310,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 				allowed = true
 			}
 		case "none":
-			if authSource == "" {
+			if authSource == "none" {
 				allowed = true
 			}
 		default:
@@ -317,6 +335,16 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 
 			return nil, false
 		}
+	}
+
+	if authSource == "none" {
+		return client, true
+	}
+
+	if authSource == "" {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+		return nil, false
 	}
 
 	var expectedSecret []byte

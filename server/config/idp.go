@@ -346,6 +346,16 @@ func (o *OIDCConfig) GetResponseTypesSupported() []string {
 	return []string{"code"}
 }
 
+// GetGrantTypesSupported returns the grant types supported by the token endpoint.
+func (o *OIDCConfig) GetGrantTypesSupported() []string {
+	return []string{
+		"authorization_code",
+		"refresh_token",
+		"client_credentials",
+		definitions.OIDCGrantTypeDeviceCode,
+	}
+}
+
 // GetSubjectTypesSupported returns the supported subject types.
 func (o *OIDCConfig) GetSubjectTypesSupported() []string {
 	if len(o.SubjectTypesSupported) > 0 {
@@ -370,6 +380,25 @@ func (o *OIDCConfig) GetTokenEndpointAuthMethodsSupported() []string {
 		return o.TokenEndpointAuthMethodsSupported
 	}
 
+	return []string{"client_secret_post", "client_secret_basic", "private_key_jwt", "none"}
+}
+
+// GetTokenEndpointAuthSigningAlgValuesSupported returns the signing algorithms
+// supported for private_key_jwt client authentication at the token endpoint.
+// The metadata value is only relevant when private_key_jwt is advertised.
+func (o *OIDCConfig) GetTokenEndpointAuthSigningAlgValuesSupported() []string {
+	for _, method := range o.GetTokenEndpointAuthMethodsSupported() {
+		if method == "private_key_jwt" {
+			return []string{"RS256", "EdDSA"}
+		}
+	}
+
+	return nil
+}
+
+// GetIntrospectionEndpointAuthMethodsSupported returns the client
+// authentication methods accepted by the introspection endpoint.
+func (o *OIDCConfig) GetIntrospectionEndpointAuthMethodsSupported() []string {
 	return []string{"client_secret_post", "client_secret_basic"}
 }
 

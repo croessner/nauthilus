@@ -302,6 +302,26 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Contains(t, scopes, "offline_access")
 	assert.Contains(t, scopes, "groups")
 	assert.Contains(t, scopes, "openid")
+	responseTypes := resp["response_types_supported"].([]any)
+	assert.Equal(t, []any{"code"}, responseTypes)
+	grantTypes := resp["grant_types_supported"].([]any)
+	assert.Contains(t, grantTypes, "authorization_code")
+	assert.Contains(t, grantTypes, "refresh_token")
+	assert.Contains(t, grantTypes, "client_credentials")
+	assert.Contains(t, grantTypes, definitions.OIDCGrantTypeDeviceCode)
+	tokenEndpointAuthMethods := resp["token_endpoint_auth_methods_supported"].([]any)
+	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_basic")
+	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_post")
+	assert.Contains(t, tokenEndpointAuthMethods, "private_key_jwt")
+	assert.Contains(t, tokenEndpointAuthMethods, "none")
+	tokenEndpointAuthSigningAlgs := resp["token_endpoint_auth_signing_alg_values_supported"].([]any)
+	assert.Contains(t, tokenEndpointAuthSigningAlgs, "RS256")
+	assert.Contains(t, tokenEndpointAuthSigningAlgs, "EdDSA")
+	introspectionAuthMethods := resp["introspection_endpoint_auth_methods_supported"].([]any)
+	assert.Contains(t, introspectionAuthMethods, "client_secret_basic")
+	assert.Contains(t, introspectionAuthMethods, "client_secret_post")
+	assert.NotContains(t, introspectionAuthMethods, "private_key_jwt")
+	assert.NotContains(t, introspectionAuthMethods, "none")
 	codeChallengeMethods := resp["code_challenge_methods_supported"].([]any)
 	assert.Contains(t, codeChallengeMethods, "S256")
 	assert.NotContains(t, codeChallengeMethods, "plain")
@@ -1300,6 +1320,54 @@ func TestOIDCHandler_Token(t *testing.T) {
 		var resp map[string]any
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.Equal(t, "invalid_client", resp["error"])
+	})
+
+	t.Run("Token request with public client and client_id only in body", func(t *testing.T) {
+		code := "public-client-code"
+		verifier := strings.Repeat("c", 43)
+		sum := sha256.Sum256([]byte(verifier))
+		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+		publicClient := config.OIDCClient{
+			ClientID:                "public-client",
+			RedirectURIs:            []string{"https://app.com/public-callback"},
+			TokenEndpointAuthMethod: "none",
+		}
+		cfg.clients = append(cfg.clients, publicClient)
+
+		oidcSession := &idp.OIDCSession{
+			ClientID:            publicClient.ClientID,
+			UserID:              "user123",
+			Scopes:              []string{definitions.ScopeOpenId},
+			RedirectURI:         "https://app.com/public-callback",
+			CodeChallenge:       challenge,
+			CodeChallengeMethod: "S256",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("client_id", publicClient.ClientID)
+		form.Add("code", code)
+		form.Add("redirect_uri", "https://app.com/public-callback")
+		form.Add("code_verifier", verifier)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NotEmpty(t, resp["id_token"])
+		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("Token request with PKCE S256 (valid verifier)", func(t *testing.T) {
