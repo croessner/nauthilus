@@ -20,6 +20,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/util"
 )
 
 type DefaultActionDispatcher struct{}
@@ -30,6 +31,10 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 	auth := view.Auth()
 
 	if !auth.Cfg().HaveLuaActions() {
+		return
+	}
+
+	if util.IsHTTPRequestCanceled(auth.Logger(), auth.Request.HTTPClientRequest, auth.Runtime.GUID, "enqueue.lua_action") {
 		return
 	}
 
@@ -45,13 +50,21 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 	commonRequest.UserFound = auth.GetAccount() != ""
 	commonRequest.FeatureName = featureName
 
-	action.RequestChan <- &action.Action{
+	actionRequest := &action.Action{
 		LuaAction:     luaAction,
 		Context:       auth.Runtime.Context,
 		FinishedChan:  finished,
 		HTTPRequest:   auth.Request.HTTPClientRequest,
 		HTTPContext:   auth.Request.HTTPClientContext,
 		CommonRequest: commonRequest,
+	}
+
+	select {
+	case action.RequestChan <- actionRequest:
+	case <-util.HTTPRequestDone(auth.Request.HTTPClientRequest):
+		util.IsHTTPRequestCanceled(auth.Logger(), auth.Request.HTTPClientRequest, auth.Runtime.GUID, "enqueue.lua_action")
+
+		return
 	}
 
 	<-finished

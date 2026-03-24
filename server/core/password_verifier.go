@@ -41,6 +41,10 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		return nil, errors.ErrAllBackendConfigError
 	}
 
+	if util.IsHTTPRequestCanceled(auth.Logger(), ctx.Request, auth.Runtime.GUID, "verify.start") {
+		return nil, util.HTTPRequestContextError(ctx.Request)
+	}
+
 	configErrors := make(map[definitions.Backend]error)
 	// Track temporary failures (e.g., pool exhaustion) to avoid mapping
 	// technical issues to "user not found" later in the pipeline.
@@ -49,6 +53,10 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 	var finalRes *PassDBResult
 
 	for i, passDB := range passDBs {
+		if util.IsHTTPRequestCanceled(auth.Logger(), ctx.Request, auth.Runtime.GUID, "verify.next_backend") {
+			return nil, util.HTTPRequestContextError(ctx.Request)
+		}
+
 		res, err := passDB.fn(auth)
 		if err != nil {
 			// Prefer treating pool exhaustion as a tempfail over negative results
@@ -69,6 +77,12 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 
 		if res == nil {
 			return nil, errors.ErrNoPassDBResult
+		}
+
+		if util.IsHTTPRequestCanceled(auth.Logger(), ctx.Request, auth.Runtime.GUID, "verify.process_result") {
+			PutPassDBResultToPool(res)
+
+			return nil, util.HTTPRequestContextError(ctx.Request)
 		}
 
 		if e := ProcessPassDBResult(ctx, res, auth, passDB); e != nil {

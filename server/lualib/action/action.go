@@ -222,9 +222,29 @@ func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 
 // handleRequest processes an HTTP request using Lua scripts and logs execution results for each script.
 func (aw *Worker) handleRequest(httpRequest *http.Request) {
+	defer func() {
+		aw.luaActionRequest.FinishedChan <- Done{}
+	}()
+
+	if util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "start.lua_post_action") {
+		return
+	}
+
+	baseCtx := aw.ctx
+	if aw.luaActionRequest != nil && aw.luaActionRequest.OTelParentSpanContext.IsValid() {
+		baseCtx = trace.ContextWithSpanContext(svcctx.Get(), aw.luaActionRequest.OTelParentSpanContext)
+	}
+
+	actionCtx, cancelActionCtx := util.ContextWithHTTPRequestCancellation(baseCtx, httpRequest)
+	defer cancelActionCtx()
+
+	if httpRequest != nil {
+		httpRequest = httpRequest.WithContext(actionCtx)
+	}
+
 	// Root span for a full actions run
 	tr := monittrace.New("nauthilus/actions")
-	actx, asp := tr.Start(aw.ctx, "actions.run",
+	actx, asp := tr.Start(actionCtx, "actions.run",
 		attribute.String("service", func() string {
 			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
 				return aw.luaActionRequest.Service
@@ -272,8 +292,6 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}()
 
 	if len(aw.actionScripts) == 0 {
-		aw.luaActionRequest.FinishedChan <- Done{}
-
 		return
 	}
 
@@ -282,9 +300,11 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		Config: aw.cfg,
 	})
 
-	L, acqErr := pool.Acquire(aw.ctx)
+	L, acqErr := pool.Acquire(actx)
 	if acqErr != nil {
-		aw.luaActionRequest.FinishedChan <- Done{}
+		if util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "acquire.lua_post_action") {
+			return
+		}
 
 		return
 	}
@@ -302,16 +322,6 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		}
 	}()
 
-	// Build a request-scoped context for this action.
-	// By default, we use the worker context. If the action carries an OpenTelemetry
-	// parent span context (e.g., originating HTTP request span), we build a fresh
-	// context from it so that Lua-created spans remain attached even after the HTTP
-	// request context is canceled.
-	baseCtx := aw.ctx
-	if aw.luaActionRequest != nil && aw.luaActionRequest.OTelParentSpanContext.IsValid() {
-		baseCtx = trace.ContextWithSpanContext(svcctx.Get(), aw.luaActionRequest.OTelParentSpanContext)
-	}
-
 	// Grouping span for all post/async actions belonging to the originating request.
 	// This gives you a stable, queryable node like "post_actions" under "POST /...".
 	// All Lua spans (HTTP/Redis/LDAP/etc.) become children of this span.
@@ -320,7 +330,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		postActionName = fmt.Sprintf("post_actions: %s %s", httpRequest.Method, httpRequest.URL.Path)
 	}
 
-	reqCtx, postSp := tr.Start(baseCtx, postActionName,
+	reqCtx, postSp := tr.Start(actx, postActionName,
 		attribute.String("component", "lua"),
 		attribute.String("action", aw.luaActionRequest.LuaAction.String()),
 		attribute.Int("action_id", int(aw.luaActionRequest.LuaAction)),
@@ -349,23 +359,27 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	request := aw.setupRequest(L)
 
 	for index := range aw.actionScripts {
-		if aw.actionScripts[index].LuaAction == aw.luaActionRequest.LuaAction && !errors.Is((aw.ctx).Err(), context.Canceled) {
-			if L.GetTop() != 0 {
-				L.SetTop(0)
-			}
-
-			ret := aw.runScript(index, L, request, logs)
-			if ret < 0 {
-				replaceVM = true
-			}
-
-			logs.Set(aw.actionScripts[index].ScriptPath, aw.createResultLogMessage(ret))
+		if aw.actionScripts[index].LuaAction != aw.luaActionRequest.LuaAction {
+			continue
 		}
+
+		if errors.Is(reqCtx.Err(), context.Canceled) || util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "execute.lua_post_action") {
+			break
+		}
+
+		if L.GetTop() != 0 {
+			L.SetTop(0)
+		}
+
+		ret := aw.runScript(reqCtx, index, L, request, logs, httpRequest)
+		if ret < 0 {
+			replaceVM = true
+		}
+
+		logs.Set(aw.actionScripts[index].ScriptPath, aw.createResultLogMessage(ret))
 	}
 
 	aw.logActionsSummary(logs)
-
-	aw.luaActionRequest.FinishedChan <- Done{}
 }
 
 // setupGlobals initializes and registers global Lua variables and functions into the provided Lua state.
@@ -401,6 +415,52 @@ func getTaskName(action *LuaScriptAction) string {
 	return fmt.Sprintf("%s:%s", actionName, action.ScriptName)
 }
 
+func (aw *Worker) currentActionService() string {
+	if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+		return aw.luaActionRequest.Service
+	}
+
+	return ""
+}
+
+func (aw *Worker) currentActionUsername() string {
+	if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+		return aw.luaActionRequest.Username
+	}
+
+	return ""
+}
+
+func (aw *Worker) actionResource() string {
+	if aw.luaActionRequest != nil && aw.luaActionRequest.HTTPContext != nil {
+		return aw.luaActionRequest.HTTPContext.FullPath()
+	}
+
+	return "action_worker"
+}
+
+func (aw *Worker) startScriptSpan(ctx context.Context, index int) (context.Context, trace.Span) {
+	tr := monittrace.New("nauthilus/actions")
+
+	return tr.Start(ctx, "actions.script",
+		attribute.String("script", getTaskName(aw.actionScripts[index])),
+		attribute.String("action", getLuaActionName(aw.actionScripts[index])),
+		attribute.String("service", aw.currentActionService()),
+		attribute.String("username", aw.currentActionUsername()),
+	)
+}
+
+func (aw *Worker) handleScriptExecutionError(index int, err error, logs *lualib.CustomLogKeyValue, span trace.Span, httpRequest *http.Request) bool {
+	if util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "run.lua_post_action") {
+		return true
+	}
+
+	aw.logScriptFailure(index, err, logs)
+	span.RecordError(err)
+
+	return false
+}
+
 // runScript executes a specified Lua script by index in the Worker instance.
 // It sets up a Lua runtime environment, passes the context and request to the script, and handles timeouts.
 // Parameters:
@@ -409,33 +469,9 @@ func getTaskName(action *LuaScriptAction) string {
 // - request: A Lua table containing the request information to pass to the script.
 // - logs: A custom log structure to add contextual logging information.
 // Returns the result of the Lua script execution as an integer.
-func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) (result int) {
-	var err error
-
+func (aw *Worker) runScript(ctx context.Context, index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue, httpRequest *http.Request) (result int) {
 	scriptStartTime := time.Now()
-	// Child span per script
-	tr := monittrace.New("nauthilus/actions")
-	sctx, ssp := tr.Start(aw.ctx, "actions.script",
-		attribute.String("script", getTaskName(aw.actionScripts[index])),
-		attribute.String("action", getLuaActionName(aw.actionScripts[index])),
-		attribute.String("service", func() string {
-			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.Service
-			}
-
-			return ""
-		}()),
-
-		attribute.String("username", func() string {
-			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
-				return aw.luaActionRequest.Username
-			}
-
-			return ""
-		}()),
-	)
-
-	_ = sctx
+	sctx, ssp := aw.startScriptSpan(ctx, index)
 
 	defer func() {
 		scriptLatency := time.Since(scriptStartTime)
@@ -445,28 +481,23 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 		ssp.End()
 	}()
 
-	resource := "action_worker"
-	if aw.luaActionRequest != nil && aw.luaActionRequest.HTTPContext != nil {
-		resource = aw.luaActionRequest.HTTPContext.FullPath()
-	}
-
-	stopTimer := stats.PrometheusTimer(aw.cfg, definitions.PromAction, getTaskName(aw.actionScripts[index]), resource)
+	stopTimer := stats.PrometheusTimer(aw.cfg, definitions.PromAction, getTaskName(aw.actionScripts[index]), aw.actionResource())
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	luaCtx, luaCancel := context.WithTimeout(aw.ctx, aw.cfg.GetServer().GetTimeouts().GetLuaScript())
+	luaCtx, luaCancel := context.WithTimeout(ctx, aw.cfg.GetServer().GetTimeouts().GetLuaScript())
+	defer luaCancel()
 
 	L.SetContext(luaCtx)
 
 	result = -1
 
-	if err = aw.executeScript(L, index, request); err != nil {
-		aw.logScriptFailure(index, err, logs)
-		ssp.RecordError(err)
-
-		luaCancel()
+	if err := aw.executeScript(L, index, request); err != nil {
+		if aw.handleScriptExecutionError(index, err, logs, ssp, httpRequest) {
+			return
+		}
 
 		return
 	}
@@ -476,12 +507,10 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	L.Pop(1)
 
 	util.DebugModule(
-		aw.ctx, aw.cfg, aw.logger,
+		sctx, aw.cfg, aw.logger,
 		definitions.DbgAction,
 		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
 	)
-
-	luaCancel()
 
 	return ret
 }

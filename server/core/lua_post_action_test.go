@@ -17,7 +17,10 @@ package core_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	corepkg "github.com/croessner/nauthilus/server/core"
@@ -30,11 +33,71 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
-	// Initialize action channel
-	corepkg.SetDefaultConfigFile(config.GetFile())
+func newLuaPostActionTestConfig(t *testing.T) *config.FileSettings {
+	bfFeature := &config.Feature{}
+	if err := bfFeature.Set(definitions.FeatureBruteForce); err != nil {
+		t.Fatalf("Set feature failed: %v", err)
+	}
+
+	return &config.FileSettings{
+		Server: &config.ServerSection{
+			Features: []*config.Feature{bfFeature},
+		},
+		Lua: &config.LuaSection{
+			Actions: []config.LuaAction{
+				{ActionType: definitions.LuaActionPostName},
+			},
+		},
+	}
+}
+
+func prepareLuaPostActionTest(t *testing.T) *config.FileSettings {
+	cfg := newLuaPostActionTestConfig(t)
+
+	config.SetTestFile(cfg)
+	corepkg.SetDefaultConfigFile(cfg)
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
-	_ = action.NewWorker(config.GetFile(), log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
+	_ = action.NewWorker(cfg, log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
+
+	return cfg
+}
+
+func newLuaPostActionArgs(req *http.Request) corepkg.PostActionArgs {
+	return corepkg.PostActionArgs{
+		Context:       &lualib.Context{},
+		HTTPRequest:   req,
+		ParentSpan:    trace.SpanContextFromContext(context.Background()),
+		StatusMessage: "status-1",
+		Request: lualib.CommonRequest{
+			Session:   "guid-123",
+			ClientIP:  "192.0.2.10",
+			Protocol:  "imap",
+			ClientNet: "10.0.0.0/24",
+			Repeating: true,
+		},
+	}
+}
+
+func startLuaPostActionReader() (chan *action.Action, chan struct{}) {
+	gotAction := make(chan *action.Action, 1)
+	stopReader := make(chan struct{})
+
+	go func() {
+		select {
+		case act := <-action.RequestChan:
+			gotAction <- act
+			if act != nil {
+				act.FinishedChan <- action.Done{}
+			}
+		case <-stopReader:
+		}
+	}()
+
+	return gotAction, stopReader
+}
+
+func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
+	cfg := prepareLuaPostActionTest(t)
 
 	done := make(chan struct{})
 	go func() {
@@ -71,24 +134,47 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 		close(done)
 	}()
 
-	args := corepkg.PostActionArgs{
-		Context:       &lualib.Context{},
-		HTTPRequest:   nil,
-		ParentSpan:    trace.SpanContextFromContext(context.Background()),
-		StatusMessage: "status-1",
-		Request: lualib.CommonRequest{
-			Session:   "guid-123",
-			ClientIP:  "192.0.2.10",
-			Protocol:  "imap",
-			ClientNet: "10.0.0.0/24", // set to avoid BF derivation path
-			Repeating: true,
-		},
-	}
-
 	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{
-		Cfg: config.GetFile(),
+		Cfg: cfg,
 	}).(*corepkg.AuthState)
-	auth.RunLuaPostAction(args)
+	auth.RunLuaPostAction(newLuaPostActionArgs(nil))
 
 	<-done
+}
+
+func TestRunLuaPostAction_SkipsCanceledHTTPRequest(t *testing.T) {
+	cfg := prepareLuaPostActionTest(t)
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest("POST", "/auth", nil).WithContext(reqCtx)
+
+	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{
+		Cfg: cfg,
+	}).(*corepkg.AuthState)
+	auth.Request.HTTPClientRequest = req
+
+	gotAction, stopReader := startLuaPostActionReader()
+
+	done := make(chan struct{})
+
+	go func() {
+		auth.RunLuaPostAction(newLuaPostActionArgs(req))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RunLuaPostAction did not return after request cancellation")
+	}
+
+	close(stopReader)
+
+	select {
+	case act := <-gotAction:
+		t.Fatalf("expected no action to be enqueued, got %+v", act)
+	default:
+	}
 }

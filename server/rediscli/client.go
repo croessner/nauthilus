@@ -126,7 +126,7 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 		MinIdleConns:     redisCfg.GetIdlePoolSize(),
 		TLSConfig:        RedisTLSOptions(redisCfg.GetTLS()),
 
-		ContextTimeoutEnabled: true,
+		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
 		DialTimeout:           redisCfg.GetDialTimeout(),
 		ReadTimeout:           redisCfg.GetReadTimeout(),
@@ -178,7 +178,7 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
 
-		ContextTimeoutEnabled: true,
+		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
 		DialTimeout:           redisCfg.GetDialTimeout(),
 		ReadTimeout:           redisCfg.GetReadTimeout(),
@@ -237,7 +237,7 @@ func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *confi
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
 
-		ContextTimeoutEnabled: true,
+		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
 		DialTimeout:           redisCfg.GetDialTimeout(),
 		ReadTimeout:           redisCfg.GetReadTimeout(),
@@ -322,7 +322,7 @@ func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCf
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
 
-		ContextTimeoutEnabled: true,
+		ContextTimeoutEnabled: false,
 		PoolTimeout:           redisCfg.GetPoolTimeout(),
 		DialTimeout:           redisCfg.GetDialTimeout(),
 		ReadTimeout:           redisCfg.GetReadTimeout(),

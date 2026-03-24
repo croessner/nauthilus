@@ -442,6 +442,10 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 // processFeatureAction updates the feature and increments the brute force counter if learning is enabled for the feature.
 // It executes a specified Lua action using the provided action name.
 func (a *AuthState) processFeatureAction(ctx *gin.Context, featureName string, luaAction definitions.LuaAction, luaActionName string) {
+	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "feature.action") {
+		return
+	}
+
 	a.Runtime.FeatureName = featureName
 
 	bruteForce := a.cfg().GetBruteForce()
@@ -479,6 +483,10 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 // It checks for various features like TLS encryption, relay domains, RBL, and Lua scripting.
 // The method returns an appropriate authentication result based on the features that are triggered or aborted.
 func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
+	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "features.evaluate") {
+		return definitions.AuthResultTempFail
+	}
+
 	// Root span for features evaluation
 	tr := monittrace.New("nauthilus/features")
 	fctx, fsp := tr.Start(ctx.Request.Context(), "features.evaluate",

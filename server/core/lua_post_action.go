@@ -62,6 +62,15 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 		return
 	}
 
+	httpRequest := args.HTTPRequest
+	if httpRequest == nil {
+		httpRequest = a.Request.HTTPClientRequest
+	}
+
+	if util.IsHTTPRequestCanceled(a.Logger(), httpRequest, args.Request.Session, "enqueue.lua_post_action") {
+		return
+	}
+
 	resource := util.RequestResource(a.Request.HTTPClientContext, a.Request.HTTPClientRequest, a.Request.Service)
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total", resource)
 	if stopTimer != nil {
@@ -114,7 +123,7 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 		LuaAction:             definitions.LuaActionPost,
 		Context:               args.Context,
 		FinishedChan:          finished,
-		HTTPRequest:           args.HTTPRequest,
+		HTTPRequest:           httpRequest,
 		HTTPContext:           nil,
 		OTelParentSpanContext: args.ParentSpan,
 		CommonRequest:         cr,

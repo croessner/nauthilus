@@ -2645,9 +2645,26 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 		sfKey = "idem:" + idem
 	}
 
-	val, err, shared := backchanSF.Do(sfKey, func() (any, error) {
+	resCh := backchanSF.DoChan(sfKey, func() (any, error) {
 		return a.verifyPassword(ctx, passDBs)
 	})
+
+	var (
+		val    any
+		err    error
+		shared bool
+	)
+
+	select {
+	case <-util.HTTPRequestDone(ctx.Request):
+		if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "verify.singleflight_wait") {
+			return nil, util.HTTPRequestContextError(ctx.Request)
+		}
+	case result := <-resCh:
+		val = result.Val
+		err = result.Err
+		shared = result.Shared
+	}
 
 	var passDBResult *PassDBResult
 	if val != nil {
@@ -2948,6 +2965,10 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 // FilterLua calls Lua filters which can change the backend result.
 func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
+	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "filter.lua") {
+		return definitions.AuthResultTempFail
+	}
+
 	tr := monittrace.New("nauthilus/auth")
 	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.filter",
 		attribute.String("service", a.Request.Service),

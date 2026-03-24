@@ -16,6 +16,7 @@
 package auth
 
 import (
+	"context"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -26,6 +27,8 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
@@ -111,5 +114,108 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 
 	if value != definitions.MetaUserAccount {
 		t.Fatalf("expected Account-Field to be %q, got %q", definitions.MetaUserAccount, value)
+	}
+}
+
+func TestDefaultPostAction_SkipsCanceledRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	bfFeature := &config.Feature{}
+	if err := bfFeature.Set(definitions.FeatureBruteForce); err != nil {
+		t.Fatalf("Set feature failed: %v", err)
+	}
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Features: []*config.Feature{bfFeature},
+		},
+		Lua: &config.LuaSection{
+			Actions: []config.LuaAction{
+				{ActionType: definitions.LuaActionPostName},
+			},
+		},
+	}
+
+	envCfg := config.NewTestEnvironmentConfig()
+	config.SetTestEnvironmentConfig(envCfg)
+	config.SetTestFile(cfg)
+	util.SetDefaultConfigFile(cfg)
+	util.SetDefaultEnvironment(envCfg)
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+	_ = action.NewWorker(cfg, log.GetLogger(), rediscli.GetClient(), envCfg)
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest("POST", "/auth", nil).WithContext(reqCtx)
+
+	auth := core.NewAuthStateFromContextWithDeps(ctx, core.AuthDeps{
+		Cfg:    cfg,
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}).(*core.AuthState)
+
+	auth.Runtime.GUID = "guid-canceled"
+	auth.Runtime.Context = &lualib.Context{}
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Request.Service = definitions.ServNginx
+	auth.Request.Username = "user@example.com"
+
+	DefaultPostAction{}.Run(core.PostActionInput{
+		View: auth.View(),
+		Result: &core.PassDBResult{
+			Authenticated: true,
+			UserFound:     true,
+		},
+	})
+
+	select {
+	case act := <-action.RequestChan:
+		t.Fatalf("expected no post action to be scheduled, got %+v", act)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestAuthStateFilterLua_SkipsCanceledRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.FileSettings{
+		Lua: &config.LuaSection{
+			Filters: []config.LuaFilter{
+				{Name: "noop"},
+			},
+		},
+	}
+
+	envCfg := config.NewTestEnvironmentConfig()
+	config.SetTestEnvironmentConfig(envCfg)
+	config.SetTestFile(cfg)
+	util.SetDefaultConfigFile(cfg)
+	util.SetDefaultEnvironment(envCfg)
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest("POST", "/auth", nil).WithContext(reqCtx)
+
+	auth := core.NewAuthStateFromContextWithDeps(ctx, core.AuthDeps{
+		Cfg:    cfg,
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}).(*core.AuthState)
+
+	auth.Runtime.GUID = "guid-canceled-filter"
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Request.Service = definitions.ServNginx
+	auth.Request.Username = "user@example.com"
+
+	result := auth.FilterLua(ctx, &core.PassDBResult{})
+	if result != definitions.AuthResultTempFail {
+		t.Fatalf("expected AuthResultTempFail, got %v", result)
 	}
 }

@@ -187,6 +187,10 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		return
 	}
 
+	if util.IsHTTPRequestCanceled(auth.Logger(), auth.Request.HTTPClientRequest, auth.Runtime.GUID, "schedule.lua_post_action") {
+		return
+	}
+
 	tr := monittrace.New("nauthilus/auth")
 	_, lspan := tr.Start(auth.Ctx(), "auth.lua.post_action",
 		attribute.String("service", auth.Request.Service),
