@@ -191,3 +191,50 @@ func TestGetHTTPRequestHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestURLPartialDecode(t *testing.T) {
+	testCases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "DecodePercentAndSpace",
+			input: "my%20pass%25word",
+			want:  "my pass%word",
+		},
+		{
+			name:  "LeavePlusAsIs",
+			input: "pass+word%2Bnext",
+			want:  "pass+word+next",
+		},
+		{
+			name:  "InvalidEscapeRemains",
+			input: "abc%2Gdef",
+			want:  "abc%2Gdef",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			L := lua.NewState()
+			defer L.Close()
+
+			L.Push(lua.LString(tc.input))
+
+			manager := NewHTTPRequestManager()
+			manager.URLPartialDecode(L)
+
+			got := L.Get(-2)
+			errVal := L.Get(-1)
+
+			if errVal != lua.LNil {
+				t.Fatalf("expected nil error, got %v", errVal)
+			}
+
+			if got.String() != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got.String())
+			}
+		})
+	}
+}

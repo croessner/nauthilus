@@ -27,7 +27,6 @@ import (
 	"maps"
 	"net"
 	"net/http"
-	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -3265,25 +3264,14 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	}
 
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	usernameValue := ctx.GetHeader(cfg.GetUsername())
-	if strings.Contains(usernameValue, "%") {
-		if decodedUsername, err := url.PathUnescape(usernameValue); err == nil {
-			usernameValue = decodedUsername
-		}
-	}
+	usernameValue := getDecodedHeader(ctx, cfg.GetUsername())
 
-	passwordValue := ctx.GetHeader(cfg.GetPassword())
+	passwordValue := getDecodedHeader(ctx, cfg.GetPassword())
 	if passwordValue != "" {
 		ctx.Request.Header.Del(cfg.GetPassword())
 	}
 
-	if strings.Contains(passwordValue, "%") {
-		if decodedPassword, err := url.PathUnescape(passwordValue); err == nil {
-			passwordValue = decodedPassword
-		}
-	}
-
-	encoded := ctx.GetHeader(cfg.GetPasswordEncoded())
+	encoded := getDecodedHeader(ctx, cfg.GetPasswordEncoded())
 	if encoded != "" {
 		ctx.Request.Header.Del(cfg.GetPasswordEncoded())
 	}
@@ -3316,8 +3304,8 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		))
 
 		a.ApplyContextData(NewAuthContext(
-			WithProtocol(ctx.GetHeader(cfg.GetProtocol())),
-			WithMethod(ctx.GetHeader(cfg.GetAuthMethod())),
+			WithProtocol(getDecodedHeader(ctx, cfg.GetProtocol())),
+			WithMethod(getDecodedHeader(ctx, cfg.GetAuthMethod())),
 		))
 	}
 
@@ -3327,7 +3315,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
 		lam := a.ensureLAM()
 		if lam != nil {
-			lam.InitFromHeader(ctx.GetHeader(cfg.GetLoginAttempt()))
+			lam.InitFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
 			a.Security.LoginAttempts = lam.FailCount()
 		}
 	}
@@ -3554,6 +3542,14 @@ func (a *AuthState) InitMethodAndUserAgent() State {
 	return a
 }
 
+func getDecodedHeader(ctx *gin.Context, headerName string) string {
+	if ctx == nil || headerName == "" {
+		return ""
+	}
+
+	return util.URLPartialDecode(ctx.GetHeader(headerName))
+}
+
 // setupAuth sets up the authentication based on the service parameter in the gin context.
 // It takes the gin context and an AuthState struct as input.
 //
@@ -3721,8 +3717,8 @@ func (a *AuthState) WithLocalInfo(ctx *gin.Context) State {
 	}
 
 	cfg := a.cfg()
-	util.ApplyStringField(ctx.GetHeader(cfg.GetLocalIP()), &a.Request.XLocalIP)
-	util.ApplyStringField(ctx.GetHeader(cfg.GetLocalPort()), &a.Request.XPort)
+	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetLocalIP()), &a.Request.XLocalIP)
+	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetLocalPort()), &a.Request.XPort)
 
 	return a
 }
@@ -3750,11 +3746,11 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	}
 
 	cfg := a.cfg()
-	util.ApplyStringField(ctx.GetHeader(cfg.GetOIDCCID()), &a.Request.OIDCCID)
-	util.ApplyStringField(ctx.GetHeader(cfg.GetClientIP()), &a.Request.ClientIP)
-	util.ApplyStringField(ctx.GetHeader(cfg.GetClientPort()), &a.Request.XClientPort)
-	util.ApplyStringField(ctx.GetHeader(cfg.GetClientID()), &a.Request.XClientID)
-	util.ApplyStringField(ctx.GetHeader(cfg.GetClientHost()), &a.Request.ClientHost)
+	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetOIDCCID()), &a.Request.OIDCCID)
+	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientIP()), &a.Request.ClientIP)
+	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientPort()), &a.Request.XClientPort)
+	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientID()), &a.Request.XClientID)
+	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientHost()), &a.Request.ClientHost)
 
 	if a.Request.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
@@ -3800,22 +3796,22 @@ func (a *AuthState) WithXSSL(ctx *gin.Context) State {
 	}
 
 	h := a.cfg().GetServer().GetDefaultHTTPRequestHeader()
-	util.ApplyStringField(ctx.GetHeader(h.GetSSL()), &a.Request.XSSL)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLSessionID()), &a.Request.XSSLSessionID)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLVerify()), &a.Request.XSSLClientVerify)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLSubject()), &a.Request.XSSLClientDN)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientCN()), &a.Request.XSSLClientCN)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLIssuer()), &a.Request.XSSLIssuer)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientNotBefore()), &a.Request.XSSLClientNotBefore)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientNotAfter()), &a.Request.XSSLClientNotAfter)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLSubjectDN()), &a.Request.XSSLSubjectDN)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLIssuerDN()), &a.Request.XSSLIssuerDN)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientSubjectDN()), &a.Request.XSSLClientSubjectDN)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLClientIssuerDN()), &a.Request.XSSLClientIssuerDN)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLCipher()), &a.Request.XSSLCipher)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLProtocol()), &a.Request.XSSLProtocol)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLSerial()), &a.Request.SSLSerial)
-	util.ApplyStringField(ctx.GetHeader(h.GetSSLFingerprint()), &a.Request.SSLFingerprint)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSL()), &a.Request.XSSL)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLSessionID()), &a.Request.XSSLSessionID)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLVerify()), &a.Request.XSSLClientVerify)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLSubject()), &a.Request.XSSLClientDN)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLClientCN()), &a.Request.XSSLClientCN)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLIssuer()), &a.Request.XSSLIssuer)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLClientNotBefore()), &a.Request.XSSLClientNotBefore)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLClientNotAfter()), &a.Request.XSSLClientNotAfter)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLSubjectDN()), &a.Request.XSSLSubjectDN)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLIssuerDN()), &a.Request.XSSLIssuerDN)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLClientSubjectDN()), &a.Request.XSSLClientSubjectDN)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLClientIssuerDN()), &a.Request.XSSLClientIssuerDN)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLCipher()), &a.Request.XSSLCipher)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLProtocol()), &a.Request.XSSLProtocol)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLSerial()), &a.Request.SSLSerial)
+	util.ApplyStringField(getDecodedHeader(ctx, h.GetSSLFingerprint()), &a.Request.SSLFingerprint)
 
 	return a
 }

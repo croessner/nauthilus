@@ -24,6 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/croessner/nauthilus/server/util"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -189,6 +190,15 @@ func (m *HTTPRequestManager) GetHTTPQueryParam(L *lua.LState) int {
 	return stack.PushResults(lua.LString(m.currentMeta(L).URL().Query().Get(paramName)), lua.LNil)
 }
 
+// URLPartialDecode decodes valid percent-escaped sequences while preserving
+// invalid escapes and '+' characters.
+func (m *HTTPRequestManager) URLPartialDecode(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	raw := stack.CheckString(1)
+
+	return stack.PushResults(lua.LString(util.URLPartialDecode(raw)), lua.LNil)
+}
+
 // LoaderModHTTP loads Lua functions based on an HTTPRequestMeta provider.
 func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -202,6 +212,7 @@ func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction {
 			definitions.LuaFnGetHTTPMethod:            manager.GetHTTPMethod,
 			definitions.LuaFnGetHTTPQueryParam:        manager.GetHTTPQueryParam,
 			definitions.LuaFnGetHTTPPath:              manager.GetHTTPPath,
+			definitions.LuaFnURLPartialDecode:         manager.URLPartialDecode,
 		})
 
 		if meta != nil {

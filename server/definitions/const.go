@@ -1360,6 +1360,9 @@ const (
 	// LuaFnGetHTTPPath retrieves the HTTP path from the incoming request.
 	LuaFnGetHTTPPath = "get_http_path"
 
+	// LuaFnURLPartialDecode decodes valid percent-encoded bytes while leaving invalid escape sequences untouched.
+	LuaFnURLPartialDecode = "url_partial_decode"
+
 	// LuaFnSetHTTPResponseHeader sets an HTTP response header (replaces existing values)
 	LuaFnSetHTTPResponseHeader = "set_http_response_header"
 
