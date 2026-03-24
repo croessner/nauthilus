@@ -1074,6 +1074,88 @@ func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect(t *testing.T
 	}
 }
 
+func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect_OptionalUnsigned(t *testing.T) {
+	spEntityID := "https://sp.example.com/saml/metadata"
+	unsigned := false
+
+	handler := NewSAMLHandler(&deps.Deps{
+		Cfg: &mockSAMLCfg{
+			sps: []config.SAML2ServiceProvider{
+				{
+					EntityID:             spEntityID,
+					ACSURL:               "https://sp.example.com/saml/acs",
+					LogoutRequestsSigned: &unsigned,
+				},
+			},
+		},
+		Logger: slog.Default(),
+	}, nil)
+
+	target := (&saml.LogoutRequest{
+		ID:           "id-redirect-unsigned",
+		Version:      "2.0",
+		IssueInstant: time.Now().UTC(),
+		Destination:  "https://auth.example.com/saml/slo",
+		Issuer: &saml.Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  spEntityID,
+		},
+		NameID: &saml.NameID{
+			Value: "alice@example.com",
+		},
+	}).Redirect("relay-state").String()
+
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+
+	message, err := routeSLOInboundMessage(req)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	_, err = handler.validateInboundLogoutRequestSignature(req, message)
+	assert.NoError(t, err)
+}
+
+func TestSAMLHandler_validateInboundLogoutRequestSignature_Redirect_DefaultUnsigned(t *testing.T) {
+	spEntityID := "https://sp.example.com/saml/metadata"
+
+	handler := NewSAMLHandler(&deps.Deps{
+		Cfg: &mockSAMLCfg{
+			sps: []config.SAML2ServiceProvider{
+				{
+					EntityID: spEntityID,
+					ACSURL:   "https://sp.example.com/saml/acs",
+				},
+			},
+		},
+		Logger: slog.Default(),
+	}, nil)
+
+	target := (&saml.LogoutRequest{
+		ID:           "id-redirect-default-unsigned",
+		Version:      "2.0",
+		IssueInstant: time.Now().UTC(),
+		Destination:  "https://auth.example.com/saml/slo",
+		Issuer: &saml.Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  spEntityID,
+		},
+		NameID: &saml.NameID{
+			Value: "alice@example.com",
+		},
+	}).Redirect("relay-state").String()
+
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+
+	message, err := routeSLOInboundMessage(req)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	_, err = handler.validateInboundLogoutRequestSignature(req, message)
+	assert.NoError(t, err)
+}
+
 func TestSAMLHandler_validateInboundLogoutRequestSignature_POST(t *testing.T) {
 	spEntityID := "https://sp.example.com/saml/metadata"
 	destination := "https://auth.example.com/saml/slo"

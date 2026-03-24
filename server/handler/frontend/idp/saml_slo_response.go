@@ -224,24 +224,22 @@ func (h *SAMLHandler) resolveLogoutResponseDestination(issuer string) (string, e
 		return "", fmt.Errorf("logout response issuer is missing")
 	}
 
-	if sp, ok := h.findConfiguredSAMLServiceProvider(issuer); ok {
-		sloURL := strings.TrimSpace(sp.SLOURL)
-		if sloURL != "" {
-			parsedSLOURL, err := parseAbsoluteURL(sloURL)
-			if err != nil {
-				return "", fmt.Errorf("invalid SAML SLOURL for issuer %q: %w", issuer, err)
-			}
-
-			return parsedSLOURL.String(), nil
-		}
-	}
-
-	parsedIssuer, err := parseAbsoluteURL(issuer)
-	if err != nil {
+	sp, ok := h.findConfiguredSAMLServiceProvider(issuer)
+	if !ok {
 		return "", fmt.Errorf("logout response destination for issuer %q is not configured", issuer)
 	}
 
-	return parsedIssuer.String(), nil
+	sloURL := strings.TrimSpace(sp.SLOURL)
+	if sloURL == "" {
+		return "", fmt.Errorf("logout response destination for issuer %q requires a configured idp.saml2.service_providers[].slo_url", issuer)
+	}
+
+	parsedSLOURL, err := parseAbsoluteURL(sloURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid SAML SLOURL for issuer %q: %w", issuer, err)
+	}
+
+	return parsedSLOURL.String(), nil
 }
 
 func (h *SAMLHandler) findConfiguredSAMLServiceProvider(entityID string) (*config.SAML2ServiceProvider, bool) {
@@ -249,15 +247,7 @@ func (h *SAMLHandler) findConfiguredSAMLServiceProvider(entityID string) (*confi
 		return nil, false
 	}
 
-	serviceProviders := h.deps.Cfg.GetIdP().SAML2.ServiceProviders
-
-	for index := range serviceProviders {
-		if strings.TrimSpace(serviceProviders[index].EntityID) == entityID {
-			return &serviceProviders[index], true
-		}
-	}
-
-	return nil, false
+	return config.FindSAMLServiceProviderByEntityID(h.deps.Cfg.GetIdP().SAML2.ServiceProviders, entityID)
 }
 
 func parseAbsoluteURL(rawURL string) (*url.URL, error) {

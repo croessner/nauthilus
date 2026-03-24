@@ -100,13 +100,7 @@ func (n *NauthilusIdP) FindClient(clientID string) (*config.OIDCClient, bool) {
 
 // FindSAMLServiceProvider returns a SAML service provider by its entity ID.
 func (n *NauthilusIdP) FindSAMLServiceProvider(entityID string) (*config.SAML2ServiceProvider, bool) {
-	for _, sp := range n.deps.Cfg.GetIdP().SAML2.ServiceProviders {
-		if sp.EntityID == entityID {
-			return &sp, true
-		}
-	}
-
-	return nil, false
+	return config.FindSAMLServiceProviderByEntityID(n.deps.Cfg.GetIdP().SAML2.ServiceProviders, entityID)
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for the given client.

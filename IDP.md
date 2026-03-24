@@ -202,6 +202,9 @@ idp:
         cert_file: "/etc/nauthilus/sp.crt"
         # Require signed AuthnRequests from this SP (Redirect or POST)
         authn_requests_signed: true
+        # Require signed SAML LogoutRequest / LogoutResponse messages from this SP
+        logout_requests_signed: true
+        logout_responses_signed: true
         delayed_response: true
 ```
 
@@ -216,6 +219,8 @@ The IdP metadata can be retrieved at `https://<domain>/saml/metadata`.
   assertion.
 - **AuthnRequest Signature Validation**: Redirect and POST-bound AuthnRequests are validated when signed, and can be
   required per SP.
+- **Per-SP SLO Signature Policy**: `logout_requests_signed` and `logout_responses_signed` allow interoperability with
+  Service Providers that do not sign logout messages. If omitted, both default to `false`.
 - **Delayed-Response**: Also available for SAML Service Providers to make account enumeration harder.
 
 ### 4.1 SAML Attribute Mapping

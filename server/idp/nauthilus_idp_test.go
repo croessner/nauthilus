@@ -48,6 +48,7 @@ func generateTestKey() string {
 type mockIdpConfig struct {
 	*config.FileSettings
 	oidc config.OIDCConfig
+	saml config.SAML2Config
 }
 
 type mockTokenGenerator struct {
@@ -60,7 +61,8 @@ func (m *mockTokenGenerator) GenerateToken(prefix string) string {
 
 func (m *mockIdpConfig) GetIdP() *config.IdPSection {
 	return &config.IdPSection{
-		OIDC: m.oidc,
+		OIDC:  m.oidc,
+		SAML2: m.saml,
 	}
 }
 
@@ -349,6 +351,40 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.Error(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet(), "Redis should have been hit for opaque token")
 	})
+}
+
+func TestNauthilusIdP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) {
+	cfg := &mockIdpConfig{
+		FileSettings: &config.FileSettings{
+			Server: &config.ServerSection{
+				Redis: config.Redis{
+					Prefix: "test:",
+				},
+			},
+		},
+		saml: config.SAML2Config{
+			ServiceProviders: []config.SAML2ServiceProvider{
+				{
+					Name:     "test-client",
+					EntityID: "https://localhost:9095/saml/metadata",
+					ACSURL:   "https://localhost:9095/saml/acs",
+					SLOURL:   "https://localhost:9095/saml/slo",
+				},
+			},
+		},
+	}
+
+	idp := NewNauthilusIdP(&deps.Deps{Cfg: cfg})
+
+	sp, found := idp.FindSAMLServiceProvider("https://localhost:9095/saml/metadata")
+	assert.True(t, found)
+	if !assert.NotNil(t, sp) {
+		return
+	}
+
+	sp.Name = "updated-client"
+
+	assert.Equal(t, "updated-client", cfg.saml.ServiceProviders[0].Name)
 }
 
 func TestNauthilusIdP_ClientCredentials(t *testing.T) {

@@ -659,10 +659,14 @@ idp:
         service_providers:
             -   entity_id: "https://sp.example.com"
                 authn_requests_signed: true
+                logout_requests_signed: true
+                logout_responses_signed: true
                 require_mfa:
                     - totp
                     - recovery_codes
 ```
+
+If `logout_requests_signed` or `logout_responses_signed` are omitted, both default to `false`.
 
 ### Signal Flow
 
