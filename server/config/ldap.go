@@ -399,19 +399,8 @@ func (l *LDAPConf) GetServerURIs() []string {
 }
 
 type LDAPFilter struct {
-	User                string `mapstructure:"user" validate:"omitempty"`
-	ListAccounts        string `mapstructure:"list_accounts" validate:"omitempty"`
-	WebAuthnCredentials string `mapstructure:"webauthn_credentials" validate:"omitempty"`
-}
-
-// GetWebAuthnCredentialsFilter returns an LDAP filter which is used to find WebAuthn credentials.
-// Returns an empty string if the LDAPFilter is nil.
-func (f *LDAPFilter) GetWebAuthnCredentialsFilter() string {
-	if f == nil {
-		return ""
-	}
-
-	return f.WebAuthnCredentials
+	User         string `mapstructure:"user" validate:"omitempty"`
+	ListAccounts string `mapstructure:"list_accounts" validate:"omitempty"`
 }
 
 type LDAPAttributeMapping struct {
