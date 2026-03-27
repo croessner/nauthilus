@@ -67,7 +67,9 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 		httpRequest = a.Request.HTTPClientRequest
 	}
 
-	if util.IsHTTPRequestCanceled(a.Logger(), httpRequest, args.Request.Session, "enqueue.lua_post_action") {
+	postActionRequest := util.DetachedHTTPRequest(httpRequest, nil)
+
+	if util.IsHTTPRequestCanceled(a.Logger(), postActionRequest, args.Request.Session, "enqueue.lua_post_action") {
 		return
 	}
 
@@ -123,7 +125,7 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 		LuaAction:             definitions.LuaActionPost,
 		Context:               args.Context,
 		FinishedChan:          finished,
-		HTTPRequest:           httpRequest,
+		HTTPRequest:           postActionRequest,
 		HTTPContext:           nil,
 		OTelParentSpanContext: args.ParentSpan,
 		CommonRequest:         cr,

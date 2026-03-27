@@ -187,7 +187,8 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		return
 	}
 
-	if util.IsHTTPRequestCanceled(auth.Logger(), auth.Request.HTTPClientRequest, auth.Runtime.GUID, "schedule.lua_post_action") {
+	postActionRequest := util.DetachedHTTPRequest(auth.Request.HTTPClientRequest, nil)
+	if util.IsHTTPRequestCanceled(auth.Logger(), postActionRequest, auth.Runtime.GUID, "schedule.lua_post_action") {
 		return
 	}
 
@@ -250,7 +251,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 
 	args := core.PostActionArgs{
 		Context:       auth.Runtime.Context,
-		HTTPRequest:   auth.Request.HTTPClientRequest,
+		HTTPRequest:   postActionRequest,
 		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
 		StatusMessage: auth.Runtime.StatusMessage,
 		Request:       requestCopy,

@@ -142,7 +142,7 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 	<-done
 }
 
-func TestRunLuaPostAction_SkipsCanceledHTTPRequest(t *testing.T) {
+func TestRunLuaPostAction_DetachesCanceledHTTPRequest(t *testing.T) {
 	cfg := prepareLuaPostActionTest(t)
 
 	reqCtx, cancel := context.WithCancel(context.Background())
@@ -165,16 +165,27 @@ func TestRunLuaPostAction_SkipsCanceledHTTPRequest(t *testing.T) {
 	}()
 
 	select {
+	case act := <-gotAction:
+		if act == nil {
+			t.Fatal("expected action to be enqueued")
+		}
+
+		if act.HTTPRequest == nil {
+			t.Fatal("expected detached HTTP request")
+		}
+
+		if err := act.HTTPRequest.Context().Err(); err != nil {
+			t.Fatalf("expected detached HTTP request context, got err=%v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected post action to be enqueued")
+	}
+
+	select {
 	case <-done:
 	case <-time.After(250 * time.Millisecond):
-		t.Fatal("RunLuaPostAction did not return after request cancellation")
+		t.Fatal("RunLuaPostAction did not return after action processing")
 	}
 
 	close(stopReader)
-
-	select {
-	case act := <-gotAction:
-		t.Fatalf("expected no action to be enqueued, got %+v", act)
-	default:
-	}
 }
