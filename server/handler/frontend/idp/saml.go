@@ -293,6 +293,21 @@ func (h *SAMLHandler) GetServiceProvider(_ *http.Request, serviceProviderID stri
 		},
 	}
 
+	if strings.TrimSpace(sp.SLOURL) != "" {
+		ssoDescriptor.SingleLogoutServices = []saml.Endpoint{
+			{
+				Binding:          saml.HTTPRedirectBinding,
+				Location:         sp.SLOURL,
+				ResponseLocation: sp.SLOURL,
+			},
+			{
+				Binding:          saml.HTTPPostBinding,
+				Location:         sp.SLOURL,
+				ResponseLocation: sp.SLOURL,
+			},
+		}
+	}
+
 	if sp.AreAuthnRequestsSigned() {
 		authnRequestsSigned := true
 		ssoDescriptor.AuthnRequestsSigned = &authnRequestsSigned

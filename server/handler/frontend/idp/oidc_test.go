@@ -95,6 +95,119 @@ func TestFormValue(t *testing.T) {
 	})
 }
 
+func TestOIDCTokenAuthMethod(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name        string
+		ctxMethod   string
+		authHeader  string
+		postForm    url.Values
+		expectedVal string
+	}{
+		{
+			name:        "context override wins",
+			ctxMethod:   "client_secret_post",
+			authHeader:  "Basic dGVzdDp0ZXN0",
+			expectedVal: "client_secret_post",
+		},
+		{
+			name:        "basic auth header",
+			authHeader:  "Basic dGVzdDp0ZXN0",
+			expectedVal: "client_secret_basic",
+		},
+		{
+			name:        "private_key_jwt",
+			postForm:    url.Values{"client_assertion": {"assertion"}},
+			expectedVal: "private_key_jwt",
+		},
+		{
+			name:        "client_secret_post",
+			postForm:    url.Values{"client_secret": {"secret"}},
+			expectedVal: "client_secret_post",
+		},
+		{
+			name:        "none for public client style",
+			postForm:    url.Values{"client_id": {"public-client"}},
+			expectedVal: "none",
+		},
+		{
+			name:        "empty when no auth hints",
+			expectedVal: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/token", nil)
+			ctx.Request.PostForm = tc.postForm
+
+			if tc.authHeader != "" {
+				ctx.Request.Header.Set("Authorization", tc.authHeader)
+			}
+
+			if tc.ctxMethod != "" {
+				ctx.Set(definitions.CtxAuthMethodKey, tc.ctxMethod)
+			}
+
+			assert.Equal(t, tc.expectedVal, oidcTokenAuthMethod(ctx))
+		})
+	}
+}
+
+func TestOIDCHandlerTokenSetsGrantTypeContext(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	cfg := &mockOIDCCfg{
+		issuer:     "https://auth.example.com",
+		signingKey: secret.New(generateTestKey()),
+		clients: []config.OIDCClient{
+			{
+				ClientID:     "test-client",
+				ClientSecret: secret.New("test-secret"),
+				RedirectURIs: []string{"https://app.com/callback"},
+			},
+		},
+	}
+
+	db, _ := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	idpInstance := idp.NewNauthilusIdP(d)
+	h := NewOIDCHandler(d, idpInstance, nil)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	form := url.Values{}
+	form.Add("grant_type", "client_credentials")
+	form.Add("client_id", "test-client")
+
+	req, _ := http.NewRequest(http.MethodPost, "/oidc/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx.Request = req
+
+	h.Token(ctx)
+
+	grantType, exists := ctx.Get(definitions.CtxOIDCGrantTypeKey)
+	if !exists {
+		t.Fatalf("expected context key %q to be set", definitions.CtxOIDCGrantTypeKey)
+	}
+
+	if grantTypeString, ok := grantType.(string); !ok || grantTypeString != "client_credentials" {
+		t.Fatalf("unexpected grant_type context value: %#v", grantType)
+	}
+}
+
 func generateTestKey() string {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pemData := pem.EncodeToMemory(&pem.Block{
@@ -302,6 +415,26 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.Contains(t, scopes, "offline_access")
 	assert.Contains(t, scopes, "groups")
 	assert.Contains(t, scopes, "openid")
+	responseTypes := resp["response_types_supported"].([]any)
+	assert.Equal(t, []any{"code"}, responseTypes)
+	grantTypes := resp["grant_types_supported"].([]any)
+	assert.Contains(t, grantTypes, "authorization_code")
+	assert.Contains(t, grantTypes, "refresh_token")
+	assert.Contains(t, grantTypes, "client_credentials")
+	assert.Contains(t, grantTypes, definitions.OIDCGrantTypeDeviceCode)
+	tokenEndpointAuthMethods := resp["token_endpoint_auth_methods_supported"].([]any)
+	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_basic")
+	assert.Contains(t, tokenEndpointAuthMethods, "client_secret_post")
+	assert.Contains(t, tokenEndpointAuthMethods, "private_key_jwt")
+	assert.Contains(t, tokenEndpointAuthMethods, "none")
+	tokenEndpointAuthSigningAlgs := resp["token_endpoint_auth_signing_alg_values_supported"].([]any)
+	assert.Contains(t, tokenEndpointAuthSigningAlgs, "RS256")
+	assert.Contains(t, tokenEndpointAuthSigningAlgs, "EdDSA")
+	introspectionAuthMethods := resp["introspection_endpoint_auth_methods_supported"].([]any)
+	assert.Contains(t, introspectionAuthMethods, "client_secret_basic")
+	assert.Contains(t, introspectionAuthMethods, "client_secret_post")
+	assert.NotContains(t, introspectionAuthMethods, "private_key_jwt")
+	assert.NotContains(t, introspectionAuthMethods, "none")
 	codeChallengeMethods := resp["code_challenge_methods_supported"].([]any)
 	assert.Contains(t, codeChallengeMethods, "S256")
 	assert.NotContains(t, codeChallengeMethods, "plain")
@@ -1300,6 +1433,54 @@ func TestOIDCHandler_Token(t *testing.T) {
 		var resp map[string]any
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.Equal(t, "invalid_client", resp["error"])
+	})
+
+	t.Run("Token request with public client and client_id only in body", func(t *testing.T) {
+		code := "public-client-code"
+		verifier := strings.Repeat("c", 43)
+		sum := sha256.Sum256([]byte(verifier))
+		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+		publicClient := config.OIDCClient{
+			ClientID:                "public-client",
+			RedirectURIs:            []string{"https://app.com/public-callback"},
+			TokenEndpointAuthMethod: "none",
+		}
+		cfg.clients = append(cfg.clients, publicClient)
+
+		oidcSession := &idp.OIDCSession{
+			ClientID:            publicClient.ClientID,
+			UserID:              "user123",
+			Scopes:              []string{definitions.ScopeOpenId},
+			RedirectURI:         "https://app.com/public-callback",
+			CodeChallenge:       challenge,
+			CodeChallengeMethod: "S256",
+		}
+		sessionData, _ := json.Marshal(oidcSession)
+
+		mock.ExpectGet("test:oidc:code:" + code).SetVal(string(sessionData))
+		mock.ExpectDel("test:oidc:code:" + code).SetVal(1)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+		form := url.Values{}
+		form.Add("grant_type", "authorization_code")
+		form.Add("client_id", publicClient.ClientID)
+		form.Add("code", code)
+		form.Add("redirect_uri", "https://app.com/public-callback")
+		form.Add("code_verifier", verifier)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NotEmpty(t, resp["id_token"])
+		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("Token request with PKCE S256 (valid verifier)", func(t *testing.T) {

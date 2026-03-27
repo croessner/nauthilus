@@ -169,7 +169,7 @@ local TEXT_COLS = {
     "session","service","features","client_ip","client_net","client_id",
     "hostname", "proto", "method", "user_agent", "local_ip",
     "display_name","account","username","password_hash",
-    "pwnd_info","brute_force_bucket","oidc_cid",
+    "pwnd_info", "brute_force_bucket", "oidc_cid", "saml_entity_id", "grant_type", "mfa_method",
     "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",
     "dyn_threat", "dyn_response", "xssl_protocol", "xssl_cipher", "ssl_fingerprint", "prot_reason", "status_msg"
 }
@@ -609,7 +609,7 @@ function nauthilus_run_hook(request)
             -- user/account info
             "display_name","account","username","password_hash",
             -- security and feature info
-            "pwnd_info","brute_force_bucket","brute_force_counter","oidc_cid",
+            "pwnd_info", "brute_force_bucket", "brute_force_counter", "oidc_cid", "saml_entity_id", "grant_type", "mfa_method",
             -- hotspot / geoip / pattern
             "failed_login_count","failed_login_rank","failed_login_recognized",
             "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",

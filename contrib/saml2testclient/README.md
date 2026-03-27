@@ -6,12 +6,15 @@ This client is used to test the SAML 2.0 functionality of Nauthilus. It implemen
 
 The client is configured via environment variables:
 
-| Variable                     | Description                            | Default Value                          |
-|------------------------------|----------------------------------------|----------------------------------------|
-| `SAML2_IDP_METADATA_URL`     | URL to the IdP metadata of Nauthilus   | `https://localhost:9443/saml/metadata` |
-| `SAML2_SP_ENTITY_ID`         | The entity ID of this test client      | `https://localhost:9095/saml/metadata` |
-| `SAML2_SP_URL`               | The base URL of this test client       | `https://localhost:9095`               |
-| `SAML2_INSECURE_SKIP_VERIFY` | Skip TLS verification for IdP metadata | `true`                                 |
+| Variable                         | Description                               | Default Value                          |
+|----------------------------------|-------------------------------------------|----------------------------------------|
+| `SAML2_IDP_METADATA_URL`         | URL to the IdP metadata of Nauthilus      | `https://localhost:9443/saml/metadata` |
+| `SAML2_SP_ENTITY_ID`             | The entity ID of this test client         | `https://localhost:9095/saml/metadata` |
+| `SAML2_SP_URL`                   | The base URL of this test client          | `https://localhost:9095`               |
+| `SAML2_INSECURE_SKIP_VERIFY`     | Skip TLS verification for IdP metadata    | `true`                                 |
+| `SAML2_SP_SIGN_AUTHN_REQUESTS`   | Sign AuthnRequests sent to the IdP        | `false`                                |
+| `SAML2_SP_SIGN_LOGOUT_REQUESTS`  | Sign SP-initiated LogoutRequests          | `false`                                |
+| `SAML2_SP_SIGN_LOGOUT_RESPONSES` | Sign LogoutResponses sent back to the IdP | `false`                                |
 
 ## Troubleshooting
 
@@ -41,6 +44,9 @@ export SAML2_SP_URL=https://localhost:9095
 By default, the client listens on `https://localhost:9095`. On the first start, it automatically generates a self-signed
 certificate for the SP if no `token.crt`/`token.key` is present. This certificate is also used for the HTTPS server.
 
+The test client now exposes a real `/saml/slo` endpoint. It can initiate SP-driven logout, accept IdP-initiated
+`LogoutRequest` messages, and process `LogoutResponse` messages from the IdP.
+
 ## Server Configuration (Nauthilus)
 
 The SAML2 IdP must be enabled and the Service Provider registered in `nauthilus.yaml`. It is highly recommended to use
@@ -56,6 +62,9 @@ idp:
     service_providers:
       - entity_id: "https://localhost:9095/saml/metadata"
         acs_url: "https://localhost:9095/saml/acs"
+        slo_url: "https://localhost:9095/saml/slo"
+        logout_requests_signed: false
+        logout_responses_signed: false
 ```
 
 ## LDAP Backend Example

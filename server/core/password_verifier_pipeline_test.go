@@ -16,6 +16,7 @@
 package core
 
 import (
+	"context"
 	stderrors "errors"
 	"net/http/httptest"
 	"os"
@@ -63,5 +64,49 @@ func TestVerifyPasswordPipeline_NoBackends(t *testing.T) {
 	_, err := VerifyPasswordPipeline(ctx, a, []*PassDBMap{})
 	if !stderrors.Is(err, serr.ErrAllBackendConfigError) {
 		t.Fatalf("expected ErrAllBackendConfigError for no backends, got %v", err)
+	}
+}
+
+func TestVerifyPasswordPipeline_CanceledRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ctx.Request = httptest.NewRequest("POST", "/auth", nil).WithContext(reqCtx)
+
+	called := false
+	a := &AuthState{
+		deps: AuthDeps{
+			Cfg:    config.GetFile(),
+			Logger: log.GetLogger(),
+		},
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
+		},
+		Runtime: AuthRuntime{
+			GUID: "ctx-canceled",
+		},
+	}
+
+	passDB := &PassDBMap{
+		backend: definitions.BackendLDAP,
+		fn: func(_ *AuthState) (*PassDBResult, error) {
+			called = true
+
+			return GetPassDBResultFromPool(), nil
+		},
+	}
+
+	_, err := VerifyPasswordPipeline(ctx, a, []*PassDBMap{passDB})
+	if !stderrors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	if called {
+		t.Fatal("expected canceled request to stop before backend execution")
 	}
 }

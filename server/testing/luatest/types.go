@@ -110,6 +110,7 @@ type MockData struct {
 	BackendResult  *BackendResultMock  `json:"backend_result"`
 	HTTPRequest    *HTTPRequestMock    `json:"http_request"`
 	HTTPResponse   *HTTPResponseMock   `json:"http_response"`
+	HTTPClient     *HTTPClientMock     `json:"http_client"`
 	ExpectedOutput *ExpectedOutputMock `json:"expected_output"`
 }
 
@@ -737,6 +738,61 @@ func (m *HTTPResponseMock) ValidateComplete() error {
 		return nil
 	}
 	return validateModuleCalls("http_response", m.ExpectedCalls, m.callIndex, m.runtimeErr)
+}
+
+// HTTPClientMock contains mock data for glua_http module.
+type HTTPClientMock struct {
+	Responses     []HTTPClientResponse       `json:"responses"`
+	ExpectedCalls []ModuleExpectedCall       `json:"expected_calls"`
+	Captured      []HTTPClientCapturedRecord `json:"-"`
+	callIndex     int                        `json:"-"`
+	responseIndex int                        `json:"-"`
+	runtimeErr    string                     `json:"-"`
+}
+
+// HTTPClientResponse defines one mocked HTTP response for glua_http.
+type HTTPClientResponse struct {
+	StatusCode int               `json:"status_code"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
+	Error      string            `json:"error"`
+}
+
+// HTTPClientCapturedRecord stores one captured glua_http request invocation.
+type HTTPClientCapturedRecord struct {
+	Method  string
+	URL     string
+	Body    string
+	Headers map[string]string
+}
+
+// ResetRuntimeState resets call-tracking and captured-request runtime data.
+func (m *HTTPClientMock) ResetRuntimeState() {
+	if m == nil {
+		return
+	}
+
+	resetCallState(&m.callIndex, &m.runtimeErr)
+	m.responseIndex = 0
+	m.Captured = nil
+}
+
+// RecordCall validates one glua_http call against the configured expectations.
+func (m *HTTPClientMock) RecordCall(method, args string) error {
+	if m == nil {
+		return nil
+	}
+
+	return recordModuleCall("http_client", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
+}
+
+// ValidateComplete verifies that all expected glua_http calls were consumed.
+func (m *HTTPClientMock) ValidateComplete() error {
+	if m == nil {
+		return nil
+	}
+
+	return validateModuleCalls("http_client", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
 // ExpectedOutputMock defines expected test results.

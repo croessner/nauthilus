@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	stdlog "log"
 	"log/slog"
 	"os"
@@ -79,6 +80,10 @@ func main() {
 		return
 	}
 
+	if bootfx.IsConfigCheckMode() {
+		os.Exit(runConfigCheck(bootfx.SetupConfiguration, os.Stderr))
+	}
+
 	if err := bootfx.SetupConfiguration(); err != nil {
 		stdlog.Fatalln("unable to load config file:", err)
 	}
@@ -128,6 +133,23 @@ func main() {
 	if err := fApp.Stop(stopCtx); err != nil {
 		stdlog.Printf("Unable to stop fx app. Error: %v", err)
 	}
+}
+
+func runConfigCheck(setupConfiguration func() error, stderr io.Writer) int {
+	if setupConfiguration == nil {
+		_, _ = fmt.Fprintln(stderr, "configuration check failed: setup function is nil")
+
+		return 1
+	}
+
+	err := setupConfiguration()
+	if err == nil {
+		return 0
+	}
+
+	_, _ = fmt.Fprintf(stderr, "configuration check failed: %v\n", err)
+
+	return 1
 }
 
 // runLuaTest executes the Lua script test and exits.

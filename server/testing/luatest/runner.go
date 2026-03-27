@@ -170,6 +170,12 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 				return nil
 			},
 			func() error {
+				if tr.mockData.HTTPClient != nil {
+					return tr.mockData.HTTPClient.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
 				if tr.mockData.DNS != nil {
 					return tr.mockData.DNS.ValidateComplete()
 				}

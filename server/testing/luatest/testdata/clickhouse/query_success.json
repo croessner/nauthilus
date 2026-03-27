@@ -1,0 +1,40 @@
+{
+  "context": {
+    "session": "sess-2",
+    "service": "api",
+    "protocol": "http",
+    "debug": true,
+    "no_auth": false,
+    "authenticated": true,
+    "user_found": true
+  },
+  "http_request": {
+    "method": "GET",
+    "path": "/api/v1/custom/clickhouse-query?action=recent&limit=1",
+    "headers": {}
+  },
+  "util": {
+    "envs": {
+      "CLICKHOUSE_SELECT_BASE": "http://clickhouse.local:8123",
+      "CLICKHOUSE_TABLE": "nauthilus.logins"
+    }
+  },
+  "http_client": {
+    "responses": [
+      {
+        "status_code": 200,
+        "body": "{\"meta\":[],\"data\":[],\"rows\":0}"
+      }
+    ],
+    "expected_calls": [
+      {
+        "method": "post",
+        "arg_contains": "SELECT"
+      }
+    ]
+  },
+  "expected_output": {
+    "action_result": true,
+    "error_expected": false
+  }
+}

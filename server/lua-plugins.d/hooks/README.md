@@ -99,7 +99,7 @@ Features:
 
 Environment:
 - CLICKHOUSE_SELECT_BASE: Base URL of ClickHouse HTTP endpoint, e.g. http://clickhouse:8123
-- CLICKHOUSE_TABLE: Target table (default nauthilus.failed_logins)
+- CLICKHOUSE_TABLE: Target table (default nauthilus.logins)
 - CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: Optional credentials via X-ClickHouse-User/Key headers
 
 Examples:

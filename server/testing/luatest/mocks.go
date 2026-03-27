@@ -18,8 +18,8 @@ package luatest
 import (
 	"context"
 	"fmt"
-	"maps"
 	stdhttp "net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -1200,6 +1200,29 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 			return 1
 		}))
 
+		L.SetField(mod, definitions.LuaFnGetHTTPQueryParam, L.NewFunction(func(L *lua.LState) int {
+			param := L.CheckString(1)
+			if err := mockData.RecordCall(definitions.LuaFnGetHTTPQueryParam, param); err != nil {
+				L.Push(lua.LNil)
+				return 1
+			}
+
+			parsed, err := url.ParseRequestURI(path)
+			if err != nil || parsed == nil {
+				L.Push(lua.LNil)
+				return 1
+			}
+
+			value := parsed.Query().Get(param)
+			if value == "" {
+				L.Push(lua.LNil)
+				return 1
+			}
+
+			L.Push(lua.LString(value))
+			return 1
+		}))
+
 		L.SetField(mod, "get_http_header", L.NewFunction(func(L *lua.LState) int {
 			key := L.CheckString(1)
 			if err := mockData.RecordCall("get_http_header", key); err != nil {
@@ -1242,6 +1265,149 @@ func LoaderModHTTPRequestMock(mockData *HTTPRequestMock) lua.LGFunction {
 			}
 			L.SetField(mod, "headers", headersTable)
 		}
+
+		L.Push(mod)
+
+		return 1
+	}
+}
+
+func collectMockHTTPHeaders(headersValue lua.LValue) map[string]string {
+	result := map[string]string{}
+
+	headersTable, ok := headersValue.(*lua.LTable)
+	if !ok || headersTable == nil {
+		return result
+	}
+
+	headersTable.ForEach(func(key lua.LValue, value lua.LValue) {
+		if key.Type() != lua.LTString {
+			return
+		}
+
+		result[key.String()] = value.String()
+	})
+
+	return result
+}
+
+func collectMockHTTPOptions(options *lua.LTable) (string, map[string]string) {
+	if options == nil {
+		return "", map[string]string{}
+	}
+
+	body := ""
+	if bodyValue := options.RawGetString("body"); bodyValue.Type() == lua.LTString {
+		body = bodyValue.String()
+	}
+
+	headers := collectMockHTTPHeaders(options.RawGetString("headers"))
+
+	return body, headers
+}
+
+func nextMockHTTPResponse(mockData *HTTPClientMock) HTTPClientResponse {
+	if mockData != nil && mockData.responseIndex < len(mockData.Responses) {
+		response := mockData.Responses[mockData.responseIndex]
+		mockData.responseIndex++
+
+		return response
+	}
+
+	return HTTPClientResponse{StatusCode: stdhttp.StatusOK}
+}
+
+func pushMockHTTPError(L *lua.LState, errMessage string) int {
+	L.Push(lua.LNil)
+	L.Push(lua.LString(errMessage))
+
+	return 2
+}
+
+func pushMockHTTPResponse(L *lua.LState, response HTTPClientResponse) int {
+	responseTable := L.NewTable()
+	statusCode := response.StatusCode
+	if statusCode == 0 {
+		statusCode = stdhttp.StatusOK
+	}
+
+	responseTable.RawSetString("status_code", lua.LNumber(statusCode))
+	responseTable.RawSetString("body", lua.LString(response.Body))
+
+	headersTable := L.NewTable()
+	for key, value := range response.Headers {
+		headersTable.RawSetString(key, lua.LString(value))
+	}
+
+	responseTable.RawSetString("headers", headersTable)
+
+	L.Push(responseTable)
+	L.Push(lua.LNil)
+
+	return 2
+}
+
+func recordMockHTTPCall(mockData *HTTPClientMock, method, url, body string, headers map[string]string) error {
+	if mockData == nil {
+		return nil
+	}
+
+	args := fmt.Sprintf("url=%s body=%s", url, body)
+	if err := mockData.RecordCall(method, args); err != nil {
+		return err
+	}
+
+	mockData.Captured = append(mockData.Captured, HTTPClientCapturedRecord{
+		Method:  method,
+		URL:     url,
+		Body:    body,
+		Headers: headers,
+	})
+
+	return nil
+}
+
+func respondMockHTTPCall(L *lua.LState, mockData *HTTPClientMock, method, url string, options *lua.LTable) int {
+	body, headers := collectMockHTTPOptions(options)
+
+	if err := recordMockHTTPCall(mockData, method, url, body, headers); err != nil {
+		return pushMockHTTPError(L, err.Error())
+	}
+
+	response := nextMockHTTPResponse(mockData)
+	if response.Error != "" {
+		return pushMockHTTPError(L, response.Error)
+	}
+
+	return pushMockHTTPResponse(L, response)
+}
+
+// LoaderModHTTPClientMock creates a mock glua_http module.
+func LoaderModHTTPClientMock(mockData *HTTPClientMock) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.NewTable()
+
+		L.SetField(mod, "post", L.NewFunction(func(L *lua.LState) int {
+			url := L.CheckString(1)
+			options := L.OptTable(2, nil)
+
+			return respondMockHTTPCall(L, mockData, "post", url, options)
+		}))
+
+		L.SetField(mod, "get", L.NewFunction(func(L *lua.LState) int {
+			url := L.CheckString(1)
+			options := L.OptTable(2, nil)
+
+			return respondMockHTTPCall(L, mockData, "get", url, options)
+		}))
+
+		L.SetField(mod, "request", L.NewFunction(func(L *lua.LState) int {
+			method := strings.ToLower(L.CheckString(1))
+			url := L.CheckString(2)
+			options := L.OptTable(3, nil)
+
+			return respondMockHTTPCall(L, mockData, method, url, options)
+		}))
 
 		L.Push(mod)
 
@@ -1721,6 +1887,39 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 			return 1
 		}))
 
+		L.SetField(mod, "log", L.NewFunction(func(L *lua.LState) int {
+			level := L.OptString(2, "")
+			_ = mockData.RecordCall("log", level)
+			return 0
+		}))
+
+		L.SetField(mod, "get_redis_key", L.NewFunction(func(L *lua.LState) int {
+			request := L.CheckAny(1)
+			key := L.CheckString(2)
+			_ = mockData.RecordCall("get_redis_key", key)
+
+			prefix := ""
+			if tbl, ok := request.(*lua.LTable); ok {
+				if raw := tbl.RawGetString("redis_prefix"); raw.Type() == lua.LTString {
+					prefix = raw.String()
+				}
+			}
+
+			L.Push(lua.LString(prefix + key))
+			return 1
+		}))
+
+		L.SetField(mod, "if_error_raise", L.NewFunction(func(L *lua.LState) int {
+			errValue := L.CheckAny(1)
+			_ = mockData.RecordCall("if_error_raise", errValue.String())
+
+			if errValue.Type() != lua.LTNil {
+				L.RaiseError("%s", errValue.String())
+			}
+
+			return 0
+		}))
+
 		L.SetField(mod, "print_result", L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall("print_result", "")
 			return 0
@@ -1761,9 +1960,15 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.NewTable()
 
-		cache := make(map[string]any)
-		if mockData != nil && mockData.Entries != nil {
-			maps.Copy(cache, mockData.Entries)
+		cache := map[string]any{}
+		if mockData != nil {
+			if mockData.Entries == nil {
+				mockData.Entries = map[string]any{}
+			}
+
+			cache = mockData.Entries
+		} else {
+			cache = map[string]any{}
 		}
 
 		L.SetField(mod, "cache_set", L.NewFunction(func(L *lua.LState) int {
@@ -1844,7 +2049,9 @@ func LoaderModCacheMock(mockData *CacheMock) lua.LGFunction {
 
 		L.SetField(mod, definitions.LuaFnCacheFlush, L.NewFunction(func(L *lua.LState) int {
 			_ = mockData.RecordCall(definitions.LuaFnCacheFlush, "")
-			cache = make(map[string]any)
+			for key := range cache {
+				delete(cache, key)
+			}
 			return 0
 		}))
 
@@ -1999,7 +2206,6 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	// Match production Lua preloads so scripts can use gopher-lua-libs in test mode.
 	libs.Preload(L)
 	L.PreloadModule("glua_crypto", gluacrypto.Loader)
-	L.PreloadModule("glua_http", gluahttp.NewHttpModule(&stdhttp.Client{}).Loader)
 
 	// Always shadow gopher-lua-libs db module in test mode so all DB scripts run
 	// against the in-memory mock regardless of driver/DSN.
@@ -2065,6 +2271,14 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	}
 	mockData.HTTPResponse = httpResponseMock
 	httpResponseMock.ResetRuntimeState()
+
+	httpClientMock := mockData.HTTPClient
+	if httpClientMock != nil {
+		httpClientMock.ResetRuntimeState()
+		L.PreloadModule("glua_http", LoaderModHTTPClientMock(httpClientMock))
+	} else {
+		L.PreloadModule("glua_http", gluahttp.NewHttpModule(&stdhttp.Client{}).Loader)
+	}
 
 	dnsMock := mockData.DNS
 	if dnsMock == nil {

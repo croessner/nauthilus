@@ -603,6 +603,56 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 
 		assert.NoError(t, cfg.validateIdPSAMLSigningSettings())
 	})
+
+	t.Run("missing cert with logout signing enabled returns error", func(t *testing.T) {
+		testCases := []struct {
+			name        string
+			serviceProv SAML2ServiceProvider
+			wantErr     string
+		}{
+			{
+				name: "logout request signing enabled",
+				serviceProv: SAML2ServiceProvider{
+					EntityID:             "https://sp.example.com/metadata",
+					ACSURL:               "https://sp.example.com/acs",
+					LogoutRequestsSigned: boolPtr(true),
+				},
+				wantErr: "logout_requests_signed requires cert or cert_file",
+			},
+			{
+				name: "logout response signing enabled",
+				serviceProv: SAML2ServiceProvider{
+					EntityID:              "https://sp.example.com/metadata",
+					ACSURL:                "https://sp.example.com/acs",
+					LogoutResponsesSigned: boolPtr(true),
+				},
+				wantErr: "logout_responses_signed requires cert or cert_file",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := &FileSettings{
+					IdP: &IdPSection{
+						SAML2: SAML2Config{
+							Enabled: true,
+							ServiceProviders: []SAML2ServiceProvider{
+								tc.serviceProv,
+							},
+						},
+					},
+				}
+
+				err := cfg.validateIdPSAMLSigningSettings()
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+			})
+		}
+	})
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func testCertificatePEM(t *testing.T) string {
@@ -647,6 +697,22 @@ func TestSAML2ServiceProvider_GetAllowedAttributes(t *testing.T) {
 		attrs := sp.GetAllowedAttributes()
 
 		assert.Equal(t, []string{"email", "displayName", "groups"}, attrs)
+	})
+}
+
+func TestSAML2ServiceProvider_LogoutSigningDefaults(t *testing.T) {
+	t.Run("nil service provider defaults to unsigned logout messages", func(t *testing.T) {
+		var sp *SAML2ServiceProvider
+
+		assert.False(t, sp.AreLogoutRequestsSigned())
+		assert.False(t, sp.AreLogoutResponsesSigned())
+	})
+
+	t.Run("missing logout signing flags default to unsigned logout messages", func(t *testing.T) {
+		sp := &SAML2ServiceProvider{}
+
+		assert.False(t, sp.AreLogoutRequestsSigned())
+		assert.False(t, sp.AreLogoutResponsesSigned())
 	})
 }
 

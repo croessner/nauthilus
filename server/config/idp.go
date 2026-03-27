@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -71,21 +72,45 @@ func (f *FileSettings) validateIdPSAMLSigningSettings() error {
 	}
 
 	for _, sp := range f.IdP.SAML2.ServiceProviders {
-		if !sp.AuthnRequestsSigned {
-			continue
+		requirements := []struct {
+			enabled bool
+			key     string
+			errHint string
+		}{
+			{
+				enabled: sp.AuthnRequestsSigned,
+				key:     "authn_requests_signed",
+				errHint: "authn request",
+			},
+			{
+				enabled: sp.LogoutRequestsSigned != nil && *sp.LogoutRequestsSigned,
+				key:     "logout_requests_signed",
+				errHint: "logout request",
+			},
+			{
+				enabled: sp.LogoutResponsesSigned != nil && *sp.LogoutResponsesSigned,
+				key:     "logout_responses_signed",
+				errHint: "logout response",
+			},
 		}
 
-		certStr, err := sp.GetCert()
-		if err != nil {
-			return fmt.Errorf("idp.saml2.service_providers[%s]: failed to read cert: %w", sp.EntityID, err)
-		}
+		for _, requirement := range requirements {
+			if !requirement.enabled {
+				continue
+			}
 
-		if strings.TrimSpace(certStr) == "" {
-			return fmt.Errorf("idp.saml2.service_providers[%s]: authn_requests_signed requires cert or cert_file", sp.EntityID)
-		}
+			certStr, err := sp.GetCert()
+			if err != nil {
+				return fmt.Errorf("idp.saml2.service_providers[%s]: failed to read cert: %w", sp.EntityID, err)
+			}
 
-		if _, err := parseFirstPEMCertificate(certStr); err != nil {
-			return fmt.Errorf("idp.saml2.service_providers[%s]: invalid cert for authn request signature validation: %w", sp.EntityID, err)
+			if strings.TrimSpace(certStr) == "" {
+				return fmt.Errorf("idp.saml2.service_providers[%s]: %s requires cert or cert_file", sp.EntityID, requirement.key)
+			}
+
+			if _, err := parseFirstPEMCertificate(certStr); err != nil {
+				return fmt.Errorf("idp.saml2.service_providers[%s]: invalid cert for %s signature validation: %w", sp.EntityID, requirement.errHint, err)
+			}
 		}
 	}
 
@@ -346,6 +371,16 @@ func (o *OIDCConfig) GetResponseTypesSupported() []string {
 	return []string{"code"}
 }
 
+// GetGrantTypesSupported returns the grant types supported by the token endpoint.
+func (o *OIDCConfig) GetGrantTypesSupported() []string {
+	return []string{
+		"authorization_code",
+		"refresh_token",
+		"client_credentials",
+		definitions.OIDCGrantTypeDeviceCode,
+	}
+}
+
 // GetSubjectTypesSupported returns the supported subject types.
 func (o *OIDCConfig) GetSubjectTypesSupported() []string {
 	if len(o.SubjectTypesSupported) > 0 {
@@ -370,6 +405,25 @@ func (o *OIDCConfig) GetTokenEndpointAuthMethodsSupported() []string {
 		return o.TokenEndpointAuthMethodsSupported
 	}
 
+	return []string{"client_secret_post", "client_secret_basic", "private_key_jwt", "none"}
+}
+
+// GetTokenEndpointAuthSigningAlgValuesSupported returns the signing algorithms
+// supported for private_key_jwt client authentication at the token endpoint.
+// The metadata value is only relevant when private_key_jwt is advertised.
+func (o *OIDCConfig) GetTokenEndpointAuthSigningAlgValuesSupported() []string {
+	for _, method := range o.GetTokenEndpointAuthMethodsSupported() {
+		if method == "private_key_jwt" {
+			return []string{"RS256", "EdDSA"}
+		}
+	}
+
+	return nil
+}
+
+// GetIntrospectionEndpointAuthMethodsSupported returns the client
+// authentication methods accepted by the introspection endpoint.
+func (o *OIDCConfig) GetIntrospectionEndpointAuthMethodsSupported() []string {
 	return []string{"client_secret_post", "client_secret_basic"}
 }
 
@@ -1031,18 +1085,20 @@ func GetContent(raw any, path string) (string, error) {
 
 // SAML2ServiceProvider represents a SAML 2.0 service provider configuration.
 type SAML2ServiceProvider struct {
-	Name                string   `mapstructure:"name"`
-	EntityID            string   `mapstructure:"entity_id" validate:"required"`
-	ACSURL              string   `mapstructure:"acs_url" validate:"required"`
-	SLOURL              string   `mapstructure:"slo_url"`
-	SLOBackChannelURL   string   `mapstructure:"slo_back_channel_url"`
-	Cert                string   `mapstructure:"cert"`
-	CertFile            string   `mapstructure:"cert_file"`
-	AuthnRequestsSigned bool     `mapstructure:"authn_requests_signed"`
-	AllowedAttributes   []string `mapstructure:"allowed_attributes"`
-	RequireMFA          []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	SupportedMFA        []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	LogoutRedirectURI   string   `mapstructure:"logout_redirect_uri"`
+	Name                  string   `mapstructure:"name"`
+	EntityID              string   `mapstructure:"entity_id" validate:"required"`
+	ACSURL                string   `mapstructure:"acs_url" validate:"required"`
+	SLOURL                string   `mapstructure:"slo_url"`
+	SLOBackChannelURL     string   `mapstructure:"slo_back_channel_url"`
+	Cert                  string   `mapstructure:"cert"`
+	CertFile              string   `mapstructure:"cert_file"`
+	AuthnRequestsSigned   bool     `mapstructure:"authn_requests_signed"`
+	LogoutRequestsSigned  *bool    `mapstructure:"logout_requests_signed"`
+	LogoutResponsesSigned *bool    `mapstructure:"logout_responses_signed"`
+	AllowedAttributes     []string `mapstructure:"allowed_attributes"`
+	RequireMFA            []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA          []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	LogoutRedirectURI     string   `mapstructure:"logout_redirect_uri"`
 	// Deprecated: use idp.remember_me_ttl instead.
 	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse bool          `mapstructure:"delayed_response"`
@@ -1084,6 +1140,83 @@ func (s *SAML2ServiceProvider) AreAuthnRequestsSigned() bool {
 	}
 
 	return s.AuthnRequestsSigned
+}
+
+// AreLogoutRequestsSigned returns whether this SP must sign LogoutRequests.
+func (s *SAML2ServiceProvider) AreLogoutRequestsSigned() bool {
+	if s == nil || s.LogoutRequestsSigned == nil {
+		return false
+	}
+
+	return *s.LogoutRequestsSigned
+}
+
+// AreLogoutResponsesSigned returns whether this SP must sign LogoutResponses.
+func (s *SAML2ServiceProvider) AreLogoutResponsesSigned() bool {
+	if s == nil || s.LogoutResponsesSigned == nil {
+		return false
+	}
+
+	return *s.LogoutResponsesSigned
+}
+
+// FindSAMLServiceProviderByEntityID returns the configured SAML service provider
+// that matches the given entity ID.
+func FindSAMLServiceProviderByEntityID(serviceProviders []SAML2ServiceProvider, entityID string) (*SAML2ServiceProvider, bool) {
+	entityID = strings.TrimSpace(entityID)
+	if entityID == "" {
+		return nil, false
+	}
+
+	for index := range serviceProviders {
+		if samlServiceProviderEntityIDMatches(serviceProviders[index].EntityID, entityID) {
+			return &serviceProviders[index], true
+		}
+	}
+
+	return nil, false
+}
+
+func samlServiceProviderEntityIDMatches(configuredEntityID, incomingEntityID string) bool {
+	configuredEntityID = strings.TrimSpace(configuredEntityID)
+	incomingEntityID = strings.TrimSpace(incomingEntityID)
+
+	if configuredEntityID == "" || incomingEntityID == "" {
+		return false
+	}
+
+	if configuredEntityID == incomingEntityID {
+		return true
+	}
+
+	normalizedConfiguredEntityID, ok := normalizeSAMLServiceProviderEntityID(configuredEntityID)
+	if !ok {
+		return false
+	}
+
+	normalizedIncomingEntityID, ok := normalizeSAMLServiceProviderEntityID(incomingEntityID)
+	if !ok {
+		return false
+	}
+
+	return normalizedConfiguredEntityID == normalizedIncomingEntityID
+}
+
+func normalizeSAMLServiceProviderEntityID(entityID string) (string, bool) {
+	parsedEntityID, err := url.Parse(strings.TrimSpace(entityID))
+	if err != nil || parsedEntityID.Scheme == "" || parsedEntityID.Host == "" {
+		return "", false
+	}
+
+	parsedEntityID.Scheme = strings.ToLower(parsedEntityID.Scheme)
+	parsedEntityID.Host = strings.ToLower(parsedEntityID.Host)
+	parsedEntityID.Fragment = ""
+
+	if parsedEntityID.Path != "/" {
+		parsedEntityID.Path = strings.TrimRight(parsedEntityID.Path, "/")
+	}
+
+	return parsedEntityID.String(), true
 }
 
 // GetAllowedAttributes returns the allowed attributes for this SP.

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   client_id            LowCardinality(String),
   hostname             LowCardinality(String) CODEC(ZSTD(3)),
   proto                LowCardinality(String),
-  method      LowCardinality(String),
+  method         LowCardinality(String),
   user_agent           LowCardinality(String) CODEC(ZSTD(5)),
   local_ip             LowCardinality(String),
   local_port           String,
@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   brute_force_bucket   LowCardinality(String),
   brute_force_counter  Nullable(UInt64),
   oidc_cid             LowCardinality(String),
+  saml_entity_id LowCardinality(String),
+  grant_type     LowCardinality(String),
+  mfa_method     LowCardinality(String),
   failed_login_count   Nullable(UInt64),
   failed_login_rank    Nullable(UInt64),
   failed_login_recognized Nullable(Bool),
@@ -53,9 +56,9 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   xssl_protocol        LowCardinality(String),
   xssl_cipher          LowCardinality(String),
   ssl_fingerprint      LowCardinality(String),
-  latency     UInt64,
-  http_status UInt16,
-  status_msg LowCardinality(String),
+  latency        UInt64,
+  http_status    UInt16,
+  status_msg     LowCardinality(String),
   INDEX idx_username   username   TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
   INDEX idx_account    account    TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
   INDEX idx_client_ip  client_ip  TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64
@@ -81,6 +84,9 @@ ALTER TABLE nauthilus.logins MODIFY COLUMN username           LowCardinality(Str
 ALTER TABLE nauthilus.logins MODIFY COLUMN pwnd_info          LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN brute_force_bucket LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN oidc_cid           LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN saml_entity_id     LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN grant_type         LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN mfa_method         LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_guid         LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_country      LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_iso_codes    LowCardinality(String);
@@ -95,6 +101,9 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS method      LowCardinality
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS latency     UInt64                 AFTER ssl_fingerprint;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS http_status UInt16                 AFTER latency;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS status_msg  LowCardinality(String) AFTER http_status;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS saml_entity_id LowCardinality(String) AFTER oidc_cid;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS grant_type     LowCardinality(String) AFTER saml_entity_id;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS mfa_method     LowCardinality(String) AFTER grant_type;
 
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rwp Nullable(Bool) AFTER repeating;
 

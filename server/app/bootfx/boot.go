@@ -58,6 +58,7 @@ type LuaTestFlags struct {
 }
 
 var luaTestFlags LuaTestFlags
+var configCheckMode bool
 
 // ParseFlagsAndPrintVersion parses command-line flags, configures viper/config paths,
 // and prints the version information if the `-version` flag is set.
@@ -65,6 +66,7 @@ func ParseFlagsAndPrintVersion(version string) {
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	configFlag := flag.String("config", "", "path to configuration file")
 	configFormatFlag := flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
+	configCheckFlag := flag.Bool("config-check", false, "validate configuration and exit (0 if valid, 1 otherwise)")
 	genOIDCKey := flag.Bool("gen-oidc-key", false, "generate a new RSA key for OIDC signing")
 	genSAMLCert := flag.String("gen-saml-cert", "", "generate a self-signed certificate for SAML (provide common name)")
 	keyBits := flag.Int("key-bits", 4096, "bits for the generated RSA key")
@@ -81,6 +83,7 @@ func ParseFlagsAndPrintVersion(version string) {
 	luaTestFlags.ScriptPath = *testLuaScript
 	luaTestFlags.CallbackType = *testCallback
 	luaTestFlags.MockDataPath = *testMockData
+	configCheckMode = *configCheckFlag
 
 	if *versionFlag {
 		fmt.Println("Version: ", version)
@@ -129,6 +132,11 @@ func GetLuaTestFlags() LuaTestFlags {
 // IsLuaTestMode returns true if Lua test mode is enabled.
 func IsLuaTestMode() bool {
 	return luaTestFlags.ScriptPath != ""
+}
+
+// IsConfigCheckMode returns true if config check mode is enabled.
+func IsConfigCheckMode() bool {
+	return configCheckMode
 }
 
 // SetupConfiguration initializes the environment, loads the configuration file,
