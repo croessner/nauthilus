@@ -533,6 +533,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 
 	auth.SetUsername(username)
 	auth.SetPassword(secret.New(password))
+	auth.SetMethod(definitions.AuthMethodPassword)
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
 

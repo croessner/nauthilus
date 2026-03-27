@@ -95,6 +95,119 @@ func TestFormValue(t *testing.T) {
 	})
 }
 
+func TestOIDCTokenAuthMethod(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name        string
+		ctxMethod   string
+		authHeader  string
+		postForm    url.Values
+		expectedVal string
+	}{
+		{
+			name:        "context override wins",
+			ctxMethod:   "client_secret_post",
+			authHeader:  "Basic dGVzdDp0ZXN0",
+			expectedVal: "client_secret_post",
+		},
+		{
+			name:        "basic auth header",
+			authHeader:  "Basic dGVzdDp0ZXN0",
+			expectedVal: "client_secret_basic",
+		},
+		{
+			name:        "private_key_jwt",
+			postForm:    url.Values{"client_assertion": {"assertion"}},
+			expectedVal: "private_key_jwt",
+		},
+		{
+			name:        "client_secret_post",
+			postForm:    url.Values{"client_secret": {"secret"}},
+			expectedVal: "client_secret_post",
+		},
+		{
+			name:        "none for public client style",
+			postForm:    url.Values{"client_id": {"public-client"}},
+			expectedVal: "none",
+		},
+		{
+			name:        "empty when no auth hints",
+			expectedVal: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/token", nil)
+			ctx.Request.PostForm = tc.postForm
+
+			if tc.authHeader != "" {
+				ctx.Request.Header.Set("Authorization", tc.authHeader)
+			}
+
+			if tc.ctxMethod != "" {
+				ctx.Set(definitions.CtxAuthMethodKey, tc.ctxMethod)
+			}
+
+			assert.Equal(t, tc.expectedVal, oidcTokenAuthMethod(ctx))
+		})
+	}
+}
+
+func TestOIDCHandlerTokenSetsGrantTypeContext(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	cfg := &mockOIDCCfg{
+		issuer:     "https://auth.example.com",
+		signingKey: secret.New(generateTestKey()),
+		clients: []config.OIDCClient{
+			{
+				ClientID:     "test-client",
+				ClientSecret: secret.New("test-secret"),
+				RedirectURIs: []string{"https://app.com/callback"},
+			},
+		},
+	}
+
+	db, _ := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	idpInstance := idp.NewNauthilusIdP(d)
+	h := NewOIDCHandler(d, idpInstance, nil)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	form := url.Values{}
+	form.Add("grant_type", "client_credentials")
+	form.Add("client_id", "test-client")
+
+	req, _ := http.NewRequest(http.MethodPost, "/oidc/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx.Request = req
+
+	h.Token(ctx)
+
+	grantType, exists := ctx.Get(definitions.CtxOIDCGrantTypeKey)
+	if !exists {
+		t.Fatalf("expected context key %q to be set", definitions.CtxOIDCGrantTypeKey)
+	}
+
+	if grantTypeString, ok := grantType.(string); !ok || grantTypeString != "client_credentials" {
+		t.Fatalf("unexpected grant_type context value: %#v", grantType)
+	}
+}
+
 func generateTestKey() string {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pemData := pem.EncodeToMemory(&pem.Block{

@@ -1,0 +1,32 @@
+{
+  "context": {
+    "username": "alice",
+    "password": "secret",
+    "client_ip": "203.0.113.10",
+    "client_port": "12345",
+    "local_ip": "127.0.0.1",
+    "local_port": "8080",
+    "service": "idp",
+    "protocol": "oidc",
+    "session": "sess-1",
+    "debug": false,
+    "no_auth": false,
+    "authenticated": false,
+    "user_found": true,
+    "account": "alice"
+  },
+  "util": {
+    "envs": {
+      "CLICKHOUSE_INSERT_URL": "http://clickhouse.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow",
+      "CLICKHOUSE_BATCH_SIZE": "2",
+      "CLICKHOUSE_CACHE_KEY": "clickhouse:batch:test"
+    }
+  },
+  "http_client": {
+    "responses": []
+  },
+  "expected_output": {
+    "action_result": true,
+    "error_expected": false
+  }
+}

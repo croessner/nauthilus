@@ -178,10 +178,10 @@ Notes:
 
 Configuration (environment variables):
 - CLICKHOUSE_INSERT_URL: Full HTTP endpoint including the INSERT and FORMAT JSONEachRow, e.g.
-  http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.failed_logins%20FORMAT%20JSONEachRow
+  http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow
 - CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: Optional; sent via X-ClickHouse-User/Key headers.
 - CLICKHOUSE_BATCH_SIZE: Optional batch size (default 100).
-- CLICKHOUSE_CACHE_KEY: Optional cache key for batching list (default clickhouse:batch:failed_logins).
+- CLICKHOUSE_CACHE_KEY: Optional cache key for batching list (default clickhouse:batch:logins).
 
 Batching details:
 - The action pushes JSON-encoded rows via nauthilus_cache.cache_push(CLICKHOUSE_CACHE_KEY, row_json).

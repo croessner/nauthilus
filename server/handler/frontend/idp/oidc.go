@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -41,15 +42,18 @@ import (
 	"github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/idp/signing"
 	slodomain "github.com/croessner/nauthilus/server/idp/slo"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // formValue retrieves a request parameter from either the POST body or the URL
@@ -543,6 +547,188 @@ type tokenResponse struct {
 	expiresIn    time.Duration
 }
 
+// oidcTokenAuthMethod resolves the effective token endpoint client authentication method.
+func oidcTokenAuthMethod(ctx *gin.Context) string {
+	if ctx == nil || ctx.Request == nil {
+		return ""
+	}
+
+	if authMethod, exists := ctx.Get(definitions.CtxAuthMethodKey); exists {
+		if method, ok := authMethod.(string); ok && method != "" {
+			return method
+		}
+	}
+
+	if strings.HasPrefix(ctx.GetHeader("Authorization"), "Basic ") {
+		return clientauth.MethodClientSecretBasic
+	}
+
+	if formValue(ctx, "client_assertion") != "" {
+		return clientauth.MethodPrivateKeyJWT
+	}
+
+	if formValue(ctx, "client_secret") != "" {
+		return clientauth.MethodClientSecretPost
+	}
+
+	if formValue(ctx, "client_id") != "" {
+		return "none"
+	}
+
+	return ""
+}
+
+func oidcTokenResult(httpStatus int) string {
+	if httpStatus >= http.StatusOK && httpStatus < http.StatusMultipleChoices {
+		return sloRequestOutcomeSuccess
+	}
+
+	return "failed"
+}
+
+func oidcTokenClientPort(remoteAddr string) string {
+	_, port, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return ""
+	}
+
+	return port
+}
+
+func oidcTokenStatusMessage(result string, httpStatus int) string {
+	if result == sloRequestOutcomeSuccess {
+		return "OIDC token issued"
+	}
+
+	return fmt.Sprintf("OIDC token request failed (%d)", httpStatus)
+}
+
+func detachedPostActionRequest(req *http.Request) *http.Request {
+	if req == nil {
+		return nil
+	}
+
+	clone := req.Clone(svcctx.Get())
+	clone.RemoteAddr = req.RemoteAddr
+
+	return clone
+}
+
+func oidcTokenDataContext(ctx *gin.Context) *lualib.Context {
+	if ctx == nil {
+		return lualib.NewContext()
+	}
+
+	luaCtx, ok := ctx.Get(definitions.CtxDataExchangeKey)
+	contextData, _ := luaCtx.(*lualib.Context)
+	if !ok || contextData == nil {
+		return lualib.NewContext()
+	}
+
+	return contextData
+}
+
+func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
+	ctx *gin.Context,
+	service string,
+	grantType string,
+	clientID string,
+	authMethod string,
+	httpStatus int,
+	result string,
+	latency time.Duration,
+) lualib.CommonRequest {
+	return lualib.CommonRequest{
+		Debug:         h.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
+		NoAuth:        true,
+		Authenticated: result == sloRequestOutcomeSuccess,
+		UserFound:     false,
+		Service:       service,
+		Session:       ctx.GetString(definitions.CtxGUIDKey),
+		ClientIP:      ctx.ClientIP(),
+		ClientPort:    oidcTokenClientPort(ctx.Request.RemoteAddr),
+		ClientID:      clientID,
+		UserAgent:     ctx.Request.UserAgent(),
+		Protocol:      definitions.ProtoOIDC,
+		Method:        authMethod,
+		OIDCCID:       clientID,
+		GrantType:     grantType,
+		Latency:       float64(latency.Milliseconds()),
+		HTTPStatus:    httpStatus,
+	}
+}
+
+func (h *OIDCHandler) runOIDCTokenPostAction(
+	ctx *gin.Context,
+	grantType string,
+	clientID string,
+	authMethod string,
+	httpStatus int,
+	result string,
+	latency time.Duration,
+) {
+	if h == nil || h.deps == nil || h.deps.Cfg == nil || !h.deps.Cfg.HaveLuaActions() {
+		return
+	}
+
+	if ctx == nil || ctx.Request == nil {
+		return
+	}
+
+	authRaw := core.NewAuthStateFromContextWithDeps(ctx, h.deps.Auth())
+	auth, ok := authRaw.(*core.AuthState)
+	if !ok || auth == nil {
+		return
+	}
+
+	service := ctx.GetString(definitions.CtxServiceKey)
+	if service == "" {
+		service = definitions.ServIdP
+	}
+
+	auth.Request.Service = service
+
+	args := core.PostActionArgs{
+		Context:       oidcTokenDataContext(ctx),
+		HTTPRequest:   detachedPostActionRequest(ctx.Request),
+		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
+		StatusMessage: oidcTokenStatusMessage(result, httpStatus),
+		Request:       h.buildOIDCTokenPostActionRequest(ctx, service, grantType, clientID, authMethod, httpStatus, result, latency),
+	}
+
+	go auth.RunLuaPostAction(args)
+}
+
+func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string, clientID string, startedAt time.Time) {
+	if ctx == nil || ctx.Request == nil {
+		return
+	}
+
+	httpStatus := http.StatusOK
+	if ctx != nil && ctx.Writer != nil {
+		httpStatus = ctx.Writer.Status()
+	}
+
+	result := oidcTokenResult(httpStatus)
+	authMethod := oidcTokenAuthMethod(ctx)
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "OIDC Token request completed",
+		"grant_type", util.WithNotAvailable(grantType),
+		"client_id", util.WithNotAvailable(clientID),
+		"auth_method", util.WithNotAvailable(authMethod),
+		definitions.LogKeyHTTPStatus, httpStatus,
+		"result", result,
+	)
+
+	h.runOIDCTokenPostAction(ctx, grantType, clientID, authMethod, httpStatus, result, time.Since(startedAt))
+}
+
 // logTokenError logs a token issuance failure and responds with a server error.
 func (h *OIDCHandler) logTokenError(ctx *gin.Context, grantType, clientID string, err error) {
 	util.DebugModuleWithCfg(
@@ -588,7 +774,14 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
 	defer sp.End()
 
+	startedAt := time.Now()
 	grantType := formValue(ctx, "grant_type")
+	ctx.Set(definitions.CtxOIDCGrantTypeKey, grantType)
+
+	clientID := formValue(ctx, "client_id")
+	defer func() {
+		h.finishOIDCTokenRequest(ctx, grantType, clientID, startedAt)
+	}()
 
 	// Try private_key_jwt first if client_assertion is present
 	var client *config.OIDCClient
@@ -604,7 +797,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		return
 	}
 
-	clientID := client.ClientID
+	clientID = client.ClientID
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),

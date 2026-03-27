@@ -25,9 +25,9 @@ data:
       client_id            LowCardinality(String),
       hostname             LowCardinality(String) CODEC(ZSTD(3)),
       proto                LowCardinality(String),
-        method LowCardinality
+      method LowCardinality
     (
-        String
+      String
     ),
       user_agent           LowCardinality(String) CODEC(ZSTD(5)),
       local_ip             LowCardinality(String),
@@ -40,6 +40,18 @@ data:
       brute_force_bucket   LowCardinality(String),
       brute_force_counter  Nullable(UInt64),
       oidc_cid             LowCardinality(String),
+      saml_entity_id LowCardinality
+    (
+      String
+    ),
+      grant_type LowCardinality
+    (
+      String
+    ),
+      mfa_method LowCardinality
+    (
+      String
+    ),
       failed_login_count   Nullable(UInt64),
       failed_login_rank    Nullable(UInt64),
       failed_login_recognized Nullable(Bool),
@@ -63,11 +75,11 @@ data:
       xssl_protocol        LowCardinality(String),
       xssl_cipher          LowCardinality(String),
       ssl_fingerprint      LowCardinality(String),
-        latency UInt64,
-        http_status UInt16,
-        status_msg LowCardinality
+      latency UInt64,
+      http_status UInt16,
+      status_msg LowCardinality
     (
-        String
+      String
     ),
       INDEX idx_username   username   TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
       INDEX idx_account    account    TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
@@ -128,18 +140,18 @@ spec:
             - -c
             - |
               set -eu
-              
+
               # Build auth flags if provided
               EXTRA=""
               if [ -n "${CLICKHOUSE_USER:-}" ]; then EXTRA="$EXTRA --user=${CLICKHOUSE_USER}"; fi
               if [ -n "${CLICKHOUSE_PASSWORD:-}" ]; then EXTRA="$EXTRA --password=${CLICKHOUSE_PASSWORD}"; fi
-              
+
               HOST="${CLICKHOUSE_HOST}"
               NATIVE_PORT="${CLICKHOUSE_NATIVE_PORT:-9000}"
               HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8123}"
               PROTO="${CLICKHOUSE_PROTOCOL:-native}"
               WAIT="${WAIT_TIMEOUT_SECONDS:-180}"
-              
+
               if command -v clickhouse-client >/dev/null 2>&1; then
                 CLI="clickhouse-client"
               else
@@ -149,7 +161,7 @@ spec:
               USER_STATE="unset"; [ -n "${CLICKHOUSE_USER:-}" ] && USER_STATE="set"
               PASS_STATE="unset"; [ -n "${CLICKHOUSE_PASSWORD:-}" ] && PASS_STATE="set"
               echo "Config: host=$HOST native_port=$NATIVE_PORT http_port=$HTTP_PORT proto=$PROTO wait=${WAIT}s user=$USER_STATE password=$PASS_STATE"
-              
+
               wait_for() {
                 local mode="$1" port="$2" proto_arg="" elapsed=0 step=2
                 if [ "$mode" = "http" ]; then proto_arg="--protocol=http"; fi
@@ -165,14 +177,14 @@ spec:
                 done
                 return 1
               }
-              
+
               apply_schema() {
                 local mode="$1" port="$2" proto_arg=""
                 if [ "$mode" = "http" ]; then proto_arg="--protocol=http"; fi
                 echo "Applying ClickHouse schema using $mode to $HOST:$port"
                 sh -c "$CLI --host \"$HOST\" --port \"$port\" $proto_arg $EXTRA --multiquery --queries-file=/schema/schema.sql"
               }
-              
+
               # Try native first if requested
               if [ "$PROTO" = "native" ]; then
                 echo "Waiting for ClickHouse (native) at $HOST:$NATIVE_PORT for up to ${WAIT}s ..."
@@ -182,12 +194,12 @@ spec:
                 fi
                 echo "Native connection failed or timed out. Falling back to HTTP at $HOST:$HTTP_PORT ..."
               fi
-              
+
               echo "Waiting for ClickHouse (http) at $HOST:$HTTP_PORT for up to ${WAIT}s ..."
               if wait_for http "$HTTP_PORT"; then
                 apply_schema http "$HTTP_PORT"
                 exit 0
               fi
-              
+
               echo "ERROR: ClickHouse is unreachable on both native ($HOST:$NATIVE_PORT) and HTTP ($HOST:$HTTP_PORT) within ${WAIT}s" >&2
               exit 1

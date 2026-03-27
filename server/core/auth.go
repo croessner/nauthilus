@@ -2101,6 +2101,7 @@ func (a *AuthState) traceSetupDetails(tsp trace.Span) {
 		attribute.String(definitions.LogKeyMode, mode),
 		attribute.String(definitions.LogKeyProtocol, a.Request.Protocol.String()),
 		attribute.String(definitions.LogKeyOIDCCID, a.Request.OIDCCID),
+		attribute.String(definitions.LogKeySAMLEntityID, a.Request.SAMLEntityID),
 		attribute.String(definitions.LogKeyClientIP, a.Request.ClientIP),
 		attribute.String(definitions.LogKeyClientPort, a.Request.XClientPort),
 		attribute.String(definitions.LogKeyClientHost, a.Request.ClientHost),
@@ -2222,17 +2223,15 @@ func (a *AuthState) fillIdPFields(cr *lualib.CommonRequest) {
 	}
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
-	if mgr == nil {
-		return
-	}
+	if mgr != nil {
+		cr.GrantType = mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
+		cr.RedirectURI = mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
+		cr.MFACompleted = mgr.GetBool(definitions.SessionKeyMFACompleted, false)
+		cr.MFAMethod = mgr.GetString(definitions.SessionKeyMFAMethod, "")
 
-	cr.GrantType = mgr.GetString(definitions.SessionKeyOIDCGrantType, "")
-	cr.RedirectURI = mgr.GetString(definitions.SessionKeyIdPRedirectURI, "")
-	cr.MFACompleted = mgr.GetBool(definitions.SessionKeyMFACompleted, false)
-	cr.MFAMethod = mgr.GetString(definitions.SessionKeyMFAMethod, "")
-
-	if scopeStr := mgr.GetString(definitions.SessionKeyIdPScope, ""); scopeStr != "" {
-		cr.RequestedScopes = strings.Split(scopeStr, " ")
+		if scopeStr := mgr.GetString(definitions.SessionKeyIdPScope, ""); scopeStr != "" {
+			cr.RequestedScopes = strings.Split(scopeStr, " ")
+		}
 	}
 
 	if a.Request.OIDCCID != "" {
@@ -2240,6 +2239,14 @@ func (a *AuthState) fillIdPFields(cr *lualib.CommonRequest) {
 			cr.OIDCClientName = client.Name
 			cr.AllowedClientScopes = client.GetAllowedScopes()
 			cr.AllowedClientGrantTypes = client.GetGrantTypes()
+		}
+	}
+
+	if cr.GrantType == "" {
+		if grantType, exists := a.Request.HTTPClientContext.Get(definitions.CtxOIDCGrantTypeKey); exists {
+			if value, ok := grantType.(string); ok {
+				cr.GrantType = value
+			}
 		}
 	}
 }

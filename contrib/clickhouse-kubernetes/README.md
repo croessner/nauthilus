@@ -7,7 +7,7 @@ It assumes a standalone ClickHouse server is running inside your Kubernetes clus
 ## What gets created
 
 - Database: `nauthilus`
-- Table: `nauthilus.failed_logins`
+- Table: `nauthilus.logins`
   - Column schema: all fields are `String` for schema stability and match exactly what the Lua plugin inserts via `FORMAT JSONEachRow`.
   - Engine: `MergeTree` with `ORDER BY (ts)`.
 
@@ -46,7 +46,7 @@ Notes:
 The action plugin batches insert rows to ClickHouse via HTTP. Configure environment variables for your Nauthilus deployment (e.g., in your Deployment manifest):
 
 - CLICKHOUSE_INSERT_URL: full HTTP endpoint including the INSERT and `FORMAT JSONEachRow`. Example:
-  `http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.failed_logins%20FORMAT%20JSONEachRow`
+  `http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow`
 - CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: optional; sent via `X-ClickHouse-User` and `X-ClickHouse-Key` headers if set.
 - CLICKHOUSE_BATCH_SIZE: optional (default 100)
 - CLICKHOUSE_CACHE_KEY: optional (default `clickhouse:batch:failed_logins`)
@@ -55,7 +55,7 @@ Example (Kubernetes container env):
 ```yaml
 env:
   - name: CLICKHOUSE_INSERT_URL
-    value: "http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.failed_logins%20FORMAT%20JSONEachRow"
+    value: "http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow"
   - name: CLICKHOUSE_USER
     valueFrom:
       secretKeyRef:
@@ -72,7 +72,7 @@ env:
 
 If you enable `server/lua-plugins.d/hooks/clickhouse-query.lua`, set:
 - CLICKHOUSE_SELECT_BASE: e.g. `http://clickhouse.auth.svc.cluster.local:8123`
-- CLICKHOUSE_TABLE: `nauthilus.failed_logins` (default)
+- CLICKHOUSE_TABLE: `nauthilus.logins` (default)
 - CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: optional
 
 Then you can use endpoints like:

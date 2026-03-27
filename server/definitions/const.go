@@ -270,6 +270,9 @@ const (
 	// LogKeyOIDCCID represents the log key for OpenID Connect Client ID.
 	LogKeyOIDCCID = "oidc_cid"
 
+	// LogKeySAMLEntityID represents the log key for SAML Service Provider Entity ID.
+	LogKeySAMLEntityID = "saml_entity_id"
+
 	// LogKeyLocalIP represents the local IP address, logged in log entries.
 	LogKeyLocalIP = "local_ip"
 
@@ -854,6 +857,9 @@ const (
 
 	// MFAMethodRecoveryCodes identifies the recovery codes method.
 	MFAMethodRecoveryCodes = "recovery_codes"
+
+	// AuthMethodPassword identifies a direct username/password authentication.
+	AuthMethodPassword = "password"
 )
 
 const (
@@ -914,6 +920,9 @@ const (
 
 	// CtxAuthMethodKey stores a request-scoped authentication method override for access logs.
 	CtxAuthMethodKey = "auth_method"
+
+	// CtxOIDCGrantTypeKey stores an OIDC grant_type value for request-scoped logging and Lua post-actions.
+	CtxOIDCGrantTypeKey = "oidc_grant_type"
 
 	// CtxBasicAuthValidatedKey marks that HTTP Basic authentication succeeded for this request.
 	CtxBasicAuthValidatedKey = "basic_auth_validated"

@@ -16,6 +16,7 @@
 package frontend
 
 import (
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -56,6 +57,11 @@ func GetLocalized(ctx *gin.Context, cfg config.File, logger *slog.Logger, messag
 
 	localization, err := localizer.Localize(&localizeConfig)
 	if err != nil {
+		var msgNotFoundErr *i18n.MessageNotFoundErr
+		if errors.As(err, &msgNotFoundErr) {
+			return messageID
+		}
+
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
