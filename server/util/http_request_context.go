@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/svcctx"
 )
 
 // HTTPRequestContextError returns the current error state of the HTTP request context.
@@ -74,6 +75,23 @@ func ContextWithHTTPRequestCancellation(parent context.Context, req *http.Reques
 		stop()
 		cancel()
 	}
+}
+
+// DetachedHTTPRequest clones req onto a long-lived parent context.
+// This is used for background work that must not inherit client disconnects.
+func DetachedHTTPRequest(req *http.Request, parent context.Context) *http.Request {
+	if req == nil {
+		return nil
+	}
+
+	if parent == nil {
+		parent = svcctx.Get()
+	}
+
+	clone := req.Clone(parent)
+	clone.RemoteAddr = req.RemoteAddr
+
+	return clone
 }
 
 // IsHTTPRequestCanceled reports whether the HTTP request context is canceled and emits an info log when it is.

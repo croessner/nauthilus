@@ -117,7 +117,7 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	}
 }
 
-func TestDefaultPostAction_SkipsCanceledRequest(t *testing.T) {
+func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	bfFeature := &config.Feature{}
@@ -160,6 +160,7 @@ func TestDefaultPostAction_SkipsCanceledRequest(t *testing.T) {
 	auth.Runtime.GUID = "guid-canceled"
 	auth.Runtime.Context = &lualib.Context{}
 	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Request.ClientIP = "192.0.2.10"
 	auth.Request.Service = definitions.ServNginx
 	auth.Request.Username = "user@example.com"
 
@@ -173,8 +174,21 @@ func TestDefaultPostAction_SkipsCanceledRequest(t *testing.T) {
 
 	select {
 	case act := <-action.RequestChan:
-		t.Fatalf("expected no post action to be scheduled, got %+v", act)
+		if act == nil {
+			t.Fatal("expected post action to be scheduled")
+		}
+
+		if act.HTTPRequest == nil {
+			t.Fatal("expected detached HTTP request")
+		}
+
+		if err := act.HTTPRequest.Context().Err(); err != nil {
+			t.Fatalf("expected detached HTTP request context, got err=%v", err)
+		}
+
+		act.FinishedChan <- action.Done{}
 	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected detached post action to be scheduled")
 	}
 }
 

@@ -49,7 +49,6 @@ import (
 	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
-	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
@@ -603,17 +602,6 @@ func oidcTokenStatusMessage(result string, httpStatus int) string {
 	return fmt.Sprintf("OIDC token request failed (%d)", httpStatus)
 }
 
-func detachedPostActionRequest(req *http.Request) *http.Request {
-	if req == nil {
-		return nil
-	}
-
-	clone := req.Clone(svcctx.Get())
-	clone.RemoteAddr = req.RemoteAddr
-
-	return clone
-}
-
 func oidcTokenDataContext(ctx *gin.Context) *lualib.Context {
 	if ctx == nil {
 		return lualib.NewContext()
@@ -690,7 +678,7 @@ func (h *OIDCHandler) runOIDCTokenPostAction(
 
 	args := core.PostActionArgs{
 		Context:       oidcTokenDataContext(ctx),
-		HTTPRequest:   detachedPostActionRequest(ctx.Request),
+		HTTPRequest:   util.DetachedHTTPRequest(ctx.Request, nil),
 		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
 		StatusMessage: oidcTokenStatusMessage(result, httpStatus),
 		Request:       h.buildOIDCTokenPostActionRequest(ctx, service, grantType, clientID, authMethod, httpStatus, result, latency),

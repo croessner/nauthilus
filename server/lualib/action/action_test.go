@@ -51,6 +51,24 @@ func newActionWorkerTestScript(t *testing.T) (string, *lua.FunctionProto) {
 	return scriptPath, compiled
 }
 
+func newActionWorkerReturnTestScript(t *testing.T) (string, *lua.FunctionProto) {
+	t.Helper()
+
+	scriptPath := filepath.Join(t.TempDir(), "return_ok.lua")
+	script := []byte("return 0\n")
+
+	if err := os.WriteFile(scriptPath, script, 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	compiled, err := lualib.CompileLua(scriptPath)
+	if err != nil {
+		t.Fatalf("CompileLua failed: %v", err)
+	}
+
+	return scriptPath, compiled
+}
+
 func newActionWorkerUnderTest(t *testing.T) (*Worker, *http.Request, context.CancelFunc, context.CancelFunc) {
 	t.Helper()
 
@@ -118,5 +136,57 @@ func TestHandleRequest_StopsWhenHTTPRequestContextIsCanceled(t *testing.T) {
 		case <-time.After(500 * time.Millisecond):
 			t.Fatal("handleRequest did not stop after HTTP request cancellation")
 		}
+	}
+}
+
+func TestHandleRequest_PostActionIgnoresCanceledHTTPRequestContext(t *testing.T) {
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{},
+	}
+
+	config.SetTestFile(cfg)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+
+	scriptPath, compiled := newActionWorkerReturnTestScript(t)
+
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	cancelReq()
+
+	req := httptest.NewRequest("POST", "/auth", nil).WithContext(reqCtx)
+
+	worker := NewWorker(cfg, log.GetLogger(), rediscli.GetClient(), util.GetDefaultEnvironment())
+	worker.ctx = context.Background()
+	worker.actionScripts = []*LuaScriptAction{
+		{
+			ScriptPath:     scriptPath,
+			ScriptCompiled: compiled,
+			ScriptName:     "return_ok",
+			LuaAction:      definitions.LuaActionPost,
+		},
+	}
+	worker.luaActionRequest = &Action{
+		LuaAction:    definitions.LuaActionPost,
+		Context:      &lualib.Context{},
+		FinishedChan: make(chan Done, 1),
+		HTTPRequest:  req,
+		CommonRequest: &lualib.CommonRequest{
+			Session:  "guid-2",
+			Username: "user@example.com",
+			Service:  definitions.ServNginx,
+		},
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		worker.handleRequest(req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleRequest did not process post action with canceled HTTP request context")
 	}
 }

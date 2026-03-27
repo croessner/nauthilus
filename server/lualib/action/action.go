@@ -226,7 +226,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		aw.luaActionRequest.FinishedChan <- Done{}
 	}()
 
-	if util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "start.lua_post_action") {
+	if aw.isCanceledHTTPRequest(httpRequest, "start.lua_post_action") {
 		return
 	}
 
@@ -235,7 +235,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		baseCtx = trace.ContextWithSpanContext(svcctx.Get(), aw.luaActionRequest.OTelParentSpanContext)
 	}
 
-	actionCtx, cancelActionCtx := util.ContextWithHTTPRequestCancellation(baseCtx, httpRequest)
+	actionCtx, cancelActionCtx := aw.actionContext(baseCtx, httpRequest)
 	defer cancelActionCtx()
 
 	if httpRequest != nil {
@@ -302,7 +302,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	L, acqErr := pool.Acquire(actx)
 	if acqErr != nil {
-		if util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "acquire.lua_post_action") {
+		if aw.isCanceledHTTPRequest(httpRequest, "acquire.lua_post_action") {
 			return
 		}
 
@@ -363,7 +363,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 			continue
 		}
 
-		if errors.Is(reqCtx.Err(), context.Canceled) || util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "execute.lua_post_action") {
+		if errors.Is(reqCtx.Err(), context.Canceled) || aw.isCanceledHTTPRequest(httpRequest, "execute.lua_post_action") {
 			break
 		}
 
@@ -451,7 +451,7 @@ func (aw *Worker) startScriptSpan(ctx context.Context, index int) (context.Conte
 }
 
 func (aw *Worker) handleScriptExecutionError(index int, err error, logs *lualib.CustomLogKeyValue, span trace.Span, httpRequest *http.Request) bool {
-	if util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, "run.lua_post_action") {
+	if aw.isCanceledHTTPRequest(httpRequest, "run.lua_post_action") {
 		return true
 	}
 
@@ -459,6 +459,26 @@ func (aw *Worker) handleScriptExecutionError(index int, err error, logs *lualib.
 	span.RecordError(err)
 
 	return false
+}
+
+func (aw *Worker) honorsHTTPRequestCancellation() bool {
+	return aw.luaActionRequest == nil || aw.luaActionRequest.LuaAction != definitions.LuaActionPost
+}
+
+func (aw *Worker) actionContext(baseCtx context.Context, httpRequest *http.Request) (context.Context, context.CancelFunc) {
+	if !aw.honorsHTTPRequestCancellation() {
+		return context.WithCancel(baseCtx)
+	}
+
+	return util.ContextWithHTTPRequestCancellation(baseCtx, httpRequest)
+}
+
+func (aw *Worker) isCanceledHTTPRequest(httpRequest *http.Request, phase string) bool {
+	if !aw.honorsHTTPRequestCancellation() {
+		return false
+	}
+
+	return util.IsHTTPRequestCanceled(aw.logger, httpRequest, aw.luaActionRequest.Session, phase)
 }
 
 // runScript executes a specified Lua script by index in the Worker instance.
