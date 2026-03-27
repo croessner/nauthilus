@@ -51,4 +51,4 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/nauthilus:${{ env.major }}
             ghcr.io/${{ github.repository_owner }}/nauthilus:${{ env.major }}.${{ env.minor }}
             ghcr.io/${{ github.repository_owner }}/nauthilus:${{ env.major }}.${{ env.minor }}.${{ env.patch }}
-          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Multi purpose authentication server
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Authentication and identity platform with OIDC, SAML, MFA, LDAP, Lua, and mail integrations
