@@ -61,4 +61,4 @@ Each subdirectory contains a README.md file with detailed information about the 
 
 ## Further Documentation
 
-For more detailed information about the Nauthilus Lua API and plugin development, refer to the [Nauthilus documentation](https://nauthilus.io/docs/lua-api/).
+For more detailed information about the Nauthilus Lua API and plugin development, refer to the [Nauthilus documentation](https://nauthilus.org/docs/lua-api/).

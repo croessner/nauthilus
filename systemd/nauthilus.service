@@ -1,5 +1,5 @@
 [Unit]
-Description=Multi purpose authentication server
+Description=Authentication and identity platform
 After=network.target
 
 [Service]

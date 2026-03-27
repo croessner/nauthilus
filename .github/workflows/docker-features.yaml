@@ -36,7 +36,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/nauthilus:dev
-          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Multi purpose authentication server
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Authentication and identity platform with OIDC, SAML, MFA, LDAP, Lua, and mail integrations
 
       - uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
@@ -46,4 +46,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/nauthilus:dev-dbg
-          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Multi purpose authentication server
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Authentication and identity platform with OIDC, SAML, MFA, LDAP, Lua, and mail integrations
