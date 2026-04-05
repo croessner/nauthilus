@@ -36,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/lualib/cacheflush"
 	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/model/admin"
 	bf "github.com/croessner/nauthilus/server/model/bruteforce"
@@ -1032,11 +1033,42 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 	redisClient := deps.effectiveRedis()
 	cfg := deps.effectiveCfg()
 
-	mappedAccounts, hashFields := collectUserAccountMappings(ctx.Request.Context(), deps, userCmd.User, guid)
+	// Run optional Lua cache flush script before account lookup.
+	var luaAdditionalKeys []string
+
+	luaResult, luaErr := cacheflush.RunCacheFlushScript(ctx.Request.Context(), cfg, logger, redisClient, userCmd.User, guid)
+	if luaErr != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error executing Lua cache flush script",
+			definitions.LogKeyError, luaErr,
+		)
+	} else if luaResult != nil {
+		luaAdditionalKeys = luaResult.AdditionalKeys
+	}
+
 	cleanupAccounts := config.NewStringSet()
 	tokenAccounts := config.NewStringSet()
 	userKeys := config.NewStringSet()
 	ipAddressSet := config.NewStringSet()
+
+	var mappedAccounts config.StringSet
+	var hashFields config.StringSet
+
+	// If the Lua script provided an account name, use it directly instead of looking up account mappings.
+	if luaResult != nil && luaResult.AccountName != "" {
+		level.Info(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Lua cache flush script provided account name, skipping account lookup",
+			"account", luaResult.AccountName,
+		)
+
+		mappedAccounts = config.NewStringSet()
+		mappedAccounts.Set(luaResult.AccountName)
+		hashFields = config.NewStringSet()
+	} else {
+		mappedAccounts, hashFields = collectUserAccountMappings(ctx.Request.Context(), deps, userCmd.User, guid)
+	}
 
 	for _, accountName := range mappedAccounts.GetStringSlice() {
 		cleanupAccounts.Set(accountName)
@@ -1149,6 +1181,24 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 					definitions.LogKeyMsg, "IdP tokens flushed for user",
 					"account", accountName,
 				)
+			}
+		}
+	}
+
+	// Delete additional Redis keys provided by the Lua cache flush script.
+	if len(luaAdditionalKeys) > 0 {
+		stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		unlinkResult, unlinkErr := redisClient.GetWriteHandle().Unlink(ctx, luaAdditionalKeys...).Result()
+		if unlinkErr != nil {
+			level.Error(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error while unlinking Lua-provided additional keys",
+				definitions.LogKeyError, unlinkErr,
+			)
+		} else if unlinkResult > 0 {
+			for _, key := range luaAdditionalKeys {
+				removedKeySet.Set(key)
 			}
 		}
 	}

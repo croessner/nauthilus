@@ -24,13 +24,14 @@ import (
 )
 
 type LuaSection struct {
-	Actions             []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
-	Features            []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
-	Filters             []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
-	Hooks               []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
-	Config              *LuaConf            `mapstructure:"config" validate:"omitempty"`
-	OptionalLuaBackends map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive,validateOptionalLuaBackend"`
-	Search              []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+	Actions              []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
+	Features             []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
+	Filters              []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
+	Hooks                []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
+	Config               *LuaConf            `mapstructure:"config" validate:"omitempty"`
+	OptionalLuaBackends  map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive,validateOptionalLuaBackend"`
+	Search               []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+	CacheFlushScriptPath string              `mapstructure:"cache_flush_script" validate:"omitempty,file"`
 }
 
 func (l *LuaSection) String() string {
@@ -80,6 +81,15 @@ func (l *LuaSection) GetOptionalLuaBackends() map[string]*LuaConf {
 	}
 
 	return l.OptionalLuaBackends
+}
+
+// GetCacheFlushScriptPath retrieves the CacheFlushScriptPath from the LuaSection. Returns an empty string if the LuaSection is nil.
+func (l *LuaSection) GetCacheFlushScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.CacheFlushScriptPath
 }
 
 // GetActions retrieves the list of LuaAction from the LuaSection. Returns an empty slice if the LuaSection is nil.
