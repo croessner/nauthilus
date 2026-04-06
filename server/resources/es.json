@@ -127,5 +127,6 @@
   "Access your email address": "Acceder a tu direccion de correo para que la aplicacion pueda contactarte y personalizar la comunicacion.",
   "Access your group memberships": "Acceder a tus pertenencias a grupos para determinar que equipos, roles o areas puedes usar.",
   "Maintain access when you are offline": "Mantener el acceso cuando estes sin conexion, para que no tengas que iniciar sesion cada vez.",
-  "No additional permissions requested.": "No se solicitaron permisos adicionales. Puedes continuar sin conceder acceso extra."
+  "No additional permissions requested.": "No se solicitaron permisos adicionales. Puedes continuar sin conceder acceso extra.",
+  "Forgot password?": "¿Olvidó su contraseña?"
 }

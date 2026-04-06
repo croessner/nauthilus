@@ -535,8 +535,10 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
 	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
 	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+	data["PasswordForgottenURL"] = h.deps.Cfg.GetIdP().PasswordForgottenURL
 	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
 	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+	data["PasswordForgottenLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Forgot password?")
 
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 }
@@ -771,8 +773,10 @@ func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *m
 	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
 	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
 	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+	data["PasswordForgottenURL"] = h.deps.Cfg.GetIdP().PasswordForgottenURL
 	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
 	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+	data["PasswordForgottenLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Forgot password?")
 
 	// Clean up cookie so they start over.
 	CleanupMFAState(sess.mgr)
@@ -924,8 +928,10 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
 		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
 		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
+		data["PasswordForgottenURL"] = h.deps.Cfg.GetIdP().PasswordForgottenURL
 		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
 		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+		data["PasswordForgottenLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Forgot password?")
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 

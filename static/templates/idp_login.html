@@ -41,6 +41,12 @@
                     </label>
                 </div>
 
+                {{ if .PasswordForgottenURL }}
+                <div class="text-right mt-2">
+                    <a class="link link-hover text-sm" href="{{ .PasswordForgottenURL }}" target="_blank">{{ .PasswordForgottenLabel }}</a>
+                </div>
+                {{ end }}
+
                 {{ if .ShowRememberMe }}
                 <div class="form-control mt-4">
                     <label class="label cursor-pointer justify-start gap-4">
