@@ -217,11 +217,21 @@ jobs:
             exit 0
           fi
 
+          last_release_tag="$(gh release view --repo "${{ github.repository }}" --json tagName --jq '.tagName' 2>/dev/null || true)"
+
+          if [ -n "${last_release_tag}" ]; then
+            ahead_by="$(gh api "repos/${{ github.repository }}/compare/${last_release_tag}...${{ github.ref_name }}" --jq '.ahead_by')"
+
+            if [ "${ahead_by}" -eq 0 ]; then
+              echo "No new commits since ${last_release_tag}; aborting release creation."
+              exit 1
+            fi
+          fi
+
           gh release create "${{ github.ref_name }}" \
             --repo "${{ github.repository }}" \
             --verify-tag \
             --generate-notes \
-            --fail-on-no-commits \
             --latest
 
   upload-release:
