@@ -167,6 +167,9 @@ type File interface {
 	// GetLuaScriptPath returns the path to the Lua script.
 	GetLuaScriptPath() string
 
+	// GetLuaCacheFlushScriptPath returns the path to the Lua cache flush script.
+	GetLuaCacheFlushScriptPath() string
+
 	// GetLuaSearchProtocol retrieves the Lua search protocol for a given protocol name.
 	GetLuaSearchProtocol(protocol string, backendName string) (*LuaSearchProtocol, error)
 
@@ -1001,6 +1004,28 @@ func (f *FileSettings) GetLuaScriptPath() string {
 		}
 
 		return luaConf.GetBackendScriptPath()
+	}
+
+	return ""
+}
+
+// GetLuaCacheFlushScriptPath returns the path to the Lua cache flush script from lua.config.cache_flush_script_path.
+func (f *FileSettings) GetLuaCacheFlushScriptPath() string {
+	if f == nil {
+		return ""
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return ""
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		if luaConf == nil {
+			return ""
+		}
+
+		return luaConf.GetCacheFlushScriptPath()
 	}
 
 	return ""

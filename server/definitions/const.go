@@ -1342,6 +1342,9 @@ const (
 	// LuaFnRunHook represents the constant string "nauthilus_run_callback".
 	LuaFnRunHook = "nauthilus_run_hook"
 
+	// LuaFnCacheFlushHook represents the entry function name for the cache flush Lua script.
+	LuaFnCacheFlushHook = "nauthilus_cache_flush"
+
 	// LuaFnGetBackendServers represents the Lua function name "get_backend_servers" that retrieves the backend servers.
 	LuaFnGetBackendServers = "get_backend_servers"
 

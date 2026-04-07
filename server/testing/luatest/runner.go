@@ -339,6 +339,17 @@ func (tr *TestRunner) createRequestTable(L *lua.LState) *lua.LTable {
 	return requestTable
 }
 
+// resolveLuaFunction looks up a callback function first in __NAUTH_REQ_ENV, then in _G.
+func resolveLuaFunction(L *lua.LState, functionName string) lua.LValue {
+	if reqEnv := L.GetGlobal("__NAUTH_REQ_ENV"); reqEnv != nil && reqEnv.Type() == lua.LTTable {
+		if fn := L.GetField(reqEnv, functionName); fn != nil && fn != lua.LNil {
+			return fn
+		}
+	}
+
+	return L.GetGlobal(functionName)
+}
+
 // executeCallback calls the appropriate Lua function based on callback type.
 func (tr *TestRunner) executeCallback(L *lua.LState) (*TestResult, error) {
 	result := &TestResult{
@@ -357,6 +368,8 @@ func (tr *TestRunner) executeCallback(L *lua.LState) (*TestResult, error) {
 		return tr.executeBackend(L)
 	case "hook":
 		return tr.executeHook(L)
+	case "cache_flush":
+		return tr.executeCacheFlush(L)
 	default:
 		return result, fmt.Errorf("unknown callback type: %s", tr.callbackType)
 	}
@@ -610,6 +623,64 @@ func (tr *TestRunner) executeHook(L *lua.LState) (*TestResult, error) {
 	return result, nil
 }
 
+// executeCacheFlush executes the Lua cache flush callback.
+func (tr *TestRunner) executeCacheFlush(L *lua.LState) (*TestResult, error) {
+	result := &TestResult{Success: false}
+
+	fn := resolveLuaFunction(L, definitions.LuaFnCacheFlushHook)
+	if fn.Type() != lua.LTFunction {
+		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnCacheFlushHook)
+	}
+
+	requestTable := tr.createRequestTable(L)
+	if err := L.CallByParam(lua.P{
+		Fn:      fn,
+		NRet:    2,
+		Protect: true,
+	}, requestTable); err != nil {
+		return result, fmt.Errorf("cache flush execution failed: %w", err)
+	}
+
+	additionalKeysValue := L.Get(-2)
+	accountNameValue := L.Get(-1)
+	L.Pop(2)
+
+	result.CacheFlushAdditionalKeys = parseCacheFlushAdditionalKeys(additionalKeysValue)
+	result.CacheFlushAccountName = parseCacheFlushAccountName(accountNameValue)
+	result.Success = true
+
+	return result, nil
+}
+
+func parseCacheFlushAdditionalKeys(value lua.LValue) []string {
+	additionalKeysTable, ok := value.(*lua.LTable)
+	if !ok || additionalKeysTable == nil {
+		return nil
+	}
+
+	additionalKeys := make([]string, 0, additionalKeysTable.Len())
+	for index := 1; index <= additionalKeysTable.Len(); index++ {
+		key := additionalKeysTable.RawGetInt(index)
+		if key.Type() != lua.LTString {
+			continue
+		}
+
+		additionalKeys = append(additionalKeys, lua.LVAsString(key))
+	}
+
+	return additionalKeys
+}
+
+func parseCacheFlushAccountName(value lua.LValue) *string {
+	if value.Type() != lua.LTString {
+		return nil
+	}
+
+	accountName := lua.LVAsString(value)
+
+	return &accountName
+}
+
 // validateOutput validates the test result against expected output.
 func (tr *TestRunner) validateOutput(result *TestResult) {
 	expected := tr.mockData.ExpectedOutput
@@ -739,6 +810,39 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 		}
 	}
 
+	if expected.CacheFlushAdditionalKeys != nil {
+		if len(expected.CacheFlushAdditionalKeys) != len(result.CacheFlushAdditionalKeys) {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("cache flush additional keys mismatch: expected %d keys, got %d",
+					len(expected.CacheFlushAdditionalKeys), len(result.CacheFlushAdditionalKeys)))
+		} else {
+			for index, expectedKey := range expected.CacheFlushAdditionalKeys {
+				resultKey := result.CacheFlushAdditionalKeys[index]
+				if expectedKey != resultKey {
+					result.Success = false
+					result.Errors = append(result.Errors,
+						fmt.Errorf("cache flush additional key mismatch at index %d: expected %s, got %s",
+							index, expectedKey, resultKey))
+				}
+			}
+		}
+	}
+
+	if expected.CacheFlushAccountName != nil {
+		if result.CacheFlushAccountName == nil {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("cache flush account name mismatch: expected %s, got <nil>",
+					*expected.CacheFlushAccountName))
+		} else if *expected.CacheFlushAccountName != *result.CacheFlushAccountName {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("cache flush account name mismatch: expected %s, got %s",
+					*expected.CacheFlushAccountName, *result.CacheFlushAccountName))
+		}
+	}
+
 	// Validate selected backend port
 	if expected.UsedBackendPort != nil {
 		if result.UsedBackendPort == nil {
@@ -865,6 +969,12 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 	}
 	if result.UsedBackendPort != nil {
 		fmt.Printf("Used Backend Port: %d\n", *result.UsedBackendPort)
+	}
+	if len(result.CacheFlushAdditionalKeys) > 0 {
+		fmt.Printf("Cache Flush Additional Keys: %v\n", result.CacheFlushAdditionalKeys)
+	}
+	if result.CacheFlushAccountName != nil {
+		fmt.Printf("Cache Flush Account Name: %s\n", *result.CacheFlushAccountName)
 	}
 	if len(result.StatusMessages) > 0 {
 		fmt.Println("\nStatus Messages:")

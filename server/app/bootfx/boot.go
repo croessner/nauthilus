@@ -74,7 +74,7 @@ func ParseFlagsAndPrintVersion(version string) {
 
 	// Lua testing flags
 	testLuaScript := flag.String("test-lua", "", "path to Lua script to test")
-	testCallback := flag.String("test-callback", "", "callback type: filter, feature, action, backend")
+	testCallback := flag.String("test-callback", "", "callback type: filter, feature, action, backend, hook, cache_flush")
 	testMockData := flag.String("test-mock", "", "path to JSON file with mock data")
 
 	flag.Parse()

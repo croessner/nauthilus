@@ -14,3 +14,8 @@ Each test consists of:
 - a JSON mock file (`*_test.json`) consumed by `--test-mock`
 
 The wrappers are intentionally minimal and keep plugin logic unchanged.
+
+Current fixtures also include a cache flush contract example:
+
+- `cache_flush_wrapper.lua` + `cache_flush_test.json` (tests `nauthilus_cache_flush` behavior via `cache_flush` callback
+  in test mode)

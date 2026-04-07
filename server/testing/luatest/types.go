@@ -797,39 +797,43 @@ func (m *HTTPClientMock) ValidateComplete() error {
 
 // ExpectedOutputMock defines expected test results.
 type ExpectedOutputMock struct {
-	FilterResult            *int     `json:"filter_result,omitempty"`
-	FeatureResult           *bool    `json:"feature_result,omitempty"`
-	ActionResult            *bool    `json:"action_result,omitempty"`
-	BackendResult           *bool    `json:"backend_result,omitempty"`
-	BackendAuthenticated    *bool    `json:"backend_authenticated,omitempty"`
-	BackendUserFound        *bool    `json:"backend_user_found,omitempty"`
-	BackendAccountField     *string  `json:"backend_account_field,omitempty"`
-	BackendDisplayName      *string  `json:"backend_display_name,omitempty"`
-	BackendUniqueUserID     *string  `json:"backend_unique_user_id,omitempty"`
-	UsedBackendAddress      *string  `json:"used_backend_address,omitempty"`
-	UsedBackendPort         *int     `json:"used_backend_port,omitempty"`
-	StatusMessageContain    []string `json:"status_message_contain,omitempty"`
-	StatusMessageNotContain []string `json:"status_message_not_contain,omitempty"`
-	LogsContain             []string `json:"logs_contain,omitempty"`
-	LogsNotContain          []string `json:"logs_not_contain,omitempty"`
-	ErrorExpected           bool     `json:"error_expected"`
+	FilterResult             *int     `json:"filter_result,omitempty"`
+	FeatureResult            *bool    `json:"feature_result,omitempty"`
+	ActionResult             *bool    `json:"action_result,omitempty"`
+	BackendResult            *bool    `json:"backend_result,omitempty"`
+	BackendAuthenticated     *bool    `json:"backend_authenticated,omitempty"`
+	BackendUserFound         *bool    `json:"backend_user_found,omitempty"`
+	BackendAccountField      *string  `json:"backend_account_field,omitempty"`
+	BackendDisplayName       *string  `json:"backend_display_name,omitempty"`
+	BackendUniqueUserID      *string  `json:"backend_unique_user_id,omitempty"`
+	CacheFlushAdditionalKeys []string `json:"cache_flush_additional_keys,omitempty"`
+	CacheFlushAccountName    *string  `json:"cache_flush_account_name,omitempty"`
+	UsedBackendAddress       *string  `json:"used_backend_address,omitempty"`
+	UsedBackendPort          *int     `json:"used_backend_port,omitempty"`
+	StatusMessageContain     []string `json:"status_message_contain,omitempty"`
+	StatusMessageNotContain  []string `json:"status_message_not_contain,omitempty"`
+	LogsContain              []string `json:"logs_contain,omitempty"`
+	LogsNotContain           []string `json:"logs_not_contain,omitempty"`
+	ErrorExpected            bool     `json:"error_expected"`
 }
 
 // TestResult contains the results of a Lua script test.
 type TestResult struct {
-	Success              bool
-	FilterResult         *int
-	FeatureResult        *bool
-	ActionResult         *bool
-	BackendResult        *bool
-	BackendAuthenticated *bool
-	BackendUserFound     *bool
-	BackendAccountField  *string
-	BackendDisplayName   *string
-	BackendUniqueUserID  *string
-	UsedBackendAddress   *string
-	UsedBackendPort      *int
-	StatusMessages       []string
-	Logs                 []string
-	Errors               []error
+	Success                  bool
+	FilterResult             *int
+	FeatureResult            *bool
+	ActionResult             *bool
+	BackendResult            *bool
+	BackendAuthenticated     *bool
+	BackendUserFound         *bool
+	BackendAccountField      *string
+	BackendDisplayName       *string
+	BackendUniqueUserID      *string
+	CacheFlushAdditionalKeys []string
+	CacheFlushAccountName    *string
+	UsedBackendAddress       *string
+	UsedBackendPort          *int
+	StatusMessages           []string
+	Logs                     []string
+	Errors                   []error
 }

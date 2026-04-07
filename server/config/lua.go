@@ -268,6 +268,7 @@ type LuaConf struct {
 	FeatureVMPoolSize      int      `mapstructure:"feature_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 	FilterVMPoolSize       int      `mapstructure:"filter_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 	HookVMPoolSize         int      `mapstructure:"hook_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+	CacheFlushScriptPath   string   `mapstructure:"cache_flush_script_path" validate:"omitempty,file"`
 
 	// Optional: generic IP scoping for Lua-driven features/metrics
 	LuaIPv6CIDR uint `mapstructure:"ip_scoping_v6_cidr" validate:"omitempty,min=1,max=128"`
@@ -384,6 +385,15 @@ func (l *LuaConf) GetBackendScriptPath() string {
 	}
 
 	return l.BackendScriptPath
+}
+
+// GetCacheFlushScriptPath retrieves the CacheFlushScriptPath from the LuaConf. Returns an empty string if the LuaConf is nil.
+func (l *LuaConf) GetCacheFlushScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.CacheFlushScriptPath
 }
 
 // GetInitScriptPath retrieves the InitScriptPath from the LuaConf. Returns an empty string if the LuaConf is nil.

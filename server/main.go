@@ -163,21 +163,22 @@ func runLuaTest() {
 	}
 
 	if flags.CallbackType == "" {
-		fmt.Fprintln(os.Stderr, "Error: --test-callback flag is required (filter, feature, action, backend, hook)")
+		fmt.Fprintln(os.Stderr, "Error: --test-callback flag is required (filter, feature, action, backend, hook, cache_flush)")
 		os.Exit(1)
 	}
 
 	// Validate callback type
 	validCallbacks := map[string]bool{
-		"filter":  true,
-		"feature": true,
-		"action":  true,
-		"backend": true,
-		"hook":    true,
+		"filter":      true,
+		"feature":     true,
+		"action":      true,
+		"backend":     true,
+		"hook":        true,
+		"cache_flush": true,
 	}
 
 	if !validCallbacks[flags.CallbackType] {
-		fmt.Fprintf(os.Stderr, "Error: invalid callback type '%s'. Valid types: filter, feature, action, backend, hook\n", flags.CallbackType)
+		fmt.Fprintf(os.Stderr, "Error: invalid callback type '%s'. Valid types: filter, feature, action, backend, hook, cache_flush\n", flags.CallbackType)
 		os.Exit(1)
 	}
 
