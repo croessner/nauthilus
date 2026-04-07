@@ -130,6 +130,16 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
+	logs := new(lualib.CustomLogKeyValue)
+	var statusMessage *string
+
+	lualib.SetBuiltinTableForCacheFlush(
+		L,
+		lualib.NewLoggingManager(luaCtx, cfg, logger, logs).AddCustomLog,
+		&statusMessage,
+	)
+	// The cache-flush callback is an administrative maintenance hook.
+	// A Lua status_message_set() value is intentionally not propagated to user-facing auth responses.
 
 	requestTable := buildRequestTable(L, cfg, user, guid)
 
@@ -138,6 +148,8 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 
 		return nil, err
 	}
+
+	logCustomLogs(logger, guid, scriptPath, *logs)
 
 	return parseReturnValues(L), nil
 }
@@ -241,4 +253,20 @@ func logScriptError(logger *slog.Logger, err error, scriptPath string) {
 		definitions.LogKeyMsg, "Error executing cache flush script",
 		definitions.LogKeyError, err,
 	)
+}
+
+func logCustomLogs(logger *slog.Logger, guid string, scriptPath string, logs lualib.CustomLogKeyValue) {
+	if len(logs) == 0 {
+		return
+	}
+
+	keyvals := make([]any, 0, len(logs)+6)
+	keyvals = append(keyvals,
+		definitions.LogKeyGUID, guid,
+		"script", scriptPath,
+		definitions.LogKeyMsg, "Lua cache flush custom logs",
+	)
+	keyvals = append(keyvals, logs...)
+
+	_ = level.Info(logger).Log(keyvals...)
 }

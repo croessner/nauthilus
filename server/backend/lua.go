@@ -275,15 +275,11 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 // setupGlobals initializes and registers a set of global Lua variables and functions in the provided Lua state.
 func setupGlobals(ctx context.Context, cfg config.File, logger *slog.Logger, luaRequest *bktype.LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
-	globals := L.NewTable()
-
-	globals.RawSet(lua.LString(definitions.LuaBackendResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(definitions.LuaBackendResultFail), lua.LNumber(1))
-
-	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.LoaderModLogging(ctx, cfg, logger, logs)))
-	globals.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
-
-	L.SetGlobal(definitions.LuaDefaultTable, globals)
+	lualib.SetBuiltinTableForBackend(
+		L,
+		lualib.LoaderModLogging(ctx, cfg, logger, logs),
+		&luaRequest.StatusMessage,
+	)
 }
 
 // setLuaRequestParameters determines the Lua command and number of return values for a LuaRequest and modifies the request.

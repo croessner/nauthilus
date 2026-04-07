@@ -16,9 +16,19 @@
 package cacheflush
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -66,6 +76,93 @@ func TestNauthilusCacheFlushLuaFunctionReturnContract(t *testing.T) {
 			result := executeLuaCacheFlush(t, tc.script)
 			assertCacheFlushResult(t, result, tc.wantAdditionalKeys, tc.wantAccountName)
 		})
+	}
+}
+
+func TestRunCacheFlushScript_ProvidesBuiltinTable(t *testing.T) {
+	resetCompiledScriptForTest(t)
+
+	scriptPath := writeCacheFlushLuaScript(t, `
+function nauthilus_cache_flush(request)
+  nauthilus_builtin.custom_log_add("cache_flush", "called")
+  return {"extra:key"}, "acct"
+end
+`)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{},
+		Lua: &config.LuaSection{
+			Config: &config.LuaConf{
+				CacheFlushScriptPath: scriptPath,
+			},
+		},
+	}
+
+	db, _ := redismock.NewClientMock()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	result, err := RunCacheFlushScript(
+		context.Background(),
+		cfg,
+		logger,
+		rediscli.NewTestClient(db),
+		"user@example.com",
+		"guid-1",
+	)
+	if err != nil {
+		t.Fatalf("expected cache flush script to run with nauthilus_builtin, got error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil cache flush result")
+	}
+
+	assertCacheFlushResult(t, result, []string{"extra:key"}, "acct")
+}
+
+func TestRunCacheFlushScript_EmitsCustomLogs(t *testing.T) {
+	resetCompiledScriptForTest(t)
+
+	scriptPath := writeCacheFlushLuaScript(t, `
+function nauthilus_cache_flush(request)
+  nauthilus_builtin.custom_log_add("cache_flush_key", "present")
+  return nil, nil
+end
+`)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{},
+		Lua: &config.LuaSection{
+			Config: &config.LuaConf{
+				CacheFlushScriptPath: scriptPath,
+			},
+		},
+	}
+
+	db, _ := redismock.NewClientMock()
+	var out bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&out, nil))
+
+	_, err := RunCacheFlushScript(
+		context.Background(),
+		cfg,
+		logger,
+		rediscli.NewTestClient(db),
+		"user@example.com",
+		"guid-log",
+	)
+	if err != nil {
+		t.Fatalf("unexpected cache flush script error: %v", err)
+	}
+
+	logOutput := out.String()
+
+	if !strings.Contains(logOutput, "Lua cache flush custom logs") {
+		t.Fatalf("expected custom cache flush log message, got: %s", logOutput)
+	}
+
+	if !strings.Contains(logOutput, "cache_flush_key=present") {
+		t.Fatalf("expected custom cache flush key/value in log output, got: %s", logOutput)
 	}
 }
 
@@ -190,4 +287,30 @@ func callLuaStringFunction(t *testing.T, L *lua.LState, fn lua.LValue) string {
 	L.Pop(1)
 
 	return ret.String()
+}
+
+func writeCacheFlushLuaScript(t *testing.T, script string) string {
+	t.Helper()
+
+	scriptPath := filepath.Join(t.TempDir(), "cache_flush.lua")
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("failed to write cache flush test script: %v", err)
+	}
+
+	return scriptPath
+}
+
+func resetCompiledScriptForTest(t *testing.T) {
+	t.Helper()
+
+	compileMu.Lock()
+	compiledScript = nil
+	compileMu.Unlock()
+
+	t.Cleanup(func() {
+		compileMu.Lock()
+		compiledScript = nil
+		compileMu.Unlock()
+	})
 }
