@@ -340,6 +340,22 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 	return data
 }
 
+func (h *FrontendHandler) setLoginLegalAndRememberData(ctx *gin.Context, data gin.H, oidcCID, samlEntityID string) {
+	data["ShowRememberMe"] = h.shouldShowRememberMe(oidcCID, samlEntityID)
+	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
+
+	idpCfg := h.deps.Cfg.GetIdP()
+	if idpCfg != nil {
+		data["TermsOfServiceURL"] = idpCfg.TermsOfServiceURL
+		data["PrivacyPolicyURL"] = idpCfg.PrivacyPolicyURL
+		data["PasswordForgottenURL"] = idpCfg.PasswordForgottenURL
+	}
+
+	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
+	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+	data["PasswordForgottenLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Forgot password?")
+}
+
 // BasePageData returns the common data for all IdP frontend pages.
 func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manager) gin.H {
 	mgr := cookie.GetManager(ctx)
@@ -531,12 +547,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["HaveError"] = haveError
 	data["ErrorMessage"] = errorMessage
 
-	data["ShowRememberMe"] = h.shouldShowRememberMe(oidcCID, samlEntityID)
-	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
-	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
-	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
-	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
-	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+	h.setLoginLegalAndRememberData(ctx, data, oidcCID, samlEntityID)
 
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 }
@@ -767,12 +778,7 @@ func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *m
 	data["HaveError"] = true
 	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-	data["ShowRememberMe"] = h.shouldShowRememberMe(sess.oidcCID, sess.samlEntityID)
-	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
-	data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
-	data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
-	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
-	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+	h.setLoginLegalAndRememberData(ctx, data, sess.oidcCID, sess.samlEntityID)
 
 	// Clean up cookie so they start over.
 	CleanupMFAState(sess.mgr)
@@ -920,12 +926,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-		data["ShowRememberMe"] = h.shouldShowRememberMe(oidcCID, samlEntityID)
-		data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
-		data["TermsOfServiceURL"] = h.deps.Cfg.GetIdP().TermsOfServiceURL
-		data["PrivacyPolicyURL"] = h.deps.Cfg.GetIdP().PrivacyPolicyURL
-		data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
-		data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
+		h.setLoginLegalAndRememberData(ctx, data, oidcCID, samlEntityID)
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 

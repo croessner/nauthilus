@@ -89,6 +89,7 @@ syntax match nauthilusKeyL2 /^  \zsmin_tolerate_percent\ze:/
 syntax match nauthilusKeyL2 /^  \zsnginx_wait_delay\ze:/
 syntax match nauthilusKeyL2 /^  \zsnumber_of_workers\ze:/
 syntax match nauthilusKeyL2 /^  \zspackage_path\ze:/
+syntax match nauthilusKeyL2 /^  \zspassword_forgotten_url\ze:/
 syntax match nauthilusKeyL2 /^  \zspop3_backend_address\ze:/
 syntax match nauthilusKeyL2 /^  \zspop3_backend_port\ze:/
 syntax match nauthilusKeyL2 /^  \zsprivacy_policy_url\ze:/

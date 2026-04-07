@@ -127,5 +127,6 @@
   "Access your email address": "访问您的电子邮件地址，以便应用可以与您联系并个性化沟通内容。",
   "Access your group memberships": "访问您的群组成员信息，用于确定您可以使用的团队、角色或功能区域。",
   "Maintain access when you are offline": "在离线时保持访问权限，这样您无需每次都重新登录。",
-  "No additional permissions requested.": "未请求额外权限。您可以在不授予额外访问权限的情况下继续。"
+  "No additional permissions requested.": "未请求额外权限。您可以在不授予额外访问权限的情况下继续。",
+  "Forgot password?": "忘记密码？"
 }

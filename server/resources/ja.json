@@ -127,5 +127,6 @@
   "Access your email address": "アプリが連絡や通知の最適化を行えるよう、メールアドレスへのアクセス。",
   "Access your group memberships": "利用可能なチーム、役割、機能範囲を判断するため、グループ所属情報へのアクセス。",
   "Maintain access when you are offline": "オフライン時でもアクセスを維持し、毎回の再ログインを不要にします。",
-  "No additional permissions requested.": "追加の権限は要求されていません。追加アクセスを許可せずに続行できます。"
+  "No additional permissions requested.": "追加の権限は要求されていません。追加アクセスを許可せずに続行できます。",
+  "Forgot password?": "パスワードをお忘れですか？"
 }

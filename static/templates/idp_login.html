@@ -41,6 +41,13 @@
                     </label>
                 </div>
 
+                {{ if .PasswordForgottenURL }}
+                <div class="text-right mt-2">
+                    <a class="link link-hover text-sm" href="{{ .PasswordForgottenURL }}" rel="noopener noreferrer"
+                       target="_blank">{{ .PasswordForgottenLabel }}</a>
+                </div>
+                {{ end }}
+
                 {{ if .ShowRememberMe }}
                 <div class="form-control mt-4">
                     <label class="label cursor-pointer justify-start gap-4">
@@ -58,10 +65,12 @@
             {{ if or .TermsOfServiceURL .PrivacyPolicyURL }}
             <div class="flex justify-center gap-4 text-xs opacity-70">
                 {{ if .TermsOfServiceURL }}
-                <a class="link link-hover" href="{{ .TermsOfServiceURL }}" target="_blank">{{ .LegalNoticeLabel }}</a>
+                <a class="link link-hover" href="{{ .TermsOfServiceURL }}" rel="noopener noreferrer" target="_blank">{{
+                    .LegalNoticeLabel }}</a>
                 {{ end }}
                 {{ if .PrivacyPolicyURL }}
-                <a class="link link-hover" href="{{ .PrivacyPolicyURL }}" target="_blank">{{ .PrivacyPolicyLabel }}</a>
+                <a class="link link-hover" href="{{ .PrivacyPolicyURL }}" rel="noopener noreferrer" target="_blank">{{
+                    .PrivacyPolicyLabel }}</a>
                 {{ end }}
             </div>
             {{ end }}

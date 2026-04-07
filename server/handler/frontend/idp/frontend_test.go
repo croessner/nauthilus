@@ -257,6 +257,62 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 	assert.Contains(t, output, "/login/webauthn")
 }
 
+func TestIDPLoginTemplateRendersLinksWithURLs(t *testing.T) {
+	tmpl := loadIDPLoginTemplate(t)
+
+	passwordForgotten := "https://example.com/forgot"
+	termsOfService := "https://example.com/legal"
+	privacyPolicy := "https://example.com/privacy"
+
+	output := renderIDPLoginTemplate(t, tmpl, passwordForgotten, termsOfService, privacyPolicy)
+
+	assert.Contains(t, output, "href=\""+passwordForgotten+"\"")
+	assert.Contains(t, output, ">Forgot password?</a>")
+	assert.Contains(t, output, "href=\""+termsOfService+"\"")
+	assert.Contains(t, output, ">Legal notice</a>")
+	assert.Contains(t, output, "href=\""+privacyPolicy+"\"")
+	assert.Contains(t, output, ">Privacy policy</a>")
+	assert.Contains(t, output, "rel=\"noopener noreferrer\"")
+}
+
+func TestIDPLoginTemplateHidesLinksWithoutURLs(t *testing.T) {
+	tmpl := loadIDPLoginTemplate(t)
+
+	output := renderIDPLoginTemplate(t, tmpl, "", "", "")
+
+	assert.NotContains(t, output, "Forgot password?</a>")
+	assert.NotContains(t, output, ">Legal notice</a>")
+	assert.NotContains(t, output, ">Privacy policy</a>")
+}
+
+func renderIDPLoginTemplate(t *testing.T, tmpl *template.Template, passwordForgottenURL, termsOfServiceURL, privacyPolicyURL string) string {
+	t.Helper()
+
+	data := map[string]any{
+		"Title":                  "Login",
+		"PostLoginEndpoint":      "/login",
+		"CSRFToken":              "dev-token",
+		"UsernameLabel":          "Username",
+		"UsernamePlaceholder":    "name",
+		"PasswordLabel":          "Password",
+		"PasswordPlaceholder":    "pass",
+		"Submit":                 "Submit",
+		"RememberMeLabel":        "Remember me",
+		"PasswordForgottenURL":   passwordForgottenURL,
+		"PasswordForgottenLabel": "Forgot password?",
+		"TermsOfServiceURL":      termsOfServiceURL,
+		"PrivacyPolicyURL":       privacyPolicyURL,
+		"LegalNoticeLabel":       "Legal notice",
+		"PrivacyPolicyLabel":     "Privacy policy",
+	}
+
+	var buf bytes.Buffer
+	err := tmpl.Execute(&buf, data)
+	assert.NoError(t, err)
+
+	return buf.String()
+}
+
 func TestGetFlowClientIdentifiers(t *testing.T) {
 	testCases := []struct {
 		name              string
@@ -638,6 +694,29 @@ func loadMFASelectTemplate(t *testing.T) *template.Template {
 	_, err = tmpl.Parse(string(content))
 	if err != nil {
 		t.Fatalf("failed to parse select template: %v", err)
+	}
+
+	return tmpl
+}
+
+func loadIDPLoginTemplate(t *testing.T) *template.Template {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_login.html")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read template: %v", err)
+	}
+
+	tmpl := template.New("idp_login.html")
+	_, err = tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
+	if err != nil {
+		t.Fatalf("failed to parse base templates: %v", err)
+	}
+
+	_, err = tmpl.Parse(string(content))
+	if err != nil {
+		t.Fatalf("failed to parse login template: %v", err)
 	}
 
 	return tmpl
