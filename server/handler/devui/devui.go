@@ -475,6 +475,8 @@ func (h *DevUIHandler) RenderTemplate(ctx *gin.Context) {
 	data["ShowRememberMe"] = true
 	data["TermsOfServiceURL"] = "https://example.com/tos"
 	data["PrivacyPolicyURL"] = "https://example.com/privacy"
+	data["PasswordForgottenURL"] = "https://example.com/forgot-password"
+	data["PasswordForgottenLabel"] = "Forgot password?"
 	data["WebAuthnAuthenticators"] = []gin.H{
 		{"ID": "1", "Name": "YubiKey 5C", "CreatedAt": time.Now().Add(-24 * time.Hour).Format(time.RFC822)},
 		{"ID": "2", "Name": "Android Phone", "CreatedAt": time.Now().Add(-48 * time.Hour).Format(time.RFC822)},

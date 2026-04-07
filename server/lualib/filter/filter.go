@@ -690,17 +690,11 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			}
 
 			// Globals for this state
-			globals := Llocal.NewTable()
-
-			globals.RawSet(lua.LString(definitions.LuaFilterAccept), lua.LBool(false))
-			globals.RawSet(lua.LString(definitions.LuaFilterREJECT), lua.LBool(true))
-			globals.RawSet(lua.LString(definitions.LuaFilterResultOk), lua.LNumber(0))
-			globals.RawSet(lua.LString(definitions.LuaFilterResultFail), lua.LNumber(1))
-
-			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.NewLoggingManager(ctx, cfg, logger, localLogs).AddCustomLog))
-			globals.RawSetString(definitions.LuaFnSetStatusMessage, Llocal.NewFunction(lualib.SetStatusMessage(&localStatus)))
-
-			Llocal.SetGlobal(definitions.LuaDefaultTable, globals)
+			lualib.SetBuiltinTableForFilter(
+				Llocal,
+				lualib.NewLoggingManager(ctx, cfg, logger, localLogs).AddCustomLog,
+				&localStatus,
+			)
 
 			// Build request table
 			request := Llocal.NewTable()

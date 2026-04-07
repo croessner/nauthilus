@@ -164,12 +164,13 @@ func parseFirstPEMCertificate(certPEM string) (*x509.Certificate, error) {
 
 // IdPSection represents the configuration for the internal Identity Provider.
 type IdPSection struct {
-	OIDC              OIDCConfig    `mapstructure:"oidc"`
-	SAML2             SAML2Config   `mapstructure:"saml2"`
-	WebAuthn          WebAuthn      `mapstructure:"webauthn"`
-	RememberMeTTL     time.Duration `mapstructure:"remember_me_ttl"`
-	TermsOfServiceURL string        `mapstructure:"terms_of_service_url"`
-	PrivacyPolicyURL  string        `mapstructure:"privacy_policy_url"`
+	OIDC                 OIDCConfig    `mapstructure:"oidc"`
+	SAML2                SAML2Config   `mapstructure:"saml2"`
+	WebAuthn             WebAuthn      `mapstructure:"webauthn"`
+	RememberMeTTL        time.Duration `mapstructure:"remember_me_ttl"`
+	TermsOfServiceURL    string        `mapstructure:"terms_of_service_url"`
+	PrivacyPolicyURL     string        `mapstructure:"privacy_policy_url"`
+	PasswordForgottenURL string        `mapstructure:"password_forgotten_url"`
 }
 
 func (i *IdPSection) String() string {
@@ -178,13 +179,14 @@ func (i *IdPSection) String() string {
 	}
 
 	return fmt.Sprintf(
-		"IdPSection: {OIDC:%s SAML2:%s WebAuthn:%s RememberMeTTL:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s}",
+		"IdPSection: {OIDC:%s SAML2:%s WebAuthn:%s RememberMeTTL:%s TermsOfServiceURL:%s PrivacyPolicyURL:%s PasswordForgottenURL:%s}",
 		i.OIDC.String(),
 		i.SAML2.String(),
 		i.WebAuthn.String(),
 		i.RememberMeTTL,
 		i.TermsOfServiceURL,
 		i.PrivacyPolicyURL,
+		i.PasswordForgottenURL,
 	)
 }
 

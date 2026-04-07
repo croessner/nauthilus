@@ -276,19 +276,11 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 			var localStatus *string
 
-			globals := Llocal.NewTable()
-
-			globals.RawSet(lua.LString(definitions.LuaFeatureTriggerNo), lua.LBool(false))
-			globals.RawSet(lua.LString(definitions.LuaFeatureTriggerYes), lua.LBool(true))
-			globals.RawSet(lua.LString(definitions.LuaFeatureAbortNo), lua.LBool(false))
-			globals.RawSet(lua.LString(definitions.LuaFeatureAbortYes), lua.LBool(true))
-			globals.RawSet(lua.LString(definitions.LuaFeatureResultOk), lua.LNumber(0))
-			globals.RawSet(lua.LString(definitions.LuaFeatureResultFail), lua.LNumber(1))
-
-			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.NewLoggingManager(ctx, cfg, logger, localLogs).AddCustomLog))
-			globals.RawSetString(definitions.LuaFnSetStatusMessage, Llocal.NewFunction(lualib.SetStatusMessage(&localStatus)))
-
-			Llocal.SetGlobal(definitions.LuaDefaultTable, globals)
+			lualib.SetBuiltinTableForFeature(
+				Llocal,
+				lualib.NewLoggingManager(ctx, cfg, logger, localLogs).AddCustomLog,
+				&localStatus,
+			)
 
 			// Build per-feature request table from the common request
 			request := Llocal.NewTable()

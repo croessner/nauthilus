@@ -97,6 +97,39 @@ func TestBasePageData(t *testing.T) {
 		r.ServeHTTP(w, req)
 	})
 
+	t.Run("Includes legal links from IdP config", func(t *testing.T) {
+		cfgWithLegalLinks := &mockFrontendCfg{
+			FileSettings: config.FileSettings{
+				IdP: &config.IdPSection{
+					TermsOfServiceURL:    "https://example.com/legal",
+					PrivacyPolicyURL:     "https://example.com/privacy",
+					PasswordForgottenURL: "https://example.com/forgot",
+				},
+			},
+		}
+
+		r := gin.New()
+		r.GET("/test", func(c *gin.Context) {
+			lm := &mockLangManager{}
+			localizer := i18n.NewLocalizer(lm.GetBundle(), "en")
+			c.Set(definitions.CtxLocalizedKey, localizer)
+
+			data := BasePageData(c, cfgWithLegalLinks, lm)
+			assert.Equal(t, "https://example.com/legal", data["TermsOfServiceURL"])
+			assert.Equal(t, "https://example.com/privacy", data["PrivacyPolicyURL"])
+			assert.Equal(t, "https://example.com/forgot", data["PasswordForgottenURL"])
+			assert.Equal(t, "Legal notice", data["LegalNoticeLabel"])
+			assert.Equal(t, "Privacy policy", data["PrivacyPolicyLabel"])
+			assert.Equal(t, "Forgot password?", data["PasswordForgottenLabel"])
+
+			c.Status(http.StatusOK)
+		})
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		r.ServeHTTP(w, req)
+	})
+
 	idpClientNameTests := []struct {
 		name         string
 		cfg          *mockFrontendCfg
@@ -255,6 +288,92 @@ func TestMFASelectTemplateWithoutRecommendation(t *testing.T) {
 	assert.NotContains(t, output, "autofocus")
 	assert.Contains(t, output, "/login/totp")
 	assert.Contains(t, output, "/login/webauthn")
+}
+
+func TestIDPLoginTemplateRendersForgotPasswordLinkWithURL(t *testing.T) {
+	tmpl := loadIDPLoginTemplate(t)
+
+	passwordForgotten := "https://example.com/forgot"
+
+	output := renderIDPLoginTemplate(t, tmpl, passwordForgotten)
+
+	assert.Contains(t, output, "href=\""+passwordForgotten+"\"")
+	assert.Contains(t, output, "label-text idp-forgot-password-link text-sm")
+	assert.Contains(t, output, ">Forgot password?</a>")
+	assert.NotContains(t, output, ">Legal notice</a>")
+	assert.NotContains(t, output, ">Privacy policy</a>")
+	assert.Contains(t, output, "rel=\"noopener noreferrer\"")
+}
+
+func TestIDPLoginTemplateHidesLinksWithoutURLs(t *testing.T) {
+	tmpl := loadIDPLoginTemplate(t)
+
+	output := renderIDPLoginTemplate(t, tmpl, "")
+
+	assert.NotContains(t, output, "Forgot password?</a>")
+	assert.NotContains(t, output, ">Legal notice</a>")
+	assert.NotContains(t, output, ">Privacy policy</a>")
+}
+
+func TestIDPFooterTemplateRendersLinksWithURLs(t *testing.T) {
+	tmpl := loadIDPFooterTemplate(t)
+
+	output := renderIDPFooterTemplate(t, tmpl, "https://example.com/legal", "https://example.com/privacy")
+
+	assert.Contains(t, output, "href=\"https://example.com/legal\"")
+	assert.Contains(t, output, "href=\"https://example.com/privacy\"")
+	assert.Contains(t, output, ">Legal notice</a>")
+	assert.Contains(t, output, ">Privacy policy</a>")
+}
+
+func TestIDPFooterTemplateHidesLinksWithoutURLs(t *testing.T) {
+	tmpl := loadIDPFooterTemplate(t)
+
+	output := renderIDPFooterTemplate(t, tmpl, "", "")
+
+	assert.NotContains(t, output, ">Legal notice</a>")
+	assert.NotContains(t, output, ">Privacy policy</a>")
+}
+
+func renderIDPLoginTemplate(t *testing.T, tmpl *template.Template, passwordForgottenURL string) string {
+	t.Helper()
+
+	data := map[string]any{
+		"Title":                  "Login",
+		"PostLoginEndpoint":      "/login",
+		"CSRFToken":              "dev-token",
+		"UsernameLabel":          "Username",
+		"UsernamePlaceholder":    "name",
+		"PasswordLabel":          "Password",
+		"PasswordPlaceholder":    "pass",
+		"Submit":                 "Submit",
+		"RememberMeLabel":        "Remember me",
+		"PasswordForgottenURL":   passwordForgottenURL,
+		"PasswordForgottenLabel": "Forgot password?",
+	}
+
+	var buf bytes.Buffer
+	err := tmpl.Execute(&buf, data)
+	assert.NoError(t, err)
+
+	return buf.String()
+}
+
+func renderIDPFooterTemplate(t *testing.T, tmpl *template.Template, termsOfServiceURL, privacyPolicyURL string) string {
+	t.Helper()
+
+	data := map[string]any{
+		"TermsOfServiceURL":  termsOfServiceURL,
+		"PrivacyPolicyURL":   privacyPolicyURL,
+		"LegalNoticeLabel":   "Legal notice",
+		"PrivacyPolicyLabel": "Privacy policy",
+	}
+
+	var buf bytes.Buffer
+	err := tmpl.Execute(&buf, data)
+	assert.NoError(t, err)
+
+	return buf.String()
 }
 
 func TestGetFlowClientIdentifiers(t *testing.T) {
@@ -638,6 +757,47 @@ func loadMFASelectTemplate(t *testing.T) *template.Template {
 	_, err = tmpl.Parse(string(content))
 	if err != nil {
 		t.Fatalf("failed to parse select template: %v", err)
+	}
+
+	return tmpl
+}
+
+func loadIDPLoginTemplate(t *testing.T) *template.Template {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_login.html")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read template: %v", err)
+	}
+
+	tmpl := template.New("idp_login.html")
+	_, err = tmpl.Parse("{{ define \"idp_header.html\" }}header{{ end }}{{ define \"idp_footer.html\" }}footer{{ end }}")
+	if err != nil {
+		t.Fatalf("failed to parse base templates: %v", err)
+	}
+
+	_, err = tmpl.Parse(string(content))
+	if err != nil {
+		t.Fatalf("failed to parse login template: %v", err)
+	}
+
+	return tmpl
+}
+
+func loadIDPFooterTemplate(t *testing.T) *template.Template {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "static", "templates", "idp_footer.html")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read template: %v", err)
+	}
+
+	tmpl := template.New("idp_footer.html")
+	_, err = tmpl.Parse(string(content))
+	if err != nil {
+		t.Fatalf("failed to parse footer template: %v", err)
 	}
 
 	return tmpl

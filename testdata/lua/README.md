@@ -64,6 +64,7 @@ The `--test-callback` flag accepts the following values:
 - **action**: Tests action scripts (returns boolean or nil)
 - **backend**: Tests backend authentication scripts (returns backend result table)
 - **hook**: Tests HTTP hook scripts (returns nil or result table)
+- **cache_flush**: Tests cache flush scripts (returns `additional_keys` table and optional `account_name`)
 
 ## Mock Data Format
 

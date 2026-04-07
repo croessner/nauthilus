@@ -306,8 +306,9 @@ func (m *mockOIDCCfg) GetLuaInitScriptPath() string { return "" }
 func (m *mockOIDCCfg) GetLuaInitScriptPaths() []string {
 	return []string{}
 }
-func (m *mockOIDCCfg) GetLuaPackagePath() string { return "" }
-func (m *mockOIDCCfg) GetLuaScriptPath() string  { return "" }
+func (m *mockOIDCCfg) GetLuaPackagePath() string          { return "" }
+func (m *mockOIDCCfg) GetLuaScriptPath() string           { return "" }
+func (m *mockOIDCCfg) GetLuaCacheFlushScriptPath() string { return "" }
 func (m *mockOIDCCfg) RetrieveGetterMap() map[definitions.Backend]config.GetterHandler {
 	return nil
 }

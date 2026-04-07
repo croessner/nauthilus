@@ -55,4 +55,4 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/nauthilus:${{ env.major }}.${{ env.minor }}
             ghcr.io/${{ github.repository_owner }}/nauthilus:${{ env.major }}.${{ env.minor }}.${{ env.patch }}
           annotations: |
-            org.opencontainers.image.description=${{ env.OCI_IMAGE_DESCRIPTION }}
+            index,manifest:org.opencontainers.image.description=${{ env.OCI_IMAGE_DESCRIPTION }}

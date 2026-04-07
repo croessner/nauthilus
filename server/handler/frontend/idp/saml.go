@@ -706,6 +706,8 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	}
 	if h.deps != nil && h.deps.LangManager != nil {
 		data = BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
+	} else {
+		setLegalLinksData(ctx, h.deps.Cfg, data)
 	}
 
 	data["DevMode"] = h.deps.Env.GetDevMode()

@@ -2,9 +2,18 @@
 
 <div id="modal-container"></div>
 
-<footer class="footer footer-center p-4 bg-base-300 text-base-content mt-auto">
-    <div>
-        <p>Copyright © - <a href="https://nauthilus.org/" target="_blank">Nauthilus</a></p>
+<footer class="footer p-4 bg-base-300 text-base-content mt-auto">
+    <div class="idp-footer-content">
+        {{ if .TermsOfServiceURL }}
+        <a class="idp-footer-link" href="{{ .TermsOfServiceURL }}" rel="noopener noreferrer" target="_blank">{{
+            .LegalNoticeLabel }}</a>
+        {{ end }}
+        {{ if .PrivacyPolicyURL }}
+        <a class="idp-footer-link" href="{{ .PrivacyPolicyURL }}" rel="noopener noreferrer" target="_blank">{{
+            .PrivacyPolicyLabel }}</a>
+        {{ end }}
+        <p class="idp-footer-text">Copyright © - <a class="idp-footer-link" href="https://nauthilus.org/"
+                                                    rel="noopener noreferrer" target="_blank">Nauthilus</a></p>
     </div>
 </footer>
 </body>

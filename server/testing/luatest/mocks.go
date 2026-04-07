@@ -2147,21 +2147,7 @@ func SetupBuiltinTable(L *lua.LState, logger *MockLogger) {
 		return
 	}
 
-	builtin := L.NewTable()
-	builtin.RawSetString(definitions.LuaActionResultOk, lua.LNumber(0))
-	builtin.RawSetString(definitions.LuaActionResultFail, lua.LNumber(1))
-	builtin.RawSetString(definitions.LuaFilterAccept, lua.LBool(false))
-	builtin.RawSetString(definitions.LuaFilterREJECT, lua.LBool(true))
-	builtin.RawSetString(definitions.LuaFilterResultOk, lua.LNumber(0))
-	builtin.RawSetString(definitions.LuaFilterResultFail, lua.LNumber(1))
-	builtin.RawSetString(definitions.LuaFeatureTriggerNo, lua.LBool(false))
-	builtin.RawSetString(definitions.LuaFeatureTriggerYes, lua.LBool(true))
-	builtin.RawSetString(definitions.LuaFeatureAbortNo, lua.LBool(false))
-	builtin.RawSetString(definitions.LuaFeatureAbortYes, lua.LBool(true))
-	builtin.RawSetString(definitions.LuaFeatureResultOk, lua.LNumber(0))
-	builtin.RawSetString(definitions.LuaFeatureResultFail, lua.LNumber(1))
-
-	builtin.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(func(L *lua.LState) int {
+	lualib.SetBuiltinTableForAll(L, func(L *lua.LState) int {
 		logKey := L.CheckString(1)
 		logValue := L.OptString(2, "")
 
@@ -2170,7 +2156,12 @@ func SetupBuiltinTable(L *lua.LState, logger *MockLogger) {
 		}
 
 		return 0
-	}))
+	}, nil)
+
+	builtin, ok := L.GetGlobal(definitions.LuaDefaultTable).(*lua.LTable)
+	if !ok || builtin == nil {
+		return
+	}
 
 	// Match runtime behavior where scripts can set a user-facing status message
 	// via nauthilus_builtin.status_message_set(...).

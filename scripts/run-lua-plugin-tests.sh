@@ -18,3 +18,4 @@ run_test testdata/lua/plugins/action_failed_login_tracker_wrapper.lua action tes
 run_test testdata/lua/plugins/feature_blocklist_wrapper.lua feature testdata/lua/plugins/feature_blocklist_test.json
 run_test testdata/lua/plugins/backend_backend_wrapper.lua backend testdata/lua/plugins/backend_backend_test.json
 run_test testdata/lua/plugins/filter_test_context_chain_wrapper.lua filter testdata/lua/plugins/filter_test_context_chain_test.json
+run_test testdata/lua/plugins/cache_flush_wrapper.lua cache_flush testdata/lua/plugins/cache_flush_test.json

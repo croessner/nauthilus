@@ -1,0 +1,37 @@
+{
+  "context": {
+    "username": "cacheflush-user@example.com",
+    "account": "cacheflush-account",
+    "session": "cache-flush-session",
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "account"
+      }
+    ]
+  },
+  "cache": {
+    "expected_calls": [
+      {
+        "method": "cache_set",
+        "arg_contains": "cache_flush:marker:cacheflush-user@example.com"
+      },
+      {
+        "method": "cache_get",
+        "arg_contains": "cache_flush:marker:cacheflush-user@example.com"
+      }
+    ]
+  },
+  "expected_output": {
+    "cache_flush_additional_keys": [
+      "ucp:__default__:cacheflush-user@example.com",
+      "user_name:__default__:cacheflush-user@example.com"
+    ],
+    "cache_flush_account_name": "cacheflush-account",
+    "logs_contain": [
+      "cache_flush_keys: ucp:__default__:cacheflush-user@example.com,user_name:__default__:cacheflush-user@example.com",
+      "cache_flush_account: cacheflush-account"
+    ],
+    "error_expected": false
+  }
+}
