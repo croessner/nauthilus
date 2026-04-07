@@ -31,6 +31,10 @@ type ParsedCredential struct {
 	Type string `cbor:"type"`
 }
 
+// PublicKeyCredential represents the IDL of the same name and contains the raw response returned to the Relying Party
+// from the client's call to navigator.credentials.create() or navigator.credentials.get().
+//
+// Specification: §5.1. PublicKeyCredential Interface (https://www.w3.org/TR/webauthn/#iface-pkcredential)
 type PublicKeyCredential struct {
 	Credential
 
@@ -39,6 +43,7 @@ type PublicKeyCredential struct {
 	AuthenticatorAttachment string                                `json:"authenticatorAttachment,omitempty"`
 }
 
+// ParsedPublicKeyCredential is the parsed form of [PublicKeyCredential] with typed fields.
 type ParsedPublicKeyCredential struct {
 	ParsedCredential
 
@@ -47,12 +52,20 @@ type ParsedPublicKeyCredential struct {
 	AuthenticatorAttachment AuthenticatorAttachment               `json:"authenticatorAttachment,omitempty"`
 }
 
+// CredentialCreationResponse is the raw response returned to the Relying Party from the client for a credential
+// registration ceremony. It contains the [AuthenticatorAttestationResponse] which holds the attestation object
+// and client data.
+//
+// Specification: §5.4. Options for Credential Creation (https://www.w3.org/TR/webauthn/#sctn-credentialcreationoptions-extension)
 type CredentialCreationResponse struct {
 	PublicKeyCredential
 
 	AttestationResponse AuthenticatorAttestationResponse `json:"response"`
 }
 
+// ParsedCredentialCreationData is the parsed form of [CredentialCreationResponse]. It is the result of parsing the
+// raw response from the authenticator and can be used with [ParsedCredentialCreationData.Verify] to complete the
+// registration ceremony verification.
 type ParsedCredentialCreationData struct {
 	ParsedPublicKeyCredential
 
@@ -60,8 +73,12 @@ type ParsedCredentialCreationData struct {
 	Raw      CredentialCreationResponse
 }
 
-// ParseCredentialCreationResponse is a non-agnostic function for parsing a registration response from the http library
-// from stdlib. It handles some standard cleanup operations.
+// ParseCredentialCreationResponse parses a registration/attestation response from a [*http.Request]. The request body
+// is automatically drained and closed after parsing.
+//
+// This is the standard entry point when using [net/http]. For implementations that don't use [net/http], see
+// [ParseCredentialCreationResponseBody] (accepts an [io.Reader]) or [ParseCredentialCreationResponseBytes] (accepts a
+// []byte).
 func ParseCredentialCreationResponse(request *http.Request) (*ParsedCredentialCreationData, error) {
 	if request == nil || request.Body == nil {
 		return nil, ErrBadRequest.WithDetails("No response given")
@@ -75,8 +92,11 @@ func ParseCredentialCreationResponse(request *http.Request) (*ParsedCredentialCr
 	return ParseCredentialCreationResponseBody(request.Body)
 }
 
-// ParseCredentialCreationResponseBody is an agnostic version of ParseCredentialCreationResponse. Implementers are
-// therefore responsible for managing cleanup.
+// ParseCredentialCreationResponseBody parses a registration/attestation response from an [io.Reader]. The caller is
+// responsible for closing the reader if applicable.
+//
+// This is the framework-agnostic variant of [ParseCredentialCreationResponse]. For a [*http.Request] use
+// [ParseCredentialCreationResponse] instead. For raw bytes use [ParseCredentialCreationResponseBytes].
 func ParseCredentialCreationResponseBody(body io.Reader) (pcc *ParsedCredentialCreationData, err error) {
 	var ccr CredentialCreationResponse
 
@@ -87,8 +107,10 @@ func ParseCredentialCreationResponseBody(body io.Reader) (pcc *ParsedCredentialC
 	return ccr.Parse()
 }
 
-// ParseCredentialCreationResponseBytes is an alternative version of ParseCredentialCreationResponseBody that just takes
-// a byte slice.
+// ParseCredentialCreationResponseBytes parses a registration/attestation response from raw bytes.
+//
+// See also [ParseCredentialCreationResponse] (for [*http.Request]) and [ParseCredentialCreationResponseBody] (for
+// [io.Reader]).
 func ParseCredentialCreationResponseBytes(data []byte) (pcc *ParsedCredentialCreationData, err error) {
 	var ccr CredentialCreationResponse
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -78,6 +79,11 @@ type AttestationObject struct {
 	AttStatement map[string]any `json:"attStmt,omitempty"`
 }
 
+// NonCompoundAttestationObject is a subset of [AttestationObject] used within compound attestation statements. Each
+// sub-statement in a compound attestation has its own format and attestation statement but shares authenticator data
+// with the parent.
+//
+// Specification: §8.9. Compound Attestation Statement Format (https://www.w3.org/TR/webauthn-3/#sctn-compound-attestation)
 type NonCompoundAttestationObject struct {
 	// The format of the Attestation data.
 	Format string `json:"fmt"`
@@ -209,7 +215,13 @@ func (a *AttestationObject) VerifyAttestation(clientDataHash []byte, mds metadat
 	// the attestation statement format fmt’s verification procedure given attStmt, authData and the hash of the serialized
 	// client data computed in step 7.
 	if attestationType, x5cs, err = handler(*a, clientDataHash, mds); err != nil {
-		return err.(*Error).WithInfo(attestationType)
+		var e *Error
+
+		if errors.As(err, &e) {
+			return e.WithInfo(attestationType)
+		}
+
+		return ErrInvalidAttestation.WithDetails(err.Error()).WithInfo(attestationType).WithError(err)
 	}
 
 	if attestationType == string(AttestationFormatCompound) {

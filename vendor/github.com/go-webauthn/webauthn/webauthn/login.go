@@ -12,10 +12,15 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 )
 
-// LoginOption is used to provide parameters that modify the default [Credential] Assertion Payload that is sent to the user.
+// LoginOption is a functional option that modifies the [protocol.PublicKeyCredentialRequestOptions] sent to the
+// client during a login ceremony. Use the With* functions in this package (e.g. [WithUserVerification],
+// [WithAllowedCredentials]) to create login options.
 type LoginOption func(*protocol.PublicKeyCredentialRequestOptions)
 
-// DiscoverableUserHandler returns a [*User] given the provided userHandle.
+// DiscoverableUserHandler is a callback function that the Relying Party must provide when performing a discoverable
+// (passkey) login. It is called with the rawID of the credential and the userHandle from the authenticator response,
+// and must return the [User] who owns the credential. This is necessary because in discoverable login flows, the
+// Relying Party does not know which user is authenticating until the authenticator response is received.
 type DiscoverableUserHandler func(rawID, userHandle []byte) (user User, err error)
 
 // BeginLogin creates the [*protocol.CredentialAssertion] data payload that should be sent to the user agent for beginning
@@ -262,6 +267,10 @@ func (webauthn *WebAuthn) ValidatePasskeyLogin(handler DiscoverableUserHandler, 
 		return nil, nil, protocol.ErrBadRequest.WithDetails(fmt.Sprintf("Failed to lookup Client-side Discoverable Credential: %s", err)).WithError(err)
 	}
 
+	if user == nil {
+		return nil, nil, protocol.ErrBadRequest.WithDetails("Failed to lookup Client-side Discoverable Credential: handler returned a nil user")
+	}
+
 	if credential, err = webauthn.validateLogin(user, session, parsedResponse); err != nil {
 		return nil, nil, err
 	}
@@ -270,6 +279,8 @@ func (webauthn *WebAuthn) ValidatePasskeyLogin(handler DiscoverableUserHandler, 
 }
 
 // validateLogin takes a parsed response and validates it against the user credentials and session data.
+//
+//nolint:gocyclo
 func (webauthn *WebAuthn) validateLogin(user User, session SessionData, parsedResponse *protocol.ParsedCredentialAssertionData) (*Credential, error) {
 	// Step 1. If the allowCredentials option was given when this authentication ceremony was initiated,
 	// verify that credential.id identifies one of the public key credentials that were listed in
@@ -293,10 +304,7 @@ func (webauthn *WebAuthn) validateLogin(user User, session SessionData, parsedRe
 	}
 
 	// Step 2. If credential.response.userHandle is present, verify that the user identified by this value is
-	// the owner of the public key credential identified by credential.id.
-
-	// This is in part handled by our Step 1.
-
+	// the owner of the public key credential identified by credential.id. This is in part handled by our Step 1.
 	userHandle := parsedResponse.Response.UserHandle
 	if len(userHandle) > 0 {
 		if !bytes.Equal(userHandle, user.WebAuthnID()) {
@@ -317,8 +325,6 @@ func (webauthn *WebAuthn) validateLogin(user User, session SessionData, parsedRe
 
 			break
 		}
-
-		found = false
 	}
 
 	if !found {
@@ -375,10 +381,7 @@ func (webauthn *WebAuthn) validateLogin(user User, session SessionData, parsedRe
 	credential.Authenticator.UpdateCounter(parsedResponse.Response.AuthenticatorData.Counter)
 
 	// Update flags from response data.
-	credential.Flags.UserPresent = parsedResponse.Response.AuthenticatorData.Flags.HasUserPresent()
-	credential.Flags.UserVerified = parsedResponse.Response.AuthenticatorData.Flags.HasUserVerified()
-	credential.Flags.BackupEligible = parsedResponse.Response.AuthenticatorData.Flags.HasBackupEligible()
-	credential.Flags.BackupState = parsedResponse.Response.AuthenticatorData.Flags.HasBackupState()
+	credential.Flags = NewCredentialFlags(parsedResponse.Response.AuthenticatorData.Flags)
 
 	return &credential, nil
 }
