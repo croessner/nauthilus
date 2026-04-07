@@ -1,8 +1,30 @@
 (() => {
     'use strict';
 
+    // Shared state for the custom HTMX confirmation modal.
     let pendingConfirmRequest = null;
+    const autoDisableDelayMs = 1000;
+    const autoDisabledAttr = 'data-auto-disabled';
+    const autoDisableSpinnerNodeSelector = '[data-auto-disable-spinner-node]';
+    const submitControlSelector = 'button[type="submit"], button:not([type]), input[type="submit"], input[type="image"]';
 
+    /**
+     * @typedef {{pending: string, running: string, success: string, timeout: string, error: string, skipped: string, retrying: string, attempt: string, summaryDone: string, summaryPartial: string}} LogoutLabels
+     * @typedef {{id?: string, display_name?: string, method: string, url?: string, payload_base64?: string, initial_status?: string, initial_detail?: string}} LogoutTask
+     * @typedef {{state: string, detail: string}} LogoutTaskResult
+     * @typedef {{statusDiv: HTMLElement | null, statusText: HTMLElement | null, errorDiv: HTMLElement | null, errorText: HTMLElement | null}} WebAuthnUI
+     * @typedef {HTMLButtonElement | HTMLInputElement} SubmitControl
+     * @typedef {{new (element: Element, options: {text: string, width: number, height: number, colorDark: string, colorLight: string, correctLevel: unknown}): unknown, CorrectLevel: {H: unknown}}} QRCodeGlobal
+     * @typedef {{logAll: () => void}} HtmxGlobal
+     * @typedef {{issueRequest: (skipConfirmation: boolean) => void, question: string}} HtmxConfirmDetail
+     * @typedef {{elt: Element | null, triggeringEvent: Event | null}} HtmxRequestDetail
+     */
+
+    /**
+     * Returns the active theme preference from local storage or system settings.
+     *
+     * @returns {string}
+     */
     function getPreferredTheme() {
         const stored = localStorage.getItem('theme');
         if (stored) {
@@ -12,10 +34,21 @@
         return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
 
+    /**
+     * Applies the theme to the root document element.
+     *
+     * @param {string} theme
+     * @returns {void}
+     */
     function setTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
     }
 
+    /**
+     * Switches between light and dark theme and persists the selection.
+     *
+     * @returns {void}
+     */
     function toggleTheme() {
         const currentTheme = document.documentElement.getAttribute('data-theme');
         const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
@@ -23,6 +56,12 @@
         localStorage.setItem('theme', newTheme);
     }
 
+    /**
+     * Closes all open dropdowns except the one containing the provided target.
+     *
+     * @param {Element | null} target
+     * @returns {void}
+     */
     function closeOpenDropdownsExcept(target) {
         document.querySelectorAll('[data-dropdown-root].dropdown-open').forEach((dropdown) => {
             if (!target || !dropdown.contains(target)) {
@@ -31,6 +70,12 @@
         });
     }
 
+    /**
+     * Converts binary data to Base64URL format.
+     *
+     * @param {ArrayBuffer} bin
+     * @returns {string}
+     */
     function arrayBufferToBase64URL(bin) {
         const uint8array = new Uint8Array(bin);
         const str = btoa(String.fromCharCode(...uint8array));
@@ -38,9 +83,31 @@
         return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     }
 
-    function base64URLToUint8Array(b64str) {
-        const len = b64str.length;
-        const normalized = b64str
+    /**
+     * Converts either a Base64URL string or a BufferSource to Uint8Array.
+     *
+     * @param {string | ArrayBuffer | ArrayBufferView} input
+     * @returns {Uint8Array}
+     */
+    function base64URLToUint8Array(input) {
+        if (input instanceof Uint8Array) {
+            return input;
+        }
+
+        if (ArrayBuffer.isView(input)) {
+            return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+        }
+
+        if (input instanceof ArrayBuffer) {
+            return new Uint8Array(input);
+        }
+
+        if (typeof input !== 'string') {
+            throw new TypeError('Expected Base64URL string or BufferSource');
+        }
+
+        const len = input.length;
+        const normalized = input
             .replace(/-/g, '+')
             .replace(/_/g, '/')
             .padEnd(len + ((4 - (len % 4)) % 4), '=');
@@ -48,10 +115,22 @@
         return new Uint8Array([...atob(normalized)].map((char) => char.charCodeAt(0)));
     }
 
+    /**
+     * Validates a relative redirect path and rejects protocol-relative values.
+     *
+     * @param {unknown} redirect
+     * @returns {boolean}
+     */
     function isSafeRelativeRedirect(redirect) {
         return typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//');
     }
 
+    /**
+     * Validates absolute redirect URLs for allowed protocols.
+     *
+     * @param {unknown} redirect
+     * @returns {boolean}
+     */
     function isSafeAbsoluteRedirect(redirect) {
         if (typeof redirect !== 'string' || redirect.startsWith('//')) {
             return false;
@@ -65,6 +144,92 @@
         }
     }
 
+    /**
+     * Returns the global QRCode constructor when available.
+     *
+     * @returns {QRCodeGlobal | null}
+     */
+    function getQRCodeGlobal() {
+        const candidate = /** @type {unknown} */ (window['QRCode']);
+        if (typeof candidate !== 'function') {
+            return null;
+        }
+
+        const qrCode = /** @type {{CorrectLevel?: {H?: unknown}}} */ (candidate);
+        if (!qrCode.CorrectLevel || typeof qrCode.CorrectLevel !== 'object' || !('H' in qrCode.CorrectLevel)) {
+            return null;
+        }
+
+        return /** @type {QRCodeGlobal} */ (candidate);
+    }
+
+    /**
+     * Returns the global htmx object with logging capability.
+     *
+     * @returns {HtmxGlobal | null}
+     */
+    function getHtmxGlobal() {
+        const candidate = /** @type {unknown} */ (window['htmx']);
+        if (!candidate || (typeof candidate !== 'object' && typeof candidate !== 'function')) {
+            return null;
+        }
+
+        const htmx = /** @type {{logAll?: unknown}} */ (candidate);
+        if (typeof htmx.logAll !== 'function') {
+            return null;
+        }
+
+        return /** @type {HtmxGlobal} */ (candidate);
+    }
+
+    /**
+     * Extracts typed confirm detail from an HTMX confirm event.
+     *
+     * @param {Event} event
+     * @returns {HtmxConfirmDetail | null}
+     */
+    function getHtmxConfirmDetail(event) {
+        if (!(event instanceof CustomEvent) || !event.detail || typeof event.detail !== 'object') {
+            return null;
+        }
+
+        const detail = /** @type {{issueRequest?: unknown, question?: unknown}} */ (event.detail);
+        if (typeof detail.issueRequest !== 'function' || typeof detail.question !== 'string') {
+            return null;
+        }
+
+        return {
+            issueRequest: /** @type {(skipConfirmation: boolean) => void} */ (detail.issueRequest),
+            question: detail.question,
+        };
+    }
+
+    /**
+     * Extracts typed request detail from HTMX request lifecycle events.
+     *
+     * @param {Event} event
+     * @returns {HtmxRequestDetail}
+     */
+    function getHtmxRequestDetail(event) {
+        if (!(event instanceof CustomEvent) || !event.detail || typeof event.detail !== 'object') {
+            return {elt: null, triggeringEvent: null};
+        }
+
+        const detail = /** @type {{elt?: unknown, triggeringEvent?: unknown}} */ (event.detail);
+
+        return {
+            elt: detail.elt instanceof Element ? detail.elt : null,
+            triggeringEvent: detail.triggeringEvent instanceof Event ? detail.triggeringEvent : null,
+        };
+    }
+
+    // Front-channel logout helpers.
+    /**
+     * Resolves the final logout redirect target from config attributes.
+     *
+     * @param {Element} config
+     * @returns {string}
+     */
     function resolveLogoutTarget(config) {
         const rawTarget = (config.getAttribute('data-logout-target') || '').trim();
         if (isSafeRelativeRedirect(rawTarget) || isSafeAbsoluteRedirect(rawTarget)) {
@@ -74,6 +239,13 @@
         return '/logged_out';
     }
 
+    /**
+     * Parses a non-negative integer with fallback support.
+     *
+     * @param {string | null} value
+     * @param {number} fallback
+     * @returns {number}
+     */
     function parsePositiveInteger(value, fallback) {
         const parsed = Number.parseInt(value || '', 10);
         if (Number.isNaN(parsed) || parsed < 0) {
@@ -83,6 +255,12 @@
         return parsed;
     }
 
+    /**
+     * Parses front-channel logout task definitions from a data attribute.
+     *
+     * @param {Element} config
+     * @returns {LogoutTask[]}
+     */
     function parseLogoutTasks(config) {
         const raw = config.getAttribute('data-logout-tasks');
         if (!raw) {
@@ -97,6 +275,12 @@
         }
     }
 
+    /**
+     * Collects localized status labels used by the logout progress view.
+     *
+     * @param {Element} config
+     * @returns {LogoutLabels}
+     */
     function logoutStateLabels(config) {
         return {
             pending: config.getAttribute('data-logout-status-pending') || 'Pending',
@@ -112,6 +296,12 @@
         };
     }
 
+    /**
+     * Maps a logout state to a badge class.
+     *
+     * @param {string} state
+     * @returns {string}
+     */
     function statusClassForLogout(state) {
         switch (state) {
             case 'running':
@@ -129,6 +319,13 @@
         }
     }
 
+    /**
+     * Resolves the localized label for a logout state.
+     *
+     * @param {string} state
+     * @param {LogoutLabels} labels
+     * @returns {string}
+     */
     function stateLabelForLogout(state, labels) {
         switch (state) {
             case 'running':
@@ -146,6 +343,15 @@
         }
     }
 
+    /**
+     * Updates one task row in the logout status list.
+     *
+     * @param {Element | null | undefined} node
+     * @param {string} state
+     * @param {string} detail
+     * @param {LogoutLabels} labels
+     * @returns {void}
+     */
     function setLogoutStatus(node, state, detail, labels) {
         if (!node) {
             return;
@@ -165,6 +371,13 @@
         }
     }
 
+    /**
+     * Builds a status row element for one logout task.
+     *
+     * @param {LogoutTask} task
+     * @param {LogoutLabels} labels
+     * @returns {HTMLLIElement}
+     */
     function makeLogoutStatusNode(task, labels) {
         const item = document.createElement('li');
         item.className = 'flex items-center justify-between gap-2 bg-base-100 rounded px-3 py-2';
@@ -194,6 +407,13 @@
         return item;
     }
 
+    /**
+     * Adds a retry hint query parameter for repeated task attempts.
+     *
+     * @param {string} urlValue
+     * @param {number} attempt
+     * @returns {string}
+     */
     function withRetryHint(urlValue, attempt) {
         if (attempt <= 1) {
             return urlValue;
@@ -208,6 +428,14 @@
         }
     }
 
+    /**
+     * Executes one front-channel logout task in a hidden iframe.
+     *
+     * @param {LogoutTask} task
+     * @param {number} timeoutMs
+     * @param {number} attempt
+     * @returns {Promise<LogoutTaskResult>}
+     */
     function executeLogoutTaskAttempt(task, timeoutMs, attempt) {
         return new Promise((resolve) => {
             const iframe = document.createElement('iframe');
@@ -224,6 +452,13 @@
                 finalize('timeout', `request timed out after ${timeoutMs}ms`);
             }, timeoutMs);
 
+            /**
+             * Finalizes iframe task execution exactly once.
+             *
+             * @param {string} state
+             * @param {string} detail
+             * @returns {void}
+             */
             function finalize(state, detail) {
                 if (settled) {
                     return;
@@ -267,6 +502,11 @@
         });
     }
 
+    /**
+     * Reads shared WebAuthn status/error nodes from the page.
+     *
+     * @returns {WebAuthnUI}
+     */
     function getWebAuthnUIElements() {
         return {
             statusDiv: document.getElementById('webauthn-status'),
@@ -276,6 +516,13 @@
         };
     }
 
+    /**
+     * Prepares the WebAuthn UI for an in-flight operation.
+     *
+     * @param {WebAuthnUI} ui
+     * @param {HTMLButtonElement} trigger
+     * @returns {void}
+     */
     function setWebAuthnInitialUI(ui, trigger) {
         if (ui.statusDiv) {
             ui.statusDiv.classList.remove('hidden');
@@ -286,6 +533,14 @@
         trigger.disabled = true;
     }
 
+    /**
+     * Shows a WebAuthn error message and re-enables the trigger button.
+     *
+     * @param {WebAuthnUI} ui
+     * @param {HTMLButtonElement} trigger
+     * @param {string} message
+     * @returns {void}
+     */
     function showWebAuthnError(ui, trigger, message) {
         if (ui.errorDiv) {
             ui.errorDiv.classList.remove('hidden');
@@ -299,6 +554,84 @@
         trigger.disabled = false;
     }
 
+    /**
+     * Reads an error message body from a failed response.
+     *
+     * @param {Response} response
+     * @param {string} fallback
+     * @returns {Promise<string>}
+     */
+    async function readFailedResponseMessage(response, fallback) {
+        try {
+            const message = await response.text();
+            if (message) {
+                return message;
+            }
+        } catch {
+            // Keep fallback message.
+        }
+
+        return fallback;
+    }
+
+    /**
+     * Renders a caught runtime error in the shared WebAuthn error panel.
+     *
+     * @param {unknown} error
+     * @param {string} fallback
+     * @param {WebAuthnUI} ui
+     * @param {HTMLButtonElement} trigger
+     * @returns {void}
+     */
+    function showWebAuthnCaughtError(error, fallback, ui, trigger) {
+        const message = error instanceof Error && error.message ? error.message : fallback;
+        showWebAuthnError(ui, trigger, message);
+    }
+
+    /**
+     * Shows a failed response message in the WebAuthn error panel.
+     *
+     * @param {Response} response
+     * @param {string} fallback
+     * @param {WebAuthnUI} ui
+     * @param {HTMLButtonElement} trigger
+     * @returns {Promise<boolean>}
+     */
+    async function ensureWebAuthnResponseOK(response, fallback, ui, trigger) {
+        if (response.ok) {
+            return true;
+        }
+
+        const message = await readFailedResponseMessage(response, fallback);
+        showWebAuthnError(ui, trigger, message);
+
+        return false;
+    }
+
+    /**
+     * Fetches an endpoint and renders response errors in the WebAuthn error panel.
+     *
+     * @param {string} endpoint
+     * @param {string} fallback
+     * @param {WebAuthnUI} ui
+     * @param {HTMLButtonElement} trigger
+     * @returns {Promise<Response | null>}
+     */
+    async function fetchWebAuthnOrShowError(endpoint, fallback, ui, trigger) {
+        const response = await fetch(endpoint);
+        if (await ensureWebAuthnResponseOK(response, fallback, ui, trigger)) {
+            return response;
+        }
+
+        return null;
+    }
+
+    /**
+     * Runs WebAuthn login with begin/finish endpoints and updates UI state.
+     *
+     * @param {HTMLButtonElement} trigger
+     * @returns {Promise<void>}
+     */
     async function runWebAuthnLogin(trigger) {
         const beginEndpoint = trigger.getAttribute('data-webauthn-begin');
         const finishEndpoint = trigger.getAttribute('data-webauthn-finish');
@@ -315,9 +648,9 @@
         setWebAuthnInitialUI(ui, trigger);
 
         try {
-            const beginResponse = await fetch(beginEndpoint);
-            if (!beginResponse.ok) {
-                throw new Error(await beginResponse.text());
+            const beginResponse = await fetchWebAuthnOrShowError(beginEndpoint, unknownErrorText, ui, trigger);
+            if (!beginResponse) {
+                return;
             }
 
             const options = await beginResponse.json();
@@ -371,16 +704,23 @@
                     }
                 }
 
-                throw new Error(await finishResponse.text());
+                if (!await ensureWebAuthnResponseOK(finishResponse, unknownErrorText, ui, trigger)) {
+                    return;
+                }
             }
 
             window.location.href = nextURL;
         } catch (error) {
-            const message = error instanceof Error && error.message ? error.message : unknownErrorText;
-            showWebAuthnError(ui, trigger, message);
+            showWebAuthnCaughtError(error, unknownErrorText, ui, trigger);
         }
     }
 
+    /**
+     * Runs WebAuthn registration with begin/finish endpoints and updates UI state.
+     *
+     * @param {HTMLButtonElement} trigger
+     * @returns {Promise<void>}
+     */
     async function runWebAuthnRegister(trigger) {
         const beginEndpoint = trigger.getAttribute('data-webauthn-begin');
         const finishEndpoint = trigger.getAttribute('data-webauthn-finish');
@@ -406,9 +746,9 @@
         }
 
         try {
-            const beginResponse = await fetch(beginEndpoint);
-            if (!beginResponse.ok) {
-                throw new Error(await beginResponse.text());
+            const beginResponse = await fetchWebAuthnOrShowError(beginEndpoint, unknownErrorText, ui, trigger);
+            if (!beginResponse) {
+                return;
             }
 
             const options = await beginResponse.json();
@@ -449,17 +789,21 @@
                 }),
             });
 
-            if (!finishResponse.ok) {
-                throw new Error(await finishResponse.text());
+            if (!await ensureWebAuthnResponseOK(finishResponse, unknownErrorText, ui, trigger)) {
+                return;
             }
 
             window.location.href = nextURL;
         } catch (error) {
-            const message = error instanceof Error && error.message ? error.message : unknownErrorText;
-            showWebAuthnError(ui, trigger, message);
+            showWebAuthnCaughtError(error, unknownErrorText, ui, trigger);
         }
     }
 
+    /**
+     * Initializes the TOTP QR code widget once per page lifecycle.
+     *
+     * @returns {void}
+     */
     function initTotpQRCode() {
         const qrcodeTarget = document.getElementById('qrcode');
         if (!qrcodeTarget || qrcodeTarget.getAttribute('data-qrcode-initialized') === '1') {
@@ -467,24 +811,33 @@
         }
 
         const qrcodeText = qrcodeTarget.getAttribute('data-qrcode-text');
-        if (!qrcodeText || typeof window.QRCode === 'undefined') {
+        const qrCodeGlobal = getQRCodeGlobal();
+        if (!qrcodeText || !qrCodeGlobal) {
             return;
         }
 
-        // eslint-disable-next-line no-undef
-        new QRCode(qrcodeTarget, {
+        new qrCodeGlobal(qrcodeTarget, {
             text: qrcodeText,
             width: 200,
             height: 200,
             colorDark: '#000000',
             colorLight: '#ffffff',
-            // eslint-disable-next-line no-undef
-            correctLevel: QRCode.CorrectLevel.H,
+            correctLevel: qrCodeGlobal.CorrectLevel.H,
         });
 
         qrcodeTarget.setAttribute('data-qrcode-initialized', '1');
     }
 
+    /**
+     * Runs a single logout task with retries and updates its status node.
+     *
+     * @param {LogoutTask} task
+     * @param {number} maxRetries
+     * @param {number} timeoutMs
+     * @param {LogoutLabels} labels
+     * @param {Element | undefined} statusNode
+     * @returns {Promise<string>}
+     */
     async function runLogoutTask(task, maxRetries, timeoutMs, labels, statusNode) {
         if (task.initial_status === 'error') {
             setLogoutStatus(statusNode, 'error', task.initial_detail || 'task initialization failed', labels);
@@ -524,6 +877,11 @@
         return 'error';
     }
 
+    /**
+     * Initializes front-channel logout orchestration and redirect flow.
+     *
+     * @returns {void}
+     */
     function initLogoutRedirect() {
         const config = document.getElementById('logout-config');
         if (!config || config.getAttribute('data-logout-initialized') === '1') {
@@ -564,6 +922,11 @@
             });
         }
 
+        /**
+         * Updates the logout progress indicator widgets.
+         *
+         * @returns {void}
+         */
         function updateProgress() {
             if (progressBar) {
                 progressBar.max = tasks.length;
@@ -599,6 +962,11 @@
         })();
     }
 
+    /**
+     * Initializes SAML POST auto-submit behavior when enabled.
+     *
+     * @returns {void}
+     */
     function initSAMLPostBinding() {
         const form = document.getElementById('SAMLResponseForm');
         if (!form || form.getAttribute('data-saml-autosubmit-initialized') === '1') {
@@ -614,6 +982,11 @@
         form.submit();
     }
 
+    /**
+     * Enables global HTMX debug logging in developer mode.
+     *
+     * @returns {void}
+     */
     function initDevHtmxLogging() {
         const root = document.documentElement;
         if (!root || root.getAttribute('data-dev-mode') !== '1') {
@@ -624,12 +997,19 @@
             return;
         }
 
-        if (window.htmx && typeof window.htmx.logAll === 'function') {
-            window.htmx.logAll();
+        const htmxGlobal = getHtmxGlobal();
+        if (htmxGlobal) {
+            htmxGlobal.logAll();
             root.setAttribute('data-htmx-log-initialized', '1');
         }
     }
 
+    /**
+     * Resolves the DOM root used for recovery code actions.
+     *
+     * @param {Element} trigger
+     * @returns {ParentNode}
+     */
     function getRecoveryRoot(trigger) {
         const selector = trigger.getAttribute('data-recovery-scope');
         if (selector) {
@@ -642,6 +1022,12 @@
         return document;
     }
 
+    /**
+     * Extracts recovery codes from the configured recovery grid.
+     *
+     * @param {Element} trigger
+     * @returns {string[]}
+     */
     function getRecoveryCodes(trigger) {
         const root = getRecoveryRoot(trigger);
         const cells = root.querySelectorAll('#recovery-codes-grid > div');
@@ -654,6 +1040,12 @@
         return codes.filter(Boolean);
     }
 
+    /**
+     * Renders recovery codes into a PNG data URL.
+     *
+     * @param {string[]} codes
+     * @returns {string}
+     */
     function buildRecoveryCodesPngDataURL(codes) {
         const lineHeight = 32;
         const colWidth = 220;
@@ -696,6 +1088,12 @@
         return canvas.toDataURL('image/png');
     }
 
+    /**
+     * Copies recovery codes into the clipboard and flashes a copied label.
+     *
+     * @param {Element} trigger
+     * @returns {Promise<void>}
+     */
     async function copyRecoveryCodes(trigger) {
         const codes = getRecoveryCodes(trigger);
         if (codes.length === 0 || !navigator.clipboard) {
@@ -727,6 +1125,12 @@
         }, 2000);
     }
 
+    /**
+     * Downloads recovery codes as PNG and optionally persists them server-side.
+     *
+     * @param {HTMLButtonElement} trigger
+     * @returns {Promise<void>}
+     */
     async function downloadRecoveryCodes(trigger) {
         const codes = getRecoveryCodes(trigger);
         if (codes.length === 0) {
@@ -784,6 +1188,12 @@
         }
     }
 
+    /**
+     * Removes a modal by selector or closest modal ancestor.
+     *
+     * @param {Element} trigger
+     * @returns {void}
+     */
     function removeModal(trigger) {
         const modalSelector = trigger.getAttribute('data-modal-target');
         if (modalSelector) {
@@ -800,6 +1210,276 @@
         }
     }
 
+    // Submission guard: prevent duplicate POST/mutation actions on slow responses.
+    /**
+     * Checks whether an element triggers an HTMX mutating request.
+     *
+     * @param {unknown} element
+     * @returns {boolean}
+     */
+    function isMutationHtmxElement(element) {
+        if (!(element instanceof Element)) {
+            return false;
+        }
+
+        return element.hasAttribute('hx-post')
+            || element.hasAttribute('hx-put')
+            || element.hasAttribute('hx-patch')
+            || element.hasAttribute('hx-delete');
+    }
+
+    /**
+     * Determines whether form submits should participate in auto-disable logic.
+     *
+     * @param {unknown} form
+     * @returns {boolean}
+     */
+    function shouldHandleFormSubmit(form) {
+        if (!(form instanceof HTMLFormElement)) {
+            return false;
+        }
+
+        if (isMutationHtmxElement(form)) {
+            return true;
+        }
+
+        return (form.getAttribute('method') || 'get').toLowerCase() === 'post';
+    }
+
+    /**
+     * Marks a submit control as auto-disabled.
+     *
+     * @param {unknown} control
+     * @returns {boolean}
+     */
+    function markControlAutoDisabled(control) {
+        if (!(control instanceof HTMLButtonElement || control instanceof HTMLInputElement)) {
+            return false;
+        }
+
+        if (control.disabled) {
+            return false;
+        }
+
+        control.disabled = true;
+        control.setAttribute(autoDisabledAttr, '1');
+
+        return true;
+    }
+
+    /**
+     * Appends a loading spinner to a button if not present already.
+     *
+     * @param {unknown} control
+     * @returns {void}
+     */
+    function appendAutoDisableSpinner(control) {
+        if (!(control instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        if (control.querySelector(autoDisableSpinnerNodeSelector)) {
+            return;
+        }
+
+        const spinner = document.createElement('span');
+        spinner.className = 'loading loading-spinner loading-xs ml-2';
+        spinner.setAttribute('aria-hidden', 'true');
+        spinner.setAttribute('data-auto-disable-spinner-node', '1');
+
+        control.appendChild(spinner);
+    }
+
+    /**
+     * Schedules spinner insertion while a control remains disabled.
+     *
+     * @param {unknown} control
+     * @returns {void}
+     */
+    function scheduleAutoDisableSpinner(control) {
+        if (!(control instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        window.setTimeout(() => {
+            if (!control.isConnected || !control.disabled) {
+                return;
+            }
+
+            appendAutoDisableSpinner(control);
+        }, autoDisableDelayMs);
+    }
+
+    /**
+     * Restores one auto-disabled submit control to its active state.
+     *
+     * @param {unknown} control
+     * @returns {void}
+     */
+    function clearAutoDisabledControl(control) {
+        if (!(control instanceof HTMLButtonElement || control instanceof HTMLInputElement)) {
+            return;
+        }
+
+        if (control.getAttribute(autoDisabledAttr) !== '1') {
+            return;
+        }
+
+        control.disabled = false;
+        control.removeAttribute(autoDisabledAttr);
+
+        if (control instanceof HTMLButtonElement) {
+            const spinner = control.querySelector(autoDisableSpinnerNodeSelector);
+            if (spinner) {
+                spinner.remove();
+            }
+        }
+    }
+
+    /**
+     * Restores controls previously disabled by auto-disable within the trigger scope.
+     *
+     * @param {Element | null | undefined} source
+     * @returns {void}
+     */
+    function restoreAutoDisabledControls(source) {
+        if (!(source instanceof Element)) {
+            return;
+        }
+
+        const form = source.closest('form');
+        const scope = form || source;
+
+        if (scope instanceof HTMLButtonElement || scope instanceof HTMLInputElement) {
+            clearAutoDisabledControl(scope);
+        }
+
+        scope.querySelectorAll(`button[${autoDisabledAttr}="1"], input[${autoDisabledAttr}="1"]`).forEach((control) => {
+            clearAutoDisabledControl(control);
+        });
+    }
+
+    /**
+     * Extracts the submit control from a native submit event.
+     *
+     * @param {Event} event
+     * @returns {SubmitControl | null}
+     */
+    function getSubmitterFromSubmitEvent(event) {
+        if (typeof SubmitEvent === 'undefined' || !(event instanceof SubmitEvent)) {
+            return null;
+        }
+
+        const submitter = event.submitter;
+        if (submitter instanceof HTMLButtonElement || submitter instanceof HTMLInputElement) {
+            return submitter;
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolves the submitter that triggered an HTMX request event.
+     *
+     * @param {Event | null | undefined} event
+     * @returns {SubmitControl | null}
+     */
+    function resolveSubmitterFromTriggeringEvent(event) {
+        if (!(event instanceof Event)) {
+            return null;
+        }
+
+        if (typeof SubmitEvent !== 'undefined' && event instanceof SubmitEvent) {
+            return getSubmitterFromSubmitEvent(event);
+        }
+
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return null;
+        }
+
+        const submitter = target.closest(submitControlSelector);
+        if (submitter instanceof HTMLButtonElement || submitter instanceof HTMLInputElement) {
+            return submitter;
+        }
+
+        return null;
+    }
+
+    /**
+     * Disables all submit controls in a form and schedules spinner feedback.
+     *
+     * @param {HTMLFormElement} form
+     * @param {HTMLButtonElement | HTMLInputElement | null} preferredSpinnerTarget
+     * @returns {void}
+     */
+    function disableFormSubmitControls(form, preferredSpinnerTarget) {
+        if (!(form instanceof HTMLFormElement)) {
+            return;
+        }
+
+        let spinnerTarget = preferredSpinnerTarget instanceof HTMLButtonElement
+            ? preferredSpinnerTarget
+            : null;
+
+        form.querySelectorAll(submitControlSelector).forEach((control) => {
+            if (!(control instanceof HTMLButtonElement || control instanceof HTMLInputElement)) {
+                return;
+            }
+
+            if (markControlAutoDisabled(control) && !spinnerTarget && control instanceof HTMLButtonElement) {
+                spinnerTarget = control;
+            }
+        });
+
+        if (spinnerTarget) {
+            scheduleAutoDisableSpinner(spinnerTarget);
+        }
+    }
+
+    /**
+     * Applies auto-disable rules for HTMX mutation triggers.
+     *
+     * @param {Element | null | undefined} elt
+     * @param {Event | null | undefined} triggeringEvent
+     * @returns {void}
+     */
+    function disableHtmxRequestTrigger(elt, triggeringEvent) {
+        if (!(elt instanceof Element)) {
+            return;
+        }
+
+        if (elt instanceof HTMLFormElement) {
+            if (!shouldHandleFormSubmit(elt)) {
+                return;
+            }
+
+            const submitter = resolveSubmitterFromTriggeringEvent(triggeringEvent);
+            disableFormSubmitControls(elt, submitter);
+
+            return;
+        }
+
+        if (!(elt instanceof HTMLButtonElement || elt instanceof HTMLInputElement)) {
+            return;
+        }
+
+        if (!isMutationHtmxElement(elt)) {
+            return;
+        }
+
+        if (markControlAutoDisabled(elt)) {
+            scheduleAutoDisableSpinner(elt);
+        }
+    }
+
+    /**
+     * Renders and appends the custom HTMX confirmation modal.
+     *
+     * @param {string} question
+     * @param {{title: string, yes: string, no: string}} labels
+     * @returns {void}
+     */
     function renderConfirmModal(question, labels) {
         const container = document.getElementById('modal-container') || document.body;
         const modalHTML = `
@@ -818,6 +1498,11 @@
         container.insertAdjacentHTML('beforeend', modalHTML);
     }
 
+    /**
+     * Closes the custom confirmation modal if present.
+     *
+     * @returns {void}
+     */
     function closeConfirmModal() {
         const modal = document.getElementById('confirm-modal');
         if (modal) {
@@ -825,6 +1510,13 @@
         }
     }
 
+    /**
+     * Dispatches declarative UI actions triggered through `data-action`.
+     *
+     * @param {Element} trigger
+     * @param {Event} event
+     * @returns {boolean}
+     */
     function handleAction(trigger, event) {
         const action = trigger.getAttribute('data-action');
         if (!action) {
@@ -913,16 +1605,22 @@
         }
     }
 
+    // Global event wiring.
     document.addEventListener('htmx:confirm', (evt) => {
         const target = evt.target;
         if (!target || !target.hasAttribute('hx-confirm')) {
             return;
         }
 
-        evt.preventDefault();
-        pendingConfirmRequest = () => evt.detail.issueRequest(true);
+        const detail = getHtmxConfirmDetail(evt);
+        if (!detail) {
+            return;
+        }
 
-        renderConfirmModal(evt.detail.question, {
+        evt.preventDefault();
+        pendingConfirmRequest = () => detail.issueRequest(true);
+
+        renderConfirmModal(detail.question, {
             title: document.documentElement.getAttribute('data-confirm-title') || 'Confirmation',
             yes: document.documentElement.getAttribute('data-confirm-yes') || 'Yes',
             no: document.documentElement.getAttribute('data-confirm-no') || 'Cancel',
@@ -930,13 +1628,22 @@
     });
 
     document.addEventListener('htmx:beforeRequest', (evt) => {
-        const elt = evt.detail && evt.detail.elt;
+        const {elt, triggeringEvent} = getHtmxRequestDetail(evt);
         if (elt && elt.id === 'recovery-modal-close') {
             const modal = document.getElementById('recovery-modal');
             if (modal) {
                 modal.remove();
             }
         }
+
+        disableHtmxRequestTrigger(elt, triggeringEvent);
+    });
+
+    ['htmx:afterRequest', 'htmx:sendError', 'htmx:timeout'].forEach((eventName) => {
+        document.addEventListener(eventName, (evt) => {
+            const {elt} = getHtmxRequestDetail(evt);
+            restoreAutoDisabledControls(elt);
+        });
     });
 
     document.addEventListener('htmx:afterSwap', () => {
@@ -952,6 +1659,16 @@
         initSAMLPostBinding();
         initDevHtmxLogging();
     });
+
+    document.addEventListener('submit', (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !shouldHandleFormSubmit(form)) {
+            return;
+        }
+
+        const submitter = getSubmitterFromSubmitEvent(event);
+        disableFormSubmitControls(form, submitter);
+    }, true);
 
     document.addEventListener('click', (event) => {
         const target = event.target;
