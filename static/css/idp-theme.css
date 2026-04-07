@@ -149,6 +149,42 @@ body {
     color: var(--idp-primary-hover);
 }
 
+.idp-forgot-password-link {
+    text-decoration: none;
+}
+
+.idp-forgot-password-link:hover,
+.idp-forgot-password-link:focus-visible {
+    text-decoration: none;
+}
+
+.idp-footer-content {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem 1rem;
+    width: 100%;
+}
+
+.idp-footer-text {
+    margin: 0;
+    color: var(--idp-text-muted);
+    white-space: nowrap;
+}
+
+.idp-footer-link {
+    color: var(--idp-text-muted);
+    white-space: nowrap;
+}
+
+.idp-footer-link:hover,
+.idp-footer-link:focus-visible {
+    color: var(--idp-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
 :root[data-theme='dark'] .menu li > a,
 :root[data-theme='dark'] .menu li > span {
     color: var(--idp-text);
@@ -283,6 +319,15 @@ body {
 @media (max-width: 640px) {
     .idp-login-logo {
         width: 175px;
+    }
+
+    .idp-footer-content {
+        flex-wrap: wrap;
+    }
+
+    .idp-footer-text,
+    .idp-footer-link {
+        white-space: normal;
     }
 
     .navbar {

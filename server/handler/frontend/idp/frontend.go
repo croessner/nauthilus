@@ -340,20 +340,9 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 	return data
 }
 
-func (h *FrontendHandler) setLoginLegalAndRememberData(ctx *gin.Context, data gin.H, oidcCID, samlEntityID string) {
+func (h *FrontendHandler) setLoginRememberData(ctx *gin.Context, data gin.H, oidcCID, samlEntityID string) {
 	data["ShowRememberMe"] = h.shouldShowRememberMe(oidcCID, samlEntityID)
 	data["RememberMeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Remember me")
-
-	idpCfg := h.deps.Cfg.GetIdP()
-	if idpCfg != nil {
-		data["TermsOfServiceURL"] = idpCfg.TermsOfServiceURL
-		data["PrivacyPolicyURL"] = idpCfg.PrivacyPolicyURL
-		data["PasswordForgottenURL"] = idpCfg.PasswordForgottenURL
-	}
-
-	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Legal notice")
-	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy")
-	data["PasswordForgottenLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Forgot password?")
 }
 
 // BasePageData returns the common data for all IdP frontend pages.
@@ -412,8 +401,7 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 	}
 
 	idpClientName := resolveIdPClientName(cfg, flowType, oidcClientID, samlEntityID)
-
-	return gin.H{
+	data := gin.H{
 		"LanguageTag":         lang,
 		"LanguageCurrentName": currentName,
 		"LanguagePassive":     frontend.CreateLanguagePassive(ctx, path, languageTags, currentName),
@@ -425,6 +413,25 @@ func BasePageData(ctx *gin.Context, cfg config.File, langManager corelang.Manage
 		"Logout":              frontend.GetLocalized(ctx, cfg, nil, "Logout"),
 		"IdPClientName":       idpClientName,
 	}
+
+	setLegalLinksData(ctx, cfg, data)
+
+	return data
+}
+
+func setLegalLinksData(ctx *gin.Context, cfg config.File, data gin.H) {
+	if cfg != nil {
+		idpCfg := cfg.GetIdP()
+		if idpCfg != nil {
+			data["TermsOfServiceURL"] = idpCfg.TermsOfServiceURL
+			data["PrivacyPolicyURL"] = idpCfg.PrivacyPolicyURL
+			data["PasswordForgottenURL"] = idpCfg.PasswordForgottenURL
+		}
+	}
+
+	data["LegalNoticeLabel"] = frontend.GetLocalized(ctx, cfg, nil, "Legal notice")
+	data["PrivacyPolicyLabel"] = frontend.GetLocalized(ctx, cfg, nil, "Privacy policy")
+	data["PasswordForgottenLabel"] = frontend.GetLocalized(ctx, cfg, nil, "Forgot password?")
 }
 
 func resolveIdPClientName(cfg config.File, flowType string, oidcClientID string, samlEntityID string) string {
@@ -547,7 +554,7 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	data["HaveError"] = haveError
 	data["ErrorMessage"] = errorMessage
 
-	h.setLoginLegalAndRememberData(ctx, data, oidcCID, samlEntityID)
+	h.setLoginRememberData(ctx, data, oidcCID, samlEntityID)
 
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 }
@@ -778,7 +785,7 @@ func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *m
 	data["HaveError"] = true
 	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-	h.setLoginLegalAndRememberData(ctx, data, sess.oidcCID, sess.samlEntityID)
+	h.setLoginRememberData(ctx, data, sess.oidcCID, sess.samlEntityID)
 
 	// Clean up cookie so they start over.
 	CleanupMFAState(sess.mgr)
@@ -926,7 +933,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["HaveError"] = true
 		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
 
-		h.setLoginLegalAndRememberData(ctx, data, oidcCID, samlEntityID)
+		h.setLoginRememberData(ctx, data, oidcCID, samlEntityID)
 
 		ctx.HTML(http.StatusOK, "idp_login.html", data)
 
