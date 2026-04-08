@@ -51,7 +51,13 @@ local CLICKHOUSE_BATCH_SIZE = tonumber(nauthilus_util.getenv("CLICKHOUSE_BATCH_S
 local CLICKHOUSE_CACHE_KEY = nauthilus_util.getenv("CLICKHOUSE_CACHE_KEY", "clickhouse:batch:logins")
 
 function nauthilus_call_action(request)
-    if request.no_auth then
+    local is_oidc_token_post_action = request.no_auth
+        and request.protocol == "oidc"
+        and request.service == "idp"
+        and request.grant_type ~= nil
+        and tostring(request.grant_type) ~= ""
+
+    if request.no_auth and not is_oidc_token_post_action then
         return nauthilus_builtin.ACTION_RESULT_OK
     end
 

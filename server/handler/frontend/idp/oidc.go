@@ -546,6 +546,17 @@ type tokenResponse struct {
 	expiresIn    time.Duration
 }
 
+type oidcTokenPostActionSubject struct {
+	Username     string
+	UniqueUserID string
+	DisplayName  string
+	MFACompleted bool
+	MFAMethod    string
+	UserFound    bool
+}
+
+const oidcTokenPostActionSubjectKey = "oidc_token_post_action_subject"
+
 // oidcTokenAuthMethod resolves the effective token endpoint client authentication method.
 func oidcTokenAuthMethod(ctx *gin.Context) string {
 	if ctx == nil || ctx.Request == nil {
@@ -616,6 +627,60 @@ func oidcTokenDataContext(ctx *gin.Context) *lualib.Context {
 	return contextData
 }
 
+func newOIDCTokenPostActionSubjectFromSession(session *idp.OIDCSession) *oidcTokenPostActionSubject {
+	if session == nil {
+		return nil
+	}
+
+	username := strings.TrimSpace(session.Username)
+	if username == "" {
+		username = strings.TrimSpace(session.UserID)
+	}
+
+	subject := &oidcTokenPostActionSubject{
+		Username:     username,
+		UniqueUserID: strings.TrimSpace(session.UserID),
+		DisplayName:  strings.TrimSpace(session.DisplayName),
+		MFACompleted: session.MFACompleted,
+		MFAMethod:    strings.TrimSpace(session.MFAMethod),
+	}
+
+	subject.UserFound = subject.Username != "" || subject.UniqueUserID != "" || subject.DisplayName != ""
+
+	return subject
+}
+
+func setOIDCTokenPostActionSubject(ctx *gin.Context, session *idp.OIDCSession) {
+	if ctx == nil {
+		return
+	}
+
+	subject := newOIDCTokenPostActionSubjectFromSession(session)
+	if subject == nil {
+		return
+	}
+
+	ctx.Set(oidcTokenPostActionSubjectKey, subject)
+}
+
+func oidcTokenPostActionSubjectFromContext(ctx *gin.Context) (*oidcTokenPostActionSubject, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+
+	value, ok := ctx.Get(oidcTokenPostActionSubjectKey)
+	if !ok {
+		return nil, false
+	}
+
+	subject, ok := value.(*oidcTokenPostActionSubject)
+	if !ok || subject == nil {
+		return nil, false
+	}
+
+	return subject, true
+}
+
 func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	ctx *gin.Context,
 	auth *core.AuthState,
@@ -656,6 +721,15 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	request.FilterStageExpected = false
 	request.Latency = float64(latency.Milliseconds())
 	request.HTTPStatus = httpStatus
+
+	if subject, ok := oidcTokenPostActionSubjectFromContext(ctx); ok {
+		request.Username = subject.Username
+		request.UniqueUserID = subject.UniqueUserID
+		request.DisplayName = subject.DisplayName
+		request.UserFound = subject.UserFound
+		request.MFACompleted = subject.MFACompleted
+		request.MFAMethod = subject.MFAMethod
+	}
 
 	if mfaCompleted, ok := ctx.Get(definitions.CtxMFACompletedKey); ok {
 		if value, ok := mfaCompleted.(bool); ok {

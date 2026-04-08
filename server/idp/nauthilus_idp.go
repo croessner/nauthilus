@@ -297,7 +297,7 @@ func (n *NauthilusIdP) IssueClientCredentialsToken(ctx context.Context, clientID
 }
 
 // ExchangeRefreshToken exchanges a refresh token for a new set of tokens.
-func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken string, clientID string) (string, string, string, time.Duration, error) {
+func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken string, clientID string) (*OIDCSession, string, string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.exchange_refresh_token",
 		attribute.String("client_id", clientID),
 	)
@@ -305,11 +305,11 @@ func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 
 	session, err := n.storage.GetRefreshToken(ctx, refreshToken)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("invalid refresh token")
+		return nil, "", "", "", 0, fmt.Errorf("invalid refresh token")
 	}
 
 	if session.ClientID != clientID {
-		return "", "", "", 0, fmt.Errorf("client mismatch")
+		return nil, "", "", "", 0, fmt.Errorf("client mismatch")
 	}
 
 	// Rotation: invalidate old access token and delete old refresh token
@@ -321,7 +321,12 @@ func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 	// Clear the old access token reference before issuing new tokens.
 	session.AccessToken = ""
 
-	return n.IssueTokens(ctx, session)
+	idToken, accessToken, newRefreshToken, expiresIn, issueErr := n.IssueTokens(ctx, session)
+	if issueErr != nil {
+		return nil, "", "", "", 0, issueErr
+	}
+
+	return session, idToken, accessToken, newRefreshToken, expiresIn, nil
 }
 
 // invalidateOldAccessToken removes the previous access token that was linked
