@@ -12,6 +12,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	domainidp "github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/secret"
@@ -199,6 +200,55 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 		assert.True(t, act.MFACompleted)
 		assert.False(t, act.FeatureStageExpected)
 		assert.False(t, act.FilterStageExpected)
+		act.FinishedChan <- action.Done{}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected post action to be queued")
+	}
+}
+
+func TestRunOIDCTokenPostActionCopiesOIDCSessionSubject(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	requestChan := make(chan *action.Action, 1)
+	originalRequestChan := action.RequestChan
+	action.RequestChan = requestChan
+	t.Cleanup(func() {
+		action.RequestChan = originalRequestChan
+	})
+
+	handler := newOIDCTokenPostActionHandler()
+	ctx := newCanceledTokenContext(t)
+
+	setOIDCTokenPostActionSubject(ctx, &domainidp.OIDCSession{
+		UserID:       "user-123",
+		Username:     "alice",
+		DisplayName:  "Alice Example",
+		MFACompleted: true,
+		MFAMethod:    "webauthn",
+	})
+
+	handler.runOIDCTokenPostAction(
+		ctx,
+		"refresh_token",
+		"test-client",
+		"client_secret_post",
+		http.StatusOK,
+		"success",
+		5*time.Millisecond,
+	)
+
+	select {
+	case act := <-requestChan:
+		if act == nil || act.CommonRequest == nil {
+			t.Fatal("expected queued action with CommonRequest")
+		}
+
+		assert.Equal(t, "alice", act.Username)
+		assert.Equal(t, "user-123", act.UniqueUserID)
+		assert.Equal(t, "Alice Example", act.DisplayName)
+		assert.Equal(t, "webauthn", act.MFAMethod)
+		assert.True(t, act.MFACompleted)
+		assert.True(t, act.UserFound)
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")

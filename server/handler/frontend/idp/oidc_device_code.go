@@ -284,6 +284,8 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		)
 	}
 
+	setOIDCTokenPostActionSubject(ctx, session)
+
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {
 		util.DebugModuleWithCfg(

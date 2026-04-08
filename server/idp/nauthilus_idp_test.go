@@ -219,8 +219,9 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
 		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
-		idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
 		assert.NoError(t, err)
+		assert.Equal(t, session.UserID, exchangedSession.UserID)
 		assert.NotEmpty(t, idToken)
 		assert.NotEmpty(t, accessToken)
 		assert.Equal(t, "na_rt_fixed-token", newRefreshToken)
@@ -255,8 +256,9 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
 		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
 
-		idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
 		assert.NoError(t, err)
+		assert.Equal(t, session.UserID, exchangedSession.UserID)
 		assert.NotEmpty(t, idToken)
 		assert.NotEmpty(t, accessToken)
 		assert.Equal(t, "na_rt_fixed-token", newRefreshToken)
