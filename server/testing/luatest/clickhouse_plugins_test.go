@@ -19,6 +19,15 @@ func TestClickhouseActionIncludesIdPFieldsInInsertedRow(t *testing.T) {
 	assertStringField(t, row, "mfa_method", "webauthn")
 }
 
+func TestClickhouseActionIncludesOIDCTokenPostActionRows(t *testing.T) {
+	runner := runClickhouseFixture(t, "action_wrapper.lua", "action_success_oidc_token.json", "action")
+	request := firstCapturedHTTPRequest(t, runner)
+	row := decodeJSONEachRowLine(t, request.Body)
+
+	assertStringField(t, row, "grant_type", "client_credentials")
+	assertStringField(t, row, "mfa_method", "webauthn")
+}
+
 func TestClickhouseActionKeepsRowInCacheWhenBatchNotReached(t *testing.T) {
 	runner := runClickhouseFixture(t, "action_wrapper.lua", "action_cache_only.json", "action")
 	captured := capturedHTTPRequests(t, runner)
