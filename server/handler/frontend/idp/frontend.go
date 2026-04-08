@@ -1444,31 +1444,13 @@ func (h *FrontendHandler) getLoginMFABackURLFromCookie(ctx *gin.Context) string 
 // All flow state is read from the encrypted cookie - no URL parameters are used.
 func (h *FrontendHandler) finalizeMFALogin(ctx *gin.Context, user *backend.User) {
 	mgr := cookie.GetManager(ctx)
-	protocol := ""
-	rememberMeTTL := 0
 
 	if mgr != nil {
-		protocol = mgr.GetString(definitions.SessionKeyProtocol, "")
-		rememberMeTTL = mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
-
-		// Remove temporary MFA flow state first, then write the final login session
-		// keys so they are not wiped by CleanupMFAState.
-		CleanupMFAState(mgr)
-
-		mgr.Set(definitions.SessionKeyAccount, user.Name)
-		mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-		mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
-		mgr.Set(definitions.SessionKeySubject, user.Id)
-		mgr.Set(definitions.SessionKeyProtocol, protocol)
-		mgr.Set(definitions.SessionKeyMFACompleted, true)
-
-		if rememberMeTTL > 0 {
-			mgr.SetMaxAge(rememberMeTTL)
-			mgr.Delete(definitions.SessionKeyRememberTTL)
-		}
-
+		core.StoreCompletedIDPMFASession(mgr, user, mgr.GetString(definitions.SessionKeyMFAMethod, ""))
 		mgr.Debug(ctx, h.deps.Logger, "MFA login finalized - session data stored")
 	}
+
+	core.QueueCompletedIDPMFAPostAction(ctx, h.deps.Auth(), user)
 
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
