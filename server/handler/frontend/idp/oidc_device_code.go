@@ -207,6 +207,8 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 
 // issueDeviceCodeTokens generates and returns tokens after successful device authorization.
 func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) {
+	setOIDCTokenPostActionMFAOverrides(ctx, request.MFACompleted, request.MFAMethod)
+
 	// Build an OIDC session from the authorized device code request
 	session := &idp.OIDCSession{
 		ClientID: request.ClientID,
@@ -906,6 +908,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 
 	request.Status = idp.DeviceCodeStatusAuthorized
 	request.UserID = oidcFlowContext.UniqueUserID()
+	applyDeviceCodeMFASessionState(mgr, request)
 
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
@@ -1056,4 +1059,13 @@ func deviceVerifyPathFromContext(ctx *gin.Context) string {
 	}
 
 	return "/oidc/device/verify"
+}
+
+func applyDeviceCodeMFASessionState(mgr cookie.Manager, request *idp.DeviceCodeRequest) {
+	if mgr == nil || request == nil {
+		return
+	}
+
+	request.MFACompleted = mgr.GetBool(definitions.SessionKeyMFACompleted, false)
+	request.MFAMethod = mgr.GetString(definitions.SessionKeyMFAMethod, "")
 }

@@ -2457,13 +2457,40 @@ func (a *AuthState) GetAccountField() string {
 }
 
 // PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
-func (a *AuthState) PostLuaAction(_ *gin.Context, passDBResult *PassDBResult) {
+func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
+	featureRejected := false
+	featureStageExpected := true
+	filterStageExpected := true
+
+	if ctx != nil {
+		featureRejected = ctx.GetBool(definitions.CtxFeatureRejectedKey)
+	}
+
+	if featureRejected {
+		filterStageExpected = false
+
+		if a.Runtime.FeatureName == definitions.FeatureBruteForce {
+			featureStageExpected = false
+		}
+	}
+
 	if disp := getPostAction(); disp != nil {
 		disp.Run(PostActionInput{
-			View:   a.View(),
-			Result: passDBResult,
+			View:                 a.View(),
+			Result:               passDBResult,
+			FeatureRejected:      featureRejected,
+			FeatureStageExpected: featureStageExpected,
+			FilterStageExpected:  filterStageExpected,
 		})
 	}
+}
+
+func (a *AuthState) markFeatureRejected(ctx *gin.Context) {
+	if ctx == nil {
+		return
+	}
+
+	ctx.Set(definitions.CtxFeatureRejectedKey, true)
 }
 
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
@@ -3975,6 +4002,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce(ctx) {
+			a.markFeatureRejected(ctx)
 			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()

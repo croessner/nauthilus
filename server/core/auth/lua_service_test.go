@@ -117,15 +117,13 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	}
 }
 
-func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
+func newDefaultPostActionTestConfig(t *testing.T) *config.FileSettings {
 	bfFeature := &config.Feature{}
 	if err := bfFeature.Set(definitions.FeatureBruteForce); err != nil {
 		t.Fatalf("Set feature failed: %v", err)
 	}
 
-	cfg := &config.FileSettings{
+	return &config.FileSettings{
 		Server: &config.ServerSection{
 			Features: []*config.Feature{bfFeature},
 		},
@@ -135,7 +133,10 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 			},
 		},
 	}
+}
 
+func prepareDefaultPostActionTest(t *testing.T) *config.FileSettings {
+	cfg := newDefaultPostActionTestConfig(t)
 	envCfg := config.NewTestEnvironmentConfig()
 	config.SetTestEnvironmentConfig(envCfg)
 	config.SetTestFile(cfg)
@@ -144,6 +145,31 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 	_ = action.NewWorker(cfg, log.GetLogger(), rediscli.GetClient(), envCfg)
 
+	return cfg
+}
+
+func newDefaultPostActionAuth(ctx *gin.Context, cfg *config.FileSettings, guid string) *core.AuthState {
+	auth := core.NewAuthStateFromContextWithDeps(ctx, core.AuthDeps{
+		Cfg:    cfg,
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}).(*core.AuthState)
+
+	auth.Runtime.GUID = guid
+	auth.Runtime.Context = &lualib.Context{}
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Request.ClientIP = "192.0.2.10"
+	auth.Request.Service = definitions.ServNginx
+	auth.Request.Username = "user@example.com"
+
+	return auth
+}
+
+func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := prepareDefaultPostActionTest(t)
+
 	reqCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -151,18 +177,7 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 	ctx, _ := gin.CreateTestContext(writer)
 	ctx.Request = httptest.NewRequest("POST", "/auth", nil).WithContext(reqCtx)
 
-	auth := core.NewAuthStateFromContextWithDeps(ctx, core.AuthDeps{
-		Cfg:    cfg,
-		Logger: log.GetLogger(),
-		Redis:  rediscli.GetClient(),
-	}).(*core.AuthState)
-
-	auth.Runtime.GUID = "guid-canceled"
-	auth.Runtime.Context = &lualib.Context{}
-	auth.Request.Protocol = config.NewProtocol("imap")
-	auth.Request.ClientIP = "192.0.2.10"
-	auth.Request.Service = definitions.ServNginx
-	auth.Request.Username = "user@example.com"
+	auth := newDefaultPostActionAuth(ctx, cfg, "guid-canceled")
 
 	DefaultPostAction{}.Run(core.PostActionInput{
 		View: auth.View(),
@@ -189,6 +204,53 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 		act.FinishedChan <- action.Done{}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected detached post action to be scheduled")
+	}
+}
+
+func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := prepareDefaultPostActionTest(t)
+
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest("POST", "/auth", nil)
+	ctx.Set(definitions.CtxFeatureRejectedKey, true)
+
+	auth := newDefaultPostActionAuth(ctx, cfg, "guid-feature-rejected")
+
+	DefaultPostAction{}.Run(core.PostActionInput{
+		View: auth.View(),
+		Result: &core.PassDBResult{
+			Authenticated: false,
+			UserFound:     false,
+		},
+		FeatureRejected:      ctx.GetBool(definitions.CtxFeatureRejectedKey),
+		FeatureStageExpected: false,
+		FilterStageExpected:  false,
+	})
+
+	select {
+	case act := <-action.RequestChan:
+		if act == nil || act.CommonRequest == nil {
+			t.Fatal("expected post action request")
+		}
+
+		if !act.FeatureRejected {
+			t.Fatal("expected feature_rejected to be forwarded to the Lua request")
+		}
+
+		if act.FeatureStageExpected {
+			t.Fatal("expected feature_stage_expected to be forwarded to the Lua request")
+		}
+
+		if act.FilterStageExpected {
+			t.Fatal("expected filter_stage_expected to be forwarded to the Lua request")
+		}
+
+		act.FinishedChan <- action.Done{}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected post action to be scheduled")
 	}
 }
 

@@ -5,7 +5,8 @@
     "protocol": "imap",
     "session": "context-chain-session",
     "no_auth": false,
-    "debug": false,
+    "authenticated": false,
+    "status_message": "Feature rejected the request",
     "expected_calls": [
       {
         "method": "context_set",
@@ -64,11 +65,11 @@
         "arg_contains": "test_marker_feature"
       },
       {
-        "method": "context_set",
+        "method": "context_get",
         "arg_contains": "test_stage_filter"
       },
       {
-        "method": "context_set",
+        "method": "context_get",
         "arg_contains": "test_marker_filter"
       },
       {
@@ -90,7 +91,7 @@
     ]
   },
   "expected_output": {
-    "filter_result": 0,
+    "action_result": true,
     "error_expected": false
   }
 }

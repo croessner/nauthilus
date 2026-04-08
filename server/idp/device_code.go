@@ -50,6 +50,8 @@ type DeviceCodeRequest struct {
 	UserCode           string           `json:"user_code"`
 	Status             DeviceCodeStatus `json:"status"`
 	UserID             string           `json:"user_id,omitempty"`
+	MFACompleted       bool             `json:"mfa_completed,omitempty"`
+	MFAMethod          string           `json:"mfa_method,omitempty"`
 	ExpiresAt          time.Time        `json:"expires_at"`
 	Interval           int              `json:"interval"`
 	LastPoll           time.Time        `json:"last_poll,omitzero"`

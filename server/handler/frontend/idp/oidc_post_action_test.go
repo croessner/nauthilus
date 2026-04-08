@@ -16,6 +16,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 )
 
 type mockOIDCPostActionCfg struct {
@@ -118,4 +119,88 @@ func TestRunOIDCTokenPostActionQueuesActionWhenRequestContextCanceled(t *testing
 	)
 
 	waitForQueuedAction(t, requestChan)
+}
+
+func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	requestChan := make(chan *action.Action, 1)
+	originalRequestChan := action.RequestChan
+	action.RequestChan = requestChan
+	t.Cleanup(func() {
+		action.RequestChan = originalRequestChan
+	})
+
+	handler := newOIDCTokenPostActionHandler()
+	ctx := newCanceledTokenContext(t)
+	ctx.Set(definitions.CtxSecureDataKey, &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyMFAMethod:    "webauthn",
+		definitions.SessionKeyMFACompleted: true,
+	}})
+
+	handler.runOIDCTokenPostAction(
+		ctx,
+		"authorization_code",
+		"test-client",
+		"client_secret_post",
+		http.StatusOK,
+		"success",
+		5*time.Millisecond,
+	)
+
+	select {
+	case act := <-requestChan:
+		if act == nil || act.CommonRequest == nil {
+			t.Fatal("expected queued action with CommonRequest")
+		}
+
+		assert.Equal(t, "webauthn", act.MFAMethod)
+		assert.True(t, act.MFACompleted)
+		assert.False(t, act.FeatureStageExpected)
+		assert.False(t, act.FilterStageExpected)
+		act.FinishedChan <- action.Done{}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected post action to be queued")
+	}
+}
+
+func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	requestChan := make(chan *action.Action, 1)
+	originalRequestChan := action.RequestChan
+	action.RequestChan = requestChan
+	t.Cleanup(func() {
+		action.RequestChan = originalRequestChan
+	})
+
+	handler := newOIDCTokenPostActionHandler()
+	ctx := newCanceledTokenContext(t)
+	ctx.Set(definitions.CtxMFACompletedKey, true)
+	ctx.Set(definitions.CtxMFAMethodKey, "totp")
+
+	handler.runOIDCTokenPostAction(
+		ctx,
+		"device_code",
+		"test-client",
+		"client_secret_post",
+		http.StatusOK,
+		"success",
+		5*time.Millisecond,
+	)
+
+	select {
+	case act := <-requestChan:
+		if act == nil || act.CommonRequest == nil {
+			t.Fatal("expected queued action with CommonRequest")
+		}
+
+		assert.Equal(t, "totp", act.MFAMethod)
+		assert.True(t, act.MFACompleted)
+		assert.False(t, act.FeatureStageExpected)
+		assert.False(t, act.FilterStageExpected)
+		act.FinishedChan <- action.Done{}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected post action to be queued")
+	}
 }

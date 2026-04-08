@@ -860,27 +860,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 				return
 			}
 
-			// Important: store user info for next steps
-			mgr.Set(definitions.SessionKeyAccount, user.Name)
-			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-			mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
-			mgr.Set(definitions.SessionKeySubject, user.Id)
-			mgr.Set(definitions.SessionKeyMFACompleted, true)
-			mgr.Set(definitions.SessionKeyMFAMethod, "webauthn")
-
-			proto := mgr.GetString(definitions.SessionKeyProtocol, definitions.ProtoIDP)
-			mgr.Set(definitions.SessionKeyProtocol, proto)
-
-			ttlVal := mgr.GetInt(definitions.SessionKeyRememberTTL, 0)
-
-			if ttlVal > 0 {
-				mgr.SetMaxAge(ttlVal)
-				mgr.Delete(definitions.SessionKeyRememberTTL)
-			}
-
-			mgr.Delete(definitions.SessionKeyRegistration)
-			mgr.Delete(definitions.SessionKeyUsername)
-			mgr.Delete(definitions.SessionKeyAuthResult)
+			StoreCompletedIDPMFASession(mgr, user, "webauthn")
 
 			if err = mgr.Save(ctx); err != nil {
 				ctx.JSON(http.StatusInternalServerError, err.Error())
@@ -888,6 +868,8 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 				return
 			}
 		}
+
+		QueueCompletedIDPMFAPostAction(ctx, authState.deps, user)
 
 		ctx.JSON(http.StatusOK, "Login success")
 	}

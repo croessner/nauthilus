@@ -18,6 +18,45 @@ local nauthilus_util = require("nauthilus_util")
 
 local N = "test_context_chain"
 
+local function context_snapshot()
+    return {
+        test_stage_feature = nauthilus_context.context_get("test_stage_feature"),
+        test_marker_feature = nauthilus_context.context_get("test_marker_feature"),
+        test_stage_filter = nauthilus_context.context_get("test_stage_filter"),
+        test_marker_filter = nauthilus_context.context_get("test_marker_filter"),
+    }
+end
+
+local function log_info(request, message, extra)
+    local fields = {
+        caller = N .. "/action",
+        message = message,
+        session = tostring(request.session or ""),
+        username = tostring(request.username or ""),
+        client_ip = tostring(request.client_ip or ""),
+        authenticated = request.authenticated == true,
+        no_auth = request.no_auth == true,
+        feature = tostring(request.feature or ""),
+        feature_rejected = request.feature_rejected == true,
+        feature_stage_expected = request.feature_stage_expected ~= false,
+        filter_stage_expected = request.filter_stage_expected ~= false,
+        status_message = tostring(request.status_message or ""),
+    }
+
+    local snapshot = context_snapshot()
+    for key, value in pairs(snapshot) do
+        fields[key] = value
+    end
+
+    if extra then
+        for key, value in pairs(extra) do
+            fields[key] = value
+        end
+    end
+
+    nauthilus_util.log_info(request, fields)
+end
+
 -- Skip localhost requests: the feature stage is not executed for local/empty
 -- IPs (see isLocalOrEmptyIP in features.go), so the context keys it would set
 -- are absent. Return early with OK to avoid nil-context assertions.
@@ -40,9 +79,70 @@ local function assert_context(key, expected, stage_label)
     end
 end
 
+local function should_skip_feature_assertions(request, marker)
+    local feature_stage = nauthilus_context.context_get("test_stage_feature")
+    local feature_marker = nauthilus_context.context_get("test_marker_feature")
+
+    if request.feature_stage_expected == false then
+        log_info(request, "Skipping feature context assertions because this request path does not include the Lua feature stage", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
+    if feature_stage == nil and feature_marker == nil and request.no_auth == true then
+        log_info(request, "Skipping feature context assertions because no-auth requests may bypass the feature stage", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
+    if feature_stage == nil and feature_marker == nil and request.feature_rejected == true then
+        log_info(request, "Skipping feature context assertions because the request was rejected before the Lua feature stage ran", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
+    return false
+end
+
+local function should_skip_filter_assertions(request, marker)
+    local filter_stage = nauthilus_context.context_get("test_stage_filter")
+    local filter_marker = nauthilus_context.context_get("test_marker_filter")
+
+    if request.filter_stage_expected == false and filter_stage == nil and filter_marker == nil then
+        log_info(request, "Skipping filter context assertions because this request path does not include the Lua filter stage", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
+    if request.feature_rejected ~= true then
+        return false
+    end
+
+    if filter_stage == nil and filter_marker == nil then
+        log_info(request, "Skipping filter context assertions because a feature rejected the request before filters ran", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
+    return false
+end
+
 -- Action stage: verify that both feature and filter stages wrote the expected context values.
 function nauthilus_call_action(request)
+    log_info(request, "Entering action stage")
+
     if is_localhost(request) then
+        log_info(request, "Skipping action stage for localhost request")
         return nauthilus_builtin.ACTION_RESULT_OK
     end
 
@@ -54,24 +154,28 @@ function nauthilus_call_action(request)
     end
 
     -- Verify feature stage values.
-    assert_context("test_stage_feature", "feature", label)
-    assert_context("test_marker_feature", marker, label)
+    log_info(request, "Verifying feature context before action assertions", {
+        expected_marker = marker,
+    })
+    if not should_skip_feature_assertions(request, marker) then
+        assert_context("test_stage_feature", "feature", label)
+        assert_context("test_marker_feature", marker, label)
+    end
+
+    if should_skip_filter_assertions(request, marker) then
+        return nauthilus_builtin.ACTION_RESULT_OK
+    end
 
     -- Verify filter stage values.
+    log_info(request, "Verifying filter context before action assertions", {
+        expected_marker = marker,
+    })
     assert_context("test_stage_filter", "filter", label)
     assert_context("test_marker_filter", marker, label)
 
-    if request.debug then
-        nauthilus_util.log_debug(request, {
-            caller = label,
-            message = "Full context chain verified successfully (feature -> filter -> action)",
-            test_stage_feature = nauthilus_context.context_get("test_stage_feature"),
-            test_marker_feature = nauthilus_context.context_get("test_marker_feature"),
-            test_stage_filter = nauthilus_context.context_get("test_stage_filter"),
-            test_marker_filter = nauthilus_context.context_get("test_marker_filter"),
-            session = marker,
-        })
-    end
+    log_info(request, "Full context chain verified successfully (feature -> filter -> action)", {
+        expected_marker = marker,
+    })
 
     return nauthilus_builtin.ACTION_RESULT_OK
 end

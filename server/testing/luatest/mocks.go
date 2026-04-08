@@ -1893,6 +1893,25 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 			return 0
 		}))
 
+		addLogWrapper := func(name, level string, hasErrorString bool) {
+			L.SetField(mod, name, L.NewFunction(func(L *lua.LState) int {
+				arg := level
+				if hasErrorString {
+					arg = L.OptString(3, "")
+				}
+
+				_ = mockData.RecordCall(name, arg)
+
+				return 0
+			}))
+		}
+
+		addLogWrapper("log_debug", "debug", false)
+		addLogWrapper("log_info", "info", false)
+		addLogWrapper("log_notice", "notice", false)
+		addLogWrapper("log_warn", "warn", false)
+		addLogWrapper("log_error", "error", true)
+
 		L.SetField(mod, "get_redis_key", L.NewFunction(func(L *lua.LState) int {
 			request := L.CheckAny(1)
 			key := L.CheckString(2)

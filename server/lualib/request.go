@@ -234,6 +234,15 @@ type CommonRequest struct {
 	// NoAuth is a flag indicating if the action requires no authentication.
 	NoAuth bool
 
+	// FeatureRejected indicates that a security feature terminated the request before filters ran.
+	FeatureRejected bool
+
+	// FeatureStageExpected indicates whether the current request path should have passed through the Lua feature stage.
+	FeatureStageExpected bool
+
+	// FilterStageExpected indicates whether the current request path should have passed through the Lua filter stage.
+	FilterStageExpected bool
+
 	// MFACompleted indicates whether MFA verification was successfully completed.
 	MFACompleted bool
 }
@@ -307,6 +316,9 @@ func (c *CommonRequest) Reset() {
 	c.UserFound = false
 	c.Authenticated = false
 	c.NoAuth = false
+	c.FeatureRejected = false
+	c.FeatureStageExpected = false
+	c.FilterStageExpected = false
 	c.MFACompleted = false
 }
 
@@ -341,6 +353,9 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSet(lua.LString(definitions.LuaRequestUserFound), lua.LBool(c.UserFound))
 	request.RawSet(lua.LString(definitions.LuaRequestAuthenticated), lua.LBool(c.Authenticated))
 	request.RawSet(lua.LString(definitions.LuaRequestNoAuth), lua.LBool(c.NoAuth))
+	request.RawSet(lua.LString(definitions.LuaRequestFeatureRejected), lua.LBool(c.FeatureRejected))
+	request.RawSet(lua.LString(definitions.LuaRequestFeatureStageExpected), lua.LBool(c.FeatureStageExpected))
+	request.RawSet(lua.LString(definitions.LuaRequestFilterStageExpected), lua.LBool(c.FilterStageExpected))
 
 	request.RawSet(lua.LString(definitions.LuaRequestBruteForceCounter), lua.LNumber(c.BruteForceCounter))
 

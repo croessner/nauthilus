@@ -924,6 +924,12 @@ const (
 	// CtxOIDCGrantTypeKey stores an OIDC grant_type value for request-scoped logging and Lua post-actions.
 	CtxOIDCGrantTypeKey = "oidc_grant_type"
 
+	// CtxMFACompletedKey stores a request-scoped MFA-completed override for detached post-actions.
+	CtxMFACompletedKey = "mfa_completed"
+
+	// CtxMFAMethodKey stores a request-scoped MFA-method override for detached post-actions.
+	CtxMFAMethodKey = "mfa_method"
+
 	// CtxBasicAuthValidatedKey marks that HTTP Basic authentication succeeded for this request.
 	CtxBasicAuthValidatedKey = "basic_auth_validated"
 
@@ -1799,6 +1805,15 @@ const (
 
 	// LuaRequestFeature indicates the feature type of the request.
 	LuaRequestFeature = "feature"
+
+	// LuaRequestFeatureRejected indicates that a security feature rejected the request before the filter stage.
+	LuaRequestFeatureRejected = "feature_rejected"
+
+	// LuaRequestFeatureStageExpected indicates whether the request path includes the Lua feature stage.
+	LuaRequestFeatureStageExpected = "feature_stage_expected"
+
+	// LuaRequestFilterStageExpected indicates whether the request path includes the Lua filter stage.
+	LuaRequestFilterStageExpected = "filter_stage_expected"
 
 	// LuaRequestSession indicates the session of the request.
 	LuaRequestSession = "session"

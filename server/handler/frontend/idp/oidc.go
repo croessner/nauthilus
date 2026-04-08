@@ -618,6 +618,7 @@ func oidcTokenDataContext(ctx *gin.Context) *lualib.Context {
 
 func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	ctx *gin.Context,
+	auth *core.AuthState,
 	service string,
 	grantType string,
 	clientID string,
@@ -626,24 +627,49 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	result string,
 	latency time.Duration,
 ) lualib.CommonRequest {
-	return lualib.CommonRequest{
-		Debug:         h.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-		NoAuth:        true,
-		Authenticated: result == sloRequestOutcomeSuccess,
-		UserFound:     false,
-		Service:       service,
-		Session:       ctx.GetString(definitions.CtxGUIDKey),
-		ClientIP:      ctx.ClientIP(),
-		ClientPort:    oidcTokenClientPort(ctx.Request.RemoteAddr),
-		ClientID:      clientID,
-		UserAgent:     ctx.Request.UserAgent(),
-		Protocol:      definitions.ProtoOIDC,
-		Method:        authMethod,
-		OIDCCID:       clientID,
-		GrantType:     grantType,
-		Latency:       float64(latency.Milliseconds()),
-		HTTPStatus:    httpStatus,
+	request := lualib.CommonRequest{}
+
+	if auth != nil {
+		auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
+		auth.Request.Service = service
+		auth.SetStatusCodes(service)
+		auth.SetOIDCCID(clientID)
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
+		auth.FillCommonRequest(&request)
 	}
+
+	request.Debug = h.deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	request.NoAuth = true
+	request.Authenticated = result == sloRequestOutcomeSuccess
+	request.UserFound = false
+	request.Service = service
+	request.Session = ctx.GetString(definitions.CtxGUIDKey)
+	request.ClientIP = ctx.ClientIP()
+	request.ClientPort = oidcTokenClientPort(ctx.Request.RemoteAddr)
+	request.ClientID = clientID
+	request.UserAgent = ctx.Request.UserAgent()
+	request.Protocol = definitions.ProtoOIDC
+	request.Method = authMethod
+	request.OIDCCID = clientID
+	request.GrantType = grantType
+	request.FeatureStageExpected = false
+	request.FilterStageExpected = false
+	request.Latency = float64(latency.Milliseconds())
+	request.HTTPStatus = httpStatus
+
+	if mfaCompleted, ok := ctx.Get(definitions.CtxMFACompletedKey); ok {
+		if value, ok := mfaCompleted.(bool); ok {
+			request.MFACompleted = value
+		}
+	}
+
+	if mfaMethod, ok := ctx.Get(definitions.CtxMFAMethodKey); ok {
+		if value, ok := mfaMethod.(string); ok {
+			request.MFAMethod = value
+		}
+	}
+
+	return request
 }
 
 func (h *OIDCHandler) runOIDCTokenPostAction(
@@ -681,7 +707,7 @@ func (h *OIDCHandler) runOIDCTokenPostAction(
 		HTTPRequest:   util.DetachedHTTPRequest(ctx.Request, nil),
 		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
 		StatusMessage: oidcTokenStatusMessage(result, httpStatus),
-		Request:       h.buildOIDCTokenPostActionRequest(ctx, service, grantType, clientID, authMethod, httpStatus, result, latency),
+		Request:       h.buildOIDCTokenPostActionRequest(ctx, auth, service, grantType, clientID, authMethod, httpStatus, result, latency),
 	}
 
 	go auth.RunLuaPostAction(args)
@@ -715,6 +741,18 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 	)
 
 	h.runOIDCTokenPostAction(ctx, grantType, clientID, authMethod, httpStatus, result, time.Since(startedAt))
+}
+
+func setOIDCTokenPostActionMFAOverrides(ctx *gin.Context, completed bool, method string) {
+	if ctx == nil {
+		return
+	}
+
+	ctx.Set(definitions.CtxMFACompletedKey, completed)
+
+	if method != "" {
+		ctx.Set(definitions.CtxMFAMethodKey, method)
+	}
 }
 
 // logTokenError logs a token issuance failure and responds with a server error.

@@ -1438,6 +1438,27 @@
     }
 
     /**
+     * Defers native form auto-disable until the browser has started submission.
+     *
+     * Disabling the submitter synchronously during the submit event can prevent
+     * navigation in some browsers. HTMX requests stay on the immediate path
+     * because they do not rely on the browser's native form submission.
+     *
+     * @param {HTMLFormElement} form
+     * @param {HTMLButtonElement | HTMLInputElement | null} submitter
+     * @returns {void}
+     */
+    function deferNativeFormSubmitDisable(form, submitter) {
+        window.setTimeout(() => {
+            if (!form.isConnected) {
+                return;
+            }
+
+            disableFormSubmitControls(form, submitter);
+        }, 0);
+    }
+
+    /**
      * Applies auto-disable rules for HTMX mutation triggers.
      *
      * @param {Element | null | undefined} elt
@@ -1667,7 +1688,7 @@
         }
 
         const submitter = getSubmitterFromSubmitEvent(event);
-        disableFormSubmitControls(form, submitter);
+        deferNativeFormSubmitDisable(form, submitter);
     }, true);
 
     document.addEventListener('click', (event) => {

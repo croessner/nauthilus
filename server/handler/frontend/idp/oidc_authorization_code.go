@@ -248,6 +248,8 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		Scopes:              filteredScopes,
 		RedirectURI:         redirectURI,
 		AuthTime:            time.Now(),
+		MFACompleted:        mgr.GetBool(definitions.SessionKeyMFACompleted, false),
+		MFAMethod:           mgr.GetString(definitions.SessionKeyMFAMethod, ""),
 		Nonce:               nonce,
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
@@ -352,6 +354,8 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 
 		return
 	}
+
+	setOIDCTokenPostActionMFAOverrides(ctx, session.MFACompleted, session.MFAMethod)
 
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
 	if err != nil {
