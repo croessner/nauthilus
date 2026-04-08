@@ -161,3 +161,42 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 		t.Fatal("expected post action to be queued")
 	}
 }
+
+func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	requestChan := make(chan *action.Action, 1)
+	originalRequestChan := action.RequestChan
+	action.RequestChan = requestChan
+	t.Cleanup(func() {
+		action.RequestChan = originalRequestChan
+	})
+
+	handler := newOIDCTokenPostActionHandler()
+	ctx := newCanceledTokenContext(t)
+	ctx.Set(definitions.CtxMFACompletedKey, true)
+	ctx.Set(definitions.CtxMFAMethodKey, "totp")
+
+	handler.runOIDCTokenPostAction(
+		ctx,
+		"device_code",
+		"test-client",
+		"client_secret_post",
+		http.StatusOK,
+		"success",
+		5*time.Millisecond,
+	)
+
+	select {
+	case act := <-requestChan:
+		if act == nil || act.CommonRequest == nil {
+			t.Fatal("expected queued action with CommonRequest")
+		}
+
+		assert.Equal(t, "totp", act.MFAMethod)
+		assert.True(t, act.MFACompleted)
+		act.FinishedChan <- action.Done{}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected post action to be queued")
+	}
+}

@@ -924,6 +924,12 @@ const (
 	// CtxOIDCGrantTypeKey stores an OIDC grant_type value for request-scoped logging and Lua post-actions.
 	CtxOIDCGrantTypeKey = "oidc_grant_type"
 
+	// CtxMFACompletedKey stores a request-scoped MFA-completed override for detached post-actions.
+	CtxMFACompletedKey = "mfa_completed"
+
+	// CtxMFAMethodKey stores a request-scoped MFA-method override for detached post-actions.
+	CtxMFAMethodKey = "mfa_method"
+
 	// CtxBasicAuthValidatedKey marks that HTTP Basic authentication succeeded for this request.
 	CtxBasicAuthValidatedKey = "basic_auth_validated"
 

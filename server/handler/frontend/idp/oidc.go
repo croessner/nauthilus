@@ -655,6 +655,18 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	request.Latency = float64(latency.Milliseconds())
 	request.HTTPStatus = httpStatus
 
+	if mfaCompleted, ok := ctx.Get(definitions.CtxMFACompletedKey); ok {
+		if value, ok := mfaCompleted.(bool); ok {
+			request.MFACompleted = value
+		}
+	}
+
+	if mfaMethod, ok := ctx.Get(definitions.CtxMFAMethodKey); ok {
+		if value, ok := mfaMethod.(string); ok {
+			request.MFAMethod = value
+		}
+	}
+
 	return request
 }
 
@@ -727,6 +739,18 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 	)
 
 	h.runOIDCTokenPostAction(ctx, grantType, clientID, authMethod, httpStatus, result, time.Since(startedAt))
+}
+
+func setOIDCTokenPostActionMFAOverrides(ctx *gin.Context, completed bool, method string) {
+	if ctx == nil {
+		return
+	}
+
+	ctx.Set(definitions.CtxMFACompletedKey, completed)
+
+	if method != "" {
+		ctx.Set(definitions.CtxMFAMethodKey, method)
+	}
 }
 
 // logTokenError logs a token issuance failure and responds with a server error.

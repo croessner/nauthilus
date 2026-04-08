@@ -36,6 +36,8 @@ type OIDCSession struct {
 	Scopes              []string       `json:"scopes"`
 	RedirectURI         string         `json:"redirect_uri"`
 	AuthTime            time.Time      `json:"auth_time"`
+	MFACompleted        bool           `json:"mfa_completed,omitempty"`
+	MFAMethod           string         `json:"mfa_method,omitempty"`
 	Nonce               string         `json:"nonce,omitempty"`
 	CodeChallenge       string         `json:"code_challenge,omitempty"`
 	CodeChallengeMethod string         `json:"code_challenge_method,omitempty"`

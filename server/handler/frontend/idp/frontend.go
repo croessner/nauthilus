@@ -647,6 +647,7 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 	// Authorize the device code
 	request.Status = idp.DeviceCodeStatusAuthorized
 	request.UserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	applyDeviceCodeMFASessionState(mgr, request)
 
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		ctx.Redirect(http.StatusFound, "/")
