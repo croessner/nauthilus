@@ -76,6 +76,27 @@ local function assert_context(key, expected, stage_label)
     end
 end
 
+local function should_skip_filter_assertions(request, marker)
+    local feature_name = tostring(request.feature or "")
+    if feature_name == "" then
+        return false
+    end
+
+    local filter_stage = nauthilus_context.context_get("test_stage_filter")
+    local filter_marker = nauthilus_context.context_get("test_marker_filter")
+
+    if filter_stage == nil and filter_marker == nil then
+        log_info(request, "Skipping filter context assertions because the request was already decided by a feature", {
+            expected_marker = marker,
+            feature_name = feature_name,
+        })
+
+        return true
+    end
+
+    return false
+end
+
 -- Action stage: verify that both feature and filter stages wrote the expected context values.
 function nauthilus_call_action(request)
     log_info(request, "Entering action stage")
@@ -98,6 +119,10 @@ function nauthilus_call_action(request)
     })
     assert_context("test_stage_feature", "feature", label)
     assert_context("test_marker_feature", marker, label)
+
+    if should_skip_filter_assertions(request, marker) then
+        return nauthilus_builtin.ACTION_RESULT_OK
+    end
 
     -- Verify filter stage values.
     log_info(request, "Verifying filter context before action assertions", {
