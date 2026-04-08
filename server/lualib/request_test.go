@@ -246,3 +246,28 @@ func TestCommonRequestPoolIdPFields(t *testing.T) {
 
 	PutCommonRequest(cr2)
 }
+
+func TestCommonRequestSetupRequestFeatureRejected(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	cr := &CommonRequest{FeatureRejected: true}
+	request := L.NewTable()
+
+	cr.SetupRequest(L, nil, request)
+
+	val := request.RawGet(lua.LString(definitions.LuaRequestFeatureRejected))
+	if val != lua.LTrue {
+		t.Fatalf("expected feature_rejected to be true, got %v", val)
+	}
+}
+
+func TestCommonRequestResetFeatureRejected(t *testing.T) {
+	cr := &CommonRequest{FeatureRejected: true}
+
+	cr.Reset()
+
+	if cr.FeatureRejected {
+		t.Fatal("expected FeatureRejected to be false after reset")
+	}
+}

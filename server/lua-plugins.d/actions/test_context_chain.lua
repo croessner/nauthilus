@@ -37,6 +37,7 @@ local function log_info(request, message, extra)
         authenticated = request.authenticated == true,
         no_auth = request.no_auth == true,
         feature = tostring(request.feature or ""),
+        feature_rejected = request.feature_rejected == true,
         status_message = tostring(request.status_message or ""),
     }
 
@@ -92,8 +93,7 @@ local function should_skip_feature_assertions(request, marker)
 end
 
 local function should_skip_filter_assertions(request, marker)
-    local feature_name = tostring(request.feature or "")
-    if feature_name == "" then
+    if request.feature_rejected ~= true then
         return false
     end
 
@@ -101,9 +101,8 @@ local function should_skip_filter_assertions(request, marker)
     local filter_marker = nauthilus_context.context_get("test_marker_filter")
 
     if filter_stage == nil and filter_marker == nil then
-        log_info(request, "Skipping filter context assertions because the request was already decided by a feature", {
+        log_info(request, "Skipping filter context assertions because a feature rejected the request before filters ran", {
             expected_marker = marker,
-            feature_name = feature_name,
         })
 
         return true

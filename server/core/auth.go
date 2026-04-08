@@ -2457,11 +2457,18 @@ func (a *AuthState) GetAccountField() string {
 }
 
 // PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
-func (a *AuthState) PostLuaAction(_ *gin.Context, passDBResult *PassDBResult) {
+func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
+	featureRejected := false
+
+	if ctx != nil {
+		featureRejected = ctx.GetBool(definitions.CtxFeatureRejectedKey)
+	}
+
 	if disp := getPostAction(); disp != nil {
 		disp.Run(PostActionInput{
-			View:   a.View(),
-			Result: passDBResult,
+			View:            a.View(),
+			Result:          passDBResult,
+			FeatureRejected: featureRejected,
 		})
 	}
 }

@@ -1806,6 +1806,9 @@ const (
 	// LuaRequestFeature indicates the feature type of the request.
 	LuaRequestFeature = "feature"
 
+	// LuaRequestFeatureRejected indicates that a security feature rejected the request before the filter stage.
+	LuaRequestFeatureRejected = "feature_rejected"
+
 	// LuaRequestSession indicates the session of the request.
 	LuaRequestSession = "session"
 

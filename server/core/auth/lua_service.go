@@ -227,6 +227,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	// updated by the passDB result after FillCommonRequest was called.
 	cr.UserFound = passDBResult.UserFound || auth.GetAccount() != ""
 	cr.Authenticated = passDBResult.Authenticated
+	cr.FeatureRejected = input.FeatureRejected
 
 	if auth.Runtime.StatusMessage == "" {
 		if cr.Authenticated {
