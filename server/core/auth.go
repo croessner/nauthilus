@@ -2473,6 +2473,14 @@ func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) 
 	}
 }
 
+func (a *AuthState) markFeatureRejected(ctx *gin.Context) {
+	if ctx == nil {
+		return
+	}
+
+	ctx.Set(definitions.CtxFeatureRejectedKey, true)
+}
+
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
 // It iterates over the MonitoringFlags slice and returns true if the flag is found, otherwise it returns false.
 func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
@@ -3982,6 +3990,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce(ctx) {
+			a.markFeatureRejected(ctx)
 			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()

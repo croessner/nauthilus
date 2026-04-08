@@ -89,6 +89,14 @@ local function should_skip_feature_assertions(request, marker)
         return true
     end
 
+    if feature_stage == nil and feature_marker == nil and request.feature_rejected == true then
+        log_info(request, "Skipping feature context assertions because the request was rejected before the Lua feature stage ran", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
     return false
 end
 
