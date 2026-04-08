@@ -18,6 +18,40 @@ local nauthilus_util = require("nauthilus_util")
 
 local N = "test_context_chain"
 
+local function context_snapshot()
+    return {
+        test_stage_feature = nauthilus_context.context_get("test_stage_feature"),
+        test_marker_feature = nauthilus_context.context_get("test_marker_feature"),
+        test_stage_filter = nauthilus_context.context_get("test_stage_filter"),
+        test_marker_filter = nauthilus_context.context_get("test_marker_filter"),
+    }
+end
+
+local function log_info(request, message, extra)
+    local fields = {
+        caller = N .. "/filter",
+        message = message,
+        session = tostring(request.session or ""),
+        username = tostring(request.username or ""),
+        client_ip = tostring(request.client_ip or ""),
+        authenticated = request.authenticated == true,
+        no_auth = request.no_auth == true,
+    }
+
+    local snapshot = context_snapshot()
+    for key, value in pairs(snapshot) do
+        fields[key] = value
+    end
+
+    if extra then
+        for key, value in pairs(extra) do
+            fields[key] = value
+        end
+    end
+
+    nauthilus_util.log_info(request, fields)
+end
+
 -- Skip localhost requests: the feature stage is not executed for local/empty
 -- IPs (see isLocalOrEmptyIP in features.go), so the context keys it would set
 -- are absent. Return early with ACCEPT to avoid nil-context assertions.
@@ -42,7 +76,10 @@ end
 
 -- Filter stage: verify feature context, then set filter context values.
 function nauthilus_call_filter(request)
+    log_info(request, "Entering filter stage")
+
     if is_localhost(request) then
+        log_info(request, "Skipping filter stage for localhost request")
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
@@ -54,6 +91,9 @@ function nauthilus_call_filter(request)
     end
 
     -- Verify that the feature stage wrote the expected values.
+    log_info(request, "Verifying feature context before filter assertions", {
+        expected_marker = marker,
+    })
     assert_context("test_stage_feature", "feature", label)
     assert_context("test_marker_feature", marker, label)
 
@@ -61,17 +101,11 @@ function nauthilus_call_filter(request)
     nauthilus_context.context_set("test_stage_filter", "filter")
     nauthilus_context.context_set("test_marker_filter", marker)
 
-    if request.debug then
-        nauthilus_util.log_debug(request, {
-            caller = label,
-            message = "Feature context verified, filter context values set successfully",
-            test_stage_feature = nauthilus_context.context_get("test_stage_feature"),
-            test_marker_feature = nauthilus_context.context_get("test_marker_feature"),
-            test_stage_filter = "filter",
-            test_marker_filter = marker,
-            session = marker,
-        })
-    end
+    log_info(request, "Feature context verified and filter context values set successfully", {
+        expected_marker = marker,
+        test_stage_filter = "filter",
+        test_marker_filter = marker,
+    })
 
     return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end
