@@ -271,3 +271,43 @@ func TestCommonRequestResetFeatureRejected(t *testing.T) {
 		t.Fatal("expected FeatureRejected to be false after reset")
 	}
 }
+
+func TestCommonRequestSetupRequestStageExpectedFlags(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	cr := &CommonRequest{
+		FeatureStageExpected: true,
+		FilterStageExpected:  false,
+	}
+	request := L.NewTable()
+
+	cr.SetupRequest(L, nil, request)
+
+	featureVal := request.RawGet(lua.LString(definitions.LuaRequestFeatureStageExpected))
+	if featureVal != lua.LTrue {
+		t.Fatalf("expected feature_stage_expected to be true, got %v", featureVal)
+	}
+
+	filterVal := request.RawGet(lua.LString(definitions.LuaRequestFilterStageExpected))
+	if filterVal != lua.LFalse {
+		t.Fatalf("expected filter_stage_expected to be false, got %v", filterVal)
+	}
+}
+
+func TestCommonRequestResetStageExpectedFlags(t *testing.T) {
+	cr := &CommonRequest{
+		FeatureStageExpected: true,
+		FilterStageExpected:  true,
+	}
+
+	cr.Reset()
+
+	if cr.FeatureStageExpected {
+		t.Fatal("expected FeatureStageExpected to be false after reset")
+	}
+
+	if cr.FilterStageExpected {
+		t.Fatal("expected FilterStageExpected to be false after reset")
+	}
+}

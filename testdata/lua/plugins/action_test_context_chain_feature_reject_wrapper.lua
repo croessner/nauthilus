@@ -9,6 +9,8 @@ function nauthilus_call_action(request)
     nauthilus_context.context_set("test_marker_feature", tostring(request.session or ""))
 
     request.feature_rejected = true
+    request.feature_stage_expected = true
+    request.filter_stage_expected = false
     request.status_message = "Feature rejected the request"
 
     return original(request)

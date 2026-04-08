@@ -30,9 +30,11 @@ type LuaFilter interface {
 // PostActionInput aggregates the minimal inputs required for the Lua post action.
 // It deliberately reduces dozens of parameters to a compact value object.
 type PostActionInput struct {
-	View            *StateView
-	Result          *PassDBResult
-	FeatureRejected bool
+	View                 *StateView
+	Result               *PassDBResult
+	FeatureRejected      bool
+	FeatureStageExpected bool
+	FilterStageExpected  bool
 }
 
 // PostAction encapsulates the asynchronous post-action dispatch to the Lua worker.

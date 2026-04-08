@@ -1,22 +1,14 @@
 {
   "context": {
-    "username": "chain@example.com",
-    "client_ip": "198.51.100.55",
-    "protocol": "lmtp",
+    "client_ip": "192.0.2.10",
+    "protocol": "oidc",
+    "service": "idp",
     "session": "context-chain-session",
     "no_auth": true,
     "authenticated": true,
-    "status_message": "OK",
+    "status_message": "OIDC token issued",
     "expected_calls": [
       {
-        "method": "context_set",
-        "arg_contains": "test_stage_filter"
-      },
-      {
-        "method": "context_set",
-        "arg_contains": "test_marker_filter"
-      },
-      {
         "method": "context_get",
         "arg_contains": "test_stage_feature"
       },
@@ -55,30 +47,6 @@
       {
         "method": "context_get",
         "arg_contains": "test_marker_feature"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_stage_feature"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_marker_feature"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_stage_filter"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_marker_filter"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_stage_filter"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_marker_filter"
       },
       {
         "method": "context_get",

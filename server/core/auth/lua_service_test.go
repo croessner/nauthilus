@@ -225,7 +225,9 @@ func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
 			Authenticated: false,
 			UserFound:     false,
 		},
-		FeatureRejected: ctx.GetBool(definitions.CtxFeatureRejectedKey),
+		FeatureRejected:      ctx.GetBool(definitions.CtxFeatureRejectedKey),
+		FeatureStageExpected: false,
+		FilterStageExpected:  false,
 	})
 
 	select {
@@ -236,6 +238,14 @@ func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
 
 		if !act.FeatureRejected {
 			t.Fatal("expected feature_rejected to be forwarded to the Lua request")
+		}
+
+		if act.FeatureStageExpected {
+			t.Fatal("expected feature_stage_expected to be forwarded to the Lua request")
+		}
+
+		if act.FilterStageExpected {
+			t.Fatal("expected filter_stage_expected to be forwarded to the Lua request")
 		}
 
 		act.FinishedChan <- action.Done{}
