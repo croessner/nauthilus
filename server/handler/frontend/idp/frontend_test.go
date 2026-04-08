@@ -335,6 +335,14 @@ func TestIDPFooterTemplateHidesLinksWithoutURLs(t *testing.T) {
 	assert.NotContains(t, output, ">Privacy policy</a>")
 }
 
+func TestIDPUISubmitDisableDefersNativeFormHandling(t *testing.T) {
+	script := loadIDPUIScript(t)
+
+	assert.Contains(t, script, "function deferNativeFormSubmitDisable(form, submitter)")
+	assert.Contains(t, script, "window.setTimeout(() => {")
+	assert.Contains(t, script, "deferNativeFormSubmitDisable(form, submitter);")
+}
+
 func renderIDPLoginTemplate(t *testing.T, tmpl *template.Template, passwordForgottenURL string) string {
 	t.Helper()
 
@@ -801,6 +809,18 @@ func loadIDPFooterTemplate(t *testing.T) *template.Template {
 	}
 
 	return tmpl
+}
+
+func loadIDPUIScript(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "static", "js", "idp_ui.js")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read script: %v", err)
+	}
+
+	return string(content)
 }
 
 func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
