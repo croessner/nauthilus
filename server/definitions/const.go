@@ -1809,6 +1809,12 @@ const (
 	// LuaRequestFeatureRejected indicates that a security feature rejected the request before the filter stage.
 	LuaRequestFeatureRejected = "feature_rejected"
 
+	// LuaRequestFeatureStageExpected indicates whether the request path includes the Lua feature stage.
+	LuaRequestFeatureStageExpected = "feature_stage_expected"
+
+	// LuaRequestFilterStageExpected indicates whether the request path includes the Lua filter stage.
+	LuaRequestFilterStageExpected = "filter_stage_expected"
+
 	// LuaRequestSession indicates the session of the request.
 	LuaRequestSession = "session"
 

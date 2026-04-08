@@ -38,6 +38,8 @@ local function log_info(request, message, extra)
         no_auth = request.no_auth == true,
         feature = tostring(request.feature or ""),
         feature_rejected = request.feature_rejected == true,
+        feature_stage_expected = request.feature_stage_expected ~= false,
+        filter_stage_expected = request.filter_stage_expected ~= false,
         status_message = tostring(request.status_message or ""),
     }
 
@@ -81,6 +83,14 @@ local function should_skip_feature_assertions(request, marker)
     local feature_stage = nauthilus_context.context_get("test_stage_feature")
     local feature_marker = nauthilus_context.context_get("test_marker_feature")
 
+    if request.feature_stage_expected == false then
+        log_info(request, "Skipping feature context assertions because this request path does not include the Lua feature stage", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
     if feature_stage == nil and feature_marker == nil and request.no_auth == true then
         log_info(request, "Skipping feature context assertions because no-auth requests may bypass the feature stage", {
             expected_marker = marker,
@@ -101,12 +111,20 @@ local function should_skip_feature_assertions(request, marker)
 end
 
 local function should_skip_filter_assertions(request, marker)
+    local filter_stage = nauthilus_context.context_get("test_stage_filter")
+    local filter_marker = nauthilus_context.context_get("test_marker_filter")
+
+    if request.filter_stage_expected == false and filter_stage == nil and filter_marker == nil then
+        log_info(request, "Skipping filter context assertions because this request path does not include the Lua filter stage", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
     if request.feature_rejected ~= true then
         return false
     end
-
-    local filter_stage = nauthilus_context.context_get("test_stage_filter")
-    local filter_marker = nauthilus_context.context_get("test_marker_filter")
 
     if filter_stage == nil and filter_marker == nil then
         log_info(request, "Skipping filter context assertions because a feature rejected the request before filters ran", {

@@ -145,6 +145,8 @@ func completedIDPMFAPostActionRequest(auth *AuthState, user *backend.User) luali
 	auth.FillCommonRequest(&requestCopy)
 	requestCopy.UserFound = true
 	requestCopy.Authenticated = true
+	requestCopy.FeatureStageExpected = false
+	requestCopy.FilterStageExpected = false
 	requestCopy.HTTPStatus = http.StatusOK
 
 	if requestCopy.Account == "" {

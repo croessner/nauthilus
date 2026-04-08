@@ -652,6 +652,8 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	request.Method = authMethod
 	request.OIDCCID = clientID
 	request.GrantType = grantType
+	request.FeatureStageExpected = false
+	request.FilterStageExpected = false
 	request.Latency = float64(latency.Milliseconds())
 	request.HTTPStatus = httpStatus
 

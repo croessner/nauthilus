@@ -156,6 +156,8 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 
 		assert.Equal(t, "webauthn", act.MFAMethod)
 		assert.True(t, act.MFACompleted)
+		assert.False(t, act.FeatureStageExpected)
+		assert.False(t, act.FilterStageExpected)
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")
@@ -195,6 +197,8 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 
 		assert.Equal(t, "totp", act.MFAMethod)
 		assert.True(t, act.MFACompleted)
+		assert.False(t, act.FeatureStageExpected)
+		assert.False(t, act.FilterStageExpected)
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")
