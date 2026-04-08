@@ -2,17 +2,58 @@
   "context": {
     "username": "chain@example.com",
     "client_ip": "198.51.100.55",
-    "protocol": "imap",
+    "protocol": "lmtp",
     "session": "context-chain-session",
-    "no_auth": false,
-    "debug": false,
+    "no_auth": true,
+    "authenticated": true,
+    "status_message": "OK",
     "expected_calls": [
       {
         "method": "context_set",
-        "arg_contains": "test_stage_feature"
+        "arg_contains": "test_stage_filter"
       },
       {
         "method": "context_set",
+        "arg_contains": "test_marker_filter"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_feature"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_feature"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_filter"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_filter"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_feature"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_feature"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_filter"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_filter"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_feature"
+      },
+      {
+        "method": "context_get",
         "arg_contains": "test_marker_feature"
       },
       {
@@ -49,26 +90,10 @@
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_feature"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_marker_feature"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_stage_feature"
-      },
-      {
-        "method": "context_get",
-        "arg_contains": "test_marker_feature"
-      },
-      {
-        "method": "context_set",
         "arg_contains": "test_stage_filter"
       },
       {
-        "method": "context_set",
+        "method": "context_get",
         "arg_contains": "test_marker_filter"
       },
       {
@@ -90,7 +115,7 @@
     ]
   },
   "expected_output": {
-    "filter_result": 0,
+    "action_result": true,
     "error_expected": false
   }
 }

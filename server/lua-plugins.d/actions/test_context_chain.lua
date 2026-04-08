@@ -76,6 +76,21 @@ local function assert_context(key, expected, stage_label)
     end
 end
 
+local function should_skip_feature_assertions(request, marker)
+    local feature_stage = nauthilus_context.context_get("test_stage_feature")
+    local feature_marker = nauthilus_context.context_get("test_marker_feature")
+
+    if feature_stage == nil and feature_marker == nil and request.no_auth == true then
+        log_info(request, "Skipping feature context assertions because no-auth requests may bypass the feature stage", {
+            expected_marker = marker,
+        })
+
+        return true
+    end
+
+    return false
+end
+
 local function should_skip_filter_assertions(request, marker)
     local feature_name = tostring(request.feature or "")
     if feature_name == "" then
@@ -117,8 +132,10 @@ function nauthilus_call_action(request)
     log_info(request, "Verifying feature context before action assertions", {
         expected_marker = marker,
     })
-    assert_context("test_stage_feature", "feature", label)
-    assert_context("test_marker_feature", marker, label)
+    if not should_skip_feature_assertions(request, marker) then
+        assert_context("test_stage_feature", "feature", label)
+        assert_context("test_marker_feature", marker, label)
+    end
 
     if should_skip_filter_assertions(request, marker) then
         return nauthilus_builtin.ACTION_RESULT_OK

@@ -58,6 +58,14 @@
       },
       {
         "method": "context_get",
+        "arg_contains": "test_stage_feature"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_feature"
+      },
+      {
+        "method": "context_get",
         "arg_contains": "test_stage_filter"
       },
       {
