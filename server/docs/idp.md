@@ -261,6 +261,31 @@ server:
 If external HTTP redirect chains are required, widen `form-action` intentionally (for example:
 `form-action 'self' https: http:`).
 
+The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
+
+### 3.1.4 Central CORS (`server.cors`)
+
+Cross-origin behavior is configured centrally under `server.cors` and is independent from frontend security headers.
+
+```yaml
+server:
+    cors:
+        enabled: true
+        policies:
+            - name: "oidc_discovery"
+              enabled: true
+              path_prefixes: ["/.well-known/"]
+              allow_origins: ["https://oc.roessner.cloud"]
+              allow_methods: ["GET", "OPTIONS"]
+              allow_headers: ["Authorization", "Content-Type"]
+              expose_headers: []
+              allow_credentials: false
+              max_age: 600
+```
+
+Policies are evaluated in order. The first active policy with a matching `path_prefixes` entry is used.
+Use explicit origin lists in production.
+
 ## 4. MFA Management API (/api/v1/mfa)
 
 The IdP provides a JSON API for managing Multi-Factor Authentication. This API is used internally by the HTMX frontend

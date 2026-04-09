@@ -304,6 +304,30 @@ If you need external HTTP redirect chains (for example during local development)
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
 
+### Central CORS (`server.cors`)
+
+Cross-origin behavior is configured centrally under `server.cors` and applies independently from frontend security
+headers.
+
+```yaml
+server:
+    cors:
+        enabled: true
+        policies:
+            - name: "oidc_discovery"
+              enabled: true
+              path_prefixes: ["/.well-known/"]
+              allow_origins: ["https://oc.roessner.cloud"]
+              allow_methods: ["GET", "OPTIONS"]
+              allow_headers: ["Authorization", "Content-Type"]
+              expose_headers: []
+              allow_credentials: false
+              max_age: 600
+```
+
+Policies are evaluated in order; the first active policy whose `path_prefixes` matches the request path is used.
+Use explicit origins for production environments.
+
 ---
 
 ## 7. MFA Self-Service (TOTP & WebAuthn)

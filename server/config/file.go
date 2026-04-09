@@ -2146,6 +2146,42 @@ func (f *FileSettings) setDefaultSecuritySettings() error {
 		f.Server.LocalCacheAuthTTL = 30 * time.Second
 	}
 
+	cors := &f.Server.CORS
+	if cors.Enabled == nil {
+		enabled := false
+		cors.Enabled = &enabled
+	}
+
+	if len(cors.Policies) == 0 {
+		cors.Policies = []CORSPolicy{
+			{
+				Name:         defaultCORSPolicyName,
+				PathPrefixes: append([]string(nil), defaultCORSPathPrefixes...),
+			},
+		}
+	}
+
+	for index := range cors.Policies {
+		policy := &cors.Policies[index]
+
+		if policy.Enabled == nil {
+			enabled := true
+			policy.Enabled = &enabled
+		}
+
+		if len(policy.AllowMethods) == 0 {
+			policy.AllowMethods = append([]string(nil), defaultCORSAllowMethods...)
+		}
+
+		if len(policy.AllowHeaders) == 0 {
+			policy.AllowHeaders = append([]string(nil), defaultCORSAllowHeaders...)
+		}
+
+		if policy.MaxAge == 0 {
+			policy.MaxAge = defaultCORSMaxAge
+		}
+	}
+
 	return nil
 }
 
