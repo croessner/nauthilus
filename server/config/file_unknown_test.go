@@ -79,3 +79,28 @@ func TestUnknownConfigParameters_CyclicMap(t *testing.T) {
 		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)
 	}
 }
+
+func TestUnknownConfigParameters_RootExtensionsIgnored(t *testing.T) {
+	cfg := &FileSettings{
+		Other: map[string]any{
+			"x-claim-email": map[string]any{
+				"claim":     "email",
+				"attribute": "mail;x-hidden",
+				"type":      "string",
+			},
+			"x-scope-profile": map[string]any{
+				"mappings": []any{
+					map[string]any{"claim": "name", "attribute": "cn;x-hidden", "type": "string"},
+				},
+			},
+			"top_level": "x",
+		},
+	}
+
+	got := cfg.unknownConfigParameters()
+	want := []string{"top_level"}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)
+	}
+}

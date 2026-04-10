@@ -2645,9 +2645,21 @@ func isSupportedCustomScopeExtraKey(key string) bool {
 }
 
 func isSupportedRootExtraKey(key string) bool {
+	if isConfigExtensionKey(key) {
+		return true
+	}
+
 	// Environment settings are provided via config/env.go and may appear in
 	// merged Viper settings although they are intentionally not part of FileSettings.
 	return key == "developer_mode"
+}
+
+func isConfigExtensionKey(key string) bool {
+	if len(key) < 3 {
+		return false
+	}
+
+	return (key[0] == 'x' || key[0] == 'X') && key[1] == '-'
 }
 
 // safeWarn logs a warning using go-kit logger when available; otherwise falls back to slog.

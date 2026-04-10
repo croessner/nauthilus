@@ -166,6 +166,65 @@ server:
 	}
 }
 
+func TestConfigLoader_LoadFromFile_IncludeSupportsRootExtensionsWithAnchors(t *testing.T) {
+	root := t.TempDir()
+
+	writeConfigFile(t, root, "aliases.yaml", `x-claim-email: &x-claim-email
+  claim: "email"
+  attribute: "mail;x-hidden"
+  type: "string"
+x-oc-mappings:
+  mappings:
+    - *x-claim-email
+`)
+
+	mainPath := writeConfigFile(t, root, "main.yaml", `includes:
+  required:
+    - aliases.yaml
+server:
+  instance_name: include-anchors
+`)
+
+	loader := NewConfigLoader("yaml")
+
+	settings, err := loader.LoadFromFile(mainPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	claimEmail, ok := settings["x-claim-email"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected x-claim-email map, got %T", settings["x-claim-email"])
+	}
+
+	if claimEmail["claim"] != "email" {
+		t.Fatalf("expected x-claim-email.claim email, got %v", claimEmail["claim"])
+	}
+
+	mappingsRoot, ok := settings["x-oc-mappings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected x-oc-mappings map, got %T", settings["x-oc-mappings"])
+	}
+
+	mappings, ok := mappingsRoot["mappings"].([]any)
+	if !ok {
+		t.Fatalf("expected x-oc-mappings.mappings slice, got %T", mappingsRoot["mappings"])
+	}
+
+	if len(mappings) != 1 {
+		t.Fatalf("expected one mapping entry, got %d", len(mappings))
+	}
+
+	firstMapping, ok := mappings[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first mapping as map, got %T", mappings[0])
+	}
+
+	if firstMapping["claim"] != "email" {
+		t.Fatalf("expected first mapping claim email, got %v", firstMapping["claim"])
+	}
+}
+
 func writeConfigFile(t *testing.T, root string, name string, content string) string {
 	t.Helper()
 
