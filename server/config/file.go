@@ -2205,12 +2205,12 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		headers.Enabled = &enabled
 	}
 
-	if headers.ContentSecurityPolicy == "" {
-		headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
+	if headers.ContentSecurityPolicy.IsZero() {
+		headers.ContentSecurityPolicy = NewContentSecurityPolicyValueFromString(defaultContentSecurityPolicy)
 	}
 
-	if headers.StrictTransportSecurity == "" {
-		headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains"
+	if headers.StrictTransportSecurity.IsZero() {
+		headers.StrictTransportSecurity = NewStrictTransportSecurityValueFromString(defaultStrictTransportSecurity)
 	}
 
 	if headers.XContentTypeOptions == "" {
@@ -2225,8 +2225,8 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		headers.ReferrerPolicy = "no-referrer"
 	}
 
-	if headers.PermissionsPolicy == "" {
-		headers.PermissionsPolicy = "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+	if headers.PermissionsPolicy.IsZero() {
+		headers.PermissionsPolicy = NewPermissionsPolicyValueFromString(defaultPermissionsPolicy)
 	}
 
 	if headers.CrossOriginOpenerPolicy == "" {
@@ -2308,6 +2308,10 @@ func (f *FileSettings) validateFrontend() error {
 		if _, err := os.Stat(f.Server.Frontend.HTMLStaticContentPath); os.IsNotExist(err) {
 			return fmt.Errorf("frontend HTML static content directory does not exist: %s", f.Server.Frontend.HTMLStaticContentPath)
 		}
+	}
+
+	if err := f.Server.Frontend.SecurityHeaders.ValidateComposedValues(); err != nil {
+		return err
 	}
 
 	return nil
@@ -3079,6 +3083,9 @@ func createDecoderOption() viper.DecoderConfigOption {
 	featuresType := reflect.TypeFor[[]*Feature]()
 	protocolsType := reflect.TypeFor[[]*Protocol]()
 	backendsType := reflect.TypeFor[[]*Backend]()
+	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
+	permissionsPolicyType := reflect.TypeFor[PermissionsPolicyValue]()
+	strictTransportSecurityType := reflect.TypeFor[StrictTransportSecurityValue]()
 	secretType := reflect.TypeFor[secret.Value]()
 
 	return func(config *mapstructure.DecoderConfig) {
@@ -3096,6 +3103,12 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processProtocols(data)
 				case to == backendsType:
 					return processBackends(data)
+				case to == contentSecurityPolicyType:
+					return processContentSecurityPolicyValue(data)
+				case to == permissionsPolicyType:
+					return processPermissionsPolicyValue(data)
+				case to == strictTransportSecurityType:
+					return processStrictTransportSecurityValue(data)
 				case to == secretType:
 					switch value := data.(type) {
 					case string:
@@ -3261,6 +3274,9 @@ func bindEnvs(i any, parts ...string) error {
 	ift := ifv.Type()
 	secretType := reflect.TypeFor[secret.Value]()
 	secretPtrType := reflect.TypeFor[*secret.Value]()
+	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
+	permissionsPolicyType := reflect.TypeFor[PermissionsPolicyValue]()
+	strictTransportSecurityType := reflect.TypeFor[StrictTransportSecurityValue]()
 
 	for i := range ift.NumField() {
 		v := ifv.Field(i)
@@ -3276,8 +3292,11 @@ func bindEnvs(i any, parts ...string) error {
 		}
 
 		isSecret := t.Type == secretType || t.Type == secretPtrType
+		isSecurityHeaderValue := t.Type == contentSecurityPolicyType ||
+			t.Type == permissionsPolicyType ||
+			t.Type == strictTransportSecurityType
 
-		if t.Type.Kind() == reflect.Pointer && t.Type.Elem().Kind() == reflect.Struct && !isSecret {
+		if t.Type.Kind() == reflect.Pointer && t.Type.Elem().Kind() == reflect.Struct && !isSecret && !isSecurityHeaderValue {
 			if v.IsNil() {
 				v.Set(reflect.New(t.Type.Elem()))
 			}
@@ -3286,7 +3305,7 @@ func bindEnvs(i any, parts ...string) error {
 			if err != nil {
 				return err
 			}
-		} else if v.Kind() == reflect.Struct && !isSecret {
+		} else if v.Kind() == reflect.Struct && !isSecret && !isSecurityHeaderValue {
 			err := bindEnvs(v.Addr().Interface(), append(parts, tag)...)
 			if err != nil {
 				return err

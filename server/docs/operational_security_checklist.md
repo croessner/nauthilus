@@ -45,7 +45,8 @@ Evidence:
 
 ## 4. CSP and Security Headers
 
-- [ ] **Production**: CSP keeps default `form-action 'self' https:` (or stricter if explicitly required).
+- [ ] **Production**: CSP keeps default `form-action 'self' https:` unless `form_action_optional_uris` is intentionally
+  used.
 - [ ] **Staging**: Any CSP widening (for redirects/dev compatibility) is explicitly documented.
 - [ ] Security headers are enabled under `server.frontend.security_headers`.
 

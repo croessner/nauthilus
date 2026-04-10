@@ -18,6 +18,7 @@ package config
 import (
 	"testing"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,15 +34,15 @@ func TestSetDefaultFrontendSettings_SecurityHeaders(t *testing.T) {
 	if assert.NotNil(t, headers.Enabled) {
 		assert.True(t, *headers.Enabled)
 	}
-	assert.Contains(t, headers.ContentSecurityPolicy, "script-src 'self' 'nonce-{{nonce}}'")
-	assert.Contains(t, headers.ContentSecurityPolicy, "style-src 'self' 'unsafe-inline'")
-	assert.NotContains(t, headers.ContentSecurityPolicy, "style-src 'self' 'nonce-{{nonce}}'")
-	assert.Contains(t, headers.ContentSecurityPolicy, "form-action 'self' https:")
-	assert.Equal(t, "max-age=31536000; includeSubDomains", headers.StrictTransportSecurity)
+	assert.Contains(t, headers.GetContentSecurityPolicy(), "script-src 'self' 'nonce-{{nonce}}'")
+	assert.Contains(t, headers.GetContentSecurityPolicy(), "style-src 'self' 'unsafe-inline'")
+	assert.NotContains(t, headers.GetContentSecurityPolicy(), "style-src 'self' 'nonce-{{nonce}}'")
+	assert.Contains(t, headers.GetContentSecurityPolicy(), "form-action 'self' https:")
+	assert.Equal(t, "max-age=31536000; includeSubDomains", headers.GetStrictTransportSecurity())
 	assert.Equal(t, "nosniff", headers.XContentTypeOptions)
 	assert.Equal(t, "DENY", headers.XFrameOptions)
 	assert.Equal(t, "no-referrer", headers.ReferrerPolicy)
-	assert.Equal(t, "geolocation=(), microphone=(), camera=(), payment=(), usb=()", headers.PermissionsPolicy)
+	assert.Equal(t, "geolocation=(), microphone=(), camera=(), payment=(), usb=()", headers.GetPermissionsPolicy())
 	assert.Equal(t, "same-origin", headers.CrossOriginOpenerPolicy)
 	assert.Equal(t, "same-origin", headers.CrossOriginResourcePolicy)
 	assert.Equal(t, "unsafe-none", headers.CrossOriginEmbedderPolicy)
@@ -56,12 +57,12 @@ func TestSetDefaultFrontendSettings_PreservesCustomSecurityHeaders(t *testing.T)
 			Frontend: Frontend{
 				SecurityHeaders: FrontendSecurityHeaders{
 					Enabled:                       &enabled,
-					ContentSecurityPolicy:         "default-src 'none'",
-					StrictTransportSecurity:       "max-age=100",
+					ContentSecurityPolicy:         NewContentSecurityPolicyValueFromString("default-src 'none'"),
+					StrictTransportSecurity:       NewStrictTransportSecurityValueFromString("max-age=100"),
 					XContentTypeOptions:           "custom",
 					XFrameOptions:                 "SAMEORIGIN",
 					ReferrerPolicy:                "origin",
-					PermissionsPolicy:             "fullscreen=(self)",
+					PermissionsPolicy:             NewPermissionsPolicyValueFromString("fullscreen=(self)"),
 					CrossOriginOpenerPolicy:       "same-origin-allow-popups",
 					CrossOriginResourcePolicy:     "cross-origin",
 					CrossOriginEmbedderPolicy:     "require-corp",
@@ -79,15 +80,50 @@ func TestSetDefaultFrontendSettings_PreservesCustomSecurityHeaders(t *testing.T)
 	if assert.NotNil(t, headers.Enabled) {
 		assert.False(t, *headers.Enabled)
 	}
-	assert.Equal(t, "default-src 'none'", headers.ContentSecurityPolicy)
-	assert.Equal(t, "max-age=100", headers.StrictTransportSecurity)
+	assert.Equal(t, "default-src 'none'", headers.GetContentSecurityPolicy())
+	assert.Equal(t, "max-age=100", headers.GetStrictTransportSecurity())
 	assert.Equal(t, "custom", headers.XContentTypeOptions)
 	assert.Equal(t, "SAMEORIGIN", headers.XFrameOptions)
 	assert.Equal(t, "origin", headers.ReferrerPolicy)
-	assert.Equal(t, "fullscreen=(self)", headers.PermissionsPolicy)
+	assert.Equal(t, "fullscreen=(self)", headers.GetPermissionsPolicy())
 	assert.Equal(t, "same-origin-allow-popups", headers.CrossOriginOpenerPolicy)
 	assert.Equal(t, "cross-origin", headers.CrossOriginResourcePolicy)
 	assert.Equal(t, "require-corp", headers.CrossOriginEmbedderPolicy)
 	assert.Equal(t, "master-only", headers.XPermittedCrossDomainPolicies)
 	assert.Equal(t, "on", headers.XDNSPrefetchControl)
+}
+
+func TestFrontendSecurityHeaders_ValidateTags_AllowStructuredHeaderValues(t *testing.T) {
+	headers := FrontendSecurityHeaders{
+		ContentSecurityPolicy: NewContentSecurityPolicyValueFromDirectives(
+			map[string][]string{
+				"connect-src": {"'self'", "https://api.example.test"},
+			},
+			[]string{"https://idp.example.test"},
+		),
+		StrictTransportSecurity: NewStrictTransportSecurityValueFromObject(
+			stringPointer("63072000"),
+			boolPointer(true),
+			boolPointer(false),
+			[]string{"example-token"},
+		),
+		PermissionsPolicy: NewPermissionsPolicyValueFromFeatures(
+			map[string]string{
+				"geolocation": "()",
+			},
+		),
+	}
+
+	validate := validator.New(validator.WithRequiredStructEnabled())
+
+	assert.NoError(t, validate.Struct(headers))
+	assert.NoError(t, headers.ValidateComposedValues())
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }

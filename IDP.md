@@ -285,13 +285,36 @@ server:
     frontend:
         security_headers:
             enabled: true
-            content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
+            # Legacy full-string form is still supported.
+            # Recommended structured form:
+            content_security_policy:
+                connect-src:
+                    - "'self'"
+                    - "https://api.example.test"
+                frame-src:
+                    - "'self'"
+                    - "https:"
+                    - "https://widgets.example.test"
+                form-action:
+                    - "'self'"
+                form_action_optional_uris:
+                    - "https://idp.example.test"
+                    - "http://localhost:8080"
             content_security_policy_report_only: false
-            strict_transport_security: "max-age=31536000; includeSubDomains"
+            strict_transport_security:
+                max_age: 31536000
+                include_subdomains: true
+                preload: false
             x_content_type_options: "nosniff"
             x_frame_options: "DENY"
             referrer_policy: "no-referrer"
-            permissions_policy: "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+            permissions_policy:
+                features:
+                    geolocation: "()"
+                    microphone: "()"
+                    camera: "()"
+                    payment: "()"
+                    usb: "()"
             cross_origin_opener_policy: "same-origin"
             cross_origin_resource_policy: "same-origin"
             cross_origin_embedder_policy: "unsafe-none"
@@ -299,8 +322,68 @@ server:
             x_dns_prefetch_control: "off"
 ```
 
-If you need external HTTP redirect chains (for example during local development), widen `form-action` explicitly:
-`form-action 'self' https: http:`.
+Type support and composition rules:
+
+- `content_security_policy` accepts either a single `string` or an `object`.
+- `permissions_policy` accepts either a single `string` or an `object`.
+- `strict_transport_security` accepts either a single `string` or an `object`.
+- In CSP object mode, `form_action_optional_uris` extends `form-action`.
+- Other security headers in this section remain single-string settings.
+- Legacy list syntax for these three headers (`[]string`) is still accepted for backward compatibility.
+
+Merge and precedence behavior:
+
+- If a header is configured as a single string, it is used as-is.
+- If a header is configured as an object, Nauthilus composes the final header from secure defaults plus object
+  overrides.
+- For `content_security_policy` object entries, sources may be configured as one space-separated `string` or as
+  `[]string`.
+- `content_security_policy` supports the following object keys (complete list):
+- `default-src`
+- `script-src`
+- `style-src`
+- `img-src`
+- `font-src`
+- `connect-src`
+- `frame-src`
+- `object-src`
+- `base-uri`
+- `frame-ancestors`
+- `form-action`
+- `form_action_optional_uris` (appended, deduplicated, to `form-action`)
+- `directives` (optional object containing any of the directive keys listed above)
+- Missing CSP directives keep secure defaults.
+- For `permissions_policy` object entries:
+- `features` is a mapping (`feature: value`).
+- Direct `feature: value` keys at object root are also supported.
+- Missing features keep secure defaults.
+- For `strict_transport_security` object entries:
+- `max_age` overrides the default max-age.
+- `include_subdomains` controls `includeSubDomains` (default remains `true`).
+- `preload` toggles `preload`.
+- `extra_tokens` appends custom tokens.
+- If you need full manual control for any of these headers, use the single-string form.
+
+Defaults and omitted partials:
+
+- If a setting is omitted entirely, secure defaults are applied.
+- If object mode is used and some entries are omitted, those entries fall back to secure defaults.
+
+Validation and error handling:
+
+- Invalid types (for example non-string directive sources) fail configuration loading.
+- Unknown object keys in `content_security_policy` and `strict_transport_security` fail configuration loading.
+- Unknown CSP directives fail configuration loading.
+- Invalid `permissions_policy` feature values fail configuration loading.
+- Errors are returned during config validation before serving requests.
+
+Backward compatibility:
+
+- Existing configurations that already use full header strings continue to work without changes.
+
+Default `form-action` is `form-action 'self' https:` when no `form_action_optional_uris` are set.
+If `form_action_optional_uris` is set, implicit default `https:` is removed and only explicit entries are appended.
+If you need full control, set `form-action` directly.
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
 

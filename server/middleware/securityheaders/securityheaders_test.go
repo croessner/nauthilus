@@ -48,12 +48,12 @@ func TestMiddleware_SetsStrictHeadersAndNonce(t *testing.T) {
 			Frontend: config.Frontend{
 				SecurityHeaders: config.FrontendSecurityHeaders{
 					Enabled:                 &enabled,
-					ContentSecurityPolicy:   "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'",
-					StrictTransportSecurity: "max-age=31536000; includeSubDomains",
+					ContentSecurityPolicy:   config.NewContentSecurityPolicyValueFromString("default-src 'self'; script-src 'self' 'nonce-{{nonce}}'"),
+					StrictTransportSecurity: config.NewStrictTransportSecurityValueFromString("max-age=31536000; includeSubDomains"),
 					XContentTypeOptions:     "nosniff",
 					XFrameOptions:           "DENY",
 					ReferrerPolicy:          "no-referrer",
-					PermissionsPolicy:       "geolocation=()",
+					PermissionsPolicy:       config.NewPermissionsPolicyValueFromString("geolocation=()"),
 				},
 			},
 		},
@@ -95,7 +95,7 @@ func TestMiddleware_DisabledSkipsHeaders(t *testing.T) {
 			Frontend: config.Frontend{
 				SecurityHeaders: config.FrontendSecurityHeaders{
 					Enabled:               &enabled,
-					ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'",
+					ContentSecurityPolicy: config.NewContentSecurityPolicyValueFromString("default-src 'self'; script-src 'self' 'nonce-{{nonce}}'"),
 				},
 			},
 		},
@@ -130,7 +130,7 @@ func TestMiddleware_NonceFailureAborts(t *testing.T) {
 			Frontend: config.Frontend{
 				SecurityHeaders: config.FrontendSecurityHeaders{
 					Enabled:               &enabled,
-					ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'",
+					ContentSecurityPolicy: config.NewContentSecurityPolicyValueFromString("default-src 'self'; script-src 'self' 'nonce-{{nonce}}'"),
 				},
 			},
 		},
@@ -163,7 +163,7 @@ func TestMiddleware_StyleSrcUnsafeInlineDropsNonce(t *testing.T) {
 			Frontend: config.Frontend{
 				SecurityHeaders: config.FrontendSecurityHeaders{
 					Enabled:               &enabled,
-					ContentSecurityPolicy: "default-src 'self'; style-src 'self' 'nonce-{{nonce}}' 'unsafe-inline'; script-src 'self' 'nonce-{{nonce}}'",
+					ContentSecurityPolicy: config.NewContentSecurityPolicyValueFromString("default-src 'self'; style-src 'self' 'nonce-{{nonce}}' 'unsafe-inline'; script-src 'self' 'nonce-{{nonce}}'"),
 				},
 			},
 		},
@@ -200,7 +200,7 @@ func TestMiddleware_FormActionSelfRemainsStrict(t *testing.T) {
 			Frontend: config.Frontend{
 				SecurityHeaders: config.FrontendSecurityHeaders{
 					Enabled:               &enabled,
-					ContentSecurityPolicy: "default-src 'self'; form-action 'self'; script-src 'self' 'nonce-{{nonce}}'",
+					ContentSecurityPolicy: config.NewContentSecurityPolicyValueFromString("default-src 'self'; form-action 'self'; script-src 'self' 'nonce-{{nonce}}'"),
 				},
 			},
 		},

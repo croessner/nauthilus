@@ -17,6 +17,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -2108,21 +2109,23 @@ func (f *Frontend) GetSecurityHeaders() *FrontendSecurityHeaders {
 
 // FrontendSecurityHeaders configures browser security headers for frontend routes.
 //
-// All header values are configurable as plain strings. If Enabled is nil, headers are enabled by default.
+// Header values are exposed as plain strings after config decoding/composition.
+// Selected headers (for example content_security_policy) can be configured as structured objects in configuration files.
+// If Enabled is nil, headers are enabled by default.
 type FrontendSecurityHeaders struct {
-	Enabled                         *bool  `mapstructure:"enabled" validate:"omitempty"`
-	ContentSecurityPolicy           string `mapstructure:"content_security_policy" validate:"omitempty,printascii"`
-	ContentSecurityPolicyReportOnly bool   `mapstructure:"content_security_policy_report_only" validate:"omitempty"`
-	StrictTransportSecurity         string `mapstructure:"strict_transport_security" validate:"omitempty,printascii"`
-	XContentTypeOptions             string `mapstructure:"x_content_type_options" validate:"omitempty,printascii"`
-	XFrameOptions                   string `mapstructure:"x_frame_options" validate:"omitempty,printascii"`
-	ReferrerPolicy                  string `mapstructure:"referrer_policy" validate:"omitempty,printascii"`
-	PermissionsPolicy               string `mapstructure:"permissions_policy" validate:"omitempty,printascii"`
-	CrossOriginOpenerPolicy         string `mapstructure:"cross_origin_opener_policy" validate:"omitempty,printascii"`
-	CrossOriginResourcePolicy       string `mapstructure:"cross_origin_resource_policy" validate:"omitempty,printascii"`
-	CrossOriginEmbedderPolicy       string `mapstructure:"cross_origin_embedder_policy" validate:"omitempty,printascii"`
-	XPermittedCrossDomainPolicies   string `mapstructure:"x_permitted_cross_domain_policies" validate:"omitempty,printascii"`
-	XDNSPrefetchControl             string `mapstructure:"x_dns_prefetch_control" validate:"omitempty,printascii"`
+	Enabled                         *bool                        `mapstructure:"enabled" validate:"omitempty"`
+	ContentSecurityPolicy           ContentSecurityPolicyValue   `mapstructure:"content_security_policy" validate:"omitempty"`
+	ContentSecurityPolicyReportOnly bool                         `mapstructure:"content_security_policy_report_only" validate:"omitempty"`
+	StrictTransportSecurity         StrictTransportSecurityValue `mapstructure:"strict_transport_security" validate:"omitempty"`
+	XContentTypeOptions             string                       `mapstructure:"x_content_type_options" validate:"omitempty,printascii"`
+	XFrameOptions                   string                       `mapstructure:"x_frame_options" validate:"omitempty,printascii"`
+	ReferrerPolicy                  string                       `mapstructure:"referrer_policy" validate:"omitempty,printascii"`
+	PermissionsPolicy               PermissionsPolicyValue       `mapstructure:"permissions_policy" validate:"omitempty"`
+	CrossOriginOpenerPolicy         string                       `mapstructure:"cross_origin_opener_policy" validate:"omitempty,printascii"`
+	CrossOriginResourcePolicy       string                       `mapstructure:"cross_origin_resource_policy" validate:"omitempty,printascii"`
+	CrossOriginEmbedderPolicy       string                       `mapstructure:"cross_origin_embedder_policy" validate:"omitempty,printascii"`
+	XPermittedCrossDomainPolicies   string                       `mapstructure:"x_permitted_cross_domain_policies" validate:"omitempty,printascii"`
+	XDNSPrefetchControl             string                       `mapstructure:"x_dns_prefetch_control" validate:"omitempty,printascii"`
 }
 
 // IsEnabled indicates whether frontend security headers are enabled.
@@ -2141,7 +2144,15 @@ func (h *FrontendSecurityHeaders) GetContentSecurityPolicy() string {
 		return ""
 	}
 
-	return h.ContentSecurityPolicy
+	value, _, err := NewSecurityHeaderComposer().ComposeContentSecurityPolicy(
+		h.ContentSecurityPolicy.PolicyInput(),
+		h.ContentSecurityPolicy.FormActionOptionalURIs(),
+	)
+	if err != nil {
+		return ""
+	}
+
+	return value
 }
 
 // IsContentSecurityPolicyReportOnly returns true when CSP should be emitted in report-only mode.
@@ -2159,7 +2170,12 @@ func (h *FrontendSecurityHeaders) GetStrictTransportSecurity() string {
 		return ""
 	}
 
-	return h.StrictTransportSecurity
+	value, _, err := NewSecurityHeaderComposer().ComposeStrictTransportSecurity(h.StrictTransportSecurity.PolicyInput())
+	if err != nil {
+		return ""
+	}
+
+	return value
 }
 
 // GetXContentTypeOptions returns X-Content-Type-Options header value.
@@ -2195,7 +2211,12 @@ func (h *FrontendSecurityHeaders) GetPermissionsPolicy() string {
 		return ""
 	}
 
-	return h.PermissionsPolicy
+	value, _, err := NewSecurityHeaderComposer().ComposePermissionsPolicy(h.PermissionsPolicy.PolicyInput())
+	if err != nil {
+		return ""
+	}
+
+	return value
 }
 
 // GetCrossOriginOpenerPolicy returns Cross-Origin-Opener-Policy header value.
@@ -2243,6 +2264,32 @@ func (h *FrontendSecurityHeaders) GetXDNSPrefetchControl() string {
 	return h.XDNSPrefetchControl
 }
 
+// ValidateComposedValues validates composed security header syntax during config load.
+func (h *FrontendSecurityHeaders) ValidateComposedValues() error {
+	if h == nil {
+		return nil
+	}
+
+	composer := NewSecurityHeaderComposer()
+
+	if _, _, err := composer.ComposeContentSecurityPolicy(
+		h.ContentSecurityPolicy.PolicyInput(),
+		h.ContentSecurityPolicy.FormActionOptionalURIs(),
+	); err != nil {
+		return err
+	}
+
+	if _, _, err := composer.ComposeStrictTransportSecurity(h.StrictTransportSecurity.PolicyInput()); err != nil {
+		return err
+	}
+
+	if _, _, err := composer.ComposePermissionsPolicy(h.PermissionsPolicy.PolicyInput()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 var secretValueType = reflect.TypeFor[secret.Value]()
 
 func fieldStringValue(field reflect.Value) string {
@@ -2267,6 +2314,10 @@ func fieldStringValue(field reflect.Value) string {
 
 			return string(secretBytes)
 		}
+	}
+
+	if stringer, ok := field.Interface().(fmt.Stringer); ok {
+		return stringer.String()
 	}
 
 	return ""
