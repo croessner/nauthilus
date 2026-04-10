@@ -1116,9 +1116,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	// negative cache. Otherwise a template filter like "(mail=%s)" would produce
 	// the same cache key for all users and could poison lookups.
 	if ldapRequest.MacroSource != nil {
-		escaped := util.EscapeLDAPFilter(ldapRequest.MacroSource.Username)
-		ldapRequest.Filter = strings.ReplaceAll(ldapRequest.Filter, "%s", escaped)
-		ldapRequest.Filter = ldapRequest.MacroSource.ReplaceMacros(ldapRequest.Filter)
+		ldapRequest.Filter = util.ExpandLDAPFilter(ldapRequest.Filter, ldapRequest.MacroSource)
 
 		// Prevent double-expansion in LDAPConnectionImpl.Search(). After this point
 		// ldapRequest.Filter is already final.

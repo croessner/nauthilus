@@ -31,4 +31,6 @@ type PositivePasswordCache struct {
 	UniqueUserIDField string              `json:"webauth_userid_field"`
 	DisplayNameField  string              `json:"display_name_field"`
 	Attributes        AttributeMapping    `json:"attributes"`
+	Groups            []string            `json:"groups"`
+	GroupDNs          []string            `json:"group_dns"`
 }

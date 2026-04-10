@@ -236,13 +236,12 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	}
 
 	if luaBackendResult.Attributes != nil {
-		passDBResult.Attributes = make(bktype.AttributeMapping)
+		passDBResult.Attributes, passDBResult.Groups, passDBResult.GroupDNs = buildAttributeMappingFromLua(luaBackendResult.Attributes)
+	}
 
-		for key, value := range luaBackendResult.Attributes {
-			if keyName, assertOk := key.(string); assertOk {
-				passDBResult.Attributes[keyName] = []any{value}
-			}
-		}
+	if len(luaBackendResult.Groups) > 0 || len(luaBackendResult.GroupDNs) > 0 {
+		passDBResult.Groups = mergeNormalizedStringSlices(passDBResult.Groups, luaBackendResult.Groups)
+		passDBResult.GroupDNs = mergeNormalizedStringSlices(passDBResult.GroupDNs, luaBackendResult.GroupDNs)
 	}
 
 	// Outcome attributes

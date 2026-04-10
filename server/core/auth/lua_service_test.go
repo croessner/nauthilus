@@ -117,6 +117,82 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	}
 }
 
+func TestDefaultLuaFilter_MergesGroupsFromBackendResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+
+	scriptPath := filepath.Clean(filepath.Join(wd, "..", "..", "lualib", "filter", "testdata", "groups_apply.lua"))
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{
+				Prefix: "nt:",
+			},
+		},
+		Lua: &config.LuaSection{
+			Filters: []config.LuaFilter{
+				{
+					Name:       "groups_apply",
+					ScriptPath: scriptPath,
+				},
+			},
+		},
+	}
+
+	envCfg := config.NewTestEnvironmentConfig()
+	config.SetTestEnvironmentConfig(envCfg)
+	config.SetTestFile(cfg)
+	util.SetDefaultConfigFile(cfg)
+	util.SetDefaultEnvironment(envCfg)
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+
+	if err := filter.PreCompileLuaFilters(config.GetFile()); err != nil {
+		t.Fatalf("PreCompileLuaFilters failed: %v", err)
+	}
+
+	redisDB, _ := redismock.NewClientMock()
+	rediscli.NewTestClient(redisDB)
+
+	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
+		Cfg:    config.GetFile(),
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}).(*core.AuthState)
+
+	auth.Runtime.GUID = "guid-2"
+	auth.Runtime.StartTime = time.Now()
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Request.Username = "user@example.com"
+	auth.Request.Password = secret.New("secret")
+	auth.Request.ClientIP = "127.0.0.1"
+	auth.SetResolvedGroups([]string{"Existing"}, nil)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+
+	passDBResult := &core.PassDBResult{}
+	result := (DefaultLuaFilter{}).Filter(ctx, auth.View(), passDBResult)
+	if result != definitions.AuthResultFail {
+		t.Fatalf("expected AuthResultFail, got %v", result)
+	}
+
+	if got := auth.GetGroups(); len(got) != 3 || got[0] != "Developer" || got[1] != "Existing" || got[2] != "Ops" {
+		t.Fatalf("unexpected merged groups on auth state: %v", got)
+	}
+
+	if got := passDBResult.Groups; len(got) != 3 || got[0] != "Developer" || got[1] != "Existing" || got[2] != "Ops" {
+		t.Fatalf("unexpected merged groups on passDBResult: %v", got)
+	}
+
+	if got := passDBResult.GroupDNs; len(got) != 1 || got[0] != "cn=Developer,ou=groups,dc=example,dc=org" {
+		t.Fatalf("unexpected group_dns on passDBResult: %v", got)
+	}
+}
+
 func newDefaultPostActionTestConfig(t *testing.T) *config.FileSettings {
 	bfFeature := &config.Feature{}
 	if err := bfFeature.Set(definitions.FeatureBruteForce); err != nil {

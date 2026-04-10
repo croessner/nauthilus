@@ -71,7 +71,8 @@ type OIDCCustomClaim struct {
 
 type OIDCClaimMapping struct {
 	Claim     string `mapstructure:"claim" validate:"required,oidc_claim_name"`
-	Attribute string `mapstructure:"attribute" validate:"required,printascii,excludesall= "`
+	Attribute string `mapstructure:"attribute" validate:"required_without=From,excluded_with=From,omitempty,printascii,excludesall= "`
+	From      string `mapstructure:"from" validate:"required_without=Attribute,excluded_with=Attribute,omitempty,oneof=groups group_dns"`
 	Type      string `mapstructure:"type" validate:"omitempty,oidc_claim_type"`
 }
 

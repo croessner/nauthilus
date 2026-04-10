@@ -71,6 +71,12 @@ type LuaBackendResult struct {
 	// Attributes holds any other attributes related to the user's account
 	Attributes map[any]any
 
+	// Groups holds resolved group names.
+	Groups []string
+
+	// GroupDNs holds resolved group distinguished names.
+	GroupDNs []string
+
 	// Logs is a pointer to a custom log key-value pair associated with the Lua script.
 	Logs *CustomLogKeyValue
 }
@@ -283,6 +289,60 @@ func (m *BackendResultManager) GetSetAttributes(L *lua.LState) int {
 	return stack.PushResult(convert.GoToLuaValue(L, backendResult.Attributes))
 }
 
+// GetSetGroups sets or retrieves the Groups field.
+func (m *BackendResultManager) GetSetGroups(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		table := stack.CheckTable(2)
+		groups := make([]string, 0, table.Len())
+
+		table.ForEach(func(_, value lua.LValue) {
+			if str, ok := value.(lua.LString); ok {
+				groups = append(groups, string(str))
+			}
+		})
+
+		backendResult.Groups = groups
+
+		return 0
+	}
+
+	return stack.PushResult(convert.GoToLuaValue(L, backendResult.Groups))
+}
+
+// GetSetGroupDNs sets or retrieves the GroupDNs field.
+func (m *BackendResultManager) GetSetGroupDNs(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+
+	backendResult := m.checkBackendResult(L)
+	if backendResult == nil {
+		return 0
+	}
+
+	if stack.GetTop() == 2 {
+		table := stack.CheckTable(2)
+		groupDNs := make([]string, 0, table.Len())
+
+		table.ForEach(func(_, value lua.LValue) {
+			if str, ok := value.(lua.LString); ok {
+				groupDNs = append(groupDNs, string(str))
+			}
+		})
+
+		backendResult.GroupDNs = groupDNs
+
+		return 0
+	}
+
+	return stack.PushResult(convert.GoToLuaValue(L, backendResult.GroupDNs))
+}
+
 // LoaderModBackendResult initializes and loads the backend result module for Lua.
 func LoaderModBackendResult(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -302,6 +362,8 @@ func LoaderModBackendResult(ctx context.Context, cfg config.File, logger *slog.L
 			definitions.LuaBackendResultDisplayNameField:    manager.GetSetDisplayNameField,
 			definitions.LuaBackendResultWebAuthnCredentials: manager.GetSetWebAuthnCredentials,
 			definitions.LuaBackendResultAttributes:          manager.GetSetAttributes,
+			definitions.LuaBackendResultGroups:              manager.GetSetGroups,
+			definitions.LuaBackendResultGroupDNs:            manager.GetSetGroupDNs,
 		}))
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{

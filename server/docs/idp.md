@@ -957,12 +957,12 @@ idp:
                     attribute: "mail"         # Map LDAP 'mail' to OIDC 'email'
                     type: "string"
                 -   claim: "groups"
-                    attribute: "memberOf"    # Map LDAP 'memberOf' to OIDC 'groups'
+                    from: "groups"                   # Use resolved groups from AuthState
                     type: "string_array"
         access_token_claims:
             mappings:
                 -   claim: "billing.roles"
-                    attribute: "billing_roles"
+                    attribute: "roles"
                     type: "string_array"
 ```
 
@@ -973,6 +973,16 @@ The mapping logic handles:
 - **Custom Claims**: Any claim name can be mapped from a backend attribute.
 - **Complex Types**: Booleans (e.g., `email_verified`) and structured objects (e.g., `address`).
 - **Default types**: If `type` is omitted, the claim's default type (standard or custom scope) is used when available.
+
+Mapping source options:
+
+- `attribute`: read claim values from backend attributes.
+- `from`: read built-in runtime sources (`groups`, `group_dns`).
+
+When groups are enabled in LDAP/Lua backends, Nauthilus stores memberships as dedicated AuthState fields (`groups`,
+`group_dns`). Claim mappings can consume them via `from: "groups"` and `from: "group_dns"`.
+
+Role claims are mapped from backend attributes directly (for example LDAP `roles`) using `attribute: "roles"`.
 
 ### 6.1 Scope-based Claim Filtering
 
@@ -1178,7 +1188,7 @@ ldap:
     - protocol: [ "oidc", "saml" ]
       base_dn: "ou=users,dc=example,dc=com"
       filter:
-        user: "(uid={{.Username}})"
+          user: "(uid=%{username})"
       mapping:
         account_field: "uid"
         display_name_field: "cn"
@@ -1187,6 +1197,20 @@ ldap:
         # JSON mode: Use the field that stores all credentials
         webauthn_credential_field: "nauthilusFido2Credential"
         webauthn_object_class: "nauthilusFido2Account"
+      groups:
+          # member_of | search | hybrid
+          strategy: "hybrid"
+          # Used by member_of and hybrid
+          attribute: "memberOf"
+          # Used by search and hybrid (defaults shown)
+          base_dn: "ou=groups,dc=example,dc=com"
+          scope: "sub"
+          # Macros use Nauthilus syntax (LDAP-escaped automatically):
+          # %{user_dn}, %{account}, %{username}, ...
+          filter: "(|(member=%{user_dn})(uniqueMember=%{user_dn})(memberUid=%{account}))"
+          name_attribute: "cn"
+          recursive: true
+          max_depth: 4
 ```
 
 ### 7.5 FIDO2 LDAP Schema & LDIF Examples

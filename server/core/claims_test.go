@@ -175,3 +175,36 @@ func TestFillIdTokenClaims_WithClientCustomScopeOverride(t *testing.T) {
 	assert.Nil(t, claims["global_claim"])
 	assert.Equal(t, "client_value", claims["client_claim"])
 }
+
+func TestFillIdTokenClaims_FromGroupsSource(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	auth := &AuthState{
+		deps: AuthDeps{
+			Logger: logger,
+		},
+	}
+	auth.SetResolvedGroups(
+		[]string{"developers", "platform"},
+		[]string{"cn=developers,ou=groups,dc=example,dc=org"},
+	)
+
+	cfgClaims := &config.IdTokenClaims{
+		Mappings: []config.OIDCClaimMapping{
+			{Claim: definitions.ClaimGroups, From: "groups", Type: definitions.ClaimTypeStringArray},
+			{Claim: "group_dns", From: "group_dns", Type: definitions.ClaimTypeStringArray},
+		},
+	}
+
+	claims := make(map[string]any)
+	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid", "groups"}, []config.Oauth2CustomScope{
+		{
+			Name: "groups",
+			Claims: []config.OIDCCustomClaim{
+				{Name: "group_dns", Type: definitions.ClaimTypeStringArray},
+			},
+		},
+	})
+
+	assert.Equal(t, []string{"developers", "platform"}, claims[definitions.ClaimGroups])
+	assert.Equal(t, []string{"cn=developers,ou=groups,dc=example,dc=org"}, claims["group_dns"])
+}

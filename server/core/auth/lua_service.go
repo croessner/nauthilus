@@ -144,13 +144,20 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		}
 
 		if luaBackendResult != nil {
-			// XXX: We currently only support changing attributes from the AuthState object.
 			if (*luaBackendResult).Attributes != nil {
 				for key, value := range (*luaBackendResult).Attributes {
 					if keyName, assertOk := key.(string); assertOk {
 						auth.SetAttributeIfAbsent(keyName, value)
 					}
 				}
+			}
+
+			if len((*luaBackendResult).Groups) > 0 || len((*luaBackendResult).GroupDNs) > 0 {
+				mergedGroups := append(auth.GetGroups(), (*luaBackendResult).Groups...)
+				mergedGroupDNs := append(auth.GetGroupDNs(), (*luaBackendResult).GroupDNs...)
+				auth.SetResolvedGroups(mergedGroups, mergedGroupDNs)
+				passDBResult.Groups = auth.GetGroups()
+				passDBResult.GroupDNs = auth.GetGroupDNs()
 			}
 		}
 

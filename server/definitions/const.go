@@ -2118,6 +2118,12 @@ const (
 
 	// LuaBackendResultAttributes represents the field name for the attributes in a Lua backend result.
 	LuaBackendResultAttributes = "attributes"
+
+	// LuaBackendResultGroups represents the field name for groups in a Lua backend result.
+	LuaBackendResultGroups = "groups"
+
+	// LuaBackendResultGroupDNs represents the field name for group DNs in a Lua backend result.
+	LuaBackendResultGroupDNs = "group_dns"
 )
 
 const (

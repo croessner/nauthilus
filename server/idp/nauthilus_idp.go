@@ -707,6 +707,8 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 
 	user := backend.NewUser(accountName, displayName, uniqueID)
 	user.Attributes = auth.GetAttributes()
+	user.Groups = auth.GetGroups()
+	user.GroupDNs = auth.GetGroupDNs()
 	user.TOTPSecretField = auth.GetTOTPSecretField()
 	user.TOTPRecoveryField = auth.GetTOTPRecoveryField()
 
@@ -740,6 +742,7 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 		}
 
 		auth.ReplaceAllAttributes(user.Attributes)
+		auth.SetResolvedGroups(user.Groups, user.GroupDNs)
 
 		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes, effectiveCustomScopes)
 		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes, effectiveCustomScopes)

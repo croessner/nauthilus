@@ -29,6 +29,8 @@ type User struct {
 
 	Credentials       []mfa.PersistentCredential `redis:"credentials"`
 	Attributes        bktype.AttributeMapping    `redis:"-"`
+	Groups            []string                   `redis:"-"`
+	GroupDNs          []string                   `redis:"-"`
 	TOTPSecretField   string                     `redis:"totp_secret_field"`
 	TOTPRecoveryField string                     `redis:"totp_recovery_field"`
 }

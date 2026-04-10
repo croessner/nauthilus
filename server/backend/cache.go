@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/security"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -44,6 +46,42 @@ var (
 	accountSF singleflight.Group
 	cacheSF   singleflight.Group
 )
+
+func loadEncryptedStringSliceField(hashValues map[string]string, fieldName string, securityManager *security.Manager) ([]string, error) {
+	fieldValue, ok := hashValues[fieldName]
+	if !ok || fieldValue == "" {
+		return nil, nil
+	}
+
+	decryptedValue, _ := securityManager.Decrypt(fieldValue)
+
+	var values []string
+	if err := jsoniter.ConfigFastest.Unmarshal([]byte(decryptedValue), &values); err != nil {
+		return nil, err
+	}
+
+	return values, nil
+}
+
+func storeEncryptedStringSliceField(hashFields map[string]any, fieldName string, values []string, securityManager *security.Manager) error {
+	if len(values) == 0 {
+		return nil
+	}
+
+	serialized, err := jsoniter.ConfigFastest.Marshal(values)
+	if err != nil {
+		return err
+	}
+
+	rawValue := string(serialized)
+	hashFields[fieldName] = rawValue
+
+	if encryptedValue, encErr := securityManager.Encrypt(rawValue); encErr == nil {
+		hashFields[fieldName] = encryptedValue
+	}
+
+	return nil
+}
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, cfg config.File, redisClient rediscli.Client, username, protocol, oidcClientID string) (accountName string, err error) {
@@ -110,6 +148,8 @@ func LoadCacheFromRedisWithSF(ctx context.Context, cfg config.File, logger *slog
 
 	// Deep copy attributes map to avoid shared mutation between concurrent requests
 	ucp.Attributes = res.ucp.Attributes.Clone()
+	ucp.Groups = slices.Clone(res.ucp.Groups)
+	ucp.GroupDNs = slices.Clone(res.ucp.GroupDNs)
 
 	return res.isRedisErr, nil
 }
@@ -209,6 +249,28 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 		ucp.Attributes = make(bktype.AttributeMapping)
 	}
 
+	if groups, parseErr := loadEncryptedStringSliceField(hashValues, "groups", sm); parseErr != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyMsg, "Failed to unmarshal groups",
+			definitions.LogKeyError, parseErr,
+		)
+
+		return false, parseErr
+	} else {
+		ucp.Groups = groups
+	}
+
+	if groupDNs, parseErr := loadEncryptedStringSliceField(hashValues, "group_dns", sm); parseErr != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyMsg, "Failed to unmarshal group_dns",
+			definitions.LogKeyError, parseErr,
+		)
+
+		return false, parseErr
+	} else {
+		ucp.GroupDNs = groupDNs
+	}
+
 	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
 		definitions.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
@@ -278,6 +340,26 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 		if encryptedAttributesJSON, err := sm.Encrypt(hashFields["attributes"].(string)); err == nil {
 			hashFields["attributes"] = encryptedAttributesJSON
 		}
+	}
+
+	if err := storeEncryptedStringSliceField(hashFields, "groups", cache.Groups, sm); err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Failed to marshal groups",
+			definitions.LogKeyError, err,
+		)
+
+		return
+	}
+
+	if err := storeEncryptedStringSliceField(hashFields, "group_dns", cache.GroupDNs, sm); err != nil {
+		level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Failed to marshal group_dns",
+			definitions.LogKeyError, err,
+		)
+
+		return
 	}
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
