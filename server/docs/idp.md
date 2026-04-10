@@ -1007,6 +1007,29 @@ idp:
             type: "string"
 ```
 
+Clients can optionally define `custom_scopes` as an override layer:
+
+```yaml
+idp:
+  oidc:
+    clients:
+      - client_id: "my-client"
+        custom_scopes:
+          - name: "nauthilus"
+            description: "Client-specific nauthilus scope"
+            claims:
+              - name: "custom_claim_3"
+                type: "string"
+```
+
+Merge behavior is deterministic:
+
+- Global scopes from `idp.oidc.custom_scopes` are the base.
+- Client scopes from `idp.oidc.clients[].custom_scopes` are applied on top.
+- If a scope name matches, the client scope fully replaces the global scope definition.
+- Client-only scope names are appended.
+- OIDC Discovery (`scopes_supported`) remains global and is not customized per client.
+
 To use these, the client must have a mapping for the claim names (in `id_token_claims` and/or `access_token_claims`):
 
 ```yaml

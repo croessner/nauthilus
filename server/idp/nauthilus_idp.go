@@ -725,6 +725,8 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 
 	// Map attributes from backend using claim mappings when client is OIDCClient.
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
+		effectiveCustomScopes := n.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(oidcClient)
+
 		// We need an AuthState to use FillIdTokenClaims
 		// We can create a lightweight AuthState just for mapping
 		authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
@@ -739,8 +741,8 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 
 		auth.ReplaceAllAttributes(user.Attributes)
 
-		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes)
-		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes)
+		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes, effectiveCustomScopes)
+		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes, effectiveCustomScopes)
 	}
 
 	return idTokenClaims, accessTokenClaims, nil

@@ -64,7 +64,7 @@ func TestFillIdTokenClaims(t *testing.T) {
 	})
 
 	claims := make(map[string]any)
-	auth.FillIdTokenClaims(cfgClaims, claims, nil)
+	auth.FillIdTokenClaims(cfgClaims, claims, nil, nil)
 
 	assert.Equal(t, "Max Mustermann", claims[definitions.ClaimName])
 	assert.Equal(t, "max@example.com", claims[definitions.ClaimEmail])
@@ -111,11 +111,67 @@ func TestFillIdTokenClaims_WithCustomScopes(t *testing.T) {
 
 	// 1. Without the scope
 	claims := make(map[string]any)
-	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid"})
+	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid"}, auth.Cfg().GetIdP().OIDC.CustomScopes)
 	assert.Nil(t, claims["my_claim"])
 
 	// 2. With the scope
 	claims = make(map[string]any)
-	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid", "my_scope"})
+	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid", "my_scope"}, auth.Cfg().GetIdP().OIDC.CustomScopes)
 	assert.Equal(t, "custom_value", claims["my_claim"])
+}
+
+func TestFillIdTokenClaims_WithClientCustomScopeOverride(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	cfg := &config.FileSettings{
+		IdP: &config.IdPSection{
+			OIDC: config.OIDCConfig{
+				CustomScopes: []config.Oauth2CustomScope{
+					{
+						Name:        "my_scope",
+						Description: "global scope",
+						Claims: []config.OIDCCustomClaim{
+							{Name: "global_claim", Type: definitions.ClaimTypeString},
+						},
+					},
+				},
+			},
+		},
+	}
+	auth := &AuthState{
+		deps: AuthDeps{
+			Logger: logger,
+			Cfg:    cfg,
+		},
+	}
+	auth.ReplaceAllAttributes(map[string][]any{
+		"global_attr": {"global_value"},
+		"client_attr": {"client_value"},
+	})
+
+	cfgClaims := &config.IdTokenClaims{
+		Mappings: []config.OIDCClaimMapping{
+			{Claim: "global_claim", Attribute: "global_attr", Type: definitions.ClaimTypeString},
+			{Claim: "client_claim", Attribute: "client_attr", Type: definitions.ClaimTypeString},
+		},
+	}
+
+	client := &config.OIDCClient{
+		ClientID: "client-1",
+		CustomScopes: []config.Oauth2CustomScope{
+			{
+				Name:        "my_scope",
+				Description: "client scope",
+				Claims: []config.OIDCCustomClaim{
+					{Name: "client_claim", Type: definitions.ClaimTypeString},
+				},
+			},
+		},
+	}
+
+	effectiveCustomScopes := cfg.GetIdP().OIDC.GetEffectiveCustomScopes(client)
+
+	claims := make(map[string]any)
+	auth.FillIdTokenClaims(cfgClaims, claims, []string{"openid", "my_scope"}, effectiveCustomScopes)
+	assert.Nil(t, claims["global_claim"])
+	assert.Equal(t, "client_value", claims["client_claim"])
 }

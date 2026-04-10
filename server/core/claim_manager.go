@@ -40,7 +40,7 @@ type ScopeManager struct {
 
 // NewScopeManager constructs a ScopeManager from config and the requested scopes.
 // It merges standard claim definitions with custom scope/claim definitions.
-func NewScopeManager(cfg config.File, requestedScopes []string) *ScopeManager {
+func NewScopeManager(requestedScopes []string, customScopes []config.Oauth2CustomScope) *ScopeManager {
 	requested := make(map[string]struct{}, len(requestedScopes))
 	for _, scope := range requestedScopes {
 		requested[scope] = struct{}{}
@@ -72,32 +72,30 @@ func NewScopeManager(cfg config.File, requestedScopes []string) *ScopeManager {
 		definitions.ClaimGroups:  {Scopes: []string{definitions.ScopeGroups}, DefaultType: definitions.ClaimTypeStringArray},
 	}
 
-	if cfg != nil {
-		for _, customScope := range cfg.GetIdP().OIDC.CustomScopes {
-			for _, customClaim := range customScope.Claims {
-				claimName := customClaim.GetName()
-				if claimName == "" {
-					continue
-				}
-
-				claimType := customClaim.GetType()
-				definition, exists := claimDefinitions[claimName]
-				if !exists {
-					claimDefinitions[claimName] = claimDefinition{
-						Scopes:      []string{customScope.Name},
-						DefaultType: claimType,
-					}
-
-					continue
-				}
-
-				definition.Scopes = appendUnique(definition.Scopes, customScope.Name)
-				if definition.DefaultType == "" {
-					definition.DefaultType = claimType
-				}
-
-				claimDefinitions[claimName] = definition
+	for _, customScope := range customScopes {
+		for _, customClaim := range customScope.Claims {
+			claimName := customClaim.GetName()
+			if claimName == "" {
+				continue
 			}
+
+			claimType := customClaim.GetType()
+			definition, exists := claimDefinitions[claimName]
+			if !exists {
+				claimDefinitions[claimName] = claimDefinition{
+					Scopes:      []string{customScope.Name},
+					DefaultType: claimType,
+				}
+
+				continue
+			}
+
+			definition.Scopes = appendUnique(definition.Scopes, customScope.Name)
+			if definition.DefaultType == "" {
+				definition.DefaultType = claimType
+			}
+
+			claimDefinitions[claimName] = definition
 		}
 	}
 
@@ -144,14 +142,14 @@ type ClaimManager struct {
 }
 
 // NewClaimManager constructs a ClaimManager for the given AuthState and scopes.
-func NewClaimManager(auth *AuthState, requestedScopes []string) *ClaimManager {
+func NewClaimManager(auth *AuthState, requestedScopes []string, customScopes []config.Oauth2CustomScope) *ClaimManager {
 	if auth == nil {
 		return &ClaimManager{}
 	}
 
 	return &ClaimManager{
 		auth:   auth,
-		scopes: NewScopeManager(auth.Cfg(), requestedScopes),
+		scopes: NewScopeManager(requestedScopes, customScopes),
 	}
 }
 

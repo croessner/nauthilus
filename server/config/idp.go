@@ -43,6 +43,25 @@ func validateRequiredWithinSupported(required, supported []string) bool {
 	return true
 }
 
+func uniqueCustomScopeNames(scopes []Oauth2CustomScope) (map[string]struct{}, string, bool) {
+	seen := make(map[string]struct{}, len(scopes))
+
+	for _, scope := range scopes {
+		name := strings.TrimSpace(scope.Name)
+		if name == "" {
+			continue
+		}
+
+		if _, exists := seen[name]; exists {
+			return nil, name, false
+		}
+
+		seen[name] = struct{}{}
+	}
+
+	return seen, "", true
+}
+
 // validateIdPMFASettings ensures require_mfa is a subset of supported_mfa when supported_mfa is configured.
 func (f *FileSettings) validateIdPMFASettings() error {
 	if f == nil || f.IdP == nil {
@@ -58,6 +77,41 @@ func (f *FileSettings) validateIdPMFASettings() error {
 	for _, sp := range f.IdP.SAML2.ServiceProviders {
 		if !validateRequiredWithinSupported(sp.RequireMFA, sp.SupportedMFA) {
 			return fmt.Errorf("idp.saml2.service_providers[%s]: require_mfa must be a subset of supported_mfa", sp.EntityID)
+		}
+	}
+
+	return nil
+}
+
+// validateIdPOIDCCustomScopes ensures OIDC custom scope names are unique and warns when
+// a client-level custom scope intentionally overrides a global scope of the same name.
+func (f *FileSettings) validateIdPOIDCCustomScopes() error {
+	if f == nil || f.IdP == nil {
+		return nil
+	}
+
+	oidc := f.IdP.OIDC
+	globalNames, duplicate, ok := uniqueCustomScopeNames(oidc.CustomScopes)
+	if !ok {
+		return fmt.Errorf("idp.oidc.custom_scopes: duplicate scope name '%s'", duplicate)
+	}
+
+	for idx, client := range oidc.Clients {
+		clientNames, duplicate, ok := uniqueCustomScopeNames(client.CustomScopes)
+		if !ok {
+			return fmt.Errorf("idp.oidc.clients[%d].custom_scopes: duplicate scope name '%s'", idx, duplicate)
+		}
+
+		for name := range clientNames {
+			if _, exists := globalNames[name]; !exists {
+				continue
+			}
+
+			safeWarn(
+				"msg", "client custom scope overrides global custom scope",
+				"client_id", client.ClientID,
+				"scope", name,
+			)
 		}
 	}
 
@@ -664,26 +718,27 @@ func (o *OIDCConfig) warnUnsupported() []string {
 
 // OIDCClient represents an OIDC client configuration.
 type OIDCClient struct {
-	Name                     string            `mapstructure:"name"`
-	ClientID                 string            `mapstructure:"client_id" validate:"required"`
-	ClientSecret             secret.Value      `mapstructure:"client_secret"`
-	RedirectURIs             []string          `mapstructure:"redirect_uris"`
-	Scopes                   []string          `mapstructure:"scopes"`
-	ImpliedScopes            []string          `mapstructure:"implied_scopes"`
-	GrantTypes               []string          `mapstructure:"grant_types"`
-	RequireMFA               []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	SupportedMFA             []string          `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
-	PostLogoutRedirectURIs   []string          `mapstructure:"post_logout_redirect_uris"`
-	BackChannelLogoutURI     string            `mapstructure:"backchannel_logout_uri"`
-	FrontChannelLogoutURI    string            `mapstructure:"frontchannel_logout_uri"`
-	LogoutRedirectURI        string            `mapstructure:"logout_redirect_uri"`
-	AccessTokenType          string            `mapstructure:"access_token_type"`
-	TokenEndpointAuthMethod  string            `mapstructure:"token_endpoint_auth_method"`
-	ClientPublicKey          string            `mapstructure:"client_public_key"`
-	ClientPublicKeyFile      string            `mapstructure:"client_public_key_file"`
-	ClientPublicKeyAlgorithm string            `mapstructure:"client_public_key_algorithm"`
-	IdTokenClaims            IdTokenClaims     `mapstructure:"id_token_claims"`
-	AccessTokenClaims        AccessTokenClaims `mapstructure:"access_token_claims"`
+	Name                     string              `mapstructure:"name"`
+	ClientID                 string              `mapstructure:"client_id" validate:"required"`
+	ClientSecret             secret.Value        `mapstructure:"client_secret"`
+	RedirectURIs             []string            `mapstructure:"redirect_uris"`
+	Scopes                   []string            `mapstructure:"scopes"`
+	ImpliedScopes            []string            `mapstructure:"implied_scopes"`
+	CustomScopes             []Oauth2CustomScope `mapstructure:"custom_scopes" validate:"omitempty,dive"`
+	GrantTypes               []string            `mapstructure:"grant_types"`
+	RequireMFA               []string            `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA             []string            `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	PostLogoutRedirectURIs   []string            `mapstructure:"post_logout_redirect_uris"`
+	BackChannelLogoutURI     string              `mapstructure:"backchannel_logout_uri"`
+	FrontChannelLogoutURI    string              `mapstructure:"frontchannel_logout_uri"`
+	LogoutRedirectURI        string              `mapstructure:"logout_redirect_uri"`
+	AccessTokenType          string              `mapstructure:"access_token_type"`
+	TokenEndpointAuthMethod  string              `mapstructure:"token_endpoint_auth_method"`
+	ClientPublicKey          string              `mapstructure:"client_public_key"`
+	ClientPublicKeyFile      string              `mapstructure:"client_public_key_file"`
+	ClientPublicKeyAlgorithm string              `mapstructure:"client_public_key_algorithm"`
+	IdTokenClaims            IdTokenClaims       `mapstructure:"id_token_claims"`
+	AccessTokenClaims        AccessTokenClaims   `mapstructure:"access_token_claims"`
 	// Deprecated: use idp.remember_me_ttl instead.
 	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
 	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
@@ -695,6 +750,58 @@ type OIDCClient struct {
 	SkipConsent                       bool          `mapstructure:"skip_consent"`
 	DelayedResponse                   bool          `mapstructure:"delayed_response"`
 	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
+}
+
+// GetEffectiveCustomScopes returns the merged custom scopes for a client.
+// Client-level scopes fully replace global scopes when names collide.
+func (o *OIDCConfig) GetEffectiveCustomScopes(client *OIDCClient) []Oauth2CustomScope {
+	if o == nil {
+		if client == nil {
+			return nil
+		}
+
+		return mergeCustomScopes(nil, client.CustomScopes)
+	}
+
+	return mergeCustomScopes(o.CustomScopes, client.GetCustomScopes())
+}
+
+func mergeCustomScopes(baseScopes []Oauth2CustomScope, clientScopes []Oauth2CustomScope) []Oauth2CustomScope {
+	if len(baseScopes) == 0 && len(clientScopes) == 0 {
+		return nil
+	}
+
+	result := make([]Oauth2CustomScope, 0, len(baseScopes)+len(clientScopes))
+	indexByName := make(map[string]int, len(baseScopes)+len(clientScopes))
+
+	for _, scope := range baseScopes {
+		name := strings.TrimSpace(scope.Name)
+		if name != "" {
+			indexByName[name] = len(result)
+		}
+
+		result = append(result, scope)
+	}
+
+	for _, scope := range clientScopes {
+		name := strings.TrimSpace(scope.Name)
+		if name == "" {
+			result = append(result, scope)
+
+			continue
+		}
+
+		if idx, exists := indexByName[name]; exists {
+			result[idx] = scope
+
+			continue
+		}
+
+		indexByName[name] = len(result)
+		result = append(result, scope)
+	}
+
+	return result
 }
 
 // IsPublicClient reports whether the client is a public client, i.e. it has no
@@ -763,6 +870,15 @@ func (c *OIDCClient) GetImpliedScopes() []string {
 	}
 
 	return c.ImpliedScopes
+}
+
+// GetCustomScopes returns the client-level custom scopes.
+func (c *OIDCClient) GetCustomScopes() []Oauth2CustomScope {
+	if c == nil || len(c.CustomScopes) == 0 {
+		return nil
+	}
+
+	return c.CustomScopes
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this client.

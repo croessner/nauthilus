@@ -2342,6 +2342,7 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultFrontendSettings,
 		f.setDefaultIdPSettings,
 		f.validateIdPMFASettings,
+		f.validateIdPOIDCCustomScopes,
 		f.validateIdPSAMLSigningSettings,
 		f.validateIdPSAML2SLOSettings,
 		f.setDefaultTrustedProxies,
@@ -2490,7 +2491,7 @@ func (f *FileSettings) warnUnsupportedConfig() {
 
 // unknownConfigParameters returns unknown configuration keys collected during decoding.
 // This includes unknown root-level keys (captured via FileSettings.Other) and unknown
-// fields inside OIDC custom scopes (captured via Oauth2CustomScope.Other).
+// fields inside OIDC custom scopes (global and client-level, captured via Oauth2CustomScope.Other).
 func (f *FileSettings) unknownConfigParameters() []string {
 	if f == nil {
 		return nil
@@ -2516,6 +2517,21 @@ func (f *FileSettings) unknownConfigParameters() []string {
 				}
 
 				collectUnknownParameterPaths(prefix+"."+key, value, &unknown, 0, make(map[uintptr]struct{}))
+			}
+		}
+
+		for clientIdx := range idpCfg.OIDC.Clients {
+			client := idpCfg.OIDC.Clients[clientIdx]
+			for scopeIdx := range client.CustomScopes {
+				scope := client.CustomScopes[scopeIdx]
+				prefix := fmt.Sprintf("idp.oidc.clients[%d].custom_scopes[%d]", clientIdx, scopeIdx)
+				for key, value := range scope.Other {
+					if isSupportedCustomScopeExtraKey(key) {
+						continue
+					}
+
+					collectUnknownParameterPaths(prefix+"."+key, value, &unknown, 0, make(map[uintptr]struct{}))
+				}
 			}
 		}
 	}
