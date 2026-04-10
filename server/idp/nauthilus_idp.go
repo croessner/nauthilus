@@ -122,7 +122,11 @@ func (n *NauthilusIdP) IsDelayedResponse(clientID string, samlEntityID string) b
 
 // ValidateRedirectURI checks if the given redirect URI is valid for the client.
 func (n *NauthilusIdP) ValidateRedirectURI(client *config.OIDCClient, redirectURI string) bool {
-	return slices.Contains(client.RedirectURIs, redirectURI)
+	if client == nil {
+		return false
+	}
+
+	return validateRedirectURIAgainstAllowList(client.RedirectURIs, redirectURI)
 }
 
 // ValidatePostLogoutRedirectURI checks if the given post-logout redirect URI is valid for the client.

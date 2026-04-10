@@ -224,7 +224,30 @@ const response = await fetch("/mfa/webauthn/register/finish", {
 });
 ```
 
-### 3.1.3 Frontend Security Headers & CSP Nonce
+### 3.1.3 Redirect URI Validation Rules
+
+Nauthilus validates `idp.oidc.clients[].redirect_uris` with strict matching plus controlled wildcard and loopback rules:
+
+- Exact string matching is the default.
+- A trailing wildcard (`*`) is supported only at the end of the configured URI and only when the configured URI does
+  not contain a query (`?`).
+- For wildcard matches, query and fragment parts of the requested `redirect_uri` are ignored during prefix matching.
+- A full wildcard (`*`) is accepted and matches any `http`/`https` redirect URI. This is strongly discouraged in
+  production.
+- For native app compatibility, `http` loopback redirect URIs (`127.0.0.1`, `localhost`, `::1`) allow dynamic ports.
+  Example: configured `http://127.0.0.1/callback` matches request `http://127.0.0.1:51208/callback`.
+- Dynamic loopback port matching is intentionally limited to `http` loopback redirects and does not apply to
+  non-loopback
+  hosts.
+
+Security hardening notes:
+
+- Wildcard matching is disabled when the incoming `redirect_uri` contains user-info (`user@host`) or unsafe path
+  traversal segments (`/../`, including encoded variants).
+- Prefer specific redirect URIs over broad wildcard patterns.
+- `post_logout_redirect_uri` remains an exact-match check against `post_logout_redirect_uris`.
+
+### 3.1.4 Frontend Security Headers & CSP Nonce
 
 Frontend routes support strict configurable browser security headers via:
 
@@ -346,7 +369,7 @@ If full control is required, set `form-action` directly.
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
 
-### 3.1.4 Central CORS (`server.cors`)
+### 3.1.5 Central CORS (`server.cors`)
 
 Cross-origin behavior is configured centrally under `server.cors` and is independent from frontend security headers.
 

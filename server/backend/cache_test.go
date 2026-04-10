@@ -35,7 +35,7 @@ func TestGetUserAccountFromCache_ProtocolMapping(t *testing.T) {
 
 	username := "croessner"
 	accountIMAP := "de10000@srvint.net"
-	accountKeycloak := "croessner_kc"
+	accountOIDC := "croessner_oidc"
 
 	key := rediscli.GetUserHashKey(cfg.GetServer().GetRedis().GetPrefix(), username)
 
@@ -47,12 +47,12 @@ func TestGetUserAccountFromCache_ProtocolMapping(t *testing.T) {
 		assert.Equal(t, accountIMAP, res)
 	})
 
-	t.Run("Keycloak mapping", func(t *testing.T) {
-		fieldKC := accountcache.GetAccountMappingField(username, "keycloak", "cid123")
-		mock.ExpectHGet(key, fieldKC).SetVal(accountKeycloak)
+	t.Run("OIDC mapping", func(t *testing.T) {
+		fieldOIDC := accountcache.GetAccountMappingField(username, "oidc", "cid123")
+		mock.ExpectHGet(key, fieldOIDC).SetVal(accountOIDC)
 
-		res := GetUserAccountFromCache(ctx, cfg, logger, redisClient, accountCache, username, "keycloak", "cid123", "guid2")
-		assert.Equal(t, accountKeycloak, res)
+		res := GetUserAccountFromCache(ctx, cfg, logger, redisClient, accountCache, username, "oidc", "cid123", "guid2")
+		assert.Equal(t, accountOIDC, res)
 	})
 
 	t.Run("Local cache hit (IMAP)", func(t *testing.T) {
@@ -61,10 +61,10 @@ func TestGetUserAccountFromCache_ProtocolMapping(t *testing.T) {
 		assert.Equal(t, accountIMAP, res)
 	})
 
-	t.Run("Local cache hit (Keycloak)", func(t *testing.T) {
+	t.Run("Local cache hit (OIDC)", func(t *testing.T) {
 		// No ExpectHGet here, should hit local cache
-		res := GetUserAccountFromCache(ctx, cfg, logger, redisClient, accountCache, username, "keycloak", "cid123", "guid4")
-		assert.Equal(t, accountKeycloak, res)
+		res := GetUserAccountFromCache(ctx, cfg, logger, redisClient, accountCache, username, "oidc", "cid123", "guid4")
+		assert.Equal(t, accountOIDC, res)
 	})
 
 	assert.NoError(t, mock.ExpectationsWereMet())
