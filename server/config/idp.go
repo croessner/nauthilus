@@ -669,6 +669,7 @@ type OIDCClient struct {
 	ClientSecret             secret.Value      `mapstructure:"client_secret"`
 	RedirectURIs             []string          `mapstructure:"redirect_uris"`
 	Scopes                   []string          `mapstructure:"scopes"`
+	ImpliedScopes            []string          `mapstructure:"implied_scopes"`
 	GrantTypes               []string          `mapstructure:"grant_types"`
 	RequireMFA               []string          `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	SupportedMFA             []string          `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
@@ -753,6 +754,15 @@ func (c *OIDCClient) GetAllowedScopes() []string {
 	}
 
 	return c.Scopes
+}
+
+// GetImpliedScopes returns the configured implied scopes for this client.
+func (c *OIDCClient) GetImpliedScopes() []string {
+	if c == nil || len(c.ImpliedScopes) == 0 {
+		return nil
+	}
+
+	return c.ImpliedScopes
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for this client.

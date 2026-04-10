@@ -85,6 +85,13 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 					{Name: "resource.role", Type: definitions.ClaimTypeStringArray},
 				},
 			},
+			{
+				Name:        "roles",
+				Description: "Role scope for compatibility mappings",
+				Claims: []config.OIDCCustomClaim{
+					{Name: "roles", Type: definitions.ClaimTypeStringArray},
+				},
+			},
 		},
 		Clients: []config.OIDCClient{
 			{
@@ -281,11 +288,13 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 				Mappings: []config.OIDCClaimMapping{
 					{Claim: definitions.ClaimEmail, Attribute: "mail", Type: definitions.ClaimTypeString},
 					{Claim: definitions.ClaimGroups, Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
+					{Claim: "roles", Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
 				},
 			},
 			AccessTokenClaims: config.AccessTokenClaims{
 				Mappings: []config.OIDCClaimMapping{
 					{Claim: "resource.role", Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
+					{Claim: "roles", Attribute: "memberOf", Type: definitions.ClaimTypeStringArray},
 				},
 			},
 		}
@@ -299,6 +308,8 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.Equal(t, "John Doe", idClaims["name"])
 		assert.Nil(t, idClaims["email"])
 		assert.Nil(t, idClaims["groups"])
+		assert.Nil(t, idClaims["roles"])
+		assert.Nil(t, accessClaims["roles"])
 		assert.Nil(t, accessClaims["resource.role"])
 
 		// email requested
@@ -313,7 +324,25 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Nil(t, idClaims["email"])
 		assert.Equal(t, []string{"group1"}, idClaims["groups"])
+		assert.Nil(t, idClaims["roles"])
 		assert.Equal(t, []string{"group1"}, accessClaims["resource.role"])
+		assert.Nil(t, accessClaims["roles"])
+
+		// roles implied for compatibility -> roles claim is now included
+		clientWithImpliedRoles := &config.OIDCClient{
+			ClientID:          "client1",
+			Scopes:            []string{"openid", "roles"},
+			ImpliedScopes:     []string{"roles"},
+			IdTokenClaims:     client.IdTokenClaims,
+			AccessTokenClaims: client.AccessTokenClaims,
+		}
+		filteredScopes := idp.FilterScopes(clientWithImpliedRoles, []string{"openid"})
+		assert.Equal(t, []string{"openid", "roles"}, filteredScopes)
+
+		idClaims, accessClaims, err = idp.GetClaims(ctx, user, clientWithImpliedRoles, filteredScopes)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"group1"}, idClaims["roles"])
+		assert.Equal(t, []string{"group1"}, accessClaims["roles"])
 	})
 
 	t.Run("FilterScopes", func(t *testing.T) {
@@ -337,6 +366,67 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		requested = []string{"openid", "profile", "email", "groups", "offline_access", "invalid"}
 		filtered = idp.FilterScopes(clientNoScopes, requested)
 		assert.Equal(t, []string{"openid", "profile", "email", "groups", "offline_access"}, filtered)
+
+		t.Run("adds implied scopes when allowed", func(t *testing.T) {
+			clientWithImplied := &config.OIDCClient{
+				ClientID:      "client3",
+				Scopes:        []string{"openid", "profile", "offline_access", "roles"},
+				ImpliedScopes: []string{"offline_access", "roles"},
+			}
+
+			filtered := idp.FilterScopes(clientWithImplied, []string{"openid", "profile"})
+			assert.Equal(t, []string{"openid", "profile", "offline_access", "roles"}, filtered)
+		})
+
+		t.Run("keeps stable order and deduplicates implied scopes", func(t *testing.T) {
+			clientWithImplied := &config.OIDCClient{
+				ClientID:      "client4",
+				Scopes:        []string{"openid", "profile", "offline_access"},
+				ImpliedScopes: []string{"offline_access", "offline_access"},
+			}
+
+			filtered := idp.FilterScopes(clientWithImplied, []string{"openid", "offline_access"})
+			assert.Equal(t, []string{"openid", "offline_access"}, filtered)
+		})
+
+		t.Run("ignores implied scopes that are not allowed", func(t *testing.T) {
+			clientWithImplied := &config.OIDCClient{
+				ClientID:      "client5",
+				Scopes:        []string{"openid", "profile"},
+				ImpliedScopes: []string{"offline_access"},
+			}
+
+			filtered := idp.FilterScopes(clientWithImplied, []string{"openid"})
+			assert.Equal(t, []string{"openid"}, filtered)
+		})
+	})
+
+	t.Run("IssueWithImpliedOfflineAccess", func(t *testing.T) {
+		client := &config.OIDCClient{
+			ClientID:             "client1",
+			Scopes:               []string{"openid", "profile", "offline_access"},
+			ImpliedScopes:        []string{"offline_access"},
+			RefreshTokenLifetime: 7 * 24 * time.Hour,
+		}
+
+		filteredScopes := idp.FilterScopes(client, []string{"openid", "profile"})
+		assert.Equal(t, []string{"openid", "profile", "offline_access"}, filteredScopes)
+
+		session := &OIDCSession{
+			ClientID: "client1",
+			UserID:   "user123",
+			Scopes:   filteredScopes,
+			AuthTime: fixedTime,
+		}
+
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		_, _, refreshToken, _, err := idp.IssueTokens(ctx, session)
+		assert.NoError(t, err)
+		assert.Equal(t, "na_rt_fixed-token", refreshToken)
+		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("ValidateToken_Heuristic", func(t *testing.T) {

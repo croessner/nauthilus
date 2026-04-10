@@ -66,21 +66,67 @@ func (n *NauthilusIdP) GetKeyManager() *oidckeys.Manager {
 func (n *NauthilusIdP) FilterScopes(client *config.OIDCClient, requestedScopes []string) []string {
 	allowed := client.GetAllowedScopes()
 	allowedMap := make(map[string]struct{}, len(allowed))
+	impliedScopes := client.GetImpliedScopes()
+	clientID := ""
 
-	for _, s := range allowed {
-		allowedMap[s] = struct{}{}
+	if client != nil {
+		clientID = client.ClientID
 	}
 
-	var filtered []string
-
-	for _, rs := range requestedScopes {
-		if rs == "" {
+	for _, s := range allowed {
+		scope := strings.TrimSpace(s)
+		if scope == "" {
 			continue
 		}
 
-		if _, ok := allowedMap[rs]; ok {
-			filtered = append(filtered, rs)
+		allowedMap[scope] = struct{}{}
+	}
+
+	filtered := make([]string, 0, len(requestedScopes)+len(impliedScopes))
+	seen := make(map[string]struct{}, len(requestedScopes)+len(impliedScopes))
+
+	for _, rs := range requestedScopes {
+		scope := strings.TrimSpace(rs)
+		if scope == "" {
+			continue
 		}
+
+		if _, ok := allowedMap[scope]; !ok {
+			continue
+		}
+
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+
+		seen[scope] = struct{}{}
+		filtered = append(filtered, scope)
+	}
+
+	for _, implied := range impliedScopes {
+		scope := strings.TrimSpace(implied)
+		if scope == "" {
+			continue
+		}
+
+		if _, ok := allowedMap[scope]; !ok {
+			if n != nil && n.deps != nil && n.deps.Logger != nil {
+				n.deps.Logger.Warn(
+					"Ignoring implied scope not listed in client allowed scopes",
+					"client_id", clientID,
+					"scope", scope,
+				)
+			}
+
+			continue
+		}
+
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+
+		seen[scope] = struct{}{}
+		filtered = append(filtered, scope)
 	}
 
 	return filtered

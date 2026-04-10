@@ -351,6 +351,25 @@ func TestOIDCClient_GetAllowedScopes(t *testing.T) {
 	})
 }
 
+func TestOIDCClient_GetImpliedScopes(t *testing.T) {
+	t.Run("NilClient", func(t *testing.T) {
+		var c *OIDCClient
+		assert.Nil(t, c.GetImpliedScopes())
+	})
+
+	t.Run("NoConfiguredImpliedScopes", func(t *testing.T) {
+		c := &OIDCClient{}
+		assert.Nil(t, c.GetImpliedScopes())
+	})
+
+	t.Run("ConfiguredImpliedScopes", func(t *testing.T) {
+		c := &OIDCClient{
+			ImpliedScopes: []string{"offline_access", "roles"},
+		}
+		assert.Equal(t, []string{"offline_access", "roles"}, c.GetImpliedScopes())
+	})
+}
+
 func TestOIDCClient_GetSupportedMFA(t *testing.T) {
 	t.Run("NilClient", func(t *testing.T) {
 		var c *OIDCClient

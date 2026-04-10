@@ -1041,7 +1041,35 @@ idp:
 - **`refresh_token_lifetime`**: Duration of validity for refresh tokens (default: 30d). Refresh tokens are only issued
   if the `offline_access` scope is requested.
 
-### 6.4 SAML Attribute Mapping
+### 6.4 Implied Scopes (Compatibility)
+
+For compatibility scenarios, clients can define `implied_scopes`. These scopes are added to the effective scope set even
+when they are not explicitly requested by the incoming authorization request.
+
+```yaml
+idp:
+  oidc:
+    clients:
+      - client_id: "opencloud-desktop"
+        scopes:
+          - openid
+          - profile
+          - email
+          - offline_access
+          - roles
+        implied_scopes:
+          - offline_access
+          - roles
+```
+
+Behavior:
+
+- Requested scopes are filtered against the configured `scopes` allow list.
+- `implied_scopes` are appended afterward in stable order and deduplicated.
+- Implied scopes not present in the client's `scopes` allow list are ignored.
+- The resulting effective scope set is used for consent evaluation, claim filtering, and token issuance.
+
+### 6.5 SAML Attribute Mapping
 
 Unlike OIDC, which uses a per-client mapping configuration, the SAML 2.0 implementation in Nauthilus currently includes
 all attributes retrieved from the user backend directly into the SAML assertion.
