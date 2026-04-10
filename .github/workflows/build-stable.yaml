@@ -228,11 +228,60 @@ jobs:
             fi
           fi
 
+          release_prefix_notes_file="$(mktemp)"
+
+          {
+            echo "## Commit Summary"
+            echo
+          } > "${release_prefix_notes_file}"
+
+          append_section() {
+            local section_title="$1"
+            local grep_pattern="$2"
+            local log_output
+
+            if [ -n "${last_release_tag}" ]; then
+              log_output="$(git log "${last_release_tag}..${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges --regexp-ignore-case --grep="^${grep_pattern}" || true)"
+            else
+              log_output="$(git log "${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges --regexp-ignore-case --grep="^${grep_pattern}" || true)"
+            fi
+
+            if [ -n "${log_output}" ]; then
+              {
+                echo "### ${section_title}"
+                echo "${log_output}"
+                echo
+              } >> "${release_prefix_notes_file}"
+            fi
+          }
+
+          append_section "Features" "feat:"
+          append_section "Fixes" "fix:"
+          append_section "Documentation" "docs?:"
+          append_section "Chores" "chore:"
+
+          if ! grep -q '^### ' "${release_prefix_notes_file}"; then
+            if [ -n "${last_release_tag}" ]; then
+              fallback_log_output="$(git log "${last_release_tag}..${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges -n 20 || true)"
+            else
+              fallback_log_output="$(git log "${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges -n 20 || true)"
+            fi
+
+            {
+              echo "### Other Commits"
+              echo "${fallback_log_output}"
+              echo
+            } >> "${release_prefix_notes_file}"
+          fi
+
           gh release create "${{ github.ref_name }}" \
             --repo "${{ github.repository }}" \
             --verify-tag \
+            --notes-file "${release_prefix_notes_file}" \
             --generate-notes \
             --latest
+
+          rm -f "${release_prefix_notes_file}"
 
   upload-release:
     runs-on: ubuntu-latest

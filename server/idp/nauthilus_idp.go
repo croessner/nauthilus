@@ -66,21 +66,67 @@ func (n *NauthilusIdP) GetKeyManager() *oidckeys.Manager {
 func (n *NauthilusIdP) FilterScopes(client *config.OIDCClient, requestedScopes []string) []string {
 	allowed := client.GetAllowedScopes()
 	allowedMap := make(map[string]struct{}, len(allowed))
+	impliedScopes := client.GetImpliedScopes()
+	clientID := ""
 
-	for _, s := range allowed {
-		allowedMap[s] = struct{}{}
+	if client != nil {
+		clientID = client.ClientID
 	}
 
-	var filtered []string
-
-	for _, rs := range requestedScopes {
-		if rs == "" {
+	for _, s := range allowed {
+		scope := strings.TrimSpace(s)
+		if scope == "" {
 			continue
 		}
 
-		if _, ok := allowedMap[rs]; ok {
-			filtered = append(filtered, rs)
+		allowedMap[scope] = struct{}{}
+	}
+
+	filtered := make([]string, 0, len(requestedScopes)+len(impliedScopes))
+	seen := make(map[string]struct{}, len(requestedScopes)+len(impliedScopes))
+
+	for _, rs := range requestedScopes {
+		scope := strings.TrimSpace(rs)
+		if scope == "" {
+			continue
 		}
+
+		if _, ok := allowedMap[scope]; !ok {
+			continue
+		}
+
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+
+		seen[scope] = struct{}{}
+		filtered = append(filtered, scope)
+	}
+
+	for _, implied := range impliedScopes {
+		scope := strings.TrimSpace(implied)
+		if scope == "" {
+			continue
+		}
+
+		if _, ok := allowedMap[scope]; !ok {
+			if n != nil && n.deps != nil && n.deps.Logger != nil {
+				n.deps.Logger.Warn(
+					"Ignoring implied scope not listed in client allowed scopes",
+					"client_id", clientID,
+					"scope", scope,
+				)
+			}
+
+			continue
+		}
+
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+
+		seen[scope] = struct{}{}
+		filtered = append(filtered, scope)
 	}
 
 	return filtered
@@ -122,7 +168,11 @@ func (n *NauthilusIdP) IsDelayedResponse(clientID string, samlEntityID string) b
 
 // ValidateRedirectURI checks if the given redirect URI is valid for the client.
 func (n *NauthilusIdP) ValidateRedirectURI(client *config.OIDCClient, redirectURI string) bool {
-	return slices.Contains(client.RedirectURIs, redirectURI)
+	if client == nil {
+		return false
+	}
+
+	return validateRedirectURIAgainstAllowList(client.RedirectURIs, redirectURI)
 }
 
 // ValidatePostLogoutRedirectURI checks if the given post-logout redirect URI is valid for the client.
@@ -657,6 +707,8 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 
 	user := backend.NewUser(accountName, displayName, uniqueID)
 	user.Attributes = auth.GetAttributes()
+	user.Groups = auth.GetGroups()
+	user.GroupDNs = auth.GetGroupDNs()
 	user.TOTPSecretField = auth.GetTOTPSecretField()
 	user.TOTPRecoveryField = auth.GetTOTPRecoveryField()
 
@@ -675,6 +727,8 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 
 	// Map attributes from backend using claim mappings when client is OIDCClient.
 	if oidcClient, ok := client.(*config.OIDCClient); ok {
+		effectiveCustomScopes := n.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(oidcClient)
+
 		// We need an AuthState to use FillIdTokenClaims
 		// We can create a lightweight AuthState just for mapping
 		authRaw := core.NewAuthStateFromContextWithDeps(ctx, n.deps.Auth())
@@ -688,9 +742,10 @@ func (n *NauthilusIdP) GetClaims(ctx *gin.Context, user *backend.User, client an
 		}
 
 		auth.ReplaceAllAttributes(user.Attributes)
+		auth.SetResolvedGroups(user.Groups, user.GroupDNs)
 
-		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes)
-		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes)
+		auth.FillIdTokenClaims(&oidcClient.IdTokenClaims, idTokenClaims, scopes, effectiveCustomScopes)
+		auth.FillAccessTokenClaims(&oidcClient.AccessTokenClaims, accessTokenClaims, scopes, effectiveCustomScopes)
 	}
 
 	return idTokenClaims, accessTokenClaims, nil

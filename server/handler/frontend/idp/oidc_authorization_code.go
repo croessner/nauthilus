@@ -424,9 +424,9 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 
 	client, _ := h.idp.FindClient(session.ClientID)
 	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), session.Scopes)
-	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, plan.Required)
+	customScopes := h.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(client)
+	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, customScopes, plan.Required)
 	optionalScopeChoices := make([]gin.H, 0, len(plan.Optional))
-	customScopes := h.deps.Cfg.GetIdP().OIDC.CustomScopes
 	lang := consentLanguage(ctx)
 
 	for _, scope := range plan.Optional {

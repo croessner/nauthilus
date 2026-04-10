@@ -118,6 +118,7 @@ func newCompletedIDPMFAPostActionAuth(ctx *gin.Context, deps AuthDeps, user *bac
 	auth.SetSAMLEntityID(samlEntityID)
 	auth.SetProtocol(config.NewProtocol(protocolName))
 	auth.ReplaceAllAttributes(user.Attributes)
+	auth.SetResolvedGroups(user.Groups, user.GroupDNs)
 
 	return auth
 }

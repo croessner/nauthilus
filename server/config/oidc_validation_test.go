@@ -101,3 +101,48 @@ func TestOIDCClaimMapping_TypeValidation(t *testing.T) {
 	err := validate.Struct(mapping)
 	assert.Error(t, err)
 }
+
+func TestOIDCClaimMapping_FromGroupsValidation(t *testing.T) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+
+	mapping := OIDCClaimMapping{
+		Claim: "groups",
+		From:  "groups",
+		Type:  definitions.ClaimTypeStringArray,
+	}
+
+	err := validate.Struct(mapping)
+	assert.NoError(t, err)
+}
+
+func TestOIDCClaimMapping_RejectsAttributeAndFromTogether(t *testing.T) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+
+	mapping := OIDCClaimMapping{
+		Claim:     "groups",
+		Attribute: "memberOf",
+		From:      "groups",
+		Type:      definitions.ClaimTypeStringArray,
+	}
+
+	err := validate.Struct(mapping)
+	assert.Error(t, err)
+}
+
+func TestOIDCClaimMapping_RejectsMissingSource(t *testing.T) {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
+	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+
+	mapping := OIDCClaimMapping{
+		Claim: "groups",
+		Type:  definitions.ClaimTypeStringArray,
+	}
+
+	err := validate.Struct(mapping)
+	assert.Error(t, err)
+}

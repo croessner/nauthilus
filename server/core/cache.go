@@ -16,6 +16,7 @@
 package core
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
@@ -112,6 +113,8 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			passDBResult.Backend = ppc.Backend
 			passDBResult.BackendName = ppc.BackendName
 			passDBResult.Attributes = ppc.Attributes
+			passDBResult.Groups = slices.Clone(ppc.Groups)
+			passDBResult.GroupDNs = slices.Clone(ppc.GroupDNs)
 
 			var pwShort string
 			auth.Request.Password.WithBytes(func(value []byte) {

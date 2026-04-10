@@ -351,6 +351,25 @@ func TestOIDCClient_GetAllowedScopes(t *testing.T) {
 	})
 }
 
+func TestOIDCClient_GetImpliedScopes(t *testing.T) {
+	t.Run("NilClient", func(t *testing.T) {
+		var c *OIDCClient
+		assert.Nil(t, c.GetImpliedScopes())
+	})
+
+	t.Run("NoConfiguredImpliedScopes", func(t *testing.T) {
+		c := &OIDCClient{}
+		assert.Nil(t, c.GetImpliedScopes())
+	})
+
+	t.Run("ConfiguredImpliedScopes", func(t *testing.T) {
+		c := &OIDCClient{
+			ImpliedScopes: []string{"offline_access", "roles"},
+		}
+		assert.Equal(t, []string{"offline_access", "roles"}, c.GetImpliedScopes())
+	})
+}
+
 func TestOIDCClient_GetSupportedMFA(t *testing.T) {
 	t.Run("NilClient", func(t *testing.T) {
 		var c *OIDCClient
@@ -425,6 +444,46 @@ func TestOIDCTokenEndpointAllowGET(t *testing.T) {
 	t.Run("can be enabled explicitly", func(t *testing.T) {
 		cfg := &OIDCConfig{TokenEndpointAllowGET: true}
 		assert.True(t, cfg.IsTokenEndpointGETAllowed())
+	})
+}
+
+func TestOIDCConfig_GetEffectiveCustomScopes(t *testing.T) {
+	t.Run("returns global scopes when client is nil", func(t *testing.T) {
+		oidc := &OIDCConfig{
+			CustomScopes: []Oauth2CustomScope{
+				{Name: "resource", Description: "global resource"},
+				{Name: "roles", Description: "global roles"},
+			},
+		}
+
+		effective := oidc.GetEffectiveCustomScopes(nil)
+		assert.Equal(t, []Oauth2CustomScope{
+			{Name: "resource", Description: "global resource"},
+			{Name: "roles", Description: "global roles"},
+		}, effective)
+	})
+
+	t.Run("client scope replaces matching global scope and appends new ones", func(t *testing.T) {
+		oidc := &OIDCConfig{
+			CustomScopes: []Oauth2CustomScope{
+				{Name: "resource", Description: "global resource"},
+				{Name: "roles", Description: "global roles"},
+			},
+		}
+		client := &OIDCClient{
+			ClientID: "client-1",
+			CustomScopes: []Oauth2CustomScope{
+				{Name: "resource", Description: "client resource"},
+				{Name: "entitlement", Description: "client entitlement"},
+			},
+		}
+
+		effective := oidc.GetEffectiveCustomScopes(client)
+		assert.Equal(t, []Oauth2CustomScope{
+			{Name: "resource", Description: "client resource"},
+			{Name: "roles", Description: "global roles"},
+			{Name: "entitlement", Description: "client entitlement"},
+		}, effective)
 	})
 }
 
@@ -506,6 +565,66 @@ func TestValidateIdPMFASettings(t *testing.T) {
 		}
 
 		assert.Error(t, cfg.validateIdPMFASettings())
+	})
+}
+
+func TestValidateIdPOIDCCustomScopes(t *testing.T) {
+	t.Run("valid client and global custom scopes", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				OIDC: OIDCConfig{
+					CustomScopes: []Oauth2CustomScope{
+						{Name: "resource", Description: "global", Claims: []OIDCCustomClaim{{Name: "resource.role", Type: definitions.ClaimTypeString}}},
+					},
+					Clients: []OIDCClient{
+						{
+							ClientID: "client-1",
+							CustomScopes: []Oauth2CustomScope{
+								{Name: "resource", Description: "client override", Claims: []OIDCCustomClaim{{Name: "resource.level", Type: definitions.ClaimTypeString}}},
+								{Name: "entitlement", Description: "client only", Claims: []OIDCCustomClaim{{Name: "entitlement", Type: definitions.ClaimTypeString}}},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		assert.NoError(t, cfg.validateIdPOIDCCustomScopes())
+	})
+
+	t.Run("duplicate global custom scope name returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				OIDC: OIDCConfig{
+					CustomScopes: []Oauth2CustomScope{
+						{Name: "resource", Description: "a", Claims: []OIDCCustomClaim{{Name: "a", Type: definitions.ClaimTypeString}}},
+						{Name: "resource", Description: "b", Claims: []OIDCCustomClaim{{Name: "b", Type: definitions.ClaimTypeString}}},
+					},
+				},
+			},
+		}
+
+		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "idp.oidc.custom_scopes")
+	})
+
+	t.Run("duplicate client custom scope name returns error", func(t *testing.T) {
+		cfg := &FileSettings{
+			IdP: &IdPSection{
+				OIDC: OIDCConfig{
+					Clients: []OIDCClient{
+						{
+							ClientID: "client-1",
+							CustomScopes: []Oauth2CustomScope{
+								{Name: "resource", Description: "a", Claims: []OIDCCustomClaim{{Name: "a", Type: definitions.ClaimTypeString}}},
+								{Name: "resource", Description: "b", Claims: []OIDCCustomClaim{{Name: "b", Type: definitions.ClaimTypeString}}},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "idp.oidc.clients[0].custom_scopes")
 	})
 }
 

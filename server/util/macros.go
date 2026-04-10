@@ -25,6 +25,8 @@ import (
 // MacroSource holds all values that might be used in macros.
 type MacroSource struct {
 	Username    string
+	UserDN      string
+	Account     string
 	XLocalIP    string
 	XPort       string
 	ClientIP    string
@@ -54,6 +56,8 @@ local_ip - local IP address
 local_port - local port
 remote_ip - remote client IP address
 remote_port - remote client port.
+account - authenticated account name
+user_dn - LDAP distinguished name of the current user
 */
 //nolint:gocognit,gocyclo // Ignore
 func (m *MacroSource) ReplaceMacros(source string) (dest string) {
@@ -111,26 +115,33 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 	}
 
 	// Long variables
-	switch macroResult[2] {
-	case "user":
-		switch {
-		case lowerCase:
-			user = strings.ToLower(m.Username)
-		case upperCase:
-			user = strings.ToUpper(m.Username)
-		default:
-			user = m.Username
+	applyCaseAndEscape := func(value string) string {
+		if lowerCase {
+			value = strings.ToLower(value)
+		} else if upperCase {
+			value = strings.ToUpper(value)
 		}
 
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
+		return EscapeLDAPFilter(value)
+	}
+
+	replaceFirst := func(value string) string {
+		return regObj.ReplaceAllStringFunc(source, func(val string) string {
 			if flag {
 				return val
 			}
 
 			flag = true
 
-			return regObj.ReplaceAllString(val, user)
+			return regObj.ReplaceAllString(val, value)
 		})
+	}
+
+	switch macroResult[2] {
+	case "user":
+		user = applyCaseAndEscape(m.Username)
+
+		dest = replaceFirst(user)
 	case "username":
 		split := splitUsername()
 		//nolint:gomnd // E-mail address format
@@ -140,21 +151,9 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 			username = m.Username
 		}
 
-		if lowerCase {
-			username = strings.ToLower(username)
-		} else if upperCase {
-			username = strings.ToUpper(username)
-		}
+		username = applyCaseAndEscape(username)
 
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, username)
-		})
+		dest = replaceFirst(username)
 	case "domain":
 		split := splitUsername()
 		//nolint:gomnd // E-mail address format
@@ -162,109 +161,44 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 			domain = split[1]
 		}
 
-		if lowerCase {
-			domain = strings.ToLower(domain)
-		} else if upperCase {
-			domain = strings.ToUpper(domain)
-		}
+		domain = applyCaseAndEscape(domain)
 
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, domain)
-		})
+		dest = replaceFirst(domain)
 	case "service":
-		switch {
-		case lowerCase:
-			service = strings.ToLower(m.Protocol.Get())
-		case upperCase:
-			service = strings.ToUpper(m.Protocol.Get())
-		default:
-			service = m.Protocol.Get()
-		}
+		service = applyCaseAndEscape(m.Protocol.Get())
 
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, service)
-		})
+		dest = replaceFirst(service)
 	case "local_ip":
-		switch {
-		case lowerCase:
-			localIP = strings.ToLower(m.XLocalIP)
-		case upperCase:
-			localIP = strings.ToUpper(m.XLocalIP)
-		default:
-			localIP = m.XLocalIP
-		}
+		localIP = applyCaseAndEscape(m.XLocalIP)
 
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, localIP)
-		})
+		dest = replaceFirst(localIP)
 	case "local_port":
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, m.XPort)
-		})
+		dest = replaceFirst(EscapeLDAPFilter(m.XPort))
 	case "remote_ip":
-		switch {
-		case lowerCase:
-			remoteIP = strings.ToLower(m.ClientIP)
-		case upperCase:
-			remoteIP = strings.ToUpper(m.ClientIP)
-		default:
-			remoteIP = m.ClientIP
-		}
+		remoteIP = applyCaseAndEscape(m.ClientIP)
 
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, remoteIP)
-		})
+		dest = replaceFirst(remoteIP)
 	case "remote_port":
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, m.XClientPort)
-		})
+		dest = replaceFirst(EscapeLDAPFilter(m.XClientPort))
 	case "totp_secret":
-		dest = regObj.ReplaceAllStringFunc(source, func(val string) string {
-			if flag {
-				return val
-			}
-
-			flag = true
-
-			return regObj.ReplaceAllString(val, m.TOTPSecret)
-		})
+		dest = replaceFirst(EscapeLDAPFilter(m.TOTPSecret))
+	case "account":
+		dest = replaceFirst(applyCaseAndEscape(m.Account))
+	case "user_dn":
+		dest = replaceFirst(applyCaseAndEscape(m.UserDN))
 	}
 
 	return m.ReplaceMacros(dest)
+}
+
+// ExpandLDAPFilter replaces legacy placeholders and macros using LDAP-safe escaping.
+// It supports both `%s` and `%{...}` syntax.
+func ExpandLDAPFilter(filter string, macroSource *MacroSource) string {
+	if macroSource == nil {
+		return filter
+	}
+
+	expanded := strings.ReplaceAll(filter, "%s", EscapeLDAPFilter(macroSource.Username))
+
+	return macroSource.ReplaceMacros(expanded)
 }

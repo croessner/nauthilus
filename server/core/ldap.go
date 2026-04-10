@@ -207,11 +207,18 @@ func (lm *ldapManagerImpl) ldapModifyContext() (context.Context, context.CancelF
 func (lm *ldapManagerImpl) newMacroSource(auth *AuthState, includeTOTPSecret bool) *util.MacroSource {
 	macro := &util.MacroSource{
 		Username:    auth.Request.Username,
+		Account:     auth.GetAccount(),
 		XLocalIP:    auth.Request.XLocalIP,
 		XPort:       auth.Request.XPort,
 		ClientIP:    auth.Request.ClientIP,
 		XClientPort: auth.Request.XClientPort,
 		Protocol:    *auth.Request.Protocol,
+	}
+
+	if dnValues, ok := auth.GetAttribute(definitions.DistinguishedName); ok && len(dnValues) > 0 {
+		if userDN, ok := dnValues[definitions.LDAPSingleValue].(string); ok {
+			macro.UserDN = userDN
+		}
 	}
 
 	if includeTOTPSecret {
@@ -473,19 +480,14 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
 	defer cancelSearch()
 
+	macroSource := lm.newMacroSource(auth, true)
+	macroSource.Username = username
+
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:     auth.Runtime.GUID,
-		Command:  definitions.LDAPSearch,
-		PoolName: lm.poolName,
-		MacroSource: &util.MacroSource{
-			Username:    username,
-			XLocalIP:    auth.Request.XLocalIP,
-			XPort:       auth.Request.XPort,
-			ClientIP:    auth.Request.ClientIP,
-			XClientPort: auth.Request.XClientPort,
-			TOTPSecret:  auth.Runtime.TOTPSecret,
-			Protocol:    *auth.Request.Protocol,
-		},
+		GUID:              auth.Runtime.GUID,
+		Command:           definitions.LDAPSearch,
+		PoolName:          lm.poolName,
+		MacroSource:       macroSource,
 		Filter:            filter,
 		BaseDN:            baseDN,
 		SearchAttributes:  attributes,
@@ -577,6 +579,10 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 					fmt.Sprintf("Failed to decrypt LDAP TOTP recovery codes: %v", decryptErr))
 			}
 		}
+	}
+
+	if passDBResult.Attributes != nil {
+		passDBResult.Groups, passDBResult.GroupDNs = lm.resolveGroups(auth, protocol, passDBResult.Attributes, accountField, lm.effectiveLogger())
 	}
 
 	if securityManager != nil && totpSecretPre != nil {
@@ -737,19 +743,13 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch(lm.effectiveCfg())
 	defer cancelSearch()
 
+	macroSource := lm.newMacroSource(auth, true)
+
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:     auth.Runtime.GUID,
-		Command:  definitions.LDAPSearch,
-		PoolName: lm.poolName,
-		MacroSource: &util.MacroSource{
-			Username:    auth.Request.Username,
-			XLocalIP:    auth.Request.XLocalIP,
-			XPort:       auth.Request.XPort,
-			ClientIP:    auth.Request.ClientIP,
-			XClientPort: auth.Request.XClientPort,
-			TOTPSecret:  auth.Runtime.TOTPSecret,
-			Protocol:    *auth.Request.Protocol,
-		},
+		GUID:              auth.Runtime.GUID,
+		Command:           definitions.LDAPSearch,
+		PoolName:          lm.poolName,
+		MacroSource:       macroSource,
 		Filter:            filter,
 		BaseDN:            baseDN,
 		SearchAttributes:  attributes,

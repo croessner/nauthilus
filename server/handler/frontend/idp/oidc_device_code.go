@@ -966,9 +966,9 @@ func (h *OIDCHandler) buildDeviceConsentPageData(ctx *gin.Context, request *idp.
 
 	client, _ := h.idp.FindClient(request.ClientID)
 	plan := buildConsentScopePlan(client, h.deps.Cfg.GetIdP().OIDC.GetConsentMode(), request.Scopes)
-	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, plan.Required)
+	customScopes := h.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(client)
+	scopeDescriptions := consentScopeDescriptions(ctx, h.deps.Cfg, h.deps.Logger, customScopes, plan.Required)
 	optionalScopeChoices := make([]gin.H, 0, len(plan.Optional))
-	customScopes := h.deps.Cfg.GetIdP().OIDC.CustomScopes
 	lang := consentLanguage(ctx)
 
 	for _, scope := range plan.Optional {

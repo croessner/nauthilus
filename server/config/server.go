@@ -17,6 +17,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -63,6 +64,7 @@ type ServerSection struct {
 	Redis                     Redis                    `mapstructure:"redis" validate:"required"`
 	MasterUser                MasterUser               `mapstructure:"master_user" validate:"omitempty"`
 	Frontend                  Frontend                 `mapstructure:"frontend" validate:"omitempty"`
+	CORS                      CORS                     `mapstructure:"cors" validate:"omitempty"`
 	Dedup                     Dedup                    `mapstructure:"dedup" validate:"omitempty"`
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
 	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header" validate:"omitempty"`
@@ -97,6 +99,17 @@ type Middlewares struct {
 	Rate                 *bool `mapstructure:"rate" validate:"omitempty"`
 }
 
+const (
+	defaultCORSPolicyName = "frontend"
+)
+
+var (
+	defaultCORSPathPrefixes = []string{"/.well-known/"}
+	defaultCORSAllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	defaultCORSAllowHeaders = []string{"Authorization", "Content-Type", "X-CSRF-Token"}
+	defaultCORSMaxAge       = uint32(600)
+)
+
 // GetMiddlewares returns the middlewares section or a zero-value if nil.
 func (s *ServerSection) GetMiddlewares() *Middlewares {
 	if s == nil {
@@ -128,6 +141,152 @@ func (m *Middlewares) IsResponseCompressionEnabled() bool {
 
 func (m *Middlewares) IsMetricsEnabled() bool { return boolOrDefaultTrue(m.Metrics) }
 func (m *Middlewares) IsRateEnabled() bool    { return boolOrDefaultTrue(m.Rate) }
+
+// GetCORS returns the CORS configuration section or a zero-value if nil.
+func (s *ServerSection) GetCORS() *CORS {
+	if s == nil {
+		return &CORS{}
+	}
+
+	return &s.CORS
+}
+
+// CORS configures centralized cross-origin request handling for HTTP routes.
+//
+// CORS is disabled by default. When enabled, policies are evaluated in order and
+// the first path-matching active policy is used.
+type CORS struct {
+	Enabled  *bool        `mapstructure:"enabled" validate:"omitempty"`
+	Policies []CORSPolicy `mapstructure:"policies" validate:"omitempty,dive"`
+}
+
+// IsEnabled indicates whether centralized CORS handling is enabled.
+func (c *CORS) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+
+	return *c.Enabled
+}
+
+// GetPolicies returns a copy of the configured CORS policies.
+func (c *CORS) GetPolicies() []CORSPolicy {
+	if c == nil || len(c.Policies) == 0 {
+		return nil
+	}
+
+	return append([]CORSPolicy(nil), c.Policies...)
+}
+
+// CORSPolicy describes CORS behavior for a subset of routes.
+type CORSPolicy struct {
+	Name             string   `mapstructure:"name" validate:"omitempty,printascii"`
+	Enabled          *bool    `mapstructure:"enabled" validate:"omitempty"`
+	PathPrefixes     []string `mapstructure:"path_prefixes" validate:"omitempty,dive,printascii"`
+	AllowOrigins     []string `mapstructure:"allow_origins" validate:"omitempty,dive,printascii"`
+	AllowMethods     []string `mapstructure:"allow_methods" validate:"omitempty,dive,printascii"`
+	AllowHeaders     []string `mapstructure:"allow_headers" validate:"omitempty,dive,printascii"`
+	ExposeHeaders    []string `mapstructure:"expose_headers" validate:"omitempty,dive,printascii"`
+	AllowCredentials *bool    `mapstructure:"allow_credentials" validate:"omitempty"`
+	MaxAge           uint32   `mapstructure:"max_age" validate:"omitempty,lte=86400"`
+}
+
+// IsEnabled indicates whether this policy is active. Defaults to true when omitted.
+func (p *CORSPolicy) IsEnabled() bool {
+	if p == nil {
+		return false
+	}
+
+	return boolOrDefaultTrue(p.Enabled)
+}
+
+// GetPathPrefixes returns a copy of the configured path prefixes.
+func (p *CORSPolicy) GetPathPrefixes() []string {
+	if p == nil || len(p.PathPrefixes) == 0 {
+		return nil
+	}
+
+	return append([]string(nil), p.PathPrefixes...)
+}
+
+// MatchesPath reports whether the request path should use this policy.
+func (p *CORSPolicy) MatchesPath(path string) bool {
+	if p == nil || !p.IsEnabled() {
+		return false
+	}
+
+	prefixes := p.GetPathPrefixes()
+	if len(prefixes) == 0 {
+		return true
+	}
+
+	for _, prefix := range prefixes {
+		trimmed := strings.TrimSpace(prefix)
+		if trimmed == "" {
+			continue
+		}
+
+		if strings.HasPrefix(path, trimmed) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// GetAllowOrigins returns a copy of the configured allowed origins.
+func (p *CORSPolicy) GetAllowOrigins() []string {
+	if p == nil || len(p.AllowOrigins) == 0 {
+		return nil
+	}
+
+	return append([]string(nil), p.AllowOrigins...)
+}
+
+// GetAllowMethods returns configured methods or defaults if omitted.
+func (p *CORSPolicy) GetAllowMethods() []string {
+	if p == nil || len(p.AllowMethods) == 0 {
+		return append([]string(nil), defaultCORSAllowMethods...)
+	}
+
+	return append([]string(nil), p.AllowMethods...)
+}
+
+// GetAllowHeaders returns configured request headers or defaults if omitted.
+func (p *CORSPolicy) GetAllowHeaders() []string {
+	if p == nil || len(p.AllowHeaders) == 0 {
+		return append([]string(nil), defaultCORSAllowHeaders...)
+	}
+
+	return append([]string(nil), p.AllowHeaders...)
+}
+
+// GetExposeHeaders returns a copy of configured exposed response headers.
+func (p *CORSPolicy) GetExposeHeaders() []string {
+	if p == nil || len(p.ExposeHeaders) == 0 {
+		return nil
+	}
+
+	return append([]string(nil), p.ExposeHeaders...)
+}
+
+// IsAllowCredentials indicates whether credentialed cross-origin requests are allowed.
+func (p *CORSPolicy) IsAllowCredentials() bool {
+	if p == nil || p.AllowCredentials == nil {
+		return false
+	}
+
+	return *p.AllowCredentials
+}
+
+// GetMaxAge returns preflight max-age in seconds, defaulting to 600 seconds.
+func (p *CORSPolicy) GetMaxAge() uint32 {
+	if p == nil || p.MaxAge == 0 {
+		return defaultCORSMaxAge
+	}
+
+	return p.MaxAge
+}
 
 // GetListenAddress retrieves the server's listen address from the ServerSection configuration.
 // Returns an empty string if the ServerSection is nil.
@@ -1950,21 +2109,23 @@ func (f *Frontend) GetSecurityHeaders() *FrontendSecurityHeaders {
 
 // FrontendSecurityHeaders configures browser security headers for frontend routes.
 //
-// All header values are configurable as plain strings. If Enabled is nil, headers are enabled by default.
+// Header values are exposed as plain strings after config decoding/composition.
+// Selected headers (for example content_security_policy) can be configured as structured objects in configuration files.
+// If Enabled is nil, headers are enabled by default.
 type FrontendSecurityHeaders struct {
-	Enabled                         *bool  `mapstructure:"enabled" validate:"omitempty"`
-	ContentSecurityPolicy           string `mapstructure:"content_security_policy" validate:"omitempty,printascii"`
-	ContentSecurityPolicyReportOnly bool   `mapstructure:"content_security_policy_report_only" validate:"omitempty"`
-	StrictTransportSecurity         string `mapstructure:"strict_transport_security" validate:"omitempty,printascii"`
-	XContentTypeOptions             string `mapstructure:"x_content_type_options" validate:"omitempty,printascii"`
-	XFrameOptions                   string `mapstructure:"x_frame_options" validate:"omitempty,printascii"`
-	ReferrerPolicy                  string `mapstructure:"referrer_policy" validate:"omitempty,printascii"`
-	PermissionsPolicy               string `mapstructure:"permissions_policy" validate:"omitempty,printascii"`
-	CrossOriginOpenerPolicy         string `mapstructure:"cross_origin_opener_policy" validate:"omitempty,printascii"`
-	CrossOriginResourcePolicy       string `mapstructure:"cross_origin_resource_policy" validate:"omitempty,printascii"`
-	CrossOriginEmbedderPolicy       string `mapstructure:"cross_origin_embedder_policy" validate:"omitempty,printascii"`
-	XPermittedCrossDomainPolicies   string `mapstructure:"x_permitted_cross_domain_policies" validate:"omitempty,printascii"`
-	XDNSPrefetchControl             string `mapstructure:"x_dns_prefetch_control" validate:"omitempty,printascii"`
+	Enabled                         *bool                        `mapstructure:"enabled" validate:"omitempty"`
+	ContentSecurityPolicy           ContentSecurityPolicyValue   `mapstructure:"content_security_policy" validate:"omitempty"`
+	ContentSecurityPolicyReportOnly bool                         `mapstructure:"content_security_policy_report_only" validate:"omitempty"`
+	StrictTransportSecurity         StrictTransportSecurityValue `mapstructure:"strict_transport_security" validate:"omitempty"`
+	XContentTypeOptions             string                       `mapstructure:"x_content_type_options" validate:"omitempty,printascii"`
+	XFrameOptions                   string                       `mapstructure:"x_frame_options" validate:"omitempty,printascii"`
+	ReferrerPolicy                  string                       `mapstructure:"referrer_policy" validate:"omitempty,printascii"`
+	PermissionsPolicy               PermissionsPolicyValue       `mapstructure:"permissions_policy" validate:"omitempty"`
+	CrossOriginOpenerPolicy         string                       `mapstructure:"cross_origin_opener_policy" validate:"omitempty,printascii"`
+	CrossOriginResourcePolicy       string                       `mapstructure:"cross_origin_resource_policy" validate:"omitempty,printascii"`
+	CrossOriginEmbedderPolicy       string                       `mapstructure:"cross_origin_embedder_policy" validate:"omitempty,printascii"`
+	XPermittedCrossDomainPolicies   string                       `mapstructure:"x_permitted_cross_domain_policies" validate:"omitempty,printascii"`
+	XDNSPrefetchControl             string                       `mapstructure:"x_dns_prefetch_control" validate:"omitempty,printascii"`
 }
 
 // IsEnabled indicates whether frontend security headers are enabled.
@@ -1983,7 +2144,15 @@ func (h *FrontendSecurityHeaders) GetContentSecurityPolicy() string {
 		return ""
 	}
 
-	return h.ContentSecurityPolicy
+	value, _, err := NewSecurityHeaderComposer().ComposeContentSecurityPolicy(
+		h.ContentSecurityPolicy.PolicyInput(),
+		h.ContentSecurityPolicy.FormActionOptionalURIs(),
+	)
+	if err != nil {
+		return ""
+	}
+
+	return value
 }
 
 // IsContentSecurityPolicyReportOnly returns true when CSP should be emitted in report-only mode.
@@ -2001,7 +2170,12 @@ func (h *FrontendSecurityHeaders) GetStrictTransportSecurity() string {
 		return ""
 	}
 
-	return h.StrictTransportSecurity
+	value, _, err := NewSecurityHeaderComposer().ComposeStrictTransportSecurity(h.StrictTransportSecurity.PolicyInput())
+	if err != nil {
+		return ""
+	}
+
+	return value
 }
 
 // GetXContentTypeOptions returns X-Content-Type-Options header value.
@@ -2037,7 +2211,12 @@ func (h *FrontendSecurityHeaders) GetPermissionsPolicy() string {
 		return ""
 	}
 
-	return h.PermissionsPolicy
+	value, _, err := NewSecurityHeaderComposer().ComposePermissionsPolicy(h.PermissionsPolicy.PolicyInput())
+	if err != nil {
+		return ""
+	}
+
+	return value
 }
 
 // GetCrossOriginOpenerPolicy returns Cross-Origin-Opener-Policy header value.
@@ -2085,6 +2264,32 @@ func (h *FrontendSecurityHeaders) GetXDNSPrefetchControl() string {
 	return h.XDNSPrefetchControl
 }
 
+// ValidateComposedValues validates composed security header syntax during config load.
+func (h *FrontendSecurityHeaders) ValidateComposedValues() error {
+	if h == nil {
+		return nil
+	}
+
+	composer := NewSecurityHeaderComposer()
+
+	if _, _, err := composer.ComposeContentSecurityPolicy(
+		h.ContentSecurityPolicy.PolicyInput(),
+		h.ContentSecurityPolicy.FormActionOptionalURIs(),
+	); err != nil {
+		return err
+	}
+
+	if _, _, err := composer.ComposeStrictTransportSecurity(h.StrictTransportSecurity.PolicyInput()); err != nil {
+		return err
+	}
+
+	if _, _, err := composer.ComposePermissionsPolicy(h.PermissionsPolicy.PolicyInput()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 var secretValueType = reflect.TypeFor[secret.Value]()
 
 func fieldStringValue(field reflect.Value) string {
@@ -2109,6 +2314,10 @@ func fieldStringValue(field reflect.Value) string {
 
 			return string(secretBytes)
 		}
+	}
+
+	if stringer, ok := field.Interface().(fmt.Stringer); ok {
+		return stringer.String()
 	}
 
 	return ""

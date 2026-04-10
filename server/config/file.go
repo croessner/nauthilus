@@ -2146,6 +2146,42 @@ func (f *FileSettings) setDefaultSecuritySettings() error {
 		f.Server.LocalCacheAuthTTL = 30 * time.Second
 	}
 
+	cors := &f.Server.CORS
+	if cors.Enabled == nil {
+		enabled := false
+		cors.Enabled = &enabled
+	}
+
+	if len(cors.Policies) == 0 {
+		cors.Policies = []CORSPolicy{
+			{
+				Name:         defaultCORSPolicyName,
+				PathPrefixes: append([]string(nil), defaultCORSPathPrefixes...),
+			},
+		}
+	}
+
+	for index := range cors.Policies {
+		policy := &cors.Policies[index]
+
+		if policy.Enabled == nil {
+			enabled := true
+			policy.Enabled = &enabled
+		}
+
+		if len(policy.AllowMethods) == 0 {
+			policy.AllowMethods = append([]string(nil), defaultCORSAllowMethods...)
+		}
+
+		if len(policy.AllowHeaders) == 0 {
+			policy.AllowHeaders = append([]string(nil), defaultCORSAllowHeaders...)
+		}
+
+		if policy.MaxAge == 0 {
+			policy.MaxAge = defaultCORSMaxAge
+		}
+	}
+
 	return nil
 }
 
@@ -2169,12 +2205,12 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		headers.Enabled = &enabled
 	}
 
-	if headers.ContentSecurityPolicy == "" {
-		headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
+	if headers.ContentSecurityPolicy.IsZero() {
+		headers.ContentSecurityPolicy = NewContentSecurityPolicyValueFromString(defaultContentSecurityPolicy)
 	}
 
-	if headers.StrictTransportSecurity == "" {
-		headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains"
+	if headers.StrictTransportSecurity.IsZero() {
+		headers.StrictTransportSecurity = NewStrictTransportSecurityValueFromString(defaultStrictTransportSecurity)
 	}
 
 	if headers.XContentTypeOptions == "" {
@@ -2189,8 +2225,8 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 		headers.ReferrerPolicy = "no-referrer"
 	}
 
-	if headers.PermissionsPolicy == "" {
-		headers.PermissionsPolicy = "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+	if headers.PermissionsPolicy.IsZero() {
+		headers.PermissionsPolicy = NewPermissionsPolicyValueFromString(defaultPermissionsPolicy)
 	}
 
 	if headers.CrossOriginOpenerPolicy == "" {
@@ -2274,6 +2310,10 @@ func (f *FileSettings) validateFrontend() error {
 		}
 	}
 
+	if err := f.Server.Frontend.SecurityHeaders.ValidateComposedValues(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2302,6 +2342,7 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultFrontendSettings,
 		f.setDefaultIdPSettings,
 		f.validateIdPMFASettings,
+		f.validateIdPOIDCCustomScopes,
 		f.validateIdPSAMLSigningSettings,
 		f.validateIdPSAML2SLOSettings,
 		f.setDefaultTrustedProxies,
@@ -2450,7 +2491,7 @@ func (f *FileSettings) warnUnsupportedConfig() {
 
 // unknownConfigParameters returns unknown configuration keys collected during decoding.
 // This includes unknown root-level keys (captured via FileSettings.Other) and unknown
-// fields inside OIDC custom scopes (captured via Oauth2CustomScope.Other).
+// fields inside OIDC custom scopes (global and client-level, captured via Oauth2CustomScope.Other).
 func (f *FileSettings) unknownConfigParameters() []string {
 	if f == nil {
 		return nil
@@ -2476,6 +2517,21 @@ func (f *FileSettings) unknownConfigParameters() []string {
 				}
 
 				collectUnknownParameterPaths(prefix+"."+key, value, &unknown, 0, make(map[uintptr]struct{}))
+			}
+		}
+
+		for clientIdx := range idpCfg.OIDC.Clients {
+			client := idpCfg.OIDC.Clients[clientIdx]
+			for scopeIdx := range client.CustomScopes {
+				scope := client.CustomScopes[scopeIdx]
+				prefix := fmt.Sprintf("idp.oidc.clients[%d].custom_scopes[%d]", clientIdx, scopeIdx)
+				for key, value := range scope.Other {
+					if isSupportedCustomScopeExtraKey(key) {
+						continue
+					}
+
+					collectUnknownParameterPaths(prefix+"."+key, value, &unknown, 0, make(map[uintptr]struct{}))
+				}
 			}
 		}
 	}
@@ -2605,9 +2661,21 @@ func isSupportedCustomScopeExtraKey(key string) bool {
 }
 
 func isSupportedRootExtraKey(key string) bool {
+	if isConfigExtensionKey(key) {
+		return true
+	}
+
 	// Environment settings are provided via config/env.go and may appear in
 	// merged Viper settings although they are intentionally not part of FileSettings.
 	return key == "developer_mode"
+}
+
+func isConfigExtensionKey(key string) bool {
+	if len(key) < 3 {
+		return false
+	}
+
+	return (key[0] == 'x' || key[0] == 'X') && key[1] == '-'
 }
 
 // safeWarn logs a warning using go-kit logger when available; otherwise falls back to slog.
@@ -3043,6 +3111,9 @@ func createDecoderOption() viper.DecoderConfigOption {
 	featuresType := reflect.TypeFor[[]*Feature]()
 	protocolsType := reflect.TypeFor[[]*Protocol]()
 	backendsType := reflect.TypeFor[[]*Backend]()
+	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
+	permissionsPolicyType := reflect.TypeFor[PermissionsPolicyValue]()
+	strictTransportSecurityType := reflect.TypeFor[StrictTransportSecurityValue]()
 	secretType := reflect.TypeFor[secret.Value]()
 
 	return func(config *mapstructure.DecoderConfig) {
@@ -3060,6 +3131,12 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processProtocols(data)
 				case to == backendsType:
 					return processBackends(data)
+				case to == contentSecurityPolicyType:
+					return processContentSecurityPolicyValue(data)
+				case to == permissionsPolicyType:
+					return processPermissionsPolicyValue(data)
+				case to == strictTransportSecurityType:
+					return processStrictTransportSecurityValue(data)
 				case to == secretType:
 					switch value := data.(type) {
 					case string:
@@ -3225,6 +3302,9 @@ func bindEnvs(i any, parts ...string) error {
 	ift := ifv.Type()
 	secretType := reflect.TypeFor[secret.Value]()
 	secretPtrType := reflect.TypeFor[*secret.Value]()
+	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
+	permissionsPolicyType := reflect.TypeFor[PermissionsPolicyValue]()
+	strictTransportSecurityType := reflect.TypeFor[StrictTransportSecurityValue]()
 
 	for i := range ift.NumField() {
 		v := ifv.Field(i)
@@ -3240,8 +3320,11 @@ func bindEnvs(i any, parts ...string) error {
 		}
 
 		isSecret := t.Type == secretType || t.Type == secretPtrType
+		isSecurityHeaderValue := t.Type == contentSecurityPolicyType ||
+			t.Type == permissionsPolicyType ||
+			t.Type == strictTransportSecurityType
 
-		if t.Type.Kind() == reflect.Pointer && t.Type.Elem().Kind() == reflect.Struct && !isSecret {
+		if t.Type.Kind() == reflect.Pointer && t.Type.Elem().Kind() == reflect.Struct && !isSecret && !isSecurityHeaderValue {
 			if v.IsNil() {
 				v.Set(reflect.New(t.Type.Elem()))
 			}
@@ -3250,7 +3333,7 @@ func bindEnvs(i any, parts ...string) error {
 			if err != nil {
 				return err
 			}
-		} else if v.Kind() == reflect.Struct && !isSecret {
+		} else if v.Kind() == reflect.Struct && !isSecret && !isSecurityHeaderValue {
 			err := bindEnvs(v.Addr().Interface(), append(parts, tag)...)
 			if err != nil {
 				return err

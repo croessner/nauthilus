@@ -33,9 +33,14 @@ const (
 	consentMsgNoAdditional = "No additional permissions requested."
 )
 
-func consentScopeDescriptions(ctx *gin.Context, cfg config.File, logger *slog.Logger, scopes []string) []string {
+func consentScopeDescriptions(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	customScopes []config.Oauth2CustomScope,
+	scopes []string,
+) []string {
 	descriptions := make([]string, 0, len(scopes))
-	customScopes := cfg.GetIdP().OIDC.CustomScopes
 	lang := consentLanguage(ctx)
 
 	for _, scope := range scopes {

@@ -238,10 +238,7 @@ func (l *LDAPConnectionImpl) Search(ctx context.Context, cfg config.File, logger
 	var searchResult *ldap.SearchResult
 
 	if ldapRequest.MacroSource != nil {
-		// Escape username for safe filter embedding (RFC 4515)
-		escaped := util.EscapeLDAPFilter(ldapRequest.MacroSource.Username)
-		ldapRequest.Filter = strings.ReplaceAll(ldapRequest.Filter, "%s", escaped)
-		ldapRequest.Filter = ldapRequest.MacroSource.ReplaceMacros(ldapRequest.Filter)
+		ldapRequest.Filter = util.ExpandLDAPFilter(ldapRequest.Filter, ldapRequest.MacroSource)
 	}
 
 	ldapRequest.Filter = util.RemoveCRLFFromQueryOrFilter(ldapRequest.Filter, "")

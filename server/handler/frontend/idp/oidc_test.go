@@ -44,6 +44,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	slodomain "github.com/croessner/nauthilus/server/idp/slo"
+	mdcors "github.com/croessner/nauthilus/server/middleware/cors"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
@@ -58,6 +59,7 @@ type mockOIDCCfg struct {
 	signingKeyID          string
 	clients               []config.OIDCClient
 	tokenEndpointAllowGET bool
+	cors                  config.CORS
 }
 
 func (m *mockOIDCCfg) GetIdP() *config.IdPSection {
@@ -240,6 +242,7 @@ func (m *mockOIDCCfg) GetServer() *config.ServerSection {
 		DNS: config.DNS{
 			ResolveClientIP: false,
 		},
+		CORS: m.cors,
 	}
 }
 
@@ -441,10 +444,8 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	assert.NotContains(t, codeChallengeMethods, "plain")
 }
 
-func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	issuer := "https://auth.example.com"
-	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey())}
+func newOIDCTestRouter(t *testing.T, cfg *mockOIDCCfg, withCORS bool) *gin.Engine {
+	t.Helper()
 
 	db, _ := redismock.NewClientMock()
 	rClient := rediscli.NewTestClient(db)
@@ -459,7 +460,75 @@ func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
 
 	h := NewOIDCHandler(d, idp.NewNauthilusIdP(d), nil)
 	r := gin.New()
+	if withCORS {
+		r.Use(mdcors.New(mdcors.MiddlewareConfig{Config: d.Cfg}).Handler())
+	}
+
 	h.Register(r)
+
+	return r
+}
+
+func TestOIDCHandler_Discovery_EmitsCORSHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	issuer := "https://auth.example.com"
+	headersEnabled := true
+	corsEnabled := true
+
+	cfg := &mockOIDCCfg{
+		issuer:     issuer,
+		signingKey: secret.New(generateTestKey()),
+		cors: config.CORS{
+			Enabled: &headersEnabled,
+			Policies: []config.CORSPolicy{
+				{
+					Name:         "oidc_discovery",
+					Enabled:      &corsEnabled,
+					PathPrefixes: []string{"/.well-known/"},
+					AllowOrigins: []string{"https://oc.roessner.cloud"},
+					AllowMethods: []string{"GET", "OPTIONS"},
+					AllowHeaders: []string{"Authorization", "Content-Type"},
+					MaxAge:       600,
+				},
+			},
+		},
+	}
+
+	r := newOIDCTestRouter(t, cfg, true)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+	getReq.Header.Set("Origin", "https://oc.roessner.cloud")
+
+	getResp := httptest.NewRecorder()
+	r.ServeHTTP(getResp, getReq)
+
+	assert.Equal(t, http.StatusOK, getResp.Code)
+	assert.Equal(t, "https://oc.roessner.cloud", getResp.Header().Get("Access-Control-Allow-Origin"))
+
+	optionsReq := httptest.NewRequest(http.MethodOptions, "/.well-known/openid-configuration", nil)
+	optionsReq.Header.Set("Origin", "https://oc.roessner.cloud")
+	optionsReq.Header.Set("Access-Control-Request-Method", "GET")
+	optionsReq.Header.Set("Access-Control-Request-Headers", "Authorization")
+
+	optionsResp := httptest.NewRecorder()
+	r.ServeHTTP(optionsResp, optionsReq)
+
+	assert.Equal(t, http.StatusNoContent, optionsResp.Code)
+	assert.Equal(t, "https://oc.roessner.cloud", optionsResp.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "GET, OPTIONS", optionsResp.Header().Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "Authorization, Content-Type", optionsResp.Header().Get("Access-Control-Allow-Headers"))
+}
+
+func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	issuer := "https://auth.example.com"
+	cfg := &mockOIDCCfg{issuer: issuer, signingKey: secret.New(generateTestKey())}
+
+	r := newOIDCTestRouter(t, cfg, false)
 
 	routes := r.Routes()
 	hasRoute := func(method, path string) bool {
@@ -470,6 +539,7 @@ func TestOIDCHandler_Register_DeviceVerifyLanguageRoute(t *testing.T) {
 
 	assert.True(t, hasRoute(http.MethodGet, "/oidc/device/verify/:languageTag"))
 	assert.True(t, hasRoute(http.MethodPost, "/oidc/device/verify/:languageTag"))
+	assert.True(t, hasRoute(http.MethodGet, "/.well-known/openid-configuration"))
 }
 
 func TestOIDCHandler_Register_TokenGETRouteConfigurable(t *testing.T) {

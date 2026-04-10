@@ -16,7 +16,7 @@ func TestGetAccountMappingField(t *testing.T) {
 		expected     string
 	}{
 		{"user1", "imap", "", "user1|imap|"},
-		{"user1", "keycloak", "clientA", "user1|keycloak|clientA"},
+		{"user1", "oidc", "clientA", "user1|oidc|clientA"},
 		{"user2", "", "", "user2||"},
 	}
 
@@ -49,18 +49,18 @@ func TestManager_GetSet(t *testing.T) {
 	// Set for IMAP
 	mgr.Set(cfg, username, "imap", "", "account_imap")
 
-	// Set for Keycloak
-	mgr.Set(cfg, username, "keycloak", "cid123", "account_kc")
+	// Set for OIDC
+	mgr.Set(cfg, username, "oidc", "cid123", "account_oidc")
 
 	// Get IMAP
 	val, ok := mgr.Get(username, "imap", "")
 	assert.True(t, ok)
 	assert.Equal(t, "account_imap", val)
 
-	// Get Keycloak
-	val, ok = mgr.Get(username, "keycloak", "cid123")
+	// Get OIDC
+	val, ok = mgr.Get(username, "oidc", "cid123")
 	assert.True(t, ok)
-	assert.Equal(t, "account_kc", val)
+	assert.Equal(t, "account_oidc", val)
 
 	// Get Non-existent
 	val, ok = mgr.Get(username, "pop3", "")

@@ -233,7 +233,7 @@ function nauthilus_call_filter(request)
         nauthilus_prometheus.increment_counter("security_slow_attack_suspicions_total", {})
         nauthilus_prometheus.increment_counter("security_stepup_challenges_issued_total", {})
 
-        -- Expose a response header so frontends (e.g., Keycloak) can enforce a CAPTCHA/Step-Up
+        -- Expose a response header so frontends can enforce a CAPTCHA/Step-Up
         pcall(function()
             nauthilus_http_response.set_http_response_header("X-Nauthilus-Protection", "stepup")
             nauthilus_http_response.set_http_response_header("X-Nauthilus-Protection-Reason", hits_str)

@@ -40,7 +40,7 @@ type ScopeManager struct {
 
 // NewScopeManager constructs a ScopeManager from config and the requested scopes.
 // It merges standard claim definitions with custom scope/claim definitions.
-func NewScopeManager(cfg config.File, requestedScopes []string) *ScopeManager {
+func NewScopeManager(requestedScopes []string, customScopes []config.Oauth2CustomScope) *ScopeManager {
 	requested := make(map[string]struct{}, len(requestedScopes))
 	for _, scope := range requestedScopes {
 		requested[scope] = struct{}{}
@@ -72,32 +72,30 @@ func NewScopeManager(cfg config.File, requestedScopes []string) *ScopeManager {
 		definitions.ClaimGroups:  {Scopes: []string{definitions.ScopeGroups}, DefaultType: definitions.ClaimTypeStringArray},
 	}
 
-	if cfg != nil {
-		for _, customScope := range cfg.GetIdP().OIDC.CustomScopes {
-			for _, customClaim := range customScope.Claims {
-				claimName := customClaim.GetName()
-				if claimName == "" {
-					continue
-				}
-
-				claimType := customClaim.GetType()
-				definition, exists := claimDefinitions[claimName]
-				if !exists {
-					claimDefinitions[claimName] = claimDefinition{
-						Scopes:      []string{customScope.Name},
-						DefaultType: claimType,
-					}
-
-					continue
-				}
-
-				definition.Scopes = appendUnique(definition.Scopes, customScope.Name)
-				if definition.DefaultType == "" {
-					definition.DefaultType = claimType
-				}
-
-				claimDefinitions[claimName] = definition
+	for _, customScope := range customScopes {
+		for _, customClaim := range customScope.Claims {
+			claimName := customClaim.GetName()
+			if claimName == "" {
+				continue
 			}
+
+			claimType := customClaim.GetType()
+			definition, exists := claimDefinitions[claimName]
+			if !exists {
+				claimDefinitions[claimName] = claimDefinition{
+					Scopes:      []string{customScope.Name},
+					DefaultType: claimType,
+				}
+
+				continue
+			}
+
+			definition.Scopes = appendUnique(definition.Scopes, customScope.Name)
+			if definition.DefaultType == "" {
+				definition.DefaultType = claimType
+			}
+
+			claimDefinitions[claimName] = definition
 		}
 	}
 
@@ -144,14 +142,14 @@ type ClaimManager struct {
 }
 
 // NewClaimManager constructs a ClaimManager for the given AuthState and scopes.
-func NewClaimManager(auth *AuthState, requestedScopes []string) *ClaimManager {
+func NewClaimManager(auth *AuthState, requestedScopes []string, customScopes []config.Oauth2CustomScope) *ClaimManager {
 	if auth == nil {
 		return &ClaimManager{}
 	}
 
 	return &ClaimManager{
 		auth:   auth,
-		scopes: NewScopeManager(auth.Cfg(), requestedScopes),
+		scopes: NewScopeManager(requestedScopes, customScopes),
 	}
 }
 
@@ -167,7 +165,7 @@ func (m *ClaimManager) ApplyMappings(mappings []config.OIDCClaimMapping, claims 
 }
 
 func (m *ClaimManager) applyMapping(mapping config.OIDCClaimMapping, claims map[string]any) {
-	if mapping.Claim == "" || mapping.Attribute == "" {
+	if mapping.Claim == "" {
 		return
 	}
 
@@ -175,10 +173,35 @@ func (m *ClaimManager) applyMapping(mapping config.OIDCClaimMapping, claims map[
 		return
 	}
 
-	values, found := m.auth.GetAttribute(mapping.Attribute)
+	var (
+		values []any
+		found  bool
+		source string
+	)
+
+	if mapping.Attribute != "" {
+		values, found = m.auth.GetAttribute(mapping.Attribute)
+		source = fmt.Sprintf("attribute '%s'", mapping.Attribute)
+	} else {
+		switch mapping.From {
+		case "groups":
+			groups := m.auth.GetGroups()
+			values = stringsToAny(groups)
+			found = len(values) > 0
+			source = "groups"
+		case "group_dns":
+			groupDNs := m.auth.GetGroupDNs()
+			values = stringsToAny(groupDNs)
+			found = len(values) > 0
+			source = "group_dns"
+		default:
+			return
+		}
+	}
+
 	if !found || len(values) == 0 {
 		m.auth.Logger().Warn(
-			fmt.Sprintf("Claim '%s' not applied (no value for attribute '%s')", mapping.Claim, mapping.Attribute),
+			fmt.Sprintf("Claim '%s' not applied (no value for %s)", mapping.Claim, source),
 			definitions.LogKeyGUID, m.auth.Runtime.GUID,
 		)
 
@@ -202,7 +225,7 @@ func (m *ClaimManager) applyMapping(mapping config.OIDCClaimMapping, claims map[
 	converted, ok := convertClaimValues(claimType, values)
 	if !ok {
 		m.auth.Logger().Warn(
-			fmt.Sprintf("Claim '%s' not applied (unsupported value for attribute '%s')", mapping.Claim, mapping.Attribute),
+			fmt.Sprintf("Claim '%s' not applied (unsupported value for %s)", mapping.Claim, source),
 			definitions.LogKeyGUID, m.auth.Runtime.GUID,
 		)
 

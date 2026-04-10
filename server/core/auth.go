@@ -569,6 +569,18 @@ type AuthAttributes struct {
 	attributesMu sync.RWMutex
 }
 
+// AuthGroups handles resolved group memberships and their synchronization.
+type AuthGroups struct {
+	// Groups stores resolved group names.
+	Groups []string
+
+	// GroupDNs stores resolved group distinguished names.
+	GroupDNs []string
+
+	// groupsMu is a mutex for thread-safe access to group fields.
+	groupsMu sync.RWMutex
+}
+
 // AuthState represents a struct that holds information related to an authentication process.
 type AuthState struct {
 	// deps holds the injected runtime dependencies for this auth request.
@@ -586,6 +598,9 @@ type AuthState struct {
 
 	// Attributes handles user attributes and their synchronization.
 	Attributes AuthAttributes
+
+	// Groups handles resolved groups and their synchronization.
+	Groups AuthGroups
 }
 
 func (a *AuthState) Cfg() config.File {
@@ -845,6 +860,12 @@ type PassDBResult struct {
 	// Attributes is the result catalog returned by the underlying password Database.
 	Attributes bktype.AttributeMapping
 
+	// Groups contains resolved group names.
+	Groups []string
+
+	// GroupDNs contains resolved group distinguished names.
+	GroupDNs []string
+
 	// AdditionalFeatures contains additional features for machine learning
 	AdditionalFeatures map[string]any
 
@@ -881,6 +902,8 @@ func (p *PassDBResult) Reset() {
 	// Reset map fields to nil
 	p.Attributes = nil
 	p.AdditionalFeatures = nil
+	p.Groups = nil
+	p.GroupDNs = nil
 }
 
 // IsPassDBResult returns true to identify this as a PassDBResult
@@ -908,6 +931,8 @@ func (p *PassDBResult) Clone() *PassDBResult {
 	res.DisplayNameField = p.DisplayNameField
 	res.Backend = p.Backend
 	res.Attributes = p.Attributes.Clone()
+	res.Groups = slices.Clone(p.Groups)
+	res.GroupDNs = slices.Clone(p.GroupDNs)
 
 	if p.AdditionalFeatures != nil {
 		res.AdditionalFeatures = make(map[string]any, len(p.AdditionalFeatures))
@@ -1488,6 +1513,56 @@ func (a *AuthState) GetAttribute(name string) ([]any, bool) {
 	return v, ok
 }
 
+// SetResolvedGroups replaces the resolved group names and group DNs.
+func (a *AuthState) SetResolvedGroups(groups []string, groupDNs []string) {
+	if a == nil {
+		return
+	}
+
+	a.Groups.groupsMu.Lock()
+	a.Groups.Groups = normalizeStringSet(groups)
+	a.Groups.GroupDNs = normalizeStringSet(groupDNs)
+	a.Groups.groupsMu.Unlock()
+}
+
+// GetGroups returns a copy of resolved group names.
+func (a *AuthState) GetGroups() []string {
+	if a == nil {
+		return nil
+	}
+
+	a.Groups.groupsMu.RLock()
+	defer a.Groups.groupsMu.RUnlock()
+
+	if len(a.Groups.Groups) == 0 {
+		return nil
+	}
+
+	out := make([]string, len(a.Groups.Groups))
+	copy(out, a.Groups.Groups)
+
+	return out
+}
+
+// GetGroupDNs returns a copy of resolved group distinguished names.
+func (a *AuthState) GetGroupDNs() []string {
+	if a == nil {
+		return nil
+	}
+
+	a.Groups.groupsMu.RLock()
+	defer a.Groups.groupsMu.RUnlock()
+
+	if len(a.Groups.GroupDNs) == 0 {
+		return nil
+	}
+
+	out := make([]string, len(a.Groups.GroupDNs))
+	copy(out, a.Groups.GroupDNs)
+
+	return out
+}
+
 // RangeAttributes iterates over all attributes under a read lock and calls fn for each key/value.
 // If fn returns false, iteration stops early.
 func (a *AuthState) RangeAttributes(fn func(string, []any) bool) {
@@ -1963,6 +2038,10 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		auth.ReplaceAllAttributes(passDBResult.Attributes)
 	}
 
+	if passDBResult.UserFound {
+		auth.SetResolvedGroups(passDBResult.Groups, passDBResult.GroupDNs)
+	}
+
 	// Handle AdditionalFeatures if they exist in the PassDBResult
 	if len(passDBResult.AdditionalFeatures) > 0 {
 		// Set AdditionalFeatures in the gin.Context
@@ -2241,6 +2320,8 @@ func (a *AuthState) fillIdPFields(cr *lualib.CommonRequest) {
 			cr.AllowedClientGrantTypes = client.GetGrantTypes()
 		}
 	}
+
+	cr.UserGroups = a.GetGroups()
 
 	if cr.GrantType == "" {
 		if grantType, exists := a.Request.HTTPClientContext.Get(definitions.CtxOIDCGrantTypeKey); exists {
@@ -2875,6 +2956,8 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 		Backend:     a.Runtime.SourcePassDBBackend,
 		BackendName: a.Runtime.BackendName,
 		Attributes:  a.Attributes.Attributes,
+		Groups:      a.GetGroups(),
+		GroupDNs:    a.GetGroupDNs(),
 	}
 }
 

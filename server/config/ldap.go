@@ -536,9 +536,138 @@ type LDAPSearchProtocol struct {
 
 	LDAPFilter           `mapstructure:"filter" validate:"required"`
 	LDAPAttributeMapping `mapstructure:"mapping" validate:"required"`
+	Groups               LDAPGroups `mapstructure:"groups" validate:"omitempty"`
 
 	// LDAP result attributes
 	Attributes []string `mapstructure:"attribute" validate:"required,dive,printascii,excludesall= "`
+}
+
+// LDAPGroups configures group resolution for a search protocol.
+// Strategy:
+// - member_of: read group memberships from a multi-value user attribute (default: memberOf)
+// - search: query group entries using filter/base_dn/scope
+// - hybrid: union of member_of and search
+type LDAPGroups struct {
+	Strategy      string `mapstructure:"strategy" validate:"omitempty,oneof=member_of search hybrid"`
+	Attribute     string `mapstructure:"attribute" validate:"omitempty,printascii,excludesall= "`
+	BaseDN        string `mapstructure:"base_dn" validate:"omitempty,printascii"`
+	Scope         string `mapstructure:"scope" validate:"omitempty,oneof=base one sub"`
+	Filter        string `mapstructure:"filter" validate:"omitempty"`
+	NameAttribute string `mapstructure:"name_attribute" validate:"omitempty,printascii,excludesall= "`
+	Recursive     bool   `mapstructure:"recursive"`
+	MaxDepth      int    `mapstructure:"max_depth" validate:"omitempty,min=1,max=32"`
+}
+
+// IsEnabled reports whether group resolution is configured.
+func (g *LDAPGroups) IsEnabled() bool {
+	if g == nil {
+		return false
+	}
+
+	return g.GetStrategy() != ""
+}
+
+// GetStrategy returns the normalized strategy. Empty means disabled.
+func (g *LDAPGroups) GetStrategy() string {
+	if g == nil {
+		return ""
+	}
+
+	strategy := strings.TrimSpace(strings.ToLower(g.Strategy))
+	if strategy == "" {
+		switch {
+		case g.Filter != "" || g.BaseDN != "":
+			return "search"
+		case g.Attribute != "":
+			return "member_of"
+		default:
+			return ""
+		}
+	}
+
+	return strategy
+}
+
+// UsesMemberOf reports whether the strategy reads the user membership attribute.
+func (g *LDAPGroups) UsesMemberOf() bool {
+	switch g.GetStrategy() {
+	case "member_of", "hybrid":
+		return true
+	default:
+		return false
+	}
+}
+
+// UsesSearch reports whether the strategy requires a dedicated group search.
+func (g *LDAPGroups) UsesSearch() bool {
+	switch g.GetStrategy() {
+	case "search", "hybrid":
+		return true
+	default:
+		return false
+	}
+}
+
+// GetAttribute returns the user membership attribute. Default: memberOf.
+func (g *LDAPGroups) GetAttribute() string {
+	if g == nil || strings.TrimSpace(g.Attribute) == "" {
+		return "memberOf"
+	}
+
+	return g.Attribute
+}
+
+// GetBaseDN returns the base DN for group searches.
+func (g *LDAPGroups) GetBaseDN() string {
+	if g == nil {
+		return ""
+	}
+
+	return g.BaseDN
+}
+
+// GetFilter returns the LDAP filter for group search.
+func (g *LDAPGroups) GetFilter() string {
+	if g == nil {
+		return ""
+	}
+
+	return g.Filter
+}
+
+// GetNameAttribute returns the group-name attribute used for resolved group names. Default: cn.
+func (g *LDAPGroups) GetNameAttribute() string {
+	if g == nil || strings.TrimSpace(g.NameAttribute) == "" {
+		return "cn"
+	}
+
+	return g.NameAttribute
+}
+
+// GetScope returns the LDAP search scope for group lookup. Default: subtree.
+func (g *LDAPGroups) GetScope() *LDAPScope {
+	scope := &LDAPScope{}
+
+	if g == nil || strings.TrimSpace(g.Scope) == "" {
+		scope.Set("sub")
+
+		return scope
+	}
+
+	if err := scope.Set(g.Scope); err != nil {
+		scope.Set("sub")
+	}
+
+	return scope
+}
+
+// GetMaxDepth returns the recursive search depth. Default: 4.
+func (g *LDAPGroups) GetMaxDepth() int {
+	if g == nil || g.MaxDepth <= 0 {
+		return 4
+	}
+
+	return g.MaxDepth
 }
 
 // getProtocols retrieves a list of protocols from the provided LDAPSearchProtocol.
@@ -582,6 +711,13 @@ func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
 	for _, field := range p.GetAllMappedFields() {
 		if field != "" {
 			uniqueAttributes[field] = struct{}{}
+		}
+	}
+
+	// Add membership attribute when group resolution uses member_of semantics.
+	if p.Groups.UsesMemberOf() {
+		if membershipAttribute := p.Groups.GetAttribute(); membershipAttribute != "" {
+			uniqueAttributes[membershipAttribute] = struct{}{}
 		}
 	}
 
@@ -714,6 +850,15 @@ func (p *LDAPSearchProtocol) GetUniqueUserIDField() string {
 // GetDisplayNameField returns the LDAP attribute for the display name.
 func (p *LDAPSearchProtocol) GetDisplayNameField() string {
 	return p.LDAPAttributeMapping.GetDisplayNameField()
+}
+
+// GetGroups returns the group resolution configuration.
+func (p *LDAPSearchProtocol) GetGroups() *LDAPGroups {
+	if p == nil {
+		return nil
+	}
+
+	return &p.Groups
 }
 
 // GetProtocols retrieves the list of protocols from the LDAPSearchProtocol.
@@ -890,6 +1035,15 @@ func (l *LDAPConf) GetNegativeCacheTTL() time.Duration {
 	}
 
 	return l.NegativeCacheTTL
+}
+
+// GetMembershipCacheTTL returns TTL for resolved group memberships. Default 2m.
+func (l *LDAPConf) GetMembershipCacheTTL() time.Duration {
+	if l == nil || l.MembershipCacheTTL == 0 {
+		return 2 * time.Minute
+	}
+
+	return l.MembershipCacheTTL
 }
 
 // GetCacheMaxEntries returns max entries for LRU caches. Default 5000.

@@ -62,6 +62,43 @@ func TestUnknownConfigParameters_CustomScopes(t *testing.T) {
 	}
 }
 
+func TestUnknownConfigParameters_ClientCustomScopes(t *testing.T) {
+	cfg := &FileSettings{
+		IdP: &IdPSection{
+			OIDC: OIDCConfig{
+				Clients: []OIDCClient{
+					{
+						ClientID: "client-1",
+						CustomScopes: []Oauth2CustomScope{
+							{
+								Other: map[string]any{
+									"description_de": "Deutsch",
+									"foo":            "bar",
+								},
+							},
+							{
+								Other: map[string]any{
+									"nested": map[string]any{"x": 1},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := cfg.unknownConfigParameters()
+	want := []string{
+		"idp.oidc.clients[0].custom_scopes[0].foo",
+		"idp.oidc.clients[0].custom_scopes[1].nested.x",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)
+	}
+}
+
 func TestUnknownConfigParameters_CyclicMap(t *testing.T) {
 	cycle := map[string]any{}
 	cycle["self"] = cycle
@@ -74,6 +111,31 @@ func TestUnknownConfigParameters_CyclicMap(t *testing.T) {
 
 	got := cfg.unknownConfigParameters()
 	want := []string{"cycle.self"}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)
+	}
+}
+
+func TestUnknownConfigParameters_RootExtensionsIgnored(t *testing.T) {
+	cfg := &FileSettings{
+		Other: map[string]any{
+			"x-claim-email": map[string]any{
+				"claim":     "email",
+				"attribute": "mail;x-hidden",
+				"type":      "string",
+			},
+			"x-scope-profile": map[string]any{
+				"mappings": []any{
+					map[string]any{"claim": "name", "attribute": "cn;x-hidden", "type": "string"},
+				},
+			},
+			"top_level": "x",
+		},
+	}
+
+	got := cfg.unknownConfigParameters()
+	want := []string{"top_level"}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)

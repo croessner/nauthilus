@@ -20,12 +20,17 @@ import (
 )
 
 // FillIdTokenClaims populates a map of claims from IdTokenClaims configuration.
-func (a *AuthState) FillIdTokenClaims(cfgClaims *config.IdTokenClaims, claims map[string]any, requestedScopes []string) {
+func (a *AuthState) FillIdTokenClaims(
+	cfgClaims *config.IdTokenClaims,
+	claims map[string]any,
+	requestedScopes []string,
+	customScopes []config.Oauth2CustomScope,
+) {
 	if a == nil || cfgClaims == nil {
 		return
 	}
 
-	manager := NewClaimManager(a, requestedScopes)
+	manager := NewClaimManager(a, requestedScopes, customScopes)
 	mappings := cfgClaims.GetMappings()
 
 	if len(mappings) == 0 {
@@ -36,12 +41,17 @@ func (a *AuthState) FillIdTokenClaims(cfgClaims *config.IdTokenClaims, claims ma
 }
 
 // FillAccessTokenClaims populates a map of claims from AccessTokenClaims configuration.
-func (a *AuthState) FillAccessTokenClaims(cfgClaims *config.AccessTokenClaims, claims map[string]any, requestedScopes []string) {
+func (a *AuthState) FillAccessTokenClaims(
+	cfgClaims *config.AccessTokenClaims,
+	claims map[string]any,
+	requestedScopes []string,
+	customScopes []config.Oauth2CustomScope,
+) {
 	if a == nil || cfgClaims == nil {
 		return
 	}
 
-	manager := NewClaimManager(a, requestedScopes)
+	manager := NewClaimManager(a, requestedScopes, customScopes)
 	mappings := cfgClaims.GetMappings()
 
 	if len(mappings) == 0 {

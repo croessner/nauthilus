@@ -410,7 +410,11 @@ func (m *FilterBackendManager) applyBackendResult(L *lua.LState) int {
 
 	// Ensure destination exists
 	if *m.backendResult == nil {
-		*m.backendResult = &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+		*m.backendResult = &lualib.LuaBackendResult{
+			Attributes: make(map[any]any),
+			Groups:     []string{},
+			GroupDNs:   []string{},
+		}
 	}
 
 	if (*m.backendResult).Attributes == nil {
@@ -419,6 +423,8 @@ func (m *FilterBackendManager) applyBackendResult(L *lua.LState) int {
 
 	// Merge attributes (overwrite on conflict)
 	maps.Copy((*m.backendResult).Attributes, luaBackendResult.Attributes)
+	(*m.backendResult).Groups = mergeSortedUniqueStrings((*m.backendResult).Groups, luaBackendResult.Groups)
+	(*m.backendResult).GroupDNs = mergeSortedUniqueStrings((*m.backendResult).GroupDNs, luaBackendResult.GroupDNs)
 
 	return 0
 }
@@ -448,6 +454,45 @@ func mergeMaps(m1, m2 map[any]any) map[any]any {
 	maps.Copy(result, m2)
 
 	return result
+}
+
+func mergeSortedUniqueStrings(base []string, values ...[]string) []string {
+	seen := make(map[string]struct{}, len(base))
+	merged := make([]string, 0, len(base))
+
+	for _, value := range base {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+
+		seen[trimmed] = struct{}{}
+		merged = append(merged, trimmed)
+	}
+
+	for _, list := range values {
+		for _, value := range list {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+
+			if _, ok := seen[trimmed]; ok {
+				continue
+			}
+
+			seen[trimmed] = struct{}{}
+			merged = append(merged, trimmed)
+		}
+	}
+
+	sort.Strings(merged)
+
+	return merged
 }
 
 // CallFilterLua executes Lua filter scripts in parallel. It merges backend results and remove-attributes
@@ -561,7 +606,11 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 	// If no scripts should run in this mode, return early with empty aggregates
 	if len(scripts) == 0 {
-		mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+		mergedBackendResult := &lualib.LuaBackendResult{
+			Attributes: make(map[any]any),
+			Groups:     []string{},
+			GroupDNs:   []string{},
+		}
 
 		return false, mergedBackendResult, nil, nil
 	}
@@ -1010,7 +1059,11 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 	mctx, mspan := tr.Start(fctx, "filters.merge")
 	_ = mctx
 
-	mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+	mergedBackendResult := &lualib.LuaBackendResult{
+		Attributes: make(map[any]any),
+		Groups:     []string{},
+		GroupDNs:   []string{},
+	}
 	mergedRemoveAttributes := config.NewStringSet()
 
 	var statusSet bool
@@ -1022,6 +1075,11 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 		if fr.backendResult != nil && len(fr.backendResult.Attributes) > 0 {
 			mergedBackendResult.Attributes = mergeMaps(mergedBackendResult.Attributes, fr.backendResult.Attributes)
+		}
+
+		if fr.backendResult != nil {
+			mergedBackendResult.Groups = mergeSortedUniqueStrings(mergedBackendResult.Groups, fr.backendResult.Groups)
+			mergedBackendResult.GroupDNs = mergeSortedUniqueStrings(mergedBackendResult.GroupDNs, fr.backendResult.GroupDNs)
 		}
 
 		for _, attr := range fr.removeAttrsList {

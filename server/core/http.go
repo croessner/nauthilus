@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	mdcors "github.com/croessner/nauthilus/server/middleware/cors"
 	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
 	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
 	"github.com/croessner/nauthilus/server/middleware/securityheaders"
@@ -189,6 +190,8 @@ func (c DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
 	if mw.IsTrustedProxiesEnabled() {
 		rb.WithTrustedProxies()
 	}
+
+	r.Use(mdcors.New(mdcors.MiddlewareConfig{Config: c.cfg}).Handler())
 
 	if mw.IsRequestDecompressionEnabled() {
 		rb.WithRequestDecompression()

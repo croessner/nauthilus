@@ -224,7 +224,30 @@ const response = await fetch("/mfa/webauthn/register/finish", {
 });
 ```
 
-### 3.1.3 Frontend Security Headers & CSP Nonce
+### 3.1.3 Redirect URI Validation Rules
+
+Nauthilus validates `idp.oidc.clients[].redirect_uris` with strict matching plus controlled wildcard and loopback rules:
+
+- Exact string matching is the default.
+- A trailing wildcard (`*`) is supported only at the end of the configured URI and only when the configured URI does
+  not contain a query (`?`).
+- For wildcard matches, query and fragment parts of the requested `redirect_uri` are ignored during prefix matching.
+- A full wildcard (`*`) is accepted and matches any `http`/`https` redirect URI. This is strongly discouraged in
+  production.
+- For native app compatibility, `http` loopback redirect URIs (`127.0.0.1`, `localhost`, `::1`) allow dynamic ports.
+  Example: configured `http://127.0.0.1/callback` matches request `http://127.0.0.1:51208/callback`.
+- Dynamic loopback port matching is intentionally limited to `http` loopback redirects and does not apply to
+  non-loopback
+  hosts.
+
+Security hardening notes:
+
+- Wildcard matching is disabled when the incoming `redirect_uri` contains user-info (`user@host`) or unsafe path
+  traversal segments (`/../`, including encoded variants).
+- Prefer specific redirect URIs over broad wildcard patterns.
+- `post_logout_redirect_uri` remains an exact-match check against `post_logout_redirect_uris`.
+
+### 3.1.4 Frontend Security Headers & CSP Nonce
 
 Frontend routes support strict configurable browser security headers via:
 
@@ -244,13 +267,36 @@ server:
     frontend:
         security_headers:
             enabled: true
-            content_security_policy: "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
+            # Legacy full-string form is still supported.
+            # Recommended structured form:
+            content_security_policy:
+                connect-src:
+                    - "'self'"
+                    - "https://api.example.test"
+                frame-src:
+                    - "'self'"
+                    - "https:"
+                    - "https://widgets.example.test"
+                form-action:
+                    - "'self'"
+                form_action_optional_uris:
+                    - "https://idp.example.test"
+                    - "http://localhost:8080"
             content_security_policy_report_only: false
-            strict_transport_security: "max-age=31536000; includeSubDomains"
+            strict_transport_security:
+                max_age: 31536000
+                include_subdomains: true
+                preload: false
             x_content_type_options: "nosniff"
             x_frame_options: "DENY"
             referrer_policy: "no-referrer"
-            permissions_policy: "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+            permissions_policy:
+                features:
+                    geolocation: "()"
+                    microphone: "()"
+                    camera: "()"
+                    payment: "()"
+                    usb: "()"
             cross_origin_opener_policy: "same-origin"
             cross_origin_resource_policy: "same-origin"
             cross_origin_embedder_policy: "unsafe-none"
@@ -258,8 +304,93 @@ server:
             x_dns_prefetch_control: "off"
 ```
 
-If external HTTP redirect chains are required, widen `form-action` intentionally (for example:
-`form-action 'self' https: http:`).
+Type support and composition rules:
+
+- `content_security_policy` accepts either a single `string` or an `object`.
+- `permissions_policy` accepts either a single `string` or an `object`.
+- `strict_transport_security` accepts either a single `string` or an `object`.
+- In CSP object mode, `form_action_optional_uris` extends `form-action`.
+- Other security headers in this section remain single-string settings.
+- Legacy list syntax for these three headers (`[]string`) is still accepted for backward compatibility.
+
+Merge and precedence behavior:
+
+- If a header is configured as a single string, it is used as-is.
+- If a header is configured as an object, Nauthilus composes the final header from secure defaults plus object
+  overrides.
+- For `content_security_policy` object entries, sources may be configured as one space-separated `string` or as
+  `[]string`.
+- `content_security_policy` supports the following object keys (complete list):
+- `default-src`
+- `script-src`
+- `style-src`
+- `img-src`
+- `font-src`
+- `connect-src`
+- `frame-src`
+- `object-src`
+- `base-uri`
+- `frame-ancestors`
+- `form-action`
+- `form_action_optional_uris` (appended, deduplicated, to `form-action`)
+- `directives` (optional object containing any of the directive keys listed above)
+- Missing CSP directives keep secure defaults.
+- For `permissions_policy` object entries:
+- `features` is a mapping (`feature: value`).
+- Direct `feature: value` keys at object root are also supported.
+- Missing features keep secure defaults.
+- For `strict_transport_security` object entries:
+- `max_age` overrides the default max-age.
+- `include_subdomains` controls `includeSubDomains` (default remains `true`).
+- `preload` toggles `preload`.
+- `extra_tokens` appends custom tokens.
+- If you need full manual control for any of these headers, use the single-string form.
+
+Defaults and omitted partials:
+
+- If a setting is omitted entirely, secure defaults are applied.
+- If object mode is used and some entries are omitted, those entries fall back to secure defaults.
+
+Validation and error handling:
+
+- Invalid types (for example non-string directive sources) fail configuration loading.
+- Unknown object keys in `content_security_policy` and `strict_transport_security` fail configuration loading.
+- Unknown CSP directives fail configuration loading.
+- Invalid `permissions_policy` feature values fail configuration loading.
+- Errors are returned during config validation before serving requests.
+
+Backward compatibility:
+
+- Existing configurations that already use full header strings continue to work without changes.
+
+Default `form-action` is `form-action 'self' https:` when no `form_action_optional_uris` are set.
+If `form_action_optional_uris` is set, implicit default `https:` is removed and only explicit entries are appended.
+If full control is required, set `form-action` directly.
+
+The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
+
+### 3.1.5 Central CORS (`server.cors`)
+
+Cross-origin behavior is configured centrally under `server.cors` and is independent from frontend security headers.
+
+```yaml
+server:
+    cors:
+        enabled: true
+        policies:
+            - name: "oidc_discovery"
+              enabled: true
+              path_prefixes: ["/.well-known/"]
+              allow_origins: ["https://oc.roessner.cloud"]
+              allow_methods: ["GET", "OPTIONS"]
+              allow_headers: ["Authorization", "Content-Type"]
+              expose_headers: []
+              allow_credentials: false
+              max_age: 600
+```
+
+Policies are evaluated in order. The first active policy with a matching `path_prefixes` entry is used.
+Use explicit origin lists in production.
 
 ## 4. MFA Management API (/api/v1/mfa)
 
@@ -826,12 +957,12 @@ idp:
                     attribute: "mail"         # Map LDAP 'mail' to OIDC 'email'
                     type: "string"
                 -   claim: "groups"
-                    attribute: "memberOf"    # Map LDAP 'memberOf' to OIDC 'groups'
+                    from: "groups"                   # Use resolved groups from AuthState
                     type: "string_array"
         access_token_claims:
             mappings:
                 -   claim: "billing.roles"
-                    attribute: "billing_roles"
+                    attribute: "roles"
                     type: "string_array"
 ```
 
@@ -842,6 +973,16 @@ The mapping logic handles:
 - **Custom Claims**: Any claim name can be mapped from a backend attribute.
 - **Complex Types**: Booleans (e.g., `email_verified`) and structured objects (e.g., `address`).
 - **Default types**: If `type` is omitted, the claim's default type (standard or custom scope) is used when available.
+
+Mapping source options:
+
+- `attribute`: read claim values from backend attributes.
+- `from`: read built-in runtime sources (`groups`, `group_dns`).
+
+When groups are enabled in LDAP/Lua backends, Nauthilus stores memberships as dedicated AuthState fields (`groups`,
+`group_dns`). Claim mappings can consume them via `from: "groups"` and `from: "group_dns"`.
+
+Role claims are mapped from backend attributes directly (for example LDAP `roles`) using `attribute: "roles"`.
 
 ### 6.1 Scope-based Claim Filtering
 
@@ -875,6 +1016,29 @@ idp:
           - name: "custom_claim_2"
             type: "string"
 ```
+
+Clients can optionally define `custom_scopes` as an override layer:
+
+```yaml
+idp:
+  oidc:
+    clients:
+      - client_id: "my-client"
+        custom_scopes:
+          - name: "nauthilus"
+            description: "Client-specific nauthilus scope"
+            claims:
+              - name: "custom_claim_3"
+                type: "string"
+```
+
+Merge behavior is deterministic:
+
+- Global scopes from `idp.oidc.custom_scopes` are the base.
+- Client scopes from `idp.oidc.clients[].custom_scopes` are applied on top.
+- If a scope name matches, the client scope fully replaces the global scope definition.
+- Client-only scope names are appended.
+- OIDC Discovery (`scopes_supported`) remains global and is not customized per client.
 
 To use these, the client must have a mapping for the claim names (in `id_token_claims` and/or `access_token_claims`):
 
@@ -910,7 +1074,35 @@ idp:
 - **`refresh_token_lifetime`**: Duration of validity for refresh tokens (default: 30d). Refresh tokens are only issued
   if the `offline_access` scope is requested.
 
-### 6.4 SAML Attribute Mapping
+### 6.4 Implied Scopes (Compatibility)
+
+For compatibility scenarios, clients can define `implied_scopes`. These scopes are added to the effective scope set even
+when they are not explicitly requested by the incoming authorization request.
+
+```yaml
+idp:
+  oidc:
+    clients:
+      - client_id: "opencloud-desktop"
+        scopes:
+          - openid
+          - profile
+          - email
+          - offline_access
+          - roles
+        implied_scopes:
+          - offline_access
+          - roles
+```
+
+Behavior:
+
+- Requested scopes are filtered against the configured `scopes` allow list.
+- `implied_scopes` are appended afterward in stable order and deduplicated.
+- Implied scopes not present in the client's `scopes` allow list are ignored.
+- The resulting effective scope set is used for consent evaluation, claim filtering, and token issuance.
+
+### 6.5 SAML Attribute Mapping
 
 Unlike OIDC, which uses a per-client mapping configuration, the SAML 2.0 implementation in Nauthilus currently includes
 all attributes retrieved from the user backend directly into the SAML assertion.
@@ -996,7 +1188,7 @@ ldap:
     - protocol: [ "oidc", "saml" ]
       base_dn: "ou=users,dc=example,dc=com"
       filter:
-        user: "(uid={{.Username}})"
+          user: "(uid=%{username})"
       mapping:
         account_field: "uid"
         display_name_field: "cn"
@@ -1005,6 +1197,20 @@ ldap:
         # JSON mode: Use the field that stores all credentials
         webauthn_credential_field: "nauthilusFido2Credential"
         webauthn_object_class: "nauthilusFido2Account"
+      groups:
+          # member_of | search | hybrid
+          strategy: "hybrid"
+          # Used by member_of and hybrid
+          attribute: "memberOf"
+          # Used by search and hybrid (defaults shown)
+          base_dn: "ou=groups,dc=example,dc=com"
+          scope: "sub"
+          # Macros use Nauthilus syntax (LDAP-escaped automatically):
+          # %{user_dn}, %{account}, %{username}, ...
+          filter: "(|(member=%{user_dn})(uniqueMember=%{user_dn})(memberUid=%{account}))"
+          name_attribute: "cn"
+          recursive: true
+          max_depth: 4
 ```
 
 ### 7.5 FIDO2 LDAP Schema & LDIF Examples
