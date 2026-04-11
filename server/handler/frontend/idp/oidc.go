@@ -245,15 +245,6 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 
 	if bClientID != "" || bClientSecret != "" {
 		if authSource != "" {
-			combinedClientAuthAllowed = allowRefreshGrantCombinedClientAuth(
-				ctx,
-				authSource,
-				clientID,
-				clientSecret,
-				bClientID,
-				bClientSecret,
-			)
-
 			// Public client compatibility: some native clients (e.g. OpenCloud
 			// iOS) always include the client_id in the request body even when
 			// HTTP Basic auth is used, together with an empty client_secret
@@ -263,7 +254,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			// method. For public clients (no registered secret or
 			// token_endpoint_auth_method="none") we accept this as long as the
 			// body client_id matches the Basic auth client_id.
-			if !combinedClientAuthAllowed && bClientSecret == "" && bClientID != "" && bClientID == clientID {
+			if bClientSecret == "" && bClientID != "" && bClientID == clientID {
 				if candidate, ok := h.idp.FindClient(clientID); ok && candidate.IsPublicClient() {
 					combinedClientAuthAllowed = true
 
@@ -279,10 +270,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 				}
 			}
 
-			if combinedClientAuthAllowed {
-				// Compatibility mode for some clients that send both basic auth
-				// and body credentials during refresh token exchange.
-			} else {
+			if !combinedClientAuthAllowed {
 				util.DebugModuleWithCfg(
 					ctx.Request.Context(),
 					h.deps.Cfg,
@@ -442,33 +430,6 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	}
 
 	return client, true
-}
-
-func allowRefreshGrantCombinedClientAuth(
-	ctx *gin.Context,
-	authSource string,
-	headerClientID string,
-	headerClientSecret string,
-	bodyClientID string,
-	bodyClientSecret string,
-) bool {
-	if ctx == nil || ctx.Request == nil {
-		return false
-	}
-
-	if formValue(ctx, "grant_type") != "refresh_token" {
-		return false
-	}
-
-	if authSource != clientauth.MethodClientSecretBasic {
-		return false
-	}
-
-	if bodyClientID == "" || bodyClientSecret == "" {
-		return false
-	}
-
-	return headerClientID == bodyClientID && headerClientSecret == bodyClientSecret
 }
 
 // authenticateClientPrivateKeyJWT authenticates a client using the private_key_jwt method (RFC 7523).
