@@ -254,6 +254,31 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 				bClientSecret,
 			)
 
+			// Public client compatibility: some native clients (e.g. OpenCloud
+			// iOS) always include the client_id in the request body even when
+			// HTTP Basic auth is used, together with an empty client_secret
+			// form parameter. Per RFC 6749 §2.3.1 the client_secret_post
+			// authentication method requires a non-empty client_secret, so a
+			// lone client_id in the body is not an independent authentication
+			// method. For public clients (no registered secret or
+			// token_endpoint_auth_method="none") we accept this as long as the
+			// body client_id matches the Basic auth client_id.
+			if !combinedClientAuthAllowed && bClientSecret == "" && bClientID != "" && bClientID == clientID {
+				if candidate, ok := h.idp.FindClient(clientID); ok && candidate.IsPublicClient() {
+					combinedClientAuthAllowed = true
+
+					util.DebugModuleWithCfg(
+						ctx.Request.Context(),
+						h.deps.Cfg,
+						h.deps.Logger,
+						definitions.DbgIdp,
+						definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+						definitions.LogKeyMsg, "Accepting duplicate client_id in body for public client",
+						"client_id", clientID,
+					)
+				}
+			}
+
 			if combinedClientAuthAllowed {
 				// Compatibility mode for some clients that send both basic auth
 				// and body credentials during refresh token exchange.

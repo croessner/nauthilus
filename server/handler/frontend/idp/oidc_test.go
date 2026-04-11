@@ -1628,6 +1628,81 @@ func TestOIDCHandler_Token(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth", func(t *testing.T) {
+		// Reproduces the OpenCloud iOS native-client pattern:
+		//   Authorization: Basic base64("public-refresh-client:")
+		//   body: grant_type=refresh_token&client_id=public-refresh-client&client_secret=&refresh_token=...
+		// Per RFC 6749 §2.3.1 the empty client_secret form parameter is not
+		// a second authentication method. For public clients we must accept
+		// the request instead of rejecting it as "invalid_client".
+		refreshToken := "refresh-token-public-client-empty-body-secret"
+		session := &idp.OIDCSession{
+			ClientID: "public-refresh-client",
+			UserID:   "user123",
+			Scopes:   []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			AuthTime: time.Now(),
+		}
+		sessionData, _ := json.Marshal(session)
+
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
+		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_.*", ".*", 30*24*time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_.*").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", refreshToken)
+		form.Add("client_id", "public-refresh-client")
+		form.Add("client_secret", "") // explicitly empty, as OpenCloud iOS does
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("public-refresh-client", "") // empty password
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NotEmpty(t, resp["access_token"])
+		assert.NotEmpty(t, resp["refresh_token"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Refresh token request for confidential client with empty body client_secret and Basic Auth (must fail)", func(t *testing.T) {
+		// Negative test: the compatibility path for public clients must NOT
+		// apply to confidential clients. A confidential client that sends
+		// Basic auth AND a duplicate client_id in the body with an empty
+		// client_secret must still be rejected as invalid_client.
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", "any-token")
+		form.Add("client_id", "test-client")
+		form.Add("client_secret", "")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, "invalid_client", resp["error"])
+	})
+
 	t.Run("Token request with enforced method (mismatch should fail)", func(t *testing.T) {
 		// Update client to enforce basic auth
 		cfg.clients[0].TokenEndpointAuthMethod = "client_secret_basic"
