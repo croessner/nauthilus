@@ -241,28 +241,45 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	// 2. Try Body
 	bClientID := formValue(ctx, "client_id")
 	bClientSecret := formValue(ctx, "client_secret")
+	combinedClientAuthAllowed := false
 
 	if bClientID != "" || bClientSecret != "" {
 		if authSource != "" {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				h.deps.Cfg,
-				h.deps.Logger,
-				definitions.DbgIdp,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "Multiple OIDC client authentication methods used",
-				"methods", authSource+","+clientauth.MethodClientSecretPost,
+			combinedClientAuthAllowed = allowRefreshGrantCombinedClientAuth(
+				ctx,
+				authSource,
+				clientID,
+				clientSecret,
+				bClientID,
+				bClientSecret,
 			)
 
-			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+			if combinedClientAuthAllowed {
+				// Compatibility mode for some clients that send both basic auth
+				// and body credentials during refresh token exchange.
+			} else {
+				util.DebugModuleWithCfg(
+					ctx.Request.Context(),
+					h.deps.Cfg,
+					h.deps.Logger,
+					definitions.DbgIdp,
+					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+					definitions.LogKeyMsg, "Multiple OIDC client authentication methods used",
+					"methods", authSource+","+clientauth.MethodClientSecretPost,
+				)
 
-			return nil, false
+				ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+
+				return nil, false
+			}
 		}
 
-		if bClientID != "" {
-			clientID = bClientID
+		if !combinedClientAuthAllowed {
+			if bClientID != "" {
+				clientID = bClientID
+			}
+			clientSecret = bClientSecret
 		}
-		clientSecret = bClientSecret
 	}
 
 	if clientID == "" {
@@ -294,6 +311,15 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 
 	if authSource == "" && bClientID != "" && (client.TokenEndpointAuthMethod == "none" || client.IsPublicClient()) {
 		authSource = "none"
+	}
+
+	if client.IsPublicClient() && clientID == client.ClientID {
+		if authSource == clientauth.MethodClientSecretBasic || authSource == clientauth.MethodClientSecretPost {
+			// Public clients cannot keep a secret. Some clients still include
+			// one for compatibility; ignore it and treat the request as "none".
+			authSource = "none"
+			clientSecret = ""
+		}
 	}
 
 	if authSource != "" {
@@ -391,6 +417,33 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	}
 
 	return client, true
+}
+
+func allowRefreshGrantCombinedClientAuth(
+	ctx *gin.Context,
+	authSource string,
+	headerClientID string,
+	headerClientSecret string,
+	bodyClientID string,
+	bodyClientSecret string,
+) bool {
+	if ctx == nil || ctx.Request == nil {
+		return false
+	}
+
+	if formValue(ctx, "grant_type") != "refresh_token" {
+		return false
+	}
+
+	if authSource != clientauth.MethodClientSecretBasic {
+		return false
+	}
+
+	if bodyClientID == "" || bodyClientSecret == "" {
+		return false
+	}
+
+	return headerClientID == bodyClientID && headerClientSecret == bodyClientSecret
 }
 
 // authenticateClientPrivateKeyJWT authenticates a client using the private_key_jwt method (RFC 7523).
@@ -878,7 +931,15 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	grantType := formValue(ctx, "grant_type")
 	ctx.Set(definitions.CtxOIDCGrantTypeKey, grantType)
 
-	clientID := formValue(ctx, "client_id")
+	clientID := oidcTokenRequestClientID(ctx)
+
+	flow := strings.TrimSpace(grantType)
+	if flow == "" {
+		flow = "token"
+	}
+
+	h.logIncomingOIDCFlowRequest(ctx, flow, grantType, clientID)
+
 	defer func() {
 		h.finishOIDCTokenRequest(ctx, grantType, clientID, startedAt)
 	}()
@@ -1270,6 +1331,8 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.logout")
 	defer sp.End()
+
+	h.logIncomingOIDCFlowRequest(ctx, "logout", "", "")
 
 	idTokenHint := ctx.Query("id_token_hint")
 	postLogoutRedirectURI := ctx.Query("post_logout_redirect_uri")

@@ -17,6 +17,7 @@ package idp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -45,6 +46,13 @@ type NauthilusIdP struct {
 	keyMgr   *oidckeys.Manager
 	tokenGen TokenGenerator
 }
+
+var (
+	// ErrInvalidRefreshToken indicates the submitted refresh token was unknown or expired.
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+	// ErrRefreshTokenClientMismatch indicates the refresh token was not issued to the requesting client.
+	ErrRefreshTokenClientMismatch = errors.New("refresh token client mismatch")
+)
 
 // NewNauthilusIdP creates a new instance of NauthilusIdP.
 func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
@@ -355,11 +363,11 @@ func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 
 	session, err := n.storage.GetRefreshToken(ctx, refreshToken)
 	if err != nil {
-		return nil, "", "", "", 0, fmt.Errorf("invalid refresh token")
+		return nil, "", "", "", 0, fmt.Errorf("%w", ErrInvalidRefreshToken)
 	}
 
 	if session.ClientID != clientID {
-		return nil, "", "", "", 0, fmt.Errorf("client mismatch")
+		return nil, "", "", "", 0, fmt.Errorf("%w", ErrRefreshTokenClientMismatch)
 	}
 
 	// Rotation: invalidate old access token and delete old refresh token
