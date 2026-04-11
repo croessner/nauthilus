@@ -1481,6 +1481,153 @@ func TestOIDCHandler_Token(t *testing.T) {
 		assert.Equal(t, "invalid_client", resp["error"])
 	})
 
+	t.Run("Refresh token request with basic and body credentials (matching) succeeds", func(t *testing.T) {
+		refreshToken := "refresh-token-combined-auth"
+		session := &idp.OIDCSession{
+			ClientID: "test-client",
+			UserID:   "user123",
+			Scopes:   []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			AuthTime: time.Now(),
+		}
+		sessionData, _ := json.Marshal(session)
+
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
+		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_.*", ".*", 30*24*time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_.*").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", refreshToken)
+		form.Add("client_id", "test-client")
+		form.Add("client_secret", "test-secret")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NotEmpty(t, resp["access_token"])
+		assert.NotEmpty(t, resp["refresh_token"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Refresh token request with invalid token returns invalid_grant", func(t *testing.T) {
+		refreshToken := "missing-refresh-token"
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).RedisNil()
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", refreshToken)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, "invalid_grant", resp["error"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Refresh token request with client mismatch returns invalid_grant", func(t *testing.T) {
+		refreshToken := "refresh-token-client-mismatch"
+		session := &idp.OIDCSession{
+			ClientID: "other-client",
+			UserID:   "user123",
+			Scopes:   []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			AuthTime: time.Now(),
+		}
+		sessionData, _ := json.Marshal(session)
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", refreshToken)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, "invalid_grant", resp["error"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Refresh token request for public client ignores provided secret", func(t *testing.T) {
+		publicClient := config.OIDCClient{
+			ClientID:     "public-refresh-client",
+			RedirectURIs: []string{"http://127.0.0.1"},
+		}
+		cfg.clients = append(cfg.clients, publicClient)
+
+		refreshToken := "refresh-token-public-client"
+		session := &idp.OIDCSession{
+			ClientID: "public-refresh-client",
+			UserID:   "user123",
+			Scopes:   []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			AuthTime: time.Now(),
+		}
+		sessionData, _ := json.Marshal(session)
+
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
+		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_.*", ".*", 30*24*time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_.*").SetVal(1)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", refreshToken)
+		form.Add("client_id", "public-refresh-client")
+		form.Add("client_secret", "ignored-secret")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("public-refresh-client", "ignored-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NotEmpty(t, resp["access_token"])
+		assert.NotEmpty(t, resp["refresh_token"])
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("Token request with enforced method (mismatch should fail)", func(t *testing.T) {
 		// Update client to enforce basic auth
 		cfg.clients[0].TokenEndpointAuthMethod = "client_secret_basic"

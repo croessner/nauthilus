@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -43,6 +44,8 @@ import (
 func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.authorize")
 	defer sp.End()
+
+	h.logIncomingOIDCFlowRequest(ctx, "authorization_code", "", ctx.Query("client_id"))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -381,6 +384,12 @@ func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *confi
 
 	session, idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
 	if err != nil {
+		if errors.Is(err, idp.ErrInvalidRefreshToken) || errors.Is(err, idp.ErrRefreshTokenClientMismatch) {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+
+			return
+		}
+
 		h.logTokenError(ctx, grantType, clientID, err)
 
 		return
@@ -401,6 +410,8 @@ func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *confi
 func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	consentChallenge := ctx.Query("consent_challenge")
 	state := ctx.Query("state")
+
+	h.logIncomingOIDCFlowRequest(ctx, "consent_get", "", "")
 
 	session, err := h.storage.GetSession(ctx.Request.Context(), "consent:"+consentChallenge)
 	if err != nil {
@@ -459,6 +470,8 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.consent_post")
 	defer sp.End()
+
+	h.logIncomingOIDCFlowRequest(ctx, "consent_post", "", "")
 
 	consentChallenge := ctx.PostForm("consent_challenge")
 	state := ctx.PostForm("state")

@@ -44,6 +44,8 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 
 	clientID := ctx.PostForm("client_id")
 
+	h.logIncomingOIDCFlowRequest(ctx, "device_authorization", "", clientID)
+
 	if clientID == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "client_id is required"})
 
@@ -369,6 +371,8 @@ func (h *OIDCHandler) DeviceVerifyFailedPage(ctx *gin.Context) {
 func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_verify")
 	defer sp.End()
+
+	h.logIncomingOIDCFlowRequest(ctx, "device_verify", "", "")
 
 	userCode := ctx.PostForm("user_code")
 
@@ -820,6 +824,8 @@ func (h *OIDCHandler) deviceConsentPath(ctx *gin.Context) string {
 // The user is shown which application requests access and which scopes are requested,
 // and can approve or deny the authorization.
 func (h *OIDCHandler) DeviceConsentGET(ctx *gin.Context) {
+	h.logIncomingOIDCFlowRequest(ctx, "device_consent_get", "", "")
+
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
 		ctx.Redirect(http.StatusFound, "/oidc/device/verify")
@@ -853,6 +859,8 @@ func (h *OIDCHandler) DeviceConsentGET(ctx *gin.Context) {
 func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.device_consent_post")
 	defer sp.End()
+
+	h.logIncomingOIDCFlowRequest(ctx, "device_consent_post", "", "")
 
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {

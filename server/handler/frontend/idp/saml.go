@@ -497,6 +497,8 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "saml.sso")
 	defer sp.End()
 
+	h.logIncomingSAMLFlowRequest(ctx, "sso", "")
+
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -729,6 +731,8 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 func (h *SAMLHandler) SLO(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "saml.slo")
 	defer sp.End()
+
+	h.logIncomingSAMLFlowRequest(ctx, "slo", "")
 
 	startTime := time.Now().UTC()
 	binding := sloBindingFromHTTPMethod(ctx.Request.Method)
