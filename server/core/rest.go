@@ -2016,8 +2016,63 @@ func isRuleApplicable(r config.BruteForceRule, isIPv4 bool, cmd *bf.FlushRuleCmd
 	return cmd.RuleName == "*" || r.Name == cmd.RuleName
 }
 
-// iterateCombinations processes combinations of protocols and OIDC Client IDs defined in a brute force rule.
-func iterateCombinations(ctx *gin.Context, deps restAdminDeps, guid string, cmd *bf.FlushRuleCmd, rule *config.BruteForceRule, removed []string) ([]string, error) {
+type bruteForceBanFlushTarget struct {
+	key      string
+	network  string
+	ruleName string
+}
+
+type bruteForceFlushPlan struct {
+	banTargets map[string]bruteForceBanFlushTarget
+	bucketKeys config.StringSet
+}
+
+func newBruteForceFlushPlan() *bruteForceFlushPlan {
+	return &bruteForceFlushPlan{
+		banTargets: make(map[string]bruteForceBanFlushTarget),
+		bucketKeys: config.NewStringSet(),
+	}
+}
+
+func (plan *bruteForceFlushPlan) addBanTarget(target bruteForceBanFlushTarget) {
+	if target.key == "" || target.network == "" {
+		return
+	}
+
+	existing, found := plan.banTargets[target.key]
+	if !found || (existing.ruleName != "*" && target.ruleName == "*") {
+		plan.banTargets[target.key] = target
+	}
+}
+
+func (plan *bruteForceFlushPlan) addBucketKeys(keys []string) {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+
+		plan.bucketKeys.Set(key)
+	}
+}
+
+func collectBruteForceFlushTargets(plan *bruteForceFlushPlan, bm bruteforce.BucketManager, rule *config.BruteForceRule, ruleName string) error {
+	banKey, network, err := bm.GetBruteForceBanRedisKey(rule)
+	if err != nil {
+		return err
+	}
+
+	plan.addBanTarget(bruteForceBanFlushTarget{
+		key:      banKey,
+		network:  network,
+		ruleName: ruleName,
+	})
+	plan.addBucketKeys(bm.GetBucketKeys(rule))
+
+	return nil
+}
+
+// collectBruteForceCombinations collects combinations of protocols and OIDC Client IDs defined in a brute force rule.
+func collectBruteForceCombinations(plan *bruteForceFlushPlan, ctx *gin.Context, deps restAdminDeps, guid string, cmd *bf.FlushRuleCmd, rule *config.BruteForceRule) error {
 	cfg := deps.effectiveCfg()
 
 	// 1) Cartesian product of FilterByProtocol × FilterByOIDCCID
@@ -2030,9 +2085,8 @@ func iterateCombinations(ctx *gin.Context, deps restAdminDeps, guid string, cmd 
 		for _, cid := range oidcCids {
 			bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, proto, cid)
 
-			var err error
-			if removed, err = flushForBucket(ctx, deps, bm, rule, cmd.RuleName, removed); err != nil {
-				return removed, err
+			if err := collectBruteForceFlushTargets(plan, bm, rule, cmd.RuleName); err != nil {
+				return err
 			}
 		}
 	}
@@ -2042,9 +2096,8 @@ func iterateCombinations(ctx *gin.Context, deps restAdminDeps, guid string, cmd 
 		for _, cid := range rule.FilterByOIDCCID {
 			bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, "", cid)
 
-			var err error
-			if removed, err = flushForBucket(ctx, deps, bm, rule, cmd.RuleName, removed); err != nil {
-				return removed, err
+			if err := collectBruteForceFlushTargets(plan, bm, rule, cmd.RuleName); err != nil {
+				return err
 			}
 		}
 	}
@@ -2053,37 +2106,28 @@ func iterateCombinations(ctx *gin.Context, deps restAdminDeps, guid string, cmd 
 	for _, proto := range cfg.GetAllProtocols() {
 		bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, proto, "")
 
-		var err error
-		if removed, err = flushForBucket(ctx, deps, bm, rule, cmd.RuleName, removed); err != nil {
-			return removed, err
+		if err := collectBruteForceFlushTargets(plan, bm, rule, cmd.RuleName); err != nil {
+			return err
 		}
 	}
 
-	return removed, nil
+	return nil
 }
 
-func deleteKeyIfExists(ctx context.Context, deps restAdminDeps, key string, guid string) (string, error) {
-	logger := deps.effectiveLogger()
-	cfg := deps.effectiveCfg()
-	redisClient := deps.effectiveRedis()
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
-	defer cancel()
-
-	result, err := redisClient.GetWriteHandle().Unlink(dCtx, key).Result()
-	if err != nil {
-		return "", err
+func sortBruteForceBanTargets(targets map[string]bruteForceBanFlushTarget) []bruteForceBanFlushTarget {
+	keys := make([]string, 0, len(targets))
+	for key := range targets {
+		keys = append(keys, key)
 	}
 
-	if result > 0 {
-		level.Info(logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
+	sort.Strings(keys)
 
-		return key, nil
+	sortedTargets := make([]bruteForceBanFlushTarget, 0, len(keys))
+	for _, key := range keys {
+		sortedTargets = append(sortedTargets, targets[key])
 	}
 
-	return "", nil
+	return sortedTargets
 }
 
 // bulkUnlink removes all provided keys using a single write pipeline with UNLINK.
@@ -2127,30 +2171,188 @@ func bulkUnlink(ctx context.Context, deps restAdminDeps, guid string, keys []str
 	return removed, nil
 }
 
-// flushForBucket deletes brute force data for a specific rule and updates the list of removed keys. Returns updated keys and error.
-func flushForBucket(ctx *gin.Context, deps restAdminDeps, bm bruteforce.BucketManager, rule *config.BruteForceRule, ruleName string, removed []string) ([]string, error) {
-	if key, err := bm.DeleteIPBruteForceRedis(rule, ruleName); err != nil {
-		return removed, err
-	} else if key != "" {
-		removed = append(removed, key)
+func removeBruteForceBansFromIndex(ctx context.Context, deps restAdminDeps, guid string, removedTargets []bruteForceBanFlushTarget) {
+	if len(removedTargets) == 0 {
+		return
 	}
 
-	for _, bucketKey := range bm.GetBucketKeys(rule) {
-		var err error
-		if removed, err = flushKey(ctx, deps, bucketKey, bm.GetBruteForceName(), removed); err != nil {
-			return removed, err
+	cfg := deps.effectiveCfg()
+	logger := deps.effectiveLogger()
+	redisClient := deps.effectiveRedis()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
+
+	pipe := redisClient.GetWriteHandle().Pipeline()
+	for _, target := range removedTargets {
+		shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, rediscli.GetBanIndexShard(target.network))
+		pipe.ZRem(ctx, shardKey, target.network)
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
+	defer cancel()
+
+	if _, err := pipe.Exec(dCtx); err != nil {
+		_ = level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error removing networks from brute force ban index ZSET",
+			definitions.LogKeyError, err,
+		)
+
+		return
+	}
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+}
+
+func bulkDeleteBruteForceBanTargets(ctx context.Context, deps restAdminDeps, guid string, targets []bruteForceBanFlushTarget) ([]string, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	logger := deps.effectiveLogger()
+	cfg := deps.effectiveCfg()
+	redisClient := deps.effectiveRedis()
+
+	pipe := redisClient.GetWriteHandle().Pipeline()
+	for _, target := range targets {
+		pipe.Del(ctx, target.key)
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
+	defer cancel()
+
+	cmds, err := pipe.Exec(dCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	removed := make([]string, 0, len(targets))
+	removedTargets := make([]bruteForceBanFlushTarget, 0, len(targets))
+
+	for index, target := range targets {
+		if index >= len(cmds) {
+			continue
 		}
+
+		intCmd, ok := cmds[index].(*redis.IntCmd)
+		if !ok {
+			continue
+		}
+
+		if removedCount, resultErr := intCmd.Result(); resultErr == nil && removedCount > 0 {
+			removed = append(removed, target.key)
+			removedTargets = append(removedTargets, target)
+			_ = level.Info(logger).Log(definitions.LogKeyGUID, guid, "key", target.key, "status", "flushed")
+		}
+	}
+
+	removeBruteForceBansFromIndex(ctx, deps, guid, removedTargets)
+
+	return removed, nil
+}
+
+func deleteMatchingBruteForceBanTargets(ctx context.Context, deps restAdminDeps, guid string, targets []bruteForceBanFlushTarget) ([]string, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	cfg := deps.effectiveCfg()
+	redisClient := deps.effectiveRedis()
+
+	pipe := redisClient.GetReadHandle().Pipeline()
+	for _, target := range targets {
+		pipe.Get(ctx, target.key)
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
+	defer cancel()
+
+	cmds, err := pipe.Exec(dCtx)
+	if err != nil && !stderrors.Is(err, redis.Nil) {
+		return nil, err
+	}
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	deleteTargets := make([]bruteForceBanFlushTarget, 0, len(targets))
+	for index, target := range targets {
+		if index >= len(cmds) {
+			continue
+		}
+
+		stringCmd, ok := cmds[index].(*redis.StringCmd)
+		if !ok {
+			continue
+		}
+
+		current, resultErr := stringCmd.Result()
+		if stderrors.Is(resultErr, redis.Nil) {
+			continue
+		}
+
+		if resultErr != nil {
+			return nil, resultErr
+		}
+
+		if current == target.ruleName {
+			deleteTargets = append(deleteTargets, target)
+		}
+	}
+
+	return bulkDeleteBruteForceBanTargets(ctx, deps, guid, deleteTargets)
+}
+
+func flushBruteForceBanTargets(ctx context.Context, deps restAdminDeps, guid string, targets map[string]bruteForceBanFlushTarget) ([]string, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	sortedTargets := sortBruteForceBanTargets(targets)
+	wildcardTargets := make([]bruteForceBanFlushTarget, 0, len(sortedTargets))
+	selectiveTargets := make([]bruteForceBanFlushTarget, 0, len(sortedTargets))
+
+	for _, target := range sortedTargets {
+		if target.ruleName == "*" {
+			wildcardTargets = append(wildcardTargets, target)
+		} else {
+			selectiveTargets = append(selectiveTargets, target)
+		}
+	}
+
+	removed := make([]string, 0, len(sortedTargets))
+
+	if removedWildcard, err := bulkDeleteBruteForceBanTargets(ctx, deps, guid, wildcardTargets); err != nil {
+		return nil, err
+	} else if len(removedWildcard) > 0 {
+		removed = append(removed, removedWildcard...)
+	}
+
+	if removedSelective, err := deleteMatchingBruteForceBanTargets(ctx, deps, guid, selectiveTargets); err != nil {
+		return nil, err
+	} else if len(removedSelective) > 0 {
+		removed = append(removed, removedSelective...)
 	}
 
 	return removed, nil
 }
 
-// flushKey deletes a Redis key if it exists, appends the removed key to a list, and returns the updated list with an error if any.
-func flushKey(ctx *gin.Context, deps restAdminDeps, key string, guid string, removed []string) ([]string, error) {
-	if rm, err := deleteKeyIfExists(ctx.Request.Context(), deps, key, guid); err != nil {
-		return removed, err
-	} else if rm != "" {
-		removed = append(removed, rm)
+func executeBruteForceFlushPlan(ctx context.Context, deps restAdminDeps, guid string, plan *bruteForceFlushPlan) ([]string, error) {
+	removed := make([]string, 0)
+
+	if removedBans, err := flushBruteForceBanTargets(ctx, deps, guid, plan.banTargets); err != nil {
+		return nil, err
+	} else if len(removedBans) > 0 {
+		removed = append(removed, removedBans...)
+	}
+
+	bucketKeys := plan.bucketKeys.GetStringSlice()
+	sort.Strings(bucketKeys)
+
+	if removedBucketKeys, err := bulkUnlink(ctx, deps, guid, bucketKeys); err != nil {
+		return nil, err
+	} else if len(removedBucketKeys) > 0 {
+		removed = append(removed, removedBucketKeys...)
 	}
 
 	return removed, nil
@@ -2160,6 +2362,7 @@ func flushKey(ctx *gin.Context, deps restAdminDeps, key string, guid string, rem
 // It evaluates rule applicability, flushes matched rules, and removes derived and tolerable combinations.
 func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushRuleCmd, guid string) (hadError bool, removed []string, err error) {
 	cfg := deps.effectiveCfg()
+	plan := newBruteForceFlushPlan()
 
 	var trSuffixes = []string{":P", ":N"}
 
@@ -2175,13 +2378,13 @@ func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushR
 
 		// Phase 2: flush the exact combination given by the user
 		bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, cmd.Protocol, cmd.OIDCCID)
-		if removed, err = flushForBucket(ctx, deps, bm, &rule, cmd.RuleName, removed); err != nil {
-			return true, removed, err
+		if err = collectBruteForceFlushTargets(plan, bm, &rule, cmd.RuleName); err != nil {
+			return true, nil, err
 		}
 
 		// Phase 3: flush all derived combinations (rule filters + safety net)
-		if removed, err = iterateCombinations(ctx, deps, guid, cmd, &rule, removed); err != nil {
-			return true, removed, err
+		if err = collectBruteForceCombinations(plan, ctx, deps, guid, cmd, &rule); err != nil {
+			return true, nil, err
 		}
 	}
 
@@ -2194,10 +2397,10 @@ func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushR
 		keys = append(keys, base+s)
 	}
 
-	if removedTr, berr := bulkUnlink(ctx.Request.Context(), deps, guid, keys); berr != nil {
-		return true, removed, berr
-	} else if len(removedTr) > 0 {
-		removed = append(removed, removedTr...)
+	plan.addBucketKeys(keys)
+
+	if removed, err = executeBruteForceFlushPlan(ctx.Request.Context(), deps, guid, plan); err != nil {
+		return true, nil, err
 	}
 
 	return false, removed, nil
