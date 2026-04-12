@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	bf "github.com/croessner/nauthilus/server/model/bruteforce"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,49 @@ func setupMinimalTestConfig(t *testing.T) {
 	SetDefaultConfigFile(config.GetFile())
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+}
+
+func configureBruteForceFlushTestConfig(t *testing.T, protocols []string, rules ...config.BruteForceRule) {
+	t.Helper()
+
+	cfg, ok := config.GetFile().(*config.FileSettings)
+	if !ok {
+		t.Fatalf("unexpected config type %T", config.GetFile())
+	}
+
+	cfg.BruteForce = &config.BruteForceSection{Buckets: rules}
+
+	if len(protocols) == 0 {
+		cfg.LDAP = nil
+
+		return
+	}
+
+	cfg.LDAP = &config.LDAPSection{
+		Search: []config.LDAPSearchProtocol{
+			{Protocols: protocols},
+		},
+	}
+}
+
+func setupRestAdminDepsWithMock(t *testing.T) (restAdminDeps, redismock.ClientMock) {
+	t.Helper()
+
+	db, mock := redismock.NewClientMock()
+
+	return restAdminDeps{
+		Cfg:    config.GetFile(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Redis:  rediscli.NewTestClient(db),
+	}, mock
+}
+
+func newTestGinContext() *gin.Context {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/bruteforce/flush", nil)
+
+	return ctx
 }
 
 func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
@@ -107,6 +151,7 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 func TestBruteForceFlushSync_OK(t *testing.T) {
 	setupMinimalTestConfig(t)
 	r, mock := setupEngineWithMock(t)
+	mock.MatchExpectationsInOrder(false)
 
 	// Expect bulk unlink of tolerate keys for the given IP (phase 4)
 	base := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFTolerationPrefix + "1.2.3.4"
@@ -125,6 +170,116 @@ func TestBruteForceFlushSync_OK(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestProcessBruteForceRules_WildcardSkipsBanRead(t *testing.T) {
+	setupMinimalTestConfig(t)
+	configureBruteForceFlushTestConfig(t, nil, config.BruteForceRule{
+		Name:           "rule-a",
+		Period:         time.Hour,
+		CIDR:           32,
+		IPv4:           true,
+		FailedRequests: 5,
+	})
+
+	deps, mock := setupRestAdminDepsWithMock(t)
+	ctx := newTestGinContext()
+	rules := config.GetFile().GetBruteForceRules()
+	bm := createBucketManager(ctx.Request.Context(), deps, "guid-1", "1.2.3.4", "", "")
+	mock.MatchExpectationsInOrder(false)
+
+	banKey, network, err := bm.GetBruteForceBanRedisKey(&rules[0])
+	if err != nil {
+		t.Fatalf("unexpected ban key error: %v", err)
+	}
+
+	bucketKeys := bm.GetBucketKeys(&rules[0])
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	tolerationBase := prefix + definitions.RedisBFTolerationPrefix + "1.2.3.4"
+	shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, rediscli.GetBanIndexShard(network))
+
+	mock.ExpectDel(banKey).SetVal(1)
+	mock.ExpectZRem(shardKey, network).SetVal(1)
+	mock.ExpectUnlink(bucketKeys[0]).SetVal(1)
+	mock.ExpectUnlink(bucketKeys[1]).SetVal(1)
+	mock.ExpectUnlink(tolerationBase).SetVal(1)
+	mock.ExpectUnlink(tolerationBase + ":P").SetVal(1)
+	mock.ExpectUnlink(tolerationBase + ":N").SetVal(1)
+
+	hadError, removed, err := processBruteForceRules(ctx, deps, &bf.FlushRuleCmd{
+		IPAddress: "1.2.3.4",
+		RuleName:  "*",
+	}, "guid-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hadError {
+		t.Fatal("expected no error flag")
+	}
+
+	if len(removed) != 6 {
+		t.Fatalf("expected 6 removed keys, got %d: %v", len(removed), removed)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestProcessBruteForceRules_DeduplicatesDerivedTargets(t *testing.T) {
+	setupMinimalTestConfig(t)
+	configureBruteForceFlushTestConfig(t, []string{"imap", "smtp"}, config.BruteForceRule{
+		Name:           "rule-a",
+		Period:         time.Hour,
+		CIDR:           32,
+		IPv4:           true,
+		FailedRequests: 5,
+	})
+
+	deps, mock := setupRestAdminDepsWithMock(t)
+	ctx := newTestGinContext()
+	rules := config.GetFile().GetBruteForceRules()
+	bm := createBucketManager(ctx.Request.Context(), deps, "guid-2", "1.2.3.4", "", "")
+	mock.MatchExpectationsInOrder(false)
+
+	banKey, network, err := bm.GetBruteForceBanRedisKey(&rules[0])
+	if err != nil {
+		t.Fatalf("unexpected ban key error: %v", err)
+	}
+
+	bucketKeys := bm.GetBucketKeys(&rules[0])
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	tolerationBase := prefix + definitions.RedisBFTolerationPrefix + "1.2.3.4"
+	shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, rediscli.GetBanIndexShard(network))
+
+	mock.ExpectDel(banKey).SetVal(1)
+	mock.ExpectZRem(shardKey, network).SetVal(1)
+	mock.ExpectUnlink(bucketKeys[0]).SetVal(1)
+	mock.ExpectUnlink(bucketKeys[1]).SetVal(1)
+	mock.ExpectUnlink(tolerationBase).SetVal(1)
+	mock.ExpectUnlink(tolerationBase + ":P").SetVal(1)
+	mock.ExpectUnlink(tolerationBase + ":N").SetVal(1)
+
+	hadError, removed, err := processBruteForceRules(ctx, deps, &bf.FlushRuleCmd{
+		IPAddress: "1.2.3.4",
+		RuleName:  "*",
+	}, "guid-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hadError {
+		t.Fatal("expected no error flag")
+	}
+
+	if len(removed) != 6 {
+		t.Fatalf("expected deduplicated 6 removed keys, got %d: %v", len(removed), removed)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

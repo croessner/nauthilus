@@ -2363,6 +2363,17 @@ func (a *AuthState) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (ke
 	return bm.GetBruteForceBucketRedisKey(rule)
 }
 
+// GetBruteForceBanRedisKey returns the Redis ban key and normalized network for the specified brute force rule.
+func (a *AuthState) GetBruteForceBanRedisKey(rule *config.BruteForceRule) (key string, network string, err error) {
+	if a == nil {
+		return "", "", nil
+	}
+
+	bm := a.createBucketManager(a.Ctx())
+
+	return bm.GetBruteForceBanRedisKey(rule)
+}
+
 // GetBucketKeys returns all Redis keys associated with a brute force rule.
 func (a *AuthState) GetBucketKeys(rule *config.BruteForceRule) []string {
 	if a == nil {

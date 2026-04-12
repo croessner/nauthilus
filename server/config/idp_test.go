@@ -382,6 +382,25 @@ func TestOIDCClient_GetSupportedMFA(t *testing.T) {
 	})
 }
 
+func TestOIDCClient_AllowsRefreshTokenCombinedClientAuth(t *testing.T) {
+	t.Run("NilClient", func(t *testing.T) {
+		var c *OIDCClient
+		assert.False(t, c.AllowsRefreshTokenCombinedClientAuth())
+	})
+
+	t.Run("DefaultIsDisabled", func(t *testing.T) {
+		c := &OIDCClient{}
+		assert.False(t, c.AllowsRefreshTokenCombinedClientAuth())
+	})
+
+	t.Run("ConfiguredEnabled", func(t *testing.T) {
+		c := &OIDCClient{
+			AllowRefreshTokenCombinedClientAuth: true,
+		}
+		assert.True(t, c.AllowsRefreshTokenCombinedClientAuth())
+	})
+}
+
 func TestOIDCConsentTTL(t *testing.T) {
 	t.Run("OIDCConfig default consent ttl", func(t *testing.T) {
 		var cfg *OIDCConfig

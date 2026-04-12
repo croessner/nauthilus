@@ -111,6 +111,9 @@ type BucketManager interface {
 	// GetBruteForceBucketRedisKey generates and returns the Redis key for tracking the brute force bucket associated with the given rule.
 	GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string)
 
+	// GetBruteForceBanRedisKey returns the Redis ban key and normalized network for a rule.
+	GetBruteForceBanRedisKey(rule *config.BruteForceRule) (key string, network string, err error)
+
 	// GetBucketKeys returns all Redis keys associated with a brute force rule (e.g. for flushing).
 	GetBucketKeys(rule *config.BruteForceRule) []string
 
@@ -282,6 +285,27 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 	logBruteForceRuleRedisKeyDebug(bm, rule, network, key)
 
 	return key
+}
+
+// GetBruteForceBanRedisKey returns the Redis ban key and normalized network for a rule.
+func (bm *bucketManagerImpl) GetBruteForceBanRedisKey(rule *config.BruteForceRule) (key string, network string, err error) {
+	if rule == nil {
+		return "", "", nil
+	}
+
+	resolvedNetwork, err := bm.getNetwork(rule)
+	if err != nil {
+		return "", "", err
+	}
+
+	if resolvedNetwork == nil {
+		return "", "", nil
+	}
+
+	network = resolvedNetwork.String()
+	key = rediscli.GetBruteForceBanKey(bm.cfg().GetServer().GetRedis().GetPrefix(), network)
+
+	return key, network, nil
 }
 
 // GetBucketKeys returns all Redis keys (current and previous window) for a rule.
@@ -1323,11 +1347,8 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) (string, error) {
 	var removedKey string
 
-	cfg := bm.cfg()
 	redisClient := bm.redis()
 	logger := bm.logger()
-
-	prefix := cfg.GetServer().GetRedis().GetPrefix()
 
 	// If the rule has FilterByProtocol specified, we need to check if the current protocol matches
 	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
@@ -1349,8 +1370,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 		}
 	}
 
-	// Resolve network
-	network, err := bm.getNetwork(rule)
+	banKey, networkStr, err := bm.GetBruteForceBanRedisKey(rule)
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
@@ -1361,12 +1381,33 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 		return "", err
 	}
 
-	if network == nil {
+	if banKey == "" || networkStr == "" {
 		return removedKey, nil
 	}
 
-	networkStr := network.String()
-	banKey := rediscli.GetBruteForceBanKey(prefix, networkStr)
+	prefix := bm.cfg().GetServer().GetRedis().GetPrefix()
+
+	if ruleName == "*" {
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
+		defer cancel()
+
+		if removed, delErr := redisClient.GetWriteHandle().Del(dCtx, banKey).Result(); delErr != nil {
+			_ = level.Error(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to delete brute force ban key",
+				definitions.LogKeyError, delErr,
+			)
+		} else if removed > 0 {
+			removedKey = banKey
+
+			// Remove from ZSET ban index
+			bm.removeBanFromIndex(dCtx, prefix, networkStr, logger)
+		}
+
+		return removedKey, nil
+	}
 
 	// Read current ban value (bucket name) to verify match
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
