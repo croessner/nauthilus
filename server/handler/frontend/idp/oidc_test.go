@@ -1316,6 +1316,33 @@ func TestOIDCHandler_Token(t *testing.T) {
 	idpInstance := idp.NewNauthilusIdP(d)
 	h := NewOIDCHandler(d, idpInstance, nil)
 
+	assertInvalidClientForCombinedClientAuth := func(t *testing.T, grantType string, grantValueKey string, grantValue string) {
+		t.Helper()
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", grantType)
+		form.Add(grantValueKey, grantValue)
+		form.Add("client_id", "test-client")
+		form.Add("client_secret", "test-secret")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.Equal(t, "invalid_client", resp["error"])
+	}
+
 	t.Run("Token request with Basic Auth", func(t *testing.T) {
 		code := "code123"
 		oidcSession := &idp.OIDCSession{
@@ -1420,24 +1447,7 @@ func TestOIDCHandler_Token(t *testing.T) {
 	})
 
 	t.Run("Token request with both Header and Body (matching - should fail)", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(w)
-
-		form := url.Values{}
-		form.Add("grant_type", "authorization_code")
-		form.Add("code", "any-code")
-		form.Add("client_id", "test-client")
-		form.Add("client_secret", "test-secret")
-
-		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("test-client", "test-secret")
-		ctx.Request = req
-
-		h.Token(ctx)
-
-		// MUST NOT use more than one authentication method
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assertInvalidClientForCombinedClientAuth(t, "authorization_code", "code", "any-code")
 	})
 
 	t.Run("Token request with 11 vs 6 chars mismatch (reproduce user log)", func(t *testing.T) {
@@ -1481,8 +1491,21 @@ func TestOIDCHandler_Token(t *testing.T) {
 		assert.Equal(t, "invalid_client", resp["error"])
 	})
 
-	t.Run("Refresh token request with basic and body credentials (matching) succeeds", func(t *testing.T) {
-		refreshToken := "refresh-token-combined-auth"
+	t.Run("Refresh token request with basic and matching body credentials is rejected by default", func(t *testing.T) {
+		// Per RFC 6749 §2.3 the client MUST NOT use more than one client
+		// authentication method. Even if the Basic auth and body credentials
+		// match, a confidential client sending both must be rejected.
+		assertInvalidClientForCombinedClientAuth(t, "refresh_token", "refresh_token", "any-token")
+	})
+
+	t.Run("Refresh token request with basic and matching body credentials is accepted when compatibility is enabled for confidential client", func(t *testing.T) {
+		origCompat := cfg.clients[0].AllowRefreshTokenCombinedClientAuth
+		cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
+		defer func() {
+			cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat
+		}()
+
+		refreshToken := "refresh-token-combined-auth-compat-confidential"
 		session := &idp.OIDCSession{
 			ClientID: "test-client",
 			UserID:   "user123",
@@ -1543,7 +1566,8 @@ func TestOIDCHandler_Token(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
 		assert.Equal(t, "invalid_grant", resp["error"])
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -1580,14 +1604,51 @@ func TestOIDCHandler_Token(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("Refresh token request for public client ignores provided secret", func(t *testing.T) {
+	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth is rejected by default", func(t *testing.T) {
 		publicClient := config.OIDCClient{
-			ClientID:     "public-refresh-client",
+			ClientID:     "public-refresh-client-no-compat",
 			RedirectURIs: []string{"http://127.0.0.1"},
 		}
 		cfg.clients = append(cfg.clients, publicClient)
 
-		refreshToken := "refresh-token-public-client"
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", "any-token")
+		form.Add("client_id", "public-refresh-client-no-compat")
+		form.Add("client_secret", "")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("public-refresh-client-no-compat", "")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.Equal(t, "invalid_client", resp["error"])
+	})
+
+	t.Run("Refresh token request for public client with empty body client_secret and Basic Auth is accepted when compatibility is enabled", func(t *testing.T) {
+		publicClient := config.OIDCClient{
+			ClientID:                            "public-refresh-client",
+			RedirectURIs:                        []string{"http://127.0.0.1"},
+			AllowRefreshTokenCombinedClientAuth: true,
+		}
+		cfg.clients = append(cfg.clients, publicClient)
+
+		// Reproduces the OpenCloud iOS native-client pattern:
+		//   Authorization: Basic base64("public-refresh-client:")
+		//   body: grant_type=refresh_token&client_id=public-refresh-client&client_secret=&refresh_token=...
+		// Per RFC 6749 §2.3.1 the empty client_secret form parameter is not
+		// a second authentication method. For public clients we must accept
+		// the request instead of rejecting it as "invalid_client".
+		refreshToken := "refresh-token-public-client-empty-body-secret"
 		session := &idp.OIDCSession{
 			ClientID: "public-refresh-client",
 			UserID:   "user123",
@@ -1611,21 +1672,56 @@ func TestOIDCHandler_Token(t *testing.T) {
 		form.Add("grant_type", "refresh_token")
 		form.Add("refresh_token", refreshToken)
 		form.Add("client_id", "public-refresh-client")
-		form.Add("client_secret", "ignored-secret")
+		form.Add("client_secret", "") // explicitly empty, as OpenCloud iOS does
 
 		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth("public-refresh-client", "ignored-secret")
+		req.SetBasicAuth("public-refresh-client", "") // empty password
 		ctx.Request = req
 
 		h.Token(ctx)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
 		assert.NotEmpty(t, resp["access_token"])
 		assert.NotEmpty(t, resp["refresh_token"])
 		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Refresh token request for confidential client with empty body client_secret and Basic Auth still fails with compatibility enabled", func(t *testing.T) {
+		// Negative test: the compatibility path for public clients must NOT
+		// apply to confidential clients. A confidential client that sends
+		// Basic auth AND a duplicate client_id in the body with an empty
+		// client_secret must still be rejected as invalid_client.
+		origCompat := cfg.clients[0].AllowRefreshTokenCombinedClientAuth
+		cfg.clients[0].AllowRefreshTokenCombinedClientAuth = true
+		defer func() {
+			cfg.clients[0].AllowRefreshTokenCombinedClientAuth = origCompat
+		}()
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", "any-token")
+		form.Add("client_id", "test-client")
+		form.Add("client_secret", "")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.Equal(t, "invalid_client", resp["error"])
 	})
 
 	t.Run("Token request with enforced method (mismatch should fail)", func(t *testing.T) {

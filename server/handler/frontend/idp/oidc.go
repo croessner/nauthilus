@@ -245,7 +245,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 
 	if bClientID != "" || bClientSecret != "" {
 		if authSource != "" {
-			combinedClientAuthAllowed = allowRefreshGrantCombinedClientAuth(
+			combinedClientAuthAllowed = h.allowRefreshGrantCombinedClientAuth(
 				ctx,
 				authSource,
 				clientID,
@@ -255,9 +255,24 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			)
 
 			if combinedClientAuthAllowed {
-				// Compatibility mode for some clients that send both basic auth
-				// and body credentials during refresh token exchange.
-			} else {
+				clientType := "confidential"
+				if candidate, ok := h.idp.FindClient(clientID); ok && candidate.IsPublicClient() {
+					clientType = "public"
+				}
+
+				util.DebugModuleWithCfg(
+					ctx.Request.Context(),
+					h.deps.Cfg,
+					h.deps.Logger,
+					definitions.DbgIdp,
+					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+					definitions.LogKeyMsg, "Accepting combined OIDC client authentication for refresh token compatibility",
+					"client_id", clientID,
+					"client_type", clientType,
+				)
+			}
+
+			if !combinedClientAuthAllowed {
 				util.DebugModuleWithCfg(
 					ctx.Request.Context(),
 					h.deps.Cfg,
@@ -419,7 +434,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	return client, true
 }
 
-func allowRefreshGrantCombinedClientAuth(
+func (h *OIDCHandler) allowRefreshGrantCombinedClientAuth(
 	ctx *gin.Context,
 	authSource string,
 	headerClientID string,
@@ -427,7 +442,7 @@ func allowRefreshGrantCombinedClientAuth(
 	bodyClientID string,
 	bodyClientSecret string,
 ) bool {
-	if ctx == nil || ctx.Request == nil {
+	if h == nil || ctx == nil || ctx.Request == nil {
 		return false
 	}
 
@@ -439,11 +454,28 @@ func allowRefreshGrantCombinedClientAuth(
 		return false
 	}
 
-	if bodyClientID == "" || bodyClientSecret == "" {
+	if headerClientID == "" || bodyClientID == "" {
 		return false
 	}
 
-	return headerClientID == bodyClientID && headerClientSecret == bodyClientSecret
+	if headerClientID != bodyClientID {
+		return false
+	}
+
+	client, ok := h.idp.FindClient(headerClientID)
+	if !ok || !client.AllowsRefreshTokenCombinedClientAuth() {
+		return false
+	}
+
+	if client.IsPublicClient() {
+		return bodyClientSecret == ""
+	}
+
+	if bodyClientSecret == "" {
+		return false
+	}
+
+	return headerClientSecret == bodyClientSecret
 }
 
 // authenticateClientPrivateKeyJWT authenticates a client using the private_key_jwt method (RFC 7523).

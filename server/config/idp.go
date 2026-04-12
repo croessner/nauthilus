@@ -740,16 +740,17 @@ type OIDCClient struct {
 	IdTokenClaims            IdTokenClaims       `mapstructure:"id_token_claims"`
 	AccessTokenClaims        AccessTokenClaims   `mapstructure:"access_token_claims"`
 	// Deprecated: use idp.remember_me_ttl instead.
-	RememberMeTTL                     time.Duration `mapstructure:"remember_me_ttl"`
-	AccessTokenLifetime               time.Duration `mapstructure:"access_token_lifetime"`
-	RefreshTokenLifetime              time.Duration `mapstructure:"refresh_token_lifetime"`
-	ConsentTTL                        time.Duration `mapstructure:"consent_ttl"`
-	ConsentMode                       string        `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
-	RequiredScopes                    []string      `mapstructure:"required_scopes"`
-	OptionalScopes                    []string      `mapstructure:"optional_scopes" validate:"omitempty,dive,ne=openid"`
-	SkipConsent                       bool          `mapstructure:"skip_consent"`
-	DelayedResponse                   bool          `mapstructure:"delayed_response"`
-	FrontChannelLogoutSessionRequired bool          `mapstructure:"frontchannel_logout_session_required"`
+	RememberMeTTL                       time.Duration `mapstructure:"remember_me_ttl"`
+	AccessTokenLifetime                 time.Duration `mapstructure:"access_token_lifetime"`
+	RefreshTokenLifetime                time.Duration `mapstructure:"refresh_token_lifetime"`
+	ConsentTTL                          time.Duration `mapstructure:"consent_ttl"`
+	ConsentMode                         string        `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
+	RequiredScopes                      []string      `mapstructure:"required_scopes"`
+	OptionalScopes                      []string      `mapstructure:"optional_scopes" validate:"omitempty,dive,ne=openid"`
+	SkipConsent                         bool          `mapstructure:"skip_consent"`
+	DelayedResponse                     bool          `mapstructure:"delayed_response"`
+	AllowRefreshTokenCombinedClientAuth bool          `mapstructure:"allow_refresh_token_combined_client_auth"`
+	FrontChannelLogoutSessionRequired   bool          `mapstructure:"frontchannel_logout_session_required"`
 }
 
 // GetEffectiveCustomScopes returns the merged custom scopes for a client.
@@ -814,6 +815,17 @@ func (c *OIDCClient) IsPublicClient() bool {
 	}
 
 	return c.ClientSecret.IsZero() || c.TokenEndpointAuthMethod == "none"
+}
+
+// AllowsRefreshTokenCombinedClientAuth reports whether this client is allowed
+// to use a compatibility mode for refresh token requests that carry
+// credentials in both HTTP Basic auth and the request body.
+func (c *OIDCClient) AllowsRefreshTokenCombinedClientAuth() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.AllowRefreshTokenCombinedClientAuth
 }
 
 func (c *OIDCClient) String() string {
