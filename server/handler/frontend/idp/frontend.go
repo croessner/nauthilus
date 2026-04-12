@@ -644,10 +644,43 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 		return
 	}
 
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+	client, ok := idpInstance.FindClient(request.ClientID)
+	if !ok {
+		request.Status = idp.DeviceCodeStatusDenied
+		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+		renderDeviceCodeFailed(ctx, h.deps, "Internal server error")
+
+		return
+	}
+
 	// Authorize the device code
 	request.Status = idp.DeviceCodeStatusAuthorized
 	request.UserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
 	applyDeviceCodeMFASessionState(mgr, request)
+
+	if err = hydrateDeviceRequestClaims(ctx, idpInstance, request, client, nil); err != nil {
+		request.Status = idp.DeviceCodeStatusDenied
+		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code flow completion failed to hydrate claims",
+			"client_id", request.ClientID,
+			"user_id", request.UserID,
+			"error", err,
+		)
+
+		renderDeviceCodeFailed(ctx, h.deps, "Internal server error")
+
+		return
+	}
 
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		ctx.Redirect(http.StatusFound, "/")
@@ -655,7 +688,6 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 		return
 	}
 
-	client, _ := idp.NewNauthilusIdP(h.deps).FindClient(request.ClientID)
 	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
 
 	util.DebugModuleWithCfg(

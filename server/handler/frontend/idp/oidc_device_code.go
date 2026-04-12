@@ -16,10 +16,12 @@
 package idp
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -27,7 +29,6 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
-	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/middleware/csrf"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -211,79 +212,36 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) {
 	setOIDCTokenPostActionMFAOverrides(ctx, request.MFACompleted, request.MFAMethod)
 
+	if request.IdTokenClaims == nil || request.AccessTokenClaims == nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code token: missing persisted claims",
+			"device_code", deviceCode,
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+		)
+
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+
+		return
+	}
+
 	// Build an OIDC session from the authorized device code request
 	session := &idp.OIDCSession{
-		ClientID: request.ClientID,
-		UserID:   request.UserID,
-		Scopes:   request.Scopes,
-		AuthTime: time.Now(),
-	}
-
-	// Get claims for the user – the token endpoint context lacks middleware
-	// keys (Lua data-exchange, service tag) that GetUserByUsername requires,
-	// so we set them explicitly on the copy.
-	ginCtx := ctx.Copy()
-
-	if _, exists := ginCtx.Get(definitions.CtxDataExchangeKey); !exists {
-		ginCtx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-	}
-
-	if ginCtx.GetString(definitions.CtxServiceKey) == "" {
-		ginCtx.Set(definitions.CtxServiceKey, definitions.ServIdP)
-	}
-
-	user, err := h.idp.GetUserByUsername(ginCtx, request.UserID, request.ClientID, "")
-	if err != nil {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Device code token: failed to get user by username",
-			"user_id", request.UserID,
-			"client_id", request.ClientID,
-			"error", err,
-		)
-	}
-
-	if err == nil && user != nil {
-		idTokenClaims, accessTokenClaims, claimsErr := h.idp.GetClaims(ginCtx, user, client, request.Scopes)
-		if claimsErr != nil {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				h.deps.Cfg,
-				h.deps.Logger,
-				definitions.DbgIdp,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "Device code token: failed to get claims",
-				"user_id", request.UserID,
-				"client_id", request.ClientID,
-				"error", claimsErr,
-			)
-		} else {
-			session.IdTokenClaims = idTokenClaims
-			session.AccessTokenClaims = accessTokenClaims
-		}
-
-		if user.DisplayName != "" {
-			session.DisplayName = user.DisplayName
-		}
-
-		if user.Name != "" {
-			session.Username = user.Name
-		}
-	} else if user == nil && err == nil {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Device code token: user not found (nil) without error",
-			"user_id", request.UserID,
-			"client_id", request.ClientID,
-		)
+		ClientID:          request.ClientID,
+		UserID:            request.UserID,
+		Username:          request.Username,
+		DisplayName:       request.DisplayName,
+		Scopes:            request.Scopes,
+		AuthTime:          time.Now(),
+		MFACompleted:      request.MFACompleted,
+		MFAMethod:         request.MFAMethod,
+		IdTokenClaims:     request.IdTokenClaims,
+		AccessTokenClaims: request.AccessTokenClaims,
 	}
 
 	setOIDCTokenPostActionSubject(ctx, session)
@@ -328,6 +286,45 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 	}
 
 	ctx.JSON(http.StatusOK, resp)
+}
+
+func hydrateDeviceRequestClaims(
+	ctx *gin.Context,
+	idpInstance *idp.NauthilusIdP,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+	user *backend.User,
+) error {
+	if request == nil {
+		return fmt.Errorf("device request is nil")
+	}
+
+	if idpInstance == nil {
+		return fmt.Errorf("idp instance is nil")
+	}
+
+	if client == nil {
+		return fmt.Errorf("oidc client is nil")
+	}
+
+	if user != nil {
+		request.StoreUserSnapshot(user)
+	}
+
+	snapshotUser := request.UserFromSnapshot()
+	if snapshotUser == nil {
+		return fmt.Errorf("device request has no user snapshot")
+	}
+
+	idTokenClaims, accessTokenClaims, err := idpInstance.GetClaims(ctx, snapshotUser, client, request.Scopes)
+	if err != nil {
+		return err
+	}
+
+	request.IdTokenClaims = idTokenClaims
+	request.AccessTokenClaims = accessTokenClaims
+
+	return nil
 }
 
 // DeviceVerifyPage renders the device code verification page (RFC 8628 §3.3).
@@ -468,6 +465,31 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 			return
 		}
+	}
+
+	client, ok := h.idp.FindClient(request.ClientID)
+	if !ok {
+		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+		return
+	}
+
+	if err = hydrateDeviceRequestClaims(ctx, h.idp, request, client, user); err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code verify: failed to hydrate claims",
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+			"error", err,
+		)
+
+		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+		return
 	}
 
 	// Check if user has MFA configured
@@ -725,7 +747,6 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 	// No consent required - authorize device code directly
 	request.Status = idp.DeviceCodeStatusAuthorized
-	request.UserID = user.Id
 
 	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
 		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
@@ -733,7 +754,6 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		return
 	}
 
-	client, _ := h.idp.FindClient(request.ClientID)
 	newOIDCAuthorizeFlowContext(cookie.GetManager(ctx)).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))
 
 	util.DebugModuleWithCfg(
@@ -916,17 +936,19 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	// User approved consent
 	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "allow").Inc()
 
-	request.Status = idp.DeviceCodeStatusAuthorized
-	request.UserID = oidcFlowContext.UniqueUserID()
-	applyDeviceCodeMFASessionState(mgr, request)
-
-	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+	client, ok := h.idp.FindClient(request.ClientID)
+	if !ok {
 		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
 
 		return
 	}
 
-	client, _ := h.idp.FindClient(request.ClientID)
+	request.Status = idp.DeviceCodeStatusAuthorized
+	if request.UserID == "" {
+		request.UserID = oidcFlowContext.UniqueUserID()
+	}
+	applyDeviceCodeMFASessionState(mgr, request)
+
 	consentMode := client.GetConsentMode(h.deps.Cfg.GetIdP().OIDC.GetConsentMode())
 
 	if consentMode == config.OIDCConsentModeGranularOptional {
@@ -939,6 +961,30 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 		}
 
 		request.Scopes = grantedScopes
+	}
+
+	if err = hydrateDeviceRequestClaims(ctx, h.idp, request, client, nil); err != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code consent: failed to hydrate claims",
+			"user_id", request.UserID,
+			"client_id", request.ClientID,
+			"error", err,
+		)
+
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
+
+		return
+	}
+
+	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+		h.renderDeviceVerifyError(ctx, request.UserCode, "Internal server error")
+
+		return
 	}
 
 	newOIDCAuthorizeFlowContext(mgr).AddClientConsent(request.ClientID, request.Scopes, consentTTLForClient(h.deps.Cfg, client))

@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/redis/go-redis/v9"
@@ -45,17 +47,52 @@ const (
 
 // DeviceCodeRequest represents the stored data for a device authorization request.
 type DeviceCodeRequest struct {
-	ClientID           string           `json:"client_id"`
-	Scopes             []string         `json:"scopes"`
-	UserCode           string           `json:"user_code"`
-	Status             DeviceCodeStatus `json:"status"`
-	UserID             string           `json:"user_id,omitempty"`
-	MFACompleted       bool             `json:"mfa_completed,omitempty"`
-	MFAMethod          string           `json:"mfa_method,omitempty"`
-	ExpiresAt          time.Time        `json:"expires_at"`
-	Interval           int              `json:"interval"`
-	LastPoll           time.Time        `json:"last_poll,omitzero"`
-	VerificationLocked bool             `json:"verification_locked"`
+	ClientID           string                  `json:"client_id"`
+	Scopes             []string                `json:"scopes"`
+	UserCode           string                  `json:"user_code"`
+	Status             DeviceCodeStatus        `json:"status"`
+	UserID             string                  `json:"user_id,omitempty"`
+	Username           string                  `json:"username,omitempty"`
+	DisplayName        string                  `json:"display_name,omitempty"`
+	UserAttributes     bktype.AttributeMapping `json:"user_attributes,omitempty"`
+	UserGroups         []string                `json:"user_groups,omitempty"`
+	UserGroupDNs       []string                `json:"user_group_dns,omitempty"`
+	IdTokenClaims      map[string]any          `json:"id_token_claims,omitempty"`
+	AccessTokenClaims  map[string]any          `json:"access_token_claims,omitempty"`
+	MFACompleted       bool                    `json:"mfa_completed,omitempty"`
+	MFAMethod          string                  `json:"mfa_method,omitempty"`
+	ExpiresAt          time.Time               `json:"expires_at"`
+	Interval           int                     `json:"interval"`
+	LastPoll           time.Time               `json:"last_poll,omitzero"`
+	VerificationLocked bool                    `json:"verification_locked"`
+}
+
+// StoreUserSnapshot copies user identity data into the request.
+func (r *DeviceCodeRequest) StoreUserSnapshot(user *backend.User) {
+	if r == nil || user == nil {
+		return
+	}
+
+	r.UserID = user.Id
+	r.Username = user.Name
+	r.DisplayName = user.DisplayName
+	r.UserAttributes = user.Attributes.Clone()
+	r.UserGroups = append([]string(nil), user.Groups...)
+	r.UserGroupDNs = append([]string(nil), user.GroupDNs...)
+}
+
+// UserFromSnapshot rebuilds a backend user from the stored snapshot.
+func (r *DeviceCodeRequest) UserFromSnapshot() *backend.User {
+	if r == nil || r.UserID == "" {
+		return nil
+	}
+
+	user := backend.NewUser(r.Username, r.DisplayName, r.UserID)
+	user.Attributes = r.UserAttributes.Clone()
+	user.Groups = append([]string(nil), r.UserGroups...)
+	user.GroupDNs = append([]string(nil), r.UserGroupDNs...)
+
+	return user
 }
 
 // DeviceCodeStore defines the interface for device code persistence.
