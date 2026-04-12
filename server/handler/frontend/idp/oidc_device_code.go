@@ -213,21 +213,24 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 	setOIDCTokenPostActionMFAOverrides(ctx, request.MFACompleted, request.MFAMethod)
 
 	if request.IdTokenClaims == nil || request.AccessTokenClaims == nil {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			h.deps.Cfg,
-			h.deps.Logger,
-			definitions.DbgIdp,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "Device code token: missing persisted claims",
-			"device_code", deviceCode,
-			"user_id", request.UserID,
-			"client_id", request.ClientID,
-		)
+		if err := h.recoverMissingDeviceRequestClaims(ctx, deviceCode, request, client); err != nil {
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				h.deps.Cfg,
+				h.deps.Logger,
+				definitions.DbgIdp,
+				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+				definitions.LogKeyMsg, "Device code token: missing persisted claims",
+				"device_code", deviceCode,
+				"user_id", request.UserID,
+				"client_id", request.ClientID,
+				"error", err,
+			)
 
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 
-		return
+			return
+		}
 	}
 
 	// Build an OIDC session from the authorized device code request
@@ -286,6 +289,57 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 	}
 
 	ctx.JSON(http.StatusOK, resp)
+}
+
+func (h *OIDCHandler) recoverMissingDeviceRequestClaims(
+	ctx *gin.Context,
+	deviceCode string,
+	request *idp.DeviceCodeRequest,
+	client *config.OIDCClient,
+) error {
+	if request.UserFromSnapshot() == nil {
+		if err := h.backfillDeviceRequestSnapshot(ctx, request); err != nil {
+			return err
+		}
+	}
+
+	if err := hydrateDeviceRequestClaims(ctx, h.idp, request, client, nil); err != nil {
+		return err
+	}
+
+	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
+		return fmt.Errorf("failed to persist recovered device claims: %w", err)
+	}
+
+	return nil
+}
+
+func (h *OIDCHandler) backfillDeviceRequestSnapshot(ctx *gin.Context, request *idp.DeviceCodeRequest) error {
+	if request == nil {
+		return fmt.Errorf("device request is nil")
+	}
+
+	candidates := make([]string, 0, 2)
+	if request.Username != "" {
+		candidates = append(candidates, request.Username)
+	}
+
+	if request.UserID != "" && request.UserID != request.Username {
+		candidates = append(candidates, request.UserID)
+	}
+
+	for _, candidate := range candidates {
+		user, err := h.idp.GetUserByUsername(ctx, candidate, request.ClientID, "")
+		if err != nil || user == nil {
+			continue
+		}
+
+		request.StoreUserSnapshot(user)
+
+		return nil
+	}
+
+	return fmt.Errorf("device request has no user snapshot")
 }
 
 func hydrateDeviceRequestClaims(

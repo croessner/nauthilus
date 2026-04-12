@@ -162,3 +162,41 @@ func TestIssueDeviceCodeTokens_UsesPersistedClaimsFromDeviceRequest(t *testing.T
 	assert.Equal(t, "alice", claims["preferred_username"])
 	assert.Equal(t, "alice@example.com", claims["email"])
 }
+
+func TestIssueDeviceCodeTokens_RehydratesMissingClaimsFromSnapshot(t *testing.T) {
+	handler, client := newTestDeviceCodeOIDCHandler(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/token", nil)
+	ctx.Set(definitions.CtxServiceKey, "test")
+
+	request := &devicecode.DeviceCodeRequest{
+		ClientID: client.ClientID,
+		Scopes:   []string{definitions.ScopeOpenId, "profile", "email"},
+		Status:   devicecode.DeviceCodeStatusAuthorized,
+	}
+	request.StoreUserSnapshot(&backend.User{
+		Id:          "user-123",
+		Name:        "alice",
+		DisplayName: "Alice Example",
+		Attributes: bktype.AttributeMapping{
+			"mail": {"alice@example.com"},
+		},
+	})
+
+	handler.issueDeviceCodeTokens(ctx, "device-code-3", request, &client)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	var tokenResp map[string]any
+	err := json.Unmarshal(recorder.Body.Bytes(), &tokenResp)
+	assert.NoError(t, err)
+
+	idToken, ok := tokenResp["id_token"].(string)
+	assert.True(t, ok)
+	assert.NotEmpty(t, idToken)
+
+	claims, err := handler.idp.ValidateToken(context.Background(), idToken)
+	assert.NoError(t, err)
+	assert.Equal(t, "alice", claims["preferred_username"])
+}
