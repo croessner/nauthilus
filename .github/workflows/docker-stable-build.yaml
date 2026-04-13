@@ -1,0 +1,112 @@
+---
+name: Stable Docker Build Reusable
+
+"on":
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Stable release tag to build.
+        required: true
+        type: string
+      build_reason:
+        description: Trigger context recorded in OCI labels.
+        required: false
+        default: tag-push
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ALPINE_IMAGE: alpine:3.23
+  GOLANG_IMAGE: golang:1.26-alpine3.23
+  OCI_IMAGE_DESCRIPTION: >-
+    Authentication and identity platform with OIDC, SAML, MFA, LDAP,
+    Lua, and mail integrations
+
+concurrency:
+  group: stable-docker-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      annotations: ${{ steps.release_metadata.outputs.annotations }}
+      labels: ${{ steps.release_metadata.outputs.labels }}
+      tags: ${{ steps.release_metadata.outputs.tags }}
+
+    steps:
+      - name: Check out workflow tooling
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          path: workflow-src
+
+      - name: Resolve base image digests
+        id: base_digests
+        run: |
+          while IFS= read -r line; do
+            echo "${line}" >> "${GITHUB_OUTPUT}"
+          done < <(./workflow-src/scripts/docker-base-digests.sh)
+
+      - name: Extract release metadata
+        id: release_metadata
+        env:
+          OCI_IMAGE_DESCRIPTION: ${{ env.OCI_IMAGE_DESCRIPTION }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          release_commit="$(git -C workflow-src rev-list -n 1 "${RELEASE_TAG}")"
+          registry_image="ghcr.io/${{ github.repository_owner }}/nauthilus"
+          major="$(echo "${RELEASE_TAG}" | cut -d'.' -f1)"
+          minor="$(echo "${RELEASE_TAG}" | cut -d'.' -f2)"
+          patch="$(echo "${RELEASE_TAG}" | cut -d'.' -f3)"
+          annotation_prefix="index,manifest:org.opencontainers.image.description="
+          alpine_digest="${{ steps.base_digests.outputs.alpine_digest }}"
+          alpine_image="${{ steps.base_digests.outputs.alpine_image }}"
+          golang_digest="${{ steps.base_digests.outputs.golang_digest }}"
+          golang_image="${{ steps.base_digests.outputs.golang_image }}"
+
+          {
+            echo "release_commit=${release_commit}"
+            echo "major=${major}"
+            echo "minor=${minor}"
+            echo "patch=${patch}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo 'tags<<EOF'
+            echo "${registry_image}:latest"
+            echo "${registry_image}:${major}"
+            echo "${registry_image}:${major}.${minor}"
+            echo "${registry_image}:${major}.${minor}.${patch}"
+            echo 'EOF'
+            echo 'annotations<<EOF'
+            echo "${annotation_prefix}${OCI_IMAGE_DESCRIPTION}"
+            echo 'EOF'
+            echo 'labels<<EOF'
+            echo "org.opencontainers.image.description=${OCI_IMAGE_DESCRIPTION}"
+            echo "org.opencontainers.image.revision=${release_commit}"
+            echo "org.opencontainers.image.version=${RELEASE_TAG}"
+            echo "io.nauthilus.base.alpine.digest=${alpine_digest}"
+            echo "io.nauthilus.base.alpine.image=${alpine_image}"
+            echo "io.nauthilus.base.golang.digest=${golang_digest}"
+            echo "io.nauthilus.base.golang.image=${golang_image}"
+            echo "io.nauthilus.build.reason=${{ inputs.build_reason }}"
+            echo "io.nauthilus.release.tag=${RELEASE_TAG}"
+            echo 'EOF'
+          } >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/docker-build-push.yaml
+    with:
+      source_ref: ${{ inputs.release_tag }}
+      fetch_depth: 0
+      checkout_path: release-src
+      dockerfile_path: Dockerfile
+      sbom: true
+      tags: ${{ needs.prepare.outputs.tags }}
+      annotations: ${{ needs.prepare.outputs.annotations }}
+      labels: ${{ needs.prepare.outputs.labels }}
+    secrets: inherit
