@@ -1,0 +1,107 @@
+---
+name: Docker Build Push Reusable
+
+"on":
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Git ref to check out before building.
+        required: false
+        default: ''
+        type: string
+      fetch_depth:
+        description: Checkout fetch depth for the source ref.
+        required: false
+        default: 1
+        type: number
+      checkout_path:
+        description: Workspace path for the checked-out source.
+        required: false
+        default: source
+        type: string
+      context_path:
+        description: Build context path relative to the checkout path.
+        required: false
+        default: .
+        type: string
+      dockerfile_path:
+        description: Dockerfile path relative to the checkout path.
+        required: true
+        type: string
+      platforms:
+        description: Target platforms passed to docker/build-push-action.
+        required: false
+        default: linux/amd64,linux/arm64
+        type: string
+      push:
+        description: Whether to push the resulting image.
+        required: false
+        default: true
+        type: boolean
+      sbom:
+        description: Whether to generate an SBOM during the image build.
+        required: false
+        default: false
+        type: boolean
+      tags:
+        description: Image tags passed to docker/build-push-action.
+        required: true
+        type: string
+      annotations:
+        description: OCI annotations passed to docker/build-push-action.
+        required: false
+        default: ''
+        type: string
+      labels:
+        description: OCI labels passed to docker/build-push-action.
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        if: ${{ inputs.source_ref == '' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: ${{ inputs.fetch_depth }}
+          path: ${{ inputs.checkout_path }}
+
+      - name: Check out source ref
+        if: ${{ inputs.source_ref != '' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: ${{ inputs.fetch_depth }}
+          path: ${{ inputs.checkout_path }}
+          ref: ${{ inputs.source_ref }}
+
+      - name: Set up Docker Buildx
+        uses: >-
+          docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+
+      - name: Login to GHCR
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
+        with:
+          context: >-
+            ./${{ inputs.checkout_path }}/${{ inputs.context_path }}
+          file: >-
+            ./${{ inputs.checkout_path }}/${{ inputs.dockerfile_path }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          sbom: ${{ inputs.sbom }}
+          tags: ${{ inputs.tags }}
+          annotations: ${{ inputs.annotations }}
+          labels: ${{ inputs.labels }}
