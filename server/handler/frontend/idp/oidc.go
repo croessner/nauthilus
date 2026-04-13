@@ -973,6 +973,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	h.logIncomingOIDCFlowRequest(ctx, flow, grantType, clientID)
 
 	defer func() {
+		h.logCompletedOIDCFlowRequest(ctx, flow, grantType, clientID)
 		h.finishOIDCTokenRequest(ctx, grantType, clientID, startedAt)
 	}()
 
@@ -1365,6 +1366,7 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "logout", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "logout", "", "")
 
 	idTokenHint := ctx.Query("id_token_hint")
 	postLogoutRedirectURI := ctx.Query("post_logout_redirect_uri")

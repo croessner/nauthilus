@@ -498,6 +498,7 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	defer sp.End()
 
 	h.logIncomingSAMLFlowRequest(ctx, "sso", "")
+	defer h.logCompletedSAMLFlowRequest(ctx, "sso", "")
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -733,6 +734,7 @@ func (h *SAMLHandler) SLO(ctx *gin.Context) {
 	defer sp.End()
 
 	h.logIncomingSAMLFlowRequest(ctx, "slo", "")
+	defer h.logCompletedSAMLFlowRequest(ctx, "slo", "")
 
 	startTime := time.Now().UTC()
 	binding := sloBindingFromHTTPMethod(ctx.Request.Method)
