@@ -17,6 +17,7 @@ package idp
 
 import (
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -42,6 +43,22 @@ func (h *SAMLHandler) logIncomingSAMLFlowRequest(ctx *gin.Context, flow string, 
 	logIncomingIDPFlowRequest(ctx, h.deps.Logger, "saml", flow, "", entityID, "")
 }
 
+func (h *OIDCHandler) logCompletedOIDCFlowRequest(ctx *gin.Context, flow string, grantType string, clientID string) {
+	if h == nil || h.deps == nil {
+		return
+	}
+
+	logCompletedIDPFlowRequest(ctx, h.deps.Logger, "oidc", flow, clientID, "", grantType)
+}
+
+func (h *SAMLHandler) logCompletedSAMLFlowRequest(ctx *gin.Context, flow string, entityID string) {
+	if h == nil || h.deps == nil {
+		return
+	}
+
+	logCompletedIDPFlowRequest(ctx, h.deps.Logger, "saml", flow, "", entityID, "")
+}
+
 func logIncomingIDPFlowRequest(
 	ctx *gin.Context,
 	logger *slog.Logger,
@@ -55,10 +72,51 @@ func logIncomingIDPFlowRequest(
 		return
 	}
 
+	keyvals := idpFlowNoticeFields(ctx, protocol, flow, clientID, samlEntityID, grantType)
+	keyvals = append(keyvals, definitions.LogKeyMsg, "Processing incoming request")
+
+	_ = level.Notice(logger).WithContext(ctx).Log(keyvals...)
+}
+
+func logCompletedIDPFlowRequest(
+	ctx *gin.Context,
+	logger *slog.Logger,
+	protocol string,
+	flow string,
+	clientID string,
+	samlEntityID string,
+	grantType string,
+) {
+	if ctx == nil || ctx.Request == nil {
+		return
+	}
+
+	httpStatus, result, message := idpFlowCompletionResult(ctx)
+
+	keyvals := idpFlowNoticeFields(ctx, protocol, flow, clientID, samlEntityID, grantType)
+	keyvals = append(
+		keyvals,
+		definitions.LogKeyHTTPStatus, httpStatus,
+		"result", result,
+		definitions.LogKeyMsg, message,
+	)
+
+	_ = level.Notice(logger).WithContext(ctx).Log(keyvals...)
+}
+
+func idpFlowNoticeFields(
+	ctx *gin.Context,
+	protocol string,
+	flow string,
+	clientID string,
+	samlEntityID string,
+	grantType string,
+) []any {
 	keyvals := []any{
 		definitions.LogKeyGUID, util.WithNotAvailable(ctx.GetString(definitions.CtxGUIDKey)),
 		definitions.LogKeyProtocol, util.WithNotAvailable(strings.TrimSpace(protocol)),
 		definitions.LogKeyMethod, util.WithNotAvailable(strings.TrimSpace(ctx.Request.Method)),
+		definitions.LogKeyClientIP, util.WithNotAvailable(strings.TrimSpace(ctx.ClientIP())),
 		definitions.LogKeyUriPath, util.WithNotAvailable(strings.TrimSpace(ctx.Request.URL.Path)),
 		"idp_flow", util.WithNotAvailable(strings.TrimSpace(flow)),
 		definitions.LogKeyOIDCCID, util.WithNotAvailable(strings.TrimSpace(clientID)),
@@ -70,7 +128,20 @@ func logIncomingIDPFlowRequest(
 		keyvals = append(keyvals, "grant_type", grantType)
 	}
 
-	level.Notice(logger).WithContext(ctx).Log(keyvals...)
+	return keyvals
+}
+
+func idpFlowCompletionResult(ctx *gin.Context) (int, string, string) {
+	httpStatus := http.StatusOK
+	if ctx != nil && ctx.Writer != nil && ctx.Writer.Status() > 0 {
+		httpStatus = ctx.Writer.Status()
+	}
+
+	if httpStatus >= http.StatusOK && httpStatus < http.StatusBadRequest {
+		return httpStatus, "ok", "IdP request was successful"
+	}
+
+	return httpStatus, "fail", "IdP request has failed"
 }
 
 func oidcTokenRequestClientID(ctx *gin.Context) string {

@@ -46,6 +46,7 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	clientID := ctx.PostForm("client_id")
 
 	h.logIncomingOIDCFlowRequest(ctx, "device_authorization", "", clientID)
+	defer h.logCompletedOIDCFlowRequest(ctx, "device_authorization", "", clientID)
 
 	if clientID == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "client_id is required"})
@@ -424,6 +425,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "device_verify", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "device_verify", "", "")
 
 	userCode := ctx.PostForm("user_code")
 
@@ -899,6 +901,7 @@ func (h *OIDCHandler) deviceConsentPath(ctx *gin.Context) string {
 // and can approve or deny the authorization.
 func (h *OIDCHandler) DeviceConsentGET(ctx *gin.Context) {
 	h.logIncomingOIDCFlowRequest(ctx, "device_consent_get", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "device_consent_get", "", "")
 
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {
@@ -935,6 +938,7 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "device_consent_post", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "device_consent_post", "", "")
 
 	mgr := cookie.GetManager(ctx)
 	if mgr == nil {

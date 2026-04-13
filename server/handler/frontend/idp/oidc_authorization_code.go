@@ -46,6 +46,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "authorization_code", "", ctx.Query("client_id"))
+	defer h.logCompletedOIDCFlowRequest(ctx, "authorization_code", "", ctx.Query("client_id"))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -412,6 +413,7 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	state := ctx.Query("state")
 
 	h.logIncomingOIDCFlowRequest(ctx, "consent_get", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "consent_get", "", "")
 
 	session, err := h.storage.GetSession(ctx.Request.Context(), "consent:"+consentChallenge)
 	if err != nil {
@@ -472,6 +474,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	defer sp.End()
 
 	h.logIncomingOIDCFlowRequest(ctx, "consent_post", "", "")
+	defer h.logCompletedOIDCFlowRequest(ctx, "consent_post", "", "")
 
 	consentChallenge := ctx.PostForm("consent_challenge")
 	state := ctx.PostForm("state")
