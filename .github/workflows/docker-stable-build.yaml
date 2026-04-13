@@ -8,6 +8,11 @@ name: Stable Docker Build Reusable
         description: Stable release tag to build.
         required: true
         type: string
+      rebuild_suffix:
+        description: Optional suffix appended to the exact release tag.
+        required: false
+        default: ''
+        type: string
       build_reason:
         description: Trigger context recorded in OCI labels.
         required: false
@@ -55,17 +60,23 @@ jobs:
         env:
           OCI_IMAGE_DESCRIPTION: ${{ env.OCI_IMAGE_DESCRIPTION }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          REBUILD_SUFFIX: ${{ inputs.rebuild_suffix }}
         run: |
           release_commit="$(git -C workflow-src rev-list -n 1 "${RELEASE_TAG}")"
           registry_image="ghcr.io/${{ github.repository_owner }}/nauthilus"
           major="$(echo "${RELEASE_TAG}" | cut -d'.' -f1)"
           minor="$(echo "${RELEASE_TAG}" | cut -d'.' -f2)"
           patch="$(echo "${RELEASE_TAG}" | cut -d'.' -f3)"
+          rebuild_tag=""
           annotation_prefix="index,manifest:org.opencontainers.image.description="
           alpine_digest="${{ steps.base_digests.outputs.alpine_digest }}"
           alpine_image="${{ steps.base_digests.outputs.alpine_image }}"
           golang_digest="${{ steps.base_digests.outputs.golang_digest }}"
           golang_image="${{ steps.base_digests.outputs.golang_image }}"
+
+          if [[ -n "${REBUILD_SUFFIX}" ]]; then
+            rebuild_tag="${RELEASE_TAG}-${REBUILD_SUFFIX}"
+          fi
 
           {
             echo "release_commit=${release_commit}"
@@ -80,6 +91,11 @@ jobs:
             echo "${registry_image}:${major}"
             echo "${registry_image}:${major}.${minor}"
             echo "${registry_image}:${major}.${minor}.${patch}"
+
+            if [[ -n "${rebuild_tag}" ]]; then
+              echo "${registry_image}:${rebuild_tag}"
+            fi
+
             echo 'EOF'
             echo 'annotations<<EOF'
             echo "${annotation_prefix}${OCI_IMAGE_DESCRIPTION}"
@@ -94,6 +110,11 @@ jobs:
             echo "io.nauthilus.base.golang.image=${golang_image}"
             echo "io.nauthilus.build.reason=${{ inputs.build_reason }}"
             echo "io.nauthilus.release.tag=${RELEASE_TAG}"
+
+            if [[ -n "${rebuild_tag}" ]]; then
+              echo "io.nauthilus.rebuild.tag=${rebuild_tag}"
+            fi
+
             echo 'EOF'
           } >> "${GITHUB_OUTPUT}"
 

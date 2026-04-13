@@ -13,6 +13,7 @@ jobs:
   detect-base-image-updates:
     runs-on: ubuntu-latest
     outputs:
+      rebuild_suffix: ${{ steps.rebuild_suffix.outputs.rebuild_suffix }}
       release_tag: ${{ steps.latest_release.outputs.release_tag }}
       should_rebuild: ${{ steps.compare.outputs.should_rebuild }}
 
@@ -51,6 +52,11 @@ jobs:
 
           echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
 
+      - name: Create rebuild suffix
+        id: rebuild_suffix
+        run: |
+          echo "rebuild_suffix=rebuild-$(date -u +%Y%m%d)" >> "${GITHUB_OUTPUT}"
+
       - name: Resolve current base image digests
         id: base_digests
         run: |
@@ -88,6 +94,8 @@ jobs:
     if: needs.detect-base-image-updates.outputs.should_rebuild == 'true'
     uses: ./.github/workflows/docker-stable-build.yaml
     with:
+      rebuild_suffix: >-
+        ${{ needs.detect-base-image-updates.outputs.rebuild_suffix }}
       release_tag: ${{ needs.detect-base-image-updates.outputs.release_tag }}
       build_reason: scheduled-base-refresh
     secrets: inherit
