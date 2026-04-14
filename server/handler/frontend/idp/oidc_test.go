@@ -1572,6 +1572,99 @@ func TestOIDCHandler_Token(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("Refresh token request without rotation reuses token and omits refresh_token in response", func(t *testing.T) {
+		origRevoke := cfg.clients[0].RevokeRefreshToken
+		disabled := false
+		cfg.clients[0].RevokeRefreshToken = &disabled
+		defer func() {
+			cfg.clients[0].RevokeRefreshToken = origRevoke
+		}()
+
+		refreshToken := "stable-refresh-token"
+		oldAccessToken := "header.payload.signature"
+		session := &idp.OIDCSession{
+			ClientID:    "test-client",
+			UserID:      "user123",
+			Scopes:      []string{definitions.ScopeOpenId, definitions.ScopeOfflineAccess},
+			AuthTime:    time.Now(),
+			AccessToken: oldAccessToken,
+		}
+		sessionData, _ := json.Marshal(session)
+
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 30*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", refreshToken)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, resp["access_token"])
+		_, hasRefreshToken := resp["refresh_token"]
+		assert.False(t, hasRefreshToken)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Refresh token request with invalid token logs failure reason", func(t *testing.T) {
+		refreshToken := "missing-refresh-token-log-reason"
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).RedisNil()
+
+		handler := &noticeCaptureHandler{}
+		previousLogger := d.Logger
+		d.Logger = slog.New(handler)
+		defer func() {
+			d.Logger = previousLogger
+		}()
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add("grant_type", "refresh_token")
+		form.Add("refresh_token", refreshToken)
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth("test-client", "test-secret")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		foundFailureLog := false
+
+		for _, record := range handler.records {
+			if record.message != "IdP request has failed" {
+				continue
+			}
+
+			assert.Equal(t, "refresh token unknown, expired, or already rotated", record.attrs["failure_reason"])
+			foundFailureLog = true
+
+			break
+		}
+
+		assert.True(t, foundFailureLog, "expected failed OIDC flow notice log with failure_reason")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("Refresh token request with client mismatch returns invalid_grant", func(t *testing.T) {
 		refreshToken := "refresh-token-client-mismatch"
 		session := &idp.OIDCSession{

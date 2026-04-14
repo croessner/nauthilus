@@ -101,6 +101,11 @@ func logCompletedIDPFlowRequest(
 		definitions.LogKeyMsg, message,
 	)
 
+	failureReason := strings.TrimSpace(ctx.GetString(definitions.CtxFailureReasonKey))
+	if failureReason != "" {
+		keyvals = append(keyvals, definitions.LogKeyFailureReason, failureReason)
+	}
+
 	_ = level.Notice(logger).WithContext(ctx).Log(keyvals...)
 }
 

@@ -1064,15 +1064,20 @@ The lifetime of access tokens and refresh tokens can be configured per client:
 ```yaml
 idp:
   oidc:
+    revoke_refresh_token: true
     clients:
       - client_id: my-app
         access_token_lifetime: 1h
         refresh_token_lifetime: 30d
+        revoke_refresh_token: false
 ```
 
 - **`access_token_lifetime`**: Duration of validity for access tokens and ID tokens (default: 1h).
 - **`refresh_token_lifetime`**: Duration of validity for refresh tokens (default: 30d). Refresh tokens are only issued
   if the `offline_access` scope is requested.
+- **`revoke_refresh_token`**: Enables one-time-use refresh token rotation (default: `true`). When set to `false`,
+  Nauthilus keeps the same refresh token valid across refresh requests and omits `refresh_token` from refresh responses,
+  which is useful for clients that need stable refresh token reuse semantics.
 
 ### 6.4 Implied Scopes (Compatibility)
 
@@ -1698,7 +1703,8 @@ The device polls this endpoint until the user completes authorization.
 ```
 
 The `id_token` is included when `openid` is in the requested scopes. The `refresh_token` is included when
-`offline_access` is in the requested scopes.
+`offline_access` is in the requested scopes. If `revoke_refresh_token` is disabled, refresh responses reuse the
+existing refresh token and therefore do not return a new `refresh_token`.
 
 ### 9.4 Configuration
 

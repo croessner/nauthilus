@@ -22,6 +22,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math/big"
@@ -698,6 +699,49 @@ func oidcTokenStatusMessage(result string, httpStatus int) string {
 	return fmt.Sprintf("OIDC token request failed (%d)", httpStatus)
 }
 
+func oidcTokenFailureReason(ctx *gin.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(ctx.GetString(definitions.CtxFailureReasonKey))
+}
+
+func setOIDCTokenFailureReason(ctx *gin.Context, reason string) {
+	if ctx == nil {
+		return
+	}
+
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return
+	}
+
+	ctx.Set(definitions.CtxFailureReasonKey, reason)
+}
+
+func oidcTokenStatusMessageWithReason(result string, httpStatus int, failureReason string) string {
+	statusMessage := oidcTokenStatusMessage(result, httpStatus)
+	failureReason = strings.TrimSpace(failureReason)
+
+	if failureReason == "" || result == sloRequestOutcomeSuccess {
+		return statusMessage
+	}
+
+	return fmt.Sprintf("%s: %s", statusMessage, failureReason)
+}
+
+func oidcRefreshTokenFailureReason(err error) string {
+	switch {
+	case errors.Is(err, idp.ErrInvalidRefreshToken):
+		return "refresh token unknown, expired, or already rotated"
+	case errors.Is(err, idp.ErrRefreshTokenClientMismatch):
+		return "refresh token was not issued to the requesting client"
+	default:
+		return ""
+	}
+}
+
 func oidcTokenDataContext(ctx *gin.Context) *lualib.Context {
 	if ctx == nil {
 		return lualib.NewContext()
@@ -859,13 +903,15 @@ func (h *OIDCHandler) runOIDCTokenPostAction(
 		service = definitions.ServIdP
 	}
 
+	failureReason := oidcTokenFailureReason(ctx)
+
 	auth.Request.Service = service
 
 	args := core.PostActionArgs{
 		Context:       oidcTokenDataContext(ctx),
 		HTTPRequest:   util.DetachedHTTPRequest(ctx.Request, nil),
 		ParentSpan:    trace.SpanContextFromContext(ctx.Request.Context()),
-		StatusMessage: oidcTokenStatusMessage(result, httpStatus),
+		StatusMessage: oidcTokenStatusMessageWithReason(result, httpStatus, failureReason),
 		Request:       h.buildOIDCTokenPostActionRequest(ctx, auth, service, grantType, clientID, authMethod, httpStatus, result, latency),
 	}
 
@@ -884,12 +930,10 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 
 	result := oidcTokenResult(httpStatus)
 	authMethod := oidcTokenAuthMethod(ctx)
+	failureReason := oidcTokenFailureReason(ctx)
+	statusMessage := oidcTokenStatusMessageWithReason(result, httpStatus, failureReason)
 
-	util.DebugModuleWithCfg(
-		ctx.Request.Context(),
-		h.deps.Cfg,
-		h.deps.Logger,
-		definitions.DbgIdp,
+	keyvals := []any{
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "OIDC Token request completed",
 		"grant_type", util.WithNotAvailable(grantType),
@@ -897,6 +941,19 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 		"auth_method", util.WithNotAvailable(authMethod),
 		definitions.LogKeyHTTPStatus, httpStatus,
 		"result", result,
+		definitions.LogKeyStatusMessage, statusMessage,
+	}
+
+	if failureReason != "" {
+		keyvals = append(keyvals, definitions.LogKeyFailureReason, failureReason)
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
+		definitions.DbgIdp,
+		keyvals...,
 	)
 
 	h.runOIDCTokenPostAction(ctx, grantType, clientID, authMethod, httpStatus, result, time.Since(startedAt))

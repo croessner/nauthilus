@@ -272,6 +272,55 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("ExchangeRefreshToken_WithoutRotation_ReusesRefreshToken", func(t *testing.T) {
+		oldAccessToken := "header.payload.signature"
+		session := &OIDCSession{
+			ClientID:    "client1",
+			UserID:      "user123",
+			Scopes:      []string{"openid", "offline_access"},
+			AuthTime:    fixedTime,
+			AccessToken: oldAccessToken,
+		}
+
+		refreshToken := "stable-rt"
+		sessionData, _ := json.Marshal(session)
+		originalClient := cfg.oidc.Clients[0]
+		disabled := false
+		cfg.oidc.Clients[0].RevokeRefreshToken = &disabled
+		defer func() {
+			cfg.oidc.Clients[0] = originalClient
+		}()
+
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", 2*time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		assert.NoError(t, err)
+		assert.Equal(t, session.UserID, exchangedSession.UserID)
+		assert.NotEmpty(t, idToken)
+		assert.NotEmpty(t, accessToken)
+		assert.Empty(t, newRefreshToken)
+
+		updatedSession := *session
+		updatedSession.AccessToken = accessToken
+		updatedSessionData, _ := json.Marshal(&updatedSession)
+
+		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(updatedSessionData))
+		mock.ExpectSet("test:oidc:denied_access_token:"+accessToken, "1", 2*time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
+		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+
+		_, _, secondAccessToken, secondRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		assert.NoError(t, err)
+		assert.NotEmpty(t, secondAccessToken)
+		assert.Empty(t, secondRefreshToken)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("GetClaimsWithScopes", func(t *testing.T) {
 		user := &backend.User{
 			Id:          "user123",

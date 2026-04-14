@@ -330,6 +330,9 @@ const (
 	// LogKeyStatusMessage represents a status message for an operation.
 	LogKeyStatusMessage = "status_message"
 
+	// LogKeyFailureReason represents a machine-readable failure reason for an operation.
+	LogKeyFailureReason = "failure_reason"
+
 	// LogKeyBFRWP indicates whether the request was identified as a Repeating Wrong Password (RWP).
 	LogKeyBFRWP = "bf_rwp"
 
@@ -905,6 +908,9 @@ const (
 
 	// CtxRateLimitReasonKey is used as a key to store the reason for a 429 Too Many Requests response in the context.
 	CtxRateLimitReasonKey = "ratelimit_reason"
+
+	// CtxFailureReasonKey stores a request-scoped failure reason for logging and post-actions.
+	CtxFailureReasonKey = "failure_reason"
 
 	// CtxSecureDataKey is used as a key to store the CookieManager instance for secure IDP data in the context.
 	CtxSecureDataKey = "secure_data"
