@@ -989,8 +989,11 @@ type authStateField struct {
 
 // hiddenAuthStateFields lists field names whose values must be redacted in non-dev mode.
 var hiddenAuthStateFields = map[string]struct{}{
-	"Password": {},
+	"Password":   {},
+	"TOTPSecret": {},
 }
+
+const logRedactedValue = "<redacted>"
 
 // String returns a human-readable representation of the AuthState.
 // The GUID is omitted and the password is hidden unless dev mode is active.
@@ -1985,7 +1988,7 @@ func ProcessPassDBResult(ctx *gin.Context, passDBResult *PassDBResult, auth *Aut
 		definitions.LogKeyGUID, auth.Runtime.GUID,
 		"passdb", passDB.backend.String(),
 		definitions.LogKeyUsername, auth.Request.Username,
-		"passdb_result", fmt.Sprintf("%+v", *passDBResult),
+		"passdb_result", passDBResult.String(),
 	)
 
 	updateAuthentication(ctx, auth, passDBResult, passDB)
@@ -3197,6 +3200,8 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 
 // String returns a human-readable representation of the PassDBResult.
 func (p *PassDBResult) String() string {
+	attributes := redactPassDBResultAttributes(p.Attributes, p.TOTPSecretField, p.TOTPRecoveryField)
+
 	fields := []authStateField{
 		{"BackendName", p.BackendName},
 		{"AccountField", p.AccountField},
@@ -3205,7 +3210,7 @@ func (p *PassDBResult) String() string {
 		{"TOTPRecoveryField", p.TOTPRecoveryField},
 		{"UniqueUserIDField", p.UniqueUserIDField},
 		{"DisplayNameField", p.DisplayNameField},
-		{"Attributes", p.Attributes},
+		{"Attributes", attributes},
 		{"AdditionalFeatures", p.AdditionalFeatures},
 		{"Authenticated", p.Authenticated},
 		{"UserFound", p.UserFound},
@@ -3223,6 +3228,34 @@ func (p *PassDBResult) String() string {
 	}
 
 	return result.String()[1:]
+}
+
+func redactPassDBResultAttributes(attributes bktype.AttributeMapping, fieldNames ...string) bktype.AttributeMapping {
+	if len(attributes) == 0 {
+		return attributes
+	}
+
+	redactedAttributes := attributes.Clone()
+
+	for _, fieldName := range fieldNames {
+		if fieldName == "" {
+			continue
+		}
+
+		values, okay := redactedAttributes[fieldName]
+		if !okay {
+			continue
+		}
+
+		redactedValues := make([]any, len(values))
+		for index := range values {
+			redactedValues[index] = logRedactedValue
+		}
+
+		redactedAttributes[fieldName] = redactedValues
+	}
+
+	return redactedAttributes
 }
 
 // updateUserAccountInRedis returns the user account value from the user Redis hash. If none was found, a new entry in

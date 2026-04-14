@@ -1340,6 +1340,13 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 	}
 
 	if !success {
+		statusMessage := "Invalid recovery code"
+		if err != nil {
+			statusMessage = err.Error()
+		}
+
+		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodRecoveryCodes, statusMessage, false)
+
 		data := h.basePageData(ctx)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
 		data["RecoveryVerifyMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter one of your recovery codes")
@@ -1357,6 +1364,8 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 
 		return
 	}
+
+	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodRecoveryCodes, "", true)
 
 	// MFA OK. Now check if the original password was OK (delayed response case).
 	if h.handleDelayedResponseFailure(ctx, sess, "recovery") {
@@ -1609,6 +1618,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	if err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "totp", "fail").Inc()
+		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodTOTP, err.Error(), false)
 
 		data := h.basePageData(ctx)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
@@ -1626,6 +1636,8 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 		return
 	}
+
+	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodTOTP, "", true)
 
 	// MFA OK. Now check if the original password was OK (delayed response case).
 	if h.handleDelayedResponseFailure(ctx, sess, "totp") {

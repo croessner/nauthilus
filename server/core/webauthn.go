@@ -627,6 +627,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		if sessionData == nil {
+			LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, errors.ErrWebAuthnSessionData.Error(), false)
 			ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData.Error())
 
 			return
@@ -640,6 +641,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			var err error
 			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, "")
 			if err != nil {
+				LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, err.Error(), false)
 				ctx.JSON(http.StatusInternalServerError, err.Error())
 
 				return
@@ -651,6 +653,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 			parsedResponse, err := protocol.ParseCredentialRequestResponseBody(bytes.NewBuffer(bodyBytes))
 			if err != nil {
+				LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, "Invalid response body", false)
 				ctx.JSON(http.StatusBadRequest, "Invalid response body")
 
 				return
@@ -658,6 +661,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 			userHandle := string(parsedResponse.Response.UserHandle)
 			if userHandle == "" {
+				LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, "No user handle provided", false)
 				ctx.JSON(http.StatusBadRequest, "No user handle provided")
 
 				return
@@ -665,6 +669,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 			user, err = backend.GetWebAuthnFromRedis(ctx.Request.Context(), auth.(*AuthState).Cfg(), auth.(*AuthState).Logger(), auth.(*AuthState).Redis(), userHandle)
 			if err != nil {
+				LogIDPMFAuthResult(ctx, deps, userHandle, definitions.MFAMethodWebAuthn, "User not found", false)
 				ctx.JSON(http.StatusBadRequest, "User not found")
 
 				return
@@ -672,6 +677,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		}
 
 		if user == nil {
+			LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, "User not found", false)
 			ctx.JSON(http.StatusBadRequest, "User not found")
 
 			return
@@ -679,6 +685,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		credential, err := webAuthn.FinishLogin(user, *sessionData, ctx.Request)
 		if err != nil {
+			LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, err.Error(), false)
 			ctx.JSON(http.StatusBadRequest, err.Error())
 
 			return
@@ -800,6 +807,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		// Success!
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "success").Inc()
+		LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, "", true)
 
 		// Set last MFA method cookie
 		secure := util.ShouldSetSecureCookie()
