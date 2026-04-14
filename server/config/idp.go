@@ -353,6 +353,7 @@ type OIDCConfig struct {
 	AccessTokenType                    string              `mapstructure:"access_token_type"`
 	DefaultAccessTokenLifetime         time.Duration       `mapstructure:"default_access_token_lifetime"`
 	DefaultRefreshTokenLifetime        time.Duration       `mapstructure:"default_refresh_token_lifetime"`
+	RevokeRefreshToken                 *bool               `mapstructure:"revoke_refresh_token"`
 	ConsentTTL                         time.Duration       `mapstructure:"consent_ttl"`
 	ConsentMode                        string              `mapstructure:"consent_mode" validate:"omitempty,oneof=all_or_nothing granular_optional"`
 	TokenEndpointAllowGET              bool                `mapstructure:"token_endpoint_allow_get"`
@@ -550,6 +551,16 @@ func (o *OIDCConfig) GetDefaultRefreshTokenLifetime() time.Duration {
 	}
 
 	return 30 * 24 * time.Hour
+}
+
+// GetRevokeRefreshToken reports whether refresh token rotation is enabled.
+// The secure default is enabled, which means refresh tokens are one-time use.
+func (o *OIDCConfig) GetRevokeRefreshToken() bool {
+	if o != nil && o.RevokeRefreshToken != nil {
+		return *o.RevokeRefreshToken
+	}
+
+	return true
 }
 
 // GetConsentTTL returns the default consent validity duration for OIDC clients.
@@ -750,6 +761,7 @@ type OIDCClient struct {
 	SkipConsent                         bool          `mapstructure:"skip_consent"`
 	DelayedResponse                     bool          `mapstructure:"delayed_response"`
 	AllowRefreshTokenCombinedClientAuth bool          `mapstructure:"allow_refresh_token_combined_client_auth"`
+	RevokeRefreshToken                  *bool         `mapstructure:"revoke_refresh_token"`
 	FrontChannelLogoutSessionRequired   bool          `mapstructure:"frontchannel_logout_session_required"`
 }
 
@@ -826,6 +838,16 @@ func (c *OIDCClient) AllowsRefreshTokenCombinedClientAuth() bool {
 	}
 
 	return c.AllowRefreshTokenCombinedClientAuth
+}
+
+// GetRevokeRefreshToken resolves the client-specific refresh token rotation
+// setting or falls back to the provided global default.
+func (c *OIDCClient) GetRevokeRefreshToken(defaultValue bool) bool {
+	if c != nil && c.RevokeRefreshToken != nil {
+		return *c.RevokeRefreshToken
+	}
+
+	return defaultValue
 }
 
 func (c *OIDCClient) String() string {

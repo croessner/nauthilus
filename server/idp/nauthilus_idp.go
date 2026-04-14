@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp/oidckeys"
+	"github.com/croessner/nauthilus/server/idp/signing"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
@@ -196,16 +197,52 @@ func (n *NauthilusIdP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, 
 // Per OIDC Core 1.0 §3.1.2.1, an ID token is only issued when the "openid" scope is present.
 // Without "openid", this behaves as a pure OAuth 2.0 token response (access_token only).
 func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, string, time.Duration, error) {
+	client, ok := n.FindClient(session.ClientID)
+	if !ok {
+		return "", "", "", 0, fmt.Errorf("client not found")
+	}
+
+	return n.issueTokensForClient(ctx, client, session, "")
+}
+
+func (n *NauthilusIdP) issueTokensForClient(
+	ctx context.Context,
+	client *config.OIDCClient,
+	session *OIDCSession,
+	persistedRefreshToken string,
+) (string, string, string, time.Duration, error) {
+	idTokenString, accessTokenString, accessTokenLifetime, err := n.issueIDAndAccessTokens(ctx, client, session)
+	if err != nil {
+		return "", "", "", 0, err
+	}
+
+	refreshTokenString := ""
+	hasOfflineAccess := slices.Contains(session.Scopes, definitions.ScopeOfflineAccess)
+
+	if hasOfflineAccess {
+		refreshTokenString, err = n.storeRefreshTokenSession(ctx, client, persistedRefreshToken, session, accessTokenString)
+		if err != nil {
+			return "", "", "", 0, err
+		}
+
+		if persistedRefreshToken != "" {
+			refreshTokenString = ""
+		}
+	}
+
+	return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
+}
+
+func (n *NauthilusIdP) issueIDAndAccessTokens(
+	ctx context.Context,
+	client *config.OIDCClient,
+	session *OIDCSession,
+) (string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.issue_tokens",
 		attribute.String("client_id", session.ClientID),
 		attribute.String("user_id", session.UserID),
 	)
 	defer sp.End()
-
-	client, ok := n.FindClient(session.ClientID)
-	if !ok {
-		return "", "", "", 0, fmt.Errorf("client not found")
-	}
 
 	accessTokenLifetime := client.AccessTokenLifetime
 	if accessTokenLifetime == 0 {
@@ -216,37 +253,16 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 
 	signer, err := n.keyMgr.GetActiveSigner(ctx, "")
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to get active signing key: %w", err)
+		return "", "", 0, fmt.Errorf("failed to get active signing key: %w", err)
 	}
 
 	now := time.Now()
 
-	// Per OIDC Core 1.0 §3.1.2.1: ID token is only issued when the "openid" scope is requested.
-	var idTokenString string
+	idTokenString, err := n.issueIDToken(session, signer, issuer, now, accessTokenLifetime)
+	if err != nil {
+		sp.RecordError(err)
 
-	if slices.Contains(session.Scopes, definitions.ScopeOpenId) {
-		idClaims := jwt.MapClaims{
-			"iss":       issuer,
-			"sub":       session.UserID,
-			"aud":       session.ClientID,
-			"exp":       now.Add(accessTokenLifetime).Unix(),
-			"iat":       now.Unix(),
-			"auth_time": session.AuthTime.Unix(),
-		}
-
-		if session.Nonce != "" {
-			idClaims["nonce"] = session.Nonce
-		}
-
-		// Add mapped claims from session
-		maps.Copy(idClaims, session.IdTokenClaims)
-
-		idTokenString, err = signer.Sign(idClaims)
-		if err != nil {
-			sp.RecordError(err)
-
-			return "", "", "", 0, fmt.Errorf("failed to sign ID token: %w", err)
-		}
+		return "", "", 0, err
 	}
 
 	// Access Token
@@ -264,33 +280,73 @@ func (n *NauthilusIdP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 	if err != nil {
 		sp.RecordError(err)
 
-		return "", "", "", 0, err
+		return "", "", 0, err
 	}
 
-	refreshTokenString := ""
-	hasOfflineAccess := slices.Contains(session.Scopes, definitions.ScopeOfflineAccess)
+	return idTokenString, accessTokenString, accessTokenLifetime, nil
+}
 
-	if hasOfflineAccess {
-		refreshTokenString = n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
-		refreshTokenLifetime := client.RefreshTokenLifetime
-
-		if refreshTokenLifetime == 0 {
-			refreshTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultRefreshTokenLifetime()
-		}
-
-		// Link the access token to the refresh token session so it can be
-		// invalidated during token rotation (RFC 6749 best practice).
-		session.AccessToken = accessTokenString
-
-		err = n.storage.StoreRefreshToken(ctx, refreshTokenString, session, refreshTokenLifetime)
-		if err != nil {
-			sp.RecordError(err)
-
-			return "", "", "", 0, fmt.Errorf("failed to store refresh token: %w", err)
-		}
+func (n *NauthilusIdP) issueIDToken(
+	session *OIDCSession,
+	signer signing.Signer,
+	issuer string,
+	now time.Time,
+	accessTokenLifetime time.Duration,
+) (string, error) {
+	if !slices.Contains(session.Scopes, definitions.ScopeOpenId) {
+		return "", nil
 	}
 
-	return idTokenString, accessTokenString, refreshTokenString, accessTokenLifetime, nil
+	idClaims := jwt.MapClaims{
+		"iss":       issuer,
+		"sub":       session.UserID,
+		"aud":       session.ClientID,
+		"exp":       now.Add(accessTokenLifetime).Unix(),
+		"iat":       now.Unix(),
+		"auth_time": session.AuthTime.Unix(),
+	}
+
+	if session.Nonce != "" {
+		idClaims["nonce"] = session.Nonce
+	}
+
+	// Add mapped claims from session
+	maps.Copy(idClaims, session.IdTokenClaims)
+
+	idTokenString, err := signer.Sign(idClaims)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign ID token: %w", err)
+	}
+
+	return idTokenString, nil
+}
+
+func (n *NauthilusIdP) storeRefreshTokenSession(
+	ctx context.Context,
+	client *config.OIDCClient,
+	refreshToken string,
+	session *OIDCSession,
+	accessToken string,
+) (string, error) {
+	if refreshToken == "" {
+		refreshToken = n.tokenGen.GenerateToken(definitions.OIDCTokenPrefixRefreshToken)
+	}
+
+	refreshTokenLifetime := client.RefreshTokenLifetime
+	if refreshTokenLifetime == 0 {
+		refreshTokenLifetime = n.deps.Cfg.GetIdP().OIDC.GetDefaultRefreshTokenLifetime()
+	}
+
+	// Link the access token to the refresh token session so it can be
+	// invalidated during token rotation or reuse.
+	session.AccessToken = accessToken
+
+	err := n.storage.StoreRefreshToken(ctx, refreshToken, session, refreshTokenLifetime)
+	if err != nil {
+		return "", fmt.Errorf("failed to store refresh token: %w", err)
+	}
+
+	return refreshToken, nil
 }
 
 // IssueClientCredentialsToken generates an access token for the Client Credentials Grant.
@@ -370,16 +426,30 @@ func (n *NauthilusIdP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 		return nil, "", "", "", 0, fmt.Errorf("%w", ErrRefreshTokenClientMismatch)
 	}
 
-	// Rotation: invalidate old access token and delete old refresh token
-	// (RFC 6749 best practice for token rotation).
+	client, ok := n.FindClient(clientID)
+	if !ok {
+		return nil, "", "", "", 0, fmt.Errorf("client not found")
+	}
+
+	rotateRefreshTokens := client.GetRevokeRefreshToken(n.deps.Cfg.GetIdP().OIDC.GetRevokeRefreshToken())
+
+	// Invalidate the access token that was last bound to this refresh token
+	// session before issuing the replacement access token.
 	n.invalidateOldAccessToken(ctx, session, clientID)
 
-	_ = n.storage.DeleteRefreshToken(ctx, refreshToken)
+	if rotateRefreshTokens {
+		_ = n.storage.DeleteRefreshToken(ctx, refreshToken)
+	}
 
 	// Clear the old access token reference before issuing new tokens.
 	session.AccessToken = ""
 
-	idToken, accessToken, newRefreshToken, expiresIn, issueErr := n.IssueTokens(ctx, session)
+	persistedRefreshToken := ""
+	if !rotateRefreshTokens {
+		persistedRefreshToken = refreshToken
+	}
+
+	idToken, accessToken, newRefreshToken, expiresIn, issueErr := n.issueTokensForClient(ctx, client, session, persistedRefreshToken)
 	if issueErr != nil {
 		return nil, "", "", "", 0, issueErr
 	}
