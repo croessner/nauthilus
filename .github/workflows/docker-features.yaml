@@ -6,6 +6,9 @@ name: Development Docker Build
     branches:
       - features
 
+permissions:
+  contents: read
+
 jobs:
   build:
     uses: ./.github/workflows/docker-build-push.yaml
