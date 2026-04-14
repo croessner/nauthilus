@@ -30,6 +30,7 @@ func TestLogIDPMFAuthResult_Success(t *testing.T) {
 	assert.Contains(t, output, "authn=true")
 	assert.Contains(t, output, "username=alice")
 	assert.Contains(t, output, "oidc_cid=test-client")
+	assert.Contains(t, output, "client_ip=203.0.113.10")
 }
 
 func TestLogIDPMFAuthResult_FailureNormalizesRecoveryMethod(t *testing.T) {
@@ -48,6 +49,7 @@ func TestLogIDPMFAuthResult_FailureNormalizesRecoveryMethod(t *testing.T) {
 	assert.Contains(t, output, "authn=false")
 	assert.Contains(t, output, "status_message=\"Invalid recovery code\"")
 	assert.Contains(t, output, "username=alice")
+	assert.Contains(t, output, "client_ip=203.0.113.10")
 }
 
 func newIDPMFALogContext(t *testing.T) (*gin.Context, *bytes.Buffer) {
@@ -60,6 +62,7 @@ func newIDPMFALogContext(t *testing.T) (*gin.Context, *bytes.Buffer) {
 	req.RemoteAddr = "198.51.100.10:54321"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "mfa-log-test")
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
 	ctx.Request = req
 	ctx.Set(definitions.CtxGUIDKey, "mfa-guid")
 	ctx.Set(definitions.CtxServiceKey, definitions.ServIdP)
