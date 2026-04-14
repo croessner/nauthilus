@@ -401,6 +401,40 @@ func TestOIDCClient_AllowsRefreshTokenCombinedClientAuth(t *testing.T) {
 	})
 }
 
+func TestOIDCRefreshTokenRotation(t *testing.T) {
+	t.Run("OIDCConfig default revokes refresh tokens", func(t *testing.T) {
+		var cfg *OIDCConfig
+		assert.True(t, cfg.GetRevokeRefreshToken())
+
+		cfg = &OIDCConfig{}
+		assert.True(t, cfg.GetRevokeRefreshToken())
+	})
+
+	t.Run("OIDCConfig configured disabled", func(t *testing.T) {
+		disabled := false
+		cfg := &OIDCConfig{RevokeRefreshToken: &disabled}
+		assert.False(t, cfg.GetRevokeRefreshToken())
+	})
+
+	t.Run("OIDCClient inherits global default", func(t *testing.T) {
+		client := &OIDCClient{}
+		assert.False(t, client.GetRevokeRefreshToken(false))
+		assert.True(t, client.GetRevokeRefreshToken(true))
+	})
+
+	t.Run("OIDCClient override enabled", func(t *testing.T) {
+		enabled := true
+		client := &OIDCClient{RevokeRefreshToken: &enabled}
+		assert.True(t, client.GetRevokeRefreshToken(false))
+	})
+
+	t.Run("OIDCClient override disabled", func(t *testing.T) {
+		disabled := false
+		client := &OIDCClient{RevokeRefreshToken: &disabled}
+		assert.False(t, client.GetRevokeRefreshToken(true))
+	})
+}
+
 func TestOIDCConsentTTL(t *testing.T) {
 	t.Run("OIDCConfig default consent ttl", func(t *testing.T) {
 		var cfg *OIDCConfig

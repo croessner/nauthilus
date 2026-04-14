@@ -498,6 +498,10 @@ Nauthilus calls specific functions when a user changes their MFA:
 Legacy compatibility: `GET /oidc/token` can be enabled via `idp.oidc.token_endpoint_allow_get: true` (disabled by
 default).
 
+Refresh token rotation is enabled by default. Setting `idp.oidc.revoke_refresh_token: false`
+keeps the same refresh token valid across refresh requests; in that mode refresh responses do not contain a new
+`refresh_token`.
+
 ### SAML 2.0
 
 | Endpoint         | Method   | Description                                |

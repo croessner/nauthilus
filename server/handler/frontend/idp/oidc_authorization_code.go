@@ -386,6 +386,7 @@ func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *confi
 	session, idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
 	if err != nil {
 		if errors.Is(err, idp.ErrInvalidRefreshToken) || errors.Is(err, idp.ErrRefreshTokenClientMismatch) {
+			setOIDCTokenFailureReason(ctx, oidcRefreshTokenFailureReason(err))
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 
 			return
