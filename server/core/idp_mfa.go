@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/idp/flow"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -87,6 +88,78 @@ func QueueCompletedIDPMFAPostAction(ctx *gin.Context, deps AuthDeps, user *backe
 	})
 
 	return true
+}
+
+// LogIDPMFAuthResult writes a Notice log for the result of a second-factor verification
+// during the IdP login flow. It is intentionally not gated behind debug modules.
+func LogIDPMFAuthResult(ctx *gin.Context, deps AuthDeps, username, method, statusMessage string, successful bool) {
+	if ctx == nil || ctx.Request == nil || deps.Cfg == nil || deps.Logger == nil {
+		return
+	}
+
+	authStateRaw := NewAuthStateFromContextWithDeps(ctx, deps)
+	auth, ok := authStateRaw.(*AuthState)
+	if !ok || auth == nil {
+		return
+	}
+
+	auth.WithClientInfo(ctx)
+	auth.WithLocalInfo(ctx)
+	auth.WithUserAgent(ctx)
+	auth.WithXSSL(ctx)
+
+	auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
+	auth.Request.Service = ctx.GetString(definitions.CtxServiceKey)
+	if auth.Request.Service == "" {
+		auth.Request.Service = definitions.ServIdP
+	}
+
+	protocolName, oidcClientID, samlEntityID := idpPostActionSessionState(ctx)
+	auth.SetProtocol(config.NewProtocol(protocolName))
+	auth.SetOIDCCID(oidcClientID)
+	auth.SetSAMLEntityID(samlEntityID)
+	auth.SetUsername(username)
+
+	logMethod := normalizeMFAMethodForLogging(method)
+	auth.SetMethod(logMethod)
+	auth.Runtime.Authenticated = successful
+	auth.Runtime.UserFound = username != ""
+
+	if statusMessage != "" {
+		auth.Runtime.StatusMessage = statusMessage
+	}
+
+	status := "fail"
+	message := "Second-factor authentication has failed"
+
+	if successful {
+		status = "ok"
+		message = "Second-factor authentication was successful"
+	}
+
+	keyvals := getLogSlice()
+
+	defer putLogSlice(keyvals)
+
+	keyvals = auth.fillLogLineTemplate(keyvals, status, ctx.Request.URL.Path)
+	keyvals = append(
+		keyvals,
+		definitions.LogKeyMsg, message,
+		definitions.SessionKeyMFAMethod, logMethod,
+	)
+
+	_ = level.Notice(auth.Logger()).WithContext(ctx).Log(keyvals...)
+}
+
+func normalizeMFAMethodForLogging(method string) string {
+	switch method {
+	case "recovery":
+		return definitions.MFAMethodRecoveryCodes
+	case "":
+		return method
+	default:
+		return method
+	}
 }
 
 func newCompletedIDPMFAPostActionAuth(ctx *gin.Context, deps AuthDeps, user *backend.User) *AuthState {

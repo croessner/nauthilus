@@ -17,7 +17,6 @@ package core
 
 import (
 	stderrors "errors"
-	"fmt"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -104,7 +103,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 			definitions.DbgAuth,
 			definitions.LogKeyGUID, auth.Runtime.GUID,
 			"passdb", passDB.backend.String(),
-			"result", fmt.Sprintf("%v", res),
+			"result", res.String(),
 		)
 
 		if finalRes != nil {
