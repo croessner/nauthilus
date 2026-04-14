@@ -3914,8 +3914,9 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientHost()), &a.Request.ClientHost)
 
 	if a.Request.ClientIP == "" {
-		// This might be valid if HAproxy v2 support is enabled
-		if cfg.GetServer().IsHAproxyProtocolEnabled() {
+		a.Request.ClientIP = util.RequestClientIP(ctx)
+
+		if a.Request.ClientIP == "" && cfg.GetServer().IsHAproxyProtocolEnabled() && ctx.Request != nil {
 			a.Request.ClientIP, a.Request.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 			if err != nil {
 				level.Error(a.logger()).Log(
@@ -3926,11 +3927,6 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 			}
 
 			util.ProcessXForwardedFor(ctx, a.Cfg(), a.Logger(), &a.Request.ClientIP, &a.Request.XClientPort, &a.Request.XSSL)
-		}
-
-		// Fallback if ClientIP is still empty
-		if a.Request.ClientIP == "" && ctx.Request != nil && ctx.Request.RemoteAddr != "" {
-			a.Request.ClientIP, a.Request.XClientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
 		}
 	}
 

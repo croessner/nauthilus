@@ -639,6 +639,40 @@ func ProcessXForwardedFor(ctx *gin.Context, cfg config.File, logger *slog.Logger
 	}
 }
 
+// RequestClientIP resolves the best available client IP from the request headers.
+// It prefers forwarded headers so logs can report the real origin instead of the
+// immediate load balancer or proxy address.
+func RequestClientIP(ctx *gin.Context) string {
+	if ctx == nil || ctx.Request == nil {
+		return ""
+	}
+
+	if forwarded := strings.TrimSpace(ctx.GetHeader("X-Forwarded-For")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+
+		return strings.TrimSpace(parts[0])
+	}
+
+	if realIP := strings.TrimSpace(ctx.GetHeader("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+
+	if clientIP := strings.TrimSpace(ctx.ClientIP()); clientIP != "" {
+		return clientIP
+	}
+
+	if remoteAddr := strings.TrimSpace(ctx.Request.RemoteAddr); remoteAddr != "" {
+		host, _, err := net.SplitHostPort(remoteAddr)
+		if err == nil {
+			return strings.TrimSpace(host)
+		}
+
+		return remoteAddr
+	}
+
+	return ""
+}
+
 // ComparePasswords takes a plain password and creates a hash. Then it compares the hashed passwords and returns true, if
 // both passwords are equal. If an error occurs, the result is false for the compare operation and the error is returned.
 // This function uses constant-time comparison to prevent timing attacks.
