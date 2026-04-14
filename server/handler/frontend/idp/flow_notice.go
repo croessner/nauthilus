@@ -116,7 +116,7 @@ func idpFlowNoticeFields(
 		definitions.LogKeyGUID, util.WithNotAvailable(ctx.GetString(definitions.CtxGUIDKey)),
 		definitions.LogKeyProtocol, util.WithNotAvailable(strings.TrimSpace(protocol)),
 		definitions.LogKeyMethod, util.WithNotAvailable(strings.TrimSpace(ctx.Request.Method)),
-		definitions.LogKeyClientIP, util.WithNotAvailable(strings.TrimSpace(ctx.ClientIP())),
+		definitions.LogKeyClientIP, util.WithNotAvailable(strings.TrimSpace(util.RequestClientIP(ctx))),
 		definitions.LogKeyUriPath, util.WithNotAvailable(strings.TrimSpace(ctx.Request.URL.Path)),
 		"idp_flow", util.WithNotAvailable(strings.TrimSpace(flow)),
 		definitions.LogKeyOIDCCID, util.WithNotAvailable(strings.TrimSpace(clientID)),

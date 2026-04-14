@@ -81,3 +81,26 @@ func TestHeaderBasedAuth_DecodesConfiguredRequestHeaders(t *testing.T) {
 	assert.Equal(t, "mail.example.test", state.Request.ClientHost)
 	assert.Equal(t, "CN=alice,O=Example", state.Request.XSSLClientDN)
 }
+
+func TestHeaderBasedAuth_UsesForwardedClientIPWhenConfiguredHeaderIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := newHeaderDecodeTestConfig()
+	SetDefaultConfigFile(cfg)
+	t.Cleanup(func() {
+		SetDefaultConfigFile(nil)
+	})
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx.Request.RemoteAddr = "127.0.0.1:54321"
+	ctx.Request.Header.Set("X-Forwarded-For", "203.0.113.10")
+
+	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{Cfg: cfg})
+	state := auth.(*AuthState)
+
+	state.WithClientInfo(ctx)
+
+	assert.Equal(t, "203.0.113.10", state.Request.ClientIP)
+}

@@ -91,6 +91,14 @@ func TestLogIncomingIDPFlowRequestIncludesClientIP(t *testing.T) {
 			},
 			wantClientIP: "203.0.113.10",
 		},
+		{
+			name:       "forwarded ip without trusted proxies",
+			remoteAddr: "127.0.0.1:44321",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.10",
+			},
+			wantClientIP: "203.0.113.10",
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -142,6 +150,17 @@ func TestLogCompletedIDPFlowRequestIncludesResultAndClientIP(t *testing.T) {
 			wantClientIP: "203.0.113.10",
 			wantResult:   "fail",
 			wantMessage:  "IdP request has failed",
+		},
+		{
+			name:       "successful forwarded request without trusted proxies",
+			remoteAddr: "127.0.0.1:44321",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.10",
+			},
+			httpStatus:   http.StatusOK,
+			wantClientIP: "203.0.113.10",
+			wantResult:   "ok",
+			wantMessage:  "IdP request was successful",
 		},
 	}
 
