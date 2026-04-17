@@ -102,9 +102,9 @@ func TestFrontendSecurityHeaders_ValidateTags_AllowStructuredHeaderValues(t *tes
 			[]string{"https://idp.example.test"},
 		),
 		StrictTransportSecurity: NewStrictTransportSecurityValueFromObject(
-			stringPointer("63072000"),
-			boolPointer(true),
-			boolPointer(false),
+			new("63072000"),
+			new(true),
+			new(false),
 			[]string{"example-token"},
 		),
 		PermissionsPolicy: NewPermissionsPolicyValueFromFeatures(
@@ -120,10 +120,12 @@ func TestFrontendSecurityHeaders_ValidateTags_AllowStructuredHeaderValues(t *tes
 	assert.NoError(t, headers.ValidateComposedValues())
 }
 
+//go:fix inline
 func stringPointer(value string) *string {
-	return &value
+	return new(value)
 }
 
+//go:fix inline
 func boolPointer(value bool) *bool {
-	return &value
+	return new(value)
 }

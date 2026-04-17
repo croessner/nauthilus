@@ -787,7 +787,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 				serviceProv: SAML2ServiceProvider{
 					EntityID:             "https://sp.example.com/metadata",
 					ACSURL:               "https://sp.example.com/acs",
-					LogoutRequestsSigned: boolPtr(true),
+					LogoutRequestsSigned: new(true),
 				},
 				wantErr: "logout_requests_signed requires cert or cert_file",
 			},
@@ -796,7 +796,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 				serviceProv: SAML2ServiceProvider{
 					EntityID:              "https://sp.example.com/metadata",
 					ACSURL:                "https://sp.example.com/acs",
-					LogoutResponsesSigned: boolPtr(true),
+					LogoutResponsesSigned: new(true),
 				},
 				wantErr: "logout_responses_signed requires cert or cert_file",
 			},
@@ -823,8 +823,9 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 	})
 }
 
+//go:fix inline
 func boolPtr(value bool) *bool {
-	return &value
+	return new(value)
 }
 
 func testCertificatePEM(t *testing.T) string {

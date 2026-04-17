@@ -15,7 +15,9 @@ function nauthilus_call_feature(request)
 
     if bf_count and bf_count > 3 then
         -- Log suspicious activity
-        return true  -- Feature triggered
+        return nauthilus_builtin.FEATURE_TRIGGER_YES,
+            nauthilus_builtin.FEATURES_ABORT_NO,
+            nauthilus_builtin.FEATURE_RESULT_OK
     end
 
     -- Check if IP is on blocklist
@@ -23,9 +25,13 @@ function nauthilus_call_feature(request)
     if client_ip then
         local blocked = nauthilus_redis.exists("blocklist:" .. client_ip)
         if blocked == 1 then
-            return true  -- Feature triggered
+            return nauthilus_builtin.FEATURE_TRIGGER_YES,
+                nauthilus_builtin.FEATURES_ABORT_NO,
+                nauthilus_builtin.FEATURE_RESULT_OK
         end
     end
 
-    return false  -- Feature not triggered
+    return nauthilus_builtin.FEATURE_TRIGGER_NO,
+        nauthilus_builtin.FEATURES_ABORT_NO,
+        nauthilus_builtin.FEATURE_RESULT_OK
 end

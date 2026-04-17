@@ -798,9 +798,13 @@ func (m *HTTPClientMock) ValidateComplete() error {
 // ExpectedOutputMock defines expected test results.
 type ExpectedOutputMock struct {
 	FilterResult             *int     `json:"filter_result,omitempty"`
+	FilterAction             *bool    `json:"filter_action,omitempty"`
 	FeatureResult            *bool    `json:"feature_result,omitempty"`
+	FeatureAbort             *bool    `json:"feature_abort,omitempty"`
+	FeatureStatus            *int     `json:"feature_status,omitempty"`
 	ActionResult             *bool    `json:"action_result,omitempty"`
 	BackendResult            *bool    `json:"backend_result,omitempty"`
+	BackendReturnCode        *int     `json:"backend_return_code,omitempty"`
 	BackendAuthenticated     *bool    `json:"backend_authenticated,omitempty"`
 	BackendUserFound         *bool    `json:"backend_user_found,omitempty"`
 	BackendAccountField      *string  `json:"backend_account_field,omitempty"`
@@ -821,9 +825,13 @@ type ExpectedOutputMock struct {
 type TestResult struct {
 	Success                  bool
 	FilterResult             *int
+	FilterAction             *bool
 	FeatureResult            *bool
+	FeatureAbort             *bool
+	FeatureStatus            *int
 	ActionResult             *bool
 	BackendResult            *bool
+	BackendReturnCode        *int
 	BackendAuthenticated     *bool
 	BackendUserFound         *bool
 	BackendAccountField      *string

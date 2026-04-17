@@ -61,7 +61,7 @@ dofile("server/lua-plugins.d/backend/backend.lua")
 local original = nauthilus_backend_verify_password
 
 function nauthilus_backend_verify_password(request)
-    local _, backend_result = original(request)
+    local status, backend_result = original(request)
 
-    return backend_result
+    return status, backend_result
 end

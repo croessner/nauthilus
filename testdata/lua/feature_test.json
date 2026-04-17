@@ -45,6 +45,8 @@
   },
   "expected_output": {
     "feature_result": true,
+    "feature_abort": false,
+    "feature_status": 0,
     "logs_contain": [],
     "error_expected": false
   }
