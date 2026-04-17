@@ -86,8 +86,8 @@ make build-client
 Run tests:
 
 ```bash
-GEXPERIMENT=runtimesecret make test
-GEXPERIMENT=runtimesecret make race
+GOEXPERIMENT=runtimesecret make test
+GOEXPERIMENT=runtimesecret make race
 ```
 
 Run the local guardrails:

@@ -67,6 +67,7 @@
     "body": "{\"test\":\"data\"}"
   },
   "expected_output": {
+    "filter_action": false,
     "filter_result": 0,
     "logs_contain": [],
     "logs_not_contain": [],

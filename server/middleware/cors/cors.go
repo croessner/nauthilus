@@ -365,7 +365,7 @@ func addVaryHeader(headers http.Header, value string) {
 
 	current := headers.Values("Vary")
 	for _, headerValue := range current {
-		for _, part := range strings.Split(headerValue, ",") {
+		for part := range strings.SplitSeq(headerValue, ",") {
 			if strings.EqualFold(strings.TrimSpace(part), trimmed) {
 				return
 			}

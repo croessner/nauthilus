@@ -36,6 +36,7 @@
   },
   "expected_output": {
     "backend_result": true,
+    "backend_return_code": 0,
     "backend_authenticated": true,
     "backend_user_found": true,
     "backend_account_field": "account",

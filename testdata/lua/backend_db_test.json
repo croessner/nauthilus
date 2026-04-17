@@ -68,6 +68,7 @@
   },
   "expected_output": {
     "backend_result": true,
+    "backend_return_code": 0,
     "backend_authenticated": false,
     "backend_user_found": true,
     "backend_account_field": "dbuser@example.com",

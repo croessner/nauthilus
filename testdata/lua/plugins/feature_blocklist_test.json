@@ -45,6 +45,8 @@
   },
   "expected_output": {
     "feature_result": true,
+    "feature_abort": true,
+    "feature_status": 0,
     "logs_contain": [
       "blocklist_ip",
       "IP address blocked"

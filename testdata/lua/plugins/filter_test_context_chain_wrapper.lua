@@ -8,10 +8,7 @@ function nauthilus_call_filter(request)
     nauthilus_context.context_set("test_stage_feature", "feature")
     nauthilus_context.context_set("test_marker_feature", tostring(request.session or ""))
 
-    local accepted = original(request)
-    if accepted then
-        return 1
-    end
+    local action, result = original(request)
 
-    return 0
+    return action, result
 end
