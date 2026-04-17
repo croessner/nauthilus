@@ -665,13 +665,7 @@ func renderTokens(tokens []string, separator string) string {
 
 // stringSliceContains reports whether a string exists in the given slice.
 func stringSliceContains(values []string, search string) bool {
-	for _, value := range values {
-		if value == search {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(values, search)
 }
 
 // collectSupportedCSPDirectiveNames returns the known CSP directive names in default order.

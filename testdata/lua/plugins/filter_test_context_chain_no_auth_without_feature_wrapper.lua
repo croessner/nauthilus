@@ -7,21 +7,17 @@ local original = nauthilus_call_filter
 function nauthilus_call_filter(request)
     request.no_auth = true
 
-    local accepted = original(request)
-    if accepted then
-        local stage = nauthilus_context.context_get("test_stage_filter")
-        local marker = nauthilus_context.context_get("test_marker_filter")
+    local action, result = original(request)
+    local stage = nauthilus_context.context_get("test_stage_filter")
+    local marker = nauthilus_context.context_get("test_marker_filter")
 
-        if stage ~= "filter" then
-            error("expected test_stage_filter to be 'filter', got '" .. tostring(stage) .. "'")
-        end
-
-        if marker ~= tostring(request.session or "") then
-            error("expected test_marker_filter to match session, got '" .. tostring(marker) .. "'")
-        end
-
-        return 1
+    if stage ~= "filter" then
+        error("expected test_stage_filter to be 'filter', got '" .. tostring(stage) .. "'")
     end
 
-    return 0
+    if marker ~= tostring(request.session or "") then
+        error("expected test_marker_filter to match session, got '" .. tostring(marker) .. "'")
+    end
+
+    return action, result
 end

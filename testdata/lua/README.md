@@ -59,10 +59,10 @@ Test a Lua script with mock data from JSON file:
 
 The `--test-callback` flag accepts the following values:
 
-- **filter**: Tests filter scripts (returns integer: -1 reject, 0 accept, >0 custom)
-- **feature**: Tests feature scripts (returns boolean)
+- **filter**: Tests filter scripts (returns `action, result`; typically `FILTER_ACCEPT|FILTER_REJECT`, `FILTER_RESULT_OK|FILTER_RESULT_FAIL`)
+- **feature**: Tests feature scripts (returns `triggered, abort, result`)
 - **action**: Tests action scripts (returns boolean or nil)
-- **backend**: Tests backend authentication scripts (returns backend result table)
+- **backend**: Tests backend authentication scripts (returns `result, backend_result`)
 - **hook**: Tests HTTP hook scripts (returns nil or result table)
 - **cache_flush**: Tests cache flush scripts (returns `additional_keys` table and optional `account_name`)
 

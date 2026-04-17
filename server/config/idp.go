@@ -469,10 +469,8 @@ func (o *OIDCConfig) GetTokenEndpointAuthMethodsSupported() []string {
 // supported for private_key_jwt client authentication at the token endpoint.
 // The metadata value is only relevant when private_key_jwt is advertised.
 func (o *OIDCConfig) GetTokenEndpointAuthSigningAlgValuesSupported() []string {
-	for _, method := range o.GetTokenEndpointAuthMethodsSupported() {
-		if method == "private_key_jwt" {
-			return []string{"RS256", "EdDSA"}
-		}
+	if slices.Contains(o.GetTokenEndpointAuthMethodsSupported(), "private_key_jwt") {
+		return []string{"RS256", "EdDSA"}
 	}
 
 	return nil

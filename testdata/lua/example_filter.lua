@@ -14,15 +14,15 @@ function nauthilus_call_filter(request)
     local username = nauthilus_context.context_get("username")
 
     if username == nil or username == "" then
-        return -1  -- Reject if no username
+        return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     -- Check Redis for blocklist
     local blocked = nauthilus_redis.exists("blocklist:" .. username)
     if blocked == 1 then
-        return -1  -- Reject if user is blocked
+        return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     -- All checks passed
-    return 0  -- Accept
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end

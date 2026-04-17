@@ -10,16 +10,24 @@ local nauthilus_context = require("nauthilus_context")
 local nauthilus_ldap = require("nauthilus_ldap")
 local nauthilus_backend_result = require("nauthilus_backend_result")
 
+local function new_backend_result(authenticated, user_found)
+    local result = nauthilus_backend_result.new()
+    result.authenticated = authenticated
+    result.user_found = user_found
+
+    return result
+end
+
 function nauthilus_backend_verify_password(request)
     local username = nauthilus_context.context_get("username")
 
     if not username or username == "" then
-        return nil
+        return nauthilus_builtin.BACKEND_RESULT_OK, new_backend_result(false, false)
     end
 
     local host, port, endpoint_err = nauthilus_ldap.ldap_endpoint("default")
     if endpoint_err ~= nil or host == nil or port == nil then
-        return nil
+        return nauthilus_builtin.BACKEND_RESULT_OK, new_backend_result(false, false)
     end
 
     local attrs, search_err = nauthilus_ldap.ldap_search({
@@ -32,7 +40,7 @@ function nauthilus_backend_verify_password(request)
     })
 
     if search_err ~= nil or attrs == nil then
-        return nil
+        return nauthilus_builtin.BACKEND_RESULT_OK, new_backend_result(false, false)
     end
 
     local dn_uid = username
@@ -51,12 +59,10 @@ function nauthilus_backend_verify_password(request)
     })
 
     if modify_err ~= nil or modify_res == nil then
-        return nil
+        return nauthilus_builtin.BACKEND_RESULT_OK, new_backend_result(false, false)
     end
 
-    local result = nauthilus_backend_result.new()
-    result.authenticated = true
-    result.user_found = true
+    local result = new_backend_result(true, true)
     result.account_field = username
 
     if attrs.uid and attrs.uid[1] then
@@ -67,5 +73,5 @@ function nauthilus_backend_verify_password(request)
         result.display_name = attrs.displayName[1]
     end
 
-    return result
+    return nauthilus_builtin.BACKEND_RESULT_OK, result
 end

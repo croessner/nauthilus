@@ -90,6 +90,7 @@
     ]
   },
   "expected_output": {
+    "filter_action": false,
     "filter_result": 0,
     "error_expected": false
   }

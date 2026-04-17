@@ -13,7 +13,8 @@ Each test consists of:
 - a wrapper script (`*_wrapper.lua`) that loads the real plugin and adds small test shims
 - a JSON mock file (`*_test.json`) consumed by `--test-mock`
 
-The wrappers are intentionally minimal and keep plugin logic unchanged.
+The wrappers are intentionally minimal, keep plugin logic unchanged, and preserve the production callback return
+signatures.
 
 Current fixtures also include a cache flush contract example:
 

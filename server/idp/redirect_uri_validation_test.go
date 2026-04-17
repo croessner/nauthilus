@@ -121,7 +121,6 @@ func runRedirectValidationCases(t *testing.T, idp *NauthilusIdP, tests []redirec
 	t.Helper()
 
 	for _, tc := range tests {
-		tc := tc
 
 		t.Run(tc.name, func(t *testing.T) {
 			client := &config.OIDCClient{RedirectURIs: tc.allowedURIs}

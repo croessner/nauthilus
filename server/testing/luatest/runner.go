@@ -379,10 +379,9 @@ func (tr *TestRunner) executeCallback(L *lua.LState) (*TestResult, error) {
 func (tr *TestRunner) executeFilter(L *lua.LState) (*TestResult, error) {
 	result := &TestResult{Success: false}
 
-	// Look for nauthilus_call_filter function
-	fn := L.GetGlobal("nauthilus_call_filter")
+	fn := resolveLuaFunction(L, definitions.LuaFnCallFilter)
 	if fn.Type() != lua.LTFunction {
-		return result, fmt.Errorf("nauthilus_call_filter function not found in script")
+		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnCallFilter)
 	}
 
 	// Create request table
@@ -391,22 +390,29 @@ func (tr *TestRunner) executeFilter(L *lua.LState) (*TestResult, error) {
 	// Call the filter with request table
 	if err := L.CallByParam(lua.P{
 		Fn:      fn,
-		NRet:    1,
+		NRet:    2,
 		Protect: true,
 	}, requestTable); err != nil {
 		return result, fmt.Errorf("filter execution failed: %w", err)
 	}
 
-	// Get the result (filters return integers)
-	ret := L.Get(-1)
-	L.Pop(1)
+	actionValue := L.Get(-2)
+	resultValue := L.Get(-1)
+	L.Pop(2)
 
-	if ret.Type() == lua.LTNumber {
-		filterResult := int(lua.LVAsNumber(ret))
+	if actionValue.Type() == lua.LTBool && resultValue.Type() == lua.LTNumber {
+		filterAction := lua.LVAsBool(actionValue)
+		filterResult := int(lua.LVAsNumber(resultValue))
+
+		result.FilterAction = &filterAction
 		result.FilterResult = &filterResult
 		result.Success = true
 	} else {
-		return result, fmt.Errorf("filter returned unexpected type: %s", ret.Type())
+		return result, fmt.Errorf(
+			"filter returned unexpected types: action=%s result=%s",
+			actionValue.Type(),
+			resultValue.Type(),
+		)
 	}
 
 	return result, nil
@@ -416,10 +422,9 @@ func (tr *TestRunner) executeFilter(L *lua.LState) (*TestResult, error) {
 func (tr *TestRunner) executeFeature(L *lua.LState) (*TestResult, error) {
 	result := &TestResult{Success: false}
 
-	// Look for nauthilus_call_feature function
-	fn := L.GetGlobal("nauthilus_call_feature")
+	fn := resolveLuaFunction(L, definitions.LuaFnCallFeature)
 	if fn.Type() != lua.LTFunction {
-		return result, fmt.Errorf("nauthilus_call_feature function not found in script")
+		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnCallFeature)
 	}
 
 	// Create request table
@@ -428,22 +433,33 @@ func (tr *TestRunner) executeFeature(L *lua.LState) (*TestResult, error) {
 	// Call the feature with request table
 	if err := L.CallByParam(lua.P{
 		Fn:      fn,
-		NRet:    1,
+		NRet:    3,
 		Protect: true,
 	}, requestTable); err != nil {
 		return result, fmt.Errorf("feature execution failed: %w", err)
 	}
 
-	// Get the result (features return booleans)
-	ret := L.Get(-1)
-	L.Pop(1)
+	triggerValue := L.Get(-3)
+	abortValue := L.Get(-2)
+	statusValue := L.Get(-1)
+	L.Pop(3)
 
-	if ret.Type() == lua.LTBool {
-		featureResult := lua.LVAsBool(ret)
+	if triggerValue.Type() == lua.LTBool && abortValue.Type() == lua.LTBool && statusValue.Type() == lua.LTNumber {
+		featureResult := lua.LVAsBool(triggerValue)
+		featureAbort := lua.LVAsBool(abortValue)
+		featureStatus := int(lua.LVAsNumber(statusValue))
+
 		result.FeatureResult = &featureResult
+		result.FeatureAbort = &featureAbort
+		result.FeatureStatus = &featureStatus
 		result.Success = true
 	} else {
-		return result, fmt.Errorf("feature returned unexpected type: %s", ret.Type())
+		return result, fmt.Errorf(
+			"feature returned unexpected types: trigger=%s abort=%s result=%s",
+			triggerValue.Type(),
+			abortValue.Type(),
+			statusValue.Type(),
+		)
 	}
 
 	return result, nil
@@ -500,10 +516,9 @@ func (tr *TestRunner) executeAction(L *lua.LState) (*TestResult, error) {
 func (tr *TestRunner) executeBackend(L *lua.LState) (*TestResult, error) {
 	result := &TestResult{Success: false}
 
-	// Look for nauthilus_backend_verify_password function
-	fn := L.GetGlobal("nauthilus_backend_verify_password")
+	fn := resolveLuaFunction(L, definitions.LuaFnBackendVerifyPassword)
 	if fn.Type() != lua.LTFunction {
-		return result, fmt.Errorf("nauthilus_backend_verify_password function not found in script")
+		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnBackendVerifyPassword)
 	}
 
 	// Create request table
@@ -512,77 +527,46 @@ func (tr *TestRunner) executeBackend(L *lua.LState) (*TestResult, error) {
 	// Call the backend with request table
 	if err := L.CallByParam(lua.P{
 		Fn:      fn,
-		NRet:    1,
+		NRet:    2,
 		Protect: true,
 	}, requestTable); err != nil {
 		return result, fmt.Errorf("backend execution failed: %w", err)
 	}
 
-	// Get the result (backends return tables/userdata)
-	ret := L.Get(-1)
-	L.Pop(1)
+	returnCodeValue := L.Get(-2)
+	backendValue := L.Get(-1)
+	L.Pop(2)
 
-	// For backends, we check if it's a table or userdata
-	if ret.Type() == lua.LTTable || ret.Type() == lua.LTUserData {
-		backendResult := true
-		result.BackendResult = &backendResult
+	if returnCodeValue.Type() != lua.LTNumber {
+		return result, fmt.Errorf("backend returned unexpected status type: %s", returnCodeValue.Type())
+	}
+
+	backendReturnCode := int(lua.LVAsNumber(returnCodeValue))
+	result.BackendReturnCode = &backendReturnCode
+
+	if backendReturnCode != 0 {
+		return result, fmt.Errorf("backend returned non-zero result code: %d", backendReturnCode)
+	}
+
+	if backendValue.Type() == lua.LTTable || backendValue.Type() == lua.LTUserData {
+		if err := populateBackendResult(result, backendValue); err != nil {
+			return result, err
+		}
+
 		result.Success = true
 
-		switch v := ret.(type) {
-		case *lua.LTable:
-			authenticatedVal := v.RawGetString(definitions.LuaBackendResultAuthenticated)
-			if authenticatedVal.Type() == lua.LTBool {
-				authenticated := lua.LVAsBool(authenticatedVal)
-				result.BackendAuthenticated = &authenticated
-			}
+		return result, nil
+	}
 
-			userFoundVal := v.RawGetString(definitions.LuaBackendResultUserFound)
-			if userFoundVal.Type() == lua.LTBool {
-				userFound := lua.LVAsBool(userFoundVal)
-				result.BackendUserFound = &userFound
-			}
-
-			accountFieldVal := v.RawGetString(definitions.LuaBackendResultAccountField)
-			if accountFieldVal.Type() == lua.LTString {
-				accountField := lua.LVAsString(accountFieldVal)
-				result.BackendAccountField = &accountField
-			}
-
-			displayNameVal := v.RawGetString(definitions.LuaBackendResultDisplayNameField)
-			if displayNameVal.Type() == lua.LTString {
-				displayName := lua.LVAsString(displayNameVal)
-				result.BackendDisplayName = &displayName
-			}
-
-			uniqueUserIDVal := v.RawGetString(definitions.LuaBAckendResultUniqueUserIDField)
-			if uniqueUserIDVal.Type() == lua.LTString {
-				uniqueUserID := lua.LVAsString(uniqueUserIDVal)
-				result.BackendUniqueUserID = &uniqueUserID
-			}
-		case *lua.LUserData:
-			if backendResultObj, ok := v.Value.(*backendResultMockValue); ok && backendResultObj != nil {
-				authenticated := backendResultObj.Authenticated
-				userFound := backendResultObj.UserFound
-				accountField := backendResultObj.AccountField
-				displayName := backendResultObj.DisplayNameField
-				uniqueUserID := backendResultObj.UniqueUserIDField
-
-				result.BackendAuthenticated = &authenticated
-				result.BackendUserFound = &userFound
-				result.BackendAccountField = &accountField
-				result.BackendDisplayName = &displayName
-				result.BackendUniqueUserID = &uniqueUserID
-			}
-		}
-	} else if ret.Type() == lua.LTNil {
+	if backendValue.Type() == lua.LTNil {
 		backendResult := false
 		result.BackendResult = &backendResult
 		result.Success = false
-	} else {
-		return result, fmt.Errorf("backend returned unexpected type: %s", ret.Type())
+
+		return result, nil
 	}
 
-	return result, nil
+	return result, fmt.Errorf("backend returned unexpected type: %s", backendValue.Type())
 }
 
 // executeHook executes a hook callback.
@@ -681,6 +665,74 @@ func parseCacheFlushAccountName(value lua.LValue) *string {
 	return &accountName
 }
 
+func populateBackendResult(result *TestResult, value lua.LValue) error {
+	backendResult := true
+	result.BackendResult = &backendResult
+
+	switch v := value.(type) {
+	case *lua.LTable:
+		populateBackendResultFromTable(result, v)
+		return nil
+	case *lua.LUserData:
+		return populateBackendResultFromUserData(result, v)
+	default:
+		return fmt.Errorf("backend returned unexpected type: %s", value.Type())
+	}
+}
+
+func populateBackendResultFromTable(result *TestResult, table *lua.LTable) {
+	authenticatedVal := table.RawGetString(definitions.LuaBackendResultAuthenticated)
+	if authenticatedVal.Type() == lua.LTBool {
+		authenticated := lua.LVAsBool(authenticatedVal)
+		result.BackendAuthenticated = &authenticated
+	}
+
+	userFoundVal := table.RawGetString(definitions.LuaBackendResultUserFound)
+	if userFoundVal.Type() == lua.LTBool {
+		userFound := lua.LVAsBool(userFoundVal)
+		result.BackendUserFound = &userFound
+	}
+
+	accountFieldVal := table.RawGetString(definitions.LuaBackendResultAccountField)
+	if accountFieldVal.Type() == lua.LTString {
+		accountField := lua.LVAsString(accountFieldVal)
+		result.BackendAccountField = &accountField
+	}
+
+	displayNameVal := table.RawGetString(definitions.LuaBackendResultDisplayNameField)
+	if displayNameVal.Type() == lua.LTString {
+		displayName := lua.LVAsString(displayNameVal)
+		result.BackendDisplayName = &displayName
+	}
+
+	uniqueUserIDVal := table.RawGetString(definitions.LuaBAckendResultUniqueUserIDField)
+	if uniqueUserIDVal.Type() == lua.LTString {
+		uniqueUserID := lua.LVAsString(uniqueUserIDVal)
+		result.BackendUniqueUserID = &uniqueUserID
+	}
+}
+
+func populateBackendResultFromUserData(result *TestResult, userData *lua.LUserData) error {
+	backendResultObj, ok := userData.Value.(*backendResultMockValue)
+	if !ok || backendResultObj == nil {
+		return fmt.Errorf("backend returned unexpected userdata payload: %T", userData.Value)
+	}
+
+	authenticated := backendResultObj.Authenticated
+	userFound := backendResultObj.UserFound
+	accountField := backendResultObj.AccountField
+	displayName := backendResultObj.DisplayNameField
+	uniqueUserID := backendResultObj.UniqueUserIDField
+
+	result.BackendAuthenticated = &authenticated
+	result.BackendUserFound = &userFound
+	result.BackendAccountField = &accountField
+	result.BackendDisplayName = &displayName
+	result.BackendUniqueUserID = &uniqueUserID
+
+	return nil
+}
+
 // validateOutput validates the test result against expected output.
 func (tr *TestRunner) validateOutput(result *TestResult) {
 	expected := tr.mockData.ExpectedOutput
@@ -695,6 +747,15 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 		}
 	}
 
+	if expected.FilterAction != nil && result.FilterAction != nil {
+		if *expected.FilterAction != *result.FilterAction {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("filter action mismatch: expected %t, got %t",
+					*expected.FilterAction, *result.FilterAction))
+		}
+	}
+
 	// Validate feature result
 	if expected.FeatureResult != nil && result.FeatureResult != nil {
 		if *expected.FeatureResult != *result.FeatureResult {
@@ -702,6 +763,24 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 			result.Errors = append(result.Errors,
 				fmt.Errorf("feature result mismatch: expected %t, got %t",
 					*expected.FeatureResult, *result.FeatureResult))
+		}
+	}
+
+	if expected.FeatureAbort != nil && result.FeatureAbort != nil {
+		if *expected.FeatureAbort != *result.FeatureAbort {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("feature abort mismatch: expected %t, got %t",
+					*expected.FeatureAbort, *result.FeatureAbort))
+		}
+	}
+
+	if expected.FeatureStatus != nil && result.FeatureStatus != nil {
+		if *expected.FeatureStatus != *result.FeatureStatus {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("feature status mismatch: expected %d, got %d",
+					*expected.FeatureStatus, *result.FeatureStatus))
 		}
 	}
 
@@ -722,6 +801,15 @@ func (tr *TestRunner) validateOutput(result *TestResult) {
 			result.Errors = append(result.Errors,
 				fmt.Errorf("backend result mismatch: expected %t, got %t",
 					*expected.BackendResult, *result.BackendResult))
+		}
+	}
+
+	if expected.BackendReturnCode != nil && result.BackendReturnCode != nil {
+		if *expected.BackendReturnCode != *result.BackendReturnCode {
+			result.Success = false
+			result.Errors = append(result.Errors,
+				fmt.Errorf("backend return code mismatch: expected %d, got %d",
+					*expected.BackendReturnCode, *result.BackendReturnCode))
 		}
 	}
 
@@ -940,14 +1028,26 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 	if result.FilterResult != nil {
 		fmt.Printf("Filter Result: %d\n", *result.FilterResult)
 	}
+	if result.FilterAction != nil {
+		fmt.Printf("Filter Action: %t\n", *result.FilterAction)
+	}
 	if result.FeatureResult != nil {
 		fmt.Printf("Feature Result: %t\n", *result.FeatureResult)
+	}
+	if result.FeatureAbort != nil {
+		fmt.Printf("Feature Abort: %t\n", *result.FeatureAbort)
+	}
+	if result.FeatureStatus != nil {
+		fmt.Printf("Feature Status: %d\n", *result.FeatureStatus)
 	}
 	if result.ActionResult != nil {
 		fmt.Printf("Action Result: %t\n", *result.ActionResult)
 	}
 	if result.BackendResult != nil {
 		fmt.Printf("Backend Result: %t\n", *result.BackendResult)
+	}
+	if result.BackendReturnCode != nil {
+		fmt.Printf("Backend Return Code: %d\n", *result.BackendReturnCode)
 	}
 	if result.BackendAuthenticated != nil {
 		fmt.Printf("Backend Authenticated: %t\n", *result.BackendAuthenticated)
