@@ -58,6 +58,7 @@ type ServerSection struct {
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
 	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`
 	Features                  []*Feature               `mapstructure:"features" validate:"omitempty,dive"`
+	Prefilters                []*Feature               `mapstructure:"prefilters" validate:"omitempty,dive"`
 	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols" validate:"omitempty,dive"`
 	DNS                       DNS                      `mapstructure:"dns" validate:"omitempty"`
 	Insights                  Insights                 `mapstructure:"insights" validate:"omitempty"`
@@ -542,6 +543,15 @@ func (s *ServerSection) GetFeatures() []*Feature {
 	}
 
 	return s.Features
+}
+
+func (s *ServerSection) normalizePrefilterAliases() {
+	if s == nil {
+		return
+	}
+
+	s.Features = preferAliasSlice(s.Prefilters, s.Features)
+	s.Prefilters = nil
 }
 
 // GetBruteForceProtocols retrieves the list of brute force protection protocols configured in the ServerSection.
@@ -1233,6 +1243,7 @@ type Redis struct {
 	TLS              TLS           `mapstructure:"tls" validate:"omitempty"`
 	PosCacheTTL      time.Duration `mapstructure:"positive_cache_ttl" validate:"omitempty,max=8760h"`
 	NegCacheTTL      time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=8760h"`
+	Primary          Master        `mapstructure:"primary" validate:"omitempty"`
 	Master           Master        `mapstructure:"master" validate:"omitempty"`
 	Replica          Replica       `mapstructure:"replica" validate:"omitempty"`
 	Sentinels        Sentinels     `mapstructure:"sentinels" validate:"omitempty"`
@@ -1277,6 +1288,15 @@ type Redis struct {
 	// unless features requiring RESP3 (like client-side tracking or maintenance notifications)
 	// are enabled. Forcing 2 can resolve parsing issues with asynchronous push messages in pipelines.
 	Protocol int `mapstructure:"protocol" validate:"omitempty,oneof=0 2 3"`
+}
+
+func (r *Redis) normalizePrimaryAlias() {
+	if r == nil {
+		return
+	}
+
+	r.Master = preferAliasValue(r.Primary, r.Master)
+	r.Primary = Master{}
 }
 
 // RedisBatching controls optional client-side command batching.

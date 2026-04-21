@@ -108,6 +108,7 @@ syntax match nauthilusKeyL2 /^  \zsshards\ze:/
 syntax match nauthilusKeyL2 /^  \zssigning_keys\ze:/
 syntax match nauthilusKeyL2 /^  \zssmtp_backend_address\ze:/
 syntax match nauthilusKeyL2 /^  \zssmtp_backend_port\ze:/
+syntax match nauthilusKeyL2 /^  \zssoft_allowlist\ze:/
 syntax match nauthilusKeyL2 /^  \zssoft_whitelist\ze:/
 syntax match nauthilusKeyL2 /^  \zsstarttls\ze:/
 syntax match nauthilusKeyL2 /^  \zsterms_of_service_url\ze:/

@@ -24,7 +24,7 @@ server:
 
   # Enable only Lua backend to focus on CSV-based backend during tests.
   backends: [ cache, lua ]
-  features: [ lua ]
+  prefilters: [ lua ]
 
   # Minimal local Redis settings (adjust to your environment if needed)
   redis:

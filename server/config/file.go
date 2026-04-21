@@ -2461,11 +2461,19 @@ func (f *FileSettings) warnDeprecatedConfig() {
 		warnDeprecatedRedisReplica("server.redis.replica", &srv.Redis.Replica)
 		// Redis TLS
 		warnDeprecatedTLS("server.redis.tls", &srv.Redis.TLS)
+		// Redis standalone primary/master alias
+		warnDeprecatedAlias("server.redis.master", "server.redis.primary", "server.redis")
 		// Dedup: distributed_enabled and in_process_enabled have been removed; warn if set
 		warnDeprecatedDedup(&srv.Dedup)
 		// Timings: singleflight_work has been removed; warn if set
 		warnDeprecatedTimeout(&srv.Timeouts)
 	}
+
+	warnDeprecatedPrefilterAlias("server.features", "server.prefilters")
+	warnDeprecatedPrefilterAlias("lua.features", "lua.prefilters")
+	warnDeprecatedAlias("brute_force.soft_whitelist", "brute_force.soft_allowlist", "brute_force")
+	warnDeprecatedAlias("relay_domains.soft_whitelist", "relay_domains.soft_allowlist", "relay_domains")
+	warnDeprecatedAlias("realtime_blackhole_lists.soft_whitelist", "realtime_blackhole_lists.soft_allowlist", "realtime_blackhole_lists")
 
 	// RBL deprecations
 	if rbl := f.GetRBLs(); rbl != nil {
@@ -2854,6 +2862,28 @@ func warnDeprecatedTimeout(t *Timeouts) {
 	}
 }
 
+func warnDeprecatedAlias(oldPath string, newPath string, location string) {
+	if !viper.IsSet(oldPath) {
+		return
+	}
+
+	msg := fmt.Sprintf("'%s' is deprecated – please use '%s'", oldPath, newPath)
+	if viper.IsSet(newPath) {
+		msg += fmt.Sprintf(" (legacy value is ignored because %s is set)", newPath)
+	}
+
+	safeWarn(
+		"component", "config",
+		"location", location,
+		"deprecated", oldPath,
+		"msg", msg,
+	)
+}
+
+func warnDeprecatedPrefilterAlias(oldPath string, newPath string) {
+	warnDeprecatedAlias(oldPath, newPath, strings.TrimSuffix(oldPath, ".features"))
+}
+
 func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 	if idpCfg == nil {
 		return
@@ -3216,6 +3246,8 @@ func (f *FileSettings) HandleFile() (err error) {
 		return err
 	}
 
+	f.normalizePrefilterAliases()
+
 	if unknown := f.unknownConfigParameters(); len(unknown) > 0 {
 		return fmt.Errorf("unknown configuration parameter(s): %s", strings.Join(unknown, ", "))
 	}
@@ -3288,6 +3320,56 @@ func (f *FileSettings) HandleFile() (err error) {
 	f.Other = nil
 
 	return nil
+}
+
+func preferAliasSlice[T any](alias []T, legacy []T) []T {
+	if alias != nil {
+		return append([]T(nil), alias...)
+	}
+
+	if legacy == nil {
+		return nil
+	}
+
+	return append([]T(nil), legacy...)
+}
+
+func preferAliasValue[T any](alias T, legacy T) T {
+	if !reflect.ValueOf(alias).IsZero() {
+		return alias
+	}
+
+	return legacy
+}
+
+func (f *FileSettings) normalizePrefilterAliases() {
+	if f == nil {
+		return
+	}
+
+	if f.Server != nil {
+		f.Server.normalizePrefilterAliases()
+	}
+
+	if f.Lua != nil {
+		f.Lua.normalizePrefilterAliases()
+	}
+
+	if f.Server != nil {
+		f.Server.Redis.normalizePrimaryAlias()
+	}
+
+	if f.BruteForce != nil {
+		f.BruteForce.normalizeSoftAllowlistAlias()
+	}
+
+	if f.RelayDomains != nil {
+		f.RelayDomains.normalizeSoftAllowlistAlias()
+	}
+
+	if f.RBLs != nil {
+		f.RBLs.normalizeSoftAllowlistAlias()
+	}
 }
 
 // bindEnvs recursively binds struct fields to environment variables using Viper, constructing keys from struct tags or field names.

@@ -26,6 +26,7 @@ import (
 type LuaSection struct {
 	Actions             []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
 	Features            []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
+	Prefilters          []LuaFeature        `mapstructure:"prefilters" validate:"omitempty,dive"`
 	Filters             []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
 	Hooks               []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
 	Config              *LuaConf            `mapstructure:"config" validate:"omitempty"`
@@ -98,6 +99,15 @@ func (l *LuaSection) GetFeatures() []LuaFeature {
 	}
 
 	return l.Features
+}
+
+func (l *LuaSection) normalizePrefilterAliases() {
+	if l == nil {
+		return
+	}
+
+	l.Features = preferAliasSlice(l.Prefilters, l.Features)
+	l.Prefilters = nil
 }
 
 // GetFilters retrieves the list of LuaFilter from the LuaSection. Returns an empty slice if the LuaSection is nil.

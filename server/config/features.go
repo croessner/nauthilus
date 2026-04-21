@@ -18,6 +18,7 @@ package config
 import "fmt"
 
 type RelayDomainsSection struct {
+	SoftAllowlist SoftWhitelist `mapstructure:"soft_allowlist"`
 	SoftWhitelist `mapstructure:"soft_whitelist"`
 	StaticDomains []string `mapstructure:"static" validate:"required,dive,hostname_rfc1123_with_opt_trailing_dot"`
 }
@@ -48,6 +49,15 @@ func (r *RelayDomainsSection) GetSoftWhitelist() SoftWhitelist {
 	}
 
 	return r.SoftWhitelist
+}
+
+func (r *RelayDomainsSection) normalizeSoftAllowlistAlias() {
+	if r == nil {
+		return
+	}
+
+	r.SoftWhitelist = preferAliasValue(r.SoftAllowlist, r.SoftWhitelist)
+	r.SoftAllowlist = nil
 }
 
 type BackendServer struct {

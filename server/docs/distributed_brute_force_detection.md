@@ -363,8 +363,8 @@ To enable the distributed brute force detection and mitigation system, you need 
 
 ```yaml
 lua:
-  # Add the features for global pattern monitoring
-  features:
+  # Add the prefilters for global pattern monitoring
+  prefilters:
     - name: "global_pattern_monitoring"
       script_path: "/etc/nauthilus/lua-plugins.d/features/global_pattern_monitoring.lua"
 
@@ -425,7 +425,7 @@ server:
     negative_cache_ttl: 3600s
 
     # Redis server configuration
-    master:
+    primary:
       address: "127.0.0.1:6379"
       username: ""
       password: ""
