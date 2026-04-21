@@ -30,6 +30,7 @@ type BruteForceSection struct {
 	Learning                   []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
 	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
+	SoftAllowlist              SoftWhitelist    `mapstructure:"soft_allowlist"`
 	SoftWhitelist              `mapstructure:"soft_whitelist"`
 	TolerateTTL                time.Duration `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
 	RWPWindow                  time.Duration `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
@@ -172,6 +173,15 @@ func (b *BruteForceSection) GetSoftWhitelist() SoftWhitelist {
 	}
 
 	return b.SoftWhitelist
+}
+
+func (b *BruteForceSection) normalizeSoftAllowlistAlias() {
+	if b == nil {
+		return
+	}
+
+	b.SoftWhitelist = preferAliasValue(b.SoftAllowlist, b.SoftWhitelist)
+	b.SoftAllowlist = nil
 }
 
 // GetIPWhitelist retrieves the IP whitelist from the BruteForceSection.

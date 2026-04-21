@@ -14,6 +14,7 @@ func TestBindEnvs_SecretValuesFromEnv(t *testing.T) {
 
 	t.Setenv("NAUTHILUS_SERVER_REDIS_PASSWORD_NONCE", "nonce")
 	t.Setenv("NAUTHILUS_SERVER_REDIS_ENCRYPTION_SECRET", "redis-secret")
+	t.Setenv("NAUTHILUS_SERVER_REDIS_PRIMARY_ADDRESS", "redis.example.test:6379")
 	t.Setenv("NAUTHILUS_LDAP_CONFIG_ENCRYPTION_SECRET", "ldap-secret")
 	t.Setenv("NAUTHILUS_LDAP_CONFIG_BIND_DN", "cn=bind,dc=example,dc=test")
 	t.Setenv("NAUTHILUS_LDAP_CONFIG_BIND_PW", "bind-secret")
@@ -33,6 +34,10 @@ func TestBindEnvs_SecretValuesFromEnv(t *testing.T) {
 
 	if cfg.GetServer().GetRedis().GetEncryptionSecret().IsZero() {
 		t.Fatal("expected redis encryption secret from env")
+	}
+
+	if cfg.GetServer().GetRedis().Primary.Address != "redis.example.test:6379" {
+		t.Fatalf("expected redis primary address from env, got %q", cfg.GetServer().GetRedis().Primary.Address)
 	}
 
 	if cfg.GetLDAPConfigEncryptionSecret().IsZero() {

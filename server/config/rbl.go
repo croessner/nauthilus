@@ -18,6 +18,7 @@ package config
 import "fmt"
 
 type RBLSection struct {
+	SoftAllowlist SoftWhitelist `mapstructure:"soft_allowlist"`
 	SoftWhitelist `mapstructure:"soft_whitelist"`
 	Lists         []RBL    `mapstructure:"lists" validate:"required,dive"`
 	Threshold     int      `mapstructure:"threshold" validate:"omitempty,min=0,max=100"`
@@ -70,6 +71,15 @@ func (r *RBLSection) GetSoftWhitelist() SoftWhitelist {
 	}
 
 	return r.SoftWhitelist
+}
+
+func (r *RBLSection) normalizeSoftAllowlistAlias() {
+	if r == nil {
+		return
+	}
+
+	r.SoftWhitelist = preferAliasValue(r.SoftAllowlist, r.SoftWhitelist)
+	r.SoftAllowlist = nil
 }
 
 type RBL struct {

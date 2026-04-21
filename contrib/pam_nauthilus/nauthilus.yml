@@ -53,7 +53,7 @@ server:
   oidc_auth:
     enabled: true
   redis:
-    master:
+    primary:
       address: "valkey:6379"
     database_number: 0
     prefix: "nauthilus:"
