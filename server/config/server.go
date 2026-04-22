@@ -58,7 +58,8 @@ type ServerSection struct {
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
 	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`
 	Features                  []*Feature               `mapstructure:"features" validate:"omitempty,dive"`
-	Prefilters                []*Feature               `mapstructure:"prefilters" validate:"omitempty,dive"`
+	Prefilters                []*Prefilter             `mapstructure:"prefilters" validate:"omitempty,dive"`
+	Capabilities              []*Capability            `mapstructure:"capabilities" validate:"omitempty,dive"`
 	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols" validate:"omitempty,dive"`
 	DNS                       DNS                      `mapstructure:"dns" validate:"omitempty"`
 	Insights                  Insights                 `mapstructure:"insights" validate:"omitempty"`
@@ -545,13 +546,43 @@ func (s *ServerSection) GetFeatures() []*Feature {
 	return s.Features
 }
 
-func (s *ServerSection) normalizePrefilterAliases() {
+func (s *ServerSection) usesLegacyFeatureMode() bool {
+	return s != nil && s.Features != nil
+}
+
+func (s *ServerSection) usesModernFeatureMode() bool {
+	return s != nil && (s.Prefilters != nil || s.Capabilities != nil)
+}
+
+func (s *ServerSection) normalizeFeatureSets() {
 	if s == nil {
 		return
 	}
 
-	s.Features = preferAliasSlice(s.Prefilters, s.Features)
-	s.Prefilters = nil
+	if s.usesModernFeatureMode() {
+		features := make([]*Feature, 0, len(s.Prefilters)+len(s.Capabilities))
+
+		for _, prefilter := range s.Prefilters {
+			if prefilter == nil {
+				continue
+			}
+
+			features = append(features, &Feature{
+				name:       prefilter.Get(),
+				whenNoAuth: prefilter.GetWhenNoAuth(),
+			})
+		}
+
+		for _, capability := range s.Capabilities {
+			if capability == nil {
+				continue
+			}
+
+			features = append(features, &Feature{name: capability.Get()})
+		}
+
+		s.Features = features
+	}
 }
 
 // GetBruteForceProtocols retrieves the list of brute force protection protocols configured in the ServerSection.

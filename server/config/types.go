@@ -25,6 +25,44 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
+var (
+	legacyFeatureNames = map[string]struct{}{
+		definitions.FeatureTLSEncryption:            {},
+		definitions.FeatureRBL:                      {},
+		definitions.FeatureRelayDomains:             {},
+		definitions.FeatureLua:                      {},
+		definitions.FeatureBackendServersMonitoring: {},
+		definitions.FeatureBruteForce:               {},
+	}
+	prefilterNames = map[string]struct{}{
+		definitions.FeatureTLSEncryption: {},
+		definitions.FeatureRBL:           {},
+		definitions.FeatureRelayDomains:  {},
+		definitions.FeatureLua:           {},
+	}
+	capabilityNames = map[string]struct{}{
+		definitions.FeatureBackendServersMonitoring: {},
+		definitions.FeatureBruteForce:               {},
+	}
+)
+
+func setNamedConfigValue(target *string, value string, allowed map[string]struct{}, kind string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		*target = value
+
+		return nil
+	}
+
+	if _, ok := allowed[value]; !ok {
+		return fmt.Errorf("wrong %s: <%s>", kind, value)
+	}
+
+	*target = value
+
+	return nil
+}
+
 // Verbosity is a type that represents the verbosity details.
 type Verbosity struct {
 	// verboseLevel holds the level of detail for logging
@@ -336,15 +374,7 @@ func (f *Feature) Set(value string) error {
 		return nil
 	}
 
-	switch value {
-	case "":
-	case definitions.FeatureTLSEncryption, definitions.FeatureRBL, definitions.FeatureRelayDomains, definitions.FeatureLua, definitions.FeatureBackendServersMonitoring, definitions.FeatureBruteForce:
-		f.name = value
-	default:
-		return fmt.Errorf(errors.ErrWrongFeature.Error(), value)
-	}
-
-	return nil
+	return setNamedConfigValue(&f.name, value, legacyFeatureNames, "feature")
 }
 
 // Type returns the name of the type.
@@ -363,6 +393,105 @@ func (f *Feature) Get() string {
 	}
 
 	return f.name
+}
+
+// Prefilter is a container for strict server prefilters.
+type Prefilter struct {
+	name       string
+	whenNoAuth bool
+}
+
+func (p *Prefilter) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+
+	return p.name
+}
+
+// SetWhenNoAuth sets the whenNoAuth field of the Prefilter.
+func (p *Prefilter) SetWhenNoAuth(value bool) {
+	if p == nil {
+		return
+	}
+
+	p.whenNoAuth = value
+}
+
+// GetWhenNoAuth returns the value of the whenNoAuth field.
+func (p *Prefilter) GetWhenNoAuth() bool {
+	if p == nil {
+		return false
+	}
+
+	return p.whenNoAuth
+}
+
+// Set updates the prefilter name based on the provided value.
+func (p *Prefilter) Set(value string) error {
+	if p == nil {
+		return nil
+	}
+
+	return setNamedConfigValue(&p.name, value, prefilterNames, "prefilter")
+}
+
+// Type returns the name of the type.
+func (p *Prefilter) Type() string {
+	if p == nil {
+		return "<nil>"
+	}
+
+	return "Prefilter"
+}
+
+// Get gets the name of a prefilter returned as string.
+func (p *Prefilter) Get() string {
+	if p == nil {
+		return ""
+	}
+
+	return p.name
+}
+
+// Capability is a container for server capabilities.
+type Capability struct {
+	name string
+}
+
+func (c *Capability) String() string {
+	if c == nil {
+		return "<nil>"
+	}
+
+	return c.name
+}
+
+// Set updates the capability name based on the provided value.
+func (c *Capability) Set(value string) error {
+	if c == nil {
+		return nil
+	}
+
+	return setNamedConfigValue(&c.name, value, capabilityNames, "capability")
+}
+
+// Type returns the name of the type.
+func (c *Capability) Type() string {
+	if c == nil {
+		return "<nil>"
+	}
+
+	return "Capability"
+}
+
+// Get gets the name of a capability returned as string.
+func (c *Capability) Get() string {
+	if c == nil {
+		return ""
+	}
+
+	return c.name
 }
 
 // DbgModule represents a debugging module configuration.

@@ -45,6 +45,7 @@ syntax match nauthilusKeyL2 /^  \zsbackends\ze:/
 syntax match nauthilusKeyL2 /^  \zsbasic_auth\ze:/
 syntax match nauthilusKeyL2 /^  \zsbrute_force_protocols\ze:/
 syntax match nauthilusKeyL2 /^  \zsbuckets\ze:/
+syntax match nauthilusKeyL2 /^  \zscapabilities\ze:/
 syntax match nauthilusKeyL2 /^  \zsclients\ze:/
 syntax match nauthilusKeyL2 /^  \zscompression\ze:/
 syntax match nauthilusKeyL2 /^  \zsconfig\ze:/
@@ -92,6 +93,7 @@ syntax match nauthilusKeyL2 /^  \zspackage_path\ze:/
 syntax match nauthilusKeyL2 /^  \zspassword_forgotten_url\ze:/
 syntax match nauthilusKeyL2 /^  \zspop3_backend_address\ze:/
 syntax match nauthilusKeyL2 /^  \zspop3_backend_port\ze:/
+syntax match nauthilusKeyL2 /^  \zsprefilters\ze:/
 syntax match nauthilusKeyL2 /^  \zsprivacy_policy_url\ze:/
 syntax match nauthilusKeyL2 /^  \zsprometheus_timer\ze:/
 syntax match nauthilusKeyL2 /^  \zspw_history_for_known_accounts\ze:/

@@ -1764,6 +1764,18 @@ func (f *FileSettings) validateBruteForce() error {
 	return nil
 }
 
+func (f *FileSettings) validateServerFeatureMode() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	if f.Server.usesLegacyFeatureMode() && f.Server.usesModernFeatureMode() {
+		return fmt.Errorf("server.features cannot be combined with server.prefilters or server.capabilities")
+	}
+
+	return nil
+}
+
 // LDAPHavePoolOnly checks if the LDAP configuration is set to use the `PoolOnly` mode. Returns false if any element is nil.
 func (f *FileSettings) LDAPHavePoolOnly(backendName string) bool {
 	if f == nil || f.LDAP == nil {
@@ -2469,7 +2481,7 @@ func (f *FileSettings) warnDeprecatedConfig() {
 		warnDeprecatedTimeout(&srv.Timeouts)
 	}
 
-	warnDeprecatedPrefilterAlias("server.features", "server.prefilters")
+	warnDeprecatedServerFeatureMode()
 	warnDeprecatedPrefilterAlias("lua.features", "lua.prefilters")
 	warnDeprecatedAlias("brute_force.soft_whitelist", "brute_force.soft_allowlist", "brute_force")
 	warnDeprecatedAlias("relay_domains.soft_whitelist", "relay_domains.soft_allowlist", "relay_domains")
@@ -2884,6 +2896,24 @@ func warnDeprecatedPrefilterAlias(oldPath string, newPath string) {
 	warnDeprecatedAlias(oldPath, newPath, strings.TrimSuffix(oldPath, ".features"))
 }
 
+func warnDeprecatedServerFeatureMode() {
+	if !viper.IsSet("server.features") {
+		return
+	}
+
+	msg := "'server.features' is deprecated – please use 'server.prefilters' and, if needed, 'server.capabilities'"
+	if viper.IsSet("server.prefilters") || viper.IsSet("server.capabilities") {
+		msg += " (legacy value is ignored because the new server feature mode is set)"
+	}
+
+	safeWarn(
+		"component", "config",
+		"location", "server",
+		"deprecated", "server.features",
+		"msg", msg,
+	)
+}
+
 func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 	if idpCfg == nil {
 		return
@@ -3021,67 +3051,70 @@ func processDebugModules(input any) (any, error) {
 	return processStringSettableSlice(input, func() *DbgModule { return &DbgModule{} })
 }
 
-// processFeatures converts input values into a slice of Feature pointers or returns an error for invalid input types or values.
-func processFeatures(input any) (any, error) {
-	var features []*Feature
+type whenNoAuthSettable interface {
+	stringSettable
+	SetWhenNoAuth(bool)
+}
 
-	addFeature := func(data any) error {
-		feature := &Feature{}
+func configureWhenNoAuthItem[T whenNoAuthSettable](item T, data any) error {
+	switch v := data.(type) {
+	case string:
+		return item.Set(v)
+	case map[string]any:
+		return configureWhenNoAuthItemFromMap(item, v["name"], v["when_no_auth"])
+	case map[any]any:
+		return configureWhenNoAuthItemFromMap(item, v["name"], v["when_no_auth"])
+	default:
+		return fmt.Errorf("invalid feature type %T", data)
+	}
+}
 
-		switch v := data.(type) {
-		case string:
-			if err := feature.Set(v); err != nil {
-				return err
-			}
-		case map[string]any:
-			name, ok := v["name"].(string)
-			if !ok {
-				return fmt.Errorf("feature name missing or not a string")
-			}
+func configureWhenNoAuthItemFromMap[T whenNoAuthSettable](item T, nameValue any, whenNoAuthValue any) error {
+	name, ok := nameValue.(string)
+	if !ok {
+		return fmt.Errorf("feature name missing or not a string")
+	}
 
-			if err := feature.Set(name); err != nil {
-				return err
-			}
+	if err := item.Set(name); err != nil {
+		return err
+	}
 
-			if whenNoAuth, ok := v["when_no_auth"].(bool); ok {
-				feature.SetWhenNoAuth(whenNoAuth)
-			}
-		case map[any]any:
-			name, ok := v["name"].(string)
-			if !ok {
-				return fmt.Errorf("feature name missing or not a string")
-			}
+	if whenNoAuth, ok := whenNoAuthValue.(bool); ok {
+		item.SetWhenNoAuth(whenNoAuth)
+	}
 
-			if err := feature.Set(name); err != nil {
-				return err
-			}
+	return nil
+}
 
-			if whenNoAuth, ok := v["when_no_auth"].(bool); ok {
-				feature.SetWhenNoAuth(whenNoAuth)
-			}
-		default:
-			return fmt.Errorf("invalid feature type %T", data)
+func processWhenNoAuthStringSettableSlice[T whenNoAuthSettable](input any, newFn func() T) (any, error) {
+	var items []T
+
+	addItem := func(data any) error {
+		item := newFn()
+
+		if err := configureWhenNoAuthItem(item, data); err != nil {
+			return err
 		}
 
-		features = append(features, feature)
+		items = append(items, item)
 
 		return nil
 	}
 
 	switch data := input.(type) {
 	case string:
-		if err := addFeature(data); err != nil {
+		if err := addItem(data); err != nil {
 			return nil, err
 		}
 	case []string:
-		for _, feature := range data {
-			if err := addFeature(feature); err != nil {
+		for _, item := range data {
+			if err := addItem(item); err != nil {
 				return nil, err
 			}
 		}
 	case []any:
-		for _, feature := range data {
-			if err := addFeature(feature); err != nil {
+		for _, item := range data {
+			if err := addItem(item); err != nil {
 				return nil, err
 			}
 		}
@@ -3089,7 +3122,22 @@ func processFeatures(input any) (any, error) {
 		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
 	}
 
-	return features, nil
+	return items, nil
+}
+
+// processFeatures converts input values into a slice of Feature pointers or returns an error for invalid input types or values.
+func processFeatures(input any) (any, error) {
+	return processWhenNoAuthStringSettableSlice(input, func() *Feature { return &Feature{} })
+}
+
+// processPrefilters converts input values into a slice of Prefilter pointers or returns an error for invalid input types or values.
+func processPrefilters(input any) (any, error) {
+	return processWhenNoAuthStringSettableSlice(input, func() *Prefilter { return &Prefilter{} })
+}
+
+// processCapabilities converts input values into a slice of Capability pointers or returns an error for invalid input types or values.
+func processCapabilities(input any) (any, error) {
+	return processStringSettableSlice(input, func() *Capability { return &Capability{} })
 }
 
 // processProtocols processes the input to generate a slice of Protocol pointers or returns an error for invalid inputs.
@@ -3139,6 +3187,8 @@ func createDecoderOption() viper.DecoderConfigOption {
 	verbosityType := reflect.TypeFor[Verbosity]()
 	debugModulesType := reflect.TypeFor[[]*DbgModule]()
 	featuresType := reflect.TypeFor[[]*Feature]()
+	prefiltersType := reflect.TypeFor[[]*Prefilter]()
+	capabilitiesType := reflect.TypeFor[[]*Capability]()
 	protocolsType := reflect.TypeFor[[]*Protocol]()
 	backendsType := reflect.TypeFor[[]*Backend]()
 	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
@@ -3157,6 +3207,10 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processDebugModules(data)
 				case to == featuresType:
 					return processFeatures(data)
+				case to == prefiltersType:
+					return processPrefilters(data)
+				case to == capabilitiesType:
+					return processCapabilities(data)
 				case to == protocolsType:
 					return processProtocols(data)
 				case to == backendsType:
@@ -3246,7 +3300,11 @@ func (f *FileSettings) HandleFile() (err error) {
 		return err
 	}
 
-	f.normalizePrefilterAliases()
+	if err = f.validateServerFeatureMode(); err != nil {
+		return err
+	}
+
+	f.normalizeConfigAliases()
 
 	if unknown := f.unknownConfigParameters(); len(unknown) > 0 {
 		return fmt.Errorf("unknown configuration parameter(s): %s", strings.Join(unknown, ", "))
@@ -3342,13 +3400,13 @@ func preferAliasValue[T any](alias T, legacy T) T {
 	return legacy
 }
 
-func (f *FileSettings) normalizePrefilterAliases() {
+func (f *FileSettings) normalizeConfigAliases() {
 	if f == nil {
 		return
 	}
 
 	if f.Server != nil {
-		f.Server.normalizePrefilterAliases()
+		f.Server.normalizeFeatureSets()
 	}
 
 	if f.Lua != nil {

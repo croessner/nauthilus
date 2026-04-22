@@ -19,7 +19,7 @@ func TestHandleFile_ServerPrefiltersAlias(t *testing.T) {
 	t.Cleanup(viper.Reset)
 
 	viper.Set("server", map[string]any{
-		"prefilters": []any{"brute_force"},
+		"prefilters": []any{"rbl"},
 		"redis": map[string]any{
 			"master": map[string]any{
 				"address": "localhost:6379",
@@ -34,8 +34,42 @@ func TestHandleFile_ServerPrefiltersAlias(t *testing.T) {
 		t.Fatalf("handle file failed: %v", err)
 	}
 
+	if !cfg.HasFeature(definitions.FeatureRBL) {
+		t.Fatal("expected server.prefilters to enable rbl")
+	}
+}
+
+func TestHandleFile_ServerCapabilitiesEnableLegacyFeatureChecks(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("server", map[string]any{
+		"prefilters":   []any{"rbl"},
+		"capabilities": []any{"brute_force", "backend_server_monitoring"},
+		"redis": map[string]any{
+			"master": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+
+	cfg := &FileSettings{}
+	if err := cfg.HandleFile(); err != nil {
+		t.Fatalf("handle file failed: %v", err)
+	}
+
+	if !cfg.HasFeature(definitions.FeatureRBL) {
+		t.Fatal("expected server.prefilters to enable rbl")
+	}
+
 	if !cfg.HasFeature(definitions.FeatureBruteForce) {
-		t.Fatal("expected server.prefilters to enable brute_force")
+		t.Fatal("expected server.capabilities to enable brute_force")
+	}
+
+	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
+		t.Fatal("expected server.capabilities to enable backend_server_monitoring")
 	}
 }
 
@@ -85,12 +119,11 @@ func TestHandleFile_LuaPrefiltersAlias(t *testing.T) {
 	}
 }
 
-func TestHandleFile_PrefiltersOverrideLegacyFeatures(t *testing.T) {
+func TestHandleFile_ServerPrefiltersRejectCapabilities(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
 	viper.Set("server", map[string]any{
-		"features":   []any{"rbl"},
 		"prefilters": []any{"brute_force"},
 		"redis": map[string]any{
 			"master": map[string]any{
@@ -100,31 +133,53 @@ func TestHandleFile_PrefiltersOverrideLegacyFeatures(t *testing.T) {
 			"encryption_secret": testRedisEncryptionSecret,
 		},
 	})
-	viper.Set("lua", map[string]any{
-		"features": []any{
-			map[string]any{
-				"name":        "test_context_chain",
-				"script_path": testLuaPrefilterScriptPath(t),
+	cfg := &FileSettings{}
+	if err := cfg.HandleFile(); err == nil {
+		t.Fatal("expected handle file to reject brute_force in server.prefilters")
+	}
+}
+
+func TestHandleFile_ServerFeaturesCannotBeMixedWithPrefilters(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("server", map[string]any{
+		"features":   []any{"brute_force"},
+		"prefilters": []any{"rbl"},
+		"redis": map[string]any{
+			"master": map[string]any{
+				"address": "localhost:6379",
 			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
 		},
-		"prefilters": []any{},
 	})
 
 	cfg := &FileSettings{}
-	if err := cfg.HandleFile(); err != nil {
-		t.Fatalf("handle file failed: %v", err)
+	if err := cfg.HandleFile(); err == nil {
+		t.Fatal("expected handle file to reject mixed server.features and server.prefilters")
 	}
+}
 
-	if !cfg.HasFeature(definitions.FeatureBruteForce) {
-		t.Fatal("expected server.prefilters to win over server.features")
-	}
+func TestHandleFile_ServerFeaturesCannotBeMixedWithCapabilities(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
 
-	if cfg.HasFeature(definitions.FeatureRBL) {
-		t.Fatal("expected legacy server.features to be ignored when server.prefilters is set")
-	}
+	viper.Set("server", map[string]any{
+		"features":     []any{"rbl"},
+		"capabilities": []any{"brute_force"},
+		"redis": map[string]any{
+			"master": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
 
-	if cfg.HaveLuaFeatures() {
-		t.Fatal("expected empty lua.prefilters to win over legacy lua.features")
+	cfg := &FileSettings{}
+	if err := cfg.HandleFile(); err == nil {
+		t.Fatal("expected handle file to reject mixed server.features and server.capabilities")
 	}
 }
 
