@@ -25,13 +25,12 @@ import (
 )
 
 type BruteForceSection struct {
-	IPWhitelist                []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
+	IPWhitelist                []string         `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
 	Buckets                    []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
 	Learning                   []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
 	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
-	SoftAllowlist              SoftWhitelist    `mapstructure:"soft_allowlist"`
-	SoftWhitelist              `mapstructure:"soft_whitelist"`
+	SoftWhitelist              SoftWhitelist    `mapstructure:"allowlist"`
 	TolerateTTL                time.Duration `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
 	RWPWindow                  time.Duration `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
 	ScaleFactor                float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
@@ -173,15 +172,6 @@ func (b *BruteForceSection) GetSoftWhitelist() SoftWhitelist {
 	}
 
 	return b.SoftWhitelist
-}
-
-func (b *BruteForceSection) normalizeSoftAllowlistAlias() {
-	if b == nil {
-		return
-	}
-
-	b.SoftWhitelist = preferAliasValue(b.SoftAllowlist, b.SoftWhitelist)
-	b.SoftAllowlist = nil
 }
 
 // GetIPWhitelist retrieves the IP whitelist from the BruteForceSection.
@@ -372,8 +362,8 @@ type BruteForceRule struct {
 	BanTime          time.Duration `mapstructure:"ban_time" validate:"omitempty,gt=0,max=8760h"`
 	CIDR             uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
 	FailedRequests   uint          `mapstructure:"failed_requests" validate:"required,min=1"`
-	IPv4             bool
-	IPv6             bool
+	IPv4             bool          `mapstructure:"ipv4"`
+	IPv6             bool          `mapstructure:"ipv6"`
 }
 
 func (b *BruteForceRule) String() string {

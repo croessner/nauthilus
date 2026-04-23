@@ -30,7 +30,7 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// ServerSection represents the configuration for a server, including network settings, TLS, logging, backends, features,
+// ServerSection represents the configuration for a server, including network settings, TLS, logging, backends, controls,
 // protocol handling, and integrations with other systems such as Redis and Prometheus.
 type ServerSection struct {
 	Address                   string                   `mapstructure:"address" validate:"omitempty,tcp_addr"`
@@ -57,9 +57,9 @@ type ServerSection struct {
 	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
 	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`
-	Features                  []*Feature               `mapstructure:"features" validate:"omitempty,dive"`
-	Prefilters                []*Prefilter             `mapstructure:"prefilters" validate:"omitempty,dive"`
-	Capabilities              []*Capability            `mapstructure:"capabilities" validate:"omitempty,dive"`
+	Features                  []*Feature               `mapstructure:"-" validate:"omitempty,dive"`
+	Controls                  []*Control               `mapstructure:"controls" validate:"omitempty,dive"`
+	Services                  []*Service               `mapstructure:"services" validate:"omitempty,dive"`
 	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols" validate:"omitempty,dive"`
 	DNS                       DNS                      `mapstructure:"dns" validate:"omitempty"`
 	Insights                  Insights                 `mapstructure:"insights" validate:"omitempty"`
@@ -69,7 +69,7 @@ type ServerSection struct {
 	CORS                      CORS                     `mapstructure:"cors" validate:"omitempty"`
 	Dedup                     Dedup                    `mapstructure:"dedup" validate:"omitempty"`
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
-	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header" validate:"omitempty"`
+	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"request_headers" validate:"omitempty"`
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
 	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
 	KeepAlive                 KeepAlive                `mapstructure:"keep_alive" validate:"omitempty"`
@@ -546,39 +546,35 @@ func (s *ServerSection) GetFeatures() []*Feature {
 	return s.Features
 }
 
-func (s *ServerSection) usesLegacyFeatureMode() bool {
-	return s != nil && s.Features != nil
+func (s *ServerSection) hasConfiguredFeatures() bool {
+	return s != nil && (s.Controls != nil || s.Services != nil)
 }
 
-func (s *ServerSection) usesModernFeatureMode() bool {
-	return s != nil && (s.Prefilters != nil || s.Capabilities != nil)
-}
-
-func (s *ServerSection) normalizeFeatureSets() {
+func (s *ServerSection) normalizeConfiguredFeatures() {
 	if s == nil {
 		return
 	}
 
-	if s.usesModernFeatureMode() {
-		features := make([]*Feature, 0, len(s.Prefilters)+len(s.Capabilities))
+	if s.hasConfiguredFeatures() {
+		features := make([]*Feature, 0, len(s.Controls)+len(s.Services))
 
-		for _, prefilter := range s.Prefilters {
-			if prefilter == nil {
+		for _, control := range s.Controls {
+			if control == nil {
 				continue
 			}
 
 			features = append(features, &Feature{
-				name:       prefilter.Get(),
-				whenNoAuth: prefilter.GetWhenNoAuth(),
+				name:       control.Get(),
+				whenNoAuth: control.GetWhenNoAuth(),
 			})
 		}
 
-		for _, capability := range s.Capabilities {
-			if capability == nil {
+		for _, service := range s.Services {
+			if service == nil {
 				continue
 			}
 
-			features = append(features, &Feature{name: capability.Get()})
+			features = append(features, &Feature{name: service.Get()})
 		}
 
 		s.Features = features
@@ -786,14 +782,13 @@ func (e *Endpoint) IsConfigurationDisabled() bool {
 
 // TLS represents the configuration for enabling TLS and managing certificates.
 type TLS struct {
-	Enabled              bool     `mapstructure:"enabled"`
-	SkipVerify           bool     `mapstructure:"skip_verify"`
-	HTTPClientSkipVerify bool     `mapstructure:"http_client_skip_verify"`
-	MinTLSVersion        string   `mapstructure:"min_tls_version" validate:"omitempty,oneof=TLS1.2 TLS1.3"`
-	Cert                 string   `mapstructure:"cert" validate:"omitempty,file"`
-	Key                  string   `mapstructure:"key" validate:"omitempty,file"`
-	CAFile               string   `mapstructure:"ca_file" validate:"omitempty,file"`
-	CipherSuites         []string `mapstructure:"cipher_suites" validate:"omitempty,dive,alphanumsymbol"`
+	Enabled       bool     `mapstructure:"enabled"`
+	SkipVerify    bool     `mapstructure:"skip_verify"`
+	MinTLSVersion string   `mapstructure:"min_tls_version" validate:"omitempty,oneof=TLS1.2 TLS1.3"`
+	Cert          string   `mapstructure:"cert" validate:"omitempty,file"`
+	Key           string   `mapstructure:"key" validate:"omitempty,file"`
+	CAFile        string   `mapstructure:"ca_file" validate:"omitempty,file"`
+	CipherSuites  []string `mapstructure:"cipher_suites" validate:"omitempty,dive,alphanumsymbol"`
 }
 
 // IsEnabled returns true if TLS is enabled, otherwise false.
@@ -835,17 +830,6 @@ func (t *TLS) GetCAFile() string {
 	return t.CAFile
 }
 
-// GetHTTPClientSkipVerify returns the value of the HTTPClientSkipVerify field, indicating whether TLS verification is skipped.
-// Returns false if the TLS is nil.
-// Deprecated: Use GetSkipVerify() instead
-func (t *TLS) GetHTTPClientSkipVerify() bool {
-	if t == nil {
-		return false
-	}
-
-	return t.HTTPClientSkipVerify
-}
-
 // GetSkipVerify returns the value of the SkipVerify field, indicating whether TLS certificate verification is skipped.
 // Returns false if the TLS receiver is nil.
 func (t *TLS) GetSkipVerify() bool {
@@ -884,7 +868,17 @@ type HTTPClient struct {
 	MaxIdleConnsPerHost int           `mapstructure:"max_idle_connections_per_host" validate:"omitempty,gte=0"`
 	IdleConnTimeout     time.Duration `mapstructure:"idle_connection_timeout" validate:"omitempty,gte=0"`
 	Proxy               string        `mapstructure:"proxy"`
-	TLS                 TLS           `mapstructure:"tls"`
+	TLS                 HTTPClientTLS `mapstructure:"tls" validate:"omitempty"`
+}
+
+// HTTPClientTLS configures TLS behavior for outbound HTTP clients.
+type HTTPClientTLS struct {
+	SkipVerify    bool     `mapstructure:"skip_verify"`
+	MinTLSVersion string   `mapstructure:"min_tls_version" validate:"omitempty,oneof=TLS1.2 TLS1.3"`
+	Cert          string   `mapstructure:"cert" validate:"omitempty,file"`
+	Key           string   `mapstructure:"key" validate:"omitempty,file"`
+	CAFile        string   `mapstructure:"ca_file" validate:"omitempty,file"`
+	CipherSuites  []string `mapstructure:"cipher_suites" validate:"omitempty,dive,alphanumsymbol"`
 }
 
 // GetMaxConnsPerHost returns the maximum number of connections allowed per host for the HTTP client.
@@ -937,13 +931,67 @@ func (c *HTTPClient) GetProxy() string {
 	return c.Proxy
 }
 
-// GetTLS returns the TLS configuration associated with the HTTP client. Returns an empty TLS struct if the receiver is nil.
-func (c *HTTPClient) GetTLS() *TLS {
+// GetTLS returns the TLS configuration associated with the HTTP client. Returns an empty HTTPClientTLS struct if the receiver is nil.
+func (c *HTTPClient) GetTLS() *HTTPClientTLS {
 	if c == nil {
-		return &TLS{}
+		return &HTTPClientTLS{}
 	}
 
 	return &c.TLS
+}
+
+// GetCert returns the client certificate path for outbound HTTP TLS.
+func (t *HTTPClientTLS) GetCert() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.Cert
+}
+
+// GetKey returns the client private key path for outbound HTTP TLS.
+func (t *HTTPClientTLS) GetKey() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.Key
+}
+
+// GetCAFile returns the CA bundle path for outbound HTTP TLS.
+func (t *HTTPClientTLS) GetCAFile() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.CAFile
+}
+
+// GetSkipVerify returns whether the outbound HTTP client should skip TLS verification.
+func (t *HTTPClientTLS) GetSkipVerify() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.SkipVerify
+}
+
+// GetCipherSuites returns the configured cipher suite names for outbound HTTP TLS.
+func (t *HTTPClientTLS) GetCipherSuites() []string {
+	if t == nil {
+		return []string{}
+	}
+
+	return t.CipherSuites
+}
+
+// GetMinTLSVersion returns the configured minimum TLS version for outbound HTTP TLS.
+func (t *HTTPClientTLS) GetMinTLSVersion() string {
+	if t == nil || t.MinTLSVersion == "" {
+		return "TLS1.2"
+	}
+
+	return t.MinTLSVersion
 }
 
 // BasicAuth represents the configuration for basic HTTP authentication.
@@ -986,7 +1034,7 @@ func (b *BasicAuth) GetPassword() secret.Value {
 // OIDCAuth represents the configuration for OIDC Bearer token authentication
 // on the backchannel API. When enabled, the OIDC Bearer middleware validates
 // tokens issued by the built-in IdP (client_credentials flow) for /api/v1/* routes.
-// This is independent of idp.oidc.enabled, which controls whether the IdP itself is active.
+// This is independent of identity.oidc.enabled, which controls whether the IdP itself is active.
 type OIDCAuth struct {
 	Enabled bool `mapstructure:"enabled"`
 }
@@ -1275,7 +1323,7 @@ type Redis struct {
 	PosCacheTTL      time.Duration `mapstructure:"positive_cache_ttl" validate:"omitempty,max=8760h"`
 	NegCacheTTL      time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=8760h"`
 	Primary          Master        `mapstructure:"primary" validate:"omitempty"`
-	Master           Master        `mapstructure:"master" validate:"omitempty"`
+	Master           Master        `mapstructure:"-" validate:"omitempty"`
 	Replica          Replica       `mapstructure:"replica" validate:"omitempty"`
 	Sentinels        Sentinels     `mapstructure:"sentinels" validate:"omitempty"`
 	Cluster          Cluster       `mapstructure:"cluster" validate:"omitempty"`
@@ -1319,15 +1367,6 @@ type Redis struct {
 	// unless features requiring RESP3 (like client-side tracking or maintenance notifications)
 	// are enabled. Forcing 2 can resolve parsing issues with asynchronous push messages in pipelines.
 	Protocol int `mapstructure:"protocol" validate:"omitempty,oneof=0 2 3"`
-}
-
-func (r *Redis) normalizePrimaryAlias() {
-	if r == nil {
-		return
-	}
-
-	r.Master = preferAliasValue(r.Primary, r.Master)
-	r.Primary = Master{}
 }
 
 // RedisBatching controls optional client-side command batching.

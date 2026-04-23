@@ -18,11 +18,10 @@ package config
 import "fmt"
 
 type RBLSection struct {
-	SoftAllowlist SoftWhitelist `mapstructure:"soft_allowlist"`
-	SoftWhitelist `mapstructure:"soft_whitelist"`
-	Lists         []RBL    `mapstructure:"lists" validate:"required,dive"`
-	Threshold     int      `mapstructure:"threshold" validate:"omitempty,min=0,max=100"`
-	IPWhiteList   []string `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
+	SoftWhitelist SoftWhitelist `mapstructure:"allowlist"`
+	Lists         []RBL         `mapstructure:"lists" validate:"required,dive"`
+	Threshold     int           `mapstructure:"threshold" validate:"omitempty,min=0,max=100"`
+	IPWhiteList   []string      `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
 }
 
 func (r *RBLSection) String() string {
@@ -73,20 +72,11 @@ func (r *RBLSection) GetSoftWhitelist() SoftWhitelist {
 	return r.SoftWhitelist
 }
 
-func (r *RBLSection) normalizeSoftAllowlistAlias() {
-	if r == nil {
-		return
-	}
-
-	r.SoftWhitelist = preferAliasValue(r.SoftAllowlist, r.SoftWhitelist)
-	r.SoftAllowlist = nil
-}
-
 type RBL struct {
 	Name         string `mapstructure:"name" validate:"required"`
 	RBL          string `mapstructure:"rbl" validate:"required,hostname_rfc1123_with_opt_trailing_dot"`
-	IPv4         bool
-	IPv6         bool
+	IPv4         bool   `mapstructure:"ipv4"`
+	IPv6         bool   `mapstructure:"ipv6"`
 	AllowFailure bool     `mapstructure:"allow_failure"`
 	ReturnCode   string   `mapstructure:"return_code" validate:"omitempty,ip4_addr"`
 	ReturnCodes  []string `mapstructure:"return_codes" validate:"required,dive,ip4_addr"`

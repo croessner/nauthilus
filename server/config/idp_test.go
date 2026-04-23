@@ -41,7 +41,7 @@ func TestGetIdP(t *testing.T) {
 	})
 
 	t.Run("NilIdPSection", func(t *testing.T) {
-		f := &FileSettings{IdP: nil}
+		f := &FileSettings{IDP: nil}
 		idp := f.GetIdP()
 		assert.NotNil(t, idp)
 		assert.False(t, idp.OIDC.Enabled)
@@ -49,7 +49,7 @@ func TestGetIdP(t *testing.T) {
 
 	t.Run("ValidIdPSection", func(t *testing.T) {
 		f := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				OIDC: OIDCConfig{
 					Enabled: true,
 					Issuer:  "https://test.example.com",
@@ -174,25 +174,6 @@ func TestSAML2Config_SLOSettings(t *testing.T) {
 		assert.Equal(t, 3, cfg.GetSLOBackChannelMaxRetries())
 	})
 
-	t.Run("legacy fallback values", func(t *testing.T) {
-		sloEnabled := false
-		frontChannelEnabled := false
-		backChannelEnabled := true
-		cfg := &SAML2Config{
-			SLOEnabled:               &sloEnabled,
-			SLOFrontChannelEnabled:   &frontChannelEnabled,
-			SLOBackChannelEnabled:    &backChannelEnabled,
-			SLOBackChannelTimeout:    9 * time.Second,
-			SLOBackChannelMaxRetries: 4,
-		}
-
-		assert.False(t, cfg.GetSLOEnabled())
-		assert.False(t, cfg.GetSLOFrontChannelEnabled())
-		assert.True(t, cfg.GetSLOBackChannelEnabled())
-		assert.Equal(t, 9*time.Second, cfg.GetSLORequestTimeout())
-		assert.Equal(t, 4, cfg.GetSLOBackChannelMaxRetries())
-	})
-
 	t.Run("negative retries clamp to zero", func(t *testing.T) {
 		cfg := &SAML2Config{
 			SLO: SAML2SLOConfig{
@@ -207,7 +188,7 @@ func TestSAML2Config_SLOSettings(t *testing.T) {
 func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
 	t.Run("accepts defaults and zero values", func(t *testing.T) {
 		fileCfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 				},
@@ -219,7 +200,7 @@ func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
 
 	t.Run("rejects negative nested timeout", func(t *testing.T) {
 		fileCfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					SLO: SAML2SLOConfig{
@@ -231,12 +212,12 @@ func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
 
 		err := fileCfg.validateIdPSAML2SLOSettings()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "idp.saml2.slo.request_timeout")
+		assert.Contains(t, err.Error(), "identity.saml.slo.request_timeout")
 	})
 
 	t.Run("rejects negative max participants", func(t *testing.T) {
 		fileCfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					SLO: SAML2SLOConfig{
@@ -248,23 +229,9 @@ func TestFileSettings_validateIdPSAML2SLOSettings(t *testing.T) {
 
 		err := fileCfg.validateIdPSAML2SLOSettings()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "idp.saml2.slo.max_participants")
+		assert.Contains(t, err.Error(), "identity.saml.slo.max_participants")
 	})
 
-	t.Run("rejects negative legacy timeout", func(t *testing.T) {
-		fileCfg := &FileSettings{
-			IdP: &IdPSection{
-				SAML2: SAML2Config{
-					Enabled:               true,
-					SLOBackChannelTimeout: -1 * time.Second,
-				},
-			},
-		}
-
-		err := fileCfg.validateIdPSAML2SLOSettings()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "idp.saml2.slo_back_channel_timeout")
-	})
 }
 
 func TestIdPConfig_Validation(t *testing.T) {
@@ -567,7 +534,7 @@ func TestOIDCClient_OptionalScopesValidation(t *testing.T) {
 func TestValidateIdPMFASettings(t *testing.T) {
 	t.Run("oidc require_mfa subset of supported_mfa", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				OIDC: OIDCConfig{
 					Clients: []OIDCClient{
 						{
@@ -585,7 +552,7 @@ func TestValidateIdPMFASettings(t *testing.T) {
 
 	t.Run("oidc require_mfa outside supported_mfa returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				OIDC: OIDCConfig{
 					Clients: []OIDCClient{
 						{
@@ -603,7 +570,7 @@ func TestValidateIdPMFASettings(t *testing.T) {
 
 	t.Run("saml require_mfa outside supported_mfa returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					ServiceProviders: []SAML2ServiceProvider{
 						{
@@ -624,7 +591,7 @@ func TestValidateIdPMFASettings(t *testing.T) {
 func TestValidateIdPOIDCCustomScopes(t *testing.T) {
 	t.Run("valid client and global custom scopes", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				OIDC: OIDCConfig{
 					CustomScopes: []Oauth2CustomScope{
 						{Name: "resource", Description: "global", Claims: []OIDCCustomClaim{{Name: "resource.role", Type: definitions.ClaimTypeString}}},
@@ -647,7 +614,7 @@ func TestValidateIdPOIDCCustomScopes(t *testing.T) {
 
 	t.Run("duplicate global custom scope name returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				OIDC: OIDCConfig{
 					CustomScopes: []Oauth2CustomScope{
 						{Name: "resource", Description: "a", Claims: []OIDCCustomClaim{{Name: "a", Type: definitions.ClaimTypeString}}},
@@ -657,12 +624,12 @@ func TestValidateIdPOIDCCustomScopes(t *testing.T) {
 			},
 		}
 
-		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "idp.oidc.custom_scopes")
+		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "identity.oidc.custom_scopes")
 	})
 
 	t.Run("duplicate client custom scope name returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				OIDC: OIDCConfig{
 					Clients: []OIDCClient{
 						{
@@ -677,7 +644,7 @@ func TestValidateIdPOIDCCustomScopes(t *testing.T) {
 			},
 		}
 
-		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "idp.oidc.clients[0].custom_scopes")
+		assert.ErrorContains(t, cfg.validateIdPOIDCCustomScopes(), "identity.oidc.clients[0].custom_scopes")
 	})
 }
 
@@ -689,7 +656,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 
 	t.Run("disabled saml", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{Enabled: false},
 			},
 		}
@@ -698,7 +665,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 
 	t.Run("authn request signing disabled does not require cert", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -715,7 +682,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 
 	t.Run("missing cert with authn request signing enabled returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -736,7 +703,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 
 	t.Run("invalid cert with authn request signing enabled returns error", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -758,7 +725,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 
 	t.Run("valid inline cert with authn request signing enabled", func(t *testing.T) {
 		cfg := &FileSettings{
-			IdP: &IdPSection{
+			IDP: &IdPSection{
 				SAML2: SAML2Config{
 					Enabled: true,
 					ServiceProviders: []SAML2ServiceProvider{
@@ -805,7 +772,7 @@ func TestValidateIdPSAMLSigningSettings(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				cfg := &FileSettings{
-					IdP: &IdPSection{
+					IDP: &IdPSection{
 						SAML2: SAML2Config{
 							Enabled: true,
 							ServiceProviders: []SAML2ServiceProvider{

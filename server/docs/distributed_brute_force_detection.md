@@ -362,31 +362,35 @@ This section provides instructions for integrating the distributed brute force d
 To enable the distributed brute force detection and mitigation system, you need to add the following configuration to your `nauthilus.yml` file:
 
 ```yaml
-lua:
-  # Add the prefilters for global pattern monitoring
-  prefilters:
-    - name: "global_pattern_monitoring"
-      script_path: "/etc/nauthilus/lua-plugins.d/features/global_pattern_monitoring.lua"
+auth:
+  controls:
+    lua:
+      # Add the controls for global pattern monitoring
+      controls:
+        - name: "global_pattern_monitoring"
+          script_path: "/etc/nauthilus/lua-plugins.d/features/global_pattern_monitoring.lua"
 
-  # Add the filter for account-centric monitoring
-  filters:
-    - name: "account_centric_monitoring"
-      script_path: "/etc/nauthilus/lua-plugins.d/filters/account_centric_monitoring.lua"
+      # Add the filter for account-centric monitoring
+      filters:
+        - name: "account_centric_monitoring"
+          script_path: "/etc/nauthilus/lua-plugins.d/filters/account_centric_monitoring.lua"
 
-  # Add the action for dynamic response
-  actions:
-    - type: "post"
-      name: "dynamic_response"
-      script_path: "/etc/nauthilus/lua-plugins.d/actions/dynamic_response.lua"
+      # Add the action for dynamic response
+      actions:
+        - type: "post"
+          name: "dynamic_response"
+          script_path: "/etc/nauthilus/lua-plugins.d/actions/dynamic_response.lua"
 
-  # Configure the initialization script
-  config:
-    # If you're using a single init script
-    init_script_path: "/etc/nauthilus/lua-plugins.d/init/init.lua"
+  backends:
+    lua:
+      backend:
+        default:
+          # If you're using a single init script
+          init_script_path: "/etc/nauthilus/lua-plugins.d/init/init.lua"
 
-    # If you're using multiple init scripts (v1.7.7+)
-    init_script_paths:
-      - "/etc/nauthilus/lua-plugins.d/init/init.lua"
+          # If you're using multiple init scripts (v1.7.7+)
+          init_script_paths:
+            - "/etc/nauthilus/lua-plugins.d/init/init.lua"
 ```
 
 ### Required Environment Variables
@@ -414,7 +418,7 @@ ADMIN_EMAIL_ADDRESSES=admin1@example.com,admin2@example.com
 The distributed brute force detection system relies heavily on Redis for storing metrics and state information. Ensure that your Redis configuration is properly set up in the `nauthilus.yml` file:
 
 ```yaml
-server:
+storage:
   redis:
     # Redis connection settings
     database_number: 0

@@ -64,10 +64,12 @@ Derives a feature signal from the Redis ZSET `ntc:top_failed_logins` (maintained
 
 **Configuration (nauthilus.yml):**
 ```yaml
-lua:
-  prefilters:
-    - name: "failed_login_hotspot"
-      script_path: "/etc/nauthilus/lua-plugins.d/features/failed_login_hotspot.lua"
+auth:
+  controls:
+    lua:
+      controls:
+        - name: "failed_login_hotspot"
+          script_path: "/etc/nauthilus/lua-plugins.d/features/failed_login_hotspot.lua"
 ```
 
 **Downstream integration:**
@@ -111,8 +113,10 @@ The plugin runs on each authentication attempt and updates Prometheus metrics. O
 
 **Configuration (nauthilus.yml):**
 ```yaml
-lua:
-  prefilters:
-    - name: "security_metrics"
-      script_path: "/etc/nauthilus/lua-plugins.d/features/security_metrics.lua"
+auth:
+  controls:
+    lua:
+      controls:
+        - name: "security_metrics"
+          script_path: "/etc/nauthilus/lua-plugins.d/features/security_metrics.lua"
 ```

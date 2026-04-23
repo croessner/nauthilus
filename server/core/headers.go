@@ -67,8 +67,8 @@ func setNginxHeadersWithDeps(cfg config.File, logger *slog.Logger, ctx *gin.Cont
 			ctx.Header("Auth-Status", "Internal failure")
 			level.Error(logger).Log(
 				definitions.LogKeyGUID, auth.Runtime.GUID,
-				definitions.LogKeyMsg, "No backend servers found for backend_server_monitoring feature",
-				definitions.LogKeyError, "No backend servers found for backend_server_monitoring feature",
+				definitions.LogKeyMsg, "No backend servers found for backend_health_checks service",
+				definitions.LogKeyError, "No backend servers found for backend_health_checks service",
 				definitions.LogKeyInstance, cfg.GetServer().GetInstanceName(),
 			)
 		} else {

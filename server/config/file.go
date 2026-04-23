@@ -30,7 +30,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -349,17 +348,23 @@ type File interface {
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
 // Lua scripting, OAuth2, LDAP, and other miscellaneous configurations. It includes synchronization via a mutex.
 type FileSettings struct {
-	Server                  *ServerSection           `mapstructure:"server" validate:"required"`
-	RBLs                    *RBLSection              `mapstructure:"realtime_blackhole_lists" validate:"omitempty"`
-	ClearTextList           []string                 `mapstructure:"cleartext_networks" validate:"omitempty,dive"`
-	RelayDomains            *RelayDomainsSection     `mapstructure:"relay_domains" validate:"omitempty"`
-	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring" validate:"omitempty"`
-	BruteForce              *BruteForceSection       `mapstructure:"brute_force" validate:"omitempty"`
-	Lua                     *LuaSection              `mapstructure:"lua" validate:"omitempty"`
-	LDAP                    *LDAPSection             `mapstructure:"ldap" validate:"omitempty"`
-	IdP                     *IdPSection              `mapstructure:"idp" validate:"omitempty"`
+	Runtime       *RuntimeSection       `mapstructure:"runtime" validate:"omitempty"`
+	Observability *ObservabilitySection `mapstructure:"observability" validate:"omitempty"`
+	Storage       *StorageSection       `mapstructure:"storage" validate:"omitempty"`
+	Auth          *AuthSection          `mapstructure:"auth" validate:"omitempty"`
+	Identity      *IdentitySection      `mapstructure:"identity" validate:"omitempty"`
+
+	Server                  *ServerSection           `mapstructure:"-" validate:"-"`
+	RBLs                    *RBLSection              `mapstructure:"-" validate:"-"`
+	ClearTextList           []string                 `mapstructure:"-" validate:"-"`
+	RelayDomains            *RelayDomainsSection     `mapstructure:"-" validate:"-"`
+	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"-" validate:"-"`
+	BruteForce              *BruteForceSection       `mapstructure:"-" validate:"-"`
+	Lua                     *LuaSection              `mapstructure:"-" validate:"-"`
+	LDAP                    *LDAPSection             `mapstructure:"-" validate:"-"`
+	IDP                     *IdPSection              `mapstructure:"-" validate:"-"`
 	Other                   map[string]any           `mapstructure:",remain"`
-	Mu                      sync.Mutex
+	Mu                      sync.Mutex               `mapstructure:"-"`
 }
 
 var _ File = (*FileSettings)(nil)
@@ -383,6 +388,10 @@ func (f *FileSettings) GetRBLs() *RBLSection {
 		return &RBLSection{}
 	}
 
+	if f.RBLs == nil {
+		f.materializeLegacySections()
+	}
+
 	return f.RBLs
 }
 
@@ -391,6 +400,10 @@ func (f *FileSettings) GetRBLs() *RBLSection {
 func (f *FileSettings) GetClearTextList() []string {
 	if f == nil {
 		return []string{}
+	}
+
+	if f.ClearTextList == nil {
+		f.materializeLegacySections()
 	}
 
 	return f.ClearTextList
@@ -402,6 +415,10 @@ func (f *FileSettings) GetRelayDomains() *RelayDomainsSection {
 		return &RelayDomainsSection{}
 	}
 
+	if f.RelayDomains == nil {
+		f.materializeLegacySections()
+	}
+
 	return f.RelayDomains
 }
 
@@ -409,6 +426,10 @@ func (f *FileSettings) GetRelayDomains() *RelayDomainsSection {
 func (f *FileSettings) GetBruteForce() *BruteForceSection {
 	if f == nil {
 		return &BruteForceSection{}
+	}
+
+	if f.BruteForce == nil {
+		f.materializeLegacySections()
 	}
 
 	return f.BruteForce
@@ -421,6 +442,14 @@ func (f *FileSettings) GetLua() *LuaSection {
 		return &LuaSection{}
 	}
 
+	if f.Lua == nil {
+		f.materializeLegacySections()
+	}
+
+	if f.Lua != nil && f.Lua.Features == nil {
+		f.Lua.normalizeConfiguredFeatures()
+	}
+
 	return f.Lua
 }
 
@@ -428,6 +457,10 @@ func (f *FileSettings) GetLua() *LuaSection {
 func (f *FileSettings) GetLDAP() *LDAPSection {
 	if f == nil {
 		return &LDAPSection{}
+	}
+
+	if f.LDAP == nil {
+		f.materializeLegacySections()
 	}
 
 	return f.LDAP
@@ -443,6 +476,10 @@ func (f *FileSettings) GetLDAP() *LDAPSection {
 func (f *FileSettings) GetBackendServerMonitoring() *BackendServerMonitoring {
 	if f == nil {
 		return &BackendServerMonitoring{}
+	}
+
+	if f.BackendServerMonitoring == nil {
+		f.materializeLegacySections()
 	}
 
 	if f.BackendServerMonitoring == nil {
@@ -1324,6 +1361,14 @@ func (f *FileSettings) GetServer() *ServerSection {
 	}
 
 	if f.Server == nil {
+		f.materializeLegacySections()
+	}
+
+	if f.Server != nil && f.Server.Features == nil {
+		f.Server.normalizeConfiguredFeatures()
+	}
+
+	if f.Server == nil {
 		return &ServerSection{}
 	}
 
@@ -1759,18 +1804,6 @@ func (f *FileSettings) validateBruteForce() error {
 				}
 			}
 		}
-	}
-
-	return nil
-}
-
-func (f *FileSettings) validateServerFeatureMode() error {
-	if f == nil || f.Server == nil {
-		return nil
-	}
-
-	if f.Server.usesLegacyFeatureMode() && f.Server.usesModernFeatureMode() {
-		return fmt.Errorf("server.features cannot be combined with server.prefilters or server.capabilities")
 	}
 
 	return nil
@@ -2266,20 +2299,20 @@ func (f *FileSettings) setDefaultFrontendSettings() error {
 
 // setDefaultIdPSettings sets the default IdP settings if they are not already configured.
 func (f *FileSettings) setDefaultIdPSettings() error {
-	if f == nil || f.IdP == nil {
+	if f == nil || f.IDP == nil {
 		return nil
 	}
 
-	if f.IdP.WebAuthn.RPDisplayName == "" {
-		f.IdP.WebAuthn.RPDisplayName = "Nauthilus"
+	if f.IDP.WebAuthn.RPDisplayName == "" {
+		f.IDP.WebAuthn.RPDisplayName = "Nauthilus"
 	}
 
-	if f.IdP.WebAuthn.RPID == "" {
-		f.IdP.WebAuthn.RPID = "localhost"
+	if f.IDP.WebAuthn.RPID == "" {
+		f.IDP.WebAuthn.RPID = "localhost"
 	}
 
-	if len(f.IdP.WebAuthn.RPOrigins) == 0 {
-		f.IdP.WebAuthn.RPOrigins = []string{"https://localhost"}
+	if len(f.IDP.WebAuthn.RPOrigins) == 0 {
+		f.IDP.WebAuthn.RPOrigins = []string{"https://localhost"}
 	}
 
 	return nil
@@ -2461,31 +2494,17 @@ func (f *FileSettings) warnDeprecatedConfig() {
 	// Server-level deprecations
 	srv := f.GetServer()
 	if srv != nil {
-		// TLS on server
-		warnDeprecatedTLS("server.tls", &srv.TLS)
-		// HTTP client TLS
-		warnDeprecatedTLS("server.http_client.tls", &srv.HTTPClient.TLS)
 		// Compression
-		warnDeprecatedCompression("server.compression", &srv.Compression)
+		warnDeprecatedCompression("runtime.http.compression", &srv.Compression)
 		// Redis Cluster
-		warnDeprecatedRedisCluster("server.redis.cluster", &srv.Redis.Cluster)
+		warnDeprecatedRedisCluster("storage.redis.cluster", &srv.Redis.Cluster)
 		// Redis standalone replica
-		warnDeprecatedRedisReplica("server.redis.replica", &srv.Redis.Replica)
-		// Redis TLS
-		warnDeprecatedTLS("server.redis.tls", &srv.Redis.TLS)
-		// Redis standalone primary/master alias
-		warnDeprecatedAlias("server.redis.master", "server.redis.primary", "server.redis")
+		warnDeprecatedRedisReplica("storage.redis.replica", &srv.Redis.Replica)
 		// Dedup: distributed_enabled and in_process_enabled have been removed; warn if set
 		warnDeprecatedDedup(&srv.Dedup)
 		// Timings: singleflight_work has been removed; warn if set
 		warnDeprecatedTimeout(&srv.Timeouts)
 	}
-
-	warnDeprecatedServerFeatureMode()
-	warnDeprecatedPrefilterAlias("lua.features", "lua.prefilters")
-	warnDeprecatedAlias("brute_force.soft_whitelist", "brute_force.soft_allowlist", "brute_force")
-	warnDeprecatedAlias("relay_domains.soft_whitelist", "relay_domains.soft_allowlist", "relay_domains")
-	warnDeprecatedAlias("realtime_blackhole_lists.soft_whitelist", "realtime_blackhole_lists.soft_allowlist", "realtime_blackhole_lists")
 
 	// RBL deprecations
 	if rbl := f.GetRBLs(); rbl != nil {
@@ -2506,142 +2525,6 @@ func (f *FileSettings) warnUnsupportedConfig() {
 
 	for _, warning := range f.GetIdP().warnUnsupported() {
 		safeWarn("msg", "unsupported configuration parameter", "warning", warning)
-	}
-}
-
-// unknownConfigParameters returns unknown configuration keys collected during decoding.
-// This includes unknown root-level keys (captured via FileSettings.Other) and unknown
-// fields inside OIDC custom scopes (global and client-level, captured via Oauth2CustomScope.Other).
-func (f *FileSettings) unknownConfigParameters() []string {
-	if f == nil {
-		return nil
-	}
-
-	unknown := make([]string, 0)
-
-	for key, value := range f.Other {
-		if isSupportedRootExtraKey(key) {
-			continue
-		}
-
-		collectUnknownParameterPaths(key, value, &unknown, 0, make(map[uintptr]struct{}))
-	}
-
-	if idpCfg := f.GetIdP(); idpCfg != nil {
-		for idx := range idpCfg.OIDC.CustomScopes {
-			scope := idpCfg.OIDC.CustomScopes[idx]
-			prefix := fmt.Sprintf("idp.oidc.custom_scopes[%d]", idx)
-			for key, value := range scope.Other {
-				if isSupportedCustomScopeExtraKey(key) {
-					continue
-				}
-
-				collectUnknownParameterPaths(prefix+"."+key, value, &unknown, 0, make(map[uintptr]struct{}))
-			}
-		}
-
-		for clientIdx := range idpCfg.OIDC.Clients {
-			client := idpCfg.OIDC.Clients[clientIdx]
-			for scopeIdx := range client.CustomScopes {
-				scope := client.CustomScopes[scopeIdx]
-				prefix := fmt.Sprintf("idp.oidc.clients[%d].custom_scopes[%d]", clientIdx, scopeIdx)
-				for key, value := range scope.Other {
-					if isSupportedCustomScopeExtraKey(key) {
-						continue
-					}
-
-					collectUnknownParameterPaths(prefix+"."+key, value, &unknown, 0, make(map[uintptr]struct{}))
-				}
-			}
-		}
-	}
-
-	if len(unknown) == 0 {
-		return nil
-	}
-
-	slices.Sort(unknown)
-
-	return slices.Compact(unknown)
-}
-
-const maxUnknownConfigTraversalDepth = 64
-
-func collectUnknownParameterPaths(prefix string, value any, out *[]string, depth int, visited map[uintptr]struct{}) {
-	if out == nil || value == nil {
-		return
-	}
-
-	if depth >= maxUnknownConfigTraversalDepth {
-		if prefix != "" {
-			*out = append(*out, prefix)
-		}
-
-		return
-	}
-
-	switch typed := value.(type) {
-	case map[string]any:
-		ptr := reflect.ValueOf(typed).Pointer()
-		if _, ok := visited[ptr]; ok {
-			if prefix != "" {
-				*out = append(*out, prefix)
-			}
-
-			return
-		}
-
-		visited[ptr] = struct{}{}
-		defer delete(visited, ptr)
-
-		if len(typed) == 0 && prefix != "" {
-			*out = append(*out, prefix)
-
-			return
-		}
-
-		for key, nested := range typed {
-			next := key
-			if prefix != "" {
-				next = prefix + "." + key
-			}
-
-			collectUnknownParameterPaths(next, nested, out, depth+1, visited)
-		}
-
-	case map[any]any:
-		ptr := reflect.ValueOf(typed).Pointer()
-		if _, ok := visited[ptr]; ok {
-			if prefix != "" {
-				*out = append(*out, prefix)
-			}
-
-			return
-		}
-
-		visited[ptr] = struct{}{}
-		defer delete(visited, ptr)
-
-		if len(typed) == 0 && prefix != "" {
-			*out = append(*out, prefix)
-
-			return
-		}
-
-		for key, nested := range typed {
-			keyStr := fmt.Sprintf("%v", key)
-			next := keyStr
-			if prefix != "" {
-				next = prefix + "." + keyStr
-			}
-
-			collectUnknownParameterPaths(next, nested, out, depth+1, visited)
-		}
-
-	default:
-		if prefix != "" {
-			*out = append(*out, prefix)
-		}
 	}
 }
 
@@ -2743,22 +2626,6 @@ func warnDeprecatedLDAP(backend string, cfg *LDAPConf) {
 	}
 }
 
-// warnDeprecatedTLS checks if the deprecated field `http_client_skip_verify` is used in the provided TLS config and logs a warning.
-func warnDeprecatedTLS(where string, t *TLS) {
-	if t == nil {
-		return
-	}
-
-	if t.HTTPClientSkipVerify {
-		safeWarn(
-			"component", "config",
-			"location", where,
-			"deprecated", "tls.http_client_skip_verify",
-			"msg", "'http_client_skip_verify' is deprecated – please use 'skip_verify'",
-		)
-	}
-}
-
 // warnDeprecatedCompression logs warnings for deprecated compression fields in the provided compression configuration.
 // It checks if compression.level and compression.content_types are used and issues warnings advising updates.
 // Parameter where specifies the configuration context location, and c is the Compression object to evaluate.
@@ -2819,7 +2686,7 @@ func warnDeprecatedRedisReplica(where string, r *Replica) {
 }
 
 // warnDeprecatedDedup warns if deprecated dedup configuration is present.
-// Specifically, 'server.dedup.distributed_enabled' has been removed and is ignored.
+// Specifically, 'runtime.http.dedup.distributed_enabled' has been removed and is ignored.
 func warnDeprecatedDedup(d *Dedup) {
 	if d == nil {
 		return
@@ -2827,18 +2694,18 @@ func warnDeprecatedDedup(d *Dedup) {
 	if d.DistributedEnabled {
 		safeWarn(
 			"component", "config",
-			"location", "server.dedup",
+			"location", "runtime.http.dedup",
 			"deprecated", "dedup.distributed_enabled",
-			"msg", "'server.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed",
+			"msg", "'runtime.http.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed",
 		)
 	}
 
 	if d.InProcessEnabled {
 		safeWarn(
 			"component", "config",
-			"location", "server.dedup",
+			"location", "runtime.http.dedup",
 			"deprecated", "dedup.in_process_enabled",
-			"msg", "'server.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
+			"msg", "'runtime.http.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
 		)
 	}
 
@@ -2867,9 +2734,9 @@ func warnDeprecatedTimeout(t *Timeouts) {
 	if t.SingleflightWork != time.Duration(0) {
 		safeWarn(
 			"component", "config",
-			"location", "server.timeouts",
+			"location", "runtime.http.timeouts",
 			"deprecated", "timeouts.singleflight_work",
-			"msg", "'server.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
+			"msg", "'runtime.http.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
 		)
 	}
 }
@@ -2892,37 +2759,15 @@ func warnDeprecatedAlias(oldPath string, newPath string, location string) {
 	)
 }
 
-func warnDeprecatedPrefilterAlias(oldPath string, newPath string) {
-	warnDeprecatedAlias(oldPath, newPath, strings.TrimSuffix(oldPath, ".features"))
-}
-
-func warnDeprecatedServerFeatureMode() {
-	if !viper.IsSet("server.features") {
-		return
-	}
-
-	msg := "'server.features' is deprecated – please use 'server.prefilters' and, if needed, 'server.capabilities'"
-	if viper.IsSet("server.prefilters") || viper.IsSet("server.capabilities") {
-		msg += " (legacy value is ignored because the new server feature mode is set)"
-	}
-
-	safeWarn(
-		"component", "config",
-		"location", "server",
-		"deprecated", "server.features",
-		"msg", msg,
-	)
-}
-
 func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 	if idpCfg == nil {
 		return
 	}
 
 	globalSet := idpCfg.RememberMeTTL > 0
-	msg := "'remember_me_ttl' is deprecated at client/service-provider level – please use 'idp.remember_me_ttl'"
+	msg := "'remember_me_ttl' is deprecated at client/service-provider level – please use 'identity.session.remember_me_ttl'"
 	if globalSet {
-		msg += " (legacy value is ignored because global idp.remember_me_ttl is set)"
+		msg += " (legacy value is ignored because global identity.session.remember_me_ttl is set)"
 	}
 
 	for _, client := range idpCfg.OIDC.Clients {
@@ -2932,9 +2777,9 @@ func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 
 		safeWarn(
 			"component", "config",
-			"location", "idp.oidc.clients",
+			"location", "identity.oidc.clients",
 			"client_id", client.ClientID,
-			"deprecated", "idp.oidc.clients[].remember_me_ttl",
+			"deprecated", "identity.oidc.clients[].remember_me_ttl",
 			"msg", msg,
 		)
 	}
@@ -2946,9 +2791,9 @@ func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 
 		safeWarn(
 			"component", "config",
-			"location", "idp.saml2.service_providers",
+			"location", "identity.saml.service_providers",
 			"entity_id", sp.EntityID,
-			"deprecated", "idp.saml2.service_providers[].remember_me_ttl",
+			"deprecated", "identity.saml.service_providers[].remember_me_ttl",
 			"msg", msg,
 		)
 	}
@@ -2956,11 +2801,11 @@ func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 
 // HasFeature checks if the given feature exists in the LoadableConfig's Features list
 func (f *FileSettings) HasFeature(feature string) bool {
-	if f == nil || f.Server == nil || f.Server.Features == nil {
+	if f == nil {
 		return false
 	}
 
-	for _, item := range f.Server.Features {
+	for _, item := range f.GetServer().Features {
 		if item.Get() == feature {
 			return true
 		}
@@ -2971,11 +2816,11 @@ func (f *FileSettings) HasFeature(feature string) bool {
 
 // ShouldRunFeature checks if a given feature is enabled and should be executed in the current auth context (noAuth).
 func (f *FileSettings) ShouldRunFeature(feature string, noAuth bool) bool {
-	if f == nil || f.Server == nil || f.Server.Features == nil {
+	if f == nil {
 		return false
 	}
 
-	for _, item := range f.Server.Features {
+	for _, item := range f.GetServer().Features {
 		if item.Get() == feature {
 			if noAuth {
 				return item.GetWhenNoAuth()
@@ -3125,19 +2970,19 @@ func processWhenNoAuthStringSettableSlice[T whenNoAuthSettable](input any, newFn
 	return items, nil
 }
 
+// processControls converts input values into a slice of Control pointers or returns an error for invalid input types or values.
+func processControls(input any) (any, error) {
+	return processWhenNoAuthStringSettableSlice(input, func() *Control { return &Control{} })
+}
+
 // processFeatures converts input values into a slice of Feature pointers or returns an error for invalid input types or values.
 func processFeatures(input any) (any, error) {
 	return processWhenNoAuthStringSettableSlice(input, func() *Feature { return &Feature{} })
 }
 
-// processPrefilters converts input values into a slice of Prefilter pointers or returns an error for invalid input types or values.
-func processPrefilters(input any) (any, error) {
-	return processWhenNoAuthStringSettableSlice(input, func() *Prefilter { return &Prefilter{} })
-}
-
-// processCapabilities converts input values into a slice of Capability pointers or returns an error for invalid input types or values.
-func processCapabilities(input any) (any, error) {
-	return processStringSettableSlice(input, func() *Capability { return &Capability{} })
+// processServices converts input values into a slice of Service pointers or returns an error for invalid input types or values.
+func processServices(input any) (any, error) {
+	return processStringSettableSlice(input, func() *Service { return &Service{} })
 }
 
 // processProtocols processes the input to generate a slice of Protocol pointers or returns an error for invalid inputs.
@@ -3182,13 +3027,13 @@ func processBackends(input any) (any, error) {
 }
 
 // createDecoderOption returns a viper.DecoderConfigOption to configure a mapstructure decoder with custom DecodeHook functions.
-// The DecodeHook functions handle conversions to specific types such as Verbosity, DbgModule, Feature, Protocol, and Backend.
+// The DecodeHook functions handle conversions to specific types such as Verbosity, DbgModule, Control, Service, Protocol, and Backend.
 func createDecoderOption() viper.DecoderConfigOption {
 	verbosityType := reflect.TypeFor[Verbosity]()
 	debugModulesType := reflect.TypeFor[[]*DbgModule]()
 	featuresType := reflect.TypeFor[[]*Feature]()
-	prefiltersType := reflect.TypeFor[[]*Prefilter]()
-	capabilitiesType := reflect.TypeFor[[]*Capability]()
+	controlsType := reflect.TypeFor[[]*Control]()
+	servicesType := reflect.TypeFor[[]*Service]()
 	protocolsType := reflect.TypeFor[[]*Protocol]()
 	backendsType := reflect.TypeFor[[]*Backend]()
 	contentSecurityPolicyType := reflect.TypeFor[ContentSecurityPolicyValue]()
@@ -3207,10 +3052,10 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processDebugModules(data)
 				case to == featuresType:
 					return processFeatures(data)
-				case to == prefiltersType:
-					return processPrefilters(data)
-				case to == capabilitiesType:
-					return processCapabilities(data)
+				case to == controlsType:
+					return processControls(data)
+				case to == servicesType:
+					return processServices(data)
 				case to == protocolsType:
 					return processProtocols(data)
 				case to == backendsType:
@@ -3238,53 +3083,6 @@ func createDecoderOption() viper.DecoderConfigOption {
 	}
 }
 
-// toSnakeCase converts a given camelCase or PascalCase string to snake_case format.
-func toSnakeCase(fieldName string) string {
-	var result strings.Builder
-
-	previousWasUpper := false
-
-	for i, r := range fieldName {
-		if unicode.IsUpper(r) {
-			if i > 0 && !previousWasUpper {
-				result.WriteByte('_')
-			}
-
-			previousWasUpper = true
-		} else {
-			previousWasUpper = false
-		}
-
-		result.WriteRune(unicode.ToLower(r))
-	}
-
-	return result.String()
-}
-
-// prettyFormatValidationErrors formats validation errors into a user-friendly error message string.
-// It iterates through all validation errors, converting each into a descriptive string, including the failed rule and field.
-func prettyFormatValidationErrors(validationErrors validator.ValidationErrors) error {
-	var errorMessages []string
-
-	for _, fieldErr := range validationErrors {
-		message := fmt.Sprintf(
-			"field '%s' (struct field: '%s') failed on the '%s' validation rule",
-			toSnakeCase(fieldErr.Field()), // The field name configured (e.g., Server, Port)
-			fieldErr.StructField(),        // Struct field name (e.g., Server, Port)
-			fieldErr.Tag(),                // Validation rule (e.g., "required", "min")
-		)
-
-		// Include the rule parameter if it exists (e.g., "1" for "min=1")
-		if fieldErr.Param() != "" {
-			message = fmt.Sprintf("%s. Rule parameter: %s", message, fieldErr.Param())
-		}
-
-		errorMessages = append(errorMessages, message)
-	}
-
-	return stderrors.New("validation errors: " + strings.Join(errorMessages, "; "))
-}
-
 // HandleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *FileSettings) HandleFile() (err error) {
@@ -3297,17 +3095,28 @@ func (f *FileSettings) HandleFile() (err error) {
 	defer f.Mu.Unlock()
 
 	if err = viper.UnmarshalExact(f, createDecoderOption()); err != nil {
-		return err
+		return formatDecodeErrors(err)
 	}
 
-	if err = f.validateServerFeatureMode(); err != nil {
-		return err
-	}
-
+	f.materializeLegacySections()
 	f.normalizeConfigAliases()
 
-	if unknown := f.unknownConfigParameters(); len(unknown) > 0 {
-		return fmt.Errorf("unknown configuration parameter(s): %s", strings.Join(unknown, ", "))
+	unknown, err := unknownConfigParameters(viper.AllSettings())
+	if err != nil {
+		return err
+	}
+
+	if len(unknown) > 0 {
+		problems := make([]Problem, 0, len(unknown))
+		for _, path := range unknown {
+			problems = append(problems, Problem{
+				Kind:    configProblemUnknownKey,
+				Path:    path,
+				Message: "is not a supported configuration key",
+			})
+		}
+
+		return formatConfigProblems(problems)
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
@@ -3345,7 +3154,6 @@ func (f *FileSettings) HandleFile() (err error) {
 	validate.RegisterValidation("secret_min", secretMin)
 	validate.RegisterValidation("secret_excludesall", secretExcludesAll)
 	validate.RegisterValidation("secret_required_if_enabled", secretRequiredIfEnabled)
-	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
 	validate.RegisterValidation("validateAuthPoolRequired", validateAuthPoolRequired)
 	validate.RegisterValidation("validatDefaultBackendName", validatDefaultBackendName)
 	// Register custom validator for alphanumeric characters and symbols
@@ -3358,7 +3166,7 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	if err = validate.Struct(f); err != nil {
 		if validationErrors, ok := stderrors.AsType[validator.ValidationErrors](err); ok {
-			return prettyFormatValidationErrors(validationErrors)
+			return formatValidationErrors(validationErrors)
 		}
 
 		return err
@@ -3380,53 +3188,17 @@ func (f *FileSettings) HandleFile() (err error) {
 	return nil
 }
 
-func preferAliasSlice[T any](alias []T, legacy []T) []T {
-	if alias != nil {
-		return append([]T(nil), alias...)
-	}
-
-	if legacy == nil {
-		return nil
-	}
-
-	return append([]T(nil), legacy...)
-}
-
-func preferAliasValue[T any](alias T, legacy T) T {
-	if !reflect.ValueOf(alias).IsZero() {
-		return alias
-	}
-
-	return legacy
-}
-
 func (f *FileSettings) normalizeConfigAliases() {
 	if f == nil {
 		return
 	}
 
 	if f.Server != nil {
-		f.Server.normalizeFeatureSets()
+		f.Server.normalizeConfiguredFeatures()
 	}
 
 	if f.Lua != nil {
-		f.Lua.normalizePrefilterAliases()
-	}
-
-	if f.Server != nil {
-		f.Server.Redis.normalizePrimaryAlias()
-	}
-
-	if f.BruteForce != nil {
-		f.BruteForce.normalizeSoftAllowlistAlias()
-	}
-
-	if f.RelayDomains != nil {
-		f.RelayDomains.normalizeSoftAllowlistAlias()
-	}
-
-	if f.RBLs != nil {
-		f.RBLs.normalizeSoftAllowlistAlias()
+		f.Lua.normalizeConfiguredFeatures()
 	}
 }
 
@@ -3457,6 +3229,10 @@ func bindEnvs(i any, parts ...string) error {
 		tag := t.Tag.Get("mapstructure")
 		if tag == "" {
 			tag = t.Name
+		}
+
+		if tag == "-" {
+			continue
 		}
 
 		isSecret := t.Type == secretType || t.Type == secretPtrType

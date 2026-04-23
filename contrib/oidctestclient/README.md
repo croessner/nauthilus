@@ -41,11 +41,14 @@ PKCE notes:
 ## Server Configuration (Nauthilus)
 The OIDC IdP must be enabled and the client registered in `nauthilus.yaml`:
 ```yaml
-idp:
+identity:
   oidc:
     enabled: true
     issuer: "http://127.0.0.1:8080"
-    signing_key: "YOUR_PRIVATE_KEY_HERE" # Or signing_key_file
+    signing_keys:
+      - id: "main"
+        key: "YOUR_PRIVATE_KEY_HERE" # Or key_file
+        active: true
     clients:
       - client_id: "test-client"
         client_secret: "test-secret"
@@ -64,28 +67,31 @@ idp:
 ## LDAP Backend Example
 For users to be able to log in, an authentication backend (e.g., LDAP) must be configured:
 ```yaml
-ldap:
-  config:
-    server_uri: ["ldap://localhost:389"]
-    bind_dn: "cn=admin,dc=example,dc=org"
-    bind_pw: "admin"
-    lookup_pool_size: 1
-    auth_pool_size: 1
-  search:
-    - protocol: ["oidc"]
-      cache_name: "ldap"
-      base_dn: "ou=users,dc=example,dc=org"
-      filter:
-        user: "(uid=%L{user})"
-      mapping:
-        account_field: "uid"
-        mail_field: "mail"
-        given_name_field: "givenName"
-        surname_field: "sn"
-      attribute:
-        - "uid"
-        - "mail"
-        - "cn"
-        - "givenName"
-        - "sn"
+auth:
+  backends:
+    order: ["ldap"]
+    ldap:
+      default:
+        server_uri: ["ldap://localhost:389"]
+        bind_dn: "cn=admin,dc=example,dc=org"
+        bind_pw: "admin"
+        lookup_pool_size: 1
+        auth_pool_size: 1
+      search:
+        - protocol: ["oidc"]
+          cache_name: "ldap"
+          base_dn: "ou=users,dc=example,dc=org"
+          filter:
+            user: "(uid=%L{user})"
+          mapping:
+            account_field: "uid"
+            mail_field: "mail"
+            given_name_field: "givenName"
+            surname_field: "sn"
+          attribute:
+            - "uid"
+            - "mail"
+            - "cn"
+            - "givenName"
+            - "sn"
 ```

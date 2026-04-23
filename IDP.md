@@ -18,9 +18,9 @@ The integrated IdP of Nauthilus was developed to provide identity services in a 
 
 ## 2. Configuration
 
-The Identity Provider configuration is located in the `idp` section of the `nauthilus.yaml` file.
+The Identity Provider configuration is located in the `identity` section of the `nauthilus.yaml` file.
 
-### 2.1 Section `idp`
+### 2.1 Section `identity`
 
 This is the central configuration for the Identity Provider.
 
@@ -32,10 +32,10 @@ This is the central configuration for the Identity Provider.
 
 ## 3. OIDC Configuration
 
-Enable OIDC in the `idp` section:
+Enable OIDC in the `identity` section:
 
 ```yaml
-idp:
+identity:
   oidc:
     enabled: true
     issuer: "https://auth.example.com"
@@ -142,7 +142,7 @@ connected applications when they end their session at the IdP.
 Extend the client definition with logout parameters:
 
 ```yaml
-idp:
+identity:
   oidc:
     clients:
       - client_id: "myapp"
@@ -172,8 +172,8 @@ idp:
 Nauthilus acts as a SAML 2.0 Identity Provider (IdP).
 
 ```yaml
-idp:
-  saml2:
+identity:
+  saml:
     enabled: true
     entity_id: "https://auth.example.com/saml/metadata"
     # Certificate (PEM or file)
@@ -275,13 +275,13 @@ Nauthilus uses [HTMX](https://htmx.org/) to update parts of the page. If you ext
 - **Login**: `/login` (Supports `return_to` parameter)
 - **MFA Portal**: `/mfa/register/home` (User security hub)
 
-### Frontend Security Headers (`server.frontend.security_headers`)
+### Frontend Security Headers (`identity.frontend.security_headers`)
 
-The frontend can enforce strict browser security headers with configuration under `server.frontend.security_headers`.
+The frontend can enforce strict browser security headers with configuration under `identity.frontend.security_headers`.
 Defaults are strict and enabled by default.
 
 ```yaml
-server:
+identity:
     frontend:
         security_headers:
             enabled: true
@@ -387,25 +387,26 @@ If you need full control, set `form-action` directly.
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
 
-### Central CORS (`server.cors`)
+### Central CORS (`runtime.http.cors`)
 
-Cross-origin behavior is configured centrally under `server.cors` and applies independently from frontend security
+Cross-origin behavior is configured centrally under `runtime.http.cors` and applies independently from frontend security
 headers.
 
 ```yaml
-server:
-    cors:
-        enabled: true
-        policies:
-            - name: "oidc_discovery"
-              enabled: true
-              path_prefixes: ["/.well-known/"]
-              allow_origins: ["https://oc.roessner.cloud"]
-              allow_methods: ["GET", "OPTIONS"]
-              allow_headers: ["Authorization", "Content-Type"]
-              expose_headers: []
-              allow_credentials: false
-              max_age: 600
+runtime:
+    http:
+        cors:
+            enabled: true
+            policies:
+                - name: "oidc_discovery"
+                  enabled: true
+                  path_prefixes: ["/.well-known/"]
+                  allow_origins: ["https://oc.roessner.cloud"]
+                  allow_methods: ["GET", "OPTIONS"]
+                  allow_headers: ["Authorization", "Content-Type"]
+                  expose_headers: []
+                  allow_credentials: false
+                  max_age: 600
 ```
 
 Policies are evaluated in order; the first active policy whose `path_prefixes` matches the request path is used.
@@ -495,10 +496,10 @@ Nauthilus calls specific functions when a user changes their MFA:
 | `/oidc/logout`                      | GET      | Logout Endpoint (RP-initiated)     |
 | `/oidc/consent`                     | GET/POST | Obtaining User Consent             |
 
-Legacy compatibility: `GET /oidc/token` can be enabled via `idp.oidc.token_endpoint_allow_get: true` (disabled by
+Legacy compatibility: `GET /oidc/token` can be enabled via `identity.oidc.token_endpoint_allow_get: true` (disabled by
 default).
 
-Refresh token rotation is enabled by default. Setting `idp.oidc.revoke_refresh_token: false`
+Refresh token rotation is enabled by default. Setting `identity.oidc.revoke_refresh_token: false`
 keeps the same refresh token valid across refresh requests; in that mode refresh responses do not contain a new
 `refresh_token`.
 

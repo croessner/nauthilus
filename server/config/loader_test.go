@@ -11,14 +11,16 @@ import (
 func TestConfigLoader_LoadFromFile_MergesIncludesAndPatches(t *testing.T) {
 	root := t.TempDir()
 
-	writeConfigFile(t, root, "base.yaml", `ldap:
-  config:
-    lookup_pool_size: 5
+	writeConfigFile(t, root, "base.yaml", `auth:
+  backends:
+    ldap:
+      default:
+        lookup_pool_size: 5
 `)
 
 	writeConfigFile(t, root, "dev.yaml", `patch:
   - op: add
-    path: ldap.search
+    path: auth.backends.ldap.search
     value:
       protocol: imap
       cache_name: imap
@@ -32,9 +34,11 @@ includes:
     dev:
       optional:
         - dev.yaml
-ldap:
-  config:
-    lookup_pool_size: 10
+auth:
+  backends:
+    ldap:
+      default:
+        lookup_pool_size: 10
 `)
 
 	loader := NewConfigLoader("yaml")
@@ -44,17 +48,27 @@ ldap:
 		t.Fatalf("load config: %v", err)
 	}
 
-	ldap, ok := settings["ldap"].(map[string]any)
+	auth, ok := settings["auth"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected ldap map, got %T", settings["ldap"])
+		t.Fatalf("expected auth map, got %T", settings["auth"])
 	}
 
-	config, ok := ldap["config"].(map[string]any)
+	backends, ok := auth["backends"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected ldap.config map, got %T", ldap["config"])
+		t.Fatalf("expected auth.backends map, got %T", auth["backends"])
 	}
 
-	if got := requireInt(t, config["lookup_pool_size"]); got != 10 {
+	ldap, ok := backends["ldap"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected auth.backends.ldap map, got %T", backends["ldap"])
+	}
+
+	defaultConfig, ok := ldap["default"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected auth.backends.ldap.default map, got %T", ldap["default"])
+	}
+
+	if got := requireInt(t, defaultConfig["lookup_pool_size"]); got != 10 {
 		t.Fatalf("expected lookup_pool_size 10, got %d", got)
 	}
 
@@ -95,7 +109,7 @@ func TestConfigLoader_LoadFromFile_OptionalMissing(t *testing.T) {
 	mainPath := writeConfigFile(t, root, "main.yaml", `includes:
   optional:
     - missing.yaml
-server:
+runtime:
   instance_name: optional
 `)
 
@@ -106,8 +120,8 @@ server:
 		t.Fatalf("load config: %v", err)
 	}
 
-	if _, ok := settings["server"]; !ok {
-		t.Fatal("expected server settings in merged config")
+	if _, ok := settings["runtime"]; !ok {
+		t.Fatal("expected runtime settings in merged config")
 	}
 }
 
@@ -121,7 +135,7 @@ func TestConfigLoader_LoadFromFile_EnvFromViper(t *testing.T) {
 
 	root := t.TempDir()
 
-	writeConfigFile(t, root, "dev.yaml", `server:
+	writeConfigFile(t, root, "dev.yaml", `runtime:
   instance_name: from-env
 `)
 
@@ -139,13 +153,13 @@ func TestConfigLoader_LoadFromFile_EnvFromViper(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
-	server, ok := settings["server"].(map[string]any)
+	runtimeSettings, ok := settings["runtime"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected server map, got %T", settings["server"])
+		t.Fatalf("expected runtime map, got %T", settings["runtime"])
 	}
 
-	if server["instance_name"] != "from-env" {
-		t.Fatalf("expected instance_name from-env, got %v", server["instance_name"])
+	if runtimeSettings["instance_name"] != "from-env" {
+		t.Fatalf("expected instance_name from-env, got %v", runtimeSettings["instance_name"])
 	}
 }
 
@@ -155,7 +169,7 @@ func TestConfigLoader_LoadFromFile_RequiredMissing(t *testing.T) {
 	mainPath := writeConfigFile(t, root, "main.yaml", `includes:
   required:
     - missing.yaml
-server:
+runtime:
   instance_name: required
 `)
 
@@ -181,7 +195,7 @@ x-oc-mappings:
 	mainPath := writeConfigFile(t, root, "main.yaml", `includes:
   required:
     - aliases.yaml
-server:
+runtime:
   instance_name: include-anchors
 `)
 

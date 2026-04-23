@@ -226,7 +226,7 @@ const response = await fetch("/mfa/webauthn/register/finish", {
 
 ### 3.1.3 Redirect URI Validation Rules
 
-Nauthilus validates `idp.oidc.clients[].redirect_uris` with strict matching plus controlled wildcard and loopback rules:
+Nauthilus validates `identity.oidc.clients[].redirect_uris` with strict matching plus controlled wildcard and loopback rules:
 
 - Exact string matching is the default.
 - A trailing wildcard (`*`) is supported only at the end of the configured URI and only when the configured URI does
@@ -251,7 +251,7 @@ Security hardening notes:
 
 Frontend routes support strict configurable browser security headers via:
 
-- `server.frontend.security_headers`
+- `identity.frontend.security_headers`
 
 Default behavior:
 
@@ -263,7 +263,7 @@ Default behavior:
 Example:
 
 ```yaml
-server:
+identity:
     frontend:
         security_headers:
             enabled: true
@@ -369,24 +369,25 @@ If full control is required, set `form-action` directly.
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
 
-### 3.1.5 Central CORS (`server.cors`)
+### 3.1.5 Central CORS (`runtime.http.cors`)
 
-Cross-origin behavior is configured centrally under `server.cors` and is independent from frontend security headers.
+Cross-origin behavior is configured centrally under `runtime.http.cors` and is independent from frontend security headers.
 
 ```yaml
-server:
-    cors:
-        enabled: true
-        policies:
-            - name: "oidc_discovery"
-              enabled: true
-              path_prefixes: ["/.well-known/"]
-              allow_origins: ["https://oc.roessner.cloud"]
-              allow_methods: ["GET", "OPTIONS"]
-              allow_headers: ["Authorization", "Content-Type"]
-              expose_headers: []
-              allow_credentials: false
-              max_age: 600
+runtime:
+    http:
+        cors:
+            enabled: true
+            policies:
+                - name: "oidc_discovery"
+                  enabled: true
+                  path_prefixes: ["/.well-known/"]
+                  allow_origins: ["https://oc.roessner.cloud"]
+                  allow_methods: ["GET", "OPTIONS"]
+                  allow_headers: ["Authorization", "Content-Type"]
+                  expose_headers: []
+                  allow_credentials: false
+                  max_age: 600
 ```
 
 Policies are evaluated in order. The first active policy with a matching `path_prefixes` entry is used.
@@ -614,7 +615,7 @@ geprueft:
     - Doppelte kritische Query-Parameter (`SAMLRequest`, `RelayState`, `SigAlg`, `Signature`) werden verworfen.
 - POST-Binding:
     - XML-Signaturpruefung gegen vertrauenswuerdige SP-Zertifikate.
-    - Zertifikate werden pro `Issuer` aus der SP-Konfiguration (`idp.saml2.service_providers[*].cert|cert_file`)
+    - Zertifikate werden pro `Issuer` aus der SP-Konfiguration (`identity.saml.service_providers[*].cert|cert_file`)
       geladen.
 - SHA-1 bleibt auf beiden Pfaden blockiert:
     - Redirect: SHA-1 `SigAlg` wird als unsupported abgelehnt.
@@ -695,12 +696,12 @@ Die SLO-Verarbeitung ist mit dedizierter Betriebsbeobachtung und Security-Haertu
 
 #### SLO-013 Konfigurationsoberflaeche
 
-Die SLO-Konfiguration ist unter `idp.saml2.slo` gebuendelt und steuert Endpunkt-Verhalten,
+Die SLO-Konfiguration ist unter `identity.saml.slo` gebuendelt und steuert Endpunkt-Verhalten,
 Front-/Back-Channel-Fanout sowie Schutzlimits:
 
 ```yaml
-idp:
-    saml2:
+identity:
+    saml:
         slo:
             enabled: true
             front_channel_enabled: true
@@ -712,29 +713,19 @@ idp:
 
 Defaults:
 
-- `idp.saml2.slo.enabled`: `true`
-- `idp.saml2.slo.front_channel_enabled`: `true`
-- `idp.saml2.slo.back_channel_enabled`: `false`
-- `idp.saml2.slo.request_timeout`: `3s`
-- `idp.saml2.slo.max_participants`: `64`
-- `idp.saml2.slo.back_channel_max_retries`: `1`
+- `identity.saml.slo.enabled`: `true`
+- `identity.saml.slo.front_channel_enabled`: `true`
+- `identity.saml.slo.back_channel_enabled`: `false`
+- `identity.saml.slo.request_timeout`: `3s`
+- `identity.saml.slo.max_participants`: `64`
+- `identity.saml.slo.back_channel_max_retries`: `1`
 
 Validierungsregeln:
 
-- `idp.saml2.slo.request_timeout >= 0` (`0` bedeutet: Default verwenden)
-- `idp.saml2.slo.max_participants >= 0` (`0` bedeutet: Default verwenden)
-- `idp.saml2.slo.back_channel_max_retries >= 0` (`0` bedeutet: Default verwenden)
-- Wenn `idp.saml2.slo.enabled=false`, sind `front_channel_enabled` und `back_channel_enabled` wirkungslos.
-
-Migrationshinweise (kompatible Alias-Felder, falls vorhanden):
-
-| Alias-Feld                               | Bevorzugtes Feld                         |
-|------------------------------------------|------------------------------------------|
-| `idp.saml2.slo_enabled`                  | `idp.saml2.slo.enabled`                  |
-| `idp.saml2.slo_front_channel_enabled`    | `idp.saml2.slo.front_channel_enabled`    |
-| `idp.saml2.slo_back_channel_enabled`     | `idp.saml2.slo.back_channel_enabled`     |
-| `idp.saml2.slo_back_channel_timeout`     | `idp.saml2.slo.request_timeout`          |
-| `idp.saml2.slo_back_channel_max_retries` | `idp.saml2.slo.back_channel_max_retries` |
+- `identity.saml.slo.request_timeout >= 0` (`0` bedeutet: Default verwenden)
+- `identity.saml.slo.max_participants >= 0` (`0` bedeutet: Default verwenden)
+- `identity.saml.slo.back_channel_max_retries >= 0` (`0` bedeutet: Default verwenden)
+- Wenn `identity.saml.slo.enabled=false`, sind `front_channel_enabled` und `back_channel_enabled` wirkungslos.
 
 #### SLO-014 Teststrategie und Interop-Abnahme
 
@@ -772,7 +763,7 @@ The `require_mfa` field accepts a list of MFA method identifiers. Valid values a
 **OIDC client example:**
 
 ```yaml
-idp:
+identity:
     oidc:
         clients:
             -   client_id: "secure-app"
@@ -785,8 +776,8 @@ idp:
 **SAML2 service provider example:**
 
 ```yaml
-idp:
-    saml2:
+identity:
+    saml:
         service_providers:
             -   entity_id: "https://sp.example.com"
                 authn_requests_signed: true
@@ -934,9 +925,9 @@ Enable the `idp` debug module in the configuration to see detailed logs of the i
 interactions:
 
 ```yaml
-server:
-  debug:
-    modules:
+observability:
+  log:
+    debug_modules:
       - idp
 ```
 
@@ -947,7 +938,7 @@ the same mapping schema:
 
 ```yaml
 # nauthilus.yaml example
-idp:
+identity:
   oidc:
     clients:
       - client_id: my-app
@@ -1005,7 +996,7 @@ The IdP supports custom scopes. These are defined globally and can group one or
 more custom claims:
 
 ```yaml
-idp:
+identity:
   oidc:
     custom_scopes:
       - name: "nauthilus"
@@ -1020,7 +1011,7 @@ idp:
 Clients can optionally define `custom_scopes` as an override layer:
 
 ```yaml
-idp:
+identity:
   oidc:
     clients:
       - client_id: "my-client"
@@ -1034,8 +1025,8 @@ idp:
 
 Merge behavior is deterministic:
 
-- Global scopes from `idp.oidc.custom_scopes` are the base.
-- Client scopes from `idp.oidc.clients[].custom_scopes` are applied on top.
+- Global scopes from `identity.oidc.custom_scopes` are the base.
+- Client scopes from `identity.oidc.clients[].custom_scopes` are applied on top.
 - If a scope name matches, the client scope fully replaces the global scope definition.
 - Client-only scope names are appended.
 - OIDC Discovery (`scopes_supported`) remains global and is not customized per client.
@@ -1043,7 +1034,7 @@ Merge behavior is deterministic:
 To use these, the client must have a mapping for the claim names (in `id_token_claims` and/or `access_token_claims`):
 
 ```yaml
-idp:
+identity:
   oidc:
     clients:
       - client_id: "my-client"
@@ -1062,7 +1053,7 @@ idp:
 The lifetime of access tokens and refresh tokens can be configured per client:
 
 ```yaml
-idp:
+identity:
   oidc:
     revoke_refresh_token: true
     clients:
@@ -1085,7 +1076,7 @@ For compatibility scenarios, clients can define `implied_scopes`. These scopes a
 when they are not explicitly requested by the incoming authorization request.
 
 ```yaml
-idp:
+identity:
   oidc:
     clients:
       - client_id: "opencloud-desktop"
@@ -1188,30 +1179,32 @@ auto-add for MFA/WebAuthn writes. If these settings are omitted, the object clas
 entries.
 
 ```yaml
-ldap:
-  search:
-    - protocol: [ "oidc", "saml" ]
-      base_dn: "ou=users,dc=example,dc=com"
-      filter:
-          user: "(uid=%{username})"
-      mapping:
-        account_field: "uid"
-        display_name_field: "cn"
-        totp_secret_field: "nauthilusTotpSecret"
-        totp_object_class: "nauthilusMfaAccount"
-        # JSON mode: Use the field that stores all credentials
-        webauthn_credential_field: "nauthilusFido2Credential"
-        webauthn_object_class: "nauthilusFido2Account"
-      groups:
-          # member_of | search | hybrid
-          strategy: "hybrid"
-          # Used by member_of and hybrid
-          attribute: "memberOf"
-          # Used by search and hybrid (defaults shown)
-          base_dn: "ou=groups,dc=example,dc=com"
-          scope: "sub"
-          # Macros use Nauthilus syntax (LDAP-escaped automatically):
-          # %{user_dn}, %{account}, %{username}, ...
+auth:
+  backends:
+    ldap:
+      search:
+        - protocol: ["oidc", "saml"]
+          base_dn: "ou=users,dc=example,dc=com"
+          filter:
+              user: "(uid=%{username})"
+          mapping:
+            account_field: "uid"
+            display_name_field: "cn"
+            totp_secret_field: "nauthilusTotpSecret"
+            totp_object_class: "nauthilusMfaAccount"
+            # JSON mode: Use the field that stores all credentials
+            webauthn_credential_field: "nauthilusFido2Credential"
+            webauthn_object_class: "nauthilusFido2Account"
+          groups:
+              # member_of | search | hybrid
+              strategy: "hybrid"
+              # Used by member_of and hybrid
+              attribute: "memberOf"
+              # Used by search and hybrid (defaults shown)
+              base_dn: "ou=groups,dc=example,dc=com"
+              scope: "sub"
+              # Macros use Nauthilus syntax (LDAP-escaped automatically):
+              # %{user_dn}, %{account}, %{username}, ...
           filter: "(|(member=%{user_dn})(uniqueMember=%{user_dn})(memberUid=%{account}))"
           name_attribute: "cn"
           recursive: true
@@ -1286,12 +1279,14 @@ TOTP code during the 2FA phase.
 **Configuration Example (LDAP):**
 
 ```yaml
-ldap:
-  search:
-    - protocol: [ "oidc", "saml" ]
-      mapping:
-        totp_recovery_field: "nauthilusTotpRecoveryCode"
-        totp_recovery_object_class: "nauthilusMfaAccount"
+auth:
+  backends:
+    ldap:
+      search:
+        - protocol: ["oidc", "saml"]
+          mapping:
+            totp_recovery_field: "nauthilusTotpRecoveryCode"
+            totp_recovery_object_class: "nauthilusMfaAccount"
 ```
 
 ## 8. Client Credentials Grant (RFC 6749 §4.4)
@@ -1666,7 +1661,7 @@ same session skip the consent page (unless `skip_consent` is configured on the c
 `GET /oidc/token` is optional and disabled by default. Enable only when needed via:
 
 ```yaml
-idp:
+identity:
     oidc:
         token_endpoint_allow_get: true
 ```

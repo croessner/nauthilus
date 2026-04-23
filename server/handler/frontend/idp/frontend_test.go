@@ -100,7 +100,7 @@ func TestBasePageData(t *testing.T) {
 	t.Run("Includes legal links from IdP config", func(t *testing.T) {
 		cfgWithLegalLinks := &mockFrontendCfg{
 			FileSettings: config.FileSettings{
-				IdP: &config.IdPSection{
+				IDP: &config.IdPSection{
 					TermsOfServiceURL:    "https://example.com/legal",
 					PrivacyPolicyURL:     "https://example.com/privacy",
 					PasswordForgottenURL: "https://example.com/forgot",
@@ -140,7 +140,7 @@ func TestBasePageData(t *testing.T) {
 			name: "OIDC Client Name",
 			cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IdP: &config.IdPSection{
+					IDP: &config.IdPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{
 								{ClientID: "client-1", Name: "Client One"},
@@ -159,7 +159,7 @@ func TestBasePageData(t *testing.T) {
 			name: "SAML Service Provider Name",
 			cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IdP: &config.IdPSection{
+					IDP: &config.IdPSection{
 						SAML2: config.SAML2Config{
 							ServiceProviders: []config.SAML2ServiceProvider{
 								{EntityID: "sp-1", Name: "Example SP"},
@@ -442,7 +442,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IdP: &config.IdPSection{
+						IDP: &config.IdPSection{
 							RememberMeTTL: 2 * time.Hour,
 							OIDC: config.OIDCConfig{
 								Clients: []config.OIDCClient{
@@ -474,7 +474,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IdP: &config.IdPSection{
+						IDP: &config.IdPSection{
 							OIDC: config.OIDCConfig{
 								Clients: []config.OIDCClient{
 									{ClientID: "oidc-client", RememberMeTTL: 30 * time.Minute},
@@ -498,7 +498,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IdP: &config.IdPSection{
+						IDP: &config.IdPSection{
 							SAML2: config.SAML2Config{
 								ServiceProviders: []config.SAML2ServiceProvider{
 									{EntityID: "sp-entity", RememberMeTTL: time.Hour},
@@ -522,7 +522,7 @@ func TestGetRememberMeTTL(t *testing.T) {
 			deps: &deps.Deps{
 				Cfg: &mockFrontendCfg{
 					FileSettings: config.FileSettings{
-						IdP: &config.IdPSection{},
+						IDP: &config.IdPSection{},
 					},
 				},
 				Env:         config.NewTestEnvironmentConfig(),
@@ -541,7 +541,7 @@ func TestIsMFAMethodSupported(t *testing.T) {
 		deps: &deps.Deps{
 			Cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IdP: &config.IdPSection{
+					IDP: &config.IdPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{
 								{
@@ -573,7 +573,7 @@ func TestIsMFAMethodSupported_DefaultsToAllWhenUnset(t *testing.T) {
 		deps: &deps.Deps{
 			Cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IdP: &config.IdPSection{
+					IDP: &config.IdPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{
 								{
@@ -611,7 +611,7 @@ func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testin
 		deps: &deps.Deps{
 			Cfg: &mockFrontendCfg{
 				FileSettings: config.FileSettings{
-					IdP: &config.IdPSection{
+					IDP: &config.IdPSection{
 						OIDC: config.OIDCConfig{
 							Clients: []config.OIDCClient{{
 								ClientID:     "different-client",

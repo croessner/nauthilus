@@ -27,19 +27,19 @@ const (
 	defaultPermissionsPolicy       = "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
 	cspFormActionDirectiveName     = "form-action"
 
-	securityHeadersCSPKey         = "server.frontend.security_headers.content_security_policy"
-	securityHeadersPermissionsKey = "server.frontend.security_headers.permissions_policy"
-	securityHeadersSTSKey         = "server.frontend.security_headers.strict_transport_security"
+	securityHeadersCSPKey         = "identity.frontend.security_headers.content_security_policy"
+	securityHeadersPermissionsKey = "identity.frontend.security_headers.permissions_policy"
+	securityHeadersSTSKey         = "identity.frontend.security_headers.strict_transport_security"
 )
 
 type cspDirective struct {
-	name    string
-	sources []string
+	name    string   `mapstructure:"-"`
+	sources []string `mapstructure:"-"`
 }
 
 type permissionsDirective struct {
-	feature string
-	value   string
+	feature string `mapstructure:"-"`
+	value   string `mapstructure:"-"`
 }
 
 var defaultContentSecurityPolicyDirectives = []cspDirective{

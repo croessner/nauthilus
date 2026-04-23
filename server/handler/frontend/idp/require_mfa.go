@@ -144,7 +144,7 @@ func (h *FrontendHandler) getFlowClientIdentifiers(mgr cookie.Manager) (string, 
 
 // getRememberMeTTL returns the effective remember-me TTL for the current flow.
 // Resolution order:
-// 1. Global idp.remember_me_ttl
+// 1. Global identity.session.remember_me_ttl
 // 2. Deprecated per-client/per-SP remember_me_ttl (legacy fallback)
 func (h *FrontendHandler) getRememberMeTTL(oidcCID, samlEntityID string) time.Duration {
 	if h == nil || h.deps == nil || h.deps.Cfg == nil {

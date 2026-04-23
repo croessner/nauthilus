@@ -504,7 +504,7 @@ func validateDeveloperModeBindAddress(devMode bool, listenAddress string) error 
 
 	host, _, err := net.SplitHostPort(listenAddress)
 	if err != nil {
-		return fmt.Errorf("developer mode requires loopback listen address (127.0.0.1 or ::1), invalid server.address %q: %w", listenAddress, err)
+		return fmt.Errorf("developer mode requires loopback listen address (127.0.0.1 or ::1), invalid runtime.listen.address %q: %w", listenAddress, err)
 	}
 
 	if host == definitions.Localhost4 || host == definitions.Localhost6 {

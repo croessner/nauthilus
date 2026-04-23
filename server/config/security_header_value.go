@@ -25,10 +25,10 @@ import (
 
 // ContentSecurityPolicyValue stores CSP config as either a string, legacy partial list, or structured object.
 type ContentSecurityPolicyValue struct {
-	value                  string
-	partials               []string
-	directives             map[string][]string
-	formActionOptionalURIs []string
+	value                  string              `mapstructure:"-"`
+	partials               []string            `mapstructure:"-"`
+	directives             map[string][]string `mapstructure:"-"`
+	formActionOptionalURIs []string            `mapstructure:"-"`
 }
 
 // NewContentSecurityPolicyValueFromString creates a CSP value from a plain string.
@@ -137,9 +137,9 @@ func (c ContentSecurityPolicyValue) String() string {
 
 // PermissionsPolicyValue stores Permissions-Policy config as either a string, legacy partial list, or structured object.
 type PermissionsPolicyValue struct {
-	value    string
-	partials []string
-	features map[string]string
+	value    string            `mapstructure:"-"`
+	partials []string          `mapstructure:"-"`
+	features map[string]string `mapstructure:"-"`
 }
 
 // NewPermissionsPolicyValueFromString creates a Permissions-Policy value from a plain string.
@@ -228,17 +228,17 @@ func (p PermissionsPolicyValue) String() string {
 }
 
 type strictTransportSecurityObject struct {
-	maxAge            *string
-	includeSubDomains *bool
-	preload           *bool
-	extraTokens       []string
+	maxAge            *string  `mapstructure:"-"`
+	includeSubDomains *bool    `mapstructure:"-"`
+	preload           *bool    `mapstructure:"-"`
+	extraTokens       []string `mapstructure:"-"`
 }
 
 // StrictTransportSecurityValue stores HSTS config as either a string, legacy partial list, or structured object.
 type StrictTransportSecurityValue struct {
-	value    string
-	partials []string
-	object   *strictTransportSecurityObject
+	value    string                         `mapstructure:"-"`
+	partials []string                       `mapstructure:"-"`
+	object   *strictTransportSecurityObject `mapstructure:"-"`
 }
 
 // NewStrictTransportSecurityValueFromString creates an HSTS value from a plain string.

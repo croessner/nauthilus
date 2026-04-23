@@ -32,11 +32,13 @@ import (
 	"github.com/croessner/nauthilus/server/app/reloadfx"
 	"github.com/croessner/nauthilus/server/app/restartfx"
 	"github.com/croessner/nauthilus/server/app/signalsfx"
+	"github.com/croessner/nauthilus/server/config"
 	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/testing/luatest"
 
+	"github.com/spf13/viper"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -78,6 +80,14 @@ func main() {
 		runLuaTest()
 
 		return
+	}
+
+	if bootfx.IsConfigDumpDefaultsMode() {
+		os.Exit(runConfigDumpDefaults(os.Stdout, os.Stderr))
+	}
+
+	if bootfx.IsConfigDumpNonDefaultsMode() {
+		os.Exit(runConfigDumpNonDefaults(bootfx.SetupConfiguration, os.Stdout, os.Stderr))
 	}
 
 	if bootfx.IsConfigCheckMode() {
@@ -150,6 +160,63 @@ func runConfigCheck(setupConfiguration func() error, stderr io.Writer) int {
 	_, _ = fmt.Fprintf(stderr, "configuration check failed: %v\n", err)
 
 	return 1
+}
+
+func runConfigDumpDefaults(stdout io.Writer, stderr io.Writer) int {
+	if bootfx.IsConfigDumpNonDefaultsMode() {
+		_, _ = fmt.Fprintln(stderr, "configuration dump failed: use either -d or -n, not both")
+
+		return 1
+	}
+
+	dumpFormat := bootfx.GetConfigDumpFormat()
+	output, err := config.RenderDefaultConfigDumpWithFormat(dumpFormat)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "configuration dump failed: %v\n", err)
+
+		return 1
+	}
+
+	if output != "" {
+		_, _ = fmt.Fprintln(stdout, output)
+	}
+
+	return 0
+}
+
+func runConfigDumpNonDefaults(setupConfiguration func() error, stdout io.Writer, stderr io.Writer) int {
+	if bootfx.IsConfigDumpDefaultsMode() {
+		_, _ = fmt.Fprintln(stderr, "configuration dump failed: use either -d or -n, not both")
+
+		return 1
+	}
+
+	if setupConfiguration == nil {
+		_, _ = fmt.Fprintln(stderr, "configuration dump failed: setup function is nil")
+
+		return 1
+	}
+
+	if err := setupConfiguration(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "configuration dump failed: %v\n", err)
+
+		return 1
+	}
+
+	dumpFormat := bootfx.GetConfigDumpFormat()
+
+	output, err := config.RenderNonDefaultConfigDumpWithFormat(viper.AllSettings(), dumpFormat)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "configuration dump failed: %v\n", err)
+
+		return 1
+	}
+
+	if output != "" {
+		_, _ = fmt.Fprintln(stdout, output)
+	}
+
+	return 0
 }
 
 // runLuaTest executes the Lua script test and exits.

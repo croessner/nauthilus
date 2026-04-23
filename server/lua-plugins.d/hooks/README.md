@@ -113,19 +113,22 @@ Security notes:
 
 ## Configuring Hooks in nauthilus.yml
 
-To use the hooks in this directory, you need to configure them in your nauthilus.yml configuration file. Hooks are configured in the `lua.custom_hooks` section of the configuration file.
+To use the hooks in this directory, you need to configure them in your `nauthilus.yml` file. Hooks are configured in
+the `auth.controls.lua.hooks` section.
 
 ### Configuration Structure
 
 Each hook requires the following configuration:
 
 ```yaml
-lua:
-  custom_hooks:
-    - http_location: "hook-name"      # The URL path for the hook (relative to /api/v1/custom/)
-      http_method: "HTTP_METHOD"      # The HTTP method (GET, POST, PUT, DELETE, PATCH)
-      script_path: "/path/to/hook.lua" # Full path to the Lua script
-      roles: ["role1", "role2"]       # Optional: List of roles that can access this hook when JWT auth is enabled
+auth:
+  controls:
+    lua:
+      hooks:
+        - http_location: "hook-name"       # The URL path for the hook (relative to /api/v1/custom/)
+          http_method: "HTTP_METHOD"       # The HTTP method (GET, POST, PUT, DELETE, PATCH)
+          script_path: "/path/to/hook.lua" # Full path to the Lua script
+          roles: ["role1", "role2"]        # Optional: List of roles that can access this hook when JWT auth is enabled
 ```
 
 ### Example Configuration
@@ -133,22 +136,24 @@ lua:
 Here's an example configuration for the hooks described in this README:
 
 ```yaml
-lua:
-  custom_hooks:
-    - http_location: "distributed-brute-force-admin"
-      http_method: "POST"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-admin.lua"
-      roles: ["admin", "security"]
+auth:
+  controls:
+    lua:
+      hooks:
+        - http_location: "distributed-brute-force-admin"
+          http_method: "POST"
+          script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-admin.lua"
+          roles: ["admin", "security"]
 
-    - http_location: "distributed-brute-force-test"
-      http_method: "POST"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-test.lua"
-      roles: ["admin", "security"]
+        - http_location: "distributed-brute-force-test"
+          http_method: "POST"
+          script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-test.lua"
+          roles: ["admin", "security"]
 
-    - http_location: "hello-world-request-dump"
-      http_method: "GET"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/hello-world-request-dump.lua"
-      roles: ["admin"]
+        - http_location: "hello-world-request-dump"
+          http_method: "GET"
+          script_path: "/etc/nauthilus/lua-plugins.d/hooks/hello-world-request-dump.lua"
+          roles: ["admin"]
 ```
 
 ### Access Control with JWT Authentication
@@ -162,12 +167,13 @@ When JWT authentication is enabled in Nauthilus, you can restrict access to hook
 
 ### Enabling/Disabling All Custom Hooks
 
-You can disable all custom hooks by setting `custom_hooks: false` in the `server.disabled_endpoints` section:
+You can disable all custom hooks by setting `custom_hooks: true` in `runtime.http.disabled_endpoints`:
 
 ```yaml
-server:
-  disabled_endpoints:
-    custom_hooks: true  # Disables all custom hooks
+runtime:
+  http:
+    disabled_endpoints:
+      custom_hooks: true  # Disables all custom hooks
 ```
 
 
@@ -185,17 +191,19 @@ Usage:
 Example:
 
 ```yaml
-lua:
-  custom_hooks:
-    - http_location: "http-head-get-demo"
-      http_method: "GET"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
-      roles: ["admin"]
+auth:
+  controls:
+    lua:
+      hooks:
+        - http_location: "http-head-get-demo"
+          http_method: "GET"
+          script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
+          roles: ["admin"]
 
-    - http_location: "http-head-get-demo"
-      http_method: "HEAD"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
-      roles: ["admin"]
+        - http_location: "http-head-get-demo"
+          http_method: "HEAD"
+          script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
+          roles: ["admin"]
 ```
 
 Endpoint examples:
@@ -228,17 +236,19 @@ Usage:
 Example configuration:
 
 ```yaml
-lua:
-  custom_hooks:
-    - http_location: "dynamic-textmap-demo"
-      http_method: "GET"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
-      roles: ["admin"]
+auth:
+  controls:
+    lua:
+      hooks:
+        - http_location: "dynamic-textmap-demo"
+          http_method: "GET"
+          script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
+          roles: ["admin"]
 
-    - http_location: "dynamic-textmap-demo"
-      http_method: "HEAD"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
-      roles: ["admin"]
+        - http_location: "dynamic-textmap-demo"
+          http_method: "HEAD"
+          script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
+          roles: ["admin"]
 ```
 
 Example requests:

@@ -64,11 +64,14 @@ If you use the Lua proxy backend (`server/lua-plugins.d/backend/proxy_backend.lu
 variables and load `extra-init.lua` through the init script list:
 
 ```yaml
-lua:
-  config:
-    init_script_paths:
-      - "/etc/nauthilus/lua-plugins.d/init/init.lua"
-      - "/etc/nauthilus/lua-plugins.d/init/extra-init.lua"
+auth:
+  backends:
+    lua:
+      backend:
+        default:
+          init_script_paths:
+            - "/etc/nauthilus/lua-plugins.d/init/init.lua"
+            - "/etc/nauthilus/lua-plugins.d/init/extra-init.lua"
 ```
 
 **Supported environment variables:**

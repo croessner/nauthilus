@@ -3,34 +3,26 @@
 # Start example:
 #   TESTING_CSV=client/logins.csv ./nauthilus -config client/nauthilus.yml -config-format yaml
 
-server:
-
-  address: "0.0.0.0:8080"
-  max_concurrent_requests: 10000
+runtime:
   instance_name: "nauthilus-testing"
 
+  listen:
+    address: "0.0.0.0:8080"
+
+  http:
+    keep_alive:
+      enabled: true
+
+observability:
   log:
     level: "warn"
     add_source: true
     json: true
 
-  keep_alive:
-    enabled: true
-
-  dedup:
-    in_process_enabled: true
-
-  brute_force_protocols: [ imap, pop3, smtp, http ]
-
-  # Enable only Lua backend to focus on CSV-based backend during tests.
-  backends: [ cache, lua ]
-  prefilters: [ lua ]
-
-  # Minimal local Redis settings (adjust to your environment if needed)
+storage:
   redis:
-    master:
+    primary:
       address: "127.0.0.1:6379"
-
     database_number: 0
     prefix: "nt:"
     pool_size: 128
@@ -41,70 +33,58 @@ server:
     batching:
       enabled: true
 
-  # Middlewares: optional switches to disable specific HTTP middlewares.
-  # By default all are enabled; set to false to turn one off.
-  # middlewares:
-  #   logging: true
-  #   limit: true
-  #   recovery: true
-  #   trusted_proxies: true
-  #   request_decompression: true
-  #   response_compression: true
-  #   metrics: true
+auth:
+  pipeline:
+    max_concurrent_requests: 10000
 
-brute_force:
+  backends:
+    order: [cache, lua]
 
-  pw_history_for_known_accounts: true
-  tolerate_percent: 3
-  tolerate_ttl: 30m
-  adaptive_toleration: true
-  min_tolerate_percent: 3
-  max_tolerate_percent: 50
+    lua:
+      backend:
+        default:
+          backend_script_path: "server/lua-plugins.d/backend/testing_csv_backend.lua"
+          init_script_paths:
+            - "server/lua-plugins.d/init/testing_csv_loader.lua"
+          package_path: "server/lua-plugins.d/share/?.lua;server/lua-plugins.d/backend/?.lua;server/lua-plugins.d/init/?.lua"
+          backend_number_of_workers: 32
+          action_number_of_workers: 32
+          feature_vm_pool_size: 48
+          filter_vm_pool_size: 48
+          hook_vm_pool_size: 48
+          queue_length: 0
 
-  buckets:
-    - { name: b_1m_ipv4_24_mail, period: 1m,   cidr: 24, ipv4: true, failed_requests: 15,
-        filter_by_protocol: [ imap, pop3, smtp ] }
-    - { name: b_1m_ipv4_32_default,  period: 1m,   cidr: 32, ipv4: true, failed_requests: 8,
-        filter_by_protocol: [ http ] }
-    - { name: b_1h_ipv4_24,      period: 1h,   cidr: 24, ipv4: true, failed_requests: 25 }
-    - { name: b_1d_ipv4_24,      period: 24h,  cidr: 24, ipv4: true, failed_requests: 35 }
-    - { name: b_1w_ipv4_24,      period: 168h, cidr: 24, ipv4: true, failed_requests: 40 }
-    - { name: b_1M_ipv4_24,      period: 672h, cidr: 24, ipv4: true, failed_requests: 50 }
+        search:
+          - protocol: [imap, pop3, smtp, http]
+            cache_name: default
 
-# Lua configuration: wires backend and init scripts for the CSV loader/backend
-lua:
+  controls:
+    enabled: [lua, brute_force]
 
-  actions:
-    - type: brute_force
-      name: brute_force_header
-      script_path: server/lua-plugins.d/actions/bruteforce_header.lua
+    brute_force:
+      protocols: [imap, pop3, smtp, http]
+      pw_history_for_known_accounts: true
+      tolerate_percent: 3
+      tolerate_ttl: 30m
+      adaptive_toleration: true
+      min_tolerate_percent: 3
+      max_tolerate_percent: 50
 
-  search:
-    - protocol: [ imap, pop3, smtp, http ]
-      cache_name: default
+      buckets:
+        - { name: b_1m_ipv4_24_mail, period: 1m, cidr: 24, ipv4: true, failed_requests: 15,
+            filter_by_protocol: [imap, pop3, smtp] }
+        - { name: b_1m_ipv4_32_default, period: 1m, cidr: 32, ipv4: true, failed_requests: 8,
+            filter_by_protocol: [http] }
+        - { name: b_1h_ipv4_24, period: 1h, cidr: 24, ipv4: true, failed_requests: 25 }
+        - { name: b_1d_ipv4_24, period: 24h, cidr: 24, ipv4: true, failed_requests: 35 }
+        - { name: b_1w_ipv4_24, period: 168h, cidr: 24, ipv4: true, failed_requests: 40 }
+        - { name: b_1M_ipv4_24, period: 672h, cidr: 24, ipv4: true, failed_requests: 50 }
 
-  config:
-    # Backend entry script (implements nauthilus_backend_verify_password)
-    backend_script_path: "server/lua-plugins.d/backend/testing_csv_backend.lua"
-
-    # Init script(s) that load the CSV into the Go-backed cache at startup
-    init_script_paths:
-      - "server/lua-plugins.d/init/testing_csv_loader.lua"
-
-    # Make sure Lua can resolve shared helper modules and plugins via require()
-    # This augments package.path at runtime.
-    package_path: "server/lua-plugins.d/share/?.lua;server/lua-plugins.d/backend/?.lua;server/lua-plugins.d/init/?.lua"
-
-    # Worker and VM pool sizes suitable for local high-throughput tests
-    backend_number_of_workers: 32
-    action_number_of_workers: 32
-
-    feature_vm_pool_size: 48
-    filter_vm_pool_size: 48
-    hook_vm_pool_size: 48
-
-    # Queue length for backend requests (0 = unlimited)
-    queue_length: 0
+    lua:
+      actions:
+        - type: brute_force
+          name: brute_force_header
+          script_path: server/lua-plugins.d/actions/bruteforce_header.lua
 
 # Notes:
 # - The CSV path can be provided via environment variable TESTING_CSV.

@@ -9,13 +9,14 @@ reduces the attack surface by running the server process with minimal permission
 
 ### Configuration
 
-Add the following optional settings under the `server` section of your configuration file:
+Add the following optional settings under the `runtime.process` section of your configuration file:
 
 ```yaml
-server:
-  run_as_user: nauthilus
-  run_as_group: nauthilus
-  chroot: /var/lib/nauthilus
+runtime:
+  process:
+    run_as_user: nauthilus
+    run_as_group: nauthilus
+    chroot: /var/lib/nauthilus
 ```
 
 | Setting        | Description                                                                                | Required |
@@ -125,15 +126,17 @@ nauthilus -config /etc/nauthilus/config.yaml
 With the configuration:
 
 ```yaml
-server:
-  address: "0.0.0.0:8080"
-  run_as_user: nauthilus
-  run_as_group: nauthilus
-  chroot: /var/lib/nauthilus
-  tls:
-    enabled: true
-    cert: /etc/ssl/nauthilus.crt
-    key: /etc/ssl/nauthilus.key
+runtime:
+  process:
+    run_as_user: nauthilus
+    run_as_group: nauthilus
+    chroot: /var/lib/nauthilus
+  listen:
+    address: "0.0.0.0:8080"
+    tls:
+      enabled: true
+      cert: /etc/ssl/nauthilus.crt
+      key: /etc/ssl/nauthilus.key
 ```
 
 > **Note**: The `-config` path is read *before* chroot takes effect. TLS certificate paths and all other runtime file

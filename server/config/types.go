@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	legacyFeatureNames = map[string]struct{}{
+	featureNames = map[string]struct{}{
 		definitions.FeatureTLSEncryption:            {},
 		definitions.FeatureRBL:                      {},
 		definitions.FeatureRelayDomains:             {},
@@ -34,15 +34,15 @@ var (
 		definitions.FeatureBackendServersMonitoring: {},
 		definitions.FeatureBruteForce:               {},
 	}
-	prefilterNames = map[string]struct{}{
+	controlNames = map[string]struct{}{
 		definitions.FeatureTLSEncryption: {},
 		definitions.FeatureRBL:           {},
 		definitions.FeatureRelayDomains:  {},
 		definitions.FeatureLua:           {},
+		definitions.FeatureBruteForce:    {},
 	}
-	capabilityNames = map[string]struct{}{
+	serviceNames = map[string]struct{}{
 		definitions.FeatureBackendServersMonitoring: {},
-		definitions.FeatureBruteForce:               {},
 	}
 )
 
@@ -66,10 +66,10 @@ func setNamedConfigValue(target *string, value string, allowed map[string]struct
 // Verbosity is a type that represents the verbosity details.
 type Verbosity struct {
 	// verboseLevel holds the level of detail for logging
-	verboseLevel int
+	verboseLevel int `mapstructure:"-"`
 
 	// name is the name of the verbosity level
-	name string
+	name string `mapstructure:"-"`
 }
 
 func (v *Verbosity) String() string {
@@ -143,8 +143,8 @@ func (v *Verbosity) Get() string {
 
 // LDAPScope is the search scope for an LDAP server.
 type LDAPScope struct {
-	scope int
-	name  string
+	scope int    `mapstructure:"-"`
+	name  string `mapstructure:"-"`
 }
 
 func (l *LDAPScope) String() string {
@@ -200,7 +200,7 @@ func (l *LDAPScope) Get() int {
 // Protocol is the protocol used between a remote client and a server. This server sets the protocol in an HTTP request
 // header "Auth-Protocol" (Nginx protocol).
 type Protocol struct {
-	name string
+	name string `mapstructure:"-"`
 }
 
 func (p *Protocol) String() string {
@@ -252,8 +252,8 @@ func NewProtocol(protocol string) *Protocol {
 
 // Backend is a password Database container.
 type Backend struct {
-	backend definitions.Backend
-	name    string
+	backend definitions.Backend `mapstructure:"-"`
+	name    string              `mapstructure:"-"`
 }
 
 func (b *Backend) String() string {
@@ -334,8 +334,8 @@ func (b *Backend) GetName() string {
 
 // Feature is a container for Nauthilus features.
 type Feature struct {
-	name       string
-	whenNoAuth bool
+	name       string `mapstructure:"-"`
+	whenNoAuth bool   `mapstructure:"-"`
 }
 
 func (f *Feature) String() string {
@@ -366,7 +366,7 @@ func (f *Feature) GetWhenNoAuth() bool {
 
 // Set updates the feature name based on the provided value.
 // It returns an error if the value is not a valid feature name.
-// Valid feature names are "tls_encryption", "rbl", "relay_domains", and "lua".
+// Valid feature names are all supported runtime features exposed by the configuration layer.
 // If the value is valid, the name field of the Feature struct is updated accordingly.
 // An error of type ErrWrongFeature is returned if the value is not valid.
 func (f *Feature) Set(value string) error {
@@ -374,7 +374,7 @@ func (f *Feature) Set(value string) error {
 		return nil
 	}
 
-	return setNamedConfigValue(&f.name, value, legacyFeatureNames, "feature")
+	return setNamedConfigValue(&f.name, value, featureNames, "feature")
 }
 
 // Type returns the name of the type.
@@ -395,109 +395,109 @@ func (f *Feature) Get() string {
 	return f.name
 }
 
-// Prefilter is a container for strict server prefilters.
-type Prefilter struct {
-	name       string
-	whenNoAuth bool
+// Control is a container for server controls.
+type Control struct {
+	name       string `mapstructure:"-"`
+	whenNoAuth bool   `mapstructure:"-"`
 }
 
-func (p *Prefilter) String() string {
-	if p == nil {
+func (c *Control) String() string {
+	if c == nil {
 		return "<nil>"
 	}
 
-	return p.name
+	return c.name
 }
 
-// SetWhenNoAuth sets the whenNoAuth field of the Prefilter.
-func (p *Prefilter) SetWhenNoAuth(value bool) {
-	if p == nil {
+// SetWhenNoAuth sets the whenNoAuth field of the Control.
+func (c *Control) SetWhenNoAuth(value bool) {
+	if c == nil {
 		return
 	}
 
-	p.whenNoAuth = value
+	c.whenNoAuth = value
 }
 
 // GetWhenNoAuth returns the value of the whenNoAuth field.
-func (p *Prefilter) GetWhenNoAuth() bool {
-	if p == nil {
+func (c *Control) GetWhenNoAuth() bool {
+	if c == nil {
 		return false
 	}
 
-	return p.whenNoAuth
+	return c.whenNoAuth
 }
 
-// Set updates the prefilter name based on the provided value.
-func (p *Prefilter) Set(value string) error {
-	if p == nil {
-		return nil
-	}
-
-	return setNamedConfigValue(&p.name, value, prefilterNames, "prefilter")
-}
-
-// Type returns the name of the type.
-func (p *Prefilter) Type() string {
-	if p == nil {
-		return "<nil>"
-	}
-
-	return "Prefilter"
-}
-
-// Get gets the name of a prefilter returned as string.
-func (p *Prefilter) Get() string {
-	if p == nil {
-		return ""
-	}
-
-	return p.name
-}
-
-// Capability is a container for server capabilities.
-type Capability struct {
-	name string
-}
-
-func (c *Capability) String() string {
-	if c == nil {
-		return "<nil>"
-	}
-
-	return c.name
-}
-
-// Set updates the capability name based on the provided value.
-func (c *Capability) Set(value string) error {
+// Set updates the control name based on the provided value.
+func (c *Control) Set(value string) error {
 	if c == nil {
 		return nil
 	}
 
-	return setNamedConfigValue(&c.name, value, capabilityNames, "capability")
+	return setNamedConfigValue(&c.name, value, controlNames, "control")
 }
 
 // Type returns the name of the type.
-func (c *Capability) Type() string {
+func (c *Control) Type() string {
 	if c == nil {
 		return "<nil>"
 	}
 
-	return "Capability"
+	return "Control"
 }
 
-// Get gets the name of a capability returned as string.
-func (c *Capability) Get() string {
+// Get gets the name of a control returned as string.
+func (c *Control) Get() string {
 	if c == nil {
 		return ""
 	}
 
 	return c.name
+}
+
+// Service is a container for server services.
+type Service struct {
+	name string `mapstructure:"-"`
+}
+
+func (s *Service) String() string {
+	if s == nil {
+		return "<nil>"
+	}
+
+	return s.name
+}
+
+// Set updates the service name based on the provided value.
+func (s *Service) Set(value string) error {
+	if s == nil {
+		return nil
+	}
+
+	return setNamedConfigValue(&s.name, value, serviceNames, "service")
+}
+
+// Type returns the name of the type.
+func (s *Service) Type() string {
+	if s == nil {
+		return "<nil>"
+	}
+
+	return "Service"
+}
+
+// Get gets the name of a service returned as string.
+func (s *Service) Get() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.name
 }
 
 // DbgModule represents a debugging module configuration.
 type DbgModule struct {
-	name   string
-	module definitions.DbgModule
+	name   string                `mapstructure:"-"`
+	module definitions.DbgModule `mapstructure:"-"`
 }
 
 func (d *DbgModule) String() string {
