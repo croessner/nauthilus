@@ -96,7 +96,7 @@ func NewDetailedError(err string) *DetailedError {
 var (
 	ErrAllBackendConfigError                   = NewDetailedError("configuration errors in all Database sections")
 	ErrUnsupportedMediaType                    = errors.New("unsupported media type")
-	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_server_monitoring not enabled")
+	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_health_checks not enabled")
 	ErrMonitoringBackendServersEmpty           = errors.New("no monitoring backend servers configured")
 	ErrInvalidUsername                         = errors.New("invalid username")
 	ErrEmptyUsername                           = errors.New("empty_username")
@@ -119,8 +119,10 @@ var (
 // file.
 
 var (
-	ErrNoLDAPSection       = errors.New("no 'ldap:' section found")
-	ErrNoLDAPSearchSection = errors.New("no 'ldap::search:' section found")
+	// ErrNoLDAPSection reports that the LDAP backend root is missing.
+	ErrNoLDAPSection = errors.New("no 'auth.backends.ldap' section found")
+	// ErrNoLDAPSearchSection reports that no LDAP protocol mappings are configured.
+	ErrNoLDAPSearchSection = errors.New("no 'auth.backends.ldap.search' section found")
 )
 
 // ldap.

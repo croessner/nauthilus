@@ -37,18 +37,34 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var errBackchannelAuthNotConfigured = errors.New("backchannel setup requires at least one configured authentication method: server.basic_auth.enabled=true or server.oidc_auth.enabled=true")
+var errBackchannelAuthNotConfigured = errors.New("backchannel setup requires at least one configured authentication method: auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
 
 func ensureBackchannelAuthConfigured(cfg config.File, developerMode bool) error {
-	if developerMode {
+	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
 		return nil
 	}
 
-	if cfg.GetServer().GetBasicAuth().IsEnabled() || cfg.GetServer().GetOIDCAuth().IsEnabled() {
+	if cfg != nil && cfg.HaveLuaHooks() {
 		return nil
 	}
 
 	return errBackchannelAuthNotConfigured
+}
+
+func hasBackchannelProtectedRouteAuth(cfg config.File, developerMode bool) bool {
+	if developerMode {
+		return true
+	}
+
+	if cfg == nil {
+		return false
+	}
+
+	if cfg.GetServer().GetBasicAuth().IsEnabled() || cfg.GetServer().GetOIDCAuth().IsEnabled() {
+		return true
+	}
+
+	return false
 }
 
 // ValidateAuthConfiguration validates required authentication settings for backchannel endpoints.
@@ -71,37 +87,41 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 
 	cfg := deps.Cfg
 	developerMode := deps.Env != nil && deps.Env.GetDevMode()
-	if err := ensureBackchannelAuthConfigured(cfg, developerMode); err != nil {
-		return err
-	}
 
 	// Main API group with configured authentication (mandatory token)
-	group := router.Group("/api/v1")
-
-	if cfg.GetServer().GetBasicAuth().IsEnabled() {
-		group.Use(mdauth.BasicAuthMiddlewareWithDeps(cfg, deps.Logger))
-	}
-
-	// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
-	// Uses the IdP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
-	// Controlled by server.oidc_auth.enabled, independent of idp.oidc.enabled.
 	var nauthilusIdP oidcbearer.TokenValidator
+	var authenticatedGroup *gin.RouterGroup
 
-	if cfg.GetServer().GetOIDCAuth().IsEnabled() {
-		nauthilusIdP = idp.NewNauthilusIdP(deps)
+	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
+		authenticatedGroup = router.Group("/api/v1")
 
-		group.Use(oidcbearer.Middleware(nauthilusIdP, cfg, deps.Logger))
+		if cfg.GetServer().GetBasicAuth().IsEnabled() {
+			authenticatedGroup.Use(mdauth.BasicAuthMiddlewareWithDeps(cfg, deps.Logger))
+		}
+
+		// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
+		// Uses the IdP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
+		// Controlled by auth.backchannel.oidc_bearer.enabled, independent of identity.oidc.enabled.
+		if cfg.GetServer().GetOIDCAuth().IsEnabled() {
+			nauthilusIdP = idp.NewNauthilusIdP(deps)
+
+			authenticatedGroup.Use(oidcbearer.Middleware(nauthilusIdP, cfg, deps.Logger))
+		}
+
+		authenticatedGroup.Use(mdlua.LuaContextMiddleware())
+
+		// Register modules (require mandatory authentication)
+		auth.New(deps).Register(authenticatedGroup)
+		bruteforce.New(deps).Register(authenticatedGroup)
+		confighandler.New(deps).Register(authenticatedGroup)
+		cache.New(deps).Register(authenticatedGroup)
+		asyncjobs.New(deps).Register(authenticatedGroup)
+		mfa_backchannel.New(deps).Register(authenticatedGroup)
+	} else {
+		deps.Logger.Warn(
+			"Skipping authenticated backchannel endpoints because no auth.backchannel method is configured",
+		)
 	}
-
-	group.Use(mdlua.LuaContextMiddleware())
-
-	// Register modules (require mandatory authentication)
-	auth.New(deps).Register(group)
-	bruteforce.New(deps).Register(group)
-	confighandler.New(deps).Register(group)
-	cache.New(deps).Register(group)
-	asyncjobs.New(deps).Register(group)
-	mfa_backchannel.New(deps).Register(group)
 
 	// Custom hooks use a separate group without authentication middleware.
 	// Authentication and authorization are handled per-hook inside HasRequiredScopes:
@@ -112,8 +132,8 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 
 	custom.New(deps.CfgProvider, deps.Logger, deps.Redis, nauthilusIdP).Register(hookGroup)
 
-	if deps.Env != nil && deps.Env.GetDevMode() {
-		devui.New(deps).Register(group)
+	if deps.Env != nil && deps.Env.GetDevMode() && authenticatedGroup != nil {
+		devui.New(deps).Register(authenticatedGroup)
 	}
 
 	return nil

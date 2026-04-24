@@ -231,7 +231,7 @@ func (h *SAMLHandler) resolveLogoutResponseDestination(issuer string) (string, e
 
 	sloURL := strings.TrimSpace(sp.SLOURL)
 	if sloURL == "" {
-		return "", fmt.Errorf("logout response destination for issuer %q requires a configured idp.saml2.service_providers[].slo_url", issuer)
+		return "", fmt.Errorf("logout response destination for issuer %q requires a configured identity.saml.service_providers[].slo_url", issuer)
 	}
 
 	parsedSLOURL, err := parseAbsoluteURL(sloURL)

@@ -20,17 +20,16 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/go-playground/validator/v10"
 )
 
 type LuaSection struct {
 	Actions             []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
-	Features            []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
-	Prefilters          []LuaFeature        `mapstructure:"prefilters" validate:"omitempty,dive"`
+	Features            []LuaFeature        `mapstructure:"-" validate:"omitempty,dive"`
+	Controls            []LuaFeature        `mapstructure:"controls" validate:"omitempty,dive"`
 	Filters             []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
-	Hooks               []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
+	Hooks               []LuaHooks          `mapstructure:"hooks" validate:"omitempty,dive"`
 	Config              *LuaConf            `mapstructure:"config" validate:"omitempty"`
-	OptionalLuaBackends map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive,validateOptionalLuaBackend"`
+	OptionalLuaBackends map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive"`
 	Search              []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
@@ -101,13 +100,16 @@ func (l *LuaSection) GetFeatures() []LuaFeature {
 	return l.Features
 }
 
-func (l *LuaSection) normalizePrefilterAliases() {
+func (l *LuaSection) normalizeConfiguredFeatures() {
 	if l == nil {
 		return
 	}
 
-	l.Features = preferAliasSlice(l.Prefilters, l.Features)
-	l.Prefilters = nil
+	if l.Controls == nil {
+		return
+	}
+
+	l.Features = append([]LuaFeature(nil), l.Controls...)
 }
 
 // GetFilters retrieves the list of LuaFilter from the LuaSection. Returns an empty slice if the LuaSection is nil.
@@ -126,21 +128,6 @@ func (l *LuaSection) GetHooks() []LuaHooks {
 	}
 
 	return l.Hooks
-}
-
-// validateOptionalLuaBackend checks if a map of LuaConf structs has empty PackagePath and InitScriptPath for all entries.
-// Returns false if any entry has a non-empty PackagePath or InitScriptPath, otherwise returns true.
-func validateOptionalLuaBackend(fl validator.FieldLevel) bool {
-	optBbackend, ok := fl.Field().Interface().(LuaConf)
-	if !ok {
-		return false
-	}
-
-	if optBbackend.PackagePath != "" || optBbackend.InitScriptPath != "" {
-		return false
-	}
-
-	return true
 }
 
 type LuaAction struct {

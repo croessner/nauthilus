@@ -92,9 +92,9 @@ TESTING_CSV=client/logins.csv \
 ```
 
 Notes:
-- `server.address` is set to `0.0.0.0:8080`. The client defaults to `http://localhost:8080/api/v1/auth/json`.
+- `runtime.listen.address` is set to `0.0.0.0:8080`. The client defaults to `http://localhost:8080/api/v1/auth/json`.
 - The Lua backend is wired to `server/lua-plugins.d/backend/testing_csv_backend.lua` and loads `server/lua-plugins.d/init/testing_csv_loader.lua` at startup.
-- Redis is expected locally at `127.0.0.1:6379` (see `server.redis`).
+- Redis is expected locally at `127.0.0.1:6379` (see `storage.redis`).
 
 ## cURL example (server)
 ```

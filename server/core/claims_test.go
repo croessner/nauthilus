@@ -84,7 +84,7 @@ func TestFillIdTokenClaims_WithCustomScopes(t *testing.T) {
 		deps: AuthDeps{
 			Logger: logger,
 			Cfg: &config.FileSettings{
-				IdP: &config.IdPSection{
+				IDP: &config.IdPSection{
 					OIDC: config.OIDCConfig{
 						CustomScopes: []config.Oauth2CustomScope{
 							{
@@ -123,7 +123,7 @@ func TestFillIdTokenClaims_WithCustomScopes(t *testing.T) {
 func TestFillIdTokenClaims_WithClientCustomScopeOverride(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := &config.FileSettings{
-		IdP: &config.IdPSection{
+		IDP: &config.IdPSection{
 			OIDC: config.OIDCConfig{
 				CustomScopes: []config.Oauth2CustomScope{
 					{

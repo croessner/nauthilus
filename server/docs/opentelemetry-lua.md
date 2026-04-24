@@ -71,7 +71,7 @@ end, { kind = "client" })
 ```
 
 Configuration toggle
-- Controlled by `server.insights.tracing.enabled` in the config file. When disabled, the module is present but all operations are no-ops.
+- Controlled by `observability.tracing.enabled` in the config file. When disabled, the module is present but all operations are no-ops.
 
 Notes
 - The module follows the active request span created by `otelgin`. Child spans created in Lua will be attached to the current request’s context.

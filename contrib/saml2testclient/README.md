@@ -53,8 +53,8 @@ The SAML2 IdP must be enabled and the Service Provider registered in `nauthilus.
 HTTPS for both IdP and SP to avoid cookie issues related to the "Schemeful Same-Site" policy.
 
 ```yaml
-idp:
-  saml2:
+identity:
+  saml:
     enabled: true
     entity_id: "https://localhost:9443/saml/metadata"
     cert: "YOUR_IDP_CERTIFICATE_HERE" # Or cert_file
@@ -72,28 +72,31 @@ idp:
 For users to be able to log in, an authentication backend (e.g., LDAP) must be configured:
 
 ```yaml
-ldap:
-  config:
-    server_uri: [ "ldap://localhost:389" ]
-    bind_dn: "cn=admin,dc=example,dc=org"
-    bind_pw: "admin"
-    lookup_pool_size: 1
-    auth_pool_size: 1
-  search:
-    - protocol: [ "saml" ]
-      cache_name: "ldap"
-      base_dn: "ou=users,dc=example,dc=org"
-      filter:
-        user: "(uid=%L{user})"
-      mapping:
-        account_field: "uid"
-        mail_field: "mail"
-        given_name_field: "givenName"
-        surname_field: "sn"
-      attribute:
-        - "uid"
-        - "mail"
-        - "cn"
-        - "givenName"
-        - "sn"
+auth:
+  backends:
+    order: ["ldap"]
+    ldap:
+      default:
+        server_uri: ["ldap://localhost:389"]
+        bind_dn: "cn=admin,dc=example,dc=org"
+        bind_pw: "admin"
+        lookup_pool_size: 1
+        auth_pool_size: 1
+      search:
+        - protocol: ["saml"]
+          cache_name: "ldap"
+          base_dn: "ou=users,dc=example,dc=org"
+          filter:
+            user: "(uid=%L{user})"
+          mapping:
+            account_field: "uid"
+            mail_field: "mail"
+            given_name_field: "givenName"
+            surname_field: "sn"
+          attribute:
+            - "uid"
+            - "mail"
+            - "cn"
+            - "givenName"
+            - "sn"
 ```

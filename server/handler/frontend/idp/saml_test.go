@@ -90,9 +90,6 @@ func (m *mockSAMLCfg) GetIdP() *config.IdPSection {
 				MaxParticipants:       m.sloMaxParticipants,
 				BackChannelMaxRetries: m.sloBackChannelRetries,
 			},
-			SLOBackChannelEnabled:    m.sloBackChannelEnabled,
-			SLOBackChannelTimeout:    m.sloRequestTimeout,
-			SLOBackChannelMaxRetries: m.sloBackChannelRetries,
 		},
 	}
 }

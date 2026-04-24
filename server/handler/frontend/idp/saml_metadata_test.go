@@ -61,7 +61,7 @@ func TestSAMLHandler_resolveLogoutResponseDestination_RequiresConfiguredSLOURL(t
 
 	_, err := handler.resolveLogoutResponseDestination("https://localhost:9095/saml/metadata")
 	assert.Error(t, err)
-	assert.ErrorContains(t, err, "requires a configured idp.saml2.service_providers[].slo_url")
+	assert.ErrorContains(t, err, "requires a configured identity.saml.service_providers[].slo_url")
 }
 
 func TestSAMLHandler_GetServiceProvider_IncludesSingleLogoutServices(t *testing.T) {

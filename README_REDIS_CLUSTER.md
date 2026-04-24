@@ -133,20 +133,21 @@ func (clt *redisClient) newRedisReplicaClient() {
 Here's an example configuration for Redis Cluster with topology awareness:
 
 ```yaml
-redis:
-  cluster:
-    addresses:
-      - "redis-node1:6379"
-      - "redis-node2:6379"
-      - "redis-node3:6379"
-    username: "redis_user"
-    password: "redis_password"
-    route_by_latency: true
-    route_randomly: false
-    route_reads_to_replicas: true
-    max_redirects: 3
-    read_timeout: 200ms
-    write_timeout: 500ms
+storage:
+  redis:
+    cluster:
+      addresses:
+        - "redis-node1:6379"
+        - "redis-node2:6379"
+        - "redis-node3:6379"
+      username: "redis_user"
+      password: "redis_password"
+      route_by_latency: true
+      route_randomly: false
+      route_reads_to_replicas: true
+      max_redirects: 3
+      read_timeout: 200ms
+      write_timeout: 500ms
 ```
 
 ## Benefits

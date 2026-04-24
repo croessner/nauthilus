@@ -50,12 +50,12 @@ auth required pam_nauthilus.so \
 
 If you need multiple scopes, provide a URL-encoded space, e.g. `scope=openid%20profile`.
 
-## Nauthilus configuration (idp.oidc only)
+## Nauthilus configuration (identity.oidc only)
 
 Example `nauthilus.yml` snippet for the OIDC IdP section:
 
 ```yaml
-idp:
+identity:
     oidc:
         enabled: true
         issuer: "https://idp.example.com"

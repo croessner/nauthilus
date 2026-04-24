@@ -239,7 +239,7 @@ func TestMFAAPI_SetupTOTP_Unauthenticated(t *testing.T) {
 
 func TestMFAAPI_SetupTOTP_Success(t *testing.T) {
 	cfg := &config.FileSettings{
-		IdP: &config.IdPSection{
+		IDP: &config.IdPSection{
 			OIDC: config.OIDCConfig{
 				Enabled: true,
 			},

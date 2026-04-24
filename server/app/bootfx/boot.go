@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/croessner/nauthilus/internal/flagutil"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -59,6 +60,10 @@ type LuaTestFlags struct {
 
 var luaTestFlags LuaTestFlags
 var configCheckMode bool
+var configDumpDefaultsMode bool
+var configDumpNonDefaultsMode bool
+var configDumpPrintSensitiveMode bool
+var configDumpFormat = config.DumpFormatCanonical
 
 // ParseFlagsAndPrintVersion parses command-line flags, configures viper/config paths,
 // and prints the version information if the `-version` flag is set.
@@ -66,7 +71,11 @@ func ParseFlagsAndPrintVersion(version string) {
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	configFlag := flag.String("config", "", "path to configuration file")
 	configFormatFlag := flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
+	configDumpFormatFlag := flag.String("dump-format", string(config.DumpFormatCanonical), "configuration dump output format (canonical, yaml, json, toml)")
 	configCheckFlag := flag.Bool("config-check", false, "validate configuration and exit (0 if valid, 1 otherwise)")
+	configDumpDefaultsFlag := flag.Bool("d", false, "print configuration defaults and exit")
+	configDumpNonDefaultsFlag := flag.Bool("n", false, "print non-default configuration values and exit")
+	configDumpPrintSensitiveFlag := flag.Bool("P", false, "print sensitive configuration values in dump output")
 	genOIDCKey := flag.Bool("gen-oidc-key", false, "generate a new RSA key for OIDC signing")
 	genSAMLCert := flag.String("gen-saml-cert", "", "generate a self-signed certificate for SAML (provide common name)")
 	keyBits := flag.Int("key-bits", 4096, "bits for the generated RSA key")
@@ -77,6 +86,25 @@ func ParseFlagsAndPrintVersion(version string) {
 	testCallback := flag.String("test-callback", "", "callback type: filter, feature, action, backend, hook, cache_flush")
 	testMockData := flag.String("test-mock", "", "path to JSON file with mock data")
 
+	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus", []flagutil.UsageGroup{
+		{
+			Title: "General",
+			Flags: []string{"version", "config", "config-format"},
+		},
+		{
+			Title: "Configuration Checks",
+			Flags: []string{"config-check", "d", "n", "dump-format", "P"},
+		},
+		{
+			Title: "Key Generation",
+			Flags: []string{"gen-oidc-key", "gen-saml-cert", "key-bits", "cert-years"},
+		},
+		{
+			Title: "Lua Testing",
+			Flags: []string{"test-lua", "test-callback", "test-mock"},
+		},
+	})
+
 	flag.Parse()
 
 	// Store Lua test flags
@@ -84,6 +112,19 @@ func ParseFlagsAndPrintVersion(version string) {
 	luaTestFlags.CallbackType = *testCallback
 	luaTestFlags.MockDataPath = *testMockData
 	configCheckMode = *configCheckFlag
+	configDumpDefaultsMode = *configDumpDefaultsFlag
+	configDumpNonDefaultsMode = *configDumpNonDefaultsFlag
+	configDumpPrintSensitiveMode = *configDumpPrintSensitiveFlag
+	config.SetConfigDumpPrintSensitiveValues(*configDumpPrintSensitiveFlag)
+	config.SetConfigDumpVersion(version)
+
+	parsedDumpFormat, err := config.ParseDumpFormat(*configDumpFormatFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid --dump-format value: %v\n", err)
+		os.Exit(1)
+	}
+
+	configDumpFormat = parsedDumpFormat
 
 	if *versionFlag {
 		fmt.Println("Version: ", version)
@@ -137,6 +178,30 @@ func IsLuaTestMode() bool {
 // IsConfigCheckMode returns true if config check mode is enabled.
 func IsConfigCheckMode() bool {
 	return configCheckMode
+}
+
+// IsConfigDumpDefaultsMode returns true if defaults dump mode is enabled.
+func IsConfigDumpDefaultsMode() bool {
+	return configDumpDefaultsMode
+}
+
+// IsConfigDumpNonDefaultsMode returns true if non-default dump mode is enabled.
+func IsConfigDumpNonDefaultsMode() bool {
+	return configDumpNonDefaultsMode
+}
+
+// IsConfigDumpPrintSensitiveMode returns true if sensitive dump values should be printed.
+func IsConfigDumpPrintSensitiveMode() bool {
+	return configDumpPrintSensitiveMode
+}
+
+// GetConfigDumpFormat returns the selected configuration dump format.
+func GetConfigDumpFormat() config.DumpFormat {
+	if configDumpFormat == "" {
+		return config.DumpFormatCanonical
+	}
+
+	return configDumpFormat
 }
 
 // SetupConfiguration initializes the environment, loads the configuration file,

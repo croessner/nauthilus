@@ -619,7 +619,7 @@ const (
 	FeatureLua = "lua"
 
 	// FeatureBackendServersMonitoring enables a custom backend list with fail-state monitoring
-	FeatureBackendServersMonitoring = "backend_server_monitoring"
+	FeatureBackendServersMonitoring = "backend_health_checks"
 
 	// FeatureBruteForce enables the brute force protection system
 	FeatureBruteForce = "brute_force"

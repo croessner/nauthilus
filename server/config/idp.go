@@ -64,19 +64,19 @@ func uniqueCustomScopeNames(scopes []Oauth2CustomScope) (map[string]struct{}, st
 
 // validateIdPMFASettings ensures require_mfa is a subset of supported_mfa when supported_mfa is configured.
 func (f *FileSettings) validateIdPMFASettings() error {
-	if f == nil || f.IdP == nil {
+	if f == nil || f.IDP == nil {
 		return nil
 	}
 
-	for _, client := range f.IdP.OIDC.Clients {
+	for _, client := range f.IDP.OIDC.Clients {
 		if !validateRequiredWithinSupported(client.RequireMFA, client.SupportedMFA) {
-			return fmt.Errorf("idp.oidc.clients[%s]: require_mfa must be a subset of supported_mfa", client.ClientID)
+			return fmt.Errorf("identity.oidc.clients[%s]: require_mfa must be a subset of supported_mfa", client.ClientID)
 		}
 	}
 
-	for _, sp := range f.IdP.SAML2.ServiceProviders {
+	for _, sp := range f.IDP.SAML2.ServiceProviders {
 		if !validateRequiredWithinSupported(sp.RequireMFA, sp.SupportedMFA) {
-			return fmt.Errorf("idp.saml2.service_providers[%s]: require_mfa must be a subset of supported_mfa", sp.EntityID)
+			return fmt.Errorf("identity.saml.service_providers[%s]: require_mfa must be a subset of supported_mfa", sp.EntityID)
 		}
 	}
 
@@ -86,20 +86,20 @@ func (f *FileSettings) validateIdPMFASettings() error {
 // validateIdPOIDCCustomScopes ensures OIDC custom scope names are unique and warns when
 // a client-level custom scope intentionally overrides a global scope of the same name.
 func (f *FileSettings) validateIdPOIDCCustomScopes() error {
-	if f == nil || f.IdP == nil {
+	if f == nil || f.IDP == nil {
 		return nil
 	}
 
-	oidc := f.IdP.OIDC
+	oidc := f.IDP.OIDC
 	globalNames, duplicate, ok := uniqueCustomScopeNames(oidc.CustomScopes)
 	if !ok {
-		return fmt.Errorf("idp.oidc.custom_scopes: duplicate scope name '%s'", duplicate)
+		return fmt.Errorf("identity.oidc.custom_scopes: duplicate scope name '%s'", duplicate)
 	}
 
 	for idx, client := range oidc.Clients {
 		clientNames, duplicate, ok := uniqueCustomScopeNames(client.CustomScopes)
 		if !ok {
-			return fmt.Errorf("idp.oidc.clients[%d].custom_scopes: duplicate scope name '%s'", idx, duplicate)
+			return fmt.Errorf("identity.oidc.clients[%d].custom_scopes: duplicate scope name '%s'", idx, duplicate)
 		}
 
 		for name := range clientNames {
@@ -121,11 +121,11 @@ func (f *FileSettings) validateIdPOIDCCustomScopes() error {
 // validateIdPSAMLSigningSettings ensures SAML SP signing requirements have the
 // required certificate material available and parseable at startup.
 func (f *FileSettings) validateIdPSAMLSigningSettings() error {
-	if f == nil || f.IdP == nil || !f.IdP.SAML2.Enabled {
+	if f == nil || f.IDP == nil || !f.IDP.SAML2.Enabled {
 		return nil
 	}
 
-	for _, sp := range f.IdP.SAML2.ServiceProviders {
+	for _, sp := range f.IDP.SAML2.ServiceProviders {
 		requirements := []struct {
 			enabled bool
 			key     string
@@ -155,15 +155,15 @@ func (f *FileSettings) validateIdPSAMLSigningSettings() error {
 
 			certStr, err := sp.GetCert()
 			if err != nil {
-				return fmt.Errorf("idp.saml2.service_providers[%s]: failed to read cert: %w", sp.EntityID, err)
+				return fmt.Errorf("identity.saml.service_providers[%s]: failed to read cert: %w", sp.EntityID, err)
 			}
 
 			if strings.TrimSpace(certStr) == "" {
-				return fmt.Errorf("idp.saml2.service_providers[%s]: %s requires cert or cert_file", sp.EntityID, requirement.key)
+				return fmt.Errorf("identity.saml.service_providers[%s]: %s requires cert or cert_file", sp.EntityID, requirement.key)
 			}
 
 			if _, err := parseFirstPEMCertificate(certStr); err != nil {
-				return fmt.Errorf("idp.saml2.service_providers[%s]: invalid cert for %s signature validation: %w", sp.EntityID, requirement.errHint, err)
+				return fmt.Errorf("identity.saml.service_providers[%s]: invalid cert for %s signature validation: %w", sp.EntityID, requirement.errHint, err)
 			}
 		}
 	}
@@ -173,30 +173,22 @@ func (f *FileSettings) validateIdPSAMLSigningSettings() error {
 
 // validateIdPSAML2SLOSettings ensures SAML SLO configuration values are within safe ranges.
 func (f *FileSettings) validateIdPSAML2SLOSettings() error {
-	if f == nil || f.IdP == nil || !f.IdP.SAML2.Enabled {
+	if f == nil || f.IDP == nil || !f.IDP.SAML2.Enabled {
 		return nil
 	}
 
-	samlCfg := f.IdP.SAML2
+	samlCfg := f.IDP.SAML2
 
 	if samlCfg.SLO.RequestTimeout < 0 {
-		return fmt.Errorf("idp.saml2.slo.request_timeout must be >= 0")
-	}
-
-	if samlCfg.SLOBackChannelTimeout < 0 {
-		return fmt.Errorf("idp.saml2.slo_back_channel_timeout must be >= 0")
+		return fmt.Errorf("identity.saml.slo.request_timeout must be >= 0")
 	}
 
 	if samlCfg.SLO.MaxParticipants < 0 {
-		return fmt.Errorf("idp.saml2.slo.max_participants must be >= 0")
+		return fmt.Errorf("identity.saml.slo.max_participants must be >= 0")
 	}
 
 	if samlCfg.SLO.BackChannelMaxRetries < 0 {
-		return fmt.Errorf("idp.saml2.slo.back_channel_max_retries must be >= 0")
-	}
-
-	if samlCfg.SLOBackChannelMaxRetries < 0 {
-		return fmt.Errorf("idp.saml2.slo_back_channel_max_retries must be >= 0")
+		return fmt.Errorf("identity.saml.slo.back_channel_max_retries must be >= 0")
 	}
 
 	return nil
@@ -748,7 +740,7 @@ type OIDCClient struct {
 	ClientPublicKeyAlgorithm string              `mapstructure:"client_public_key_algorithm"`
 	IdTokenClaims            IdTokenClaims       `mapstructure:"id_token_claims"`
 	AccessTokenClaims        AccessTokenClaims   `mapstructure:"access_token_claims"`
-	// Deprecated: use idp.remember_me_ttl instead.
+	// Deprecated: use identity.session.remember_me_ttl instead.
 	RememberMeTTL                       time.Duration `mapstructure:"remember_me_ttl"`
 	AccessTokenLifetime                 time.Duration `mapstructure:"access_token_lifetime"`
 	RefreshTokenLifetime                time.Duration `mapstructure:"refresh_token_lifetime"`
@@ -1020,16 +1012,6 @@ type SAML2Config struct {
 	DefaultExpireTime time.Duration          `mapstructure:"default_expire_time"`
 	NameIDFormat      string                 `mapstructure:"name_id_format"`
 	SLO               SAML2SLOConfig         `mapstructure:"slo"`
-	// Deprecated: use `slo.enabled`.
-	SLOEnabled *bool `mapstructure:"slo_enabled"`
-	// Deprecated: use `slo.front_channel_enabled`.
-	SLOFrontChannelEnabled *bool `mapstructure:"slo_front_channel_enabled"`
-	// Deprecated: use `slo.back_channel_enabled`.
-	SLOBackChannelEnabled *bool `mapstructure:"slo_back_channel_enabled"`
-	// Deprecated: use `slo.request_timeout`.
-	SLOBackChannelTimeout time.Duration `mapstructure:"slo_back_channel_timeout"`
-	// Deprecated: use `slo.back_channel_max_retries`.
-	SLOBackChannelMaxRetries int `mapstructure:"slo_back_channel_max_retries"`
 }
 
 type SAML2SLOConfig struct {
@@ -1106,10 +1088,6 @@ func (s *SAML2Config) GetSLOEnabled() bool {
 		return *s.SLO.Enabled
 	}
 
-	if s.SLOEnabled != nil {
-		return *s.SLOEnabled
-	}
-
 	return defaultSLOEnabled
 }
 
@@ -1121,10 +1099,6 @@ func (s *SAML2Config) GetSLOFrontChannelEnabled() bool {
 
 	if s.SLO.FrontChannelEnabled != nil {
 		return *s.SLO.FrontChannelEnabled
-	}
-
-	if s.SLOFrontChannelEnabled != nil {
-		return *s.SLOFrontChannelEnabled
 	}
 
 	return defaultSLOFrontChannel
@@ -1140,10 +1114,6 @@ func (s *SAML2Config) GetSLOBackChannelEnabled() bool {
 		return *s.SLO.BackChannelEnabled
 	}
 
-	if s.SLOBackChannelEnabled != nil {
-		return *s.SLOBackChannelEnabled
-	}
-
 	return defaultSLOBackChannel
 }
 
@@ -1155,10 +1125,6 @@ func (s *SAML2Config) GetSLORequestTimeout() time.Duration {
 
 	if s.SLO.RequestTimeout > 0 {
 		return s.SLO.RequestTimeout
-	}
-
-	if s.SLOBackChannelTimeout > 0 {
-		return s.SLOBackChannelTimeout
 	}
 
 	return defaultSLORequestTimeout
@@ -1185,9 +1151,6 @@ func (s *SAML2Config) GetSLOBackChannelMaxRetries() int {
 	}
 
 	retries := s.SLO.BackChannelMaxRetries
-	if retries == 0 {
-		retries = s.SLOBackChannelMaxRetries
-	}
 
 	if retries == 0 {
 		return defaultSLOBackChannelRetries
@@ -1259,7 +1222,7 @@ type SAML2ServiceProvider struct {
 	RequireMFA            []string `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	SupportedMFA          []string `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	LogoutRedirectURI     string   `mapstructure:"logout_redirect_uri"`
-	// Deprecated: use idp.remember_me_ttl instead.
+	// Deprecated: use identity.session.remember_me_ttl instead.
 	RememberMeTTL   time.Duration `mapstructure:"remember_me_ttl"`
 	DelayedResponse bool          `mapstructure:"delayed_response"`
 }
@@ -1413,9 +1376,13 @@ func (f *FileSettings) GetIdP() *IdPSection {
 		return &IdPSection{}
 	}
 
-	if f.IdP == nil {
+	if f.IDP == nil {
+		f.materializeLegacySections()
+	}
+
+	if f.IDP == nil {
 		return &IdPSection{}
 	}
 
-	return f.IdP
+	return f.IDP
 }

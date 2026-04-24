@@ -11,7 +11,7 @@ This checklist is intended for release readiness and recurring security operatio
 ## 1. Backchannel Access Control
 
 - [ ] **Production**: At least one backchannel auth method is enabled:
-    - `server.basic_auth.enabled=true` or `server.oidc_auth.enabled=true`
+    - `auth.backchannel.basic_auth.enabled=true` or `auth.backchannel.oidc_bearer.enabled=true`
 - [ ] **Staging**: At least one backchannel auth method is enabled.
 - [ ] **Production**: `/api/v1/*` is reachable only from trusted internal networks.
 - [ ] **Staging**: `/api/v1/*` is not publicly exposed.
@@ -23,8 +23,8 @@ Evidence:
 
 ## 2. OIDC Token Endpoint Hardening
 
-- [ ] **Production**: `idp.oidc.token_endpoint_allow_get=false`
-- [ ] **Staging**: `idp.oidc.token_endpoint_allow_get=false`
+- [ ] **Production**: `identity.oidc.tokens.token_endpoint_allow_get=false`
+- [ ] **Staging**: `identity.oidc.tokens.token_endpoint_allow_get=false`
 - [ ] Any temporary GET enablement has a documented exception owner and expiration date.
 
 Evidence:
@@ -34,7 +34,7 @@ Evidence:
 
 ## 3. Configuration Endpoint Exposure
 
-- [ ] **Production**: `server.disabled_endpoints.configuration=true` unless explicitly required.
+- [ ] **Production**: `runtime.http.disabled_endpoints.configuration=true` unless explicitly required.
 - [ ] **Staging**: Configuration endpoint exposure is justified and documented.
 - [ ] If enabled, access is restricted and audited.
 
@@ -48,7 +48,7 @@ Evidence:
 - [ ] **Production**: CSP keeps default `form-action 'self' https:` unless `form_action_optional_uris` is intentionally
   used.
 - [ ] **Staging**: Any CSP widening (for redirects/dev compatibility) is explicitly documented.
-- [ ] Security headers are enabled under `server.frontend.security_headers`.
+- [ ] Security headers are enabled under `identity.frontend.security_headers`.
 
 Evidence:
 
@@ -71,7 +71,7 @@ Evidence:
 - [ ] Redis is not publicly reachable.
 - [ ] Redis authentication and TLS are configured where applicable.
 - [ ] Redis ACLs follow least privilege.
-- [ ] `server.trusted_proxies` is explicitly configured (no broad trust).
+- [ ] `runtime.listen.trusted_proxies` is explicitly configured (no broad trust).
 
 Evidence:
 

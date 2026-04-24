@@ -16,7 +16,7 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
 
@@ -86,6 +86,12 @@ uninstall: ## Uninstall nauthilus binary and systemd service
 validate-templates: ## Validate Go HTML templates for syntax errors
 	go run scripts/validate-templates.go
 
+generate-vim-syntax: ## Generate contrib/vim/syntax/nauthilus.vim from the canonical config dump
+	python3 scripts/generate-vim-syntax.py
+
+generate-vim-syntax-check: ## Verify that contrib/vim/syntax/nauthilus.vim is up to date
+	python3 scripts/generate-vim-syntax.py --check
+
 install-hooks: ## Install Git hooks for development
 	./scripts/install-hooks.sh
 
@@ -103,7 +109,7 @@ sync-prompts-check: ## Verify that AGENTS.md is in sync with .junie/guidelines.m
 policy-check: ## Validate mandatory policy documents and text markers
 	./scripts/check-policy-docs.sh
 
-guardrails: sync-prompts-check policy-check ## Run mandatory local quality gates
+guardrails: sync-prompts-check policy-check generate-vim-syntax-check ## Run mandatory local quality gates
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
 	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
 	go test -short $$(go list ./... | grep -v /vendor/)

@@ -59,7 +59,7 @@ import (
 // formValue retrieves a request parameter from either the POST body or the URL
 // query string depending on request method.
 // For POST it reads only form body values, for GET it reads query values.
-// GET support on /oidc/token is optional and controlled via idp.oidc.token_endpoint_allow_get.
+// GET support on /oidc/token is optional and controlled via identity.oidc.tokens.token_endpoint_allow_get.
 func formValue(ctx *gin.Context, key string) string {
 	if ctx == nil || ctx.Request == nil {
 		return ""

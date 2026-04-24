@@ -138,8 +138,8 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 		r.Use(rateLimiter.Middleware())
 	}
 
-	// Tracing middleware (OpenTelemetry) – enabled if insights.tracing.enable is true
-	// and not disabled via server.disabled_endpoints.tracing
+	// Tracing middleware (OpenTelemetry) – enabled if observability.tracing.enabled is true
+	// and not disabled via runtime.http.disabled_endpoints.tracing
 	if c.cfg.GetServer().GetInsights().IsTracingEnabled() {
 		tr := c.cfg.GetServer().GetInsights().GetTracing()
 
@@ -393,28 +393,7 @@ func (c DefaultTLSConfigurator) Build() *tls.Config {
 		}
 	}
 
-	tlsVersionMap := map[string]uint16{
-		"TLS1.2": tls.VersionTLS12,
-		"TLS1.3": tls.VersionTLS13,
-	}
-
-	if tlsVersion, exists := tlsVersionMap[c.cfg.GetServer().GetTLS().GetMinTLSVersion()]; exists {
-		minTLSVersion = tlsVersion
-	} else {
-		minTLSVersion = tls.VersionTLS12
-	}
-
-	cipherMap := map[string]uint16{
-		"TLS_AES_128_GCM_SHA256":                  tls.TLS_AES_128_GCM_SHA256,
-		"TLS_AES_256_GCM_SHA384":                  tls.TLS_AES_256_GCM_SHA384,
-		"TLS_CHACHA20_POLY1305_SHA256":            tls.TLS_CHACHA20_POLY1305_SHA256,
-		"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":   tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384": tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":   tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305":  tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-		"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305":    tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-	}
+	minTLSVersion = config.TLSMinVersionValue(c.cfg.GetServer().GetTLS().GetMinTLSVersion())
 
 	preferredCiphers := []string{
 		"TLS_AES_256_GCM_SHA384",
@@ -428,11 +407,14 @@ func (c DefaultTLSConfigurator) Build() *tls.Config {
 		preferredCiphers = c.cfg.GetServer().GetTLS().GetCipherSuites()
 	}
 
-	for _, cipherString := range preferredCiphers {
-		if cipher, exists := cipherMap[cipherString]; exists {
-			cipherSuites = append(cipherSuites, cipher)
-		} else {
-			level.Warn(c.logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Cipher suite %s not found", cipherString))
+	knownCipherSuites := config.TLSCipherSuiteValues(preferredCiphers)
+	cipherSuites = append(cipherSuites, knownCipherSuites...)
+
+	if len(knownCipherSuites) != len(preferredCiphers) {
+		for _, cipherString := range preferredCiphers {
+			if _, ok := config.TLSCipherSuiteValue(cipherString); !ok {
+				_ = level.Warn(c.logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Cipher suite %s not found", cipherString))
+			}
 		}
 	}
 

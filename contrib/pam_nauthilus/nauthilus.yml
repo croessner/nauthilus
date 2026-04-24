@@ -1,31 +1,31 @@
-server:
-  address: "0.0.0.0:8080"
+runtime:
   instance_name: "nauthilus-demo"
-  log:
-    level: "debug"
-    json: true
-    add_source: true
-    debug_modules: [ "auth", "ldap", "idp" ]
+
+  listen:
+    address: "0.0.0.0:8080"
+
+identity:
   frontend:
     enabled: true
     encryption_secret: "demofrontendsecret123456"
-    html_static_content_path: "static/templates"
-    language_resources: "server/resources"
-    languages:
-      - "en"
-    default_language: "en"
+
+    assets:
+      html_static_content_path: "static/templates"
+      language_resources: "server/resources"
+
+    localization:
+      languages:
+        - "en"
+      default_language: "en"
+
     security_headers:
       enabled: true
-      # Legacy full-string form is still supported.
-      # Recommended structured form:
       content_security_policy:
         connect-src:
           - "'self'"
           - "https://api.example.test"
         form-action:
           - "'self'"
-        # If your consent/login flow must redirect via external HTTP chains,
-        # add optional form-action targets:
         form_action_optional_uris:
           - "http://localhost:8080"
       strict_transport_security:
@@ -47,64 +47,24 @@ server:
       cross_origin_embedder_policy: "unsafe-none"
       x_permitted_cross_domain_policies: "none"
       x_dns_prefetch_control: "off"
-  backends:
-    - "cache"
-    - "ldap"
-  oidc_auth:
-    enabled: true
-  redis:
-    primary:
-      address: "valkey:6379"
-    database_number: 0
-    prefix: "nauthilus:"
-    pool_size: 16
-    idle_pool_size: 4
-    positive_cache_ttl: 1h
-    negative_cache_ttl: 1h
-    password_nonce: "demopasswordnonce123456"
-    encryption_secret: "demoencryptionsecret123456"
 
-ldap:
-  config:
-    server_uri:
-      - "ldap://openldap:389"
-    bind_dn: "cn=admin,dc=demo,dc=local"
-    bind_pw: "admin"
-    lookup_pool_size: 5
-    lookup_idle_pool_size: 2
-    auth_pool_size: 5
-    auth_idle_pool_size: 2
-  search:
-    - protocol:
-        - "idp"
-        - "oidc"
-      cache_name: "ldap"
-      base_dn: "ou=people,dc=demo,dc=local"
-      filter:
-        user: "(uid=%s)"
-        list_accounts: "(uid=*)"
-      mapping:
-        account_field: "uid"
-        display_name_field: "cn"
-        unique_user_id_field: "uid"
-      attribute:
-        - "uid"
-        - "cn"
-        - "mail"
-
-idp:
   oidc:
     enabled: true
     issuer: "http://localhost:8080"
-    # Keep disabled unless you explicitly need legacy clients that call /oidc/token with GET.
-    token_endpoint_allow_get: false
+
+    tokens:
+      token_endpoint_allow_get: false
+
     signing_keys:
       - id: "demo"
         key_file: "/etc/nauthilus/idp-signing-key.pem"
         active: true
-    device_code_expiry: 10m
-    device_code_polling_interval: 5
-    device_code_user_code_length: 8
+
+    device_flow:
+      code_expiry: 10m
+      polling_interval: 5
+      user_code_length: 8
+
     clients:
       - name: "PAM Demo"
         client_id: "ssh"
@@ -121,3 +81,62 @@ idp:
             - claim: "preferred_username"
               attribute: "uid"
               type: "string"
+
+observability:
+  log:
+    level: "debug"
+    json: true
+    add_source: true
+    debug_modules: ["auth", "ldap", "idp"]
+
+storage:
+  redis:
+    primary:
+      address: "valkey:6379"
+    database_number: 0
+    prefix: "nauthilus:"
+    pool_size: 16
+    idle_pool_size: 4
+    positive_cache_ttl: 1h
+    negative_cache_ttl: 1h
+    password_nonce: "demopasswordnonce123456"
+    encryption_secret: "demoencryptionsecret123456"
+
+auth:
+  backchannel:
+    oidc_bearer:
+      enabled: true
+
+  backends:
+    order:
+      - "cache"
+      - "ldap"
+
+    ldap:
+      default:
+        server_uri:
+          - "ldap://openldap:389"
+        bind_dn: "cn=admin,dc=demo,dc=local"
+        bind_pw: "admin"
+        lookup_pool_size: 5
+        lookup_idle_pool_size: 2
+        auth_pool_size: 5
+        auth_idle_pool_size: 2
+
+      search:
+        - protocol:
+            - "idp"
+            - "oidc"
+          cache_name: "ldap"
+          base_dn: "ou=people,dc=demo,dc=local"
+          filter:
+            user: "(uid=%s)"
+            list_accounts: "(uid=*)"
+          mapping:
+            account_field: "uid"
+            display_name_field: "cn"
+            unique_user_id_field: "uid"
+          attribute:
+            - "uid"
+            - "cn"
+            - "mail"

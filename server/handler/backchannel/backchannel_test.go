@@ -20,6 +20,26 @@ func TestEnsureBackchannelAuthConfigured(t *testing.T) {
 		assert.ErrorIs(t, err, errBackchannelAuthNotConfigured)
 	})
 
+	t.Run("allows hook-only setup without auth", func(t *testing.T) {
+		cfg := &config.FileSettings{
+			Server: &config.ServerSection{
+				BasicAuth: config.BasicAuth{Enabled: false},
+				OIDCAuth:  config.OIDCAuth{Enabled: false},
+			},
+			Lua: &config.LuaSection{
+				Hooks: []config.LuaHooks{
+					{
+						Location:   "/hooks/demo",
+						Method:     "POST",
+						ScriptPath: "/tmp/demo.lua",
+					},
+				},
+			},
+		}
+
+		assert.NoError(t, ValidateAuthConfiguration(cfg, false))
+	})
+
 	t.Run("allows basic auth only", func(t *testing.T) {
 		cfg := &config.FileSettings{
 			Server: &config.ServerSection{

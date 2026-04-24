@@ -65,10 +65,10 @@ type SettingsMerger interface {
 
 // ConfigLoader loads a config tree, resolves includes, and applies patches.
 type ConfigLoader struct {
-	reader          ConfigReader
-	includeResolver IncludeResolver
-	patchEngine     PatchEngine
-	merger          SettingsMerger
+	reader          ConfigReader    `mapstructure:"-"`
+	includeResolver IncludeResolver `mapstructure:"-"`
+	patchEngine     PatchEngine     `mapstructure:"-"`
+	merger          SettingsMerger  `mapstructure:"-"`
 }
 
 // NewConfigLoader returns a ConfigLoader configured for the given config type.
@@ -224,8 +224,8 @@ func isConfigNotFound(err error) bool {
 
 // IncludeFile describes a resolved include path and whether it is required.
 type IncludeFile struct {
-	Path     string
-	Required bool
+	Path     string `mapstructure:"-"`
+	Required bool   `mapstructure:"-"`
 }
 
 // IncludeGroup groups required and optional include paths.
@@ -484,7 +484,7 @@ func (MapMerger) Merge(target map[string]any, source map[string]any) {
 
 // ViperConfigReader reads configuration settings using Viper.
 type ViperConfigReader struct {
-	configType string
+	configType string `mapstructure:"-"`
 }
 
 // Read returns the settings from the config file at the given path.

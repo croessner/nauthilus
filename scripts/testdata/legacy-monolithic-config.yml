@@ -1,0 +1,152 @@
+server:
+  address: "[::]:8080"
+  http3: true
+  keep_alive:
+    enabled: true
+  run_as_user: "nauthilus"
+  log:
+    level: "info"
+  redis:
+    master:
+      address: "redis:6379"
+    encryption_secret: "0123456789abcdef"
+    password_nonce: "0123456789abcdef"
+  default_http_request_header:
+    username: "Auth-User"
+  basic_auth:
+    enabled: true
+    username: "api-user"
+    password: "0123456789abcdef"
+  oidc_auth:
+    enabled: true
+  max_concurrent_requests: 100
+  max_login_attempts: 5
+  nginx_wait_delay: 250
+  local_cache_auth_ttl: "30s"
+  max_password_history_entries: 7
+  backends:
+    - "cache"
+    - "ldap"
+  imap_backend_address: "imap.example.test"
+  imap_backend_port: 143
+  frontend:
+    enabled: false
+    totp_issuer: "Nauthilus"
+    totp_skew: 1
+  controls:
+    - "realtime_blackhole_lists"
+    - "brute_force"
+    - "cleartext_networks"
+    - "lua"
+  services:
+    - "backend_server_monitoring"
+  features:
+    - "backend_server_monitoring"
+    - name: "cleartext_networks"
+      when_no_auth: true
+    - name: "lua"
+      when_no_auth: false
+
+ldap:
+  config:
+    server_uri:
+      - "ldap://ldap:389"
+    bind_dn: "cn=admin,dc=example,dc=org"
+    lookup_pool_size: 4
+    auth_pool_size: 4
+  optional_ldap_pools:
+    list-account:
+      server_uri:
+        - "ldap://ldap-list:389"
+      bind_dn: "cn=list,dc=example,dc=org"
+      lookup_pool_size: 2
+      lookup_idle_pool_size: 1
+      lookup_pool_only: true
+      number_of_workers: 2
+      sasl_external: false
+      search_size_limit: 25
+      search_time_limit: "15s"
+      search_timeout: "10s"
+      tls_ca_cert: "contrib/pam_nauthilus/idp-signing-key.pem"
+      tls_client_cert: "contrib/pam_nauthilus/idp-signing-key.pem"
+      tls_client_key: "contrib/pam_nauthilus/idp-signing-key.pem"
+      tls_skip_verify: true
+  search:
+    - protocol:
+        - "imap"
+      cache_name: "mail"
+      base_dn: "dc=example,dc=org"
+      scope: "sub"
+      filter:
+        user: "(&(objectClass=person)(uid=%u))"
+      mapping:
+        account_field: "uid"
+      attribute:
+        - "uid"
+
+lua:
+  config:
+    package_path: "server/lua-plugins.d"
+  optional_lua_backends:
+    lookup-secondary:
+      package_path: "server/lua-plugins.d"
+  custom_hooks:
+    - http_location: "status"
+      http_method: "GET"
+      script_path: "server/lua-plugins.d/hooks/hello-world-request-dump.lua"
+      roles:
+        - "nauthilus:mfa"
+  features:
+    - name: "test_context_chain"
+      script_path: "server/lua-plugins.d/features/test_context_chain.lua"
+      when_no_auth: true
+
+brute_force:
+  ip_whitelist:
+    - "127.0.0.1"
+  buckets:
+    - name: "default"
+      period: "15m"
+      failed_requests: 5
+      cidr: 32
+      ipv4: true
+  learning:
+    - "realtime_blackhole_lists"
+    - "brute_force"
+    - "cleartext_networks"
+    - "lua"
+
+realtime_blackhole_lists:
+  threshold: 2
+  lists:
+    - name: "Spamhaus"
+      rbl: "zen.spamhaus.org"
+      ipv4: true
+      return_codes:
+        - "127.0.0.2"
+
+backend_server_monitoring:
+  backend_servers:
+    - host: "imap.example.test"
+      protocol: "imap"
+      port: 143
+
+cleartext_networks:
+  - "127.0.0.0/8"
+
+idp:
+  remember_me_ttl: "24h"
+  privacy_policy_url: "https://example.test/privacy"
+  oidc:
+    enabled: true
+
+x-claim-email:
+  claim: "email"
+  attribute: "mail"
+  type: "string"
+
+x-scope-profile:
+  mappings:
+    - claim: "name"
+      attribute: "displayName"
+      type: "string"

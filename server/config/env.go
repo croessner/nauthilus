@@ -44,7 +44,7 @@ type Environment interface {
 // EnvironmentSettings represents overall configuration settings for the application.
 type EnvironmentSettings struct {
 	// DevMode indicates whether the application is running in developer mode.
-	DevMode bool
+	DevMode bool `mapstructure:"developer_mode"`
 }
 
 var _ Environment = (*EnvironmentSettings)(nil)

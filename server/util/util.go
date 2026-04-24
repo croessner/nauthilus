@@ -22,7 +22,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	stderrors "errors"
@@ -784,9 +783,7 @@ func NewHTTPClient(cfg config.File) *http.Client {
 		MaxIdleConns:        cfg.GetServer().GetHTTPClient().GetMaxIdleConns(),
 		MaxIdleConnsPerHost: cfg.GetServer().GetHTTPClient().GetMaxIdleConnsPerHost(),
 		IdleConnTimeout:     cfg.GetServer().GetHTTPClient().GetIdleConnTimeout(),
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: cfg.GetServer().GetTLS().GetHTTPClientSkipVerify() || cfg.GetServer().GetHTTPClient().GetTLS().GetSkipVerify(),
-		},
+		TLSClientConfig:     cfg.GetServer().GetHTTPClient().GetTLS().ToTLSConfig(),
 	}
 
 	var transport http.RoundTripper = baseTransport

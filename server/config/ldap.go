@@ -29,18 +29,18 @@ import (
 
 type LDAPSection struct {
 	Config            *LDAPConf            `mapstructure:"config" validate:"required"`
-	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive,validatDefaultBackendName"`
+	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,validatDefaultBackendName,dive"`
 	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 // validatDefaultBackendName ensures the backend name is not set to "default" or the predefined DefaultBackendName constant.
 func validatDefaultBackendName(fl validator.FieldLevel) bool {
-	conf, ok := fl.Parent().Interface().(LDAPSection)
+	pools, ok := fl.Field().Interface().(map[string]*LDAPConf)
 	if !ok {
 		return false
 	}
 
-	for backendName := range conf.OptionalLDAPPools {
+	for backendName := range pools {
 		if backendName == "default" || backendName == definitions.DefaultBackendName {
 			return false
 		}
@@ -111,7 +111,7 @@ type LDAPConf struct {
 	// Deprecated: use lookup_pool_only
 	PoolOnly       bool `mapstructure:"pool_only"`
 	LookupPoolOnly bool `mapstructure:"lookup_pool_only"`
-	StartTLS       bool
+	StartTLS       bool `mapstructure:"starttls"`
 	TLSSkipVerify  bool `mapstructure:"tls_skip_verify"`
 	SASLExternal   bool `mapstructure:"sasl_external"`
 

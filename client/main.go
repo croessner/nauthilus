@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/client/engine"
+	"github.com/croessner/nauthilus/internal/flagutil"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -123,6 +124,49 @@ func setupFlags(cfg *engine.Config) {
 	flag.Float64Var(&cfg.RandomBadPassProb, "random-bad-pass-prob", cfg.RandomBadPassProb, "Probability for random-bad-pass")
 
 	flag.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable debug output (including FX logs)")
+
+	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus-client", []flagutil.UsageGroup{
+		{
+			Title: "Input & Endpoint",
+			Flags: []string{"csv", "url", "method", "headers", "basic-auth", "ok-status", "json-ok"},
+		},
+		{
+			Title: "Execution",
+			Flags: []string{"concurrency", "rps", "jitter-ms", "delay-ms", "timeout-ms", "max", "shuffle", "loops", "duration"},
+		},
+		{
+			Title: "Parallelism",
+			Flags: []string{"max-parallel", "parallel-prob", "abort-prob", "compare-parallel", "idempotency-key"},
+		},
+		{
+			Title: "CSV Generation",
+			Flags: []string{"generate-csv", "generate-count", "generate-cidr-prob", "generate-cidr-prefix", "csv-delim", "csv-debug"},
+		},
+		{
+			Title: "Output",
+			Flags: []string{"v", "progress-interval", "progress-bar", "color"},
+		},
+		{
+			Title: "Thresholds",
+			Flags: []string{"warn-p95", "crit-p95", "warn-error-rate", "crit-error-rate", "warn-track", "crit-track", "grace-seconds"},
+		},
+		{
+			Title: "Auto Mode",
+			Flags: []string{"auto", "auto-target-p95", "auto-max-rps", "auto-max-concurrency", "auto-start-rps", "auto-start-concurrency", "auto-step-rps", "auto-step-concurrency", "auto-backoff", "auto-max-err", "auto-min-sample", "auto-focus"},
+		},
+		{
+			Title: "Plateau Detection",
+			Flags: []string{"auto-plateau", "auto-plateau-windows", "auto-plateau-gain", "auto-plateau-action", "auto-plateau-cooldown", "auto-plateau-track-threshold", "auto-plateau-track-windows", "auto-plateau-track-action"},
+		},
+		{
+			Title: "Random Effects",
+			Flags: []string{"random-no-auth", "random-no-auth-prob", "random-bad-pass", "random-bad-pass-prob"},
+		},
+		{
+			Title: "Diagnostics",
+			Flags: []string{"debug"},
+		},
+	})
 }
 
 func runApp(lifecycle fx.Lifecycle, app *engine.App, shutdown fx.Shutdowner) {
