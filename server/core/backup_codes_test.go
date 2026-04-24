@@ -15,7 +15,10 @@
 
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestGenerateBackupCodes(t *testing.T) {
 	recovery, err := GenerateBackupCodes()
@@ -31,6 +34,25 @@ func TestGenerateBackupCodes(t *testing.T) {
 	for _, code := range codes {
 		if len(code) != DefaultBackupCodeLength {
 			t.Errorf("Expected code length %d, got %d", DefaultBackupCodeLength, len(code))
+		}
+
+		if strings.Trim(code, BackupCodeAlphabet) != "" {
+			t.Errorf("Expected code %q to only use backup code alphabet %q", code, BackupCodeAlphabet)
+		}
+	}
+}
+
+func TestGenerateBackupCodesAvoidsAmbiguousCharacters(t *testing.T) {
+	const ambiguousCharacters = "01ILOilo"
+
+	recovery, err := GenerateBackupCodes()
+	if err != nil {
+		t.Fatalf("GenerateBackupCodes failed: %v", err)
+	}
+
+	for _, code := range recovery.GetCodes() {
+		if strings.ContainsAny(code, ambiguousCharacters) {
+			t.Fatalf("Expected recovery code %q to avoid ambiguous characters %q", code, ambiguousCharacters)
 		}
 	}
 }

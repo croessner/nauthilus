@@ -343,6 +343,43 @@ func TestIDPUISubmitDisableDefersNativeFormHandling(t *testing.T) {
 	assert.Contains(t, script, "deferNativeFormSubmitDisable(form, submitter);")
 }
 
+func TestIDPUIRecoveryCodesDownloadUsesPDF(t *testing.T) {
+	script := loadIDPUIScript(t)
+
+	assert.Contains(t, script, "function buildRecoveryCodesPdfBlob(codes)")
+	assert.Contains(t, script, "application/pdf")
+	assert.Contains(t, script, "recovery-codes.pdf")
+	assert.NotContains(t, script, "buildRecoveryCodesPngDataURL")
+	assert.NotContains(t, script, "toDataURL('image/png')")
+	assert.NotContains(t, script, "recovery-codes.png")
+}
+
+func TestIDPUIRecoveryDownloadEnablesVisualTargetState(t *testing.T) {
+	script := loadIDPUIScript(t)
+	modal := loadStaticTemplate(t, "idp_recovery_codes_modal.html")
+
+	assert.Contains(t, script, "function enableRecoveryTarget(selector)")
+	assert.Contains(t, script, "target.classList.remove('btn-disabled')")
+	assert.Contains(t, script, "target.classList.add(...enabledClasses.split")
+	assert.Contains(t, script, "target.focus()")
+	assert.Contains(t, script, "target.removeAttribute('aria-disabled')")
+	assert.Contains(t, script, "markRecoveryDownloadComplete(trigger)")
+	assert.Contains(t, modal, `data-enable-target="#recovery-modal-close"`)
+	assert.Contains(t, modal, `data-enable-class="btn-primary"`)
+	assert.Contains(t, modal, `data-focus-on-enable="1"`)
+	assert.Contains(t, modal, `id="recovery-modal-close"`)
+}
+
+func TestIDPUIRecoveryCodesDistinguishesDigitsVisually(t *testing.T) {
+	script := loadIDPUIScript(t)
+
+	assert.Contains(t, script, "function decorateRecoveryCodes(root)")
+	assert.Contains(t, script, "span.className = 'text-info font-bold'")
+	assert.Contains(t, script, "function appendRecoveryCodePdfText(content, code, x, y)")
+	assert.Contains(t, script, "0.05 0.38 0.85 rg")
+	assert.Contains(t, script, "decorateRecoveryCodes(document)")
+}
+
 func renderIDPLoginTemplate(t *testing.T, tmpl *template.Template, passwordForgottenURL string) string {
 	t.Helper()
 
@@ -818,6 +855,18 @@ func loadIDPUIScript(t *testing.T) string {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read script: %v", err)
+	}
+
+	return string(content)
+}
+
+func loadStaticTemplate(t *testing.T, name string) string {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "static", "templates", name)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read template %s: %v", name, err)
 	}
 
 	return string(content)

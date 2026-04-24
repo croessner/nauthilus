@@ -885,14 +885,23 @@ func ApplyStringField(src string, dest *string) {
 func GenerateRandomString(n int) (string, error) {
 	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+	return GenerateRandomStringFromAlphabet(n, letters)
+}
+
+// GenerateRandomStringFromAlphabet generates a cryptographically secure random string from the provided alphabet.
+func GenerateRandomStringFromAlphabet(n int, alphabet string) (string, error) {
+	if alphabet == "" {
+		return "", stderrors.New("alphabet must not be empty")
+	}
+
 	ret := make([]byte, n)
 	for i := range n {
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
 		if err != nil {
 			return "", err
 		}
 
-		ret[i] = letters[num.Int64()]
+		ret[i] = alphabet[num.Int64()]
 	}
 
 	return string(ret), nil
