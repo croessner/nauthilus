@@ -33,16 +33,17 @@
                 <span id="copy-label">{{ .Copy }}</span>
             </button>
 
-            <!-- Download as PNG -->
+            <!-- Download as PDF -->
             <button class="btn btn-secondary w-full mb-3" data-action="recovery-download" data-csrf-token="{{ .CSRFToken }}"
-                    data-enable-target="#continue-btn" data-recovery-scope="#idp-main-content"
-                    data-save-url="/mfa/recovery/register/save" id="download-btn" type="button">
+                    data-downloaded-label="{{ .Downloaded }}" data-enable-target="#continue-btn"
+                    data-recovery-scope="#idp-main-content" data-save-url="/mfa/recovery/register/save" id="download-btn"
+                    type="button">
                 <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
                     <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
                           stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
                 </svg>
-                {{ .Download }}
+                <span data-download-label="1">{{ .Download }}</span>
             </button>
 
             <!-- Continue (disabled until download) -->

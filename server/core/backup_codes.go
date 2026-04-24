@@ -25,13 +25,15 @@ const (
 	DefaultNumberOfBackupCodes = 10
 	// DefaultBackupCodeLength defines the default length of a single backup code.
 	DefaultBackupCodeLength = 8
+	// BackupCodeAlphabet excludes characters that are easy to confuse when read from screen or paper.
+	BackupCodeAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz"
 )
 
 // GenerateBackupCodes generates a new set of backup codes.
 func GenerateBackupCodes() (*mfa.TOTPRecovery, error) {
 	codes := make([]string, DefaultNumberOfBackupCodes)
 	for i := range DefaultNumberOfBackupCodes {
-		code, err := util.GenerateRandomString(DefaultBackupCodeLength)
+		code, err := util.GenerateRandomStringFromAlphabet(DefaultBackupCodeLength, BackupCodeAlphabet)
 		if err != nil {
 			return nil, err
 		}

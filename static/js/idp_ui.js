@@ -1041,51 +1041,202 @@
     }
 
     /**
-     * Renders recovery codes into a PNG data URL.
+     * Decorates recovery code characters so digits stand out from letters.
      *
-     * @param {string[]} codes
+     * @param {ParentNode} root
+     * @returns {void}
+     */
+    function decorateRecoveryCodes(root) {
+        root.querySelectorAll('#recovery-codes-grid > div').forEach((cell) => {
+            if (!(cell instanceof HTMLElement) || cell.getAttribute('data-recovery-code-decorated') === '1') {
+                return;
+            }
+
+            const code = (cell.textContent || '').trim();
+            if (!code) {
+                return;
+            }
+
+            cell.textContent = '';
+            cell.setAttribute('data-recovery-code-decorated', '1');
+
+            for (const char of code) {
+                const span = document.createElement('span');
+                span.textContent = char;
+
+                if (/\d/.test(char)) {
+                    span.className = 'text-info font-bold';
+                }
+
+                cell.appendChild(span);
+            }
+        });
+    }
+
+    /**
+     * Returns an ASCII-safe PDF text literal.
+     *
+     * @param {string} value
      * @returns {string}
      */
-    function buildRecoveryCodesPngDataURL(codes) {
-        const lineHeight = 32;
-        const colWidth = 220;
-        const cols = 2;
-        const rows = Math.ceil(codes.length / cols);
-        const padding = 40;
-        const titleHeight = 50;
-        const width = cols * colWidth + padding * 2;
-        const height = titleHeight + rows * lineHeight + padding * 2;
+    function escapePdfText(value) {
+        return value
+            .replace(/[^\x20-\x7E]/g, '?')
+            .replace(/\\/g, '\\\\')
+            .replace(/\(/g, '\\(')
+            .replace(/\)/g, '\\)');
+    }
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const context = canvas.getContext('2d');
-        if (!context) {
-            return '';
+    /**
+     * Returns the byte length used in PDF object offsets.
+     *
+     * @param {string} value
+     * @returns {number}
+     */
+    function pdfByteLength(value) {
+        if (typeof TextEncoder === 'undefined') {
+            return value.length;
         }
 
-        context.fillStyle = '#ffffff';
-        context.fillRect(0, 0, width, height);
+        return new TextEncoder().encode(value).length;
+    }
 
-        context.fillStyle = '#000000';
-        context.font = 'bold 18px monospace';
-        context.textAlign = 'center';
-        context.fillText('Recovery Codes', width / 2, padding);
+    /**
+     * Appends a PDF indirect object and records its byte offset.
+     *
+     * @param {string[]} parts
+     * @param {number[]} offsets
+     * @param {string} object
+     * @returns {void}
+     */
+    function appendPdfObject(parts, offsets, object) {
+        const offset = parts.reduce((total, part) => total + pdfByteLength(part), 0);
+        offsets.push(offset);
+        parts.push(object);
+    }
 
-        context.font = '16px monospace';
-        context.textAlign = 'left';
+    /**
+     * Renders recovery codes into a PDF blob.
+     *
+     * @param {string[]} codes
+     * @returns {Blob}
+     */
+    function buildRecoveryCodesPdfBlob(codes) {
+        const pageWidth = 612;
+        const pageHeight = 792;
+        const marginLeft = 72;
+        const top = 720;
+        const lineHeight = 28;
+        const colWidth = 220;
+        const cols = 2;
+        const title = 'Recovery Codes';
+        const content = [
+            'BT',
+            '/F1 20 Tf',
+            `1 0 0 1 ${marginLeft} ${top} Tm`,
+            `(${escapePdfText(title)}) Tj`,
+            'ET',
+        ];
 
         for (let index = 0; index < codes.length; index++) {
             const col = index % cols;
             const row = Math.floor(index / cols);
-            const x = padding + col * colWidth;
-            const y = titleHeight + padding + row * lineHeight;
+            const x = marginLeft + col * colWidth;
+            const y = top - 56 - row * lineHeight;
 
-            context.fillText(codes[index], x, y);
+            appendRecoveryCodePdfText(content, codes[index], x, y);
         }
 
-        return canvas.toDataURL('image/png');
+        const contentStream = content.join('\n');
+        const objects = [
+            '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+            '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+            `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`,
+            '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n',
+            `5 0 obj\n<< /Length ${pdfByteLength(contentStream)} >>\nstream\n${contentStream}\nendstream\nendobj\n`,
+        ];
+        const parts = ['%PDF-1.4\n'];
+        const offsets = [];
+
+        objects.forEach((object) => {
+            appendPdfObject(parts, offsets, object);
+        });
+
+        const xrefOffset = parts.reduce((total, part) => total + pdfByteLength(part), 0);
+        const xrefRows = offsets
+            .map((offset) => `${String(offset).padStart(10, '0')} 00000 n `)
+            .join('\n');
+        const trailer = [
+            `xref\n0 ${objects.length + 1}`,
+            '0000000000 65535 f ',
+            xrefRows,
+            `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>`,
+            'startxref',
+            String(xrefOffset),
+            '%%EOF',
+            '',
+        ].join('\n');
+
+        parts.push(trailer);
+
+        return new Blob(parts, {type: 'application/pdf'});
+    }
+
+    /**
+     * Appends one color-coded recovery code to a PDF content stream.
+     *
+     * @param {string[]} content
+     * @param {string} code
+     * @param {number} x
+     * @param {number} y
+     * @returns {void}
+     */
+    function appendRecoveryCodePdfText(content, code, x, y) {
+        const charWidth = 8.4;
+
+        for (let charIndex = 0; charIndex < code.length; charIndex++) {
+            const char = code[charIndex];
+            const color = /\d/.test(char) ? '0.05 0.38 0.85 rg' : '0.05 0.05 0.05 rg';
+
+            content.push(
+                color,
+                'BT',
+                '/F1 14 Tf',
+                `1 0 0 1 ${x + charIndex * charWidth} ${y} Tm`,
+                `(${escapePdfText(char)}) Tj`,
+                'ET',
+            );
+        }
+    }
+
+    /**
+     * Downloads a blob through a temporary object URL.
+     *
+     * @param {Blob} blob
+     * @param {string} filename
+     * @returns {boolean}
+     */
+    function downloadBlob(blob, filename) {
+        if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+            return false;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+
+        try {
+            link.click();
+        } finally {
+            document.body.removeChild(link);
+            window.setTimeout(() => {
+                URL.revokeObjectURL(url);
+            }, 0);
+        }
+
+        return true;
     }
 
     /**
@@ -1126,7 +1277,60 @@
     }
 
     /**
-     * Downloads recovery codes as PNG and optionally persists them server-side.
+     * Enables a button or link and removes visual disabled state classes.
+     *
+     * @param {string | null} selector
+     * @returns {void}
+     */
+    function enableRecoveryTarget(selector) {
+        if (!selector) {
+            return;
+        }
+
+        const target = document.querySelector(selector);
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        if (target instanceof HTMLButtonElement || target instanceof HTMLInputElement) {
+            target.disabled = false;
+        }
+
+        target.classList.remove('btn-disabled');
+        target.removeAttribute('aria-disabled');
+
+        const enabledClasses = target.getAttribute('data-enable-class');
+        if (enabledClasses) {
+            target.classList.add(...enabledClasses.split(/\s+/).filter(Boolean));
+        }
+
+        if (target.getAttribute('data-focus-on-enable') === '1') {
+            target.focus();
+        }
+    }
+
+    /**
+     * Marks the download button as completed and enables the configured next action.
+     *
+     * @param {HTMLButtonElement} trigger
+     * @returns {void}
+     */
+    function markRecoveryDownloadComplete(trigger) {
+        const label = trigger.querySelector('[data-download-label]');
+        const downloadedLabel = trigger.getAttribute('data-downloaded-label');
+
+        if (label && downloadedLabel) {
+            label.textContent = downloadedLabel;
+        }
+
+        trigger.disabled = false;
+        trigger.classList.remove('btn-secondary');
+        trigger.classList.add('btn-success');
+        enableRecoveryTarget(trigger.getAttribute('data-enable-target'));
+    }
+
+    /**
+     * Downloads recovery codes as PDF and optionally persists them server-side.
      *
      * @param {HTMLButtonElement} trigger
      * @returns {Promise<void>}
@@ -1140,22 +1344,15 @@
         trigger.disabled = true;
 
         try {
-            const dataURL = buildRecoveryCodesPngDataURL(codes);
-            if (!dataURL) {
+            const downloaded = downloadBlob(buildRecoveryCodesPdfBlob(codes), 'recovery-codes.pdf');
+            if (!downloaded) {
                 trigger.disabled = false;
                 return;
             }
 
-            const link = document.createElement('a');
-            link.href = dataURL;
-            link.download = 'recovery-codes.png';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-
             const saveURL = trigger.getAttribute('data-save-url');
             if (!saveURL) {
-                trigger.disabled = false;
+                markRecoveryDownloadComplete(trigger);
                 return;
             }
 
@@ -1173,13 +1370,7 @@
             });
 
             if (response.ok) {
-                const enableTarget = trigger.getAttribute('data-enable-target');
-                if (enableTarget) {
-                    const button = document.querySelector(enableTarget);
-                    if (button) {
-                        button.disabled = false;
-                    }
-                }
+                markRecoveryDownloadComplete(trigger);
             } else {
                 trigger.disabled = false;
             }
@@ -1669,6 +1860,7 @@
 
     document.addEventListener('htmx:afterSwap', () => {
         initTotpQRCode();
+        decorateRecoveryCodes(document);
         initLogoutRedirect();
         initSAMLPostBinding();
         initDevHtmxLogging();
@@ -1676,6 +1868,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         initTotpQRCode();
+        decorateRecoveryCodes(document);
         initLogoutRedirect();
         initSAMLPostBinding();
         initDevHtmxLogging();
