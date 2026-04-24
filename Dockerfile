@@ -29,7 +29,18 @@ RUN cd docker-healthcheck && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod
 RUN cd contrib/smtp-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
 RUN cd contrib/imap-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o fakeimap . && upx --best --lzma fakeimap
 
-FROM alpine:3.23
+FROM alpine:3.23 AS runtime-base
+
+RUN apk --no-cache --upgrade add ca-certificates
+
+RUN mkdir -p /runtime-root/etc/ssl/certs /runtime-root/tmp /runtime-root/usr/app && \
+    cp /etc/ssl/certs/ca-certificates.crt /runtime-root/etc/ssl/certs/ca-certificates.crt && \
+    printf 'hosts: files dns\n' > /runtime-root/etc/nsswitch.conf && \
+    printf 'nauthilus:x:65532:65532:nauthilus:/nonexistent:/sbin/nologin\n' > /runtime-root/etc/passwd && \
+    printf 'nauthilus:x:65532:\n' > /runtime-root/etc/group && \
+    ln -s ./server/lua-plugins.d /runtime-root/usr/app/lua-plugins.d
+
+FROM scratch
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
@@ -39,10 +50,7 @@ LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
 
 WORKDIR /usr/app
 
-RUN addgroup -S nauthilus; \
-    adduser -S nauthilus -G nauthilus -D -H -s /bin/nologin
-
-RUN apk --no-cache --upgrade add ca-certificates bash curl
+COPY --from=runtime-base ["/runtime-root/", "/"]
 
 # Copy binary to destination image
 COPY --from=builder ["/build/server/nauthilus", "/build/client/nauthilus-client", "/build/contrib/oidctestclient/oidctestclient", "/build/contrib/saml2testclient/saml2testclient", "./"]
@@ -53,19 +61,14 @@ COPY --from=builder ["/build/contrib/smtp-server/fakesmtp", "./"]
 COPY --from=builder ["/build/contrib/imap-server/fakeimap", "./"]
 COPY --from=builder ["/build/static/", "./static/"]
 
-RUN ln -s ./server/lua-plugins.d ./lua-plugins.d
-
 COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
 
-# set up nsswitch.conf for Go's "netgo" implementation
-# - https://github.com/golang/go/blob/go1.9.1/src/net/conf.go#L194-L275
-RUN echo 'hosts: files dns' > /etc/nsswitch.conf
-
 ENV ZONEINFO=/zoneinfo.zip
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV TERM=xterm-256color
 
 EXPOSE 8080
 
-USER nauthilus
+USER 65532:65532
 
 CMD ["/usr/app/nauthilus", "-config", "/etc/nauthilus/nauthilus.yml", "-config-format", "yaml"]
