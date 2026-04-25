@@ -147,6 +147,8 @@ func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint s
 		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(a.Runtime.StartTime)),
 	)
 
+	keyvals = appendExternalSessionLogValue(keyvals, a.Request.ExternalSessionID)
+
 	if len(a.Runtime.AdditionalLogs) > 0 && len(a.Runtime.AdditionalLogs)%2 == 0 {
 		keyvals = append(keyvals, a.Runtime.AdditionalLogs...)
 	}
@@ -185,5 +187,15 @@ func (a *AuthState) fillLogLineProcessingTemplate(keyvals []any, endpoint string
 		definitions.LogKeyUriPath, endpoint,
 	)
 
+	keyvals = appendExternalSessionLogValue(keyvals, a.Request.ExternalSessionID)
+
 	return keyvals
+}
+
+func appendExternalSessionLogValue(keyvals []any, externalSessionID string) []any {
+	if externalSessionID == "" {
+		return keyvals
+	}
+
+	return append(keyvals, definitions.LogKeyExternalSession, externalSessionID)
 }

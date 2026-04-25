@@ -173,6 +173,7 @@ local function build_auth_payload(request)
     local payload = {}
     add_if_set(payload, "username", request.username)
     add_if_set(payload, "password", request.password)
+    add_if_set(payload, "external_session_id", request.external_session)
     add_if_set(payload, "client_ip", request.client_ip)
     add_if_set(payload, "client_port", request.client_port)
     add_if_set(payload, "client_hostname", request.client_hostname)

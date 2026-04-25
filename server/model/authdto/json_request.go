@@ -35,6 +35,9 @@ type Request struct {
 	// ClientID is the unique identifier of the client/user, usually assigned by the application.
 	ClientID string `json:"client_id,omitempty"`
 
+	// ExternalSessionID is an optional upstream session identifier for log correlation.
+	ExternalSessionID string `json:"external_session_id,omitempty"`
+
 	// UserAgent optionally provides the user agent via JSON when headers are unavailable.
 	UserAgent string `json:"user_agent,omitempty"`
 

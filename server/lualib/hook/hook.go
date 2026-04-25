@@ -640,6 +640,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	defer lualib.PutCommonRequest(cr)
 
 	cr.Session = guid
+	cr.ExternalSessionID = externalSessionIDFromRequest(ctx, cfg)
 	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
 	cr.SetupRequest(L, cfg, requestTable)
 
@@ -663,6 +664,19 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	}
 
 	return result, err
+}
+
+func externalSessionIDFromRequest(ctx *gin.Context, cfg config.File) string {
+	if ctx == nil || cfg == nil {
+		return ""
+	}
+
+	externalSessionID := strings.TrimSpace(util.URLPartialDecode(ctx.GetHeader(cfg.GetExternalSessionID())))
+	if externalSessionID != "" {
+		ctx.Set(definitions.CtxExternalSessionKey, externalSessionID)
+	}
+
+	return externalSessionID
 }
 
 // RunLuaHook executes a precompiled Lua script based on a hook parameter from the gin.Context.

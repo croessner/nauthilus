@@ -2596,6 +2596,7 @@ type DefaultHTTPRequestHeader struct {
 	ClientPort         string `mapstructure:"client_port" validate:"omitempty,printascii,excludesall= "`
 	ClientHost         string `mapstructure:"client_host" validate:"omitempty,printascii,excludesall= "`
 	ClientID           string `mapstructure:"client_id" validate:"omitempty,printascii,excludesall= "`
+	ExternalSessionID  string `mapstructure:"external_session_id" validate:"omitempty,printascii,excludesall= "`
 	SSL                string `mapstructure:"ssl" validate:"omitempty,printascii,excludesall= "`
 	SSLSessionID       string `mapstructure:"ssl_session_id" validate:"omitempty,printascii,excludesall= "`
 	SSLVerify          string `mapstructure:"ssl_verify" validate:"omitempty,printascii,excludesall= "`
@@ -2733,6 +2734,16 @@ func (d *DefaultHTTPRequestHeader) GetClientID() string {
 	}
 
 	return d.ClientID
+}
+
+// GetExternalSessionID retrieves the external session identifier header from the DefaultHTTPRequestHeader struct.
+// Returns an empty string if the DefaultHTTPRequestHeader is nil.
+func (d *DefaultHTTPRequestHeader) GetExternalSessionID() string {
+	if d == nil {
+		return ""
+	}
+
+	return d.ExternalSessionID
 }
 
 // GetSSL retrieves the SSL value from the DefaultHTTPRequestHeader struct.

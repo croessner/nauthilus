@@ -68,6 +68,9 @@ type CommonRequest struct {
 	// Session stores the unique session identifier.
 	Session string // GUID
 
+	// ExternalSessionID stores an optional upstream session identifier.
+	ExternalSessionID string
+
 	// ClientIP stores the IP address of the client.
 	ClientIP string
 
@@ -257,6 +260,7 @@ func (c *CommonRequest) Reset() {
 	c.AllowedClientGrantTypes = nil
 	c.Service = ""
 	c.Session = ""
+	c.ExternalSessionID = ""
 	c.ClientIP = ""
 	c.ClientPort = ""
 	c.ClientNet = ""
@@ -361,6 +365,7 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 
 	request.RawSetString(definitions.LuaRequestService, lua.LString(c.Service))
 	request.RawSetString(definitions.LuaRequestSession, lua.LString(c.Session))
+	request.RawSetString(definitions.LuaRequestExternalSession, lua.LString(c.ExternalSessionID))
 	request.RawSetString(definitions.LuaRequestClientIP, lua.LString(c.ClientIP))
 	request.RawSetString(definitions.LuaRequestClientPort, lua.LString(c.ClientPort))
 	request.RawSetString(definitions.LuaRequestClientNet, lua.LString(c.ClientNet))

@@ -101,6 +101,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.BruteForceCounter = 0 // unavailable
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 	commonRequest.ClientIP = auth.Request.ClientIP
 	commonRequest.ClientPort = auth.Request.XClientPort
 	commonRequest.ClientNet = "" // unavailable
@@ -298,6 +299,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 	commonRequest.ClientIP = auth.Request.ClientIP
 	commonRequest.ClientPort = auth.Request.XClientPort
 	commonRequest.LocalIP = auth.Request.XLocalIP
@@ -402,6 +404,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 	commonRequest.Username = auth.Request.Username
 	commonRequest.ClientIP = auth.Request.ClientIP
 	commonRequest.ClientPort = auth.Request.XClientPort
@@ -495,6 +498,7 @@ func (lm *luaManagerImpl) DeleteTOTPSecret(auth *AuthState) (err error) {
 	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 	commonRequest.Username = auth.Request.Username
 	commonRequest.ClientIP = auth.Request.ClientIP
 	commonRequest.ClientPort = auth.Request.XClientPort
@@ -578,6 +582,7 @@ func (lm *luaManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.TO
 	commonRequest.NoAuth = auth.Request.NoAuth
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 	commonRequest.ClientIP = auth.Request.ClientIP
 	commonRequest.ClientPort = auth.Request.XClientPort
 	commonRequest.ClientHost = auth.Request.ClientHost
@@ -656,6 +661,7 @@ func (lm *luaManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err error) {
 	commonRequest.NoAuth = auth.Request.NoAuth
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 	commonRequest.ClientIP = auth.Request.ClientIP
 	commonRequest.ClientPort = auth.Request.XClientPort
 	commonRequest.ClientHost = auth.Request.ClientHost

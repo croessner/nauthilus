@@ -278,6 +278,9 @@ type File interface {
 	// GetClientID retrieves the client's ID.
 	GetClientID() string
 
+	// GetExternalSessionID retrieves the upstream session ID header name.
+	GetExternalSessionID() string
+
 	// GetUsername returns the username of the currently authenticated user.
 	GetUsername() string
 
@@ -1630,6 +1633,15 @@ func (f *FileSettings) GetClientID() string {
 	return f.GetServer().GetDefaultHTTPRequestHeader().GetClientID()
 }
 
+// GetExternalSessionID returns the HTTP request header used to retrieve an optional upstream session ID.
+func (f *FileSettings) GetExternalSessionID() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetExternalSessionID()
+}
+
 // GetSSL returns the HTTP request header used to indicate SSL security for the current client connection
 func (f *FileSettings) GetSSL() string {
 	if f == nil {
@@ -2044,6 +2056,7 @@ func (f *FileSettings) setDefaultHeaders() error {
 		"X-Auth-Port":             &f.Server.DefaultHTTPRequestHeader.LocalPort,
 		"X-Client-Port":           &f.Server.DefaultHTTPRequestHeader.ClientPort,
 		"X-Client-ID":             &f.Server.DefaultHTTPRequestHeader.ClientID,
+		"X-External-Session-ID":   &f.Server.DefaultHTTPRequestHeader.ExternalSessionID,
 		"X-OIDC-CID":              &f.Server.DefaultHTTPRequestHeader.OIDCCID,
 
 		"X-SSL":                   &f.Server.DefaultHTTPRequestHeader.SSL,
