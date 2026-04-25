@@ -15,7 +15,11 @@
 
 package core
 
-import "github.com/croessner/nauthilus/server/secret"
+import (
+	"strings"
+
+	"github.com/croessner/nauthilus/server/secret"
+)
 
 // Credentials captures user-supplied credentials (username/password, optional MFA).
 // It is intended to be immutable via options; apply them to AuthState via ApplyCredentials.
@@ -56,10 +60,11 @@ type AuthContext struct {
 	Method    string
 	UserAgent string
 
-	ClientIP       string
-	ClientPort     string
-	ClientHostname string
-	ClientID       string
+	ClientIP          string
+	ClientPort        string
+	ClientHostname    string
+	ClientID          string
+	ExternalSessionID string
 
 	LocalIP   string
 	LocalPort string
@@ -123,6 +128,11 @@ func WithClientHostname(h string) AuthContextOption {
 
 func WithClientID(id string) AuthContextOption {
 	return func(c *AuthContext) { c.ClientID = id }
+}
+
+// WithExternalSessionID sets the optional upstream session identifier.
+func WithExternalSessionID(id string) AuthContextOption {
+	return func(c *AuthContext) { c.ExternalSessionID = normalizeExternalSessionID(id) }
 }
 
 func WithLocalIP(ip string) AuthContextOption {
@@ -212,4 +222,8 @@ type FieldMapping struct {
 	TOTPSecret  string
 	UniqueID    string
 	DisplayName string
+}
+
+func normalizeExternalSessionID(id string) string {
+	return strings.TrimSpace(id)
 }

@@ -54,8 +54,9 @@ func (h *Handler) Register(router gin.IRouter) {
 }
 
 type backendRequest struct {
-	Backend     string `json:"backend"`
-	BackendName string `json:"backend_name"`
+	Backend           string `json:"backend"`
+	BackendName       string `json:"backend_name"`
+	ExternalSessionID string `json:"external_session_id"`
 }
 
 type totpRequest struct {
@@ -77,7 +78,7 @@ type webauthnRequest struct {
 	OldCredential string `json:"old_credential"`
 }
 
-func (h *Handler) buildAuthState(ctx *gin.Context, username string) (*core.AuthState, error) {
+func (h *Handler) buildAuthState(ctx *gin.Context, username string, externalSessionID string) (*core.AuthState, error) {
 	if h.deps == nil {
 		return nil, errors.New("handler dependencies are missing")
 	}
@@ -102,12 +103,13 @@ func (h *Handler) buildAuthState(ctx *gin.Context, username string) (*core.AuthS
 	authState.InitMethodAndUserAgent()
 	authState.WithDefaults(ctx)
 	authState.SetUsername(username)
+	authState.ApplyContextData(core.NewAuthContext(core.WithExternalSessionID(externalSessionID)))
 
 	return authState, nil
 }
 
-func (h *Handler) resolveBackend(ctx *gin.Context, backendType string, backendName string, username string) (core.BackendManager, *core.AuthState, error) {
-	authState, err := h.buildAuthState(ctx, username)
+func (h *Handler) resolveBackend(ctx *gin.Context, backendType string, backendName string, username string, externalSessionID string) (core.BackendManager, *core.AuthState, error) {
+	authState, err := h.buildAuthState(ctx, username, externalSessionID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -159,17 +161,21 @@ type mfaPayload interface {
 	getBackend() string
 	getBackendName() string
 	getUsername() string
+	getExternalSessionID() string
 }
 
-func (r totpRequest) getBackend() string              { return r.Backend }
-func (r totpRequest) getBackendName() string          { return r.BackendName }
-func (r totpRequest) getUsername() string             { return r.Username }
-func (r recoveryCodesRequest) getBackend() string     { return r.Backend }
-func (r recoveryCodesRequest) getBackendName() string { return r.BackendName }
-func (r recoveryCodesRequest) getUsername() string    { return r.Username }
-func (r webauthnRequest) getBackend() string          { return r.Backend }
-func (r webauthnRequest) getBackendName() string      { return r.BackendName }
-func (r webauthnRequest) getUsername() string         { return r.Username }
+func (r totpRequest) getBackend() string                    { return r.Backend }
+func (r totpRequest) getBackendName() string                { return r.BackendName }
+func (r totpRequest) getUsername() string                   { return r.Username }
+func (r totpRequest) getExternalSessionID() string          { return r.ExternalSessionID }
+func (r recoveryCodesRequest) getBackend() string           { return r.Backend }
+func (r recoveryCodesRequest) getBackendName() string       { return r.BackendName }
+func (r recoveryCodesRequest) getUsername() string          { return r.Username }
+func (r recoveryCodesRequest) getExternalSessionID() string { return r.ExternalSessionID }
+func (r webauthnRequest) getBackend() string                { return r.Backend }
+func (r webauthnRequest) getBackendName() string            { return r.BackendName }
+func (r webauthnRequest) getUsername() string               { return r.Username }
+func (r webauthnRequest) getExternalSessionID() string      { return r.ExternalSessionID }
 
 // executeMFAOp binds JSON, validates the payload, resolves the backend, and executes the operation.
 // The validate function performs payload-specific checks (return error message or empty string).
@@ -194,7 +200,7 @@ func executeMFAOp[T mfaPayload](
 		return
 	}
 
-	mgr, authState, err := h.resolveBackend(ctx, payload.getBackend(), payload.getBackendName(), payload.getUsername())
+	mgr, authState, err := h.resolveBackend(ctx, payload.getBackend(), payload.getBackendName(), payload.getUsername(), payload.getExternalSessionID())
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 
@@ -282,7 +288,7 @@ func (h *Handler) GetWebAuthnCredential(ctx *gin.Context) {
 		return
 	}
 
-	mgr, authState, err := h.resolveBackend(ctx, ctx.Query("backend"), ctx.Query("backend_name"), username)
+	mgr, authState, err := h.resolveBackend(ctx, ctx.Query("backend"), ctx.Query("backend_name"), username, ctx.Query("external_session_id"))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 
@@ -340,7 +346,7 @@ func (h *Handler) UpdateWebAuthnCredential(ctx *gin.Context) {
 		return
 	}
 
-	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username)
+	mgr, authState, err := h.resolveBackend(ctx, payload.Backend, payload.BackendName, payload.Username, payload.ExternalSessionID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 

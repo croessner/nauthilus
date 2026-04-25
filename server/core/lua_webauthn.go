@@ -49,6 +49,7 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 	commonRequest.Username = auth.Request.Username
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 	ctxLua, cancelLua := context.WithTimeout(lctx, dLua)
@@ -125,6 +126,7 @@ func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
 	commonRequest.Username = auth.Request.Username
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 	ctxLua, cancelLua := context.WithTimeout(lctx, dLua)
@@ -210,6 +212,7 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 	commonRequest.Username = auth.Request.Username
 	commonRequest.Service = auth.Request.Service
 	commonRequest.Session = auth.Runtime.GUID
+	commonRequest.ExternalSessionID = auth.Request.ExternalSessionID
 	commonRequest.WebAuthnCredential = string(newCredBytes)
 	commonRequest.WebAuthnOldCredential = string(oldCredBytes)
 

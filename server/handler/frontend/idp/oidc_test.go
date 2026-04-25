@@ -258,6 +258,9 @@ func (m *mockOIDCCfg) GetOIDCCID() string    { return "X-Nauthilus-OIDC-ClientID
 func (m *mockOIDCCfg) GetClientIP() string   { return "X-Real-IP" }
 func (m *mockOIDCCfg) GetClientPort() string { return "X-Real-Port" }
 func (m *mockOIDCCfg) GetClientID() string   { return "X-Nauthilus-Client-ID" }
+func (m *mockOIDCCfg) GetExternalSessionID() string {
+	return "X-External-Session-ID"
+}
 func (m *mockOIDCCfg) GetClientHost() string { return "X-Nauthilus-Client-Host" }
 func (m *mockOIDCCfg) GetLocalIP() string    { return "X-Local-IP" }
 func (m *mockOIDCCfg) GetLocalPort() string  { return "X-Local-Port" }

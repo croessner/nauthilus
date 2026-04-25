@@ -426,6 +426,9 @@ type AuthRequest struct {
 	// XClientID is a custom client identifier.
 	XClientID string
 
+	// ExternalSessionID is an upstream session identifier supplied by the caller.
+	ExternalSessionID string
+
 	// XLocalIP is the local IP address on which the request was received.
 	XLocalIP string
 
@@ -2203,6 +2206,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	}
 
 	cr.Session = a.Runtime.GUID
+	cr.ExternalSessionID = a.Request.ExternalSessionID
 	cr.Username = a.Request.Username
 	cr.Password = a.passwordBytes()
 	cr.ClientIP = a.Request.ClientIP
@@ -3627,6 +3631,7 @@ func buildAuthContextOptions(request *authdto.Request) []AuthContextOption {
 		{request.ClientIP, WithClientIP},
 		{request.ClientPort, WithClientPort},
 		{request.ClientHostname, WithClientHostname},
+		{request.ExternalSessionID, WithExternalSessionID},
 		{request.LocalIP, WithLocalIP},
 		{request.LocalPort, WithLocalPort},
 		{request.Protocol, WithProtocol},
@@ -3912,6 +3917,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientPort()), &a.Request.XClientPort)
 	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientID()), &a.Request.XClientID)
 	util.ApplyStringField(getDecodedHeader(ctx, cfg.GetClientHost()), &a.Request.ClientHost)
+	a.ApplyContextData(NewAuthContext(WithExternalSessionID(getDecodedHeader(ctx, cfg.GetExternalSessionID()))))
 
 	if a.Request.ClientIP == "" {
 		a.Request.ClientIP = util.RequestClientIP(ctx)
@@ -4187,6 +4193,7 @@ func (a *AuthState) ApplyContextData(x AuthContext) {
 		{x.ClientPort, &a.Request.XClientPort},
 		{x.ClientHostname, &a.Request.ClientHost},
 		{x.ClientID, &a.Request.XClientID},
+		{x.ExternalSessionID, &a.Request.ExternalSessionID},
 		{x.LocalIP, &a.Request.XLocalIP},
 		{x.LocalPort, &a.Request.XPort},
 		{x.XSSL, &a.Request.XSSL},
@@ -4211,6 +4218,10 @@ func (a *AuthState) ApplyContextData(x AuthContext) {
 	// Apply all string field mappings
 	for _, mapping := range fieldMappings {
 		util.ApplyStringField(mapping.src, mapping.dest)
+	}
+
+	if a.Request.ExternalSessionID != "" && a.Request.HTTPClientContext != nil {
+		a.Request.HTTPClientContext.Set(definitions.CtxExternalSessionKey, a.Request.ExternalSessionID)
 	}
 
 	// Handle Protocol specially as it requires type conversion

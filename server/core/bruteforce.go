@@ -141,6 +141,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		commonRequest.BruteForceCounter = a.Security.BruteForceCounter[rule.Name]
 		commonRequest.Service = a.Request.Service
 		commonRequest.Session = a.Runtime.GUID
+		commonRequest.ExternalSessionID = a.Request.ExternalSessionID
 		commonRequest.ClientIP = a.Request.ClientIP
 		commonRequest.ClientPort = a.Request.XClientPort
 		commonRequest.ClientNet = clientNet

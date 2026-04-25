@@ -130,6 +130,10 @@ func LoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
 			keyvals = append(keyvals, definitions.LogKeyRateLimitReason, reason)
 		}
 
+		if externalSessionID := strings.TrimSpace(ctx.GetString(definitions.CtxExternalSessionKey)); externalSessionID != "" {
+			keyvals = append(keyvals, definitions.LogKeyExternalSession, externalSessionID)
+		}
+
 		logWrapper(logger).Log(keyvals...)
 	}
 }

@@ -255,6 +255,9 @@ const (
 	// LogKeyGUID represents the session identifier used in log entries.
 	LogKeyGUID = "session"
 
+	// LogKeyExternalSession represents an upstream session identifier supplied by the caller.
+	LogKeyExternalSession = "external_session"
+
 	// LogKeyMsg represents the message content in log entries.
 	LogKeyMsg = "msg"
 
@@ -868,6 +871,9 @@ const (
 const (
 	// CtxGUIDKey is used as a key to store the session's unique identifier in session.Store
 	CtxGUIDKey = "guid"
+
+	// CtxExternalSessionKey stores an optional upstream session identifier for request correlation.
+	CtxExternalSessionKey = "external_session"
 
 	// CtxAdditionalFeaturesKey is the key used to store additional features in the lualib.Context
 	CtxAdditionalFeaturesKey = "additional_features"
@@ -1823,6 +1829,9 @@ const (
 
 	// LuaRequestSession indicates the session of the request.
 	LuaRequestSession = "session"
+
+	// LuaRequestExternalSession indicates the upstream session of the request, if supplied.
+	LuaRequestExternalSession = "external_session"
 
 	// LuaRequestClientIP signifies the client IP of the request.
 	LuaRequestClientIP = "client_ip"

@@ -18,9 +18,12 @@ package core
 import (
 	"testing"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // TestFillIdPFieldsPopulatesUserGroupsFromState verifies that fillIdPFields populates the
@@ -60,4 +63,57 @@ func TestFillIdPFieldsUsesEmptyUserGroupsWhenNotSet(t *testing.T) {
 	auth.fillIdPFields(request)
 
 	assert.Nil(t, request.UserGroups)
+}
+
+func TestApplyContextDataStoresExternalSessionInAuthStateAndGinContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := gin.CreateTestContext(nil)
+
+	auth := &AuthState{
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+		},
+	}
+
+	auth.ApplyContextData(NewAuthContext(WithExternalSessionID(" " + testExternalSessionID + " ")))
+
+	assert.Equal(t, testExternalSessionID, auth.Request.ExternalSessionID)
+	assert.Equal(t, testExternalSessionID, ctx.GetString(definitions.CtxExternalSessionKey))
+}
+
+func TestSetAuthenticationFieldsMapsExternalSessionFromJSONRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := gin.CreateTestContext(nil)
+	auth := &AuthState{
+		Request: AuthRequest{
+			HTTPClientContext: ctx,
+		},
+	}
+
+	setAuthenticationFields(auth, &authdto.Request{
+		Username:          "user@example.test",
+		ExternalSessionID: testExternalSessionID,
+	})
+
+	assert.Equal(t, testExternalSessionID, auth.Request.ExternalSessionID)
+	assert.Equal(t, testExternalSessionID, ctx.GetString(definitions.CtxExternalSessionKey))
+}
+
+func TestCommonRequestSetupRequestIncludesExternalSession(t *testing.T) {
+	t.Parallel()
+
+	L := lua.NewState()
+	defer L.Close()
+
+	request := L.NewTable()
+	commonRequest := &lualib.CommonRequest{
+		Session:           "guid-1",
+		ExternalSessionID: testExternalSessionID,
+	}
+
+	commonRequest.SetupRequest(L, nil, request)
+
+	assert.Equal(t, lua.LString(testExternalSessionID), request.RawGetString(definitions.LuaRequestExternalSession))
 }
