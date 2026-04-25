@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"reflect"
 	"sync"
 	"time"
 
@@ -114,6 +115,12 @@ type Context struct {
 	mu   sync.RWMutex
 }
 
+// ContextDelta describes request-local Lua context changes made by one script.
+type ContextDelta struct {
+	Set    map[string]any
+	Delete []string
+}
+
 // NewContext initializes a new Lua Context.
 func NewContext() *Context {
 	ctx := &Context{}
@@ -133,6 +140,84 @@ func (c *Context) Set(key string, value any) {
 	c.data[key] = value
 
 	c.mu.Unlock()
+}
+
+// Snapshot returns a shallowly typed but recursively copied view of all context values.
+func (c *Context) Snapshot() map[string]any {
+	if c == nil {
+		return map[string]any{}
+	}
+
+	c.mu.RLock()
+
+	defer c.mu.RUnlock()
+
+	snapshot := make(map[string]any, len(c.data))
+	for key, value := range c.data {
+		snapshot[key] = cloneContextValue(value)
+	}
+
+	return snapshot
+}
+
+// Clone returns an independent context copy for isolated script execution.
+func (c *Context) Clone() *Context {
+	clone := NewContext()
+
+	for key, value := range c.Snapshot() {
+		clone.data[key] = value
+	}
+
+	return clone
+}
+
+// Diff computes changes between a previous snapshot and the current context state.
+func (c *Context) Diff(before map[string]any) ContextDelta {
+	after := c.Snapshot()
+	delta := ContextDelta{
+		Set:    make(map[string]any),
+		Delete: make([]string, 0),
+	}
+
+	for key, beforeValue := range before {
+		afterValue, exists := after[key]
+		if !exists {
+			delta.Delete = append(delta.Delete, key)
+
+			continue
+		}
+
+		if !reflect.DeepEqual(beforeValue, afterValue) {
+			delta.Set[key] = afterValue
+		}
+	}
+
+	for key, afterValue := range after {
+		if _, exists := before[key]; !exists {
+			delta.Set[key] = afterValue
+		}
+	}
+
+	return delta
+}
+
+// ApplyDelta merges a script delta into the shared request context.
+func (c *Context) ApplyDelta(delta ContextDelta) {
+	if c == nil {
+		return
+	}
+
+	c.mu.Lock()
+
+	defer c.mu.Unlock()
+
+	for _, key := range delta.Delete {
+		delete(c.data, key)
+	}
+
+	for key, value := range delta.Set {
+		c.data[key] = cloneContextValue(value)
+	}
 }
 
 // GetExists retrieves the value associated with the given key and returns a boolean indicating its existence in the context.
@@ -177,6 +262,36 @@ func (c *Context) Delete(key string) {
 	defer c.mu.Unlock()
 
 	delete(c.data, key)
+}
+
+func cloneContextValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		clone := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			clone[key] = cloneContextValue(nested)
+		}
+
+		return clone
+	case map[any]any:
+		clone := make(map[any]any, len(typed))
+		for key, nested := range typed {
+			clone[cloneContextValue(key)] = cloneContextValue(nested)
+		}
+
+		return clone
+	case []any:
+		clone := make([]any, len(typed))
+		for index, nested := range typed {
+			clone[index] = cloneContextValue(nested)
+		}
+
+		return clone
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 // Deadline is not currently used

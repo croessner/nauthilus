@@ -37,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
+	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
@@ -59,33 +60,50 @@ var LuaFilters *PreCompiledLuaFilters
 // FilterBackendManager manages backend operations for Lua filters.
 type FilterBackendManager struct {
 	*lualib.BaseManager
-	request          *Request
-	backendResult    **lualib.LuaBackendResult
-	removeAttributes *[]string
+	request                 *Request
+	backendResult           **lualib.LuaBackendResult
+	removeAttributes        *[]string
+	currentBackendResult    *lualib.LuaBackendResult
+	currentRemoveAttributes []string
 }
 
 // NewFilterBackendManager creates a new FilterBackendManager.
 func NewFilterBackendManager(ctx context.Context, cfg config.File, logger *slog.Logger, request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) *FilterBackendManager {
+	return NewFilterBackendManagerWithCurrent(ctx, cfg, logger, request, backendResult, removeAttributes, nil, nil)
+}
+
+// NewFilterBackendManagerWithCurrent creates a new FilterBackendManager with cumulative input snapshots.
+func NewFilterBackendManagerWithCurrent(ctx context.Context, cfg config.File, logger *slog.Logger, request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string, currentBackendResult *lualib.LuaBackendResult, currentRemoveAttributes []string) *FilterBackendManager {
 	return &FilterBackendManager{
-		BaseManager:      lualib.NewBaseManager(ctx, cfg, logger),
-		request:          request,
-		backendResult:    backendResult,
-		removeAttributes: removeAttributes,
+		BaseManager:             lualib.NewBaseManager(ctx, cfg, logger),
+		request:                 request,
+		backendResult:           backendResult,
+		removeAttributes:        removeAttributes,
+		currentBackendResult:    cloneLuaBackendResult(currentBackendResult),
+		currentRemoveAttributes: append([]string(nil), currentRemoveAttributes...),
 	}
 }
 
 // LoaderModBackend initializes and returns a Lua module containing backend-related functionalities for LuaState.
 func LoaderModBackend(ctx context.Context, cfg config.File, logger *slog.Logger, request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
+	return LoaderModBackendWithCurrent(ctx, cfg, logger, request, backendResult, removeAttributes, nil, nil)
+}
+
+// LoaderModBackendWithCurrent initializes the backend module with cumulative input snapshots.
+func LoaderModBackendWithCurrent(ctx context.Context, cfg config.File, logger *slog.Logger, request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string, currentBackendResult *lualib.LuaBackendResult, currentRemoveAttributes []string) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewFilterBackendManager(ctx, cfg, logger, request, backendResult, removeAttributes)
+		manager := NewFilterBackendManagerWithCurrent(ctx, cfg, logger, request, backendResult, removeAttributes, currentBackendResult, currentRemoveAttributes)
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetBackendServers:       manager.getBackendServers,
-			definitions.LuaFnSelectBackendServer:     manager.selectBackendServer,
-			definitions.LuaFnCheckBackendConnection:  lualib.LoaderModConnection(ctx, cfg, logger, monitoring.NewMonitor(cfg, logger)),
-			definitions.LuaFnApplyBackendResult:      manager.applyBackendResult,
-			definitions.LuaFnRemoveFromBackendResult: manager.removeFromBackendResult,
+			definitions.LuaFnGetBackendServers:           manager.getBackendServers,
+			definitions.LuaFnSelectBackendServer:         manager.selectBackendServer,
+			definitions.LuaFnGetCurrentBackendResult:     manager.getCurrentBackendResult,
+			definitions.LuaFnGetSelectedBackendServer:    manager.getSelectedBackendServer,
+			definitions.LuaFnCheckBackendConnection:      lualib.LoaderModConnection(ctx, cfg, logger, monitoring.NewMonitor(cfg, logger)),
+			definitions.LuaFnApplyBackendResult:          manager.applyBackendResult,
+			definitions.LuaFnRemoveFromBackendResult:     manager.removeFromBackendResult,
+			definitions.LuaFnGetRemovedBackendAttributes: manager.getRemovedBackendAttributes,
 		})
 
 		return stack.PushResult(mod)
@@ -145,9 +163,16 @@ func PreCompileLuaFilters(cfgFile config.File) (err error) {
 			luaFilter.WhenAuthenticated = wa
 			luaFilter.WhenUnauthenticated = wu
 			luaFilter.WhenNoAuth = wn
+			luaFilter.DependsOn = append([]string(nil), cfg.DependsOn...)
 
 			// Add compiled Lua Filters.
 			LuaFilters.Add(luaFilter)
+		}
+
+		if err = validateFilterDependencies(LuaFilters.LuaScripts); err != nil {
+			sp.RecordError(err)
+
+			return err
 		}
 	}
 
@@ -194,6 +219,8 @@ type LuaFilter struct {
 	// It represents a compiled Lua function that can be executed by a Lua VM.
 	CompiledScript *lua.FunctionProto
 
+	DependsOn []string
+
 	// Execution flags: control in which authentication states this filter should run
 	WhenAuthenticated   bool
 	WhenUnauthenticated bool
@@ -220,6 +247,76 @@ func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 		Name:           name,
 		CompiledScript: compiledScript,
 	}, nil
+}
+
+func validateFilterDependencies(filters []*LuaFilter) error {
+	return pipeline.ValidateStatic(filterPipelineNodes(filters))
+}
+
+func filterPipelineNodes(filters []*LuaFilter) []pipeline.Node {
+	nodes := make([]pipeline.Node, 0, len(filters))
+
+	for index, filter := range filters {
+		nodes = append(nodes, pipeline.Node{
+			Name:      filter.Name,
+			DependsOn: append([]string(nil), filter.DependsOn...),
+			Index:     index,
+			Modes:     filterModeMask(filter),
+			Value:     filter,
+		})
+	}
+
+	return nodes
+}
+
+func filterModeMask(filter *LuaFilter) pipeline.ModeMask {
+	var modes pipeline.ModeMask
+
+	if filter.WhenAuthenticated {
+		modes |= pipeline.ModeAuthenticated
+	}
+
+	if filter.WhenUnauthenticated {
+		modes |= pipeline.ModeUnauthenticated
+	}
+
+	if filter.WhenNoAuth {
+		modes |= pipeline.ModeNoAuth
+	}
+
+	return modes
+}
+
+func requestFilterMode(r *Request) pipeline.ModeMask {
+	if r != nil && r.CommonRequest != nil && r.NoAuth {
+		return pipeline.ModeNoAuth
+	}
+
+	if r != nil && r.CommonRequest != nil && r.Authenticated {
+		return pipeline.ModeAuthenticated
+	}
+
+	return pipeline.ModeUnauthenticated
+}
+
+func cloneLuaBackendResult(source *lualib.LuaBackendResult) *lualib.LuaBackendResult {
+	if source == nil {
+		return &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+	}
+
+	clone := *source
+	clone.WebAuthnCredentials = append([]string(nil), source.WebAuthnCredentials...)
+	clone.Groups = append([]string(nil), source.Groups...)
+	clone.GroupDNs = append([]string(nil), source.GroupDNs...)
+
+	if source.Attributes != nil {
+		clone.Attributes = make(map[any]any, len(source.Attributes))
+		maps.Copy(clone.Attributes, source.Attributes)
+	} else {
+		clone.Attributes = make(map[any]any)
+	}
+
+	return &clone
 }
 
 // Request represents a structure used for handling and processing requests within the system.
@@ -390,6 +487,25 @@ func (m *FilterBackendManager) selectBackendServer(L *lua.LState) int {
 	return 0
 }
 
+func (m *FilterBackendManager) getCurrentBackendResult(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	userData := L.NewUserData()
+	userData.Value = cloneLuaBackendResult(m.currentBackendResult)
+	L.SetMetatable(userData, L.GetTypeMetatable(definitions.LuaBackendResultTypeName))
+
+	return stack.PushResult(userData)
+}
+
+func (m *FilterBackendManager) getSelectedBackendServer(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+
+	if m.request == nil || m.request.UsedBackendAddr == nil || m.request.UsedBackendPort == nil {
+		return stack.PushResults(lua.LNil, lua.LNil)
+	}
+
+	return stack.PushResults(lua.LString(*m.request.UsedBackendAddr), lua.LNumber(*m.request.UsedBackendPort))
+}
+
 // applyBackendResult merges attributes from the provided Lua userdata into the existing backendResult.
 func (m *FilterBackendManager) applyBackendResult(L *lua.LState) int {
 	stack := luastack.NewManager(L)
@@ -443,6 +559,17 @@ func (m *FilterBackendManager) removeFromBackendResult(L *lua.LState) int {
 	})
 
 	return 0
+}
+
+func (m *FilterBackendManager) getRemovedBackendAttributes(L *lua.LState) int {
+	stack := luastack.NewManager(L)
+	table := L.NewTable()
+
+	for _, attribute := range m.currentRemoveAttributes {
+		table.Append(lua.LString(attribute))
+	}
+
+	return stack.PushResult(table)
 }
 
 // mergeMaps merges 2 maps into one. If same key exists in both maps, value from m2 is used.
@@ -604,6 +731,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 	r.Logs.Set("filter_mode", mode)
 
+	if r.Context == nil {
+		r.Context = lualib.NewContext()
+	}
+
 	// If no scripts should run in this mode, return early with empty aggregates
 	if len(scripts) == 0 {
 		mergedBackendResult := &lualib.LuaBackendResult{
@@ -628,436 +759,17 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		selectedAddress *string
 		selectedPort    *int
 		selectedSet     bool
+		contextDelta    lualib.ContextDelta
 	}
 
-	var (
-		mu      sync.Mutex
-		results = make([]*filtResult, 0, len(scripts))
-	)
+	plan, err := pipeline.BuildPlan(filterPipelineNodes(scripts), requestFilterMode(r))
+	if err != nil {
+		return false, nil, nil, err
+	}
 
-	g, egCtx := errgroup.WithContext(fctx)
+	results := make([]*filtResult, 0, len(scripts))
 
 	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: cfg.GetLuaFilterVMPoolSize(), Config: cfg})
-
-	// Span to cover goroutine setup
-	pstartCtx, pstart := tr.Start(fctx, "filters.parallel.start", attribute.Int("runnable", len(scripts)))
-	_ = pstartCtx
-
-	for scriptIdx, script := range scripts {
-		idx := scriptIdx
-		sc := script
-		g.Go(func() error {
-			// Per-script span
-			sCtx, sSpan := tr.Start(fctx, "filters.script",
-				attribute.String("name", sc.Name),
-				attribute.String("mode", mode),
-			)
-			_ = sCtx
-
-			// Per-filter state from bounded vmpool
-			actx, asp := tr.Start(egCtx, "filters.vm.acquire",
-				attribute.String("name", sc.Name),
-			)
-			Llocal, acqErr := pool.Acquire(actx)
-			asp.End()
-
-			if acqErr != nil {
-				sSpan.RecordError(acqErr)
-				sSpan.End()
-
-				return acqErr
-			}
-
-			replaceVM := false
-			defer func() {
-				if r := recover(); r != nil {
-					replaceVM = true
-				}
-
-				if replaceVM {
-					pool.Replace(Llocal)
-				} else {
-					pool.Release(Llocal)
-				}
-
-				sSpan.End()
-			}()
-
-			// Local log and status to avoid races on r.Logs / r.StatusMessage
-			localLogs := new(lualib.CustomLogKeyValue)
-			var localStatus *string
-
-			// Local backend result and remove-attributes that this filter may set
-			localBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
-			localRemoveAttrs := make([]string, 0)
-			var localUsedBackendAddr *string
-			var localUsedBackendPort *int
-
-			if r.UsedBackendAddr != nil {
-				addrValue := *r.UsedBackendAddr
-				localUsedBackendAddr = &addrValue
-			}
-
-			if r.UsedBackendPort != nil {
-				portValue := *r.UsedBackendPort
-				localUsedBackendPort = &portValue
-			}
-
-			localRequest := *r
-			localRequest.UsedBackendAddr = localUsedBackendAddr
-			localRequest.UsedBackendPort = localUsedBackendPort
-			originalBackendAddrPtr := localRequest.UsedBackendAddr
-			originalBackendPortPtr := localRequest.UsedBackendPort
-			originalBackendAddrSet := localRequest.UsedBackendAddr != nil
-			originalBackendPortSet := localRequest.UsedBackendPort != nil
-			originalBackendAddrValue := ""
-			originalBackendPortValue := 0
-
-			if originalBackendAddrSet {
-				originalBackendAddrValue = *localRequest.UsedBackendAddr
-			}
-
-			if originalBackendPortSet {
-				originalBackendPortValue = *localRequest.UsedBackendPort
-			}
-
-			// Environment preparation span
-			envCtx, envSpan := tr.Start(fctx, "filters.env.prepare",
-				attribute.String("name", sc.Name),
-			)
-			_ = envCtx
-
-			// 6) nauthilus_backend_result
-			lualib.LoaderModBackendResult(ctx, cfg, logger)(Llocal)
-
-			if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-				Llocal.Pop(1)
-				Llocal.SetGlobal(definitions.LuaBackendResultTypeName, mod)
-				luapool.BindModuleIntoReq(Llocal, definitions.LuaBackendResultTypeName, mod)
-			} else {
-				Llocal.Pop(1)
-			}
-
-			// Globals for this state
-			lualib.SetBuiltinTableForFilter(
-				Llocal,
-				lualib.NewLoggingManager(ctx, cfg, logger, localLogs).AddCustomLog,
-				&localStatus,
-			)
-
-			// Build request table
-			request := Llocal.NewTable()
-
-			r.SetupRequest(Llocal, cfg, request)
-
-			// Set local override fields from Request struct
-			if r.Session != "" {
-				request.RawSetString(definitions.LuaRequestSession, lua.LString(r.Session))
-			}
-
-			if r.Username != "" {
-				request.RawSetString(definitions.LuaRequestUsername, lua.LString(r.Username))
-			}
-
-			if len(r.Password) > 0 {
-				request.RawSetString(definitions.LuaRequestPassword, lua.LString(string(r.Password)))
-			}
-
-			if r.ClientIP != "" {
-				request.RawSetString(definitions.LuaRequestClientIP, lua.LString(r.ClientIP))
-			}
-
-			if r.AccountName != "" {
-				request.RawSetString(definitions.LuaRequestAccount, lua.LString(r.AccountName))
-			}
-
-			// Timing and context
-			stopTimer := stats.PrometheusTimer(cfg, definitions.PromFilter, sc.Name, ctx.FullPath())
-
-			luaCtx, luaCancel := context.WithTimeout(egCtx, cfg.GetServer().GetTimeouts().GetLuaScript())
-			defer luaCancel()
-
-			Llocal.SetContext(luaCtx)
-
-			// Prepare per-request environment so that request-local globals and module bindings are visible
-			_, mspan := tr.Start(envCtx, "filters.env.modules")
-			luapool.PrepareRequestEnv(Llocal)
-
-			// Bind request-scoped modules into reqEnv so that require() resolves correctly.
-			// 1) nauthilus_context
-			if loader := lualib.LoaderModContext(r.Context); loader != nil {
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModContext, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 2) nauthilus_http_request
-			if ctx != nil && ctx.Request != nil {
-				loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPRequest, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 3) nauthilus_http_response
-			if ctx != nil {
-				loader := lualib.LoaderModHTTPResponse(ctx)
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPResponse, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 4) nauthilus_redis
-			if loader := redislib.LoaderModRedis(luaCtx, cfg, redisClient); loader != nil {
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModRedis, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 5) nauthilus_ldap (optional)
-			if cfg.HaveLDAPBackend() {
-				loader := backend.LoaderModLDAP(luaCtx, cfg)
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModLDAP, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 6) nauthilus_psnet (connection monitoring)
-			if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 7) nauthilus_dns (DNS lookups)
-			if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
-			{
-				var loader lua.LGFunction
-
-				if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
-					loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
-				} else {
-					loader = lualib.LoaderOTELStateless()
-				}
-
-				if loader != nil {
-					_ = loader(Llocal)
-					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-						Llocal.Pop(1)
-						luapool.BindModuleIntoReq(Llocal, definitions.LuaModOpenTelemetry, mod)
-					} else {
-						Llocal.Pop(1)
-					}
-				}
-			}
-
-			// 8) nauthilus_brute_force (toleration and blocking helpers)
-			if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			// 9) nauthilus_backend (preload stateless placeholder, then request-bound)
-			Llocal.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
-			{
-				loader := LoaderModBackend(luaCtx, cfg, logger, &localRequest, &localBackendResult, &localRemoveAttrs)
-				_ = loader(Llocal)
-
-				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
-					Llocal.Pop(1)
-					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBackend, mod)
-				} else {
-					Llocal.Pop(1)
-				}
-			}
-
-			mspan.End()
-			envSpan.End()
-
-			fr := &filtResult{name: sc.Name, scriptIdx: idx, statusText: &localStatus, backendResult: localBackendResult}
-
-			// Execute script
-			execCtx, execSpan := tr.Start(fctx, "filters.execute",
-				attribute.String("name", sc.Name),
-			)
-			_ = execCtx
-
-			if e := lualib.PackagePath(Llocal, cfg); e != nil {
-				r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
-				execSpan.RecordError(e)
-				execSpan.End()
-
-				return e
-			}
-
-			if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
-				r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
-				execSpan.RecordError(e)
-				execSpan.End()
-
-				return e
-			}
-
-			// Call filter function if present (reqEnv-first lookup)
-			filterFunc := lua.LNil
-			if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
-				if fn := Llocal.GetField(v, definitions.LuaFnCallFilter); fn != nil {
-					filterFunc = fn
-				}
-			}
-
-			if filterFunc == lua.LNil {
-				filterFunc = Llocal.GetGlobal(definitions.LuaFnCallFilter)
-			}
-
-			if filterFunc.Type() == lua.LTFunction {
-				if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
-					r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
-					execSpan.RecordError(e)
-					execSpan.End()
-
-					return e
-				}
-
-				ret := Llocal.ToInt(-1)
-				Llocal.Pop(1)
-				takeAction := Llocal.ToBool(-1)
-				Llocal.Pop(1)
-				fr.ret = ret
-				fr.action = takeAction
-
-				execSpan.SetAttributes(
-					attribute.Int("result", ret),
-					attribute.Bool("action", takeAction),
-				)
-			}
-
-			execSpan.End()
-
-			// Snapshot local logs and remove-attrs for aggregation
-			fr.logs = *localLogs
-			fr.removeAttrsList = localRemoveAttrs
-
-			selectedChanged := localRequest.UsedBackendAddr != originalBackendAddrPtr || localRequest.UsedBackendPort != originalBackendPortPtr
-			if !selectedChanged {
-				if localRequest.UsedBackendAddr != nil {
-					selectedChanged = !originalBackendAddrSet || *localRequest.UsedBackendAddr != originalBackendAddrValue
-				}
-
-				if !selectedChanged && localRequest.UsedBackendPort != nil {
-					selectedChanged = !originalBackendPortSet || *localRequest.UsedBackendPort != originalBackendPortValue
-				}
-			}
-
-			if selectedChanged {
-				fr.selectedSet = true
-				fr.selectedAddress = localRequest.UsedBackendAddr
-				fr.selectedPort = localRequest.UsedBackendPort
-			}
-
-			// Emit debug log for this filter
-			logs := []any{definitions.LogKeyGUID, r.Session, "name", sc.Name, definitions.LogKeyMsg, "Lua filter finished", "action", fr.action, "result", func() string {
-				switch fr.ret {
-				case 0:
-					return "ok"
-				case 1:
-					return "fail"
-				default:
-					return fmt.Sprintf("unknown(%d)", fr.ret)
-				}
-			}()}
-
-			if len(fr.logs) > 0 {
-				for i := range fr.logs {
-					logs = append(logs, fr.logs[i])
-				}
-			}
-
-			util.DebugModuleWithCfg(fctx, cfg, logger, definitions.DbgFilter, logs...)
-
-			if stopTimer != nil {
-				stopTimer()
-			}
-
-			mu.Lock()
-			results = append(results, fr)
-			mu.Unlock()
-
-			return nil
-		})
-	}
-
-	// End parallel start span after scheduling all goroutines
-	pstart.End()
-
-	// Wait span to cover synchronization
-	wctx, wspan := tr.Start(fctx, "filters.parallel.wait")
-	_ = wctx
-
-	if e := g.Wait(); e != nil {
-		wspan.RecordError(e)
-		wspan.End()
-
-		return false, nil, nil, e
-	}
-
-	wspan.SetAttributes(attribute.Int("completed", len(results)))
-	wspan.End()
-
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].scriptIdx < results[j].scriptIdx
-	})
-
-	// Aggregate results
-	mctx, mspan := tr.Start(fctx, "filters.merge")
-	_ = mctx
 
 	mergedBackendResult := &lualib.LuaBackendResult{
 		Attributes: make(map[any]any),
@@ -1068,32 +780,477 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 	var statusSet bool
 
-	for _, fr := range results {
-		if fr.action {
-			action = true
+	for levelIndex, level := range plan.Levels {
+		var (
+			mu           sync.Mutex
+			levelResults = make([]*filtResult, 0, len(level))
+		)
+
+		g, egCtx := errgroup.WithContext(fctx)
+
+		pstartCtx, pstart := tr.Start(fctx, "filters.parallel.start",
+			attribute.Int("runnable", len(level)),
+			attribute.Int("level", levelIndex),
+		)
+		_ = pstartCtx
+
+		for _, planned := range level {
+			idx := planned.Index
+			sc := planned.Value.(*LuaFilter)
+			g.Go(func() error {
+				// Per-script span
+				sCtx, sSpan := tr.Start(fctx, "filters.script",
+					attribute.String("name", sc.Name),
+					attribute.String("mode", mode),
+				)
+				_ = sCtx
+
+				// Per-filter state from bounded vmpool
+				actx, asp := tr.Start(egCtx, "filters.vm.acquire",
+					attribute.String("name", sc.Name),
+				)
+				Llocal, acqErr := pool.Acquire(actx)
+				asp.End()
+
+				if acqErr != nil {
+					sSpan.RecordError(acqErr)
+					sSpan.End()
+
+					return acqErr
+				}
+
+				replaceVM := false
+				defer func() {
+					if r := recover(); r != nil {
+						replaceVM = true
+					}
+
+					if replaceVM {
+						pool.Replace(Llocal)
+					} else {
+						pool.Release(Llocal)
+					}
+
+					sSpan.End()
+				}()
+
+				localContext := r.Clone()
+				contextBefore := localContext.Snapshot()
+
+				// Local log and status to avoid races on r.Logs / r.StatusMessage
+				localLogs := new(lualib.CustomLogKeyValue)
+				var localStatus *string
+
+				// Local backend result and remove-attributes that this filter may set
+				localBackendResult := cloneLuaBackendResult(mergedBackendResult)
+				localRemoveAttrs := make([]string, 0)
+				var localUsedBackendAddr *string
+				var localUsedBackendPort *int
+
+				if r.UsedBackendAddr != nil {
+					addrValue := *r.UsedBackendAddr
+					localUsedBackendAddr = &addrValue
+				}
+
+				if r.UsedBackendPort != nil {
+					portValue := *r.UsedBackendPort
+					localUsedBackendPort = &portValue
+				}
+
+				localRequest := *r
+				localRequest.UsedBackendAddr = localUsedBackendAddr
+				localRequest.UsedBackendPort = localUsedBackendPort
+				localRequest.Context = localContext
+				originalBackendAddrPtr := localRequest.UsedBackendAddr
+				originalBackendPortPtr := localRequest.UsedBackendPort
+				originalBackendAddrSet := localRequest.UsedBackendAddr != nil
+				originalBackendPortSet := localRequest.UsedBackendPort != nil
+				originalBackendAddrValue := ""
+				originalBackendPortValue := 0
+
+				if originalBackendAddrSet {
+					originalBackendAddrValue = *localRequest.UsedBackendAddr
+				}
+
+				if originalBackendPortSet {
+					originalBackendPortValue = *localRequest.UsedBackendPort
+				}
+
+				// Environment preparation span
+				envCtx, envSpan := tr.Start(fctx, "filters.env.prepare",
+					attribute.String("name", sc.Name),
+				)
+				_ = envCtx
+
+				// 6) nauthilus_backend_result
+				lualib.LoaderModBackendResult(ctx, cfg, logger)(Llocal)
+
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					Llocal.SetGlobal(definitions.LuaBackendResultTypeName, mod)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaBackendResultTypeName, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+
+				// Globals for this state
+				lualib.SetBuiltinTableForFilter(
+					Llocal,
+					lualib.NewLoggingManager(ctx, cfg, logger, localLogs).AddCustomLog,
+					&localStatus,
+				)
+
+				// Build request table
+				request := Llocal.NewTable()
+
+				localRequest.SetupRequest(Llocal, cfg, request)
+
+				// Set local override fields from Request struct
+				if r.Session != "" {
+					request.RawSetString(definitions.LuaRequestSession, lua.LString(r.Session))
+				}
+
+				if r.Username != "" {
+					request.RawSetString(definitions.LuaRequestUsername, lua.LString(r.Username))
+				}
+
+				if len(r.Password) > 0 {
+					request.RawSetString(definitions.LuaRequestPassword, lua.LString(string(r.Password)))
+				}
+
+				if r.ClientIP != "" {
+					request.RawSetString(definitions.LuaRequestClientIP, lua.LString(r.ClientIP))
+				}
+
+				if r.AccountName != "" {
+					request.RawSetString(definitions.LuaRequestAccount, lua.LString(r.AccountName))
+				}
+
+				// Timing and context
+				stopTimer := stats.PrometheusTimer(cfg, definitions.PromFilter, sc.Name, ctx.FullPath())
+
+				luaCtx, luaCancel := context.WithTimeout(egCtx, cfg.GetServer().GetTimeouts().GetLuaScript())
+				defer luaCancel()
+
+				Llocal.SetContext(luaCtx)
+
+				// Prepare per-request environment so that request-local globals and module bindings are visible
+				_, mspan := tr.Start(envCtx, "filters.env.modules")
+				luapool.PrepareRequestEnv(Llocal)
+
+				// Bind request-scoped modules into reqEnv so that require() resolves correctly.
+				// 1) nauthilus_context
+				if loader := lualib.LoaderModContext(localRequest.Context); loader != nil {
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModContext, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 2) nauthilus_http_request
+				if ctx != nil && ctx.Request != nil {
+					loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPRequest, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 3) nauthilus_http_response
+				if ctx != nil {
+					loader := lualib.LoaderModHTTPResponse(ctx)
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPResponse, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 4) nauthilus_redis
+				if loader := redislib.LoaderModRedis(luaCtx, cfg, redisClient); loader != nil {
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModRedis, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 5) nauthilus_ldap (optional)
+				if cfg.HaveLDAPBackend() {
+					loader := backend.LoaderModLDAP(luaCtx, cfg)
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModLDAP, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 6) nauthilus_psnet (connection monitoring)
+				if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 7) nauthilus_dns (DNS lookups)
+				if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
+				{
+					var loader lua.LGFunction
+
+					if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
+						loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
+					} else {
+						loader = lualib.LoaderOTELStateless()
+					}
+
+					if loader != nil {
+						_ = loader(Llocal)
+						if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+							Llocal.Pop(1)
+							luapool.BindModuleIntoReq(Llocal, definitions.LuaModOpenTelemetry, mod)
+						} else {
+							Llocal.Pop(1)
+						}
+					}
+				}
+
+				// 8) nauthilus_brute_force (toleration and blocking helpers)
+				if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				// 9) nauthilus_backend (preload stateless placeholder, then request-bound)
+				Llocal.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
+				{
+					loader := LoaderModBackendWithCurrent(luaCtx, cfg, logger, &localRequest, &localBackendResult, &localRemoveAttrs, mergedBackendResult, mergedRemoveAttributes.GetStringSlice())
+					_ = loader(Llocal)
+
+					if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+						Llocal.Pop(1)
+						luapool.BindModuleIntoReq(Llocal, definitions.LuaModBackend, mod)
+					} else {
+						Llocal.Pop(1)
+					}
+				}
+
+				mspan.End()
+				envSpan.End()
+
+				fr := &filtResult{name: sc.Name, scriptIdx: idx, statusText: &localStatus, backendResult: localBackendResult}
+
+				// Execute script
+				execCtx, execSpan := tr.Start(fctx, "filters.execute",
+					attribute.String("name", sc.Name),
+				)
+				_ = execCtx
+
+				if e := lualib.PackagePath(Llocal, cfg); e != nil {
+					r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+					execSpan.RecordError(e)
+					execSpan.End()
+
+					return e
+				}
+
+				if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
+					r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+					execSpan.RecordError(e)
+					execSpan.End()
+
+					return e
+				}
+
+				// Call filter function if present (reqEnv-first lookup)
+				filterFunc := lua.LNil
+				if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+					if fn := Llocal.GetField(v, definitions.LuaFnCallFilter); fn != nil {
+						filterFunc = fn
+					}
+				}
+
+				if filterFunc == lua.LNil {
+					filterFunc = Llocal.GetGlobal(definitions.LuaFnCallFilter)
+				}
+
+				if filterFunc.Type() == lua.LTFunction {
+					if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
+						r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+						execSpan.RecordError(e)
+						execSpan.End()
+
+						return e
+					}
+
+					ret := Llocal.ToInt(-1)
+					Llocal.Pop(1)
+					takeAction := Llocal.ToBool(-1)
+					Llocal.Pop(1)
+					fr.ret = ret
+					fr.action = takeAction
+
+					execSpan.SetAttributes(
+						attribute.Int("result", ret),
+						attribute.Bool("action", takeAction),
+					)
+				}
+
+				execSpan.End()
+
+				// Snapshot local logs and remove-attrs for aggregation
+				fr.logs = *localLogs
+				fr.removeAttrsList = localRemoveAttrs
+				fr.contextDelta = localRequest.Diff(contextBefore)
+
+				selectedChanged := localRequest.UsedBackendAddr != originalBackendAddrPtr || localRequest.UsedBackendPort != originalBackendPortPtr
+				if !selectedChanged {
+					if localRequest.UsedBackendAddr != nil {
+						selectedChanged = !originalBackendAddrSet || *localRequest.UsedBackendAddr != originalBackendAddrValue
+					}
+
+					if !selectedChanged && localRequest.UsedBackendPort != nil {
+						selectedChanged = !originalBackendPortSet || *localRequest.UsedBackendPort != originalBackendPortValue
+					}
+				}
+
+				if selectedChanged {
+					fr.selectedSet = true
+					fr.selectedAddress = localRequest.UsedBackendAddr
+					fr.selectedPort = localRequest.UsedBackendPort
+				}
+
+				// Emit debug log for this filter
+				logs := []any{definitions.LogKeyGUID, r.Session, "name", sc.Name, definitions.LogKeyMsg, "Lua filter finished", "action", fr.action, "result", func() string {
+					switch fr.ret {
+					case 0:
+						return "ok"
+					case 1:
+						return "fail"
+					default:
+						return fmt.Sprintf("unknown(%d)", fr.ret)
+					}
+				}()}
+
+				if len(fr.logs) > 0 {
+					for i := range fr.logs {
+						logs = append(logs, fr.logs[i])
+					}
+				}
+
+				util.DebugModuleWithCfg(fctx, cfg, logger, definitions.DbgFilter, logs...)
+
+				if stopTimer != nil {
+					stopTimer()
+				}
+
+				mu.Lock()
+				levelResults = append(levelResults, fr)
+				mu.Unlock()
+
+				return nil
+			})
 		}
 
-		if fr.backendResult != nil && len(fr.backendResult.Attributes) > 0 {
-			mergedBackendResult.Attributes = mergeMaps(mergedBackendResult.Attributes, fr.backendResult.Attributes)
+		// End parallel start span after scheduling all goroutines
+		pstart.End()
+
+		// Wait span to cover synchronization
+		wctx, wspan := tr.Start(fctx, "filters.parallel.wait")
+		_ = wctx
+
+		if e := g.Wait(); e != nil {
+			wspan.RecordError(e)
+			wspan.End()
+
+			return false, nil, nil, e
 		}
 
-		if fr.backendResult != nil {
-			mergedBackendResult.Groups = mergeSortedUniqueStrings(mergedBackendResult.Groups, fr.backendResult.Groups)
-			mergedBackendResult.GroupDNs = mergeSortedUniqueStrings(mergedBackendResult.GroupDNs, fr.backendResult.GroupDNs)
+		wspan.SetAttributes(attribute.Int("completed", len(levelResults)))
+		wspan.End()
+
+		sort.Slice(levelResults, func(i, j int) bool {
+			return levelResults[i].scriptIdx < levelResults[j].scriptIdx
+		})
+
+		mctx, mspan := tr.Start(fctx, "filters.level.merge",
+			attribute.Int("level", levelIndex),
+			attribute.Int("scripts", len(levelResults)),
+		)
+		_ = mctx
+
+		for _, fr := range levelResults {
+			if fr.action {
+				action = true
+			}
+
+			if fr.backendResult != nil && len(fr.backendResult.Attributes) > 0 {
+				mergedBackendResult.Attributes = mergeMaps(mergedBackendResult.Attributes, fr.backendResult.Attributes)
+			}
+
+			if fr.backendResult != nil {
+				mergedBackendResult.Groups = mergeSortedUniqueStrings(mergedBackendResult.Groups, fr.backendResult.Groups)
+				mergedBackendResult.GroupDNs = mergeSortedUniqueStrings(mergedBackendResult.GroupDNs, fr.backendResult.GroupDNs)
+			}
+
+			for _, attr := range fr.removeAttrsList {
+				mergedRemoveAttributes.Set(attr)
+			}
+
+			if fr.selectedSet {
+				r.UsedBackendAddr = fr.selectedAddress
+				r.UsedBackendPort = fr.selectedPort
+			}
+
+			r.ApplyDelta(fr.contextDelta)
+			lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, *fr.statusText, fr.logs)
 		}
 
-		for _, attr := range fr.removeAttrsList {
-			mergedRemoveAttributes.Set(attr)
-		}
+		results = append(results, levelResults...)
 
-		// Persist selected backend from filters in deterministic script order.
-		if fr.selectedSet {
-			r.UsedBackendAddr = fr.selectedAddress
-			r.UsedBackendPort = fr.selectedPort
-		}
-
-		// Merge per-filter status message and logs via common helper
-		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, *fr.statusText, fr.logs)
+		mspan.SetAttributes(
+			attribute.Int("merged_attrs", len(mergedBackendResult.Attributes)),
+			attribute.Int("removed_attrs_unique", len(mergedRemoveAttributes.GetStringSlice())),
+		)
+		mspan.End()
 	}
 
 	// After aggregating results, log rejected filters and per-filter return codes
@@ -1131,13 +1288,13 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		r.Logs.Set(definitions.LogKeyFilterResults, strings.Join(resultPairs, ","))
 	}
 
-	// Finalize merge span with sizes
-	mspan.SetAttributes(
+	_, finalMergeSpan := tr.Start(fctx, "filters.merge.final")
+	finalMergeSpan.SetAttributes(
 		attribute.Int("merged_attrs", len(mergedBackendResult.Attributes)),
 		attribute.Int("removed_attrs_unique", len(mergedRemoveAttributes.GetStringSlice())),
 		attribute.Int("rejected_count", len(rejectedFilters)),
 	)
-	mspan.End()
+	finalMergeSpan.End()
 
 	backendResult = mergedBackendResult
 	removeAttributes = mergedRemoveAttributes.GetStringSlice()

@@ -344,3 +344,114 @@ func TestCallFilterLuaSelectBackendServerDelegatesTwoScriptsDeterministic(t *tes
 
 	assertSelectedBackend(t, request, "second.backend.local", 2002)
 }
+
+func TestCallFilterLuaDependencyContextPropagation(t *testing.T) {
+	scriptDir := t.TempDir()
+	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_filter(request)
+    nauthilus_context.context_set("dependency_value", "ready")
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+end
+`)
+	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_filter(request)
+    if nauthilus_context.context_get("dependency_value") ~= "ready" then
+        return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_FAIL
+    end
+
+    nauthilus_context.context_set("dependent_value", "seen")
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+end
+`)
+	first := mustNewLuaFilter(t, "first", firstScriptPath)
+	second := mustNewLuaFilter(t, "second", secondScriptPath)
+	second.DependsOn = []string{"first"}
+
+	withTestLuaFilters(t, first, second)
+
+	request := newFilterTestRequest(nil, nil)
+	action := runCallFilterLua(t, request)
+
+	if action {
+		t.Fatalf("expected action=false, got true")
+	}
+
+	if got := request.Get("dependent_value"); got != "seen" {
+		t.Fatalf("expected dependent context value %q, got %v", "seen", got)
+	}
+}
+
+func TestCallFilterLuaRejectsDependencyCycle(t *testing.T) {
+	scriptDir := t.TempDir()
+	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", selectBackendFilterScript("first.backend.local", 2001))
+	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", selectBackendFilterScript("second.backend.local", 2002))
+	first := mustNewLuaFilter(t, "first", firstScriptPath)
+	second := mustNewLuaFilter(t, "second", secondScriptPath)
+	first.DependsOn = []string{"second"}
+	second.DependsOn = []string{"first"}
+
+	withTestLuaFilters(t, first, second)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	request := newFilterTestRequest(nil, nil)
+	_, _, _, err := request.CallFilterLua(newFilterTestContext(), newFilterTestConfig(), logger, nil)
+	if err == nil {
+		t.Fatal("expected dependency cycle error")
+	}
+}
+
+func TestCallFilterLuaDependencyBackendSnapshotPropagation(t *testing.T) {
+	scriptDir := t.TempDir()
+	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+local nauthilus_backend = require("nauthilus_backend")
+local nauthilus_backend_result = require("nauthilus_backend_result")
+
+function nauthilus_call_filter(request)
+    local backend_result = nauthilus_backend_result.new()
+    backend_result:attributes({ dependency_attribute = "ready" })
+    nauthilus_backend.apply_backend_result(backend_result)
+    nauthilus_backend.remove_from_backend_result({ "stale_attribute" })
+    nauthilus_backend.select_backend_server("dependency.backend.local", 2525)
+
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+end
+`)
+	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+local nauthilus_context = require("nauthilus_context")
+local nauthilus_backend = require("nauthilus_backend")
+
+function nauthilus_call_filter(request)
+    local backend_result = nauthilus_backend.get_current_backend_result()
+    local attributes = backend_result:attributes()
+    local address, port = nauthilus_backend.get_selected_backend_server()
+    local removed = nauthilus_backend.get_removed_backend_attributes()
+
+    if attributes.dependency_attribute == "ready" and address == "dependency.backend.local" and port == 2525 and removed[1] == "stale_attribute" then
+        nauthilus_context.context_set("backend_snapshot_seen", "yes")
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+    end
+
+    return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_FAIL
+end
+`)
+	first := mustNewLuaFilter(t, "first", firstScriptPath)
+	second := mustNewLuaFilter(t, "second", secondScriptPath)
+	second.DependsOn = []string{"first"}
+
+	withTestLuaFilters(t, first, second)
+
+	request := newFilterTestRequest(nil, nil)
+	action := runCallFilterLua(t, request)
+
+	if action {
+		t.Fatalf("expected action=false, got true")
+	}
+
+	if got := request.Get("backend_snapshot_seen"); got != "yes" {
+		t.Fatalf("expected backend snapshot marker %q, got %v", "yes", got)
+	}
+}

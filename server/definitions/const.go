@@ -1369,6 +1369,12 @@ const (
 	// LuaFnSelectBackendServer represents the constant used as the key for the Lua function "select_backend_server".
 	LuaFnSelectBackendServer = "select_backend_server"
 
+	// LuaFnGetCurrentBackendResult returns the cumulative backend result visible to the current Lua filter.
+	LuaFnGetCurrentBackendResult = "get_current_backend_result"
+
+	// LuaFnGetSelectedBackendServer returns the cumulative selected backend visible to the current Lua filter.
+	LuaFnGetSelectedBackendServer = "get_selected_backend_server"
+
 	// LuaFnSetStatusMessage represents the Lua function name for setting the status message of a Lua request.
 	LuaFnSetStatusMessage = "status_message_set"
 
@@ -1594,6 +1600,9 @@ const (
 
 	// LuaFnRemoveFromBackendResult represents the function to remove an attribute from the backend result set.
 	LuaFnRemoveFromBackendResult = "remove_from_backend_result"
+
+	// LuaFnGetRemovedBackendAttributes returns cumulative backend attributes marked for removal.
+	LuaFnGetRemovedBackendAttributes = "get_removed_backend_attributes"
 
 	// LuaFnCheckBackendConnection represents the Lua function name for checking the backend connection.
 	LuaFnCheckBackendConnection = "check_backend_connection"
