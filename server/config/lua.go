@@ -186,11 +186,12 @@ func (l *LuaAction) GetScriptPath() string {
 }
 
 type LuaFeature struct {
-	Name                string `mapstructure:"name" validate:"required"`
-	ScriptPath          string `mapstructure:"script_path" validate:"required,file"`
-	WhenAuthenticated   bool   `mapstructure:"when_authenticated"`
-	WhenUnauthenticated bool   `mapstructure:"when_unauthenticated"`
-	WhenNoAuth          bool   `mapstructure:"when_no_auth"`
+	Name                string   `mapstructure:"name" validate:"required"`
+	ScriptPath          string   `mapstructure:"script_path" validate:"required,file"`
+	DependsOn           []string `mapstructure:"depends_on" validate:"omitempty,dive,required"`
+	WhenAuthenticated   bool     `mapstructure:"when_authenticated"`
+	WhenUnauthenticated bool     `mapstructure:"when_unauthenticated"`
+	WhenNoAuth          bool     `mapstructure:"when_no_auth"`
 }
 
 func (l *LuaFeature) String() string {
@@ -220,11 +221,12 @@ func (l *LuaFeature) GetScriptPath() string {
 }
 
 type LuaFilter struct {
-	Name                string `mapstructure:"name" validate:"required"`
-	ScriptPath          string `mapstructure:"script_path" validate:"required,file"`
-	WhenAuthenticated   bool   `mapstructure:"when_authenticated"`
-	WhenUnauthenticated bool   `mapstructure:"when_unauthenticated"`
-	WhenNoAuth          bool   `mapstructure:"when_no_auth"`
+	Name                string   `mapstructure:"name" validate:"required"`
+	ScriptPath          string   `mapstructure:"script_path" validate:"required,file"`
+	DependsOn           []string `mapstructure:"depends_on" validate:"omitempty,dive,required"`
+	WhenAuthenticated   bool     `mapstructure:"when_authenticated"`
+	WhenUnauthenticated bool     `mapstructure:"when_unauthenticated"`
+	WhenNoAuth          bool     `mapstructure:"when_no_auth"`
 }
 
 func (l *LuaFilter) String() string {
