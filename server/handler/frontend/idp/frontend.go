@@ -72,7 +72,7 @@ func NewFrontendHandler(d *deps.Deps) *FrontendHandler {
 	return &FrontendHandler{
 		deps:        d,
 		mfa:         idp.NewMFAService(d),
-		deviceStore: idp.NewRedisDeviceCodeStore(d.Redis, prefix),
+		deviceStore: idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
 		tracer:      monittrace.New("nauthilus/idp/frontend"),
 	}
 }

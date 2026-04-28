@@ -59,7 +59,7 @@ var (
 func NewNauthilusIdP(d *deps.Deps) *NauthilusIdP {
 	return &NauthilusIdP{
 		deps:     d,
-		storage:  NewRedisTokenStorage(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix()),
+		storage:  NewRedisTokenStorageWithConfig(d.Redis, d.Cfg.GetServer().GetRedis().GetPrefix(), d.Cfg),
 		tracer:   monittrace.New("nauthilus/idp"),
 		keyMgr:   oidckeys.NewManager(d),
 		tokenGen: NewDefaultTokenGenerator(),

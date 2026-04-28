@@ -136,6 +136,61 @@ end
 	}
 }
 
+func TestCallFeatureLuaIndependentScriptsMergeSharedContextTable(t *testing.T) {
+	scriptDir := t.TempDir()
+	firstScriptPath := writeFeatureScript(t, scriptDir, "first.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_feature(request)
+    local rt = nauthilus_context.context_get("rt") or {}
+    rt.first_feature = true
+    nauthilus_context.context_set("rt", rt)
+    return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
+end
+`)
+	secondScriptPath := writeFeatureScript(t, scriptDir, "second.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_feature(request)
+    local rt = nauthilus_context.context_get("rt") or {}
+    rt.second_feature = true
+    nauthilus_context.context_set("rt", rt)
+    return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
+end
+`)
+	first := mustNewLuaFeature(t, "first", firstScriptPath)
+	second := mustNewLuaFeature(t, "second", secondScriptPath)
+
+	withTestLuaFeatures(t, first, second)
+
+	request := newFeatureTestRequest()
+	triggered, abortFeatures, err := request.CallFeatureLua(newFeatureTestContext(), newFeatureTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatalf("CallFeatureLua returned error: %v", err)
+	}
+
+	if triggered {
+		t.Fatal("expected triggered=false")
+	}
+
+	if abortFeatures {
+		t.Fatal("expected abortFeatures=false")
+	}
+
+	rt, ok := request.Get("rt").(map[any]any)
+	if !ok {
+		t.Fatalf("expected rt context map, got %T", request.Get("rt"))
+	}
+
+	if got := rt["first_feature"]; got != true {
+		t.Fatalf("expected first_feature=true, got %v", got)
+	}
+
+	if got := rt["second_feature"]; got != true {
+		t.Fatalf("expected second_feature=true, got %v", got)
+	}
+}
+
 func TestCallFeatureLuaRejectsDependencyCycle(t *testing.T) {
 	scriptDir := t.TempDir()
 	firstScriptPath := writeFeatureScript(t, scriptDir, "first.lua", `

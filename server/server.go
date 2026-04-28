@@ -419,7 +419,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
-		storage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
+		storage := idp.NewRedisTokenStorageWithConfig(store.redisClient, cfg.GetServer().GetRedis().GetPrefix(), cfg)
 
 		if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
 			setupIdP = func(e *gin.Engine) {
@@ -466,7 +466,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 	}
 
 	// Backchannel API
-	tokenStorage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
+	tokenStorage := idp.NewRedisTokenStorageWithConfig(store.redisClient, cfg.GetServer().GetRedis().GetPrefix(), cfg)
 
 	setupBackchannel = func(e *gin.Engine) {
 		deps := &handlerdeps.Deps{

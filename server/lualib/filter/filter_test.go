@@ -385,6 +385,54 @@ end
 	}
 }
 
+func TestCallFilterLuaIndependentScriptsMergeSharedContextTable(t *testing.T) {
+	scriptDir := t.TempDir()
+	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_filter(request)
+    local rt = nauthilus_context.context_get("rt") or {}
+    rt.first_filter = true
+    nauthilus_context.context_set("rt", rt)
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+end
+`)
+	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_filter(request)
+    local rt = nauthilus_context.context_get("rt") or {}
+    rt.second_filter = true
+    nauthilus_context.context_set("rt", rt)
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+end
+`)
+	first := mustNewLuaFilter(t, "first", firstScriptPath)
+	second := mustNewLuaFilter(t, "second", secondScriptPath)
+
+	withTestLuaFilters(t, first, second)
+
+	request := newFilterTestRequest(nil, nil)
+	action := runCallFilterLua(t, request)
+
+	if action {
+		t.Fatalf("expected action=false, got true")
+	}
+
+	rt, ok := request.Get("rt").(map[any]any)
+	if !ok {
+		t.Fatalf("expected rt context map, got %T", request.Get("rt"))
+	}
+
+	if got := rt["first_filter"]; got != true {
+		t.Fatalf("expected first_filter=true, got %v", got)
+	}
+
+	if got := rt["second_filter"]; got != true {
+		t.Fatalf("expected second_filter=true, got %v", got)
+	}
+}
+
 func TestCallFilterLuaRejectsDependencyCycle(t *testing.T) {
 	scriptDir := t.TempDir()
 	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", selectBackendFilterScript("first.backend.local", 2001))

@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	jsoniter "github.com/json-iterator/go"
 )
 
@@ -49,12 +51,26 @@ type OIDCSession struct {
 // RedisTokenStorage handles OIDC token/session persistence in Redis.
 type RedisTokenStorage struct {
 	redis  rediscli.Client
+	cfg    config.File
 	prefix string
 }
 
 // NewRedisTokenStorage creates a new RedisTokenStorage.
 func NewRedisTokenStorage(redis rediscli.Client, prefix string) *RedisTokenStorage {
-	return &RedisTokenStorage{redis: redis, prefix: prefix}
+	return NewRedisTokenStorageWithConfig(redis, prefix, nil)
+}
+
+// NewRedisTokenStorageWithConfig creates a new RedisTokenStorage with configured Redis operation deadlines.
+func NewRedisTokenStorageWithConfig(redis rediscli.Client, prefix string, cfg config.File) *RedisTokenStorage {
+	return &RedisTokenStorage{redis: redis, cfg: cfg, prefix: prefix}
+}
+
+func (s *RedisTokenStorage) redisReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return util.GetCtxWithDeadlineRedisRead(ctx, s.cfg)
+}
+
+func (s *RedisTokenStorage) redisWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return util.GetCtxWithDeadlineRedisWrite(ctx, s.cfg)
 }
 
 // StoreSession stores an OIDC session with a given code and TTL.
@@ -70,13 +86,19 @@ func (s *RedisTokenStorage) StoreSession(ctx context.Context, code string, sessi
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
-	return s.redis.GetWriteHandle().Set(ctx, key, encryptedData, ttl).Err()
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	return s.redis.GetWriteHandle().Set(writeCtx, key, encryptedData, ttl).Err()
 }
 
 // GetSession retrieves an OIDC session from Redis.
 func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCSession, error) {
 	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
-	data, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+	readCtx, cancel := s.redisReadContext(ctx)
+	defer cancel()
+
+	data, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +119,10 @@ func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCS
 // DeleteSession removes an OIDC session from Redis.
 func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) error {
 	key := s.prefix + fmt.Sprintf("oidc:code:%s", code)
-	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	return s.redis.GetWriteHandle().Del(writeCtx, key).Err()
 }
 
 // StoreRefreshToken stores a refresh token session in Redis and tracks it for the user.
@@ -114,14 +139,16 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 
 	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
 	userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", session.UserID)
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
 
 	pipe := s.redis.GetWriteHandle().Pipeline()
-	pipe.Set(ctx, key, encryptedData, ttl)
-	pipe.SAdd(ctx, userKey, token)
+	pipe.Set(writeCtx, key, encryptedData, ttl)
+	pipe.SAdd(writeCtx, userKey, token)
 	// Keep the user mapping alive as long as there might be active tokens
-	pipe.Expire(ctx, userKey, 30*24*time.Hour)
+	pipe.Expire(writeCtx, userKey, 30*24*time.Hour)
 
-	_, err = pipe.Exec(ctx)
+	_, err = pipe.Exec(writeCtx)
 
 	return err
 }
@@ -129,7 +156,10 @@ func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string,
 // GetRefreshToken retrieves a refresh token session from Redis.
 func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (*OIDCSession, error) {
 	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
-	data, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+	readCtx, cancel := s.redisReadContext(ctx)
+	defer cancel()
+
+	data, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -152,12 +182,16 @@ func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string
 	session, err := s.GetRefreshToken(ctx, token)
 	if err == nil && session != nil {
 		userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", session.UserID)
-		_ = s.redis.GetWriteHandle().SRem(ctx, userKey, token).Err()
+		writeCtx, cancel := s.redisWriteContext(ctx)
+		_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
+		cancel()
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:refresh_token:%s", token)
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
 
-	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+	return s.redis.GetWriteHandle().Del(writeCtx, key).Err()
 }
 
 // DeleteUserRefreshTokens removes all refresh tokens for a given user from Redis.
@@ -167,8 +201,10 @@ func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID 
 	}
 
 	userKey := s.prefix + fmt.Sprintf("oidc:user_refresh_tokens:%s", userID)
+	readCtx, readCancel := s.redisReadContext(ctx)
 
-	tokens, err := s.redis.GetReadHandle().SMembers(ctx, userKey).Result()
+	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
+	readCancel()
 	if err != nil {
 		return err
 	}
@@ -177,15 +213,18 @@ func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID 
 		return nil
 	}
 
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
 	pipe := s.redis.GetWriteHandle().Pipeline()
 
 	for _, token := range tokens {
-		pipe.Del(ctx, s.prefix+fmt.Sprintf("oidc:refresh_token:%s", token))
+		pipe.Del(writeCtx, s.prefix+fmt.Sprintf("oidc:refresh_token:%s", token))
 	}
 
-	pipe.Del(ctx, userKey)
+	pipe.Del(writeCtx, userKey)
 
-	_, err = pipe.Exec(ctx)
+	_, err = pipe.Exec(writeCtx)
 
 	return err
 }
@@ -204,14 +243,16 @@ func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, 
 
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
 	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", session.UserID)
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
 
 	pipe := s.redis.GetWriteHandle().Pipeline()
-	pipe.Set(ctx, key, encryptedData, ttl)
-	pipe.SAdd(ctx, userKey, token)
+	pipe.Set(writeCtx, key, encryptedData, ttl)
+	pipe.SAdd(writeCtx, userKey, token)
 	// Keep the user mapping alive as long as there might be active tokens
-	pipe.Expire(ctx, userKey, 30*24*time.Hour)
+	pipe.Expire(writeCtx, userKey, 30*24*time.Hour)
 
-	_, err = pipe.Exec(ctx)
+	_, err = pipe.Exec(writeCtx)
 
 	return err
 }
@@ -219,7 +260,10 @@ func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, 
 // GetAccessToken retrieves an opaque access token session from Redis.
 func (s *RedisTokenStorage) GetAccessToken(ctx context.Context, token string) (*OIDCSession, error) {
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
-	data, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+	readCtx, cancel := s.redisReadContext(ctx)
+	defer cancel()
+
+	data, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -242,12 +286,16 @@ func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string)
 	session, err := s.GetAccessToken(ctx, token)
 	if err == nil && session != nil {
 		userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", session.UserID)
-		_ = s.redis.GetWriteHandle().SRem(ctx, userKey, token).Err()
+		writeCtx, cancel := s.redisWriteContext(ctx)
+		_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
+		cancel()
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:access_token:%s", token)
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
 
-	return s.redis.GetWriteHandle().Del(ctx, key).Err()
+	return s.redis.GetWriteHandle().Del(writeCtx, key).Err()
 }
 
 // DenyJWTAccessToken adds a JWT access token to the denylist in Redis.
@@ -258,15 +306,19 @@ func (s *RedisTokenStorage) DenyJWTAccessToken(ctx context.Context, token string
 	}
 
 	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
 
-	return s.redis.GetWriteHandle().Set(ctx, key, "1", ttl).Err()
+	return s.redis.GetWriteHandle().Set(writeCtx, key, "1", ttl).Err()
 }
 
 // IsJWTAccessTokenDenied checks whether a JWT access token has been denied (invalidated).
 func (s *RedisTokenStorage) IsJWTAccessTokenDenied(ctx context.Context, token string) bool {
 	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
+	readCtx, cancel := s.redisReadContext(ctx)
+	defer cancel()
 
-	_, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+	_, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
 
 	return err == nil
 }
@@ -278,8 +330,10 @@ func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID s
 	}
 
 	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", userID)
+	readCtx, readCancel := s.redisReadContext(ctx)
 
-	tokens, err := s.redis.GetReadHandle().SMembers(ctx, userKey).Result()
+	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
+	readCancel()
 	if err != nil {
 		return err
 	}
@@ -288,15 +342,18 @@ func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID s
 		return nil
 	}
 
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
 	pipe := s.redis.GetWriteHandle().Pipeline()
 
 	for _, token := range tokens {
-		pipe.Del(ctx, s.prefix+fmt.Sprintf("oidc:access_token:%s", token))
+		pipe.Del(writeCtx, s.prefix+fmt.Sprintf("oidc:access_token:%s", token))
 	}
 
-	pipe.Del(ctx, userKey)
+	pipe.Del(writeCtx, userKey)
 
-	_, err = pipe.Exec(ctx)
+	_, err = pipe.Exec(writeCtx)
 
 	return err
 }
@@ -317,8 +374,10 @@ func (s *RedisTokenStorage) FlushUserTokens(ctx context.Context, userID string) 
 // ListUserSessions returns all active OIDC sessions (via access tokens) for a user.
 func (s *RedisTokenStorage) ListUserSessions(ctx context.Context, userID string) (map[string]*OIDCSession, error) {
 	userKey := s.prefix + fmt.Sprintf("oidc:user_access_tokens:%s", userID)
+	readCtx, cancel := s.redisReadContext(ctx)
 
-	tokens, err := s.redis.GetReadHandle().SMembers(ctx, userKey).Result()
+	tokens, err := s.redis.GetReadHandle().SMembers(readCtx, userKey).Result()
+	cancel()
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +390,9 @@ func (s *RedisTokenStorage) ListUserSessions(ctx context.Context, userID string)
 			sessions[token] = session
 		} else {
 			// Clean up expired token from set
-			_ = s.redis.GetWriteHandle().SRem(ctx, userKey, token).Err()
+			writeCtx, cancel := s.redisWriteContext(ctx)
+			_ = s.redis.GetWriteHandle().SRem(writeCtx, userKey, token).Err()
+			cancel()
 		}
 	}
 
