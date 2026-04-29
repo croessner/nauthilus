@@ -925,6 +925,7 @@ func configDumpDefaultProviders() map[string]configDumpValueProvider {
 	addConfigDumpDefaultProviders(providers, configDumpRedisDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpIdentityDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBruteForceDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpBackendHealthCheckDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpLDAPDefaults())
 
 	return providers
@@ -1015,6 +1016,18 @@ func configDumpBruteForceDefaults() map[string]configDumpValueProvider {
 		"auth.controls.brute_force.min_tolerate_percent":      func() any { return uint8(10) },
 		"auth.controls.brute_force.max_tolerate_percent":      func() any { return uint8(50) },
 		"auth.controls.brute_force.scale_factor":              func() any { return 1.0 },
+	}
+}
+
+func configDumpBackendHealthCheckDefaults() map[string]configDumpValueProvider {
+	return map[string]configDumpValueProvider{
+		"auth.services.backend_health_checks.connect_timeout":    func() any { return defaultBackendHealthCheckTimeout },
+		"auth.services.backend_health_checks.tls_timeout":        func() any { return defaultBackendHealthCheckTimeout },
+		"auth.services.backend_health_checks.deep_timeout":       func() any { return defaultBackendHealthCheckTimeout },
+		"auth.services.backend_health_checks.connect_interval":   func() any { return defaultBackendHealthCheckInterval },
+		"auth.services.backend_health_checks.deep_interval":      func() any { return defaultBackendHealthCheckInterval },
+		"auth.services.backend_health_checks.failure_threshold":  func() any { return defaultBackendHealthCheckFailureThreshold },
+		"auth.services.backend_health_checks.recovery_threshold": func() any { return defaultBackendHealthCheckRecoveryThreshold },
 	}
 }
 

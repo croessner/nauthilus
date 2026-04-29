@@ -15,7 +15,17 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
+
+const (
+	defaultBackendHealthCheckTimeout           = 5 * time.Second
+	defaultBackendHealthCheckInterval          = 10 * time.Second
+	defaultBackendHealthCheckFailureThreshold  = 1
+	defaultBackendHealthCheckRecoveryThreshold = 1
+)
 
 type RelayDomainsSection struct {
 	SoftWhitelist SoftWhitelist `mapstructure:"allowlist"`
@@ -57,6 +67,10 @@ type BackendServer struct {
 	RequestURI   string `mapstructure:"request_uri" validate:"omitempty,url_encoded"`
 	TestUsername string `mapstructure:"test_username" validate:"omitempty,excludesall= "`
 	TestPassword string `mapstructure:"test_password" validate:"omitempty,excludesall= "`
+
+	ConnectTimeout time.Duration `mapstructure:"connect_timeout" validate:"omitempty,gt=0,max=1m"`
+	TLSTimeout     time.Duration `mapstructure:"tls_timeout" validate:"omitempty,gt=0,max=1m"`
+	DeepTimeout    time.Duration `mapstructure:"deep_timeout" validate:"omitempty,gt=0,max=5m"`
 
 	Port          int  `mapstructure:"port" validate:"omitempty,min=1,max=65535"`
 	DeepCheck     bool `mapstructure:"deep_check"`
@@ -176,6 +190,15 @@ func (n *BackendServer) IsHAProxyV2() bool {
 
 type BackendServerMonitoring struct {
 	BackendServers []*BackendServer `mapstructure:"backend_servers" validate:"required,dive"`
+
+	ConnectTimeout  time.Duration `mapstructure:"connect_timeout" validate:"omitempty,gt=0,max=1m"`
+	TLSTimeout      time.Duration `mapstructure:"tls_timeout" validate:"omitempty,gt=0,max=1m"`
+	DeepTimeout     time.Duration `mapstructure:"deep_timeout" validate:"omitempty,gt=0,max=5m"`
+	ConnectInterval time.Duration `mapstructure:"connect_interval" validate:"omitempty,gt=0,max=24h"`
+	DeepInterval    time.Duration `mapstructure:"deep_interval" validate:"omitempty,gt=0,max=24h"`
+
+	FailureThreshold  int `mapstructure:"failure_threshold" validate:"omitempty,min=1,max=100"`
+	RecoveryThreshold int `mapstructure:"recovery_threshold" validate:"omitempty,min=1,max=100"`
 }
 
 func (n *BackendServerMonitoring) String() string {
@@ -194,4 +217,102 @@ func (n *BackendServerMonitoring) GetBackendServers() []*BackendServer {
 	}
 
 	return n.BackendServers
+}
+
+// GetConnectTimeout returns the TCP connect timeout used by backend health checks.
+func (n *BackendServerMonitoring) GetConnectTimeout() time.Duration {
+	if n == nil || n.ConnectTimeout <= 0 {
+		return defaultBackendHealthCheckTimeout
+	}
+
+	return n.ConnectTimeout
+}
+
+// GetTLSTimeout returns the TLS handshake timeout used by backend health checks.
+func (n *BackendServerMonitoring) GetTLSTimeout() time.Duration {
+	if n == nil || n.TLSTimeout <= 0 {
+		return defaultBackendHealthCheckTimeout
+	}
+
+	return n.TLSTimeout
+}
+
+// GetDeepTimeout returns the protocol-level deep check timeout.
+func (n *BackendServerMonitoring) GetDeepTimeout() time.Duration {
+	if n == nil || n.DeepTimeout <= 0 {
+		return defaultBackendHealthCheckTimeout
+	}
+
+	return n.DeepTimeout
+}
+
+// GetConnectInterval returns the interval for connect-only backend probes.
+func (n *BackendServerMonitoring) GetConnectInterval(fallback time.Duration) time.Duration {
+	if n != nil && n.ConnectInterval > 0 {
+		return n.ConnectInterval
+	}
+
+	if fallback > 0 {
+		return fallback
+	}
+
+	return defaultBackendHealthCheckInterval
+}
+
+// GetDeepInterval returns the interval for protocol-level deep backend probes.
+func (n *BackendServerMonitoring) GetDeepInterval(fallback time.Duration) time.Duration {
+	if n != nil && n.DeepInterval > 0 {
+		return n.DeepInterval
+	}
+
+	if fallback > 0 {
+		return fallback
+	}
+
+	return n.GetConnectInterval(0)
+}
+
+// GetFailureThreshold returns how many consecutive probe failures are required before a server is marked unhealthy.
+func (n *BackendServerMonitoring) GetFailureThreshold() int {
+	if n == nil || n.FailureThreshold <= 0 {
+		return defaultBackendHealthCheckFailureThreshold
+	}
+
+	return n.FailureThreshold
+}
+
+// GetRecoveryThreshold returns how many consecutive probe successes are required before a server recovers.
+func (n *BackendServerMonitoring) GetRecoveryThreshold() int {
+	if n == nil || n.RecoveryThreshold <= 0 {
+		return defaultBackendHealthCheckRecoveryThreshold
+	}
+
+	return n.RecoveryThreshold
+}
+
+// GetServerConnectTimeout returns the target-specific connect timeout or the monitoring default.
+func (n *BackendServerMonitoring) GetServerConnectTimeout(server *BackendServer) time.Duration {
+	if server != nil && server.ConnectTimeout > 0 {
+		return server.ConnectTimeout
+	}
+
+	return n.GetConnectTimeout()
+}
+
+// GetServerTLSTimeout returns the target-specific TLS timeout or the monitoring default.
+func (n *BackendServerMonitoring) GetServerTLSTimeout(server *BackendServer) time.Duration {
+	if server != nil && server.TLSTimeout > 0 {
+		return server.TLSTimeout
+	}
+
+	return n.GetTLSTimeout()
+}
+
+// GetServerDeepTimeout returns the target-specific deep-check timeout or the monitoring default.
+func (n *BackendServerMonitoring) GetServerDeepTimeout(server *BackendServer) time.Duration {
+	if server != nil && server.DeepTimeout > 0 {
+		return server.DeepTimeout
+	}
+
+	return n.GetDeepTimeout()
 }

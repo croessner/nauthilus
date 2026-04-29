@@ -388,13 +388,13 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				fr := &featResult{name: feature.Name, scriptIdx: idx, statusText: &localStatus}
 
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
-					r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
+					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, feature.Name, stopTimer)
 
 					return e
 				}
 
 				if e := lualib.DoCompiledFile(Llocal, feature.CompiledScript); e != nil {
-					r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
+					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, feature.Name, stopTimer)
 
 					return e
 				}
@@ -412,7 +412,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 				if callFeaturesFunc.Type() == lua.LTFunction {
 					if e := Llocal.CallByParam(lua.P{Fn: callFeaturesFunc, NRet: 3, Protect: true}, request); e != nil {
-						r.handleError(logger, luaCancel, e, feature.Name, stopTimer)
+						r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, feature.Name, stopTimer)
 
 						return e
 					}
@@ -489,16 +489,24 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 }
 
 // handleError logs the error message and cancels the Lua context.
-func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
+func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, diagnostics lualib.RuntimeCancellationDiagnostics, err error, scriptName string, stopTimer func()) {
 	// Include Lua stacktrace when available for better diagnostics
 	if ae, ok := stderrors.AsType[*lua.ApiError](err); ok && ae != nil {
-		level.Error(logger).Log(
+		keyvals := []any{
 			definitions.LogKeyGUID, r.Session,
 			"name", scriptName,
 			definitions.LogKeyMsg, "Lua feature failed",
 			definitions.LogKeyError, ae.Error(),
 			"stacktrace", ae.StackTrace,
-		)
+		}
+
+		if r.CommonRequest != nil && r.HealthCheck {
+			keyvals = append(keyvals, definitions.LogKeyHealthCheck, true)
+		}
+
+		keyvals = append(keyvals, diagnostics.LogValues()...)
+
+		_ = level.Error(logger).Log(keyvals...)
 	}
 
 	if stopTimer != nil {

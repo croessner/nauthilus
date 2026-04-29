@@ -258,6 +258,9 @@ const (
 	// LogKeyExternalSession represents an upstream session identifier supplied by the caller.
 	LogKeyExternalSession = "external_session"
 
+	// LogKeyHealthCheck indicates that the request was created by an internal backend health check.
+	LogKeyHealthCheck = "health_check"
+
 	// LogKeyMsg represents the message content in log entries.
 	LogKeyMsg = "msg"
 
@@ -1841,6 +1844,9 @@ const (
 
 	// LuaRequestExternalSession indicates the upstream session of the request, if supplied.
 	LuaRequestExternalSession = "external_session"
+
+	// LuaRequestHealthCheck indicates that the request was created by a backend health check.
+	LuaRequestHealthCheck = "health_check"
 
 	// LuaRequestClientIP signifies the client IP of the request.
 	LuaRequestClientIP = "client_ip"

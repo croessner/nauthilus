@@ -349,10 +349,10 @@ type Request struct {
 
 // handleError logs Lua execution errors for filters with stacktrace when available,
 // stops the running timer and cancels the Lua context to abort pending operations.
-func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
+func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, diagnostics lualib.RuntimeCancellationDiagnostics, err error, scriptName string, stopTimer func()) {
 	// Try to include Lua stacktrace for easier diagnostics
 	if ae, ok := stderrs.AsType[*lua.ApiError](err); ok && ae != nil {
-		level.Error(logger).Log(
+		keyvals := []any{
 			definitions.LogKeyGUID, func() string {
 				if r != nil && r.CommonRequest != nil {
 					return r.CommonRequest.Session
@@ -364,7 +364,15 @@ func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc,
 			definitions.LogKeyMsg, "Lua filter failed",
 			definitions.LogKeyError, ae.Error(),
 			"stacktrace", ae.StackTrace,
-		)
+		}
+
+		if r != nil && r.CommonRequest != nil && r.HealthCheck {
+			keyvals = append(keyvals, definitions.LogKeyHealthCheck, true)
+		}
+
+		keyvals = append(keyvals, diagnostics.LogValues()...)
+
+		_ = level.Error(logger).Log(keyvals...)
 	}
 
 	if stopTimer != nil {
@@ -1085,7 +1093,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				_ = execCtx
 
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
-					r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					execSpan.RecordError(e)
 					execSpan.End()
 
@@ -1093,7 +1101,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				}
 
 				if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
-					r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					execSpan.RecordError(e)
 					execSpan.End()
 
@@ -1114,7 +1122,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 				if filterFunc.Type() == lua.LTFunction {
 					if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
-						r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+						r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 						execSpan.RecordError(e)
 						execSpan.End()
 

@@ -225,6 +225,15 @@ type AuthServicesSection struct {
 // BackendHealthChecksSection configures backend reachability checks.
 type BackendHealthChecksSection struct {
 	Targets []*BackendServer `mapstructure:"targets" validate:"required,dive"`
+
+	ConnectTimeout  time.Duration `mapstructure:"connect_timeout" validate:"omitempty,gt=0,max=1m"`
+	TLSTimeout      time.Duration `mapstructure:"tls_timeout" validate:"omitempty,gt=0,max=1m"`
+	DeepTimeout     time.Duration `mapstructure:"deep_timeout" validate:"omitempty,gt=0,max=5m"`
+	ConnectInterval time.Duration `mapstructure:"connect_interval" validate:"omitempty,gt=0,max=24h"`
+	DeepInterval    time.Duration `mapstructure:"deep_interval" validate:"omitempty,gt=0,max=24h"`
+
+	FailureThreshold  int `mapstructure:"failure_threshold" validate:"omitempty,min=1,max=100"`
+	RecoveryThreshold int `mapstructure:"recovery_threshold" validate:"omitempty,min=1,max=100"`
 }
 
 // IdentitySection groups frontend, MFA, and identity-provider protocols.
@@ -340,15 +349,43 @@ func (f *FileSettings) materializeLegacySections() {
 		return
 	}
 
-	if f.Runtime != nil || f.Observability != nil || f.Storage != nil || f.Auth != nil || f.Identity != nil {
+	if f.Runtime == nil && f.Observability == nil && f.Storage == nil && f.Auth == nil && f.Identity == nil {
+		return
+	}
+
+	if f.Server == nil {
 		f.Server = f.materializeServerSection()
+	}
+
+	if f.RBLs == nil {
 		f.RBLs = f.materializeRBLSection()
+	}
+
+	if f.ClearTextList == nil {
 		f.ClearTextList = f.materializeCleartextNetworks()
+	}
+
+	if f.RelayDomains == nil {
 		f.RelayDomains = f.materializeRelayDomains()
+	}
+
+	if f.BackendServerMonitoring == nil {
 		f.BackendServerMonitoring = f.materializeBackendServerMonitoring()
+	}
+
+	if f.BruteForce == nil {
 		f.BruteForce = f.materializeBruteForce()
+	}
+
+	if f.Lua == nil {
 		f.Lua = f.materializeLua()
+	}
+
+	if f.LDAP == nil {
 		f.LDAP = f.materializeLDAP()
+	}
+
+	if f.IDP == nil {
 		f.IDP = f.materializeIDP()
 	}
 }
@@ -500,8 +537,19 @@ func (f *FileSettings) materializeBackendServerMonitoring() *BackendServerMonito
 		return nil
 	}
 
+	wire := f.Auth.Services.BackendHealthChecks
+
 	return &BackendServerMonitoring{
-		BackendServers: append([]*BackendServer(nil), f.Auth.Services.BackendHealthChecks.Targets...),
+		BackendServers: append([]*BackendServer(nil), wire.Targets...),
+
+		ConnectTimeout:  wire.ConnectTimeout,
+		TLSTimeout:      wire.TLSTimeout,
+		DeepTimeout:     wire.DeepTimeout,
+		ConnectInterval: wire.ConnectInterval,
+		DeepInterval:    wire.DeepInterval,
+
+		FailureThreshold:  wire.FailureThreshold,
+		RecoveryThreshold: wire.RecoveryThreshold,
 	}
 }
 

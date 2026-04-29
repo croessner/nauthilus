@@ -2207,6 +2207,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 
 	cr.Session = a.Runtime.GUID
 	cr.ExternalSessionID = a.Request.ExternalSessionID
+	cr.HealthCheck = a.IsBackendHealthCheckRequest()
 	cr.Username = a.Request.Username
 	cr.Password = a.passwordBytes()
 	cr.ClientIP = a.Request.ClientIP
@@ -2280,6 +2281,42 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	}
 
 	a.fillIdPFields(cr)
+}
+
+// IsBackendHealthCheckRequest reports whether the current authentication request matches a configured health-check identity.
+func (a *AuthState) IsBackendHealthCheckRequest() bool {
+	if a == nil || a.Cfg() == nil {
+		return false
+	}
+
+	username := strings.TrimSpace(a.Request.Username)
+	if username == "" {
+		return false
+	}
+
+	service := strings.ToLower(strings.TrimSpace(a.Request.Service))
+	protocol := strings.ToLower(strings.TrimSpace(a.Request.Protocol.Get()))
+
+	for _, server := range a.Cfg().GetBackendServers() {
+		if server == nil || server.TestUsername == "" {
+			continue
+		}
+
+		if username != strings.TrimSpace(server.TestUsername) {
+			continue
+		}
+
+		serverProtocol := strings.ToLower(strings.TrimSpace(server.Protocol))
+		if service == "" && protocol == "" {
+			return true
+		}
+
+		if serverProtocol == service || serverProtocol == protocol {
+			return true
+		}
+	}
+
+	return false
 }
 
 // findOIDCClient looks up an OIDC client by its ID from the loaded configuration.

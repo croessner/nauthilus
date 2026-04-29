@@ -80,7 +80,8 @@ func (s *BackendMonitoringService) Start(parent context.Context) error {
 	}
 
 	ctx, cancel := context.WithCancel(parent)
-	ticker := time.NewTicker(s.interval)
+	interval := snap.File.GetBackendServerMonitoring().GetConnectInterval(s.interval)
+	ticker := time.NewTicker(interval)
 
 	s.parent = parent
 	s.ctx = ctx
@@ -92,7 +93,7 @@ func (s *BackendMonitoringService) Start(parent context.Context) error {
 	go func(loopCtx context.Context, loopCfg config.File, loopLogger *slog.Logger, loopTicker *time.Ticker) {
 		defer s.wg.Done()
 
-		backendmonitoring.Run(loopCtx, loopCfg, loopLogger, loopTicker)
+		backendmonitoring.RunWithTickerInterval(loopCtx, loopCfg, loopLogger, loopTicker, interval)
 	}(ctx, snap.File, s.logger, ticker)
 
 	return nil

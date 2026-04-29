@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/spf13/viper"
@@ -51,6 +52,137 @@ func TestHandleFile_ServerControlsAndServicesEnableRuntimeFeatures(t *testing.T)
 
 	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		t.Fatal("expected auth.services to enable backend_health_checks")
+	}
+}
+
+func TestHandleFile_BackendHealthChecksExposeTimeoutsIntervalsAndThresholds(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setBackendHealthChecksTestConfig()
+
+	cfg := &FileSettings{}
+	if err := cfg.HandleFile(); err != nil {
+		t.Fatalf("handle file failed: %v", err)
+	}
+
+	monitoring := cfg.GetBackendServerMonitoring()
+	assertBackendHealthCheckTimings(t, monitoring)
+	assertBackendHealthCheckThresholds(t, monitoring)
+	assertBackendHealthCheckTargetOverrides(t, monitoring)
+}
+
+func TestMaterializeLegacySectionsDoesNotClearFrontendTemplateDefaultWhenHealthChecksMissing(t *testing.T) {
+	cfg := &FileSettings{
+		Identity: &IdentitySection{
+			Frontend: IdentityFrontendSection{
+				Enabled: true,
+			},
+		},
+	}
+
+	cfg.materializeLegacySections()
+	if err := cfg.setDefaultHTMLStaticContentPath(); err != nil {
+		t.Fatalf("set default HTML path failed: %v", err)
+	}
+
+	if got := cfg.GetServer().Frontend.GetHTMLStaticContentPath(); got != definitions.HTMLStaticContentPath {
+		t.Fatalf("expected frontend HTML path default %q after load, got %q", definitions.HTMLStaticContentPath, got)
+	}
+
+	_ = cfg.GetBackendServerMonitoring()
+
+	if got := cfg.GetServer().Frontend.GetHTMLStaticContentPath(); got != definitions.HTMLStaticContentPath {
+		t.Fatalf("expected backend monitoring lookup to preserve frontend HTML path default %q, got %q", definitions.HTMLStaticContentPath, got)
+	}
+}
+
+func setBackendHealthChecksTestConfig() {
+	viper.Set("auth", map[string]any{
+		"services": map[string]any{
+			"enabled": []any{"backend_health_checks"},
+			"backend_health_checks": map[string]any{
+				"connect_timeout":    "150ms",
+				"tls_timeout":        "250ms",
+				"deep_timeout":       "750ms",
+				"connect_interval":   "5s",
+				"deep_interval":      "1m",
+				"failure_threshold":  3,
+				"recovery_threshold": 2,
+				"targets": []any{
+					map[string]any{
+						"protocol":        "imap",
+						"host":            "127.0.0.1",
+						"port":            993,
+						"deep_check":      true,
+						"connect_timeout": "50ms",
+						"deep_timeout":    "500ms",
+					},
+				},
+			},
+		},
+	})
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+}
+
+func assertBackendHealthCheckTimings(t *testing.T, monitoring *BackendServerMonitoring) {
+	t.Helper()
+
+	if monitoring.GetConnectTimeout() != 150*time.Millisecond {
+		t.Fatalf("expected connect timeout 150ms, got %s", monitoring.GetConnectTimeout())
+	}
+
+	if monitoring.GetTLSTimeout() != 250*time.Millisecond {
+		t.Fatalf("expected TLS timeout 250ms, got %s", monitoring.GetTLSTimeout())
+	}
+
+	if monitoring.GetDeepTimeout() != 750*time.Millisecond {
+		t.Fatalf("expected deep timeout 750ms, got %s", monitoring.GetDeepTimeout())
+	}
+
+	if monitoring.GetConnectInterval(0) != 5*time.Second {
+		t.Fatalf("expected connect interval 5s, got %s", monitoring.GetConnectInterval(0))
+	}
+
+	if monitoring.GetDeepInterval(monitoring.GetConnectInterval(0)) != time.Minute {
+		t.Fatalf("expected deep interval 1m, got %s", monitoring.GetDeepInterval(0))
+	}
+}
+
+func assertBackendHealthCheckThresholds(t *testing.T, monitoring *BackendServerMonitoring) {
+	t.Helper()
+
+	if monitoring.GetFailureThreshold() != 3 {
+		t.Fatalf("expected failure threshold 3, got %d", monitoring.GetFailureThreshold())
+	}
+
+	if monitoring.GetRecoveryThreshold() != 2 {
+		t.Fatalf("expected recovery threshold 2, got %d", monitoring.GetRecoveryThreshold())
+	}
+}
+
+func assertBackendHealthCheckTargetOverrides(t *testing.T, monitoring *BackendServerMonitoring) {
+	t.Helper()
+
+	targets := monitoring.GetBackendServers()
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %d", len(targets))
+	}
+
+	if got := monitoring.GetServerConnectTimeout(targets[0]); got != 50*time.Millisecond {
+		t.Fatalf("expected target connect timeout 50ms, got %s", got)
+	}
+
+	if got := monitoring.GetServerDeepTimeout(targets[0]); got != 500*time.Millisecond {
+		t.Fatalf("expected target deep timeout 500ms, got %s", got)
 	}
 }
 
