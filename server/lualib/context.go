@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"maps"
 	"reflect"
 	"sync"
 	"time"
@@ -164,9 +165,7 @@ func (c *Context) Snapshot() map[string]any {
 func (c *Context) Clone() *Context {
 	clone := NewContext()
 
-	for key, value := range c.Snapshot() {
-		clone.data[key] = value
-	}
+	maps.Copy(clone.data, c.Snapshot())
 
 	return clone
 }

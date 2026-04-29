@@ -703,6 +703,7 @@ func (s *ServerSection) GetFrontend() *Frontend {
 type Endpoint struct {
 	AuthHeader    bool `mapstructure:"auth_header"`
 	AuthJSON      bool `mapstructure:"auth_json"`
+	AuthCBOR      bool `mapstructure:"auth_cbor"`
 	AuthBasic     bool `mapstructure:"auth_basic"`
 	AuthNginx     bool `mapstructure:"auth_nginx"`
 	AuthJWT       bool `mapstructure:"auth_jwt"`
@@ -728,6 +729,16 @@ func (e *Endpoint) IsAuthJSONDisabled() bool {
 	}
 
 	return e.AuthJSON
+}
+
+// IsAuthCBORDisabled checks if CBOR-based authentication is disabled.
+// Returns false if the Endpoint is nil.
+func (e *Endpoint) IsAuthCBORDisabled() bool {
+	if e == nil {
+		return false
+	}
+
+	return e.AuthCBOR
 }
 
 // IsAuthBasicDisabled checks if Basic authentication is enabled for the endpoint and returns the corresponding boolean value.

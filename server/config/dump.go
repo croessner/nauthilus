@@ -18,6 +18,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -932,9 +933,7 @@ func configDumpDefaultProviders() map[string]configDumpValueProvider {
 }
 
 func addConfigDumpDefaultProviders(target map[string]configDumpValueProvider, providers map[string]configDumpValueProvider) {
-	for key, provider := range providers {
-		target[key] = provider
-	}
+	maps.Copy(target, providers)
 }
 
 func configDumpRuntimeDefaults() map[string]configDumpValueProvider {

@@ -143,9 +143,15 @@ func (mm *ModuleManager) BindBruteForce(L *lua.LState, tolerate tolerate.Tolerat
 	mm.BindModule(L, definitions.LuaModBruteForce, loader)
 }
 
+// BindCBOR binds the nauthilus_cbor module.
+func (mm *ModuleManager) BindCBOR(L *lua.LState) {
+	mm.BindModule(L, definitions.LuaModCBOR, lualib.LoaderModCBOR())
+}
+
 // BindAllDefault binds all default modules into the Lua state.
 func (mm *ModuleManager) BindAllDefault(L *lua.LState, requestCtx *lualib.Context, redisCtx context.Context, tolerate tolerate.Tolerate) {
 	mm.BindContext(L, requestCtx)
+	mm.BindCBOR(L)
 	mm.BindRedis(L, redisCtx)
 	mm.BindPsnet(L)
 	mm.BindDNS(L)

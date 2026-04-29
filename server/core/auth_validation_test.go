@@ -27,7 +27,9 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
@@ -117,6 +119,80 @@ func TestAuthValidation_InvalidJSON(t *testing.T) {
 	assert.True(t, ctx.IsAborted(), "Context should be aborted")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), `"error"`)
+}
+
+func TestAuthValidation_ApplicationCBOR(t *testing.T) {
+	setupMinimalTestConfig(t)
+	gin.SetMode(gin.TestMode)
+	deps := setupAuthDeps()
+
+	payload, err := cbor.Marshal(authdto.Request{
+		Username:  "user1",
+		Password:  "secret",
+		ClientIP:  "192.0.2.10",
+		UserAgent: "imap-test",
+		Protocol:  "imap",
+		Method:    "plain",
+	})
+	assert.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/cbor", bytes.NewBuffer(payload))
+	ctx.Request.Header.Set("Content-Type", "application/cbor")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServCBOR)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
+	assert.NotNil(t, auth)
+	assert.False(t, ctx.IsAborted())
+	assert.Equal(t, "user1", auth.GetUsername())
+	assert.Equal(t, "192.0.2.10", auth.GetClientIP())
+	assert.Equal(t, "imap", auth.GetProtocol().Get())
+}
+
+func TestAuthValidation_InvalidCBOR(t *testing.T) {
+	setupMinimalTestConfig(t)
+	gin.SetMode(gin.TestMode)
+	deps := setupAuthDeps()
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/cbor", bytes.NewBuffer([]byte{0xff}))
+	ctx.Request.Header.Set("Content-Type", "application/cbor")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServCBOR)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
+	assert.Nil(t, auth)
+	assert.True(t, ctx.IsAborted())
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), `"error"`)
+}
+
+func TestAuthValidation_CBORMissingPassword(t *testing.T) {
+	setupMinimalTestConfig(t)
+	gin.SetMode(gin.TestMode)
+	deps := setupAuthDeps()
+
+	payload, err := cbor.Marshal(authdto.Request{Username: "user1"})
+	assert.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/cbor", bytes.NewBuffer(payload))
+	ctx.Request.Header.Set("Content-Type", "application/cbor")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServCBOR)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
+	assert.Nil(t, auth)
+	assert.True(t, ctx.IsAborted())
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), `"field":"Password"`)
 }
 
 func TestAuthValidation_EmptyUsername_Header(t *testing.T) {

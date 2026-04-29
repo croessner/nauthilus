@@ -84,6 +84,23 @@ func NewFilterBackendManagerWithCurrent(ctx context.Context, cfg config.File, lo
 	}
 }
 
+func bindFilterModuleIntoReq(L *lua.LState, moduleName string, loader lua.LGFunction) {
+	if loader == nil {
+		return
+	}
+
+	_ = loader(L)
+
+	if mod, ok := L.Get(-1).(*lua.LTable); ok {
+		L.Pop(1)
+		luapool.BindModuleIntoReq(L, moduleName, mod)
+
+		return
+	}
+
+	L.Pop(1)
+}
+
 // LoaderModBackend initializes and returns a Lua module containing backend-related functionalities for LuaState.
 func LoaderModBackend(ctx context.Context, cfg config.File, logger *slog.Logger, request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
 	return LoaderModBackendWithCurrent(ctx, cfg, logger, request, backendResult, removeAttributes, nil, nil)
@@ -1009,7 +1026,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 2) nauthilus_http_request
+				// 2) nauthilus_cbor
+				bindFilterModuleIntoReq(Llocal, definitions.LuaModCBOR, lualib.LoaderModCBOR())
+
+				// 3) nauthilus_http_request
 				if ctx != nil && ctx.Request != nil {
 					loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
 					_ = loader(Llocal)
@@ -1022,7 +1042,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 3) nauthilus_http_response
+				// 4) nauthilus_http_response
 				if ctx != nil {
 					loader := lualib.LoaderModHTTPResponse(ctx)
 					_ = loader(Llocal)
@@ -1035,7 +1055,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 4) nauthilus_redis
+				// 5) nauthilus_redis
 				if loader := redislib.LoaderModRedis(luaCtx, cfg, redisClient); loader != nil {
 					_ = loader(Llocal)
 
@@ -1047,7 +1067,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 5) nauthilus_ldap (optional)
+				// 6) nauthilus_ldap (optional)
 				if cfg.HaveLDAPBackend() {
 					loader := backend.LoaderModLDAP(luaCtx, cfg)
 					_ = loader(Llocal)
@@ -1060,7 +1080,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 6) nauthilus_psnet (connection monitoring)
+				// 7) nauthilus_psnet (connection monitoring)
 				if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 					_ = loader(Llocal)
 
@@ -1072,7 +1092,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 7) nauthilus_dns (DNS lookups)
+				// 8) nauthilus_dns (DNS lookups)
 				if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 					_ = loader(Llocal)
 
@@ -1084,7 +1104,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
+				// 9) nauthilus_opentelemetry (OTel helpers for Lua)
 				{
 					var loader lua.LGFunction
 
@@ -1105,7 +1125,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 8) nauthilus_brute_force (toleration and blocking helpers)
+				// 10) nauthilus_brute_force (toleration and blocking helpers)
 				if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
 					_ = loader(Llocal)
 
@@ -1117,7 +1137,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 9) nauthilus_backend (preload stateless placeholder, then request-bound)
+				// 11) nauthilus_backend (preload stateless placeholder, then request-bound)
 				Llocal.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
 				{
 					loader := LoaderModBackendWithCurrent(luaCtx, cfg, logger, &localRequest, &localBackendResult, &localRemoveAttrs, mergedBackendResult, mergedRemoveAttributes.GetStringSlice())

@@ -841,6 +841,9 @@ const (
 	// ServJSON is a constant for the "json" service.
 	ServJSON = "json"
 
+	// ServCBOR is a constant for the "cbor" service.
+	ServCBOR = "cbor"
+
 	// ServFlush is a constant for the "flush" service.
 	ServFlush = "flush"
 
@@ -1324,6 +1327,9 @@ const (
 	// LuaModHTTPResponse is a constant representing the value "nauthilus_http_response".
 	LuaModHTTPResponse = "nauthilus_http_response"
 
+	// LuaModCBOR is the module name exposed to Lua for CBOR encode and decode helpers.
+	LuaModCBOR = "nauthilus_cbor"
+
 	// LuaModPrometheus is a constant that identifies the Prometheus module for monitoring and metrics collection.
 	LuaModPrometheus = "nauthilus_prometheus"
 
@@ -1401,6 +1407,15 @@ const (
 
 	// LuaFnURLPartialDecode decodes valid percent-encoded bytes while leaving invalid escape sequences untouched.
 	LuaFnURLPartialDecode = "url_partial_decode"
+
+	// LuaFnCBORDecode decodes a CBOR byte string into Lua values.
+	LuaFnCBORDecode = "decode"
+
+	// LuaFnCBOREncode encodes Lua values as CBOR.
+	LuaFnCBOREncode = "encode"
+
+	// LuaFnCBORBytes marks a Lua string for CBOR byte string encoding.
+	LuaFnCBORBytes = "bytes"
 
 	// LuaFnSetHTTPResponseHeader sets an HTTP response header (replaces existing values)
 	LuaFnSetHTTPResponseHeader = "set_http_response_header"
