@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/gin-gonic/gin"
 )
 
@@ -63,6 +64,36 @@ func withTestLuaFeatures(t *testing.T, features ...*LuaFeature) {
 	t.Cleanup(func() {
 		LuaFeatures = original
 	})
+}
+
+func TestPreCompiledLuaFeaturesCachesPlansForModes(t *testing.T) {
+	features := &PreCompiledLuaFeatures{
+		LuaScripts: []*LuaFeature{
+			{Name: "context", WhenAuthenticated: true, WhenUnauthenticated: true},
+			{Name: "monitor", DependsOn: []string{"context"}, WhenAuthenticated: true},
+		},
+	}
+
+	if err := features.RebuildPlans(); err != nil {
+		t.Fatalf("RebuildPlans returned error: %v", err)
+	}
+
+	plan, cached, err := features.planForMode(pipeline.ModeAuthenticated)
+	if err != nil {
+		t.Fatalf("planForMode returned error: %v", err)
+	}
+
+	if !cached {
+		t.Fatal("expected cached plan")
+	}
+
+	if len(plan.Levels) != 2 {
+		t.Fatalf("expected 2 dependency levels, got %d", len(plan.Levels))
+	}
+
+	if got := pipeline.PlannedNodeCount(plan); got != 2 {
+		t.Fatalf("expected 2 planned scripts, got %d", got)
+	}
 }
 
 func newFeatureTestContext() *gin.Context {

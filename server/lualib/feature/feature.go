@@ -36,12 +36,14 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -86,7 +88,7 @@ func PreCompileLuaFeatures(cfg config.File, _ *slog.Logger) (err error) {
 			LuaFeatures.Add(luaFeature)
 		}
 
-		if err = validateFeatureDependencies(LuaFeatures.LuaScripts); err != nil {
+		if err = LuaFeatures.RebuildPlans(); err != nil {
 			return err
 		}
 	}
@@ -98,6 +100,7 @@ func PreCompileLuaFeatures(cfg config.File, _ *slog.Logger) (err error) {
 // It contains an array of LuaFeature objects and a read-write mutex for synchronization.
 type PreCompiledLuaFeatures struct {
 	LuaScripts []*LuaFeature
+	plans      pipeline.Plans
 	Mu         sync.RWMutex
 }
 
@@ -108,6 +111,7 @@ func (a *PreCompiledLuaFeatures) Add(luaFeature *LuaFeature) {
 	defer a.Mu.Unlock()
 
 	a.LuaScripts = append(a.LuaScripts, luaFeature)
+	a.plans = nil
 }
 
 // Reset clears the LuaScripts slice and resets it to an empty state while ensuring thread-safe access via locking.
@@ -117,6 +121,38 @@ func (a *PreCompiledLuaFeatures) Reset() {
 	defer a.Mu.Unlock()
 
 	a.LuaScripts = make([]*LuaFeature, 0)
+	a.plans = nil
+}
+
+// RebuildPlans validates all feature dependencies and caches per-mode execution plans.
+func (a *PreCompiledLuaFeatures) RebuildPlans() error {
+	a.Mu.Lock()
+
+	defer a.Mu.Unlock()
+
+	plans, err := pipeline.BuildPlans(featurePipelineNodes(a.LuaScripts))
+	if err != nil {
+		return err
+	}
+
+	a.plans = plans
+
+	return nil
+}
+
+func (a *PreCompiledLuaFeatures) planForMode(mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
+	if a.plans != nil {
+		if plan, ok := a.plans[mode]; ok {
+			return plan, true, nil
+		}
+	}
+
+	plan, err := pipeline.BuildPlan(featurePipelineNodes(a.LuaScripts), mode)
+	if err != nil {
+		return pipeline.Plan{}, false, err
+	}
+
+	return plan, false, nil
 }
 
 // LuaFeature represents a Lua feature that has been compiled.
@@ -283,10 +319,25 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 		r.Context = lualib.NewContext()
 	}
 
-	plan, err := pipeline.BuildPlan(featurePipelineNodes(LuaFeatures.LuaScripts), requestFeatureMode(r))
+	tr := monittrace.New("nauthilus/features")
+	mode := requestFeatureMode(r)
+	pctx, pspan := tr.Start(ctx.Request.Context(), "features.plan.lookup")
+	_ = pctx
+
+	plan, cached, err := LuaFeatures.planForMode(mode)
+	pspan.SetAttributes(
+		attribute.Bool("cached", cached),
+		attribute.Int("levels", len(plan.Levels)),
+		attribute.Int("scripts", pipeline.PlannedNodeCount(plan)),
+	)
 	if err != nil {
+		pspan.RecordError(err)
+		pspan.End()
+
 		return false, false, err
 	}
+
+	pspan.End()
 
 	var statusSet bool
 	for _, level := range plan.Levels {

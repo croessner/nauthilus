@@ -169,7 +169,7 @@ func PreCompileLuaFilters(cfgFile config.File) (err error) {
 			LuaFilters.Add(luaFilter)
 		}
 
-		if err = validateFilterDependencies(LuaFilters.LuaScripts); err != nil {
+		if err = LuaFilters.RebuildPlans(); err != nil {
 			sp.RecordError(err)
 
 			return err
@@ -186,6 +186,9 @@ type PreCompiledLuaFilters struct {
 	// each of which represents a precompiled Lua script.
 	LuaScripts []*LuaFilter
 
+	// plans contains per-request-mode dependency plans built during precompile.
+	plans pipeline.Plans
+
 	// Mu is a read/write mutex used to allow safe concurrent access to the LuaScripts.
 	Mu sync.RWMutex
 }
@@ -197,6 +200,7 @@ func (a *PreCompiledLuaFilters) Add(luaFilter *LuaFilter) {
 	defer a.Mu.Unlock()
 
 	a.LuaScripts = append(a.LuaScripts, luaFilter)
+	a.plans = nil
 }
 
 // Reset clears the LuaScripts slice of a PreCompiledLuaFilters object.The method also prevents race conditions
@@ -207,6 +211,38 @@ func (a *PreCompiledLuaFilters) Reset() {
 	defer a.Mu.Unlock()
 
 	a.LuaScripts = make([]*LuaFilter, 0)
+	a.plans = nil
+}
+
+// RebuildPlans validates all filter dependencies and caches per-mode execution plans.
+func (a *PreCompiledLuaFilters) RebuildPlans() error {
+	a.Mu.Lock()
+
+	defer a.Mu.Unlock()
+
+	plans, err := pipeline.BuildPlans(filterPipelineNodes(a.LuaScripts))
+	if err != nil {
+		return err
+	}
+
+	a.plans = plans
+
+	return nil
+}
+
+func (a *PreCompiledLuaFilters) planForMode(mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
+	if a.plans != nil {
+		if plan, ok := a.plans[mode]; ok {
+			return plan, true, nil
+		}
+	}
+
+	plan, err := pipeline.BuildPlan(filterPipelineNodes(a.LuaScripts), mode)
+	if err != nil {
+		return pipeline.Plan{}, false, err
+	}
+
+	return plan, false, nil
 }
 
 // LuaFilter represents a struct for managing Lua filters.
@@ -770,10 +806,24 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		contextDelta    lualib.ContextDelta
 	}
 
-	plan, err := pipeline.BuildPlan(filterPipelineNodes(scripts), requestFilterMode(r))
+	modeMask := requestFilterMode(r)
+	pctx, pspan := tr.Start(fctx, "filters.plan.lookup")
+	_ = pctx
+
+	plan, cached, err := LuaFilters.planForMode(modeMask)
+	pspan.SetAttributes(
+		attribute.Bool("cached", cached),
+		attribute.Int("levels", len(plan.Levels)),
+		attribute.Int("scripts", pipeline.PlannedNodeCount(plan)),
+	)
 	if err != nil {
+		pspan.RecordError(err)
+		pspan.End()
+
 		return false, nil, nil, err
 	}
+
+	pspan.End()
 
 	results := make([]*filtResult, 0, len(scripts))
 
