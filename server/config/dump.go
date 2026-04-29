@@ -947,6 +947,7 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 		"runtime.http.middlewares.response_compression":  func() any { return true },
 		"runtime.http.middlewares.metrics":               func() any { return true },
 		"runtime.http.middlewares.rate":                  func() any { return true },
+		"runtime.http.security_txt.enabled":              func() any { return false },
 		"runtime.listen.tls.min_tls_version":             func() any { return "TLS1.2" },
 		"runtime.http.timeouts.redis_read":               func() any { return 1 * time.Second },
 		"runtime.http.timeouts.redis_write":              func() any { return 2 * time.Second },

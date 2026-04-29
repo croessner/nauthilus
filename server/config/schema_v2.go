@@ -40,6 +40,7 @@ type RuntimeHTTPSection struct {
 	RateLimit         HTTPRateLimit `mapstructure:"rate_limit" validate:"omitempty"`
 	Timeouts          Timeouts      `mapstructure:"timeouts" validate:"omitempty"`
 	CORS              CORS          `mapstructure:"cors" validate:"omitempty"`
+	SecurityTxt       SecurityTxt   `mapstructure:"security_txt" validate:"omitempty"`
 }
 
 // HTTPRateLimit configures the global HTTP rate limiter.
@@ -423,6 +424,7 @@ func (f *FileSettings) applyRuntimeSection(server *ServerSection) {
 	server.RateLimitBurst = runtime.HTTP.RateLimit.Burst
 	server.Timeouts = runtime.HTTP.Timeouts
 	server.CORS = runtime.HTTP.CORS
+	server.SecurityTxt = runtime.HTTP.SecurityTxt
 	server.HTTPClient = runtime.Clients.HTTP
 	server.DNS = runtime.Clients.DNS
 	server.RunAsUser = runtime.Process.RunAsUser

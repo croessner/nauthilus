@@ -55,6 +55,7 @@ COPY --from=runtime-base ["/runtime-root/", "/"]
 # Copy binary to destination image
 COPY --from=builder ["/build/server/nauthilus", "/build/client/nauthilus-client", "/build/contrib/oidctestclient/oidctestclient", "/build/contrib/saml2testclient/saml2testclient", "./"]
 COPY --from=builder ["/build/server/resources", "./server/resources/"]
+COPY --from=builder ["/build/server/resources/security-policy.md", "./server/resources/security-policy.md"]
 COPY --from=builder ["/build/server/lua-plugins.d", "./server/lua-plugins.d/"]
 COPY --from=builder ["/build/docker-healthcheck/healthcheck", "./"]
 COPY --from=builder ["/build/contrib/smtp-server/fakesmtp", "./"]

@@ -34,6 +34,7 @@ RUN apk --no-cache --upgrade add ca-certificates bash curl
 
 COPY --from=builder ["/usr/app/server/nauthilus", "./server/"]
 COPY --from=builder ["/usr/app/server/resources/", "./server/resources/"]
+COPY --from=builder ["/usr/app/server/resources/security-policy.md", "./server/resources/security-policy.md"]
 COPY --from=builder ["/usr/app/server/lua-plugins.d/", "./server/lua-plugins.d/"]
 COPY --from=builder ["/usr/app/docker-healthcheck/healthcheck", "./"]
 COPY --from=builder ["/usr/app/contrib/smtp-server/fakesmtp", "./"]

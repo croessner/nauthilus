@@ -224,6 +224,10 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 		setupMetrics(r)
 	}
 
+	rb := approuter.NewRouter(c.cfg)
+	rb.Engine = r
+	rb.WithSecurityTxt()
+
 	if c.cfg.GetServer().Frontend.Enabled {
 		r.SetFuncMap(template.FuncMap{
 			"int": func(v any) int {
@@ -252,14 +256,8 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 
 		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
-		rb := approuter.NewRouter(c.cfg)
-		rb.Engine = r
-
 		rb.WithFrontend(setupIdP)
 	}
-
-	rb := approuter.NewRouter(c.cfg)
-	rb.Engine = r
 
 	rb.WithBackchannel(setupBackchannel)
 
