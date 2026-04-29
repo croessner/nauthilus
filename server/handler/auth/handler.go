@@ -54,6 +54,7 @@ func (h *Handler) Register(router gin.IRouter) {
 	h.registerBasicEndpoint(authGroup, withService)
 	authGroup.GET("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
 	authGroup.POST("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
+	authGroup.GET("/"+definitions.ServCBOR, withService(definitions.ServCBOR, h.cbor))
 	authGroup.POST("/"+definitions.ServCBOR, withService(definitions.ServCBOR, h.cbor))
 	authGroup.GET("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.POST("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))

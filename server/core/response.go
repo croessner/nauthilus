@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 
@@ -134,7 +135,7 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		setNginxHeaders(ctx, a)
 	case definitions.ServHeader:
 		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON:
+	case definitions.ServJSON, definitions.ServCBOR:
 		sendAuthResponse(ctx, a)
 	}
 
@@ -165,8 +166,13 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 
 	a.Runtime.StatusMessage = reason
 
-	if a.Request.Service == definitions.ServJSON {
+	switch a.Request.Service {
+	case definitions.ServJSON:
 		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
+
+		return
+	case definitions.ServCBOR:
+		writeCBORError(ctx, a.Runtime.StatusCodeInternalError, reason)
 
 		return
 	}
@@ -214,7 +220,7 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Logger, ctx, a)
 	case definitions.ServHeader:
 		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON:
+	case definitions.ServJSON, definitions.ServCBOR:
 		sendAuthResponse(ctx, a)
 	}
 
@@ -247,8 +253,13 @@ func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason st
 
 	a.Runtime.StatusMessage = reason
 
-	if a.Request.Service == definitions.ServJSON {
+	switch a.Request.Service {
+	case definitions.ServJSON:
 		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
+
+		return
+	case definitions.ServCBOR:
+		writeCBORError(ctx, a.Runtime.StatusCodeInternalError, reason)
 
 		return
 	}
@@ -265,9 +276,10 @@ func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason st
 	level.Warn(w.deps.Logger).WithContext(ctx).Log(keyvals...)
 }
 
-// sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
-// It now includes an explicit {"ok": true} field and emits only the fields required by clients and tests,
-// in the exact order expected by the golden file.
+// sendAuthResponse sends a structured success response for the JSON or CBOR
+// service variants. It includes an explicit {"ok": true} field and emits only
+// the fields required by clients and tests, in the exact order expected by the
+// JSON golden file.
 func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 	// Build a minimal response matching the golden expectations exactly.
 	type response struct {
@@ -286,6 +298,19 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 		Attributes:   auth.Attributes.Attributes,
 	}
 
+	if auth.Request.Service == definitions.ServCBOR {
+		b, err := cborcodec.Marshal(resp)
+		if err != nil {
+			ctx.AbortWithStatus(http.StatusInternalServerError)
+
+			return
+		}
+
+		ctx.Data(auth.Runtime.StatusCodeOK, "application/cbor", b)
+
+		return
+	}
+
 	// Use stable JSON encoding to avoid parallel_mismatched in client tests
 	// caused by non-deterministic map key ordering.
 	b, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(resp)
@@ -296,4 +321,17 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 	}
 
 	ctx.Data(auth.Runtime.StatusCodeOK, "application/json; charset=utf-8", b)
+}
+
+// writeCBORError emits a CBOR-encoded error envelope mirroring the JSON
+// {"error": reason} payload. On encoding failure it falls back to a 500.
+func writeCBORError(ctx *gin.Context, status int, reason string) {
+	b, err := cborcodec.Marshal(map[string]string{"error": reason})
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	ctx.Data(status, "application/cbor", b)
 }

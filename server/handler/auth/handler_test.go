@@ -30,11 +30,24 @@ func TestHandlerRegistersCBORAuthEndpoint(t *testing.T) {
 
 	New(nil).Register(api)
 
+	want := map[string]bool{
+		http.MethodGet:  false,
+		http.MethodPost: false,
+	}
+
 	for _, route := range router.Routes() {
-		if route.Method == http.MethodPost && route.Path == "/api/v1/auth/cbor" {
-			return
+		if route.Path != "/api/v1/auth/cbor" {
+			continue
+		}
+
+		if _, ok := want[route.Method]; ok {
+			want[route.Method] = true
 		}
 	}
 
-	t.Fatal("expected POST /api/v1/auth/cbor route to be registered")
+	for method, found := range want {
+		if !found {
+			t.Fatalf("expected %s /api/v1/auth/cbor route to be registered", method)
+		}
+	}
 }

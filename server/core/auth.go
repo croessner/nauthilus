@@ -1798,8 +1798,20 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
 
-		// Do not include password history in responses; always return JSON null on failure
-		ctx.JSON(a.Runtime.StatusCodeFail, nil)
+		// Do not include password history in responses; always return a null
+		// body on failure, encoded in the format the client requested.
+		if a.Request.Service == definitions.ServCBOR {
+			b, err := cborcodec.Marshal(nil)
+			if err != nil {
+				ctx.AbortWithStatus(http.StatusInternalServerError)
+
+				return
+			}
+
+			ctx.Data(a.Runtime.StatusCodeFail, "application/cbor", b)
+		} else {
+			ctx.JSON(a.Runtime.StatusCodeFail, nil)
+		}
 	default:
 		ctx.String(a.Runtime.StatusCodeFail, a.Runtime.StatusMessage)
 	}
