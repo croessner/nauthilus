@@ -292,12 +292,10 @@ func PreCompileInit(cfg config.File) error {
 	return nil
 }
 
-// PreCompileHooks pre-compiles Lua hooks if enabled.
+// PreCompileHooks refreshes the Lua hook registry from configuration.
 func PreCompileHooks(cfg config.File) error {
-	if cfg.HaveLuaHooks() {
-		if err := hook.PreCompileLuaHooks(cfg); err != nil {
-			return err
-		}
+	if err := hook.PreCompileLuaHooks(cfg); err != nil {
+		return err
 	}
 
 	return nil

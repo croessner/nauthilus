@@ -50,8 +50,11 @@ var (
 	// LuaScripts is a map that stores precompiled Lua scripts, allowing safe concurrent access and manipulation.
 	LuaScripts = make(map[string]*PrecompiledLuaScript)
 
-	// hookRoles is a map that associates each Location and HTTP method with its corresponding roles.
-	hookRoles = make(map[string][]string)
+	// hookScopes is a map that associates each Location and HTTP method with its corresponding scopes.
+	hookScopes = make(map[string][]string)
+
+	// hookAliasLocations maps an absolute external alias location and method to a canonical hook location.
+	hookAliasLocations = make(map[string]string)
 
 	mu sync.RWMutex
 )
@@ -192,18 +195,46 @@ func NewCustomLocation() CustomLocation {
 
 // getHookKey generates a unique key for a hook based on its location and method.
 func getHookKey(location, method string) string {
-	return strings.TrimLeft(location, "/") + ":" + method
+	return strings.TrimLeft(location, "/") + ":" + strings.ToUpper(method)
 }
 
-// GetHookScopes returns the roles required for a specific hook.
+func getHookAliasKey(location, method string) string {
+	return strings.TrimSpace(location) + ":" + strings.ToUpper(method)
+}
+
+// GetHookScopes returns the scopes required for a specific hook.
 func GetHookScopes(location, method string) []string {
 	hookKey := getHookKey(location, method)
 
 	mu.RLock()
-	roles := hookRoles[hookKey]
+	scopes := hookScopes[hookKey]
 	mu.RUnlock()
 
-	return roles
+	return scopes
+}
+
+// ResolveAliasLocation returns the canonical hook location for a configured absolute alias.
+func ResolveAliasLocation(location, method string) (string, bool) {
+	aliasKey := getHookAliasKey(location, method)
+
+	mu.RLock()
+	canonicalLocation, found := hookAliasLocations[aliasKey]
+	mu.RUnlock()
+
+	return canonicalLocation, found
+}
+
+// ResolveRequestHook returns the canonical hook name for the current request.
+func ResolveRequestHook(ctx *gin.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
+	if hookName := ctx.GetString(definitions.CtxCustomHookKey); hookName != "" {
+		return hookName
+	}
+
+	return ctx.Param("hook")
 }
 
 // HasRequiredScopes checks if the user has any of the required scopes for a hook.
@@ -221,7 +252,7 @@ func GetHookScopes(location, method string) []string {
 func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, validator oidcbearer.TokenValidator, location, method string) bool {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	// Get the roles required for this hook
+	// Get the scopes required for this hook
 	requiredScopes := resolveRequiredScopes(location, method, cfg, logger, guid, ctx)
 
 	startEvent := hookAuthzEventScopesRequired
@@ -236,7 +267,7 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 		return false
 	}
 
-	// If no roles are configured, this is a public hook — allow access regardless of token.
+	// If no scopes are configured, this is a public hook — allow access regardless of token.
 	if nextState == hookAuthzStateAuthorized {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -328,7 +359,7 @@ func abortOnHookAuthzState(ctx *gin.Context, state hookAuthzFSMState, msg string
 	}
 }
 
-// resolveRequiredScopes looks up the required roles for a hook, trying both with and without a leading slash.
+// resolveRequiredScopes looks up the required scopes for a hook, trying both with and without a leading slash.
 func resolveRequiredScopes(location, method string, cfg config.File, logger *slog.Logger, guid string, ctx *gin.Context) []string {
 	requiredScopes := GetHookScopes(location, method)
 
@@ -413,13 +444,13 @@ func PreCompileLuaScript(cfg config.File, filePath string) (err error) {
 }
 
 // PreCompileLuaHooks pre-compiles Lua hook scripts defined in the configuration and assigns them to specified locations and methods.
-// It also stores the roles associated with each hook for role-based access control.
+// It also stores the scopes associated with each hook for access control.
 // Returns an error if the compilation or setup fails.
 func PreCompileLuaHooks(cfg config.File) error {
 	tr := monittrace.New("nauthilus/hooks")
 	ctx, sp := tr.Start(svcctx.Get(), "hooks.precompile_all",
 		attribute.Int("configured", func() int {
-			if cfg.HaveLuaHooks() {
+			if cfg != nil && cfg.HaveLuaHooks() {
 				return len(cfg.GetLua().Hooks)
 			}
 			return 0
@@ -429,16 +460,11 @@ func PreCompileLuaHooks(cfg config.File) error {
 
 	defer sp.End()
 
-	if cfg.HaveLuaHooks() {
-		if customLocation == nil {
-			customLocation = NewCustomLocation()
-		}
+	nextLocation := NewCustomLocation()
+	nextScopes := make(map[string][]string)
+	nextAliases := make(map[string]string)
 
-		// Clear the hookRoles map before repopulating it
-		mu.Lock()
-		hookRoles = make(map[string][]string)
-		mu.Unlock()
-
+	if cfg != nil && cfg.HaveLuaHooks() {
 		for index := range cfg.GetLua().Hooks {
 			hook := cfg.GetLua().Hooks[index]
 
@@ -449,16 +475,21 @@ func PreCompileLuaHooks(cfg config.File) error {
 				return err
 			}
 
-			customLocation.SetScript(hook.Location, hook.Method, script)
+			nextLocation.SetScript(hook.Location, hook.Method, script)
 
-			// Store the roles for this hook
 			hookKey := getHookKey(hook.Location, hook.Method)
-
-			mu.Lock()
-			hookRoles[hookKey] = hook.GetScopes()
-			mu.Unlock()
+			nextScopes[hookKey] = hook.GetScopes()
+			if aliasLocation := strings.TrimSpace(hook.GetAliasLocation()); aliasLocation != "" {
+				nextAliases[getHookAliasKey(aliasLocation, hook.Method)] = hook.Location
+			}
 		}
 	}
+
+	mu.Lock()
+	customLocation = nextLocation
+	hookScopes = nextScopes
+	hookAliasLocations = nextAliases
+	mu.Unlock()
 
 	return nil
 }
@@ -549,7 +580,7 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) (gin.H, error) {
 	tr := monittrace.New("nauthilus/hooks")
 	xctx, xsp := tr.Start(ctx.Request.Context(), "hooks.execute_custom",
-		attribute.String("path", ctx.Param("hook")),
+		attribute.String("path", ResolveRequestHook(ctx)),
 		attribute.String("method", ctx.Request.Method),
 	)
 
@@ -561,7 +592,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	var script *PrecompiledLuaScript
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
-	hook := ctx.Param("hook")
+	hook := ResolveRequestHook(ctx)
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),

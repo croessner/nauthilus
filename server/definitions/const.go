@@ -914,6 +914,9 @@ const (
 	// CtxResponseWrittenKey marks that a Lua response has been written for this request.
 	CtxResponseWrittenKey = "response_written"
 
+	// CtxCustomHookKey stores the canonical custom hook name resolved for the current request.
+	CtxCustomHookKey = "custom_hook"
+
 	// CtxAccountKey stores the resolved account name for the current request in gin.Context.
 	// Keep this limited to the plain account string as agreed; additional fields are intentionally omitted.
 	CtxAccountKey = "account"

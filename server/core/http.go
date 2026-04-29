@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/handler/custom"
 	"github.com/croessner/nauthilus/server/log/level"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdcors "github.com/croessner/nauthilus/server/middleware/cors"
@@ -263,6 +264,10 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	rb.WithBackchannel(setupBackchannel)
 
 	r.NoRoute(func(ctx *gin.Context) {
+		if custom.DispatchAlias(ctx) {
+			return
+		}
+
 		if strings.HasPrefix(ctx.Request.URL.Path, "/api/v1") {
 			ctx.Status(http.StatusNotFound)
 

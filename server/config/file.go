@@ -2403,6 +2403,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateIdPOIDCCustomScopes,
 		f.validateIdPSAMLSigningSettings,
 		f.validateIdPSAML2SLOSettings,
+		f.validateLuaHooks,
 		f.setDefaultTrustedProxies,
 		f.validateFrontend,
 	}
@@ -2414,6 +2415,37 @@ func (f *FileSettings) validate() (err error) {
 	}
 
 	f.checkResourceLimits()
+
+	return nil
+}
+
+func (f *FileSettings) validateLuaHooks() error {
+	if f == nil || !f.HaveLuaHooks() {
+		return nil
+	}
+
+	aliases := make(map[string]int)
+	for idx, luaHook := range f.GetLua().GetHooks() {
+		aliasLocation := strings.TrimSpace(luaHook.GetAliasLocation())
+		if aliasLocation == "" {
+			continue
+		}
+
+		canonicalLocation := "/api/v1/custom/" + strings.TrimLeft(luaHook.GetLocation(), "/")
+		if aliasLocation == canonicalLocation {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location duplicates canonical hook location %q", idx, canonicalLocation)
+		}
+		if strings.HasPrefix(aliasLocation, "/api/v1/custom/") {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location must not use reserved custom hook prefix %q", idx, "/api/v1/custom/")
+		}
+
+		aliasKey := strings.ToUpper(luaHook.GetMethod()) + ":" + aliasLocation
+		if previous, found := aliases[aliasKey]; found {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location duplicates auth.controls.lua.hooks[%d] for %s %q", idx, previous, luaHook.GetMethod(), aliasLocation)
+		}
+
+		aliases[aliasKey] = idx
+	}
 
 	return nil
 }
