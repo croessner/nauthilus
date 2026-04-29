@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"runtime"
@@ -2403,7 +2404,9 @@ func (f *FileSettings) validate() (err error) {
 		f.validateIdPOIDCCustomScopes,
 		f.validateIdPSAMLSigningSettings,
 		f.validateIdPSAML2SLOSettings,
+		f.validateLuaHooks,
 		f.setDefaultTrustedProxies,
+		f.validateSecurityTxt,
 		f.validateFrontend,
 	}
 
@@ -2414,6 +2417,197 @@ func (f *FileSettings) validate() (err error) {
 	}
 
 	f.checkResourceLimits()
+
+	return nil
+}
+
+func (f *FileSettings) validateSecurityTxt() error {
+	if f == nil || f.Server == nil || !f.Server.SecurityTxt.IsEnabled() {
+		return nil
+	}
+
+	securityTxt := f.Server.SecurityTxt
+	if len(securityTxt.GetContacts()) == 0 {
+		return fmt.Errorf("runtime.http.security_txt.contacts must contain at least one URI when security_txt is enabled")
+	}
+
+	expires := strings.TrimSpace(securityTxt.GetExpires())
+	expiresAfter := securityTxt.GetExpiresAfter()
+	switch {
+	case expiresAfter < 0:
+		return fmt.Errorf("runtime.http.security_txt.expires_after must be greater than zero")
+	case expires != "" && expiresAfter != 0:
+		return fmt.Errorf("runtime.http.security_txt.expires and runtime.http.security_txt.expires_after are mutually exclusive")
+	case expires == "" && expiresAfter <= 0:
+		return fmt.Errorf("runtime.http.security_txt.expires or runtime.http.security_txt.expires_after must be set when security_txt is enabled")
+	case expiresAfter > 365*24*time.Hour:
+		return fmt.Errorf("runtime.http.security_txt.expires_after must be less than or equal to 8760h")
+	}
+
+	if expires != "" {
+		return validateSecurityTxtStaticExpires(expires, securityTxt)
+	}
+
+	return validateSecurityTxtFields(securityTxt)
+}
+
+func validateSecurityTxtStaticExpires(expires string, securityTxt SecurityTxt) error {
+	if _, err := time.Parse(time.RFC3339, expires); err != nil {
+		return fmt.Errorf("runtime.http.security_txt.expires must be an RFC3339 timestamp: %w", err)
+	}
+
+	return validateSecurityTxtFields(securityTxt)
+}
+
+func validateSecurityTxtFields(securityTxt SecurityTxt) error {
+	if err := validateSecurityTxtURIs("contacts", securityTxt.GetContacts()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("canonical", securityTxt.GetCanonical()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("encryption", securityTxt.GetEncryption()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("acknowledgments", securityTxt.GetAcknowledgments()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("policy", securityTxt.GetPolicy()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("hiring", securityTxt.GetHiring()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtServedFile("encryption", securityTxt.GetEncryptionFile(), securityTxt.GetEncryptionURI()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtServedFile("policy", securityTxt.GetPolicyFile(), securityTxt.GetPolicyURI()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtServedRoutes(securityTxt); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateSecurityTxtServedFile(field string, filePath string, publicURI string) error {
+	filePath = strings.TrimSpace(filePath)
+	publicURI = strings.TrimSpace(publicURI)
+	if filePath == "" && publicURI == "" {
+		return nil
+	}
+
+	if filePath == "" || publicURI == "" {
+		return fmt.Errorf("runtime.http.security_txt.%s_file and runtime.http.security_txt.%s_uri must be configured together", field, field)
+	}
+
+	if err := validateSecurityTxtURIs(field+"_uri", []string{publicURI}); err != nil {
+		return err
+	}
+
+	if info, err := os.Stat(filePath); err != nil {
+		return fmt.Errorf("runtime.http.security_txt.%s_file cannot be read: %w", field, err)
+	} else if info.IsDir() {
+		return fmt.Errorf("runtime.http.security_txt.%s_file must be a file", field)
+	}
+
+	return nil
+}
+
+func validateSecurityTxtServedRoutes(securityTxt SecurityTxt) error {
+	routes := make(map[string]string)
+
+	if err := addSecurityTxtServedRoute(routes, "encryption", securityTxt.GetEncryptionURI()); err != nil {
+		return err
+	}
+
+	if err := addSecurityTxtServedRoute(routes, "policy", securityTxt.GetPolicyURI()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func addSecurityTxtServedRoute(routes map[string]string, field string, publicURI string) error {
+	publicURI = strings.TrimSpace(publicURI)
+	if publicURI == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(publicURI)
+	if err != nil || parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") {
+		return fmt.Errorf("runtime.http.security_txt.%s_uri must contain an absolute path", field)
+	}
+
+	if parsed.Path == "/.well-known/security.txt" {
+		return fmt.Errorf("runtime.http.security_txt.%s_uri must not reuse /.well-known/security.txt", field)
+	}
+
+	if previous, found := routes[parsed.Path]; found {
+		return fmt.Errorf("runtime.http.security_txt.%s_uri route %q duplicates %s_uri", field, parsed.Path, previous)
+	}
+
+	routes[parsed.Path] = field
+
+	return nil
+}
+
+func validateSecurityTxtURIs(field string, values []string) error {
+	for index, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return fmt.Errorf("runtime.http.security_txt.%s[%d] must not be empty", field, index)
+		}
+
+		parsed, err := url.ParseRequestURI(trimmed)
+		if err != nil || parsed.Scheme == "" {
+			return fmt.Errorf("runtime.http.security_txt.%s[%d] must be a URI", field, index)
+		}
+
+		if (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Scheme != "https" {
+			return fmt.Errorf("runtime.http.security_txt.%s[%d] web URI must use https", field, index)
+		}
+	}
+
+	return nil
+}
+
+func (f *FileSettings) validateLuaHooks() error {
+	if f == nil || !f.HaveLuaHooks() {
+		return nil
+	}
+
+	aliases := make(map[string]int)
+	for idx, luaHook := range f.GetLua().GetHooks() {
+		aliasLocation := strings.TrimSpace(luaHook.GetAliasLocation())
+		if aliasLocation == "" {
+			continue
+		}
+
+		canonicalLocation := "/api/v1/custom/" + strings.TrimLeft(luaHook.GetLocation(), "/")
+		if aliasLocation == canonicalLocation {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location duplicates canonical hook location %q", idx, canonicalLocation)
+		}
+		if strings.HasPrefix(aliasLocation, "/api/v1/custom/") {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location must not use reserved custom hook prefix %q", idx, "/api/v1/custom/")
+		}
+
+		aliasKey := strings.ToUpper(luaHook.GetMethod()) + ":" + aliasLocation
+		if previous, found := aliases[aliasKey]; found {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location duplicates auth.controls.lua.hooks[%d] for %s %q", idx, previous, luaHook.GetMethod(), aliasLocation)
+		}
+
+		aliases[aliasKey] = idx
+	}
 
 	return nil
 }

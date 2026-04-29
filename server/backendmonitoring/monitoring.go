@@ -32,9 +32,127 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 )
 
-// serversAlive represents a concurrency-safe collection of backend servers that are currently operational.
+type healthGate struct {
+	failureThreshold  int
+	recoveryThreshold int
+	failures          int
+	successes         int
+	healthy           bool
+}
+
+func newHealthGate(failureThreshold int, recoveryThreshold int, initiallyHealthy bool) *healthGate {
+	if failureThreshold < 1 {
+		failureThreshold = 1
+	}
+
+	if recoveryThreshold < 1 {
+		recoveryThreshold = 1
+	}
+
+	return &healthGate{
+		failureThreshold:  failureThreshold,
+		recoveryThreshold: recoveryThreshold,
+		healthy:           initiallyHealthy,
+	}
+}
+
+func (g *healthGate) Record(success bool) bool {
+	if g == nil {
+		return success
+	}
+
+	if success {
+		g.failures = 0
+		if g.healthy {
+			g.successes = 0
+
+			return true
+		}
+
+		g.successes++
+		if g.successes >= g.recoveryThreshold {
+			g.healthy = true
+			g.successes = 0
+		}
+
+		return g.healthy
+	}
+
+	g.successes = 0
+	if !g.healthy {
+		g.failures = 0
+
+		return false
+	}
+
+	g.failures++
+	if g.failures >= g.failureThreshold {
+		g.healthy = false
+		g.failures = 0
+	}
+
+	return g.healthy
+}
+
+func (g *healthGate) Healthy() bool {
+	if g == nil {
+		return true
+	}
+
+	return g.healthy
+}
+
+type serverProbeState struct {
+	connect *healthGate
+	deep    *healthGate
+}
+
+func newServerProbeState(monitoringCfg *config.BackendServerMonitoring) *serverProbeState {
+	return &serverProbeState{
+		connect: newHealthGate(monitoringCfg.GetFailureThreshold(), monitoringCfg.GetRecoveryThreshold(), true),
+		deep:    newHealthGate(monitoringCfg.GetFailureThreshold(), monitoringCfg.GetRecoveryThreshold(), true),
+	}
+}
+
+func (s *serverProbeState) record(phase monitoring.BackendCheckPhase, success bool) bool {
+	if phase == monitoring.BackendCheckPhaseConnect {
+		return s.connect.Record(success)
+	}
+
+	if success {
+		s.connect.Record(true)
+	}
+
+	return s.deep.Record(success)
+}
+
+func (s *serverProbeState) healthy(server *config.BackendServer) bool {
+	if s == nil {
+		return true
+	}
+
+	if server != nil && server.DeepCheck {
+		return s.connect.Healthy() && s.deep.Healthy()
+	}
+
+	return s.connect.Healthy()
+}
+
+type backendProbe struct {
+	server *config.BackendServer
+	phase  monitoring.BackendCheckPhase
+}
+
+type healthCheckRunner struct {
+	logger     *slog.Logger
+	monitor    monitoring.Monitor
+	oldServers *serversAlive
+	states     map[*config.BackendServer]*serverProbeState
+	servers    []*config.BackendServer
+}
+
+// serversAlive stores the backend servers currently considered healthy.
 type serversAlive struct {
-	mu      sync.Mutex
 	servers []*config.BackendServer
 }
 
@@ -72,20 +190,24 @@ func handleError(cfg config.File, logger *slog.Logger, err error) {
 }
 
 // logBackendServerError logs an error related to a backend server, including details like host, port, protocol, and the error.
-func logBackendServerError(logger *slog.Logger, server *config.BackendServer, err error) {
+func logBackendServerError(logger *slog.Logger, server *config.BackendServer, phase monitoring.BackendCheckPhase, err error, stillHealthy bool) {
 	level.Error(logger).Log(
 		definitions.LogKeyMsg, fmt.Sprintf("Backend server failed: %s:%d (%s)",
 			server.Host, server.Port, server.Protocol),
 		definitions.LogKeyError, err,
+		"health_check_phase", string(phase),
+		"health_check_still_healthy", stillHealthy,
 		definitions.LogKeyBackendServer, server,
 	)
 }
 
 // logBackendServerDebug logs a debug message indicating that a backend server is operational, including its details.
-func logBackendServerDebug(logger *slog.Logger, server *config.BackendServer) {
+func logBackendServerDebug(logger *slog.Logger, server *config.BackendServer, phase monitoring.BackendCheckPhase, healthy bool) {
 	level.Info(logger).Log(
 		definitions.LogKeyMsg, fmt.Sprintf("Backend server alive: %s:%d (%s)",
 			server.Host, server.Port, server.Protocol),
+		"health_check_phase", string(phase),
+		"health_check_healthy", healthy,
 		definitions.LogKeyBackendServer, server,
 	)
 }
@@ -109,49 +231,126 @@ func compareServers(servers []*config.BackendServer, servers2 []*config.BackendS
 	return len(servers) == foundServer
 }
 
-// healthCheckLoop performs periodic health checks on backend servers and updates the list of active servers atomically.
-func healthCheckLoop(cfg config.File, logger *slog.Logger, servers []*config.BackendServer, oldServers *serversAlive) *serversAlive {
-	var wg sync.WaitGroup
-
-	wg.Add(len(servers))
-
-	serversLiveness := &serversAlive{}
-
-	stats.GetMetrics().GetBackendServerStatus().WithLabelValues("wanted").Set(float64(len(servers)))
+func newHealthCheckRunner(cfg config.File, logger *slog.Logger, servers []*config.BackendServer, oldServers *serversAlive) *healthCheckRunner {
+	monitoringCfg := cfg.GetBackendServerMonitoring()
+	runner := &healthCheckRunner{
+		logger:     logger,
+		monitor:    monitoring.NewMonitor(cfg, logger),
+		oldServers: oldServers,
+		states:     make(map[*config.BackendServer]*serverProbeState, len(servers)),
+		servers:    servers,
+	}
 
 	for _, server := range servers {
-		go func(server *config.BackendServer) {
-			err := monitoring.NewMonitor(cfg, logger).CheckBackendConnection(server)
+		runner.states[server] = newServerProbeState(monitoringCfg)
+	}
 
-			serversLiveness.mu.Lock()
-			defer serversLiveness.mu.Unlock()
+	return runner
+}
+
+func (r *healthCheckRunner) runConnect() {
+	probes := make([]backendProbe, 0, len(r.servers))
+	for _, server := range r.servers {
+		probes = append(probes, backendProbe{server: server, phase: monitoring.BackendCheckPhaseConnect})
+	}
+
+	r.runProbes(probes)
+}
+
+func (r *healthCheckRunner) runDeep() {
+	probes := make([]backendProbe, 0, len(r.servers))
+	for _, server := range r.servers {
+		if !server.DeepCheck {
+			continue
+		}
+
+		probes = append(probes, backendProbe{server: server, phase: monitoring.BackendCheckPhaseDeep})
+	}
+
+	r.runProbes(probes)
+}
+
+func (r *healthCheckRunner) runCombined() {
+	probes := make([]backendProbe, 0, len(r.servers))
+	for _, server := range r.servers {
+		phase := monitoring.BackendCheckPhaseConnect
+		if server.DeepCheck {
+			phase = monitoring.BackendCheckPhaseDeep
+		}
+
+		probes = append(probes, backendProbe{server: server, phase: phase})
+	}
+
+	r.runProbes(probes)
+}
+
+func (r *healthCheckRunner) runProbes(probes []backendProbe) {
+	if len(probes) == 0 {
+		return
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(len(probes))
+
+	stats.GetMetrics().GetBackendServerStatus().WithLabelValues("wanted").Set(float64(len(r.servers)))
+
+	for _, probe := range probes {
+		go func(probe backendProbe) {
+			err := r.monitor.CheckBackendConnectionPhase(probe.server, probe.phase)
+			success := err == nil
+
+			state := r.states[probe.server]
+			healthy := state.record(probe.phase, success)
 
 			if err != nil {
-				logBackendServerError(logger, server, err)
+				logBackendServerError(r.logger, probe.server, probe.phase, err, healthy)
 			} else {
-				serversLiveness.servers = append(serversLiveness.servers, server)
-				logBackendServerDebug(logger, server)
+				logBackendServerDebug(r.logger, probe.server, probe.phase, healthy)
 			}
 
 			wg.Done()
-		}(server)
+		}(probe)
 	}
 
 	wg.Wait()
 
-	stats.GetMetrics().GetBackendServerStatus().WithLabelValues("alive").Set(float64(len(serversLiveness.servers)))
+	r.updateAliveServers()
+}
 
-	if !compareServers(serversLiveness.servers, oldServers.servers) {
-		core.BackendServers.Update(serversLiveness.servers)
-		oldServers.servers = serversLiveness.servers
+func (r *healthCheckRunner) updateAliveServers() {
+	serversLiveness := &serversAlive{}
+
+	for _, server := range r.servers {
+		if r.states[server].healthy(server) {
+			serversLiveness.servers = append(serversLiveness.servers, server)
+		}
 	}
 
-	return oldServers
+	stats.GetMetrics().GetBackendServerStatus().WithLabelValues("alive").Set(float64(len(serversLiveness.servers)))
+
+	if !compareServers(serversLiveness.servers, r.oldServers.servers) {
+		core.BackendServers.Update(serversLiveness.servers)
+		r.oldServers.servers = serversLiveness.servers
+	}
+}
+
+func connectAndDeepIntervals(cfg config.File, tickerInterval time.Duration) (time.Duration, time.Duration) {
+	monitoringCfg := cfg.GetBackendServerMonitoring()
+	connectInterval := monitoringCfg.GetConnectInterval(tickerInterval)
+	deepInterval := monitoringCfg.GetDeepInterval(connectInterval)
+
+	return connectInterval, deepInterval
 }
 
 // Run executes the backend server monitoring loop until ctx is canceled.
 // On configuration errors the loop does not run (best-effort), but the process continues.
 func Run(ctx context.Context, cfg config.File, logger *slog.Logger, ticker *time.Ticker) {
+	RunWithTickerInterval(ctx, cfg, logger, ticker, 0)
+}
+
+// RunWithTickerInterval executes the backend server monitoring loop using tickerInterval as the connect-interval fallback.
+func RunWithTickerInterval(ctx context.Context, cfg config.File, logger *slog.Logger, ticker *time.Ticker, tickerInterval time.Duration) {
 	backendServers, err := configForMonitoring(cfg)
 	if err != nil {
 		handleError(cfg, logger, err)
@@ -162,14 +361,47 @@ func Run(ctx context.Context, cfg config.File, logger *slog.Logger, ticker *time
 	oldServers := &serversAlive{servers: backendServers}
 
 	core.BackendServers.Update(backendServers)
-	oldServers = healthCheckLoop(cfg, logger, backendServers, oldServers)
+	runner := newHealthCheckRunner(cfg, logger, backendServers, oldServers)
+	connectInterval, deepInterval := connectAndDeepIntervals(cfg, tickerInterval)
+
+	if ticker == nil {
+		ticker = time.NewTicker(connectInterval)
+		defer ticker.Stop()
+	}
+
+	if connectInterval == deepInterval {
+		runner.runCombined()
+	} else {
+		runner.runConnect()
+		runner.runDeep()
+	}
+
+	var deepTicker *time.Ticker
+	if connectInterval != deepInterval {
+		deepTicker = time.NewTicker(deepInterval)
+		defer deepTicker.Stop()
+	}
 
 	for {
 		select {
 		case <-ticker.C:
-			oldServers = healthCheckLoop(cfg, logger, backendServers, oldServers)
+			if connectInterval == deepInterval {
+				runner.runCombined()
+			} else {
+				runner.runConnect()
+			}
+		case <-deepTickerChan(deepTicker):
+			runner.runDeep()
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func deepTickerChan(ticker *time.Ticker) <-chan time.Time {
+	if ticker == nil {
+		return nil
+	}
+
+	return ticker.C
 }

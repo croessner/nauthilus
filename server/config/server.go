@@ -73,6 +73,7 @@ type ServerSection struct {
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
 	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
 	KeepAlive                 KeepAlive                `mapstructure:"keep_alive" validate:"omitempty"`
+	SecurityTxt               SecurityTxt              `mapstructure:"security_txt" validate:"omitempty"`
 	// Middlewares holds feature switches to enable/disable individual HTTP middlewares.
 	// By default, all middlewares are considered enabled if not explicitly disabled in the config file.
 	Middlewares Middlewares `mapstructure:"middlewares" validate:"omitempty"`
@@ -119,6 +120,159 @@ func (s *ServerSection) GetMiddlewares() *Middlewares {
 	}
 
 	return &s.Middlewares
+}
+
+// GetSecurityTxt returns the configured security.txt settings.
+func (s *ServerSection) GetSecurityTxt() *SecurityTxt {
+	if s == nil {
+		return &SecurityTxt{}
+	}
+
+	return &s.SecurityTxt
+}
+
+// SecurityTxt configures the /.well-known/security.txt endpoint as specified by RFC 9116.
+type SecurityTxt struct {
+	Contacts           []string      `mapstructure:"contacts" validate:"omitempty,dive,uri"`
+	Canonical          []string      `mapstructure:"canonical" validate:"omitempty,dive,uri"`
+	Encryption         []string      `mapstructure:"encryption" validate:"omitempty,dive,uri"`
+	Acknowledgments    []string      `mapstructure:"acknowledgments" validate:"omitempty,dive,uri"`
+	Policy             []string      `mapstructure:"policy" validate:"omitempty,dive,uri"`
+	Hiring             []string      `mapstructure:"hiring" validate:"omitempty,dive,uri"`
+	PreferredLanguages []string      `mapstructure:"preferred_languages" validate:"omitempty,dive,bcp47_language_tag"`
+	Expires            string        `mapstructure:"expires" validate:"omitempty"`
+	EncryptionFile     string        `mapstructure:"encryption_file" validate:"omitempty"`
+	EncryptionURI      string        `mapstructure:"encryption_uri" validate:"omitempty,uri"`
+	PolicyFile         string        `mapstructure:"policy_file" validate:"omitempty"`
+	PolicyURI          string        `mapstructure:"policy_uri" validate:"omitempty,uri"`
+	ExpiresAfter       time.Duration `mapstructure:"expires_after" validate:"omitempty"`
+	Enabled            bool          `mapstructure:"enabled"`
+}
+
+// IsEnabled reports whether the security.txt endpoint should be registered.
+func (s *SecurityTxt) IsEnabled() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.Enabled
+}
+
+// GetExpires returns the configured RFC3339 expiration timestamp.
+func (s *SecurityTxt) GetExpires() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.Expires
+}
+
+// GetExpiresAfter returns the dynamic expiration interval.
+func (s *SecurityTxt) GetExpiresAfter() time.Duration {
+	if s == nil {
+		return 0
+	}
+
+	return s.ExpiresAfter
+}
+
+// GetContacts returns configured vulnerability disclosure contact URIs.
+func (s *SecurityTxt) GetContacts() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.Contacts
+}
+
+// GetCanonical returns configured canonical security.txt URIs.
+func (s *SecurityTxt) GetCanonical() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.Canonical
+}
+
+// GetEncryption returns configured encryption key URIs.
+func (s *SecurityTxt) GetEncryption() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.Encryption
+}
+
+// GetEncryptionFile returns the local OpenPGP key file path to serve.
+func (s *SecurityTxt) GetEncryptionFile() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.EncryptionFile
+}
+
+// GetEncryptionURI returns the public URI for the served OpenPGP key.
+func (s *SecurityTxt) GetEncryptionURI() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.EncryptionURI
+}
+
+// GetAcknowledgments returns configured acknowledgment URIs.
+func (s *SecurityTxt) GetAcknowledgments() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.Acknowledgments
+}
+
+// GetPolicy returns configured vulnerability disclosure policy URIs.
+func (s *SecurityTxt) GetPolicy() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.Policy
+}
+
+// GetPolicyFile returns the local vulnerability disclosure policy file path to serve.
+func (s *SecurityTxt) GetPolicyFile() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.PolicyFile
+}
+
+// GetPolicyURI returns the public URI for the served vulnerability disclosure policy.
+func (s *SecurityTxt) GetPolicyURI() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.PolicyURI
+}
+
+// GetHiring returns configured security hiring URIs.
+func (s *SecurityTxt) GetHiring() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.Hiring
+}
+
+// GetPreferredLanguages returns configured preferred language tags.
+func (s *SecurityTxt) GetPreferredLanguages() []string {
+	if s == nil {
+		return nil
+	}
+
+	return s.PreferredLanguages
 }
 
 func boolOrDefaultTrue(v *bool) bool {
@@ -703,6 +857,7 @@ func (s *ServerSection) GetFrontend() *Frontend {
 type Endpoint struct {
 	AuthHeader    bool `mapstructure:"auth_header"`
 	AuthJSON      bool `mapstructure:"auth_json"`
+	AuthCBOR      bool `mapstructure:"auth_cbor"`
 	AuthBasic     bool `mapstructure:"auth_basic"`
 	AuthNginx     bool `mapstructure:"auth_nginx"`
 	AuthJWT       bool `mapstructure:"auth_jwt"`
@@ -728,6 +883,16 @@ func (e *Endpoint) IsAuthJSONDisabled() bool {
 	}
 
 	return e.AuthJSON
+}
+
+// IsAuthCBORDisabled checks if CBOR-based authentication is disabled.
+// Returns false if the Endpoint is nil.
+func (e *Endpoint) IsAuthCBORDisabled() bool {
+	if e == nil {
+		return false
+	}
+
+	return e.AuthCBOR
 }
 
 // IsAuthBasicDisabled checks if Basic authentication is enabled for the endpoint and returns the corresponding boolean value.

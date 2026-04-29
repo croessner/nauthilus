@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/gin-gonic/gin"
 )
 
@@ -63,6 +64,36 @@ func withTestLuaFeatures(t *testing.T, features ...*LuaFeature) {
 	t.Cleanup(func() {
 		LuaFeatures = original
 	})
+}
+
+func TestPreCompiledLuaFeaturesCachesPlansForModes(t *testing.T) {
+	features := &PreCompiledLuaFeatures{
+		LuaScripts: []*LuaFeature{
+			{Name: "context", WhenAuthenticated: true, WhenUnauthenticated: true},
+			{Name: "monitor", DependsOn: []string{"context"}, WhenAuthenticated: true},
+		},
+	}
+
+	if err := features.RebuildPlans(); err != nil {
+		t.Fatalf("RebuildPlans returned error: %v", err)
+	}
+
+	plan, cached, err := features.planForMode(pipeline.ModeAuthenticated)
+	if err != nil {
+		t.Fatalf("planForMode returned error: %v", err)
+	}
+
+	if !cached {
+		t.Fatal("expected cached plan")
+	}
+
+	if len(plan.Levels) != 2 {
+		t.Fatalf("expected 2 dependency levels, got %d", len(plan.Levels))
+	}
+
+	if got := pipeline.PlannedNodeCount(plan); got != 2 {
+		t.Fatalf("expected 2 planned scripts, got %d", got)
+	}
 }
 
 func newFeatureTestContext() *gin.Context {
@@ -133,6 +164,61 @@ end
 
 	if got := request.Get("feature_dependent_value"); got != "seen" {
 		t.Fatalf("expected dependent context value %q, got %v", "seen", got)
+	}
+}
+
+func TestCallFeatureLuaIndependentScriptsMergeSharedContextTable(t *testing.T) {
+	scriptDir := t.TempDir()
+	firstScriptPath := writeFeatureScript(t, scriptDir, "first.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_feature(request)
+    local rt = nauthilus_context.context_get("rt") or {}
+    rt.first_feature = true
+    nauthilus_context.context_set("rt", rt)
+    return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
+end
+`)
+	secondScriptPath := writeFeatureScript(t, scriptDir, "second.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_feature(request)
+    local rt = nauthilus_context.context_get("rt") or {}
+    rt.second_feature = true
+    nauthilus_context.context_set("rt", rt)
+    return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
+end
+`)
+	first := mustNewLuaFeature(t, "first", firstScriptPath)
+	second := mustNewLuaFeature(t, "second", secondScriptPath)
+
+	withTestLuaFeatures(t, first, second)
+
+	request := newFeatureTestRequest()
+	triggered, abortFeatures, err := request.CallFeatureLua(newFeatureTestContext(), newFeatureTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatalf("CallFeatureLua returned error: %v", err)
+	}
+
+	if triggered {
+		t.Fatal("expected triggered=false")
+	}
+
+	if abortFeatures {
+		t.Fatal("expected abortFeatures=false")
+	}
+
+	rt, ok := request.Get("rt").(map[any]any)
+	if !ok {
+		t.Fatalf("expected rt context map, got %T", request.Get("rt"))
+	}
+
+	if got := rt["first_feature"]; got != true {
+		t.Fatalf("expected first_feature=true, got %v", got)
+	}
+
+	if got := rt["second_feature"]; got != true {
+		t.Fatalf("expected second_feature=true, got %v", got)
 	}
 }
 

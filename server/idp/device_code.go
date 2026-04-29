@@ -26,8 +26,10 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -148,12 +150,26 @@ func (g *DefaultUserCodeGenerator) GenerateUserCode(length int) (string, error) 
 // RedisDeviceCodeStore implements DeviceCodeStore using Redis.
 type RedisDeviceCodeStore struct {
 	redis  rediscli.Client
+	cfg    config.File
 	prefix string
 }
 
 // NewRedisDeviceCodeStore creates a new RedisDeviceCodeStore.
 func NewRedisDeviceCodeStore(redis rediscli.Client, prefix string) *RedisDeviceCodeStore {
-	return &RedisDeviceCodeStore{redis: redis, prefix: prefix}
+	return NewRedisDeviceCodeStoreWithConfig(redis, prefix, nil)
+}
+
+// NewRedisDeviceCodeStoreWithConfig creates a RedisDeviceCodeStore with configured Redis operation deadlines.
+func NewRedisDeviceCodeStoreWithConfig(redis rediscli.Client, prefix string, cfg config.File) *RedisDeviceCodeStore {
+	return &RedisDeviceCodeStore{redis: redis, cfg: cfg, prefix: prefix}
+}
+
+func (s *RedisDeviceCodeStore) redisReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return util.GetCtxWithDeadlineRedisRead(ctx, s.cfg)
+}
+
+func (s *RedisDeviceCodeStore) redisWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return util.GetCtxWithDeadlineRedisWrite(ctx, s.cfg)
 }
 
 // StoreDeviceCode stores a device code request in Redis.
@@ -171,17 +187,19 @@ func (s *RedisDeviceCodeStore) StoreDeviceCode(ctx context.Context, deviceCode s
 
 	// Store the device code entry
 	deviceKey := s.deviceCodeKey(deviceCode)
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
 
-	if err := s.redis.GetWriteHandle().Set(ctx, deviceKey, encryptedData, ttl).Err(); err != nil {
+	if err := s.redis.GetWriteHandle().Set(writeCtx, deviceKey, encryptedData, ttl).Err(); err != nil {
 		return fmt.Errorf("failed to store device code: %w", err)
 	}
 
 	// Store the user code -> device code mapping
 	userCodeKey := s.userCodeKey(request.UserCode)
 
-	if err := s.redis.GetWriteHandle().Set(ctx, userCodeKey, deviceCode, ttl).Err(); err != nil {
+	if err := s.redis.GetWriteHandle().Set(writeCtx, userCodeKey, deviceCode, ttl).Err(); err != nil {
 		// Clean up the device code entry on failure
-		_ = s.redis.GetWriteHandle().Del(ctx, deviceKey).Err()
+		_ = s.redis.GetWriteHandle().Del(writeCtx, deviceKey).Err()
 
 		return fmt.Errorf("failed to store user code mapping: %w", err)
 	}
@@ -192,8 +210,10 @@ func (s *RedisDeviceCodeStore) StoreDeviceCode(ctx context.Context, deviceCode s
 // GetDeviceCode retrieves a device code request from Redis.
 func (s *RedisDeviceCodeStore) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCodeRequest, error) {
 	key := s.deviceCodeKey(deviceCode)
+	readCtx, cancel := s.redisReadContext(ctx)
+	defer cancel()
 
-	data, err := s.redis.GetReadHandle().Get(ctx, key).Result()
+	data, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("device code not found or expired")
@@ -228,8 +248,10 @@ func (s *RedisDeviceCodeStore) GetDeviceCodeByUserCode(ctx context.Context, user
 	}
 
 	userCodeKey := s.userCodeKey(userCode)
+	readCtx, cancel := s.redisReadContext(ctx)
 
-	deviceCode, err := s.redis.GetReadHandle().Get(ctx, userCodeKey).Result()
+	deviceCode, err := s.redis.GetReadHandle().Get(readCtx, userCodeKey).Result()
+	cancel()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return "", nil, fmt.Errorf("user code not found or expired")
@@ -249,9 +271,11 @@ func (s *RedisDeviceCodeStore) GetDeviceCodeByUserCode(ctx context.Context, user
 // UpdateDeviceCode updates the stored device code request, preserving the original TTL.
 func (s *RedisDeviceCodeStore) UpdateDeviceCode(ctx context.Context, deviceCode string, request *DeviceCodeRequest) error {
 	key := s.deviceCodeKey(deviceCode)
+	readCtx, readCancel := s.redisReadContext(ctx)
 
 	// Get remaining TTL
-	ttl, err := s.redis.GetReadHandle().TTL(ctx, key).Result()
+	ttl, err := s.redis.GetReadHandle().TTL(readCtx, key).Result()
+	readCancel()
 	if err != nil || ttl <= 0 {
 		return fmt.Errorf("device code not found or expired")
 	}
@@ -266,7 +290,10 @@ func (s *RedisDeviceCodeStore) UpdateDeviceCode(ctx context.Context, deviceCode 
 		return fmt.Errorf("failed to encrypt device code data: %w", err)
 	}
 
-	return s.redis.GetWriteHandle().Set(ctx, key, encryptedData, ttl).Err()
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	return s.redis.GetWriteHandle().Set(writeCtx, key, encryptedData, ttl).Err()
 }
 
 // DeleteDeviceCode removes a device code and its user code mapping from Redis.
@@ -275,12 +302,16 @@ func (s *RedisDeviceCodeStore) DeleteDeviceCode(ctx context.Context, deviceCode 
 	request, err := s.GetDeviceCode(ctx, deviceCode)
 	if err == nil && request != nil {
 		userCodeKey := s.userCodeKey(request.UserCode)
-		_ = s.redis.GetWriteHandle().Del(ctx, userCodeKey).Err()
+		writeCtx, cancel := s.redisWriteContext(ctx)
+		_ = s.redis.GetWriteHandle().Del(writeCtx, userCodeKey).Err()
+		cancel()
 	}
 
 	deviceKey := s.deviceCodeKey(deviceCode)
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
 
-	return s.redis.GetWriteHandle().Del(ctx, deviceKey).Err()
+	return s.redis.GetWriteHandle().Del(writeCtx, deviceKey).Err()
 }
 
 // deviceCodeKey returns the Redis key for a device code.

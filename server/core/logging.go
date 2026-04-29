@@ -148,6 +148,7 @@ func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint s
 	)
 
 	keyvals = appendExternalSessionLogValue(keyvals, a.Request.ExternalSessionID)
+	keyvals = appendHealthCheckLogValue(keyvals, a.IsBackendHealthCheckRequest())
 
 	if len(a.Runtime.AdditionalLogs) > 0 && len(a.Runtime.AdditionalLogs)%2 == 0 {
 		keyvals = append(keyvals, a.Runtime.AdditionalLogs...)
@@ -188,6 +189,7 @@ func (a *AuthState) fillLogLineProcessingTemplate(keyvals []any, endpoint string
 	)
 
 	keyvals = appendExternalSessionLogValue(keyvals, a.Request.ExternalSessionID)
+	keyvals = appendHealthCheckLogValue(keyvals, a.IsBackendHealthCheckRequest())
 
 	return keyvals
 }
@@ -198,4 +200,12 @@ func appendExternalSessionLogValue(keyvals []any, externalSessionID string) []an
 	}
 
 	return append(keyvals, definitions.LogKeyExternalSession, externalSessionID)
+}
+
+func appendHealthCheckLogValue(keyvals []any, healthCheck bool) []any {
+	if !healthCheck {
+		return keyvals
+	}
+
+	return append(keyvals, definitions.LogKeyHealthCheck, true)
 }

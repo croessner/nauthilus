@@ -17,12 +17,20 @@ package custom
 
 import (
 	"log/slog"
+	"sync"
 
 	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
 )
+
+var aliasDispatcher = struct {
+	sync.RWMutex
+	handler gin.HandlerFunc
+}{}
 
 // Handler registers custom Lua hook endpoint(s).
 type Handler struct {
@@ -40,5 +48,36 @@ func New(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Clie
 
 // Register registers the custom hook route on the given router.
 func (h *Handler) Register(r gin.IRouter) {
-	r.Any("/custom/*hook", CustomRequestHandler(h.cfgProvider, h.logger, h.redis, h.validator))
+	handler := CustomRequestHandler(h.cfgProvider, h.logger, h.redis, h.validator)
+
+	r.Any("/custom/*hook", handler)
+
+	aliasDispatcher.Lock()
+	aliasDispatcher.handler = handler
+	aliasDispatcher.Unlock()
+}
+
+// DispatchAlias executes a configured custom hook alias for requests that did
+// not match a concrete route. It returns false when the request is not an alias.
+func DispatchAlias(ctx *gin.Context) bool {
+	if ctx == nil || ctx.Request == nil || ctx.Request.URL == nil {
+		return false
+	}
+
+	canonicalHook, found := hook.ResolveAliasLocation(ctx.Request.URL.Path, ctx.Request.Method)
+	if !found {
+		return false
+	}
+
+	aliasDispatcher.RLock()
+	handler := aliasDispatcher.handler
+	aliasDispatcher.RUnlock()
+	if handler == nil {
+		return false
+	}
+
+	ctx.Set(definitions.CtxCustomHookKey, canonicalHook)
+	handler(ctx)
+
+	return true
 }

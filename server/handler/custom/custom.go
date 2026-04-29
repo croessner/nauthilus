@@ -53,8 +53,8 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, re
 			return
 		}
 
-		// Get the hook name and method from the request
-		hookName := ctx.Param("hook")
+		// Get the canonical hook name and method from the request.
+		hookName := hook.ResolveRequestHook(ctx)
 		hookMethod := ctx.Request.Method
 
 		util.DebugModuleWithCfg(
@@ -79,7 +79,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, re
 			logger,
 			definitions.DbgHTTP,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("User has required roles for hook: %s %s, executing hook", hookMethod, hookName),
+			definitions.LogKeyMsg, fmt.Sprintf("User has required scopes for hook: %s %s, executing hook", hookMethod, hookName),
 		)
 
 		// Execute the hook

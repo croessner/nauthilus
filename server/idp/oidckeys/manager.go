@@ -17,6 +17,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 )
@@ -54,6 +55,14 @@ func NewManager(d *deps.Deps) *Manager {
 	return &Manager{deps: d}
 }
 
+func (m *Manager) redisReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return util.GetCtxWithDeadlineRedisRead(ctx, m.deps.Cfg)
+}
+
+func (m *Manager) redisWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return util.GetCtxWithDeadlineRedisWrite(ctx, m.deps.Cfg)
+}
+
 // GetActiveSigner returns the current active signer for the given algorithm.
 // If algorithm is empty, it defaults to RS256.
 func (m *Manager) GetActiveSigner(ctx context.Context, algorithm string) (signing.Signer, error) {
@@ -81,7 +90,9 @@ func (m *Manager) getActiveRSASigner(ctx context.Context) (signing.Signer, error
 // getActiveEdDSASigner returns the current active EdDSA signer.
 func (m *Manager) getActiveEdDSASigner(ctx context.Context) (signing.Signer, error) {
 	// 1. Try Redis
-	kid, err := m.deps.Redis.GetReadHandle().Get(ctx, m.redisPrefix()+RedisKeyOIDCEdActive).Result()
+	readCtx, cancel := m.redisReadContext(ctx)
+	kid, err := m.deps.Redis.GetReadHandle().Get(readCtx, m.redisPrefix()+RedisKeyOIDCEdActive).Result()
+	cancel()
 	if err == nil && kid != "" {
 		pemData, err := m.getEncryptedEdKeyFromRedis(ctx, kid)
 		if err == nil {
@@ -131,7 +142,9 @@ func (m *Manager) getActiveEdDSASigner(ctx context.Context) (signing.Signer, err
 // GetActiveKey returns the current active RSA private key and its ID.
 func (m *Manager) GetActiveKey(ctx context.Context) (*rsa.PrivateKey, string, error) {
 	// 1. Try to get active key from Redis
-	kid, err := m.deps.Redis.GetReadHandle().Get(ctx, m.redisPrefix()+RedisKeyOIDCActive).Result()
+	readCtx, cancel := m.redisReadContext(ctx)
+	kid, err := m.deps.Redis.GetReadHandle().Get(readCtx, m.redisPrefix()+RedisKeyOIDCActive).Result()
+	cancel()
 	if err == nil && kid != "" {
 		pemData, err := m.getEncryptedKeyFromRedis(ctx, kid)
 		if err == nil {
@@ -232,7 +245,9 @@ func (m *Manager) GetAllEdKeys(ctx context.Context) (map[string]ed25519.PrivateK
 
 // loadRSAKeysFromRedis loads RSA keys from Redis into the provided map.
 func (m *Manager) loadRSAKeysFromRedis(ctx context.Context, keys map[string]*rsa.PrivateKey) (map[string]*rsa.PrivateKey, error) {
-	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(ctx, m.redisPrefix()+RedisKeyOIDCKeys).Result()
+	readCtx, cancel := m.redisReadContext(ctx)
+	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, m.redisPrefix()+RedisKeyOIDCKeys).Result()
+	cancel()
 	if err != nil {
 		return keys, err
 	}
@@ -257,7 +272,9 @@ func (m *Manager) loadRSAKeysFromRedis(ctx context.Context, keys map[string]*rsa
 
 // loadEdKeysFromRedis loads Ed25519 keys from Redis into the provided map.
 func (m *Manager) loadEdKeysFromRedis(ctx context.Context, keys map[string]ed25519.PrivateKey) (map[string]ed25519.PrivateKey, error) {
-	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(ctx, m.redisPrefix()+RedisKeyOIDCEdKeys).Result()
+	readCtx, cancel := m.redisReadContext(ctx)
+	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, m.redisPrefix()+RedisKeyOIDCEdKeys).Result()
+	cancel()
 	if err != nil {
 		return keys, err
 	}
@@ -345,15 +362,17 @@ func (m *Manager) storeKeyInRedis(ctx context.Context, kid, pemData, algorithm, 
 	}
 
 	prefix := m.redisPrefix()
+	writeCtx, cancel := m.redisWriteContext(ctx)
+	defer cancel()
 
 	// Store in Redis
-	err = m.deps.Redis.GetWriteHandle().HSet(ctx, prefix+hashKey, kid, encryptedData).Err()
+	err = m.deps.Redis.GetWriteHandle().HSet(writeCtx, prefix+hashKey, kid, encryptedData).Err()
 	if err != nil {
 		return "", fmt.Errorf("failed to store key in Redis: %w", err)
 	}
 
 	// Set as active
-	err = m.deps.Redis.GetWriteHandle().Set(ctx, prefix+activeKey, kid, 0).Err()
+	err = m.deps.Redis.GetWriteHandle().Set(writeCtx, prefix+activeKey, kid, 0).Err()
 	if err != nil {
 		return "", fmt.Errorf("failed to set active key in Redis: %w", err)
 	}
@@ -370,7 +389,9 @@ func (m *Manager) getEncryptedEdKeyFromRedis(ctx context.Context, kid string) (s
 }
 
 func (m *Manager) getEncryptedKeyFromRedisHash(ctx context.Context, kid, hashKey string) (string, error) {
-	encryptedData, err := m.deps.Redis.GetReadHandle().HGet(ctx, m.redisPrefix()+hashKey, kid).Result()
+	readCtx, cancel := m.redisReadContext(ctx)
+	encryptedData, err := m.deps.Redis.GetReadHandle().HGet(readCtx, m.redisPrefix()+hashKey, kid).Result()
+	cancel()
 	if err != nil {
 		return "", err
 	}
@@ -487,8 +508,10 @@ func (m *Manager) RotateKeys(ctx context.Context) {
 // rotateKeyType checks and rotates a specific key type.
 func (m *Manager) rotateKeyType(ctx context.Context, activeRedisKey, hashRedisKey, label string, generateFn func(context.Context) (string, error)) {
 	prefix := m.redisPrefix()
+	readCtx, cancel := m.redisReadContext(ctx)
 
-	activeKID, err := m.deps.Redis.GetReadHandle().Get(ctx, prefix+activeRedisKey).Result()
+	activeKID, err := m.deps.Redis.GetReadHandle().Get(readCtx, prefix+activeRedisKey).Result()
+	cancel()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		level.Error(m.deps.Logger).Log("msg", "failed to get active kid from Redis", "algorithm", label, "error", err)
 
@@ -497,8 +520,10 @@ func (m *Manager) rotateKeyType(ctx context.Context, activeRedisKey, hashRedisKe
 
 	if activeKID != "" {
 		sm := m.deps.Redis.GetSecurityManager()
+		readCtx, cancel := m.redisReadContext(ctx)
 
-		encryptedData, _ := m.deps.Redis.GetReadHandle().HGet(ctx, prefix+hashRedisKey, activeKID).Result()
+		encryptedData, _ := m.deps.Redis.GetReadHandle().HGet(readCtx, prefix+hashRedisKey, activeKID).Result()
+		cancel()
 
 		meta, err := m.decryptMetadata(sm, encryptedData)
 		if err == nil {
@@ -526,13 +551,17 @@ func (m *Manager) CleanupOldKeys(ctx context.Context) {
 // cleanupKeysInHash removes expired keys from a specific Redis hash.
 func (m *Manager) cleanupKeysInHash(ctx context.Context, hashKey, activeKey string) {
 	prefix := m.redisPrefix()
+	readCtx, cancel := m.redisReadContext(ctx)
 
-	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(ctx, prefix+hashKey).Result()
+	redisKeys, err := m.deps.Redis.GetReadHandle().HGetAll(readCtx, prefix+hashKey).Result()
+	cancel()
 	if err != nil {
 		return
 	}
 
-	activeKID, _ := m.deps.Redis.GetReadHandle().Get(ctx, prefix+activeKey).Result()
+	readCtx, cancel = m.redisReadContext(ctx)
+	activeKID, _ := m.deps.Redis.GetReadHandle().Get(readCtx, prefix+activeKey).Result()
+	cancel()
 	sm := m.deps.Redis.GetSecurityManager()
 	now := time.Now()
 
@@ -547,7 +576,9 @@ func (m *Manager) cleanupKeysInHash(ctx context.Context, hashKey, activeKey stri
 		}
 
 		if isExpired(meta, now) {
-			m.deps.Redis.GetWriteHandle().HDel(ctx, prefix+hashKey, kid)
+			writeCtx, cancel := m.redisWriteContext(ctx)
+			m.deps.Redis.GetWriteHandle().HDel(writeCtx, prefix+hashKey, kid)
+			cancel()
 			level.Info(m.deps.Logger).Log("msg", "cleaned up expired OIDC signing key", "kid", kid)
 		}
 	}
