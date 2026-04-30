@@ -41,6 +41,30 @@ func secureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
 }
 
+// ValidateBasicCredentials compares submitted Basic credentials with the
+// configured backchannel Basic Auth credentials.
+func ValidateBasicCredentials(cfg config.File, username, password string) bool {
+	if cfg == nil || cfg.GetServer() == nil {
+		return false
+	}
+
+	basicAuth := cfg.GetServer().GetBasicAuth()
+	if !basicAuth.IsEnabled() {
+		return false
+	}
+
+	if basicAuth.GetUsername() == "" || basicAuth.GetPassword().IsZero() {
+		return false
+	}
+
+	expectedPassword := ""
+	basicAuth.GetPassword().WithString(func(value string) {
+		expectedPassword = value
+	})
+
+	return secureCompare(username, basicAuth.GetUsername()) && secureCompare(password, expectedPassword)
+}
+
 // --- Minimal brute-force protection helpers (per-IP) ---
 // These helpers implement a tiny in-memory backoff and blocking for repeated auth failures.
 // They are intentionally simple and local to this process.
@@ -160,16 +184,8 @@ func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
 		return false
 	}
 
-	if cfg != nil && !cfg.HasFeature(definitions.FeatureBruteForce) {
-		return false
-	}
-
 	ip := ctx.ClientIP()
-	if ip == "" {
-		return false
-	}
-
-	exceeded, remaining := authRateLimitExceededForIP(ip)
+	exceeded, remaining := MaybeThrottleAuthByIPValue(ip, cfg)
 	if exceeded {
 		ctx.Set(definitions.CtxRateLimitReasonKey, "brute-force")
 
@@ -185,6 +201,28 @@ func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
 	return false
 }
 
+// MaybeThrottleAuthByIPValue checks whether authentication attempts from ip are temporarily blocked.
+func MaybeThrottleAuthByIPValue(ip string, cfg config.File) (bool, time.Duration) {
+	if cfg != nil && !cfg.HasFeature(definitions.FeatureBruteForce) {
+		return false, 0
+	}
+
+	if ip == "" {
+		return false, 0
+	}
+
+	return authRateLimitExceededForIP(ip)
+}
+
+// ApplyAuthBackoffOnFailureForIP records a failed authentication attempt for ip and applies the shared delay.
+func ApplyAuthBackoffOnFailureForIP(ip string) {
+	if ip != "" {
+		noteAuthFailureForIP(ip)
+	}
+
+	time.Sleep(bfSleepOnFail)
+}
+
 // ApplyAuthBackoffOnFailure notes a failure for this IP and sleeps a short duration.
 func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
 	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
@@ -194,11 +232,7 @@ func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
 	}
 
 	ip := ctx.ClientIP()
-	if ip != "" {
-		noteAuthFailureForIP(ip)
-	}
-
-	time.Sleep(bfSleepOnFail)
+	ApplyAuthBackoffOnFailureForIP(ip)
 }
 
 // CheckAndRequireBasicAuth enforces basic authentication if it's enabled in the server configuration.
@@ -223,12 +257,7 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	}
 
 	username, password, ok := ctx.Request.BasicAuth()
-	expectedPassword := ""
-	cfg.GetServer().GetBasicAuth().GetPassword().WithString(func(value string) {
-		expectedPassword = value
-	})
-
-	if ok && secureCompare(username, cfg.GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, expectedPassword) {
+	if ok && ValidateBasicCredentials(cfg, username, password) {
 		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
 		ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
 
@@ -244,58 +273,65 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	return false
 }
 
-func BasicAuthMiddlewareWithDeps(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		guid := ctx.GetString(definitions.CtxGUIDKey)
+// AuthorizeBasicAuthWithDeps validates Basic Auth for the current request and
+// keeps the route-specific behavior used by the backchannel middleware.
+func AuthorizeBasicAuthWithDeps(ctx *gin.Context, cfg config.File, logger *slog.Logger) bool {
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-		cat := ctx.GetString(definitions.CtxCategoryKey)
-		svc := ctx.GetString(definitions.CtxServiceKey)
+	cat := ctx.GetString(definitions.CtxCategoryKey)
+	svc := ctx.GetString(definitions.CtxServiceKey)
 
-		if cat == "" || svc == "" {
-			full := ctx.FullPath()
-			if full != "" {
-				parts := strings.Split(strings.Trim(full, "/"), "/")
-				if len(parts) >= 4 && parts[0] == "api" && parts[1] == "v1" {
-					if cat == "" {
-						cat = parts[2]
-						ctx.Set(definitions.CtxCategoryKey, cat)
-					}
+	if cat == "" || svc == "" {
+		full := ctx.FullPath()
+		if full != "" {
+			parts := strings.Split(strings.Trim(full, "/"), "/")
+			if len(parts) >= 4 && parts[0] == "api" && parts[1] == "v1" {
+				if cat == "" {
+					cat = parts[2]
+					ctx.Set(definitions.CtxCategoryKey, cat)
+				}
 
-					if svc == "" {
-						svc = parts[3]
-						ctx.Set(definitions.CtxServiceKey, svc)
-					}
+				if svc == "" {
+					svc = parts[3]
+					ctx.Set(definitions.CtxServiceKey, svc)
 				}
 			}
 		}
+	}
 
-		if cat == "" || svc == "" {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "missing routing context keys",
-				definitions.LogKeyError, "missing routing context keys",
-				"category", cat,
-				"service", svc,
-			)
-			ctx.AbortWithStatus(http.StatusInternalServerError)
+	if cat == "" || svc == "" {
+		_ = level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "missing routing context keys",
+			definitions.LogKeyError, "missing routing context keys",
+			"category", cat,
+			"service", svc,
+		)
+		ctx.AbortWithStatus(http.StatusInternalServerError)
 
-			return
-		}
+		return false
+	}
 
-		// Note: Chicken-egg problem.
-		if cat == definitions.CatAuth && svc == definitions.ServBasic {
-			level.Warn(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Disabling HTTP basic Auth",
-				"category", cat,
-				"service", svc,
-			)
+	// Note: Chicken-egg problem.
+	if cat == definitions.CatAuth && svc == definitions.ServBasic {
+		_ = level.Warn(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Disabling HTTP basic Auth",
+			"category", cat,
+			"service", svc,
+		)
 
-			return
-		}
+		return true
+	}
 
-		// Use shared helper to validate or challenge for Basic Auth
-		if !CheckAndRequireBasicAuthWithCfg(ctx, cfg) {
+	return CheckAndRequireBasicAuthWithCfg(ctx, cfg)
+}
+
+// BasicAuthMiddlewareWithDeps returns a Gin middleware that enforces the
+// configured Basic Auth credentials for protected backchannel routes.
+func BasicAuthMiddlewareWithDeps(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !AuthorizeBasicAuthWithDeps(ctx, cfg, logger) {
 			return
 		}
 

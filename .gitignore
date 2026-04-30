@@ -108,6 +108,8 @@ bin/*
 /ui/node_modules/
 /node_modules/
 temp/*
+.cache/
+.venv-grpc-smoke/
 sbom/
 client/logins.local.csv
 client/result.ldif

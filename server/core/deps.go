@@ -33,6 +33,7 @@ type AuthDeps struct {
 	Env           config.Environment
 	Redis         rediscli.Client
 	Tolerate      tolerate.Tolerate
+	Resp          ResponseWriter
 	AccountCache  *accountcache.Manager
 	Channel       backend.Channel
 	Backend       BackendManager

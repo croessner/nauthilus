@@ -844,6 +844,9 @@ const (
 	// ServCBOR is a constant for the "cbor" service.
 	ServCBOR = "cbor"
 
+	// ServGRPC is a constant for the "grpc" service.
+	ServGRPC = "grpc"
+
 	// ServFlush is a constant for the "flush" service.
 	ServFlush = "flush"
 

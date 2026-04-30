@@ -176,7 +176,7 @@ When OIDC bearer authentication is enabled in Nauthilus, you can restrict access
 
 ### Enabling/Disabling All Custom Hooks
 
-You can disable all custom hooks by setting `custom_hooks: true` in `runtime.http.disabled_endpoints`:
+You can disable all custom hooks by setting `custom_hooks: true` in `runtime.servers.http.disabled_endpoints`:
 
 ```yaml
 runtime:

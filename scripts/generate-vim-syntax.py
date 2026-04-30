@@ -73,7 +73,6 @@ def load_schema_keys(schema_file: Path | None) -> tuple[list[str], list[str], li
 
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
         env.setdefault("GOCACHE", str(gocache_dir))
 
         try:

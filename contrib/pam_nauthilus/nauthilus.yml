@@ -1,8 +1,9 @@
 runtime:
   instance_name: "nauthilus-demo"
 
-  listen:
-    address: "0.0.0.0:8080"
+  servers:
+    http:
+      address: "0.0.0.0:8080"
 
 identity:
   frontend:

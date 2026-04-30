@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -69,9 +70,7 @@ func withIsolatedHookRoles(t *testing.T) {
 		orig[k] = clone
 	}
 	origAliases := make(map[string]string, len(hookAliasLocations))
-	for k, v := range hookAliasLocations {
-		origAliases[k] = v
-	}
+	maps.Copy(origAliases, hookAliasLocations)
 	origLocation := customLocation
 	hookScopes = make(map[string][]string)
 	hookAliasLocations = make(map[string]string)

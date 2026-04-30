@@ -140,8 +140,9 @@ func writeHookOnlyConfig(t *testing.T, redisAddress string, listenAddress string
 	configPath := filepath.Join(t.TempDir(), "nauthilus.yml")
 	configBody := fmt.Sprintf(`runtime:
   instance_name: "hook-only-startup"
-  listen:
-    address: "%s"
+  servers:
+    http:
+      address: "%s"
 
 storage:
   redis:

@@ -122,7 +122,7 @@ func TLSMinVersionValue(version string) uint16 {
 	switch version {
 	case "TLS1.3":
 		return tls.VersionTLS13
-	case "TLS1.2":
+	case defaultTLSMinVersion:
 		return tls.VersionTLS12
 	default:
 		return tls.VersionTLS12

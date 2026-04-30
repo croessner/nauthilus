@@ -2383,6 +2383,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateBruteForce,
 		f.validatePassDBBackends,
 		f.validateAddress,
+		f.validateGRPCAuthServer,
 
 		// Without errors, but fixing things
 		f.setDefaultInstanceName,
@@ -2421,6 +2422,96 @@ func (f *FileSettings) validate() (err error) {
 	return nil
 }
 
+func (f *FileSettings) validateGRPCAuthServer() error {
+	return ValidateGRPCAuthServerConfig(f)
+}
+
+// RuntimeGRPCAuthServerProvider exposes the gRPC AuthService listener settings.
+type RuntimeGRPCAuthServerProvider interface {
+	GetRuntimeGRPCAuthServer() *RuntimeGRPCAuthServerSection
+	GetServer() *ServerSection
+}
+
+// ValidateGRPCAuthServerConfig validates the gRPC AuthService listener and its
+// shared backchannel caller authentication requirements.
+func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error {
+	if provider == nil {
+		return nil
+	}
+
+	grpcAuth := provider.GetRuntimeGRPCAuthServer()
+	if !grpcAuth.IsEnabled() {
+		return nil
+	}
+
+	if grpcAuth.Address == "" {
+		grpcAuth.Address = defaultGRPCAuthAddress
+	}
+
+	if err := checkAddress(grpcAuth.GetAddress()); err != nil {
+		return fmt.Errorf("runtime.servers.grpc.auth.address: %w", err)
+	}
+
+	server := provider.GetServer()
+	if server == nil || (!server.GetBasicAuth().IsEnabled() && !server.GetOIDCAuth().IsEnabled()) {
+		return fmt.Errorf("runtime.servers.grpc.auth.enabled requires auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
+	}
+
+	if server.GetBasicAuth().IsEnabled() {
+		var problems []string
+		if strings.TrimSpace(server.GetBasicAuth().GetUsername()) == "" {
+			problems = append(problems, "auth.backchannel.basic_auth.username")
+		}
+
+		if server.GetBasicAuth().GetPassword().IsZero() {
+			problems = append(problems, "auth.backchannel.basic_auth.password")
+		}
+
+		if len(problems) > 0 {
+			return fmt.Errorf("%s are required when runtime.servers.grpc.auth.enabled=true and auth.backchannel.basic_auth.enabled=true", strings.Join(problems, " and "))
+		}
+	}
+
+	tlsConfig := grpcAuth.GetTLS()
+	if !tlsConfig.IsEnabled() && !isLoopbackListenAddress(grpcAuth.GetAddress()) {
+		return fmt.Errorf("runtime.servers.grpc.auth.address %q requires TLS; plaintext gRPC is only allowed on loopback addresses", grpcAuth.GetAddress())
+	}
+
+	if tlsConfig.RequiresClientCert() && !tlsConfig.IsEnabled() {
+		return fmt.Errorf("runtime.servers.grpc.auth.tls.require_client_cert requires runtime.servers.grpc.auth.tls.enabled=true")
+	}
+
+	if tlsConfig.IsEnabled() {
+		if tlsConfig.GetCert() == "" || tlsConfig.GetKey() == "" {
+			return fmt.Errorf("runtime.servers.grpc.auth.tls.cert and runtime.servers.grpc.auth.tls.key are required when gRPC TLS is enabled")
+		}
+
+		if tlsConfig.RequiresClientCert() && tlsConfig.GetClientCA() == "" {
+			return fmt.Errorf("runtime.servers.grpc.auth.tls.client_ca is required when require_client_cert is true")
+		}
+	}
+
+	return nil
+}
+
+func isLoopbackListenAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+
+	return ip.IsLoopback()
+}
+
 func (f *FileSettings) validateSecurityTxt() error {
 	if f == nil || f.Server == nil || !f.Server.SecurityTxt.IsEnabled() {
 		return nil
@@ -2428,20 +2519,20 @@ func (f *FileSettings) validateSecurityTxt() error {
 
 	securityTxt := f.Server.SecurityTxt
 	if len(securityTxt.GetContacts()) == 0 {
-		return fmt.Errorf("runtime.http.security_txt.contacts must contain at least one URI when security_txt is enabled")
+		return fmt.Errorf("runtime.servers.http.security_txt.contacts must contain at least one URI when security_txt is enabled")
 	}
 
 	expires := strings.TrimSpace(securityTxt.GetExpires())
 	expiresAfter := securityTxt.GetExpiresAfter()
 	switch {
 	case expiresAfter < 0:
-		return fmt.Errorf("runtime.http.security_txt.expires_after must be greater than zero")
+		return fmt.Errorf("runtime.servers.http.security_txt.expires_after must be greater than zero")
 	case expires != "" && expiresAfter != 0:
-		return fmt.Errorf("runtime.http.security_txt.expires and runtime.http.security_txt.expires_after are mutually exclusive")
+		return fmt.Errorf("runtime.servers.http.security_txt.expires and runtime.servers.http.security_txt.expires_after are mutually exclusive")
 	case expires == "" && expiresAfter <= 0:
-		return fmt.Errorf("runtime.http.security_txt.expires or runtime.http.security_txt.expires_after must be set when security_txt is enabled")
+		return fmt.Errorf("runtime.servers.http.security_txt.expires or runtime.servers.http.security_txt.expires_after must be set when security_txt is enabled")
 	case expiresAfter > 365*24*time.Hour:
-		return fmt.Errorf("runtime.http.security_txt.expires_after must be less than or equal to 8760h")
+		return fmt.Errorf("runtime.servers.http.security_txt.expires_after must be less than or equal to 8760h")
 	}
 
 	if expires != "" {
@@ -2453,7 +2544,7 @@ func (f *FileSettings) validateSecurityTxt() error {
 
 func validateSecurityTxtStaticExpires(expires string, securityTxt SecurityTxt) error {
 	if _, err := time.Parse(time.RFC3339, expires); err != nil {
-		return fmt.Errorf("runtime.http.security_txt.expires must be an RFC3339 timestamp: %w", err)
+		return fmt.Errorf("runtime.servers.http.security_txt.expires must be an RFC3339 timestamp: %w", err)
 	}
 
 	return validateSecurityTxtFields(securityTxt)
@@ -2507,7 +2598,7 @@ func validateSecurityTxtServedFile(field string, filePath string, publicURI stri
 	}
 
 	if filePath == "" || publicURI == "" {
-		return fmt.Errorf("runtime.http.security_txt.%s_file and runtime.http.security_txt.%s_uri must be configured together", field, field)
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_file and runtime.servers.http.security_txt.%s_uri must be configured together", field, field)
 	}
 
 	if err := validateSecurityTxtURIs(field+"_uri", []string{publicURI}); err != nil {
@@ -2515,9 +2606,9 @@ func validateSecurityTxtServedFile(field string, filePath string, publicURI stri
 	}
 
 	if info, err := os.Stat(filePath); err != nil {
-		return fmt.Errorf("runtime.http.security_txt.%s_file cannot be read: %w", field, err)
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_file cannot be read: %w", field, err)
 	} else if info.IsDir() {
-		return fmt.Errorf("runtime.http.security_txt.%s_file must be a file", field)
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_file must be a file", field)
 	}
 
 	return nil
@@ -2545,15 +2636,15 @@ func addSecurityTxtServedRoute(routes map[string]string, field string, publicURI
 
 	parsed, err := url.Parse(publicURI)
 	if err != nil || parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") {
-		return fmt.Errorf("runtime.http.security_txt.%s_uri must contain an absolute path", field)
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_uri must contain an absolute path", field)
 	}
 
 	if parsed.Path == "/.well-known/security.txt" {
-		return fmt.Errorf("runtime.http.security_txt.%s_uri must not reuse /.well-known/security.txt", field)
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_uri must not reuse /.well-known/security.txt", field)
 	}
 
 	if previous, found := routes[parsed.Path]; found {
-		return fmt.Errorf("runtime.http.security_txt.%s_uri route %q duplicates %s_uri", field, parsed.Path, previous)
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_uri route %q duplicates %s_uri", field, parsed.Path, previous)
 	}
 
 	routes[parsed.Path] = field
@@ -2565,16 +2656,16 @@ func validateSecurityTxtURIs(field string, values []string) error {
 	for index, value := range values {
 		trimmed := strings.TrimSpace(value)
 		if trimmed == "" {
-			return fmt.Errorf("runtime.http.security_txt.%s[%d] must not be empty", field, index)
+			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] must not be empty", field, index)
 		}
 
 		parsed, err := url.ParseRequestURI(trimmed)
 		if err != nil || parsed.Scheme == "" {
-			return fmt.Errorf("runtime.http.security_txt.%s[%d] must be a URI", field, index)
+			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] must be a URI", field, index)
 		}
 
 		if (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Scheme != "https" {
-			return fmt.Errorf("runtime.http.security_txt.%s[%d] web URI must use https", field, index)
+			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] web URI must use https", field, index)
 		}
 	}
 
@@ -2702,7 +2793,7 @@ func (f *FileSettings) warnDeprecatedConfig() {
 	srv := f.GetServer()
 	if srv != nil {
 		// Compression
-		warnDeprecatedCompression("runtime.http.compression", &srv.Compression)
+		warnDeprecatedCompression("runtime.servers.http.compression", &srv.Compression)
 		// Redis Cluster
 		warnDeprecatedRedisCluster("storage.redis.cluster", &srv.Redis.Cluster)
 		// Redis standalone replica
@@ -2893,7 +2984,7 @@ func warnDeprecatedRedisReplica(where string, r *Replica) {
 }
 
 // warnDeprecatedDedup warns if deprecated dedup configuration is present.
-// Specifically, 'runtime.http.dedup.distributed_enabled' has been removed and is ignored.
+// Specifically, 'runtime.servers.http.dedup.distributed_enabled' has been removed and is ignored.
 func warnDeprecatedDedup(d *Dedup) {
 	if d == nil {
 		return
@@ -2901,18 +2992,18 @@ func warnDeprecatedDedup(d *Dedup) {
 	if d.DistributedEnabled {
 		safeWarn(
 			"component", "config",
-			"location", "runtime.http.dedup",
+			"location", "runtime.servers.http.dedup",
 			"deprecated", "dedup.distributed_enabled",
-			"msg", "'runtime.http.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed",
+			"msg", "'runtime.servers.http.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed",
 		)
 	}
 
 	if d.InProcessEnabled {
 		safeWarn(
 			"component", "config",
-			"location", "runtime.http.dedup",
+			"location", "runtime.servers.http.dedup",
 			"deprecated", "dedup.in_process_enabled",
-			"msg", "'runtime.http.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
+			"msg", "'runtime.servers.http.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
 		)
 	}
 
@@ -2941,9 +3032,9 @@ func warnDeprecatedTimeout(t *Timeouts) {
 	if t.SingleflightWork != time.Duration(0) {
 		safeWarn(
 			"component", "config",
-			"location", "runtime.http.timeouts",
+			"location", "runtime.timeouts",
 			"deprecated", "timeouts.singleflight_work",
-			"msg", "'runtime.http.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
+			"msg", "'runtime.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
 		)
 	}
 }

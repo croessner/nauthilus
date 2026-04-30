@@ -120,7 +120,7 @@ func (r *reloadOrchestrator) stopWorkersForConfig(ctx context.Context, cfg confi
 			r.stopLDAP(ctx, cfg)
 		case definitions.BackendLua:
 			r.stopLua(ctx)
-		case definitions.BackendCache:
+		case definitions.BackendCache, definitions.BackendTest:
 		default:
 			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unknown backend")
 		}
@@ -210,7 +210,7 @@ func (r *reloadOrchestrator) startWorkersForConfig(ctx context.Context, cfg conf
 			setupLuaWorker(r.store, ctx, cfg, getLogger(r.store), r.store.redisClient, r.store.channel)
 
 			luaStarted = true
-		case definitions.BackendCache:
+		case definitions.BackendCache, definitions.BackendTest:
 		default:
 			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unknown backend", "backend")
 		}
@@ -282,7 +282,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 		// Best-effort: ensure the process keeps serving HTTP even if the restart
 		// operation fails or times out.
-		if err := startHTTPServer(r.ctx, r.store); err != nil {
+		if err := startHTTPServerWithOptions(r.ctx, r.store, httpServerStartOptions{continueHTTPOnGRPCAuthError: true}); err != nil {
 			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to start HTTP server after restart", definitions.LogKeyError, err)
 		}
 	}()
@@ -309,6 +309,17 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 			case <-r.store.signals.HTTP3Done():
 			case <-opCtx.Done():
 				step = "wait_http3_done"
+				restartErr = opCtx.Err()
+
+				return restartErr
+			}
+		}
+
+		if r.store.grpcAuthDone != nil {
+			select {
+			case <-r.store.grpcAuthDone:
+			case <-opCtx.Done():
+				step = "wait_grpc_auth_done"
 				restartErr = opCtx.Err()
 
 				return restartErr
@@ -511,6 +522,13 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 				return
 			}
 		}
+		if store.grpcAuthDone != nil {
+			select {
+			case <-store.grpcAuthDone:
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
 
 	cfg := getConfigFile(store)
@@ -566,7 +584,7 @@ func waitForBackendShutdown(ctx context.Context, cfg config.File, channel backen
 				return false
 			}
 		}
-	case definitions.BackendCache:
+	case definitions.BackendCache, definitions.BackendTest:
 	default:
 		level.Warn(getLogger(nil)).Log(definitions.LogKeyMsg, "Unknown backend")
 	}

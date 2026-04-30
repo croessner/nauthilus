@@ -3,6 +3,8 @@ server:
   http3: true
   keep_alive:
     enabled: true
+  timeouts:
+    lua_script: "30s"
   run_as_user: "nauthilus"
   log:
     level: "info"

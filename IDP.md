@@ -387,9 +387,9 @@ If you need full control, set `form-action` directly.
 
 The placeholder `{{nonce}}` is replaced per request. Inline script tags in templates are emitted with this nonce.
 
-### Central CORS (`runtime.http.cors`)
+### Central CORS (`runtime.servers.http.cors`)
 
-Cross-origin behavior is configured centrally under `runtime.http.cors` and applies independently from frontend security
+Cross-origin behavior is configured centrally under `runtime.servers.http.cors` and applies independently from frontend security
 headers.
 
 ```yaml

@@ -43,7 +43,7 @@ func TestValidateSecurityTxt_RejectsIncompleteConfig(t *testing.T) {
 				Enabled:  true,
 				Contacts: []string{"mailto:security@example.test"},
 			},
-			wantErr: "expires or runtime.http.security_txt.expires_after must be set",
+			wantErr: "expires or runtime.servers.http.security_txt.expires_after must be set",
 		},
 		{
 			name: "invalid expires",
@@ -150,7 +150,7 @@ func TestValidateSecurityTxt_RejectsIncompleteServedFile(t *testing.T) {
 	}
 
 	err := settings.validateSecurityTxt()
-	if err == nil || !strings.Contains(err.Error(), "policy_file and runtime.http.security_txt.policy_uri") {
+	if err == nil || !strings.Contains(err.Error(), "policy_file and runtime.servers.http.security_txt.policy_uri") {
 		t.Fatalf("validateSecurityTxt() error = %v, want paired file and URI error", err)
 	}
 }
@@ -174,11 +174,13 @@ func TestValidateSecurityTxt_AcceptsRFC9116Minimum(t *testing.T) {
 func TestApplyRuntimeSection_MaterializesSecurityTxt(t *testing.T) {
 	settings := &FileSettings{
 		Runtime: &RuntimeSection{
-			HTTP: RuntimeHTTPSection{
-				SecurityTxt: SecurityTxt{
-					Enabled:  true,
-					Contacts: []string{"mailto:security@example.test"},
-					Expires:  "2026-12-31T23:59:00Z",
+			Servers: RuntimeServersSection{
+				HTTP: RuntimeHTTPServerSection{
+					SecurityTxt: SecurityTxt{
+						Enabled:  true,
+						Contacts: []string{"mailto:security@example.test"},
+						Expires:  "2026-12-31T23:59:00Z",
+					},
 				},
 			},
 		},

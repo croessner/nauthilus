@@ -35,7 +35,7 @@ func TestRunConfigDumpDefaults(t *testing.T) {
 		t.Fatalf("expected no stderr output, got %q", stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), `runtime.http.middlewares.logging = true`) {
+	if !strings.Contains(stdout.String(), `runtime.servers.http.middlewares.logging = true`) {
 		t.Fatalf("unexpected stdout output: %q", stdout.String())
 	}
 }

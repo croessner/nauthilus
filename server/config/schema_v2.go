@@ -6,12 +6,14 @@ import (
 	"github.com/croessner/nauthilus/server/secret"
 )
 
-// RuntimeSection groups process, listener, and HTTP runtime behavior.
+const defaultGRPCAuthAddress = "127.0.0.1:9444"
+
+// RuntimeSection groups process, server, and client runtime behavior.
 type RuntimeSection struct {
 	InstanceName string                `mapstructure:"instance_name"`
 	Process      RuntimeProcessSection `mapstructure:"process"`
-	Listen       RuntimeListenSection  `mapstructure:"listen"`
-	HTTP         RuntimeHTTPSection    `mapstructure:"http"`
+	Servers      RuntimeServersSection `mapstructure:"servers" validate:"omitempty"`
+	Timeouts     Timeouts              `mapstructure:"timeouts" validate:"omitempty"`
 	Clients      RuntimeClientsSection `mapstructure:"clients"`
 }
 
@@ -22,25 +24,128 @@ type RuntimeProcessSection struct {
 	Chroot     string `mapstructure:"chroot" validate:"omitempty,dir"`
 }
 
-// RuntimeListenSection configures inbound listener settings.
-type RuntimeListenSection struct {
-	Address        string   `mapstructure:"address" validate:"omitempty,tcp_addr"`
-	HTTP3          bool     `mapstructure:"http3"`
-	HAproxyV2      bool     `mapstructure:"haproxy_v2"`
-	TrustedProxies []string `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
-	TLS            TLS      `mapstructure:"tls" validate:"omitempty"`
+// RuntimeServersSection groups inbound runtime servers.
+type RuntimeServersSection struct {
+	HTTP RuntimeHTTPServerSection  `mapstructure:"http" validate:"omitempty"`
+	GRPC RuntimeGRPCServersSection `mapstructure:"grpc" validate:"omitempty"`
 }
 
-// RuntimeHTTPSection configures HTTP middleware, timeouts, and endpoint behavior.
-type RuntimeHTTPSection struct {
+// RuntimeHTTPServerSection configures the inbound HTTP server.
+type RuntimeHTTPServerSection struct {
+	Address           string        `mapstructure:"address" validate:"omitempty,tcp_addr"`
+	HTTP3             bool          `mapstructure:"http3"`
+	HAproxyV2         bool          `mapstructure:"haproxy_v2"`
+	TrustedProxies    []string      `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
+	TLS               TLS           `mapstructure:"tls" validate:"omitempty"`
 	DisabledEndpoints Endpoint      `mapstructure:"disabled_endpoints" validate:"omitempty"`
 	Middlewares       Middlewares   `mapstructure:"middlewares" validate:"omitempty"`
 	Compression       Compression   `mapstructure:"compression" validate:"omitempty"`
 	KeepAlive         KeepAlive     `mapstructure:"keep_alive" validate:"omitempty"`
 	RateLimit         HTTPRateLimit `mapstructure:"rate_limit" validate:"omitempty"`
-	Timeouts          Timeouts      `mapstructure:"timeouts" validate:"omitempty"`
 	CORS              CORS          `mapstructure:"cors" validate:"omitempty"`
 	SecurityTxt       SecurityTxt   `mapstructure:"security_txt" validate:"omitempty"`
+}
+
+// RuntimeGRPCServersSection groups inbound gRPC servers.
+type RuntimeGRPCServersSection struct {
+	Auth RuntimeGRPCAuthServerSection `mapstructure:"auth" validate:"omitempty"`
+}
+
+// RuntimeGRPCAuthServerSection configures the future gRPC AuthService listener.
+type RuntimeGRPCAuthServerSection struct {
+	Address string                `mapstructure:"address" validate:"omitempty,tcp_addr"`
+	TLS     RuntimeGRPCTLSSection `mapstructure:"tls" validate:"omitempty"`
+	Enabled bool                  `mapstructure:"enabled"`
+}
+
+// IsEnabled reports whether the gRPC AuthService listener is enabled.
+func (s *RuntimeGRPCAuthServerSection) IsEnabled() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.Enabled
+}
+
+// GetAddress returns the configured gRPC AuthService address or the loopback default.
+func (s *RuntimeGRPCAuthServerSection) GetAddress() string {
+	if s == nil || s.Address == "" {
+		return defaultGRPCAuthAddress
+	}
+
+	return s.Address
+}
+
+// GetTLS returns the gRPC AuthService TLS configuration.
+func (s *RuntimeGRPCAuthServerSection) GetTLS() *RuntimeGRPCTLSSection {
+	if s == nil {
+		return &RuntimeGRPCTLSSection{}
+	}
+
+	return &s.TLS
+}
+
+// RuntimeGRPCTLSSection configures TLS for gRPC listeners.
+type RuntimeGRPCTLSSection struct {
+	Cert              string `mapstructure:"cert" validate:"omitempty,file"`
+	Key               string `mapstructure:"key" validate:"omitempty,file"`
+	ClientCA          string `mapstructure:"client_ca" validate:"omitempty,file"`
+	Enabled           bool   `mapstructure:"enabled"`
+	RequireClientCert bool   `mapstructure:"require_client_cert"`
+}
+
+// IsEnabled reports whether TLS is enabled for the gRPC listener.
+func (t *RuntimeGRPCTLSSection) IsEnabled() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.Enabled
+}
+
+// GetCert returns the gRPC server certificate path.
+func (t *RuntimeGRPCTLSSection) GetCert() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.Cert
+}
+
+// GetKey returns the gRPC server private key path.
+func (t *RuntimeGRPCTLSSection) GetKey() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.Key
+}
+
+// GetClientCA returns the CA path used to verify gRPC client certificates.
+func (t *RuntimeGRPCTLSSection) GetClientCA() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.ClientCA
+}
+
+// RequiresClientCert reports whether client certificates are mandatory.
+func (t *RuntimeGRPCTLSSection) RequiresClientCert() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.RequireClientCert
+}
+
+// GetRuntimeGRPCAuthServer returns the configured gRPC AuthService listener settings.
+func (f *FileSettings) GetRuntimeGRPCAuthServer() *RuntimeGRPCAuthServerSection {
+	if f == nil || f.Runtime == nil {
+		return &RuntimeGRPCAuthServerSection{Address: defaultGRPCAuthAddress}
+	}
+
+	return &f.Runtime.Servers.GRPC.Auth
 }
 
 // HTTPRateLimit configures the global HTTP rate limiter.
@@ -409,22 +514,23 @@ func (f *FileSettings) applyRuntimeSection(server *ServerSection) {
 	}
 
 	runtime := f.Runtime
+	httpServer := runtime.Servers.HTTP
 
 	server.InstanceName = runtime.InstanceName
-	server.Address = runtime.Listen.Address
-	server.HTTP3 = runtime.Listen.HTTP3
-	server.HAproxyV2 = runtime.Listen.HAproxyV2
-	server.TLS = runtime.Listen.TLS
-	server.TrustedProxies = append([]string(nil), runtime.Listen.TrustedProxies...)
-	server.DisabledEndpoints = runtime.HTTP.DisabledEndpoints
-	server.Middlewares = runtime.HTTP.Middlewares
-	server.Compression = runtime.HTTP.Compression
-	server.KeepAlive = runtime.HTTP.KeepAlive
-	server.RateLimitPerSecond = runtime.HTTP.RateLimit.PerSecond
-	server.RateLimitBurst = runtime.HTTP.RateLimit.Burst
-	server.Timeouts = runtime.HTTP.Timeouts
-	server.CORS = runtime.HTTP.CORS
-	server.SecurityTxt = runtime.HTTP.SecurityTxt
+	server.Address = httpServer.Address
+	server.HTTP3 = httpServer.HTTP3
+	server.HAproxyV2 = httpServer.HAproxyV2
+	server.TLS = httpServer.TLS
+	server.TrustedProxies = append([]string(nil), httpServer.TrustedProxies...)
+	server.DisabledEndpoints = httpServer.DisabledEndpoints
+	server.Middlewares = httpServer.Middlewares
+	server.Compression = httpServer.Compression
+	server.KeepAlive = httpServer.KeepAlive
+	server.RateLimitPerSecond = httpServer.RateLimit.PerSecond
+	server.RateLimitBurst = httpServer.RateLimit.Burst
+	server.Timeouts = runtime.Timeouts
+	server.CORS = httpServer.CORS
+	server.SecurityTxt = httpServer.SecurityTxt
 	server.HTTPClient = runtime.Clients.HTTP
 	server.DNS = runtime.Clients.DNS
 	server.RunAsUser = runtime.Process.RunAsUser

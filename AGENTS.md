@@ -12,8 +12,8 @@ This document captures practical, project-specific details to build, configure, 
 - MUST: Apply DRY strictly; avoid duplicated logic and copy-paste implementations.
 - MUST: Follow OOP-oriented design with small responsibilities, clear boundaries, and composition-first structure.
 - MUST: Write code comments and technical docs in English.
-- MUST (CRITICAL, GO 1.26): ALWAYS prefix Go test commands with `GEXPERIMENT=runtimesecret`.
-    - Required form: `GEXPERIMENT=runtimesecret go test ...`
+- MUST (CRITICAL, GO 1.26): ALWAYS prefix Go test commands with `GOEXPERIMENT=runtimesecret`.
+    - Required form: `GOEXPERIMENT=runtimesecret go test ...`
     - This is mandatory for every Go 1.26 test run and must never be skipped.
 - Definition Of Done (required for every coding task):
     - [ ] Reproducer test added first for bugfixes (or explicit reason documented in PR).
@@ -50,16 +50,18 @@ This document captures practical, project-specific details to build, configure, 
 2. Testing
 
 - Running tests
-    - CRITICAL (Go 1.26): Always run tests with `GEXPERIMENT=runtimesecret`.
+    - CRITICAL (Go 1.26): Always run tests with `GOEXPERIMENT=runtimesecret`.
   - Repository-wide unit tests (short):
-      - `GEXPERIMENT=runtimesecret make test` or `GEXPERIMENT=runtimesecret go test -short ./...`
+      - `GOEXPERIMENT=runtimesecret make test` or `GOEXPERIMENT=runtimesecret go test -short ./...`
   - With the race detector:
-      - `GEXPERIMENT=runtimesecret make race` or `GEXPERIMENT=runtimesecret go test -race -short ./...`
+      - `GOEXPERIMENT=runtimesecret make race` or `GOEXPERIMENT=runtimesecret go test -race -short ./...`
   - With MSAN (platform-dependent):
-      - `GEXPERIMENT=runtimesecret make msan` or `GEXPERIMENT=runtimesecret go test -msan -short ./...`
+      - `GOEXPERIMENT=runtimesecret make msan` or `GOEXPERIMENT=runtimesecret go test -msan -short ./...`
   - Package-scoped runs (useful while iterating):
-      - `GEXPERIMENT=runtimesecret go test -v ./server/util`
-      - `GEXPERIMENT=runtimesecret go test -run <Regex> ./server/lualib/redislib`
+      - `GOEXPERIMENT=runtimesecret go test -v ./server/util`
+      - `GOEXPERIMENT=runtimesecret go test -run <Regex> ./server/lualib/redislib`
+  - If the default Go build cache is not writable in a sandbox, use a local cache path, for example:
+      - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/config`
 - External dependencies and isolation
   - Redis is mocked using github.com/go-redis/redismock/v9 in unit tests. Avoid hitting real Redis in unit tests; prefer rediscli.NewTestClient(...) with a redismock client when the code path touches Redis.
   - Lua: Lua-related tests use github.com/yuin/gopher-lua and preload modules via lualib.LoaderModX. Keep tests hermetic by constructing an L state and PreloadModule calls. Example: L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(ctx)).

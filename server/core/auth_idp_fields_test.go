@@ -92,7 +92,7 @@ func TestSetAuthenticationFieldsMapsExternalSessionFromJSONRequest(t *testing.T)
 		},
 	}
 
-	setAuthenticationFields(auth, &authdto.Request{
+	ApplyStructuredAuthRequest(auth, &authdto.Request{
 		Username:          "user@example.test",
 		ExternalSessionID: testExternalSessionID,
 	})
@@ -105,7 +105,7 @@ func TestSetAuthenticationFieldsMapsLoginAttemptFromJSONRequest(t *testing.T) {
 	setupMinimalTestConfig(t)
 	auth := &AuthState{deps: setupAuthDeps()}
 
-	setAuthenticationFields(auth, &authdto.Request{
+	ApplyStructuredAuthRequest(auth, &authdto.Request{
 		Username:         "user@example.test",
 		AuthLoginAttempt: 3,
 	})

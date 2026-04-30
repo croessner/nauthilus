@@ -140,7 +140,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	}
 
 	// Tracing middleware (OpenTelemetry) – enabled if observability.tracing.enabled is true
-	// and not disabled via runtime.http.disabled_endpoints.tracing
+	// and not disabled via runtime.servers.http.disabled_endpoints.tracing
 	if c.cfg.GetServer().GetInsights().IsTracingEnabled() {
 		tr := c.cfg.GetServer().GetInsights().GetTracing()
 

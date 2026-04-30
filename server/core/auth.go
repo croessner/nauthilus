@@ -1812,9 +1812,7 @@ func (a *AuthState) ResetLoginAttemptsOnSuccess() {
 //
 // If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
 func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
-	if a.Runtime.StatusMessage == "" {
-		a.Runtime.StatusMessage = definitions.PasswordFail
-	}
+	a.prepareAuthFailure()
 
 	ctx.Header("Auth-Status", a.Runtime.StatusMessage)
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
@@ -3630,7 +3628,7 @@ func processStructuredAuthRequest(ctx *gin.Context, auth State, metricName strin
 		return
 	}
 
-	setAuthenticationFields(auth, &request)
+	ApplyStructuredAuthRequest(auth, &request)
 
 	// If no user_agent was provided in the request body, fall back to the HTTP header.
 	if request.UserAgent == "" {
@@ -3661,8 +3659,9 @@ func processApplicationCBOR(ctx *gin.Context, auth State) {
 	})
 }
 
-// setAuthenticationFields updates the provided authentication state with data from the request, if available.
-func setAuthenticationFields(auth State, request *authdto.Request) {
+// ApplyStructuredAuthRequest updates the provided authentication state with
+// data from the structured request payload, if available.
+func ApplyStructuredAuthRequest(auth State, request *authdto.Request) {
 	authState, ok := auth.(*AuthState)
 	if !ok {
 		return

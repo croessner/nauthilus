@@ -104,6 +104,7 @@ type Middlewares struct {
 
 const (
 	defaultCORSPolicyName = "frontend"
+	defaultTLSMinVersion  = "TLS1.2"
 )
 
 var (
@@ -1014,14 +1015,14 @@ func (t *TLS) GetCipherSuites() []string {
 	return t.CipherSuites
 }
 
-// GetMinTLSVersion returns the minimum TLS version configured. Defaults to "TLS1.2" if unset or if the receiver is nil.
+// GetMinTLSVersion returns the minimum TLS version configured. Defaults to TLS 1.2 if unset or if the receiver is nil.
 func (t *TLS) GetMinTLSVersion() string {
 	if t == nil {
-		return "TLS1.2"
+		return defaultTLSMinVersion
 	}
 
 	if t.MinTLSVersion == "" {
-		return "TLS1.2"
+		return defaultTLSMinVersion
 	}
 
 	return t.MinTLSVersion
@@ -1153,7 +1154,7 @@ func (t *HTTPClientTLS) GetCipherSuites() []string {
 // GetMinTLSVersion returns the configured minimum TLS version for outbound HTTP TLS.
 func (t *HTTPClientTLS) GetMinTLSVersion() string {
 	if t == nil || t.MinTLSVersion == "" {
-		return "TLS1.2"
+		return defaultTLSMinVersion
 	}
 
 	return t.MinTLSVersion

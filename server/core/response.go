@@ -121,6 +121,59 @@ func NewDefaultResponseWriter(deps ResponseDeps) ResponseWriter {
 	return depResponseWriter{deps: deps}
 }
 
+func (a *AuthState) responseWriter() ResponseWriter {
+	if a != nil && a.deps.Resp != nil {
+		return a.deps.Resp
+	}
+
+	return getDefaultResponseWriter()
+}
+
+func (a *AuthState) applyAuthSuccessSideEffects(ctx *gin.Context) {
+	a.ResetLoginAttemptsOnSuccess()
+	a.finishAuthSuccessSideEffects(ctx)
+}
+
+func (a *AuthState) finishAuthSuccessSideEffects(ctx *gin.Context) {
+	handleLogging(ctx, a)
+
+	// Only authentication attempts
+	if !a.Request.NoAuth && !a.Request.ListAccounts {
+		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
+		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
+	}
+}
+
+func (a *AuthState) prepareAuthFailure() {
+	if a.Runtime.StatusMessage == "" {
+		a.Runtime.StatusMessage = definitions.PasswordFail
+	}
+}
+
+func (a *AuthState) applyAuthFailureSideEffects(ctx *gin.Context) {
+	a.prepareAuthFailure()
+	a.loginAttemptProcessing(ctx)
+}
+
+func (a *AuthState) prepareAuthTempFail(reason string) {
+	a.Runtime.StatusMessage = reason
+}
+
+func (a *AuthState) shouldLogAuthTempFail() bool {
+	return a.Request.Service != definitions.ServJSON
+}
+
+func (a *AuthState) logAuthTempFail(ctx *gin.Context, logger *slog.Logger) {
+	keyvals := getLogSlice()
+
+	defer putLogSlice(keyvals)
+
+	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", ctx.Request.URL.Path)
+	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
+
+	_ = level.Warn(logger).WithContext(ctx).Log(keyvals...)
+}
+
 func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	a := view.auth
 	// On successful authentication, reset the internal fail counter to
@@ -138,17 +191,7 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		sendAuthResponse(ctx, a)
 	}
 
-	handleLogging(ctx, a)
-
-	// Only authentication attempts
-	if !a.Request.NoAuth && !a.Request.ListAccounts {
-		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
-		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
-
-		if !getDefaultConfigFile().HasFeature(definitions.FeatureBruteForce) {
-			return
-		}
-	}
+	a.finishAuthSuccessSideEffects(ctx)
 }
 
 func (globalResponseWriter) Fail(ctx *gin.Context, view *StateView) {
@@ -163,7 +206,7 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 	a.setSMPTHeaders(ctx)
 
-	a.Runtime.StatusMessage = reason
+	a.prepareAuthTempFail(reason)
 
 	if a.Request.Service == definitions.ServJSON {
 		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
@@ -172,32 +215,24 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 	}
 
 	ctx.String(a.Runtime.StatusCodeInternalError, a.Runtime.StatusMessage)
-
-	keyvals := getLogSlice()
-
-	defer putLogSlice(keyvals)
-
-	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", ctx.Request.URL.Path)
-	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
-
-	level.Warn(getDefaultLogger()).WithContext(ctx).Log(keyvals...)
+	a.logAuthTempFail(ctx, getDefaultLogger())
 }
 
 // AuthOK is the general method to indicate authentication success.
 func (a *AuthState) AuthOK(ctx *gin.Context) {
-	getDefaultResponseWriter().OK(ctx, a.View())
+	a.responseWriter().OK(ctx, a.View())
 }
 
 // AuthFail handles the failure of authentication.
 // It increases the login attempts, then delegates header/logging to the ResponseWriter.
 func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
-	getDefaultResponseWriter().Fail(ctx, a.View())
+	a.responseWriter().Fail(ctx, a.View())
 }
 
 // AuthTempFail sends a temporary failure response with the provided reason and logs the error.
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
-	getDefaultResponseWriter().TempFail(ctx, a.View(), reason)
+	a.responseWriter().TempFail(ctx, a.View(), reason)
 }
 
 // OK implements the success response logic (unchanged behavior).
@@ -218,17 +253,7 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		sendAuthResponse(ctx, a)
 	}
 
-	handleLogging(ctx, a)
-
-	// Only authentication attempts
-	if !a.Request.NoAuth && !a.Request.ListAccounts {
-		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Request.Protocol.Get()).Inc()
-		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
-
-		if !w.deps.Cfg.HasFeature(definitions.FeatureBruteForce) {
-			return
-		}
-	}
+	a.finishAuthSuccessSideEffects(ctx)
 }
 
 // Fail implements the failure response logic (unchanged behavior).
@@ -245,7 +270,7 @@ func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason st
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 	a.setSMPTHeaders(ctx)
 
-	a.Runtime.StatusMessage = reason
+	a.prepareAuthTempFail(reason)
 
 	if a.Request.Service == definitions.ServJSON {
 		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
@@ -254,15 +279,7 @@ func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason st
 	}
 
 	ctx.String(a.Runtime.StatusCodeInternalError, a.Runtime.StatusMessage)
-
-	keyvals := getLogSlice()
-
-	defer putLogSlice(keyvals)
-
-	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", ctx.Request.URL.Path)
-	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
-
-	level.Warn(w.deps.Logger).WithContext(ctx).Log(keyvals...)
+	a.logAuthTempFail(ctx, w.deps.Logger)
 }
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.

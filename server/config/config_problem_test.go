@@ -68,7 +68,7 @@ func TestFormatConfigProblems_UsesMultilineOutputForMultipleProblems(t *testing.
 	err := formatConfigProblems([]Problem{
 		{
 			Kind:    configProblemValidation,
-			Path:    "runtime.listen.tls.cert",
+			Path:    "runtime.servers.http.tls.cert",
 			Message: "failed validation rule 'file'",
 		},
 		{
@@ -86,7 +86,7 @@ func TestFormatConfigProblems_UsesMultilineOutputForMultipleProblems(t *testing.
 	expectedParts := []string{
 		"configuration errors:\n",
 		"- field 'auth.controls.lua.hooks[0].script_path' failed validation rule 'file'\n",
-		"- field 'runtime.listen.tls.cert' failed validation rule 'file'",
+		"- field 'runtime.servers.http.tls.cert' failed validation rule 'file'",
 	}
 
 	for _, expected := range expectedParts {
@@ -117,8 +117,8 @@ func TestHandleFile_ValidationErrorsUseCanonicalPathsOnly(t *testing.T) {
 	got := err.Error()
 
 	assertContainsAll(t, got, []string{
-		"runtime.listen.tls.cert",
-		"runtime.listen.tls.key",
+		"runtime.servers.http.tls.cert",
+		"runtime.servers.http.tls.key",
 		"auth.controls.lua.hooks[0].script_path",
 	})
 	assertContainsNone(t, got, []string{
@@ -144,9 +144,11 @@ func TestHandleFile_RejectsLegacyHTTPClientSkipVerify(t *testing.T) {
 		},
 	})
 	viper.Set("runtime", map[string]any{
-		"listen": map[string]any{
-			"tls": map[string]any{
-				"http_client_skip_verify": true,
+		"servers": map[string]any{
+			"http": map[string]any{
+				"tls": map[string]any{
+					"http_client_skip_verify": true,
+				},
 			},
 		},
 	})
@@ -159,9 +161,157 @@ func TestHandleFile_RejectsLegacyHTTPClientSkipVerify(t *testing.T) {
 
 	got := err.Error()
 
-	if !strings.Contains(got, "runtime.listen.tls") || !strings.Contains(got, "http_client_skip_verify") {
+	if !strings.Contains(got, "runtime.servers.http.tls") || !strings.Contains(got, "http_client_skip_verify") {
 		t.Fatalf("HandleFile() error = %q, want canonical parent path plus rejected key", got)
 	}
+}
+
+func TestHandleFile_RejectsRemovedRuntimeListenAndHTTPPaths(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("runtime", map[string]any{
+		"listen": map[string]any{
+			"address": "127.0.0.1:9080",
+		},
+		"http": map[string]any{
+			"keep_alive": map[string]any{
+				"enabled": true,
+			},
+		},
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want removed runtime path rejection")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{"runtime", "listen", "http"})
+}
+
+func TestHandleFile_RejectsEnabledGRPCAuthWithoutBackchannelAuth(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want gRPC backchannel auth configuration error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.grpc.auth.enabled",
+		"auth.backchannel.basic_auth.enabled=true",
+		"auth.backchannel.oidc_bearer.enabled=true",
+	})
+}
+
+func TestHandleFile_RejectsPlaintextGRPCAuthOnNonLoopback(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("0.0.0.0:9444")
+	viper.Set("auth", map[string]any{
+		"backchannel": map[string]any{
+			"basic_auth": map[string]any{
+				"enabled":  true,
+				"username": "grpc-test",
+				"password": "grpc-secret-1234",
+			},
+		},
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want plaintext gRPC bind validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.grpc.auth.address",
+		"plaintext",
+		"loopback",
+	})
+}
+
+func TestHandleFile_RejectsGRPCAuthWithIncompleteBasicBackchannelAuth(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+	viper.Set("auth", map[string]any{
+		"backchannel": map[string]any{
+			"basic_auth": map[string]any{
+				"enabled": true,
+			},
+		},
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want incomplete gRPC Basic backchannel auth configuration error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"auth.backchannel.basic_auth.username",
+		"auth.backchannel.basic_auth.password",
+	})
+}
+
+func TestHandleFile_RejectsGRPCAuthClientCertWithoutTLS(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+	viper.Set("auth", map[string]any{
+		"backchannel": map[string]any{
+			"basic_auth": map[string]any{
+				"enabled":  true,
+				"username": "grpc-test",
+				"password": "grpc-secret-1234",
+			},
+		},
+	})
+	viper.Set("runtime.servers.grpc.auth.tls.require_client_cert", true)
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want gRPC client certificate TLS configuration error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.grpc.auth.tls.require_client_cert",
+		"runtime.servers.grpc.auth.tls.enabled",
+	})
 }
 
 func setValidationErrorTestConfig() {
@@ -175,10 +325,12 @@ func setValidationErrorTestConfig() {
 		},
 	})
 	viper.Set("runtime", map[string]any{
-		"listen": map[string]any{
-			"tls": map[string]any{
-				"cert": "/definitely/missing/cert.pem",
-				"key":  "/definitely/missing/key.pem",
+		"servers": map[string]any{
+			"http": map[string]any{
+				"tls": map[string]any{
+					"cert": "/definitely/missing/cert.pem",
+					"key":  "/definitely/missing/key.pem",
+				},
 			},
 		},
 	})
@@ -191,6 +343,28 @@ func setValidationErrorTestConfig() {
 						"http_method":   "GET",
 						"script_path":   "/definitely/missing/hook.lua",
 					},
+				},
+			},
+		},
+	})
+}
+
+func setGRPCAuthValidationTestConfig(address string) {
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("runtime", map[string]any{
+		"servers": map[string]any{
+			"grpc": map[string]any{
+				"auth": map[string]any{
+					"enabled": true,
+					"address": address,
 				},
 			},
 		},

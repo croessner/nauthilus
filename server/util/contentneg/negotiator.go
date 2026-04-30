@@ -208,8 +208,8 @@ func matches(acceptType, candidate string) bool {
 		return true
 	}
 
-	if strings.HasSuffix(acceptType, "/*") {
-		prefix := strings.TrimSuffix(acceptType, "/*")
+	if before, ok := strings.CutSuffix(acceptType, "/*"); ok {
+		prefix := before
 		slash := strings.IndexByte(candidate, '/')
 
 		return slash > 0 && candidate[:slash] == prefix
