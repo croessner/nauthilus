@@ -303,7 +303,7 @@ def add_headers(request: urllib.request.Request, args: argparse.Namespace) -> No
     if args.http_method == "POST":
         request.add_header("Content-Type", "application/cbor")
 
-    request.add_header("Accept", "application/cbor, application/json;q=0.5, text/plain;q=0.1, */*;q=0.05")
+    request.add_header("Accept", "application/cbor")
     request.add_header("User-Agent", args.user_agent)
 
     if args.bearer_token:

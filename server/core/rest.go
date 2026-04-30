@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -170,6 +171,15 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 		switch acceptHeader {
 		case "application/json":
 			ctx.JSON(http.StatusOK, allAccountsList)
+		case "application/cbor":
+			body, err := cborcodec.Marshal(allAccountsList)
+			if err != nil {
+				ctx.AbortWithStatus(http.StatusInternalServerError)
+
+				return
+			}
+
+			ctx.Data(http.StatusOK, "application/cbor", body)
 		case "*/*", "text/plain":
 			for _, account := range allAccountsList {
 				ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
