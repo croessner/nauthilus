@@ -67,6 +67,13 @@ def parse_args() -> argparse.Namespace:
         default="auth",
         help="Optional auth mode query parameter.",
     )
+    parser.add_argument(
+        "--http-method",
+        choices=("POST", "GET"),
+        default="POST",
+        help="HTTP method to use. GET skips the request body and is intended for "
+             "no-auth/list-accounts modes.",
+    )
     parser.add_argument("--bearer-token", default="", help="Bearer token for protected API access.")
     parser.add_argument("--api-basic-user", default="", help="Basic auth username for protected API access.")
     parser.add_argument("--api-basic-password", default="", help="Basic auth password for protected API access.")
@@ -293,8 +300,10 @@ def cbor_loads(data: bytes) -> Any:
 
 
 def add_headers(request: urllib.request.Request, args: argparse.Namespace) -> None:
-    request.add_header("Content-Type", "application/cbor")
-    request.add_header("Accept", "application/json, application/cbor, text/plain;q=0.9, */*;q=0.1")
+    if args.http_method == "POST":
+        request.add_header("Content-Type", "application/cbor")
+
+    request.add_header("Accept", "application/cbor, application/json;q=0.5, text/plain;q=0.1, */*;q=0.05")
     request.add_header("User-Agent", args.user_agent)
 
     if args.bearer_token:
@@ -354,8 +363,12 @@ def main() -> int:
     if args.dump_payload_json:
         print(json.dumps(payload, indent=2, sort_keys=True), file=sys.stderr)
 
-    data = cbor_dumps(payload)
-    request = urllib.request.Request(endpoint_url(args), data=data, method="POST")
+    if args.http_method == "POST":
+        data = cbor_dumps(payload)
+    else:
+        data = None
+
+    request = urllib.request.Request(endpoint_url(args), data=data, method=args.http_method)
     add_headers(request, args)
 
     context = None

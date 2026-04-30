@@ -101,6 +101,19 @@ func TestSetAuthenticationFieldsMapsExternalSessionFromJSONRequest(t *testing.T)
 	assert.Equal(t, testExternalSessionID, ctx.GetString(definitions.CtxExternalSessionKey))
 }
 
+func TestSetAuthenticationFieldsMapsLoginAttemptFromJSONRequest(t *testing.T) {
+	setupMinimalTestConfig(t)
+	auth := &AuthState{deps: setupAuthDeps()}
+
+	setAuthenticationFields(auth, &authdto.Request{
+		Username:         "user@example.test",
+		AuthLoginAttempt: 3,
+	})
+
+	assert.Equal(t, uint(2), auth.Security.LoginAttempts)
+	assert.Equal(t, uint(2), auth.GetFailCount())
+}
+
 func TestCommonRequestSetupRequestIncludesExternalSession(t *testing.T) {
 	t.Parallel()
 

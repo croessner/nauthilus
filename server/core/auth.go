@@ -1273,6 +1273,36 @@ func (a *AuthState) SetLoginAttempts(loginAttempts uint) {
 	a.Security.LoginAttempts = loginAttempts
 }
 
+// SyncLoginAttemptsFromAttemptOrdinal updates the internal login attempt manager
+// from a 1-based attempt ordinal and mirrors the normalized fail count.
+func (a *AuthState) SyncLoginAttemptsFromAttemptOrdinal(ordinal uint) {
+	if ordinal == 0 {
+		return
+	}
+
+	lam := a.ensureLAM()
+	if lam == nil {
+		a.Security.LoginAttempts = ordinal - 1
+
+		return
+	}
+
+	lam.InitFromAttemptOrdinal(ordinal)
+	a.Security.LoginAttempts = lam.FailCount()
+}
+
+// SyncLoginAttemptsFromHeader updates the internal login attempt manager from
+// a header value containing a 1-based attempt ordinal.
+func (a *AuthState) SyncLoginAttemptsFromHeader(headerValue string) {
+	lam := a.ensureLAM()
+	if lam == nil {
+		return
+	}
+
+	lam.InitFromHeader(headerValue)
+	a.Security.LoginAttempts = lam.FailCount()
+}
+
 // GetFailCount returns the current number of failed login attempts using the
 // centralized manager if available. If the manager is not initialized, it
 // falls back to the legacy field. This method is used for logging
@@ -3516,11 +3546,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 
 	// Initialize login attempts from header using the centralized manager.
 	if a, ok := auth.(*AuthState); ok {
-		lam := a.ensureLAM()
-		if lam != nil {
-			lam.InitFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
-			a.Security.LoginAttempts = lam.FailCount()
-		}
+		a.SyncLoginAttemptsFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
 	}
 }
 
@@ -3647,6 +3673,10 @@ func setAuthenticationFields(auth State, request *authdto.Request) {
 
 	ctxData := NewAuthContext(buildAuthContextOptions(request)...)
 	authState.ApplyContextData(ctxData)
+
+	if request.AuthLoginAttempt > 0 {
+		authState.SyncLoginAttemptsFromAttemptOrdinal(request.AuthLoginAttempt)
+	}
 }
 
 // buildCredentialOptions creates credential options from the request.

@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -45,9 +46,20 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/croessner/nauthilus/server/util/contentneg"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+)
+
+// listAccountsNegotiator selects the response media type for list-accounts
+// answers. Entries are listed in server-preferred order: ties on quality and
+// specificity fall back to the leftmost entry.
+var listAccountsNegotiator = contentneg.New(
+	"application/cbor",
+	"application/json",
+	"application/x-www-form-urlencoded",
+	"text/plain",
 )
 
 // TokenFlusher abstracts the ability to flush all OIDC/SAML2 tokens for a user.
@@ -163,29 +175,55 @@ func (a *AuthState) handleMasterUserMode() string {
 // HandleAuthentication handles the authentication logic based on the selected service type.
 func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 	if a.Request.ListAccounts {
-		allAccountsList := a.ListUserAccounts()
-
-		acceptHeader := ctx.GetHeader("Accept")
-
-		switch acceptHeader {
-		case "application/json":
-			ctx.JSON(http.StatusOK, allAccountsList)
-		case "*/*", "text/plain":
-			for _, account := range allAccountsList {
-				ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
-			}
-		case "application/x-www-form-urlencoded":
-			for _, account := range allAccountsList {
-				ctx.Data(http.StatusOK, "application/x-www-form-urlencoded", []byte(account+"\r\n"))
-			}
-		default:
-			ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
-			ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
-		}
+		a.writeListAccountsResponse(ctx)
 
 		level.Info(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMode, ctx.Query("mode"))
 	} else {
 		a.runAuthPipelineFSM(ctx)
+	}
+}
+
+// writeListAccountsResponse renders the account list using the response
+// media type negotiated from the Accept header. It dispatches to the
+// matching encoder and aborts with 415 when the client cannot be served
+// any of the supported types.
+func (a *AuthState) writeListAccountsResponse(ctx *gin.Context) {
+	accounts := a.ListUserAccounts()
+	chosen := listAccountsNegotiator.BestMatch(ctx.GetHeader("Accept"))
+
+	switch chosen {
+	case "application/json":
+		ctx.JSON(http.StatusOK, accounts)
+	case "application/cbor":
+		writeCBORList(ctx, accounts)
+	case "text/plain":
+		writeLineSeparated(ctx, accounts, "text/plain")
+	case "application/x-www-form-urlencoded":
+		writeLineSeparated(ctx, accounts, "application/x-www-form-urlencoded")
+	default:
+		_ = ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+		ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
+	}
+}
+
+// writeCBORList encodes the account list as a single CBOR array body.
+func writeCBORList(ctx *gin.Context, accounts AccountList) {
+	body, err := cborcodec.Marshal(accounts)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	ctx.Data(http.StatusOK, "application/cbor", body)
+}
+
+// writeLineSeparated streams the account list as CRLF-separated entries with
+// the given content type. Used by both text/plain and form-urlencoded paths,
+// which differ only in the response Content-Type they advertise.
+func writeLineSeparated(ctx *gin.Context, accounts AccountList, contentType string) {
+	for _, account := range accounts {
+		ctx.Data(http.StatusOK, contentType, []byte(account+"\r\n"))
 	}
 }
 
