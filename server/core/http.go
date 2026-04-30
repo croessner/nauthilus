@@ -398,17 +398,7 @@ func (c DefaultTLSConfigurator) Build() *tls.Config {
 
 	minTLSVersion = config.TLSMinVersionValue(c.cfg.GetServer().GetTLS().GetMinTLSVersion())
 
-	preferredCiphers := []string{
-		"TLS_AES_256_GCM_SHA384",
-		"TLS_CHACHA20_POLY1305_SHA256",
-		"TLS_AES_128_GCM_SHA256",
-		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-	}
-
-	if len(c.cfg.GetServer().GetTLS().GetCipherSuites()) > 0 {
-		preferredCiphers = c.cfg.GetServer().GetTLS().GetCipherSuites()
-	}
+	preferredCiphers := c.cfg.GetServer().GetTLS().GetCipherSuites()
 
 	knownCipherSuites := config.TLSCipherSuiteValues(preferredCiphers)
 	cipherSuites = append(cipherSuites, knownCipherSuites...)

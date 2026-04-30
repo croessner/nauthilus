@@ -282,7 +282,7 @@ func buildServerTLSConfig(tlsSection *config.RuntimeGRPCTLSSection) (*tls.Config
 		Certificates: []tls.Certificate{cert},
 		ClientAuth:   clientAuth,
 		ClientCAs:    clientCAs,
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   config.TLSMinVersionValue(tlsSection.GetMinTLSVersion()),
 		NextProtos:   []string{"h2"},
 	}, nil
 }

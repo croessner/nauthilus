@@ -16,6 +16,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -231,15 +232,7 @@ func TestHandleFile_RejectsPlaintextGRPCAuthOnNonLoopback(t *testing.T) {
 	t.Cleanup(viper.Reset)
 
 	setGRPCAuthValidationTestConfig("0.0.0.0:9444")
-	viper.Set("auth", map[string]any{
-		"backchannel": map[string]any{
-			"basic_auth": map[string]any{
-				"enabled":  true,
-				"username": "grpc-test",
-				"password": "grpc-secret-1234",
-			},
-		},
-	})
+	setGRPCAuthBasicBackchannelTestConfig()
 
 	cfg := &FileSettings{}
 	err := cfg.HandleFile()
@@ -252,6 +245,104 @@ func TestHandleFile_RejectsPlaintextGRPCAuthOnNonLoopback(t *testing.T) {
 		"runtime.servers.grpc.auth.address",
 		"plaintext",
 		"loopback",
+	})
+}
+
+func TestHandleFile_AcceptsGRPCAuthMinTLSVersion(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setGRPCAuthValidationTestConfig("0.0.0.0:9444")
+	setGRPCAuthBasicBackchannelTestConfig()
+	viper.Set("runtime.servers.grpc.auth.tls", map[string]any{
+		"enabled":         true,
+		"cert":            certFile,
+		"key":             keyFile,
+		"min_tls_version": "TLS1.3",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err != nil {
+		t.Fatalf("HandleFile() error = %v, want gRPC min_tls_version to be accepted", err)
+	}
+}
+
+func TestHandleFile_RejectsHTTPServerTLS13CipherSuites(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.2", []string{
+		"TLS_AES_256_GCM_SHA384",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want HTTP TLS 1.3 cipher suite validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.http.tls.cipher_suites[0]",
+		"TLS_AES_256_GCM_SHA384",
+		"TLS 1.3 cipher suites are not configurable",
+	})
+}
+
+func TestHandleFile_RejectsHTTPServerCipherSuitesWithTLS13Minimum(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.3", []string{
+		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want HTTP TLS cipher suite validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.http.tls.cipher_suites",
+		"runtime.servers.http.tls.min_tls_version",
+		"TLS1.3",
+	})
+}
+
+func TestHandleFile_RejectsUnknownHTTPServerCipherSuites(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.2", []string{
+		"TLS_NOT_A_REAL_CIPHER_SUITE",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want HTTP TLS unknown cipher suite validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.http.tls.cipher_suites[0]",
+		"TLS_NOT_A_REAL_CIPHER_SUITE",
+		"unsupported TLS cipher suite",
 	})
 }
 
@@ -290,15 +381,7 @@ func TestHandleFile_RejectsGRPCAuthClientCertWithoutTLS(t *testing.T) {
 	t.Cleanup(viper.Reset)
 
 	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
-	viper.Set("auth", map[string]any{
-		"backchannel": map[string]any{
-			"basic_auth": map[string]any{
-				"enabled":  true,
-				"username": "grpc-test",
-				"password": "grpc-secret-1234",
-			},
-		},
-	})
+	setGRPCAuthBasicBackchannelTestConfig()
 	viper.Set("runtime.servers.grpc.auth.tls.require_client_cert", true)
 
 	cfg := &FileSettings{}
@@ -369,6 +452,61 @@ func setGRPCAuthValidationTestConfig(address string) {
 			},
 		},
 	})
+}
+
+func setGRPCAuthBasicBackchannelTestConfig() {
+	viper.Set("auth", map[string]any{
+		"backchannel": map[string]any{
+			"basic_auth": map[string]any{
+				"enabled":  true,
+				"username": "grpc-test",
+				"password": "grpc-secret-1234",
+			},
+		},
+	})
+}
+
+func setHTTPServerTLSValidationTestConfig(certFile, keyFile, minTLSVersion string, cipherSuites []string) {
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("runtime", map[string]any{
+		"servers": map[string]any{
+			"http": map[string]any{
+				"tls": map[string]any{
+					"enabled":         true,
+					"cert":            certFile,
+					"key":             keyFile,
+					"min_tls_version": minTLSVersion,
+					"cipher_suites":   cipherSuites,
+				},
+			},
+		},
+	})
+}
+
+func writeTestTLSKeyPair(t *testing.T) (string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	certFile := dir + "/server.crt"
+	keyFile := dir + "/server.key"
+
+	if err := os.WriteFile(certFile, []byte("test certificate"), 0o600); err != nil {
+		t.Fatalf("write test certificate: %v", err)
+	}
+
+	if err := os.WriteFile(keyFile, []byte("test key"), 0o600); err != nil {
+		t.Fatalf("write test key: %v", err)
+	}
+
+	return certFile, keyFile
 }
 
 func assertContainsAll(t *testing.T, got string, expected []string) {

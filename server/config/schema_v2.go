@@ -90,6 +90,7 @@ type RuntimeGRPCTLSSection struct {
 	Cert              string `mapstructure:"cert" validate:"omitempty,file"`
 	Key               string `mapstructure:"key" validate:"omitempty,file"`
 	ClientCA          string `mapstructure:"client_ca" validate:"omitempty,file"`
+	MinTLSVersion     string `mapstructure:"min_tls_version" validate:"omitempty,oneof=TLS1.2 TLS1.3"`
 	Enabled           bool   `mapstructure:"enabled"`
 	RequireClientCert bool   `mapstructure:"require_client_cert"`
 }
@@ -128,6 +129,15 @@ func (t *RuntimeGRPCTLSSection) GetClientCA() string {
 	}
 
 	return t.ClientCA
+}
+
+// GetMinTLSVersion returns the minimum TLS version configured for the gRPC listener.
+func (t *RuntimeGRPCTLSSection) GetMinTLSVersion() string {
+	if t == nil || t.MinTLSVersion == "" {
+		return defaultTLSMinVersion
+	}
+
+	return t.MinTLSVersion
 }
 
 // RequiresClientCert reports whether client certificates are mandatory.

@@ -18,13 +18,19 @@ package grpcauth
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"log/slog"
+	"math/big"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -449,6 +455,23 @@ func TestNewServerRegistersAuthService(t *testing.T) {
 	}
 }
 
+func TestBuildServerTLSConfigUsesConfiguredMinimumVersion(t *testing.T) {
+	certFile, keyFile := writeGRPCTestTLSKeyPair(t)
+	tlsConfig, err := buildServerTLSConfig(&config.RuntimeGRPCTLSSection{
+		Enabled:       true,
+		Cert:          certFile,
+		Key:           keyFile,
+		MinTLSVersion: "TLS1.3",
+	})
+	if err != nil {
+		t.Fatalf("buildServerTLSConfig() error = %v", err)
+	}
+
+	if tlsConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("MinVersion = %v, want %v", tlsConfig.MinVersion, tls.VersionTLS13)
+	}
+}
+
 func TestStartServerStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	listener := newBlockingListener()
@@ -778,6 +801,48 @@ func validBasicAuthConfig() config.BasicAuth {
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
 	}
+}
+
+func writeGRPCTestTLSKeyPair(t *testing.T) (string, string) {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate private key: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "localhost",
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+
+	dir := t.TempDir()
+	certFile := dir + "/server.crt"
+	keyFile := dir + "/server.key"
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
+
+	if err = os.WriteFile(certFile, certPEM, 0o600); err != nil {
+		t.Fatalf("write certificate: %v", err)
+	}
+
+	if err = os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+
+	return certFile, keyFile
 }
 
 func enableBruteForceFeature(t *testing.T, cfg *config.FileSettings) {

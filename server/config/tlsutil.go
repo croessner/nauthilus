@@ -20,7 +20,23 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"strings"
 )
+
+var tls12CipherSuites = map[string]uint16{
+	"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":   tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384": tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":   tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305":  tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+	"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305":    tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+}
+
+var tls13CipherSuites = map[string]struct{}{
+	"TLS_AES_128_GCM_SHA256":       {},
+	"TLS_AES_256_GCM_SHA384":       {},
+	"TLS_CHACHA20_POLY1305_SHA256": {},
+}
 
 type tlsClientConfigProvider interface {
 	GetCAFile() string
@@ -147,19 +163,38 @@ func TLSCipherSuiteValues(suites []string) []uint16 {
 
 // TLSCipherSuiteValue converts one configured cipher suite name into the tls package constant.
 func TLSCipherSuiteValue(suite string) (uint16, bool) {
-	cipherMap := map[string]uint16{
-		"TLS_AES_128_GCM_SHA256":                  tls.TLS_AES_128_GCM_SHA256,
-		"TLS_AES_256_GCM_SHA384":                  tls.TLS_AES_256_GCM_SHA384,
-		"TLS_CHACHA20_POLY1305_SHA256":            tls.TLS_CHACHA20_POLY1305_SHA256,
-		"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":   tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384": tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":   tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305":  tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-		"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305":    tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-	}
-
-	mapped, ok := cipherMap[suite]
+	mapped, ok := tls12CipherSuites[suite]
 
 	return mapped, ok
+}
+
+// ValidateTLSCipherSuites checks that configured cipher suites only contain values
+// that Go can actually apply through tls.Config.CipherSuites.
+func ValidateTLSCipherSuites(path, minTLSVersion string, suites []string) error {
+	if len(suites) == 0 {
+		return nil
+	}
+
+	if minTLSVersion == "TLS1.3" {
+		return fmt.Errorf("%s must be empty when %s is TLS1.3; cipher_suites only applies to TLS 1.2", path, joinConfigPath(strings.TrimSuffix(path, ".cipher_suites"), "min_tls_version"))
+	}
+
+	for index, suite := range suites {
+		if IsTLS13CipherSuite(suite) {
+			return fmt.Errorf("%s[%d]: %q is a TLS 1.3 cipher suite; TLS 1.3 cipher suites are not configurable through tls.Config.cipher_suites", path, index, suite)
+		}
+
+		if _, ok := TLSCipherSuiteValue(suite); !ok {
+			return fmt.Errorf("%s[%d]: unsupported TLS cipher suite %q", path, index, suite)
+		}
+	}
+
+	return nil
+}
+
+// IsTLS13CipherSuite reports whether the name is a TLS 1.3 cipher suite.
+func IsTLS13CipherSuite(suite string) bool {
+	_, ok := tls13CipherSuites[suite]
+
+	return ok
 }

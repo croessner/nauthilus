@@ -942,6 +942,7 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 		"runtime.servers.grpc.auth.address":                      func() any { return defaultGRPCAuthAddress },
 		"runtime.servers.grpc.auth.enabled":                      func() any { return false },
 		"runtime.servers.grpc.auth.tls.enabled":                  func() any { return false },
+		"runtime.servers.grpc.auth.tls.min_tls_version":          func() any { return defaultTLSMinVersion },
 		"runtime.servers.grpc.auth.tls.require_client_cert":      func() any { return false },
 		"runtime.servers.http.address":                           func() any { return definitions.HTTPAddress },
 		"runtime.servers.http.middlewares.logging":               func() any { return true },

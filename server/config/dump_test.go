@@ -42,6 +42,7 @@ func TestRenderDefaultConfigDump_IncludesKnownDefaults(t *testing.T) {
 
 	expectedLines := []string{
 		`runtime.servers.grpc.auth.address = "127.0.0.1:9444"`,
+		`runtime.servers.grpc.auth.tls.min_tls_version = "TLS1.2"`,
 		`runtime.servers.http.middlewares.logging = true`,
 		`runtime.servers.http.tls.min_tls_version = "TLS1.2"`,
 		`runtime.timeouts.lua_script = "30s"`,
@@ -77,6 +78,9 @@ func TestRenderNonDefaultConfigDump_SuppressesDefaultsAndKeepsChanges(t *testing
 				"grpc": map[string]any{
 					"auth": map[string]any{
 						"address": "127.0.0.1:9445",
+						"tls": map[string]any{
+							"min_tls_version": "TLS1.3",
+						},
 					},
 				},
 			},
@@ -106,6 +110,7 @@ func TestRenderNonDefaultConfigDump_SuppressesDefaultsAndKeepsChanges(t *testing
 
 	expectedLines := []string{
 		`runtime.servers.grpc.auth.address = "127.0.0.1:9445"`,
+		`runtime.servers.grpc.auth.tls.min_tls_version = "TLS1.3"`,
 		`runtime.servers.http.middlewares.limit = false`,
 		`runtime.servers.http.tls.min_tls_version = "TLS1.3"`,
 		`runtime.timeouts.lua_script = "45s"`,

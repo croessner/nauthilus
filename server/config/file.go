@@ -2383,6 +2383,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateBruteForce,
 		f.validatePassDBBackends,
 		f.validateAddress,
+		f.validateTLSSettings,
 		f.validateGRPCAuthServer,
 
 		// Without errors, but fixing things
@@ -2424,6 +2425,23 @@ func (f *FileSettings) validate() (err error) {
 
 func (f *FileSettings) validateGRPCAuthServer() error {
 	return ValidateGRPCAuthServerConfig(f)
+}
+
+func (f *FileSettings) validateTLSSettings() error {
+	server := f.GetServer()
+	if err := ValidateTLSCipherSuites(
+		"runtime.servers.http.tls.cipher_suites",
+		server.GetTLS().GetMinTLSVersion(),
+		server.GetTLS().GetCipherSuites(),
+	); err != nil {
+		return err
+	}
+
+	return ValidateTLSCipherSuites(
+		"runtime.clients.http.tls.cipher_suites",
+		server.GetHTTPClient().GetTLS().GetMinTLSVersion(),
+		server.GetHTTPClient().GetTLS().GetCipherSuites(),
+	)
 }
 
 // RuntimeGRPCAuthServerProvider exposes the gRPC AuthService listener settings.
@@ -2484,6 +2502,10 @@ func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error 
 	if tlsConfig.IsEnabled() {
 		if tlsConfig.GetCert() == "" || tlsConfig.GetKey() == "" {
 			return fmt.Errorf("runtime.servers.grpc.auth.tls.cert and runtime.servers.grpc.auth.tls.key are required when gRPC TLS is enabled")
+		}
+
+		if tlsConfig.GetMinTLSVersion() != "TLS1.2" && tlsConfig.GetMinTLSVersion() != "TLS1.3" {
+			return fmt.Errorf("runtime.servers.grpc.auth.tls.min_tls_version must be TLS1.2 or TLS1.3")
 		}
 
 		if tlsConfig.RequiresClientCert() && tlsConfig.GetClientCA() == "" {
