@@ -29,9 +29,8 @@ func TestNewHTTPClient_UsesDedicatedHTTPClientTLSSettings(t *testing.T) {
 			HTTPClient: config.HTTPClient{
 				TLS: config.HTTPClientTLS{
 					SkipVerify:    true,
-					MinTLSVersion: "TLS1.3",
+					MinTLSVersion: "TLS1.2",
 					CipherSuites: []string{
-						"TLS_AES_256_GCM_SHA384",
 						"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
 					},
 				},
@@ -55,12 +54,11 @@ func TestNewHTTPClient_UsesDedicatedHTTPClientTLSSettings(t *testing.T) {
 		t.Fatal("TLSClientConfig.InsecureSkipVerify = false, want true")
 	}
 
-	if tlsConfig.MinVersion != tls.VersionTLS13 {
-		t.Fatalf("TLSClientConfig.MinVersion = %v, want %v", tlsConfig.MinVersion, tls.VersionTLS13)
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("TLSClientConfig.MinVersion = %v, want %v", tlsConfig.MinVersion, tls.VersionTLS12)
 	}
 
 	wantCipherSuites := []uint16{
-		tls.TLS_AES_256_GCM_SHA384,
 		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 	}
 

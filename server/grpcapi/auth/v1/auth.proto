@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package nauthilus.auth.v1;
+
+option go_package = "github.com/croessner/nauthilus/server/grpcapi/auth/v1;authv1";
+
+service AuthService {
+  rpc Authenticate(AuthRequest) returns (AuthResponse);
+  rpc LookupIdentity(LookupIdentityRequest) returns (AuthResponse);
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+}
+
+message AuthRequest {
+  string username = 1;
+  string password = 2;
+  string client_ip = 3;
+  string client_port = 4;
+  string client_hostname = 5;
+  string client_id = 6;
+  string external_session_id = 7;
+  string user_agent = 8;
+  string local_ip = 9;
+  string local_port = 10;
+  string protocol = 11;
+  string method = 12;
+  string ssl = 13;
+  string ssl_session_id = 14;
+  string ssl_client_verify = 15;
+  string ssl_client_dn = 16;
+  string ssl_client_cn = 17;
+  string ssl_issuer = 18;
+  string ssl_client_notbefore = 19;
+  string ssl_client_notafter = 20;
+  string ssl_subject_dn = 21;
+  string ssl_issuer_dn = 22;
+  string ssl_client_subject_dn = 23;
+  string ssl_client_issuer_dn = 24;
+  string ssl_protocol = 25;
+  string ssl_cipher = 26;
+  string ssl_serial = 27;
+  string ssl_fingerprint = 28;
+  string oidc_cid = 29;
+  uint32 auth_login_attempt = 30;
+}
+
+message ListAccountsRequest {
+  string username = 1;
+  string client_ip = 2;
+  string client_port = 3;
+  string client_hostname = 4;
+  string client_id = 5;
+  string external_session_id = 6;
+  string user_agent = 7;
+  string local_ip = 8;
+  string local_port = 9;
+  string protocol = 10;
+  string method = 11;
+  string oidc_cid = 12;
+}
+
+message LookupIdentityRequest {
+  string username = 1;
+  string client_ip = 2;
+  string client_port = 3;
+  string client_hostname = 4;
+  string client_id = 5;
+  string external_session_id = 6;
+  string user_agent = 7;
+  string local_ip = 8;
+  string local_port = 9;
+  string protocol = 10;
+  string method = 11;
+  string ssl = 12;
+  string ssl_session_id = 13;
+  string ssl_client_verify = 14;
+  string ssl_client_dn = 15;
+  string ssl_client_cn = 16;
+  string ssl_issuer = 17;
+  string ssl_client_notbefore = 18;
+  string ssl_client_notafter = 19;
+  string ssl_subject_dn = 20;
+  string ssl_issuer_dn = 21;
+  string ssl_client_subject_dn = 22;
+  string ssl_client_issuer_dn = 23;
+  string ssl_protocol = 24;
+  string ssl_cipher = 25;
+  string ssl_serial = 26;
+  string ssl_fingerprint = 27;
+  string oidc_cid = 28;
+}
+
+enum AuthDecision {
+  AUTH_DECISION_UNSPECIFIED = 0;
+  AUTH_DECISION_OK = 1;
+  AUTH_DECISION_FAIL = 2;
+  AUTH_DECISION_TEMPFAIL = 3;
+}
+
+message AttributeValues {
+  repeated string values = 1;
+}
+
+message AuthResponse {
+  bool ok = 1;
+  AuthDecision decision = 2;
+  string session = 3;
+  string account_field = 4;
+  string totp_secret_field = 5;
+  uint32 backend = 6;
+  map<string, AttributeValues> attributes = 7;
+  string status_message = 8;
+  string error = 9;
+}
+
+message ListAccountsResponse {
+  repeated string accounts = 1;
+  string session = 2;
+}

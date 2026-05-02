@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"runtime"
@@ -2382,6 +2383,8 @@ func (f *FileSettings) validate() (err error) {
 		f.validateBruteForce,
 		f.validatePassDBBackends,
 		f.validateAddress,
+		f.validateTLSSettings,
+		f.validateGRPCAuthServer,
 
 		// Without errors, but fixing things
 		f.setDefaultInstanceName,
@@ -2403,7 +2406,9 @@ func (f *FileSettings) validate() (err error) {
 		f.validateIdPOIDCCustomScopes,
 		f.validateIdPSAMLSigningSettings,
 		f.validateIdPSAML2SLOSettings,
+		f.validateLuaHooks,
 		f.setDefaultTrustedProxies,
+		f.validateSecurityTxt,
 		f.validateFrontend,
 	}
 
@@ -2414,6 +2419,308 @@ func (f *FileSettings) validate() (err error) {
 	}
 
 	f.checkResourceLimits()
+
+	return nil
+}
+
+func (f *FileSettings) validateGRPCAuthServer() error {
+	return ValidateGRPCAuthServerConfig(f)
+}
+
+func (f *FileSettings) validateTLSSettings() error {
+	server := f.GetServer()
+	if err := ValidateTLSCipherSuites(
+		"runtime.servers.http.tls.cipher_suites",
+		server.GetTLS().GetMinTLSVersion(),
+		server.GetTLS().GetCipherSuites(),
+	); err != nil {
+		return err
+	}
+
+	return ValidateTLSCipherSuites(
+		"runtime.clients.http.tls.cipher_suites",
+		server.GetHTTPClient().GetTLS().GetMinTLSVersion(),
+		server.GetHTTPClient().GetTLS().GetCipherSuites(),
+	)
+}
+
+// RuntimeGRPCAuthServerProvider exposes the gRPC AuthService listener settings.
+type RuntimeGRPCAuthServerProvider interface {
+	GetRuntimeGRPCAuthServer() *RuntimeGRPCAuthServerSection
+	GetServer() *ServerSection
+}
+
+// ValidateGRPCAuthServerConfig validates the gRPC AuthService listener and its
+// shared backchannel caller authentication requirements.
+func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error {
+	if provider == nil {
+		return nil
+	}
+
+	grpcAuth := provider.GetRuntimeGRPCAuthServer()
+	if !grpcAuth.IsEnabled() {
+		return nil
+	}
+
+	if grpcAuth.Address == "" {
+		grpcAuth.Address = defaultGRPCAuthAddress
+	}
+
+	if err := checkAddress(grpcAuth.GetAddress()); err != nil {
+		return fmt.Errorf("runtime.servers.grpc.auth.address: %w", err)
+	}
+
+	server := provider.GetServer()
+	if server == nil || (!server.GetBasicAuth().IsEnabled() && !server.GetOIDCAuth().IsEnabled()) {
+		return fmt.Errorf("runtime.servers.grpc.auth.enabled requires auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
+	}
+
+	if server.GetBasicAuth().IsEnabled() {
+		var problems []string
+		if strings.TrimSpace(server.GetBasicAuth().GetUsername()) == "" {
+			problems = append(problems, "auth.backchannel.basic_auth.username")
+		}
+
+		if server.GetBasicAuth().GetPassword().IsZero() {
+			problems = append(problems, "auth.backchannel.basic_auth.password")
+		}
+
+		if len(problems) > 0 {
+			return fmt.Errorf("%s are required when runtime.servers.grpc.auth.enabled=true and auth.backchannel.basic_auth.enabled=true", strings.Join(problems, " and "))
+		}
+	}
+
+	tlsConfig := grpcAuth.GetTLS()
+	if !tlsConfig.IsEnabled() && !isLoopbackListenAddress(grpcAuth.GetAddress()) {
+		return fmt.Errorf("runtime.servers.grpc.auth.address %q requires TLS; plaintext gRPC is only allowed on loopback addresses", grpcAuth.GetAddress())
+	}
+
+	if tlsConfig.RequiresClientCert() && !tlsConfig.IsEnabled() {
+		return fmt.Errorf("runtime.servers.grpc.auth.tls.require_client_cert requires runtime.servers.grpc.auth.tls.enabled=true")
+	}
+
+	if tlsConfig.IsEnabled() {
+		if tlsConfig.GetCert() == "" || tlsConfig.GetKey() == "" {
+			return fmt.Errorf("runtime.servers.grpc.auth.tls.cert and runtime.servers.grpc.auth.tls.key are required when gRPC TLS is enabled")
+		}
+
+		if tlsConfig.GetMinTLSVersion() != "TLS1.2" && tlsConfig.GetMinTLSVersion() != "TLS1.3" {
+			return fmt.Errorf("runtime.servers.grpc.auth.tls.min_tls_version must be TLS1.2 or TLS1.3")
+		}
+
+		if tlsConfig.RequiresClientCert() && tlsConfig.GetClientCA() == "" {
+			return fmt.Errorf("runtime.servers.grpc.auth.tls.client_ca is required when require_client_cert is true")
+		}
+	}
+
+	return nil
+}
+
+func isLoopbackListenAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+
+	return ip.IsLoopback()
+}
+
+func (f *FileSettings) validateSecurityTxt() error {
+	if f == nil || f.Server == nil || !f.Server.SecurityTxt.IsEnabled() {
+		return nil
+	}
+
+	securityTxt := f.Server.SecurityTxt
+	if len(securityTxt.GetContacts()) == 0 {
+		return fmt.Errorf("runtime.servers.http.security_txt.contacts must contain at least one URI when security_txt is enabled")
+	}
+
+	expires := strings.TrimSpace(securityTxt.GetExpires())
+	expiresAfter := securityTxt.GetExpiresAfter()
+	switch {
+	case expiresAfter < 0:
+		return fmt.Errorf("runtime.servers.http.security_txt.expires_after must be greater than zero")
+	case expires != "" && expiresAfter != 0:
+		return fmt.Errorf("runtime.servers.http.security_txt.expires and runtime.servers.http.security_txt.expires_after are mutually exclusive")
+	case expires == "" && expiresAfter <= 0:
+		return fmt.Errorf("runtime.servers.http.security_txt.expires or runtime.servers.http.security_txt.expires_after must be set when security_txt is enabled")
+	case expiresAfter > 365*24*time.Hour:
+		return fmt.Errorf("runtime.servers.http.security_txt.expires_after must be less than or equal to 8760h")
+	}
+
+	if expires != "" {
+		return validateSecurityTxtStaticExpires(expires, securityTxt)
+	}
+
+	return validateSecurityTxtFields(securityTxt)
+}
+
+func validateSecurityTxtStaticExpires(expires string, securityTxt SecurityTxt) error {
+	if _, err := time.Parse(time.RFC3339, expires); err != nil {
+		return fmt.Errorf("runtime.servers.http.security_txt.expires must be an RFC3339 timestamp: %w", err)
+	}
+
+	return validateSecurityTxtFields(securityTxt)
+}
+
+func validateSecurityTxtFields(securityTxt SecurityTxt) error {
+	if err := validateSecurityTxtURIs("contacts", securityTxt.GetContacts()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("canonical", securityTxt.GetCanonical()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("encryption", securityTxt.GetEncryption()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("acknowledgments", securityTxt.GetAcknowledgments()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("policy", securityTxt.GetPolicy()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtURIs("hiring", securityTxt.GetHiring()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtServedFile("encryption", securityTxt.GetEncryptionFile(), securityTxt.GetEncryptionURI()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtServedFile("policy", securityTxt.GetPolicyFile(), securityTxt.GetPolicyURI()); err != nil {
+		return err
+	}
+
+	if err := validateSecurityTxtServedRoutes(securityTxt); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateSecurityTxtServedFile(field string, filePath string, publicURI string) error {
+	filePath = strings.TrimSpace(filePath)
+	publicURI = strings.TrimSpace(publicURI)
+	if filePath == "" && publicURI == "" {
+		return nil
+	}
+
+	if filePath == "" || publicURI == "" {
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_file and runtime.servers.http.security_txt.%s_uri must be configured together", field, field)
+	}
+
+	if err := validateSecurityTxtURIs(field+"_uri", []string{publicURI}); err != nil {
+		return err
+	}
+
+	if info, err := os.Stat(filePath); err != nil {
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_file cannot be read: %w", field, err)
+	} else if info.IsDir() {
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_file must be a file", field)
+	}
+
+	return nil
+}
+
+func validateSecurityTxtServedRoutes(securityTxt SecurityTxt) error {
+	routes := make(map[string]string)
+
+	if err := addSecurityTxtServedRoute(routes, "encryption", securityTxt.GetEncryptionURI()); err != nil {
+		return err
+	}
+
+	if err := addSecurityTxtServedRoute(routes, "policy", securityTxt.GetPolicyURI()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func addSecurityTxtServedRoute(routes map[string]string, field string, publicURI string) error {
+	publicURI = strings.TrimSpace(publicURI)
+	if publicURI == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(publicURI)
+	if err != nil || parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") {
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_uri must contain an absolute path", field)
+	}
+
+	if parsed.Path == "/.well-known/security.txt" {
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_uri must not reuse /.well-known/security.txt", field)
+	}
+
+	if previous, found := routes[parsed.Path]; found {
+		return fmt.Errorf("runtime.servers.http.security_txt.%s_uri route %q duplicates %s_uri", field, parsed.Path, previous)
+	}
+
+	routes[parsed.Path] = field
+
+	return nil
+}
+
+func validateSecurityTxtURIs(field string, values []string) error {
+	for index, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] must not be empty", field, index)
+		}
+
+		parsed, err := url.ParseRequestURI(trimmed)
+		if err != nil || parsed.Scheme == "" {
+			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] must be a URI", field, index)
+		}
+
+		if (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Scheme != "https" {
+			return fmt.Errorf("runtime.servers.http.security_txt.%s[%d] web URI must use https", field, index)
+		}
+	}
+
+	return nil
+}
+
+func (f *FileSettings) validateLuaHooks() error {
+	if f == nil || !f.HaveLuaHooks() {
+		return nil
+	}
+
+	aliases := make(map[string]int)
+	for idx, luaHook := range f.GetLua().GetHooks() {
+		aliasLocation := strings.TrimSpace(luaHook.GetAliasLocation())
+		if aliasLocation == "" {
+			continue
+		}
+
+		canonicalLocation := "/api/v1/custom/" + strings.TrimLeft(luaHook.GetLocation(), "/")
+		if aliasLocation == canonicalLocation {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location duplicates canonical hook location %q", idx, canonicalLocation)
+		}
+		if strings.HasPrefix(aliasLocation, "/api/v1/custom/") {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location must not use reserved custom hook prefix %q", idx, "/api/v1/custom/")
+		}
+
+		aliasKey := strings.ToUpper(luaHook.GetMethod()) + ":" + aliasLocation
+		if previous, found := aliases[aliasKey]; found {
+			return fmt.Errorf("auth.controls.lua.hooks[%d].http_alias_location duplicates auth.controls.lua.hooks[%d] for %s %q", idx, previous, luaHook.GetMethod(), aliasLocation)
+		}
+
+		aliases[aliasKey] = idx
+	}
 
 	return nil
 }
@@ -2508,7 +2815,7 @@ func (f *FileSettings) warnDeprecatedConfig() {
 	srv := f.GetServer()
 	if srv != nil {
 		// Compression
-		warnDeprecatedCompression("runtime.http.compression", &srv.Compression)
+		warnDeprecatedCompression("runtime.servers.http.compression", &srv.Compression)
 		// Redis Cluster
 		warnDeprecatedRedisCluster("storage.redis.cluster", &srv.Redis.Cluster)
 		// Redis standalone replica
@@ -2699,7 +3006,7 @@ func warnDeprecatedRedisReplica(where string, r *Replica) {
 }
 
 // warnDeprecatedDedup warns if deprecated dedup configuration is present.
-// Specifically, 'runtime.http.dedup.distributed_enabled' has been removed and is ignored.
+// Specifically, 'runtime.servers.http.dedup.distributed_enabled' has been removed and is ignored.
 func warnDeprecatedDedup(d *Dedup) {
 	if d == nil {
 		return
@@ -2707,18 +3014,18 @@ func warnDeprecatedDedup(d *Dedup) {
 	if d.DistributedEnabled {
 		safeWarn(
 			"component", "config",
-			"location", "runtime.http.dedup",
+			"location", "runtime.servers.http.dedup",
 			"deprecated", "dedup.distributed_enabled",
-			"msg", "'runtime.http.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed",
+			"msg", "'runtime.servers.http.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed",
 		)
 	}
 
 	if d.InProcessEnabled {
 		safeWarn(
 			"component", "config",
-			"location", "runtime.http.dedup",
+			"location", "runtime.servers.http.dedup",
 			"deprecated", "dedup.in_process_enabled",
-			"msg", "'runtime.http.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
+			"msg", "'runtime.servers.http.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
 		)
 	}
 
@@ -2747,9 +3054,9 @@ func warnDeprecatedTimeout(t *Timeouts) {
 	if t.SingleflightWork != time.Duration(0) {
 		safeWarn(
 			"component", "config",
-			"location", "runtime.http.timeouts",
+			"location", "runtime.timeouts",
 			"deprecated", "timeouts.singleflight_work",
-			"msg", "'runtime.http.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
+			"msg", "'runtime.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
 		)
 	}
 }

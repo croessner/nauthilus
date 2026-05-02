@@ -41,9 +41,11 @@ func TestRenderDefaultConfigDump_IncludesKnownDefaults(t *testing.T) {
 	}
 
 	expectedLines := []string{
-		`runtime.http.middlewares.logging = true`,
-		`runtime.listen.tls.min_tls_version = "TLS1.2"`,
-		`runtime.http.timeouts.lua_script = "30s"`,
+		`runtime.servers.grpc.auth.address = "127.0.0.1:9444"`,
+		`runtime.servers.grpc.auth.tls.min_tls_version = "TLS1.2"`,
+		`runtime.servers.http.middlewares.logging = true`,
+		`runtime.servers.http.tls.min_tls_version = "TLS1.2"`,
+		`runtime.timeouts.lua_script = "30s"`,
 		`identity.oidc.tokens.revoke_refresh_token = true`,
 	}
 
@@ -63,16 +65,27 @@ func TestRenderNonDefaultConfigDump_SuppressesDefaultsAndKeepsChanges(t *testing
 	settings := map[string]any{
 		"developer_mode": false,
 		"runtime": map[string]any{
-			"http": map[string]any{
-				"middlewares": map[string]any{
-					"logging": true,
-					"limit":   false,
+			"servers": map[string]any{
+				"http": map[string]any{
+					"middlewares": map[string]any{
+						"logging": true,
+						"limit":   false,
+					},
+					"tls": map[string]any{
+						"min_tls_version": "TLS1.3",
+					},
+				},
+				"grpc": map[string]any{
+					"auth": map[string]any{
+						"address": "127.0.0.1:9445",
+						"tls": map[string]any{
+							"min_tls_version": "TLS1.3",
+						},
+					},
 				},
 			},
-			"listen": map[string]any{
-				"tls": map[string]any{
-					"min_tls_version": "TLS1.3",
-				},
+			"timeouts": map[string]any{
+				"lua_script": "45s",
 			},
 		},
 	}
@@ -87,7 +100,7 @@ func TestRenderNonDefaultConfigDump_SuppressesDefaultsAndKeepsChanges(t *testing
 		t.Fatalf("RenderNonDefaultConfigDump() missing header %q in output %q", expectedHeader, output)
 	}
 
-	if strings.Contains(output, `runtime.http.middlewares.logging = true`) {
+	if strings.Contains(output, `runtime.servers.http.middlewares.logging = true`) {
 		t.Fatalf("RenderNonDefaultConfigDump() unexpectedly kept default-valued line: %q", output)
 	}
 
@@ -96,8 +109,11 @@ func TestRenderNonDefaultConfigDump_SuppressesDefaultsAndKeepsChanges(t *testing
 	}
 
 	expectedLines := []string{
-		`runtime.http.middlewares.limit = false`,
-		`runtime.listen.tls.min_tls_version = "TLS1.3"`,
+		`runtime.servers.grpc.auth.address = "127.0.0.1:9445"`,
+		`runtime.servers.grpc.auth.tls.min_tls_version = "TLS1.3"`,
+		`runtime.servers.http.middlewares.limit = false`,
+		`runtime.servers.http.tls.min_tls_version = "TLS1.3"`,
+		`runtime.timeouts.lua_script = "45s"`,
 	}
 
 	for _, expected := range expectedLines {
@@ -256,9 +272,11 @@ func TestRenderNonDefaultConfigDumpWithStructuredFormats_RoundTrips(t *testing.T
 	settings := map[string]any{
 		"runtime": map[string]any{
 			"instance_name": "mini",
-			"http": map[string]any{
-				"middlewares": map[string]any{
-					"limit": false,
+			"servers": map[string]any{
+				"http": map[string]any{
+					"middlewares": map[string]any{
+						"limit": false,
+					},
 				},
 			},
 		},
@@ -301,8 +319,9 @@ func TestRenderDefaultConfigDumpWithStructuredFormats_ProducesLoadableDocuments(
 			}
 
 			parsed := parseStructuredConfigDumpOutput(t, format, output)
-			assertStructuredDumpValue(t, parsed, []string{"runtime", "http", "middlewares", "logging"}, true)
-			assertStructuredDumpValue(t, parsed, []string{"runtime", "listen", "tls", "min_tls_version"}, "TLS1.2")
+			assertStructuredDumpValue(t, parsed, []string{"runtime", "servers", "http", "middlewares", "logging"}, true)
+			assertStructuredDumpValue(t, parsed, []string{"runtime", "servers", "http", "tls", "min_tls_version"}, "TLS1.2")
+			assertStructuredDumpValue(t, parsed, []string{"runtime", "timeouts", "lua_script"}, "30s")
 		})
 	}
 }
@@ -326,7 +345,7 @@ func assertStructuredDumpRoundTripValues(t *testing.T, parsed map[string]any) {
 	t.Helper()
 
 	assertStructuredDumpValue(t, parsed, []string{"runtime", "instance_name"}, "mini")
-	assertStructuredDumpValue(t, parsed, []string{"runtime", "http", "middlewares", "limit"}, false)
+	assertStructuredDumpValue(t, parsed, []string{"runtime", "servers", "http", "middlewares", "limit"}, false)
 	assertStructuredDumpValue(t, parsed, []string{"storage", "redis", "primary", "address"}, "localhost:6379")
 	assertStructuredDumpValue(t, parsed, []string{"storage", "redis", "password_nonce"}, "nonce-secret-1234")
 	assertStructuredDumpValue(t, parsed, []string{"identity", "session", "remember_me_ttl"}, "24h")

@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/handler/custom"
 	"github.com/croessner/nauthilus/server/log/level"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdcors "github.com/croessner/nauthilus/server/middleware/cors"
@@ -139,7 +140,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	}
 
 	// Tracing middleware (OpenTelemetry) – enabled if observability.tracing.enabled is true
-	// and not disabled via runtime.http.disabled_endpoints.tracing
+	// and not disabled via runtime.servers.http.disabled_endpoints.tracing
 	if c.cfg.GetServer().GetInsights().IsTracingEnabled() {
 		tr := c.cfg.GetServer().GetInsights().GetTracing()
 
@@ -223,6 +224,10 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 		setupMetrics(r)
 	}
 
+	rb := approuter.NewRouter(c.cfg)
+	rb.Engine = r
+	rb.WithSecurityTxt()
+
 	if c.cfg.GetServer().Frontend.Enabled {
 		r.SetFuncMap(template.FuncMap{
 			"int": func(v any) int {
@@ -251,18 +256,16 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 
 		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
-		rb := approuter.NewRouter(c.cfg)
-		rb.Engine = r
-
 		rb.WithFrontend(setupIdP)
 	}
-
-	rb := approuter.NewRouter(c.cfg)
-	rb.Engine = r
 
 	rb.WithBackchannel(setupBackchannel)
 
 	r.NoRoute(func(ctx *gin.Context) {
+		if custom.DispatchAlias(ctx) {
+			return
+		}
+
 		if strings.HasPrefix(ctx.Request.URL.Path, "/api/v1") {
 			ctx.Status(http.StatusNotFound)
 
@@ -395,17 +398,7 @@ func (c DefaultTLSConfigurator) Build() *tls.Config {
 
 	minTLSVersion = config.TLSMinVersionValue(c.cfg.GetServer().GetTLS().GetMinTLSVersion())
 
-	preferredCiphers := []string{
-		"TLS_AES_256_GCM_SHA384",
-		"TLS_CHACHA20_POLY1305_SHA256",
-		"TLS_AES_128_GCM_SHA256",
-		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-	}
-
-	if len(c.cfg.GetServer().GetTLS().GetCipherSuites()) > 0 {
-		preferredCiphers = c.cfg.GetServer().GetTLS().GetCipherSuites()
-	}
+	preferredCiphers := c.cfg.GetServer().GetTLS().GetCipherSuites()
 
 	knownCipherSuites := config.TLSCipherSuiteValues(preferredCiphers)
 	cipherSuites = append(cipherSuites, knownCipherSuites...)

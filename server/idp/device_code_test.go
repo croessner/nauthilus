@@ -16,10 +16,12 @@
 package idp
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
@@ -90,6 +92,27 @@ func TestDefaultUserCodeGenerator_GenerateUserCode(t *testing.T) {
 		assert.Len(t, code, 7)
 		assert.Equal(t, "-", string(code[3]))
 	})
+}
+
+func TestRedisDeviceCodeStoreUsesConfiguredRedisDeadlines(t *testing.T) {
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Timeouts: config.Timeouts{
+				RedisRead: 35 * time.Millisecond,
+			},
+		},
+	}
+
+	store := NewRedisDeviceCodeStore(nil, "test:")
+	store.cfg = cfg
+
+	readCtx, cancel := store.redisReadContext(context.Background())
+	defer cancel()
+
+	deadline, ok := readCtx.Deadline()
+
+	assert.True(t, ok, "expected Redis read context to carry a deadline")
+	assert.WithinDuration(t, time.Now().Add(35*time.Millisecond), deadline, 10*time.Millisecond)
 }
 
 func TestRedisDeviceCodeStore_StoreAndGet(t *testing.T) {

@@ -42,6 +42,9 @@ import (
 type Monitor interface {
 	// CheckBackendConnection checks the backend connection of a server based on the provided Host address, port number, whether the server runs with HAProxy V2 protocol, and whether TLS should be used. It returns an error if the connection fails.
 	CheckBackendConnection(server *config.BackendServer) error
+
+	// CheckBackendConnectionPhase checks one backend health-check phase.
+	CheckBackendConnectionPhase(server *config.BackendServer, phase BackendCheckPhase) error
 }
 
 // ConnMonitor is a struct that implements monitoring of backend server connections by checking their availability.
@@ -56,6 +59,11 @@ func (cm *ConnMonitor) CheckBackendConnection(server *config.BackendServer) erro
 	return checkBackendConnection(cm.cfg, cm.logger, server)
 }
 
+// CheckBackendConnectionPhase checks one backend health-check phase.
+func (cm *ConnMonitor) CheckBackendConnectionPhase(server *config.BackendServer, phase BackendCheckPhase) error {
+	return checkBackendConnectionWithDialer(cm.cfg, cm.logger, server, phase, net.DialTimeout)
+}
+
 var _ Monitor = (*ConnMonitor)(nil)
 
 // NewMonitor returns a new instance of the Monitor interface. The returned Monitor is implemented by the ConnMonitor struct.
@@ -66,97 +74,172 @@ func NewMonitor(cfg config.File, logger *slog.Logger) Monitor {
 	}
 }
 
+// BackendCheckPhase identifies which part of a backend health check is being executed.
+type BackendCheckPhase string
+
+const (
+	// BackendCheckPhaseConnect verifies TCP, HAProxy-v2 preface, and TLS reachability only.
+	BackendCheckPhaseConnect BackendCheckPhase = "connect"
+
+	// BackendCheckPhaseDeep verifies the protocol-level deep check when enabled for a target.
+	BackendCheckPhaseDeep BackendCheckPhase = "deep"
+)
+
+const (
+	backendCheckPhaseConnect = BackendCheckPhaseConnect
+	backendCheckPhaseDeep    = BackendCheckPhaseDeep
+)
+
+type backendDialer func(network string, address string, timeout time.Duration) (net.Conn, error)
+
 // checkBackendConnection attempts to establish a TCP connection to a specified backend server within a given timeout period.
 // If the backend requires HAProxy v2 protocol, it sends the necessary headers. For secure connections, it performs a TLS handshake.
 // Upon successful connection, it handles different protocols using the provided server settings. It returns an error if any step fails.
 func checkBackendConnection(cfg config.File, logger *slog.Logger, server *config.BackendServer) error {
-	timeout := 5 * time.Second
+	return checkBackendConnectionWithDialer(cfg, logger, server, BackendCheckPhaseDeep, net.DialTimeout)
+}
 
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(server.Host, fmt.Sprintf("%d", server.Port)), timeout)
+func checkBackendConnectionWithDialer(cfg config.File, logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, dialer backendDialer) error {
+	monitoringCfg := monitoringConfig(cfg)
+	conn, err := dialBackendConnection(logger, server, phase, monitoringCfg, dialer)
 	if err != nil {
-		level.Error(logger).Log(
+		return err
+	}
+
+	defer func() {
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}()
+
+	preparedConn, err := prepareBackendConnection(cfg, logger, server, phase, monitoringCfg, conn)
+	if err != nil {
+		return err
+	}
+
+	conn = preparedConn
+
+	return runBackendProtocolCheck(logger, server, phase, monitoringCfg, conn)
+}
+
+func dialBackendConnection(logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, monitoringCfg *config.BackendServerMonitoring, dialer backendDialer) (net.Conn, error) {
+	if dialer == nil {
+		dialer = net.DialTimeout
+	}
+
+	connectTimeout := monitoringCfg.GetServerConnectTimeout(server)
+	conn, err := dialer("tcp", net.JoinHostPort(server.Host, fmt.Sprintf("%d", server.Port)), connectTimeout)
+	if err != nil {
+		_ = level.Error(logger).Log(
 			definitions.LogKeyMsg, "TCP dial failed",
 			"host", server.Host,
 			"port", server.Port,
 			"protocol", strings.ToLower(server.Protocol),
+			"health_check_phase", string(phase),
 			definitions.LogKeyError, err,
 		)
 
-		return err
+		return nil, err
 	}
 
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	setConnectionDeadline(conn, connectTimeout)
 
-	defer conn.Close()
+	return conn, nil
+}
 
+func prepareBackendConnection(cfg config.File, logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, monitoringCfg *config.BackendServerMonitoring, conn net.Conn) (net.Conn, error) {
 	if server.HAProxyV2 {
-		if err = checkHAproxyV2(cfg, logger, conn, server.Host, server.Port); err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyMsg, "HAProxy v2 header send failed",
-				"host", server.Host,
-				"port", server.Port,
-				"protocol", strings.ToLower(server.Protocol),
-				definitions.LogKeyError, err,
-			)
-
-			return err
+		if err := sendHAProxyV2Header(cfg, logger, server, phase, conn); err != nil {
+			return nil, err
 		}
 	}
 
-	if server.TLS && strings.ToLower(server.Protocol) != "sieve" {
-		// Securing the connection
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: server.TLSSkipVerify,
-			ServerName:         server.Host,
-			MinVersion:         tls.VersionTLS12,
-			// Prefer modern secure ciphers; leave to Go defaults but ensure SNI is set.
-		}
-
-		// If the underlying service expects implicit TLS (e.g., SMTPS/IMAPS/POPS/HTTPS), we can wrap immediately.
-		// Otherwise, STARTTLS should be handled at protocol layer (as with Sieve below).
-		tlsConn := tls.Client(conn, tlsConfig)
-		defer tlsConn.Close()
-
-		// Handshake to establish the secure connection with a short timeout
-		type deadlineConn interface {
-			SetDeadline(time.Time) error
-		}
-
-		if dc, ok := conn.(deadlineConn); ok {
-			_ = dc.SetDeadline(time.Now().Add(5 * time.Second))
-		}
-
-		err = tlsConn.Handshake()
-		if err != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, "TLS handshake failed",
-				"host", server.Host,
-				"port", server.Port,
-				"protocol", strings.ToLower(server.Protocol),
-				"skip_verify", server.TLSSkipVerify,
-				definitions.LogKeyError, err,
-			)
-
-			return fmt.Errorf("TLS handshake failed (host=%s port=%d protocol=%s skip_verify=%t): %w", server.Host, server.Port, strings.ToLower(server.Protocol), server.TLSSkipVerify, err)
-		}
-
-		// Replace the plain 'conn' with the tlsConn - everything written/read to/from this connection is encrypted/decrypted
-		conn = net.Conn(tlsConn)
+	if !server.TLS || strings.ToLower(server.Protocol) == "sieve" {
+		return conn, nil
 	}
 
-	if server.DeepCheck {
-		err = handleProtocol(logger, server, conn)
+	return wrapTLSConnection(logger, server, phase, monitoringCfg, conn)
+}
+
+func sendHAProxyV2Header(cfg config.File, logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, conn net.Conn) error {
+	err := checkHAproxyV2(cfg, logger, conn, server.Host, server.Port)
+	if err == nil {
+		return nil
 	}
+
+	_ = level.Error(logger).Log(
+		definitions.LogKeyMsg, "HAProxy v2 header send failed",
+		"host", server.Host,
+		"port", server.Port,
+		"protocol", strings.ToLower(server.Protocol),
+		"health_check_phase", string(phase),
+		definitions.LogKeyError, err,
+	)
 
 	return err
+}
+
+func wrapTLSConnection(logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, monitoringCfg *config.BackendServerMonitoring, conn net.Conn) (net.Conn, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: server.TLSSkipVerify,
+		ServerName:         server.Host,
+		MinVersion:         tls.VersionTLS12,
+	}
+	tlsConn := tls.Client(conn, tlsConfig)
+
+	setConnectionDeadline(tlsConn, monitoringCfg.GetServerTLSTimeout(server))
+
+	if err := tlsConn.Handshake(); err != nil {
+		_ = tlsConn.Close()
+		_ = level.Error(logger).Log(
+			definitions.LogKeyMsg, "TLS handshake failed",
+			"host", server.Host,
+			"port", server.Port,
+			"protocol", strings.ToLower(server.Protocol),
+			"skip_verify", server.TLSSkipVerify,
+			"health_check_phase", string(phase),
+			definitions.LogKeyError, err,
+		)
+
+		return nil, fmt.Errorf("TLS handshake failed (host=%s port=%d protocol=%s skip_verify=%t): %w", server.Host, server.Port, strings.ToLower(server.Protocol), server.TLSSkipVerify, err)
+	}
+
+	return net.Conn(tlsConn), nil
+}
+
+func runBackendProtocolCheck(logger *slog.Logger, server *config.BackendServer, phase BackendCheckPhase, monitoringCfg *config.BackendServerMonitoring, conn net.Conn) error {
+	if phase == BackendCheckPhaseConnect || !server.DeepCheck {
+		return nil
+	}
+
+	setConnectionDeadline(conn, monitoringCfg.GetServerDeepTimeout(server))
+
+	return handleProtocol(logger, server, conn)
+}
+
+func monitoringConfig(cfg config.File) *config.BackendServerMonitoring {
+	if cfg == nil {
+		return nil
+	}
+
+	return cfg.GetBackendServerMonitoring()
+}
+
+func setConnectionDeadline(conn net.Conn, timeout time.Duration) {
+	if conn == nil {
+		return
+	}
+
+	deadline := time.Now().Add(timeout)
+	_ = conn.SetReadDeadline(deadline)
+	_ = conn.SetWriteDeadline(deadline)
 }
 
 // handleProtocol processes authentication for a test user over a network connection based on the specified protocol.
 // Supported protocols include SMTP, POP3, IMAP, and HTTP. If an unsupported protocol is specified, a warning is logged.
 // This function currently does not support plain connections requiring StartTLS.
 func handleProtocol(logger *slog.Logger, server *config.BackendServer, conn net.Conn) (err error) {
-	// Limited support only. Plain connections requireing StartTLS are not supported at the moment!
+	// Limited support only. Plain connections requiring StartTLS are not supported at the moment!
 	switch strings.ToLower(server.Protocol) {
 	case "smtp", "lmtp":
 		err = checkSMTP(logger, conn, server.Protocol, server.TestUsername, server.TestPassword)

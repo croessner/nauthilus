@@ -17,6 +17,9 @@ package backchannel
 
 import (
 	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/handler/asyncjobs"
@@ -67,9 +70,83 @@ func hasBackchannelProtectedRouteAuth(cfg config.File, developerMode bool) bool 
 	return false
 }
 
+func hasConfiguredBackchannelAuth(cfg config.File) bool {
+	if cfg == nil || cfg.GetServer() == nil {
+		return false
+	}
+
+	return cfg.GetServer().GetBasicAuth().IsEnabled() || cfg.GetServer().GetOIDCAuth().IsEnabled()
+}
+
 // ValidateAuthConfiguration validates required authentication settings for backchannel endpoints.
 func ValidateAuthConfiguration(cfg config.File, developerMode bool) error {
 	return ensureBackchannelAuthConfigured(cfg, developerMode)
+}
+
+func backchannelAuthMiddleware(
+	cfg config.File,
+	validator oidcbearer.TokenValidator,
+	logger *slog.Logger,
+) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !authorizeBackchannelRequest(ctx, cfg, validator, logger) {
+			return
+		}
+
+		ctx.Next()
+	}
+}
+
+func authorizeBackchannelRequest(
+	ctx *gin.Context,
+	cfg config.File,
+	validator oidcbearer.TokenValidator,
+	logger *slog.Logger,
+) bool {
+	if cfg == nil || cfg.GetServer() == nil {
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "backchannel authentication is not configured"})
+
+		return false
+	}
+
+	basicEnabled := cfg.GetServer().GetBasicAuth().IsEnabled()
+	oidcEnabled := cfg.GetServer().GetOIDCAuth().IsEnabled()
+	if !basicEnabled && !oidcEnabled {
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "backchannel authentication is not configured"})
+
+		return false
+	}
+
+	switch authorizationHeaderScheme(ctx) {
+	case "basic":
+		if basicEnabled {
+			return mdauth.AuthorizeBasicAuthWithDeps(ctx, cfg, logger)
+		}
+	case "bearer":
+		if oidcEnabled {
+			return oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, logger)
+		}
+	case "":
+		if basicEnabled && !oidcEnabled {
+			return mdauth.AuthorizeBasicAuthWithDeps(ctx, cfg, logger)
+		}
+	}
+
+	if oidcEnabled {
+		return oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, logger)
+	}
+
+	return mdauth.AuthorizeBasicAuthWithDeps(ctx, cfg, logger)
+}
+
+func authorizationHeaderScheme(ctx *gin.Context) string {
+	header := strings.TrimSpace(ctx.GetHeader("Authorization"))
+	scheme, _, ok := strings.Cut(header, " ")
+	if !ok {
+		return ""
+	}
+
+	return strings.ToLower(scheme)
 }
 
 // Setup registers backchannel API endpoints with explicit dependencies.
@@ -95,17 +172,15 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
 		authenticatedGroup = router.Group("/api/v1")
 
-		if cfg.GetServer().GetBasicAuth().IsEnabled() {
-			authenticatedGroup.Use(mdauth.BasicAuthMiddlewareWithDeps(cfg, deps.Logger))
-		}
-
 		// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
 		// Uses the IdP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
 		// Controlled by auth.backchannel.oidc_bearer.enabled, independent of identity.oidc.enabled.
 		if cfg.GetServer().GetOIDCAuth().IsEnabled() {
 			nauthilusIdP = idp.NewNauthilusIdP(deps)
+		}
 
-			authenticatedGroup.Use(oidcbearer.Middleware(nauthilusIdP, cfg, deps.Logger))
+		if hasConfiguredBackchannelAuth(cfg) {
+			authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIdP, deps.Logger))
 		}
 
 		authenticatedGroup.Use(mdlua.LuaContextMiddleware())

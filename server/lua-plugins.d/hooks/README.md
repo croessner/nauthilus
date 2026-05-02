@@ -125,10 +125,11 @@ auth:
   controls:
     lua:
       hooks:
-        - http_location: "hook-name"       # The URL path for the hook (relative to /api/v1/custom/)
-          http_method: "HTTP_METHOD"       # The HTTP method (GET, POST, PUT, DELETE, PATCH)
-          script_path: "/path/to/hook.lua" # Full path to the Lua script
-          roles: ["role1", "role2"]        # Optional: List of roles that can access this hook when JWT auth is enabled
+        - http_location: "hook-name"                 # The URL path for the hook (relative to /api/v1/custom/)
+          http_alias_location: "/external/hook-name" # Optional: absolute external alias path for the same hook
+          http_method: "HTTP_METHOD"                 # The HTTP method (GET, POST, PUT, DELETE, PATCH)
+          script_path: "/path/to/hook.lua"           # Full path to the Lua script
+          scopes: ["scope1", "scope2"]               # Optional: OIDC scopes required to access this hook
 ```
 
 ### Example Configuration
@@ -141,33 +142,41 @@ auth:
     lua:
       hooks:
         - http_location: "distributed-brute-force-admin"
+          http_alias_location: "/admin/hooks/distributed-brute-force"
           http_method: "POST"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-admin.lua"
-          roles: ["admin", "security"]
+          scopes: ["admin", "security"]
 
         - http_location: "distributed-brute-force-test"
           http_method: "POST"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-test.lua"
-          roles: ["admin", "security"]
+          scopes: ["admin", "security"]
 
         - http_location: "hello-world-request-dump"
           http_method: "GET"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/hello-world-request-dump.lua"
-          roles: ["admin"]
+          scopes: ["admin"]
 ```
 
-### Access Control with JWT Authentication
+### Absolute Alias Locations
 
-When JWT authentication is enabled in Nauthilus, you can restrict access to hooks based on user roles:
+`http_alias_location` exposes the same hook at an additional absolute path outside `/api/v1/custom/`.
+The alias uses the canonical hook configuration, including the same HTTP method, script, and `scopes`.
+Existing concrete Nauthilus routes take precedence; aliases are resolved only for requests that would otherwise be a 404.
+Alias locations under `/api/v1/custom/` are rejected because that prefix is reserved for canonical hook URLs.
 
-1. Define the required roles in the `roles` array for each hook
-2. Users must have at least one of the specified roles in their JWT token to access the hook
-3. If no roles are specified, any authenticated user can access the hook
-4. If JWT authentication is not enabled, role restrictions are ignored
+### Access Control with OIDC Bearer Authentication
+
+When OIDC bearer authentication is enabled in Nauthilus, you can restrict access to hooks based on token scopes:
+
+1. Define the required scopes in the `scopes` array for each hook
+2. Users must have at least one of the specified scopes in their bearer token to access the hook
+3. If no scopes are specified, the hook is public
+4. If OIDC bearer authentication is not enabled, hooks with scopes deny access
 
 ### Enabling/Disabling All Custom Hooks
 
-You can disable all custom hooks by setting `custom_hooks: true` in `runtime.http.disabled_endpoints`:
+You can disable all custom hooks by setting `custom_hooks: true` in `runtime.servers.http.disabled_endpoints`:
 
 ```yaml
 runtime:
@@ -198,12 +207,12 @@ auth:
         - http_location: "http-head-get-demo"
           http_method: "GET"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
-          roles: ["admin"]
+          scopes: ["admin"]
 
         - http_location: "http-head-get-demo"
           http_method: "HEAD"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
-          roles: ["admin"]
+          scopes: ["admin"]
 ```
 
 Endpoint examples:
@@ -243,12 +252,12 @@ auth:
         - http_location: "dynamic-textmap-demo"
           http_method: "GET"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
-          roles: ["admin"]
+          scopes: ["admin"]
 
         - http_location: "dynamic-textmap-demo"
           http_method: "HEAD"
           script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
-          roles: ["admin"]
+          scopes: ["admin"]
 ```
 
 Example requests:

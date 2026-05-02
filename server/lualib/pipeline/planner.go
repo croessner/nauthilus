@@ -36,6 +36,11 @@ const (
 	ModeNoAuth
 )
 
+// RequestModes returns all request modes supported by Lua pipeline planning.
+func RequestModes() []ModeMask {
+	return []ModeMask{ModeAuthenticated, ModeUnauthenticated, ModeNoAuth}
+}
+
 // Node describes one configured script in a dependency graph.
 type Node struct {
 	Name      string
@@ -57,6 +62,9 @@ type PlannedNode struct {
 type Plan struct {
 	Levels [][]PlannedNode
 }
+
+// Plans contains cached dependency plans keyed by request mode.
+type Plans map[ModeMask]Plan
 
 type graphState struct {
 	byName     map[string]Node
@@ -102,6 +110,41 @@ func BuildPlan(nodes []Node, mode ModeMask) (Plan, error) {
 		return Plan{}, err
 	}
 
+	return buildRunnablePlan(nodes, mode)
+}
+
+// BuildPlans validates nodes once and returns cached plans for all request modes.
+func BuildPlans(nodes []Node) (Plans, error) {
+	if err := ValidateStatic(nodes); err != nil {
+		return nil, err
+	}
+
+	plans := make(Plans, len(RequestModes()))
+
+	for _, mode := range RequestModes() {
+		plan, err := buildRunnablePlan(nodes, mode)
+		if err != nil {
+			return nil, err
+		}
+
+		plans[mode] = plan
+	}
+
+	return plans, nil
+}
+
+// PlannedNodeCount returns the number of runnable nodes in a plan.
+func PlannedNodeCount(plan Plan) int {
+	count := 0
+
+	for _, level := range plan.Levels {
+		count += len(level)
+	}
+
+	return count
+}
+
+func buildRunnablePlan(nodes []Node, mode ModeMask) (Plan, error) {
 	runnable := make([]Node, 0, len(nodes))
 	for _, node := range nodes {
 		if node.Modes&mode != 0 {

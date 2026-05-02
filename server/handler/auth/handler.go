@@ -54,6 +54,8 @@ func (h *Handler) Register(router gin.IRouter) {
 	h.registerBasicEndpoint(authGroup, withService)
 	authGroup.GET("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
 	authGroup.POST("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
+	authGroup.GET("/"+definitions.ServCBOR, withService(definitions.ServCBOR, h.cbor))
+	authGroup.POST("/"+definitions.ServCBOR, withService(definitions.ServCBOR, h.cbor))
 	authGroup.GET("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.POST("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.GET("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
@@ -76,6 +78,23 @@ func (h *Handler) json(ctx *gin.Context) {
 
 	// Propagate the new context down the call chain so child operations
 	// (e.g., Redis, outbound HTTP) attach under this span when possible.
+	ctx.Request = ctx.Request.WithContext(spanCtx)
+
+	h.process(ctx)
+}
+
+func (h *Handler) cbor(ctx *gin.Context) {
+	if h.deps.Cfg.GetServer().GetEndpoint().IsAuthCBORDisabled() {
+		ctx.AbortWithStatus(http.StatusNotFound)
+
+		return
+	}
+
+	tr := monittrace.New("nauthilus/rest")
+
+	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_cbor")
+	defer sp.End()
+
 	ctx.Request = ctx.Request.WithContext(spanCtx)
 
 	h.process(ctx)

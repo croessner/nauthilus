@@ -52,26 +52,41 @@ type EnforceBearerScopeAuthOptions struct {
 // scope, which is required for all backchannel API access.
 func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		_, ok := EnforceBearerScopeAuth(ctx, validator, cfg, EnforceBearerScopeAuthOptions{
-			RequiredScopes:         []string{definitions.ScopeAuthenticate},
-			MissingScopeMessage:    "missing required scope: " + definitions.ScopeAuthenticate,
-			ThrottleOnMissingToken: true,
-		})
-		if !ok {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				cfg,
-				logger,
-				definitions.DbgIdp,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, "OIDC token missing required scope: "+definitions.ScopeAuthenticate,
-			)
-
+		if !AuthorizeAuthenticateScope(ctx, validator, cfg, logger) {
 			return
 		}
 
 		ctx.Next()
 	}
+}
+
+// AuthorizeAuthenticateScope validates a Bearer token for the base backchannel
+// authentication scope and stores validated claims in the Gin context.
+func AuthorizeAuthenticateScope(
+	ctx *gin.Context,
+	validator TokenValidator,
+	cfg config.File,
+	logger *slog.Logger,
+) bool {
+	_, ok := EnforceBearerScopeAuth(ctx, validator, cfg, EnforceBearerScopeAuthOptions{
+		RequiredScopes:         []string{definitions.ScopeAuthenticate},
+		MissingScopeMessage:    "missing required scope: " + definitions.ScopeAuthenticate,
+		ThrottleOnMissingToken: true,
+	})
+	if !ok {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "OIDC token missing required scope: "+definitions.ScopeAuthenticate,
+		)
+
+		return false
+	}
+
+	return true
 }
 
 func EnforceBearerScopeAuth(

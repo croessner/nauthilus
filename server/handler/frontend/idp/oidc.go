@@ -115,8 +115,8 @@ func NewOIDCHandler(d *deps.Deps, idpInstance *idp.NauthilusIdP, frontendHandler
 	return &OIDCHandler{
 		deps:        d,
 		idp:         idpInstance,
-		storage:     idp.NewRedisTokenStorage(d.Redis, prefix),
-		deviceStore: idp.NewRedisDeviceCodeStore(d.Redis, prefix),
+		storage:     idp.NewRedisTokenStorageWithConfig(d.Redis, prefix, d.Cfg),
+		deviceStore: idp.NewRedisDeviceCodeStoreWithConfig(d.Redis, prefix, d.Cfg),
 		userCodeGen: &idp.DefaultUserCodeGenerator{},
 		frontend:    frontendHandler,
 		tracer:      monittrace.New("nauthilus/idp/oidc"),

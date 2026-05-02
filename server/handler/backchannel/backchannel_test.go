@@ -1,9 +1,18 @@
 package backchannel
 
 import (
+	"context"
+	"encoding/base64"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/secret"
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -72,4 +81,70 @@ func TestEnsureBackchannelAuthConfigured(t *testing.T) {
 
 		assert.NoError(t, ensureBackchannelAuthConfigured(cfg, true))
 	})
+}
+
+func TestBackchannelAuthMiddlewareAllowsEitherBasicOrBearer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			BasicAuth: config.BasicAuth{
+				Enabled:  true,
+				Username: "api-client",
+				Password: secret.New("api-secret-1234"),
+			},
+			OIDCAuth: config.OIDCAuth{Enabled: true},
+		},
+	}
+
+	t.Run("allows basic auth without bearer token", func(t *testing.T) {
+		validator := &recordingTokenValidator{
+			claims: jwt.MapClaims{"scope": definitions.ScopeAuthenticate},
+		}
+		router := newBackchannelAuthTestRouter(cfg, validator)
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/probe", nil)
+		request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("api-client:api-secret-1234")))
+
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusNoContent, response.Code)
+		assert.Equal(t, 0, validator.calls)
+	})
+
+	t.Run("allows bearer token without basic credentials", func(t *testing.T) {
+		validator := &recordingTokenValidator{
+			claims: jwt.MapClaims{"scope": definitions.ScopeAuthenticate},
+		}
+		router := newBackchannelAuthTestRouter(cfg, validator)
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/probe", nil)
+		request.Header.Set("Authorization", "Bearer token-1")
+
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusNoContent, response.Code)
+		assert.Equal(t, 1, validator.calls)
+	})
+}
+
+func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenValidator) *gin.Engine {
+	router := gin.New()
+	router.Use(backchannelAuthMiddleware(cfg, validator, slog.Default()))
+	router.GET("/api/v1/auth/probe", func(ctx *gin.Context) {
+		ctx.Status(http.StatusNoContent)
+	})
+
+	return router
+}
+
+type recordingTokenValidator struct {
+	claims jwt.MapClaims
+	calls  int
+}
+
+func (v *recordingTokenValidator) ValidateToken(context.Context, string) (jwt.MapClaims, error) {
+	v.calls++
+
+	return v.claims, nil
 }

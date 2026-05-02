@@ -24,6 +24,7 @@ import "strconv"
 // Header values are interpreted as attempt ordinals (1-based) and normalized to failCount = max(0, ordinal-1).
 type LoginAttemptManager interface {
 	InitFromHeader(headerVal string)
+	InitFromAttemptOrdinal(ordinal uint)
 	InitFromBucket(counter uint)
 	OnAuthFailure()
 	OnAuthSuccess()
@@ -65,11 +66,20 @@ func (m *defaultLoginAttemptManager) InitFromHeader(headerVal string) {
 		return
 	}
 
-	// Header is 1-based attempt ordinal; convert to 0-based fail count.
-	fc := max(n-1, 0)
+	m.InitFromAttemptOrdinal(uint(n))
+}
 
-	if uint(fc) > m.failCount {
-		m.failCount = uint(fc)
+// InitFromAttemptOrdinal initializes the login attempt manager from a 1-based attempt ordinal.
+func (m *defaultLoginAttemptManager) InitFromAttemptOrdinal(ordinal uint) {
+	if ordinal == 0 {
+		return
+	}
+
+	// Attempt ordinals are 1-based; convert to 0-based fail count.
+	failCount := ordinal - 1
+
+	if failCount > m.failCount {
+		m.failCount = failCount
 		m.from = srcHeader
 	}
 }

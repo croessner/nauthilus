@@ -16,6 +16,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestFormatConfigProblems_UsesMultilineOutputForMultipleProblems(t *testing.
 	err := formatConfigProblems([]Problem{
 		{
 			Kind:    configProblemValidation,
-			Path:    "runtime.listen.tls.cert",
+			Path:    "runtime.servers.http.tls.cert",
 			Message: "failed validation rule 'file'",
 		},
 		{
@@ -86,7 +87,7 @@ func TestFormatConfigProblems_UsesMultilineOutputForMultipleProblems(t *testing.
 	expectedParts := []string{
 		"configuration errors:\n",
 		"- field 'auth.controls.lua.hooks[0].script_path' failed validation rule 'file'\n",
-		"- field 'runtime.listen.tls.cert' failed validation rule 'file'",
+		"- field 'runtime.servers.http.tls.cert' failed validation rule 'file'",
 	}
 
 	for _, expected := range expectedParts {
@@ -117,8 +118,8 @@ func TestHandleFile_ValidationErrorsUseCanonicalPathsOnly(t *testing.T) {
 	got := err.Error()
 
 	assertContainsAll(t, got, []string{
-		"runtime.listen.tls.cert",
-		"runtime.listen.tls.key",
+		"runtime.servers.http.tls.cert",
+		"runtime.servers.http.tls.key",
 		"auth.controls.lua.hooks[0].script_path",
 	})
 	assertContainsNone(t, got, []string{
@@ -144,9 +145,11 @@ func TestHandleFile_RejectsLegacyHTTPClientSkipVerify(t *testing.T) {
 		},
 	})
 	viper.Set("runtime", map[string]any{
-		"listen": map[string]any{
-			"tls": map[string]any{
-				"http_client_skip_verify": true,
+		"servers": map[string]any{
+			"http": map[string]any{
+				"tls": map[string]any{
+					"http_client_skip_verify": true,
+				},
 			},
 		},
 	})
@@ -159,9 +162,239 @@ func TestHandleFile_RejectsLegacyHTTPClientSkipVerify(t *testing.T) {
 
 	got := err.Error()
 
-	if !strings.Contains(got, "runtime.listen.tls") || !strings.Contains(got, "http_client_skip_verify") {
+	if !strings.Contains(got, "runtime.servers.http.tls") || !strings.Contains(got, "http_client_skip_verify") {
 		t.Fatalf("HandleFile() error = %q, want canonical parent path plus rejected key", got)
 	}
+}
+
+func TestHandleFile_RejectsRemovedRuntimeListenAndHTTPPaths(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("runtime", map[string]any{
+		"listen": map[string]any{
+			"address": "127.0.0.1:9080",
+		},
+		"http": map[string]any{
+			"keep_alive": map[string]any{
+				"enabled": true,
+			},
+		},
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want removed runtime path rejection")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{"runtime", "listen", "http"})
+}
+
+func TestHandleFile_RejectsEnabledGRPCAuthWithoutBackchannelAuth(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want gRPC backchannel auth configuration error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.grpc.auth.enabled",
+		"auth.backchannel.basic_auth.enabled=true",
+		"auth.backchannel.oidc_bearer.enabled=true",
+	})
+}
+
+func TestHandleFile_RejectsPlaintextGRPCAuthOnNonLoopback(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("0.0.0.0:9444")
+	setGRPCAuthBasicBackchannelTestConfig()
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want plaintext gRPC bind validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.grpc.auth.address",
+		"plaintext",
+		"loopback",
+	})
+}
+
+func TestHandleFile_AcceptsGRPCAuthMinTLSVersion(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setGRPCAuthValidationTestConfig("0.0.0.0:9444")
+	setGRPCAuthBasicBackchannelTestConfig()
+	viper.Set("runtime.servers.grpc.auth.tls", map[string]any{
+		"enabled":         true,
+		"cert":            certFile,
+		"key":             keyFile,
+		"min_tls_version": "TLS1.3",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err != nil {
+		t.Fatalf("HandleFile() error = %v, want gRPC min_tls_version to be accepted", err)
+	}
+}
+
+func TestHandleFile_RejectsHTTPServerTLS13CipherSuites(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.2", []string{
+		"TLS_AES_256_GCM_SHA384",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want HTTP TLS 1.3 cipher suite validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.http.tls.cipher_suites[0]",
+		"TLS_AES_256_GCM_SHA384",
+		"TLS 1.3 cipher suites are not configurable",
+	})
+}
+
+func TestHandleFile_RejectsHTTPServerCipherSuitesWithTLS13Minimum(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.3", []string{
+		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want HTTP TLS cipher suite validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.http.tls.cipher_suites",
+		"runtime.servers.http.tls.min_tls_version",
+		"TLS1.3",
+	})
+}
+
+func TestHandleFile_RejectsUnknownHTTPServerCipherSuites(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	certFile, keyFile := writeTestTLSKeyPair(t)
+	setHTTPServerTLSValidationTestConfig(certFile, keyFile, "TLS1.2", []string{
+		"TLS_NOT_A_REAL_CIPHER_SUITE",
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want HTTP TLS unknown cipher suite validation error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.http.tls.cipher_suites[0]",
+		"TLS_NOT_A_REAL_CIPHER_SUITE",
+		"unsupported TLS cipher suite",
+	})
+}
+
+func TestHandleFile_RejectsGRPCAuthWithIncompleteBasicBackchannelAuth(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+	viper.Set("auth", map[string]any{
+		"backchannel": map[string]any{
+			"basic_auth": map[string]any{
+				"enabled": true,
+			},
+		},
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want incomplete gRPC Basic backchannel auth configuration error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"auth.backchannel.basic_auth.username",
+		"auth.backchannel.basic_auth.password",
+	})
+}
+
+func TestHandleFile_RejectsGRPCAuthClientCertWithoutTLS(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+	setGRPCAuthBasicBackchannelTestConfig()
+	viper.Set("runtime.servers.grpc.auth.tls.require_client_cert", true)
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want gRPC client certificate TLS configuration error")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.grpc.auth.tls.require_client_cert",
+		"runtime.servers.grpc.auth.tls.enabled",
+	})
 }
 
 func setValidationErrorTestConfig() {
@@ -175,10 +408,12 @@ func setValidationErrorTestConfig() {
 		},
 	})
 	viper.Set("runtime", map[string]any{
-		"listen": map[string]any{
-			"tls": map[string]any{
-				"cert": "/definitely/missing/cert.pem",
-				"key":  "/definitely/missing/key.pem",
+		"servers": map[string]any{
+			"http": map[string]any{
+				"tls": map[string]any{
+					"cert": "/definitely/missing/cert.pem",
+					"key":  "/definitely/missing/key.pem",
+				},
 			},
 		},
 	})
@@ -195,6 +430,83 @@ func setValidationErrorTestConfig() {
 			},
 		},
 	})
+}
+
+func setGRPCAuthValidationTestConfig(address string) {
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("runtime", map[string]any{
+		"servers": map[string]any{
+			"grpc": map[string]any{
+				"auth": map[string]any{
+					"enabled": true,
+					"address": address,
+				},
+			},
+		},
+	})
+}
+
+func setGRPCAuthBasicBackchannelTestConfig() {
+	viper.Set("auth", map[string]any{
+		"backchannel": map[string]any{
+			"basic_auth": map[string]any{
+				"enabled":  true,
+				"username": "grpc-test",
+				"password": "grpc-secret-1234",
+			},
+		},
+	})
+}
+
+func setHTTPServerTLSValidationTestConfig(certFile, keyFile, minTLSVersion string, cipherSuites []string) {
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("runtime", map[string]any{
+		"servers": map[string]any{
+			"http": map[string]any{
+				"tls": map[string]any{
+					"enabled":         true,
+					"cert":            certFile,
+					"key":             keyFile,
+					"min_tls_version": minTLSVersion,
+					"cipher_suites":   cipherSuites,
+				},
+			},
+		},
+	})
+}
+
+func writeTestTLSKeyPair(t *testing.T) (string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	certFile := dir + "/server.crt"
+	keyFile := dir + "/server.key"
+
+	if err := os.WriteFile(certFile, []byte("test certificate"), 0o600); err != nil {
+		t.Fatalf("write test certificate: %v", err)
+	}
+
+	if err := os.WriteFile(keyFile, []byte("test key"), 0o600); err != nil {
+		t.Fatalf("write test key: %v", err)
+	}
+
+	return certFile, keyFile
 }
 
 func assertContainsAll(t *testing.T, got string, expected []string) {

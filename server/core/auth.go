@@ -41,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -422,6 +423,9 @@ type AuthRequest struct {
 
 	// SSLFingerprint is the fingerprint of the SSL certificate.
 	SSLFingerprint string
+
+	// AuthLoginAttempt is the incoming authentication attempt ordinal.
+	AuthLoginAttempt uint
 
 	// XClientID is a custom client identifier.
 	XClientID string
@@ -1272,6 +1276,36 @@ func (a *AuthState) SetLoginAttempts(loginAttempts uint) {
 	a.Security.LoginAttempts = loginAttempts
 }
 
+// SyncLoginAttemptsFromAttemptOrdinal updates the internal login attempt manager
+// from a 1-based attempt ordinal and mirrors the normalized fail count.
+func (a *AuthState) SyncLoginAttemptsFromAttemptOrdinal(ordinal uint) {
+	if ordinal == 0 {
+		return
+	}
+
+	lam := a.ensureLAM()
+	if lam == nil {
+		a.Security.LoginAttempts = ordinal - 1
+
+		return
+	}
+
+	lam.InitFromAttemptOrdinal(ordinal)
+	a.Security.LoginAttempts = lam.FailCount()
+}
+
+// SyncLoginAttemptsFromHeader updates the internal login attempt manager from
+// a header value containing a 1-based attempt ordinal.
+func (a *AuthState) SyncLoginAttemptsFromHeader(headerValue string) {
+	lam := a.ensureLAM()
+	if lam == nil {
+		return
+	}
+
+	lam.InitFromHeader(headerValue)
+	a.Security.LoginAttempts = lam.FailCount()
+}
+
 // GetFailCount returns the current number of failed login attempts using the
 // centralized manager if available. If the manager is not initialized, it
 // falls back to the legacy field. This method is used for logging
@@ -1781,15 +1815,13 @@ func (a *AuthState) ResetLoginAttemptsOnSuccess() {
 //
 // If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
 func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
-	if a.Runtime.StatusMessage == "" {
-		a.Runtime.StatusMessage = definitions.PasswordFail
-	}
+	a.prepareAuthFailure()
 
 	ctx.Header("Auth-Status", a.Runtime.StatusMessage)
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 
 	switch a.Request.Service {
-	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON:
+	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON, definitions.ServCBOR:
 		maxWaitDelay := uint(a.Cfg().GetServer().GetNginxWaitDelay())
 
 		if maxWaitDelay > 0 {
@@ -2207,6 +2239,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 
 	cr.Session = a.Runtime.GUID
 	cr.ExternalSessionID = a.Request.ExternalSessionID
+	cr.HealthCheck = a.IsBackendHealthCheckRequest()
 	cr.Username = a.Request.Username
 	cr.Password = a.passwordBytes()
 	cr.ClientIP = a.Request.ClientIP
@@ -2280,6 +2313,42 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	}
 
 	a.fillIdPFields(cr)
+}
+
+// IsBackendHealthCheckRequest reports whether the current authentication request matches a configured health-check identity.
+func (a *AuthState) IsBackendHealthCheckRequest() bool {
+	if a == nil || a.Cfg() == nil {
+		return false
+	}
+
+	username := strings.TrimSpace(a.Request.Username)
+	if username == "" {
+		return false
+	}
+
+	service := strings.ToLower(strings.TrimSpace(a.Request.Service))
+	protocol := strings.ToLower(strings.TrimSpace(a.Request.Protocol.Get()))
+
+	for _, server := range a.Cfg().GetBackendServers() {
+		if server == nil || server.TestUsername == "" {
+			continue
+		}
+
+		if username != strings.TrimSpace(server.TestUsername) {
+			continue
+		}
+
+		serverProtocol := strings.ToLower(strings.TrimSpace(server.Protocol))
+		if service == "" && protocol == "" {
+			return true
+		}
+
+		if serverProtocol == service || serverProtocol == protocol {
+			return true
+		}
+	}
+
+	return false
 }
 
 // findOIDCClient looks up an OIDC client by its ID from the loaded configuration.
@@ -3478,11 +3547,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 
 	// Initialize login attempts from header using the centralized manager.
 	if a, ok := auth.(*AuthState); ok {
-		lam := a.ensureLAM()
-		if lam != nil {
-			lam.InitFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
-			a.Security.LoginAttempts = lam.FailCount()
-		}
+		a.SyncLoginAttemptsFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
 	}
 }
 
@@ -3543,40 +3608,37 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 	}
 }
 
-// processApplicationJSON takes a gin Context and an AuthState object.
-// It attempts to bind the JSON payload from the Context to a JSONRequest object.
-// If there is an error in the binding process, it sets the error type to "gin.ErrorTypeBind" and returns.
-// Otherwise, it calls the setAuthenticationFields function with the AuthState object and the JSONRequest object,
-// and sets additional fields in the AuthState object using the XSSL method.
-func processApplicationJSON(ctx *gin.Context, auth State) {
+type authRequestDecoder func(ctx *gin.Context, request *authdto.Request) error
+
+func processStructuredAuthRequest(ctx *gin.Context, auth State, metricName string, decoder authRequestDecoder) {
 	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_json_decode_total", ctx.FullPath()); stop != nil {
+		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, metricName, ctx.FullPath()); stop != nil {
 			defer stop()
 		}
 	}
 
-	var jsonRequest authdto.Request
+	var request authdto.Request
 
-	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
+	if err := decoder(ctx, &request); err != nil {
 		HandleJSONError(ctx, err)
 
 		return
 	}
 
-	if jsonRequest.Password == "" && ctx.Query("mode") != "no-auth" && ctx.Query("mode") != "list-accounts" {
+	if request.Password == "" && ctx.Query("mode") != "no-auth" && ctx.Query("mode") != "list-accounts" {
 		HandleJSONValidationError(ctx, "Password", "This field is required")
 
 		return
 	}
 
-	setAuthenticationFields(auth, &jsonRequest)
+	ApplyStructuredAuthRequest(auth, &request)
 
-	// If no user_agent provided via JSON, fallback to HTTP header
-	if jsonRequest.UserAgent == "" {
+	// If no user_agent was provided in the request body, fall back to the HTTP header.
+	if request.UserAgent == "" {
 		auth.WithUserAgent(ctx)
 	}
 
-	jsonRequest = authdto.Request{}
+	request = authdto.Request{}
 	ctx.Request.Body = http.NoBody
 	ctx.Request.ContentLength = 0
 
@@ -3586,8 +3648,23 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 	}
 }
 
-// setAuthenticationFields updates the provided authentication state with data from the request, if available.
-func setAuthenticationFields(auth State, request *authdto.Request) {
+// processApplicationJSON decodes application/json authentication requests.
+func processApplicationJSON(ctx *gin.Context, auth State) {
+	processStructuredAuthRequest(ctx, auth, "request_json_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
+		return ctx.ShouldBindJSON(request)
+	})
+}
+
+// processApplicationCBOR decodes application/cbor authentication requests.
+func processApplicationCBOR(ctx *gin.Context, auth State) {
+	processStructuredAuthRequest(ctx, auth, "request_cbor_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
+		return cborcodec.DecodeReader(ctx.Request.Body, request)
+	})
+}
+
+// ApplyStructuredAuthRequest updates the provided authentication state with
+// data from the structured request payload, if available.
+func ApplyStructuredAuthRequest(auth State, request *authdto.Request) {
 	authState, ok := auth.(*AuthState)
 	if !ok {
 		return
@@ -3598,6 +3675,11 @@ func setAuthenticationFields(auth State, request *authdto.Request) {
 
 	ctxData := NewAuthContext(buildAuthContextOptions(request)...)
 	authState.ApplyContextData(ctxData)
+
+	if request.AuthLoginAttempt > 0 {
+		authState.Request.AuthLoginAttempt = request.AuthLoginAttempt
+		authState.SyncLoginAttemptsFromAttemptOrdinal(request.AuthLoginAttempt)
+	}
 }
 
 // buildCredentialOptions creates credential options from the request.
@@ -3669,8 +3751,8 @@ func buildAuthContextOptions(request *authdto.Request) []AuthContextOption {
 // It retrieves the "Content-Type" header from the Context.
 // If the "Content-Type" starts with "application/x-www-form-urlencoded",
 // it calls the processApplicationXWWWFormUrlencoded function passing the Context and AuthState object.
-// If the "Content-Type" is "application/json",
-// it calls the processApplicationJSON function passing the Context and AuthState object.
+// If the "Content-Type" is "application/json" or "application/cbor",
+// it decodes the body with the corresponding structured decoder.
 // If neither of the above conditions match, it sets the error associated with unsupported media type
 // and sets the error type to gin.ErrorTypeBind on the Context.
 func setupBodyBasedAuth(ctx *gin.Context, auth State) {
@@ -3681,6 +3763,8 @@ func setupBodyBasedAuth(ctx *gin.Context, auth State) {
 			processApplicationXWWWFormUrlencoded(ctx, auth)
 		} else if strings.HasPrefix(contentType, "application/json") {
 			processApplicationJSON(ctx, auth)
+		} else if strings.HasPrefix(contentType, "application/cbor") {
+			processApplicationCBOR(ctx, auth)
 		} else {
 			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
 			ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
@@ -3751,7 +3835,7 @@ func setupAuth(ctx *gin.Context, auth State) {
 	switch svc {
 	case definitions.ServNginx, definitions.ServHeader:
 		setupHeaderBasedAuth(ctx, auth)
-	case definitions.ServJSON, definitions.ServIdP:
+	case definitions.ServJSON, definitions.ServCBOR, definitions.ServIdP:
 		setupBodyBasedAuth(ctx, auth)
 	case definitions.ServBasic:
 		setupHTTPBasicAuth(ctx, auth)

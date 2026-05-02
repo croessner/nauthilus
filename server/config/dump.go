@@ -18,6 +18,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -925,36 +926,42 @@ func configDumpDefaultProviders() map[string]configDumpValueProvider {
 	addConfigDumpDefaultProviders(providers, configDumpRedisDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpIdentityDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBruteForceDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpBackendHealthCheckDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpLDAPDefaults())
 
 	return providers
 }
 
 func addConfigDumpDefaultProviders(target map[string]configDumpValueProvider, providers map[string]configDumpValueProvider) {
-	for key, provider := range providers {
-		target[key] = provider
-	}
+	maps.Copy(target, providers)
 }
 
 func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
-		"developer_mode":                                 func() any { return false },
-		"runtime.http.middlewares.logging":               func() any { return true },
-		"runtime.http.middlewares.limit":                 func() any { return true },
-		"runtime.http.middlewares.recovery":              func() any { return true },
-		"runtime.http.middlewares.trusted_proxies":       func() any { return true },
-		"runtime.http.middlewares.request_decompression": func() any { return true },
-		"runtime.http.middlewares.response_compression":  func() any { return true },
-		"runtime.http.middlewares.metrics":               func() any { return true },
-		"runtime.http.middlewares.rate":                  func() any { return true },
-		"runtime.listen.tls.min_tls_version":             func() any { return "TLS1.2" },
-		"runtime.http.timeouts.redis_read":               func() any { return 1 * time.Second },
-		"runtime.http.timeouts.redis_write":              func() any { return 2 * time.Second },
-		"runtime.http.timeouts.ldap_search":              func() any { return 3 * time.Second },
-		"runtime.http.timeouts.ldap_bind":                func() any { return 3 * time.Second },
-		"runtime.http.timeouts.ldap_modify":              func() any { return 5 * time.Second },
-		"runtime.http.timeouts.lua_backend":              func() any { return 5 * time.Second },
-		"runtime.http.timeouts.lua_script":               func() any { return 30 * time.Second },
+		"developer_mode":                                         func() any { return false },
+		"runtime.servers.grpc.auth.address":                      func() any { return defaultGRPCAuthAddress },
+		"runtime.servers.grpc.auth.enabled":                      func() any { return false },
+		"runtime.servers.grpc.auth.tls.enabled":                  func() any { return false },
+		"runtime.servers.grpc.auth.tls.min_tls_version":          func() any { return defaultTLSMinVersion },
+		"runtime.servers.grpc.auth.tls.require_client_cert":      func() any { return false },
+		"runtime.servers.http.address":                           func() any { return definitions.HTTPAddress },
+		"runtime.servers.http.middlewares.logging":               func() any { return true },
+		"runtime.servers.http.middlewares.limit":                 func() any { return true },
+		"runtime.servers.http.middlewares.recovery":              func() any { return true },
+		"runtime.servers.http.middlewares.trusted_proxies":       func() any { return true },
+		"runtime.servers.http.middlewares.request_decompression": func() any { return true },
+		"runtime.servers.http.middlewares.response_compression":  func() any { return true },
+		"runtime.servers.http.middlewares.metrics":               func() any { return true },
+		"runtime.servers.http.middlewares.rate":                  func() any { return true },
+		"runtime.servers.http.security_txt.enabled":              func() any { return false },
+		"runtime.servers.http.tls.min_tls_version":               func() any { return defaultTLSMinVersion },
+		"runtime.timeouts.redis_read":                            func() any { return 1 * time.Second },
+		"runtime.timeouts.redis_write":                           func() any { return 2 * time.Second },
+		"runtime.timeouts.ldap_search":                           func() any { return 3 * time.Second },
+		"runtime.timeouts.ldap_bind":                             func() any { return 3 * time.Second },
+		"runtime.timeouts.ldap_modify":                           func() any { return 5 * time.Second },
+		"runtime.timeouts.lua_backend":                           func() any { return 5 * time.Second },
+		"runtime.timeouts.lua_script":                            func() any { return 30 * time.Second },
 	}
 }
 
@@ -1015,6 +1022,18 @@ func configDumpBruteForceDefaults() map[string]configDumpValueProvider {
 		"auth.controls.brute_force.min_tolerate_percent":      func() any { return uint8(10) },
 		"auth.controls.brute_force.max_tolerate_percent":      func() any { return uint8(50) },
 		"auth.controls.brute_force.scale_factor":              func() any { return 1.0 },
+	}
+}
+
+func configDumpBackendHealthCheckDefaults() map[string]configDumpValueProvider {
+	return map[string]configDumpValueProvider{
+		"auth.services.backend_health_checks.connect_timeout":    func() any { return defaultBackendHealthCheckTimeout },
+		"auth.services.backend_health_checks.tls_timeout":        func() any { return defaultBackendHealthCheckTimeout },
+		"auth.services.backend_health_checks.deep_timeout":       func() any { return defaultBackendHealthCheckTimeout },
+		"auth.services.backend_health_checks.connect_interval":   func() any { return defaultBackendHealthCheckInterval },
+		"auth.services.backend_health_checks.deep_interval":      func() any { return defaultBackendHealthCheckInterval },
+		"auth.services.backend_health_checks.failure_threshold":  func() any { return defaultBackendHealthCheckFailureThreshold },
+		"auth.services.backend_health_checks.recovery_threshold": func() any { return defaultBackendHealthCheckRecoveryThreshold },
 	}
 }
 

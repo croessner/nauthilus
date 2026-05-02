@@ -37,6 +37,7 @@ import (
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
+	handlergrpcauth "github.com/croessner/nauthilus/server/handler/grpcauth"
 	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
 	"github.com/croessner/nauthilus/server/idp"
@@ -85,6 +86,9 @@ type contextStore struct {
 
 	// signals holds server lifecycle channels via the interface (no globals)
 	signals core.ServerSignals
+
+	// grpcAuthDone signals completion of the optional gRPC AuthService server.
+	grpcAuthDone <-chan struct{}
 
 	// langManager is the injected language manager.
 	langManager language.Manager
@@ -198,7 +202,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 			setupLuaWorker(store, ctx, cfg, logger, redisClient, channel)
 
 			luaStarted = true
-		case definitions.BackendCache:
+		case definitions.BackendCache, definitions.BackendTest:
 		default:
 			level.Warn(logger).Log(definitions.LogKeyMsg, "Unknown backend", "backend")
 		}
@@ -300,80 +304,140 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 	return fmt.Errorf("failed to establish Redis connections after max retries")
 }
 
+type grpcAuthStarter func(context.Context, handlergrpcauth.ServerDeps) (<-chan struct{}, error)
+
+type httpServerStartOptions struct {
+	grpcAuthStarter             grpcAuthStarter
+	continueHTTPOnGRPCAuthError bool
+}
+
+func (o httpServerStartOptions) effectiveGRPCAuthStarter() grpcAuthStarter {
+	if o.grpcAuthStarter != nil {
+		return o.grpcAuthStarter
+	}
+
+	return handlergrpcauth.StartServer
+}
+
 // startHTTPServer starts the HTTP server by initializing the context, setting up channels, and launching the HTTP application.
 func startHTTPServer(ctx context.Context, store *contextStore) error {
+	return startHTTPServerWithOptions(ctx, store, httpServerStartOptions{})
+}
+
+type httpServerRuntime struct {
+	store   *contextStore
+	cfg     config.File
+	env     config.Environment
+	logger  *slog.Logger
+	signals core.ServerSignals
+}
+
+type httpSetupCallbacks struct {
+	health      func(*gin.Engine)
+	metrics     func(*gin.Engine)
+	idp         func(*gin.Engine)
+	backchannel func(*gin.Engine)
+}
+
+func startHTTPServerWithOptions(ctx context.Context, store *contextStore, options httpServerStartOptions) error {
+	runtime, err := prepareHTTPServerRuntime(ctx, store)
+	if err != nil {
+		return err
+	}
+
+	callbacks := buildHTTPSetupCallbacks(runtime)
+	app := core.NewDefaultHTTPApp(core.HTTPDeps{
+		Cfg:          runtime.cfg,
+		Logger:       runtime.logger,
+		Env:          runtime.env,
+		Redis:        runtime.store.redisClient,
+		AccountCache: runtime.store.accountCache,
+	})
+
+	if err := startGRPCAuthForHTTP(runtime.store.server.ctx, runtime.store, runtime.cfg, runtime.env, runtime.logger, options); err != nil {
+		return err
+	}
+
+	go app.Start(runtime.store.server.ctx, callbacks.health, callbacks.metrics, callbacks.idp, callbacks.backchannel, runtime.signals)
+
+	return nil
+}
+
+func prepareHTTPServerRuntime(ctx context.Context, store *contextStore) (httpServerRuntime, error) {
+	cfg, env, logger, err := validateHTTPServerStartStore(store)
+	if err != nil {
+		return httpServerRuntime{}, err
+	}
+
+	configureHTTPServerDefaults(store, cfg, env, logger)
+	logHTTPServerStart(logger)
+
+	store.server = newContextTuple(ctx)
+	store.signals = core.NewDefaultServerSignals(cfg.GetServer().IsHTTP3Enabled())
+
+	return httpServerRuntime{
+		store:   store,
+		cfg:     cfg,
+		env:     env,
+		logger:  logger,
+		signals: store.signals,
+	}, nil
+}
+
+func validateHTTPServerStartStore(store *contextStore) (config.File, config.Environment, *slog.Logger, error) {
 	if store == nil {
-		return fmt.Errorf("context store is nil")
+		return nil, nil, nil, fmt.Errorf("context store is nil")
 	}
 
 	if store.logger == nil {
-		return fmt.Errorf("logger is nil")
+		return nil, nil, nil, fmt.Errorf("logger is nil")
 	}
 
 	if store.env == nil {
-		return fmt.Errorf("environment is nil")
+		return nil, nil, nil, fmt.Errorf("environment is nil")
 	}
 
 	if store.cfgProvider == nil {
-		return fmt.Errorf("config provider is nil")
+		return nil, nil, nil, fmt.Errorf("config provider is nil")
 	}
 
 	snap := store.cfgProvider.Current()
 	if snap.File == nil {
-		return fmt.Errorf("config snapshot file is nil")
+		return nil, nil, nil, fmt.Errorf("config snapshot file is nil")
 	}
 
-	logger := store.logger
 	cfg := snap.File
 	env := store.env
-
 	if err := validateDeveloperModeBindAddress(env.GetDevMode(), cfg.GetServer().GetListenAddress()); err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
 	if err := handlerbackchannel.ValidateAuthConfiguration(cfg, env.GetDevMode()); err != nil {
-		return fmt.Errorf("invalid backchannel authentication configuration: %w", err)
+		return nil, nil, nil, fmt.Errorf("invalid backchannel authentication configuration: %w", err)
 	}
 
-	// Configure response/header behavior via DI instead of globals.
+	return cfg, env, store.logger, nil
+}
+
+func configureHTTPServerDefaults(store *contextStore, cfg config.File, env config.Environment, logger *slog.Logger) {
 	core.SetDefaultResponseWriter(core.NewDefaultResponseWriter(core.ResponseDeps{Cfg: cfg, Env: env, Logger: logger}))
-
-	// Make environment available to core subtrees without direct global access.
 	core.SetDefaultEnvironment(env)
-
-	// Provide core defaults for legacy call sites.
 	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultLogger(logger)
-
-	// Make environment available to util subtrees without direct global access.
 	util.SetDefaultEnvironment(env)
-
-	// Provide util defaults for legacy call sites.
 	util.SetDefaultConfigFile(cfg)
 	util.SetDefaultLogger(logger)
-
-	// Make environment available to backend/ldappool without direct global access.
 	ldappool.SetDefaultEnvironment(env)
-
-	// Make environment available to lualib/action without direct global access.
 	action.SetDefaultEnvironment(env)
-
-	// Make Redis available to lualib/redislib without direct global access.
 	redislib.SetDefaultClient(store.redisClient)
-
-	// Make Redis available to backend package without direct global access.
 	backend.SetDefaultRedisClient(store.redisClient)
-
-	// Make Redis available to bruteforce package without direct global access.
 	bruteforce.SetDefaultRedisClient(store.redisClient)
-
-	// Make Redis available to core helpers without direct global access.
 	core.SetDefaultRedisClient(store.redisClient)
-
-	// Make Redis available to bruteforce tolerations without direct global access.
 	tolerate.SetDefaultClient(store.redisClient)
+}
 
-	level.Info(logger).Log(
+func logHTTPServerStart(logger *slog.Logger) {
+	_ = level.Info(logger).Log(
 		definitions.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"license", "GPL-3.0",
 		"author", "Christian Rößner",
@@ -382,117 +446,154 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 		"version", version,
 		"build_time", buildTime,
 	)
+}
 
-	store.server = newContextTuple(ctx)
+func buildHTTPSetupCallbacks(runtime httpServerRuntime) httpSetupCallbacks {
+	return httpSetupCallbacks{
+		health:      buildHealthSetupCallback(runtime),
+		metrics:     buildMetricsSetupCallback(runtime),
+		idp:         buildIDPSetupCallback(runtime),
+		backchannel: buildBackchannelSetupCallback(runtime),
+	}
+}
 
-	enableHTTP3 := cfg.GetServer().IsHTTP3Enabled()
-	signals := core.NewDefaultServerSignals(enableHTTP3)
+func buildHealthSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
+	return func(e *gin.Engine) {
+		handlerhealth.New(runtime.cfg, runtime.logger, runtime.store.redisClient).Register(e)
+	}
+}
 
-	// Store signals on the contextStore for consumption by signal handlers
-	store.signals = signals
+func buildMetricsSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
+	return func(e *gin.Engine) {
+		handlermetrics.New(runtime.cfg, runtime.logger, runtime.store.redisClient).Register(e)
+	}
+}
 
-	// Build frontend/backchannel setup callbacks to avoid core->handler import cycles
-	var setupHealth func(*gin.Engine)
-	var setupMetrics func(*gin.Engine)
-	var setupIdP func(*gin.Engine)
-	var setupBackchannel func(*gin.Engine)
-
-	// Health endpoint (always register)
-	setupHealth = func(e *gin.Engine) {
-		handlerhealth.New(cfg, logger, store.redisClient).Register(e)
+func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
+	if !runtime.cfg.GetServer().Frontend.Enabled {
+		return nil
 	}
 
-	// Metrics endpoint (always register)
-	setupMetrics = func(e *gin.Engine) {
-		handlermetrics.New(cfg, logger, store.redisClient).Register(e)
+	deps := frontendHandlerDeps(runtime)
+	storage := idp.NewRedisTokenStorageWithConfig(
+		runtime.store.redisClient,
+		runtime.cfg.GetServer().GetRedis().GetPrefix(),
+		runtime.cfg,
+	)
+
+	if !runtime.cfg.GetIdP().OIDC.Enabled && !runtime.cfg.GetIdP().SAML2.Enabled {
+		logMissingInternalIDP(runtime)
+
+		return nil
 	}
 
-	// Frontend handlers only if enabled (keeps logic parity)
-	if cfg.GetServer().Frontend.Enabled {
+	return func(e *gin.Engine) {
+		deps.Env = runtime.env
+		deps.Redis = runtime.store.redisClient
+		registerIDPRoutes(e, runtime, deps, storage)
+	}
+}
+
+func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {
+	deps := &handlerdeps.Deps{
+		Cfg:          runtime.cfg,
+		CfgProvider:  runtime.store.cfgProvider,
+		Logger:       runtime.logger,
+		Channel:      runtime.store.channel,
+		AccountCache: runtime.store.accountCache,
+		LangManager:  runtime.store.langManager,
+	}
+	deps.Svc = handlerdeps.NewDefaultServices(deps)
+
+	return deps
+}
+
+func logMissingInternalIDP(runtime httpServerRuntime) {
+	if runtime.env.GetDevMode() {
+		_ = level.Warn(runtime.logger).Log(
+			definitions.LogKeyMsg,
+			"Frontend is enabled, but internal IdP (OIDC/SAML2) is not enabled. Login routes will not be registered",
+		)
+	}
+}
+
+func registerIDPRoutes(
+	e *gin.Engine,
+	runtime httpServerRuntime,
+	deps *handlerdeps.Deps,
+	storage *idp.RedisTokenStorage,
+) {
+	nauthilusIDP := idp.NewNauthilusIdP(deps)
+	if runtime.cfg.GetIdP().OIDC.Enabled {
+		nauthilusIDP.GetKeyManager().StartRotationJob(runtime.store.server.ctx)
+	}
+
+	frontendHandler := handleridp.NewFrontendHandler(deps)
+	frontendHandler.Register(e)
+	handlerapiv1.NewMFAAPI(deps).Register(e)
+
+	if runtime.cfg.GetIdP().OIDC.Enabled {
+		handlerapiv1.NewOIDCSessionsAPI(deps, storage).Register(e)
+		handleridp.NewOIDCHandler(deps, nauthilusIDP, frontendHandler).Register(e)
+	}
+
+	if runtime.cfg.GetIdP().SAML2.Enabled {
+		handleridp.NewSAMLHandler(deps, nauthilusIDP).Register(e)
+	}
+}
+
+func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
+	tokenStorage := idp.NewRedisTokenStorageWithConfig(
+		runtime.store.redisClient,
+		runtime.cfg.GetServer().GetRedis().GetPrefix(),
+		runtime.cfg,
+	)
+
+	return func(e *gin.Engine) {
 		deps := &handlerdeps.Deps{
-			Cfg:          cfg,
-			CfgProvider:  store.cfgProvider,
-			Logger:       logger,
-			Channel:      store.channel,
-			AccountCache: store.accountCache,
-			LangManager:  store.langManager,
-		}
-		deps.Svc = handlerdeps.NewDefaultServices(deps)
-
-		storage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
-
-		if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
-			setupIdP = func(e *gin.Engine) {
-				deps.Env = env
-				deps.Redis = store.redisClient
-				nauthilusIdP := idp.NewNauthilusIdP(deps)
-
-				if cfg.GetIdP().OIDC.Enabled {
-					nauthilusIdP.GetKeyManager().StartRotationJob(store.server.ctx)
-				}
-
-				var frontendHandler *handleridp.FrontendHandler
-
-				if cfg.GetIdP().OIDC.Enabled || cfg.GetIdP().SAML2.Enabled {
-					frontendHandler = handleridp.NewFrontendHandler(deps)
-					frontendHandler.Register(e)
-
-					mfaAPI := handlerapiv1.NewMFAAPI(deps)
-					mfaAPI.Register(e)
-
-					if cfg.GetIdP().OIDC.Enabled {
-						oidcSessionsAPI := handlerapiv1.NewOIDCSessionsAPI(deps, storage)
-						oidcSessionsAPI.Register(e)
-					}
-				}
-
-				if cfg.GetIdP().OIDC.Enabled {
-					oidcHandler := handleridp.NewOIDCHandler(deps, nauthilusIdP, frontendHandler)
-					oidcHandler.Register(e)
-				}
-
-				if cfg.GetIdP().SAML2.Enabled {
-					samlHandler := handleridp.NewSAMLHandler(deps, nauthilusIdP)
-					samlHandler.Register(e)
-				}
-			}
-		}
-
-		if env.GetDevMode() {
-			if setupIdP == nil {
-				level.Warn(logger).Log(definitions.LogKeyMsg, "Frontend is enabled, but internal IdP (OIDC/SAML2) is not enabled. Login routes will not be registered")
-			}
-		}
-	}
-
-	// Backchannel API
-	tokenStorage := idp.NewRedisTokenStorage(store.redisClient, cfg.GetServer().GetRedis().GetPrefix())
-
-	setupBackchannel = func(e *gin.Engine) {
-		deps := &handlerdeps.Deps{
-			Cfg:          cfg,
-			CfgProvider:  store.cfgProvider,
-			Env:          env,
-			Logger:       logger,
-			Redis:        store.redisClient,
-			LangManager:  store.langManager,
+			Cfg:          runtime.cfg,
+			CfgProvider:  runtime.store.cfgProvider,
+			Env:          runtime.env,
+			Logger:       runtime.logger,
+			Redis:        runtime.store.redisClient,
+			LangManager:  runtime.store.langManager,
 			TokenFlusher: tokenStorage,
 		}
 		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		if err := handlerbackchannel.Setup(e, deps); err != nil {
-			level.Error(logger).Log(definitions.LogKeyMsg, "Backchannel route setup failed", definitions.LogKeyError, err)
+			_ = level.Error(runtime.logger).Log(definitions.LogKeyMsg, "Backchannel route setup failed", definitions.LogKeyError, err)
 		}
 	}
+}
 
-	app := core.NewDefaultHTTPApp(core.HTTPDeps{
+func startGRPCAuthForHTTP(
+	ctx context.Context,
+	store *contextStore,
+	cfg config.File,
+	env config.Environment,
+	logger *slog.Logger,
+	options httpServerStartOptions,
+) error {
+	grpcAuthDone, err := options.effectiveGRPCAuthStarter()(ctx, handlergrpcauth.ServerDeps{
 		Cfg:          cfg,
-		Logger:       logger,
 		Env:          env,
+		Logger:       logger,
 		Redis:        store.redisClient,
 		AccountCache: store.accountCache,
+		Channel:      store.channel,
 	})
+	if err != nil {
+		store.grpcAuthDone = nil
+		if options.continueHTTPOnGRPCAuthError {
+			_ = level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to start gRPC AuthService server; continuing HTTP startup", definitions.LogKeyError, err)
 
-	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupIdP, setupBackchannel, signals)
+			return nil
+		}
+
+		return fmt.Errorf("start gRPC AuthService server: %w", err)
+	}
+
+	store.grpcAuthDone = grpcAuthDone
 
 	return nil
 }
@@ -504,7 +605,7 @@ func validateDeveloperModeBindAddress(devMode bool, listenAddress string) error 
 
 	host, _, err := net.SplitHostPort(listenAddress)
 	if err != nil {
-		return fmt.Errorf("developer mode requires loopback listen address (127.0.0.1 or ::1), invalid runtime.listen.address %q: %w", listenAddress, err)
+		return fmt.Errorf("developer mode requires loopback listen address (127.0.0.1 or ::1), invalid runtime.servers.http.address %q: %w", listenAddress, err)
 	}
 
 	if host == definitions.Localhost4 || host == definitions.Localhost6 {

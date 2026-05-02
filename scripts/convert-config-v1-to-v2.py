@@ -57,15 +57,15 @@ SERVICE_NAME_MAP = {
 
 PATH_RENAMES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("server", "instance_name"): ("runtime", "instance_name"),
-    ("server", "address"): ("runtime", "listen", "address"),
-    ("server", "http3"): ("runtime", "listen", "http3"),
-    ("server", "haproxy_v2"): ("runtime", "listen", "haproxy_v2"),
-    ("server", "trusted_proxies"): ("runtime", "listen", "trusted_proxies"),
+    ("server", "address"): ("runtime", "servers", "http", "address"),
+    ("server", "http3"): ("runtime", "servers", "http", "http3"),
+    ("server", "haproxy_v2"): ("runtime", "servers", "http", "haproxy_v2"),
+    ("server", "trusted_proxies"): ("runtime", "servers", "http", "trusted_proxies"),
     ("server", "run_as_user"): ("runtime", "process", "run_as_user"),
     ("server", "run_as_group"): ("runtime", "process", "run_as_group"),
     ("server", "chroot"): ("runtime", "process", "chroot"),
-    ("server", "rate_limit_burst"): ("runtime", "http", "rate_limit", "burst"),
-    ("server", "rate_limit_per_second"): ("runtime", "http", "rate_limit", "per_second"),
+    ("server", "rate_limit_burst"): ("runtime", "servers", "http", "rate_limit", "burst"),
+    ("server", "rate_limit_per_second"): ("runtime", "servers", "http", "rate_limit", "per_second"),
     ("server", "insights", "enable_pprof"): ("observability", "profiles", "pprof", "enabled"),
     ("server", "insights", "enable_block_profile"): ("observability", "profiles", "block", "enabled"),
     ("server", "insights", "monitor_connections"): ("observability", "metrics", "monitor_connections"),
@@ -121,13 +121,14 @@ PATH_RENAMES: dict[tuple[str, ...], tuple[str, ...]] = {
 }
 
 PREFIX_RENAMES: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
-    (("server", "tls"), ("runtime", "listen", "tls")),
-    (("server", "disabled_endpoints"), ("runtime", "http", "disabled_endpoints")),
-    (("server", "middlewares"), ("runtime", "http", "middlewares")),
-    (("server", "compression"), ("runtime", "http", "compression")),
-    (("server", "keep_alive"), ("runtime", "http", "keep_alive")),
-    (("server", "timeouts"), ("runtime", "http", "timeouts")),
-    (("server", "cors"), ("runtime", "http", "cors")),
+    (("server", "tls"), ("runtime", "servers", "http", "tls")),
+    (("server", "disabled_endpoints"), ("runtime", "servers", "http", "disabled_endpoints")),
+    (("server", "middlewares"), ("runtime", "servers", "http", "middlewares")),
+    (("server", "compression"), ("runtime", "servers", "http", "compression")),
+    (("server", "keep_alive"), ("runtime", "servers", "http", "keep_alive")),
+    (("server", "timeouts"), ("runtime", "timeouts")),
+    (("server", "cors"), ("runtime", "servers", "http", "cors")),
+    (("server", "security_txt"), ("runtime", "servers", "http", "security_txt")),
     (("server", "http_client"), ("runtime", "clients", "http")),
     (("server", "dns"), ("runtime", "clients", "dns")),
     (("server", "log"), ("observability", "log")),
@@ -953,8 +954,6 @@ def load_legacy_yaml(path: Path) -> dict[str, Any]:
     """Load YAML through the vendored Go YAML stack and return JSON-decoded data."""
     env = os.environ.copy()
     env.setdefault("GOEXPERIMENT", "runtimesecret")
-    env.setdefault("GEXPERIMENT", "runtimesecret")
-
     result = subprocess.run(
         (*YAML_READER_CMD, str(path)),
         cwd=ROOT_DIR,
@@ -1030,8 +1029,6 @@ def validate_converted_config(rendered_yaml: str, report: ConversionReport) -> i
     """Run `nauthilus --config-check` on the converted YAML."""
     env = os.environ.copy()
     env.setdefault("GOEXPERIMENT", "runtimesecret")
-    env.setdefault("GEXPERIMENT", "runtimesecret")
-
     with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False, encoding="utf-8") as handle:
         handle.write(rendered_yaml)
         temp_path = Path(handle.name)

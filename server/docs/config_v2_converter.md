@@ -84,6 +84,8 @@ The converter is intentionally conservative:
 
 - known legacy paths are rewritten to their current config-v2 locations
 - canonical names are enforced where old aliases are no longer accepted
+- runtime listener settings are emitted under `runtime.servers.http`
+- shared runtime timeouts are emitted under `runtime.timeouts` so HTTP and gRPC transports use the same values
 - current config-v2 roots already present in the file are preserved
 - top-level `x-*` extension roots are preserved as-is
 - best-effort `x-*` anchor/alias reuse is restored in the generated YAML when the converted structure still references the same subtree
@@ -95,7 +97,7 @@ Validation uses:
 go run ./server --config <converted-file> --config-check
 ```
 
-with the required `GOEXPERIMENT=runtimesecret` and `GEXPERIMENT=runtimesecret` environment.
+with the required `GOEXPERIMENT=runtimesecret` environment.
 
 ## Notes
 

@@ -92,13 +92,26 @@ func TestSetAuthenticationFieldsMapsExternalSessionFromJSONRequest(t *testing.T)
 		},
 	}
 
-	setAuthenticationFields(auth, &authdto.Request{
+	ApplyStructuredAuthRequest(auth, &authdto.Request{
 		Username:          "user@example.test",
 		ExternalSessionID: testExternalSessionID,
 	})
 
 	assert.Equal(t, testExternalSessionID, auth.Request.ExternalSessionID)
 	assert.Equal(t, testExternalSessionID, ctx.GetString(definitions.CtxExternalSessionKey))
+}
+
+func TestSetAuthenticationFieldsMapsLoginAttemptFromJSONRequest(t *testing.T) {
+	setupMinimalTestConfig(t)
+	auth := &AuthState{deps: setupAuthDeps()}
+
+	ApplyStructuredAuthRequest(auth, &authdto.Request{
+		Username:         "user@example.test",
+		AuthLoginAttempt: 3,
+	})
+
+	assert.Equal(t, uint(2), auth.Security.LoginAttempts)
+	assert.Equal(t, uint(2), auth.GetFailCount())
 }
 
 func TestCommonRequestSetupRequestIncludesExternalSession(t *testing.T) {

@@ -84,6 +84,23 @@ func NewFilterBackendManagerWithCurrent(ctx context.Context, cfg config.File, lo
 	}
 }
 
+func bindFilterModuleIntoReq(L *lua.LState, moduleName string, loader lua.LGFunction) {
+	if loader == nil {
+		return
+	}
+
+	_ = loader(L)
+
+	if mod, ok := L.Get(-1).(*lua.LTable); ok {
+		L.Pop(1)
+		luapool.BindModuleIntoReq(L, moduleName, mod)
+
+		return
+	}
+
+	L.Pop(1)
+}
+
 // LoaderModBackend initializes and returns a Lua module containing backend-related functionalities for LuaState.
 func LoaderModBackend(ctx context.Context, cfg config.File, logger *slog.Logger, request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
 	return LoaderModBackendWithCurrent(ctx, cfg, logger, request, backendResult, removeAttributes, nil, nil)
@@ -169,7 +186,7 @@ func PreCompileLuaFilters(cfgFile config.File) (err error) {
 			LuaFilters.Add(luaFilter)
 		}
 
-		if err = validateFilterDependencies(LuaFilters.LuaScripts); err != nil {
+		if err = LuaFilters.RebuildPlans(); err != nil {
 			sp.RecordError(err)
 
 			return err
@@ -186,6 +203,9 @@ type PreCompiledLuaFilters struct {
 	// each of which represents a precompiled Lua script.
 	LuaScripts []*LuaFilter
 
+	// plans contains per-request-mode dependency plans built during precompile.
+	plans pipeline.Plans
+
 	// Mu is a read/write mutex used to allow safe concurrent access to the LuaScripts.
 	Mu sync.RWMutex
 }
@@ -197,6 +217,7 @@ func (a *PreCompiledLuaFilters) Add(luaFilter *LuaFilter) {
 	defer a.Mu.Unlock()
 
 	a.LuaScripts = append(a.LuaScripts, luaFilter)
+	a.plans = nil
 }
 
 // Reset clears the LuaScripts slice of a PreCompiledLuaFilters object.The method also prevents race conditions
@@ -207,6 +228,38 @@ func (a *PreCompiledLuaFilters) Reset() {
 	defer a.Mu.Unlock()
 
 	a.LuaScripts = make([]*LuaFilter, 0)
+	a.plans = nil
+}
+
+// RebuildPlans validates all filter dependencies and caches per-mode execution plans.
+func (a *PreCompiledLuaFilters) RebuildPlans() error {
+	a.Mu.Lock()
+
+	defer a.Mu.Unlock()
+
+	plans, err := pipeline.BuildPlans(filterPipelineNodes(a.LuaScripts))
+	if err != nil {
+		return err
+	}
+
+	a.plans = plans
+
+	return nil
+}
+
+func (a *PreCompiledLuaFilters) planForMode(mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
+	if a.plans != nil {
+		if plan, ok := a.plans[mode]; ok {
+			return plan, true, nil
+		}
+	}
+
+	plan, err := pipeline.BuildPlan(filterPipelineNodes(a.LuaScripts), mode)
+	if err != nil {
+		return pipeline.Plan{}, false, err
+	}
+
+	return plan, false, nil
 }
 
 // LuaFilter represents a struct for managing Lua filters.
@@ -349,10 +402,10 @@ type Request struct {
 
 // handleError logs Lua execution errors for filters with stacktrace when available,
 // stops the running timer and cancels the Lua context to abort pending operations.
-func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
+func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc, diagnostics lualib.RuntimeCancellationDiagnostics, err error, scriptName string, stopTimer func()) {
 	// Try to include Lua stacktrace for easier diagnostics
 	if ae, ok := stderrs.AsType[*lua.ApiError](err); ok && ae != nil {
-		level.Error(logger).Log(
+		keyvals := []any{
 			definitions.LogKeyGUID, func() string {
 				if r != nil && r.CommonRequest != nil {
 					return r.CommonRequest.Session
@@ -364,7 +417,15 @@ func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc,
 			definitions.LogKeyMsg, "Lua filter failed",
 			definitions.LogKeyError, ae.Error(),
 			"stacktrace", ae.StackTrace,
-		)
+		}
+
+		if r != nil && r.CommonRequest != nil && r.HealthCheck {
+			keyvals = append(keyvals, definitions.LogKeyHealthCheck, true)
+		}
+
+		keyvals = append(keyvals, diagnostics.LogValues()...)
+
+		_ = level.Error(logger).Log(keyvals...)
 	}
 
 	if stopTimer != nil {
@@ -762,10 +823,24 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		contextDelta    lualib.ContextDelta
 	}
 
-	plan, err := pipeline.BuildPlan(filterPipelineNodes(scripts), requestFilterMode(r))
+	modeMask := requestFilterMode(r)
+	pctx, pspan := tr.Start(fctx, "filters.plan.lookup")
+	_ = pctx
+
+	plan, cached, err := LuaFilters.planForMode(modeMask)
+	pspan.SetAttributes(
+		attribute.Bool("cached", cached),
+		attribute.Int("levels", len(plan.Levels)),
+		attribute.Int("scripts", pipeline.PlannedNodeCount(plan)),
+	)
 	if err != nil {
+		pspan.RecordError(err)
+		pspan.End()
+
 		return false, nil, nil, err
 	}
+
+	pspan.End()
 
 	results := make([]*filtResult, 0, len(scripts))
 
@@ -951,7 +1026,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 2) nauthilus_http_request
+				// 2) nauthilus_cbor
+				bindFilterModuleIntoReq(Llocal, definitions.LuaModCBOR, lualib.LoaderModCBOR())
+
+				// 3) nauthilus_http_request
 				if ctx != nil && ctx.Request != nil {
 					loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
 					_ = loader(Llocal)
@@ -964,7 +1042,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 3) nauthilus_http_response
+				// 4) nauthilus_http_response
 				if ctx != nil {
 					loader := lualib.LoaderModHTTPResponse(ctx)
 					_ = loader(Llocal)
@@ -977,7 +1055,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 4) nauthilus_redis
+				// 5) nauthilus_redis
 				if loader := redislib.LoaderModRedis(luaCtx, cfg, redisClient); loader != nil {
 					_ = loader(Llocal)
 
@@ -989,7 +1067,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 5) nauthilus_ldap (optional)
+				// 6) nauthilus_ldap (optional)
 				if cfg.HaveLDAPBackend() {
 					loader := backend.LoaderModLDAP(luaCtx, cfg)
 					_ = loader(Llocal)
@@ -1002,7 +1080,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 6) nauthilus_psnet (connection monitoring)
+				// 7) nauthilus_psnet (connection monitoring)
 				if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 					_ = loader(Llocal)
 
@@ -1014,7 +1092,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 7) nauthilus_dns (DNS lookups)
+				// 8) nauthilus_dns (DNS lookups)
 				if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 					_ = loader(Llocal)
 
@@ -1026,7 +1104,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
+				// 9) nauthilus_opentelemetry (OTel helpers for Lua)
 				{
 					var loader lua.LGFunction
 
@@ -1047,7 +1125,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 8) nauthilus_brute_force (toleration and blocking helpers)
+				// 10) nauthilus_brute_force (toleration and blocking helpers)
 				if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redisClient, tolerate.GetTolerate()); loader != nil {
 					_ = loader(Llocal)
 
@@ -1059,7 +1137,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 9) nauthilus_backend (preload stateless placeholder, then request-bound)
+				// 11) nauthilus_backend (preload stateless placeholder, then request-bound)
 				Llocal.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
 				{
 					loader := LoaderModBackendWithCurrent(luaCtx, cfg, logger, &localRequest, &localBackendResult, &localRemoveAttrs, mergedBackendResult, mergedRemoveAttributes.GetStringSlice())
@@ -1085,7 +1163,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				_ = execCtx
 
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
-					r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					execSpan.RecordError(e)
 					execSpan.End()
 
@@ -1093,7 +1171,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				}
 
 				if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
-					r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					execSpan.RecordError(e)
 					execSpan.End()
 
@@ -1114,7 +1192,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 				if filterFunc.Type() == lua.LTFunction {
 					if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
-						r.handleError(logger, luaCancel, e, sc.Name, stopTimer)
+						r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 						execSpan.RecordError(e)
 						execSpan.End()
 

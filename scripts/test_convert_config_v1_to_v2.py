@@ -38,8 +38,6 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
     def test_convert_and_validate_legacy_config(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
-
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "converted.yml"
             report_path = Path(tmp_dir) / "conversion-report.txt"
@@ -67,6 +65,8 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             report = report_path.read_text(encoding="utf-8")
 
             self.assertIn("runtime:", converted)
+            self.assertIn("  servers:\n    http:", converted)
+            self.assertIn("  timeouts:", converted)
             self.assertIn("storage:", converted)
             self.assertIn("auth:", converted)
             self.assertIn("identity:", converted)
@@ -98,6 +98,8 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertNotRegex(converted, re.compile(r"^ldap:", re.MULTILINE))
             self.assertNotRegex(converted, re.compile(r"^lua:", re.MULTILINE))
             self.assertNotRegex(converted, re.compile(r"^idp:", re.MULTILINE))
+            self.assertNotRegex(converted, re.compile(r"^  listen:", re.MULTILINE))
+            self.assertNotRegex(converted, re.compile(r"^  http:", re.MULTILINE))
             self.assertNotIn("soft_whitelist", converted)
             self.assertNotIn("ip_whitelist", converted)
             self.assertNotIn("backend_server_monitoring", converted)
@@ -113,8 +115,6 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
     def test_convert_dotted_legacy_keys(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
-
         legacy = """\
 server:
   basic_auth.enabled: true
@@ -153,8 +153,11 @@ server:
             self.assertIn("basic_auth:", converted)
             self.assertIn("oidc_bearer:", converted)
             self.assertIn("keep_alive:", converted)
+            self.assertIn("  servers:\n    http:", converted)
             self.assertIn("enabled: true", converted)
             self.assertIn("enabled: false", converted)
+            self.assertNotRegex(converted, re.compile(r"^  listen:", re.MULTILINE))
+            self.assertNotRegex(converted, re.compile(r"^  http:", re.MULTILINE))
             self.assertNotIn("no mapping rule", report)
             self.assertNotIn("Dropped legacy paths requiring manual review", report)
             self.assertNotIn("server.basic_auth.enabled", report)
@@ -164,8 +167,6 @@ server:
     def test_semantic_auto_enable_does_not_duplicate_named_controls(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
-
         legacy = """\
 server:
   features:
@@ -223,11 +224,65 @@ cleartext_networks:
             self.assertIn('name: "rbl"', converted)
             self.assertNotIn("- auto-enabled controls: rbl, tls_encryption", report)
 
+    def test_preserve_existing_runtime_root_without_v2_rewrite(self) -> None:
+        env = os.environ.copy()
+        env.setdefault("GOEXPERIMENT", "runtimesecret")
+        legacy = """\
+runtime:
+  listen:
+    address: "127.0.0.1:9080"
+    tls:
+      enabled: false
+  http:
+    keep_alive:
+      enabled: true
+    timeouts:
+      lua_script: 45s
+    middlewares:
+      logging: false
+"""
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_path = Path(tmp_dir) / "legacy.yml"
+            output_path = Path(tmp_dir) / "converted.yml"
+            report_path = Path(tmp_dir) / "conversion-report.txt"
+            input_path.write_text(legacy, encoding="utf-8")
+
+            result = subprocess.run(
+                (
+                    "python3",
+                    str(SCRIPT_PATH),
+                    str(input_path),
+                    "--output",
+                    str(output_path),
+                    "--report",
+                    str(report_path),
+                ),
+                cwd=ROOT_DIR,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual("", result.stdout)
+
+            converted = output_path.read_text(encoding="utf-8")
+            report = report_path.read_text(encoding="utf-8")
+
+            self.assertIn("  listen:", converted)
+            self.assertIn('address: "127.0.0.1:9080"', converted)
+            self.assertIn("  http:", converted)
+            self.assertIn("keep_alive:", converted)
+            self.assertIn('lua_script: "45s"', converted)
+            self.assertIn("logging: false", converted)
+            self.assertNotIn("  servers:", converted)
+            self.assertIn("migrated paths", report)
+            self.assertNotIn("Dropped legacy paths requiring manual review", report)
+
     def test_convert_legacy_oidc_logout_keys(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
-
         legacy = """\
 idp:
   oidc:
@@ -280,8 +335,6 @@ idp:
     def test_preserves_root_extension_anchors_best_effort(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
-
         legacy = """\
 x-claim-email: &x-claim-email
   claim: "email"
@@ -321,8 +374,6 @@ x-oc-mappings:
     def test_preserves_mapping_order_from_legacy_yaml(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
-
         legacy = """\
 x-order-test:
   zeta: "z"
@@ -363,8 +414,6 @@ x-order-test:
     def test_renders_multiline_ldap_filter_as_yaml_block_scalar(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
-        env.setdefault("GEXPERIMENT", "runtimesecret")
-
         legacy = """\
 ldap:
   config:

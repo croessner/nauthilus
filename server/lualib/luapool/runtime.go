@@ -72,6 +72,7 @@ func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	// Internal stateless modules. No context bindings!
 	L.PreloadModule(definitions.LuaModPassword, lualib.LoaderModPassword(context.Background(), cfg, log.Logger))
 	L.PreloadModule(definitions.LuaModMisc, lualib.LoaderModMisc(context.Background(), cfg, log.Logger))
+	L.PreloadModule(definitions.LuaModCBOR, lualib.LoaderModCBOR())
 	L.PreloadModule(definitions.LuaModPrometheus, metrics.LoaderModPrometheus(context.Background(), cfg, log.Logger))
 	L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache(context.Background(), cfg, log.Logger))
 	L.PreloadModule(definitions.LuaModSoftWhitelist, lualib.LoaderModSoftAllow(context.Background(), cfg, log.Logger))

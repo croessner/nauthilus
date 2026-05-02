@@ -258,6 +258,9 @@ const (
 	// LogKeyExternalSession represents an upstream session identifier supplied by the caller.
 	LogKeyExternalSession = "external_session"
 
+	// LogKeyHealthCheck indicates that the request was created by an internal backend health check.
+	LogKeyHealthCheck = "health_check"
+
 	// LogKeyMsg represents the message content in log entries.
 	LogKeyMsg = "msg"
 
@@ -287,6 +290,51 @@ const (
 
 	// LogKeyTLSCipher represents the cipher used in the TLS connection, logged in log entries.
 	LogKeyTLSCipher = "tls_cipher"
+
+	// LogKeySSL represents the raw SSL/TLS presence flag supplied by a structured auth request.
+	LogKeySSL = "ssl"
+
+	// LogKeySSLSessionID represents the SSL/TLS session identifier.
+	LogKeySSLSessionID = "ssl_session_id"
+
+	// LogKeySSLClientVerify represents the SSL/TLS client certificate verification status.
+	LogKeySSLClientVerify = "ssl_client_verify"
+
+	// LogKeySSLClientDN represents the SSL/TLS client certificate distinguished name.
+	LogKeySSLClientDN = "ssl_client_dn"
+
+	// LogKeySSLClientCN represents the SSL/TLS client certificate common name.
+	LogKeySSLClientCN = "ssl_client_cn"
+
+	// LogKeySSLIssuer represents the SSL/TLS issuer field.
+	LogKeySSLIssuer = "ssl_issuer"
+
+	// LogKeySSLClientNotBefore represents the SSL/TLS client certificate not-before timestamp.
+	LogKeySSLClientNotBefore = "ssl_client_notbefore"
+
+	// LogKeySSLClientNotAfter represents the SSL/TLS client certificate not-after timestamp.
+	LogKeySSLClientNotAfter = "ssl_client_notafter"
+
+	// LogKeySSLSubjectDN represents the SSL/TLS subject distinguished name.
+	LogKeySSLSubjectDN = "ssl_subject_dn"
+
+	// LogKeySSLIssuerDN represents the SSL/TLS issuer distinguished name.
+	LogKeySSLIssuerDN = "ssl_issuer_dn"
+
+	// LogKeySSLClientSubjectDN represents the SSL/TLS client certificate subject distinguished name.
+	LogKeySSLClientSubjectDN = "ssl_client_subject_dn"
+
+	// LogKeySSLClientIssuerDN represents the SSL/TLS client certificate issuer distinguished name.
+	LogKeySSLClientIssuerDN = "ssl_client_issuer_dn"
+
+	// LogKeySSLSerial represents the SSL/TLS certificate serial number.
+	LogKeySSLSerial = "ssl_serial"
+
+	// LogKeySSLFingerprint represents the SSL/TLS certificate fingerprint.
+	LogKeySSLFingerprint = "ssl_fingerprint"
+
+	// LogKeyAuthLoginAttempt represents the incoming authentication attempt ordinal.
+	LogKeyAuthLoginAttempt = "auth_login_attempt"
 
 	// LogKeyAuthMethod represents the authentication method used for a session.
 	LogKeyAuthMethod = "auth_method"
@@ -838,6 +886,12 @@ const (
 	// ServJSON is a constant for the "json" service.
 	ServJSON = "json"
 
+	// ServCBOR is a constant for the "cbor" service.
+	ServCBOR = "cbor"
+
+	// ServGRPC is a constant for the "grpc" service.
+	ServGRPC = "grpc"
+
 	// ServFlush is a constant for the "flush" service.
 	ServFlush = "flush"
 
@@ -907,6 +961,9 @@ const (
 
 	// CtxResponseWrittenKey marks that a Lua response has been written for this request.
 	CtxResponseWrittenKey = "response_written"
+
+	// CtxCustomHookKey stores the canonical custom hook name resolved for the current request.
+	CtxCustomHookKey = "custom_hook"
 
 	// CtxAccountKey stores the resolved account name for the current request in gin.Context.
 	// Keep this limited to the plain account string as agreed; additional fields are intentionally omitted.
@@ -1321,6 +1378,9 @@ const (
 	// LuaModHTTPResponse is a constant representing the value "nauthilus_http_response".
 	LuaModHTTPResponse = "nauthilus_http_response"
 
+	// LuaModCBOR is the module name exposed to Lua for CBOR encode and decode helpers.
+	LuaModCBOR = "nauthilus_cbor"
+
 	// LuaModPrometheus is a constant that identifies the Prometheus module for monitoring and metrics collection.
 	LuaModPrometheus = "nauthilus_prometheus"
 
@@ -1398,6 +1458,15 @@ const (
 
 	// LuaFnURLPartialDecode decodes valid percent-encoded bytes while leaving invalid escape sequences untouched.
 	LuaFnURLPartialDecode = "url_partial_decode"
+
+	// LuaFnCBORDecode decodes a CBOR byte string into Lua values.
+	LuaFnCBORDecode = "decode"
+
+	// LuaFnCBOREncode encodes Lua values as CBOR.
+	LuaFnCBOREncode = "encode"
+
+	// LuaFnCBORBytes marks a Lua string for CBOR byte string encoding.
+	LuaFnCBORBytes = "bytes"
 
 	// LuaFnSetHTTPResponseHeader sets an HTTP response header (replaces existing values)
 	LuaFnSetHTTPResponseHeader = "set_http_response_header"
@@ -1841,6 +1910,9 @@ const (
 
 	// LuaRequestExternalSession indicates the upstream session of the request, if supplied.
 	LuaRequestExternalSession = "external_session"
+
+	// LuaRequestHealthCheck indicates that the request was created by a backend health check.
+	LuaRequestHealthCheck = "health_check"
 
 	// LuaRequestClientIP signifies the client IP of the request.
 	LuaRequestClientIP = "client_ip"

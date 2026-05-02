@@ -34,7 +34,7 @@ Evidence:
 
 ## 3. Configuration Endpoint Exposure
 
-- [ ] **Production**: `runtime.http.disabled_endpoints.configuration=true` unless explicitly required.
+- [ ] **Production**: `runtime.servers.http.disabled_endpoints.configuration=true` unless explicitly required.
 - [ ] **Staging**: Configuration endpoint exposure is justified and documented.
 - [ ] If enabled, access is restricted and audited.
 
@@ -71,7 +71,7 @@ Evidence:
 - [ ] Redis is not publicly reachable.
 - [ ] Redis authentication and TLS are configured where applicable.
 - [ ] Redis ACLs follow least privilege.
-- [ ] `runtime.listen.trusted_proxies` is explicitly configured (no broad trust).
+- [ ] `runtime.servers.http.trusted_proxies` is explicitly configured (no broad trust).
 
 Evidence:
 

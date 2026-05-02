@@ -6,12 +6,12 @@
 runtime:
   instance_name: "nauthilus-testing"
 
-  listen:
-    address: "0.0.0.0:8080"
+  servers:
+    http:
+      address: "0.0.0.0:8080"
 
-  http:
-    keep_alive:
-      enabled: true
+      keep_alive:
+        enabled: true
 
 observability:
   log:

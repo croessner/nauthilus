@@ -71,6 +71,9 @@ type CommonRequest struct {
 	// ExternalSessionID stores an optional upstream session identifier.
 	ExternalSessionID string
 
+	// HealthCheck indicates that this request came from an internal backend health check.
+	HealthCheck bool
+
 	// ClientIP stores the IP address of the client.
 	ClientIP string
 
@@ -261,6 +264,7 @@ func (c *CommonRequest) Reset() {
 	c.Service = ""
 	c.Session = ""
 	c.ExternalSessionID = ""
+	c.HealthCheck = false
 	c.ClientIP = ""
 	c.ClientPort = ""
 	c.ClientNet = ""
@@ -366,6 +370,7 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestService, lua.LString(c.Service))
 	request.RawSetString(definitions.LuaRequestSession, lua.LString(c.Session))
 	request.RawSetString(definitions.LuaRequestExternalSession, lua.LString(c.ExternalSessionID))
+	request.RawSet(lua.LString(definitions.LuaRequestHealthCheck), lua.LBool(c.HealthCheck))
 	request.RawSetString(definitions.LuaRequestClientIP, lua.LString(c.ClientIP))
 	request.RawSetString(definitions.LuaRequestClientPort, lua.LString(c.ClientPort))
 	request.RawSetString(definitions.LuaRequestClientNet, lua.LString(c.ClientNet))

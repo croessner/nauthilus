@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"maps"
 	"reflect"
 	"sync"
 	"time"
@@ -164,9 +165,7 @@ func (c *Context) Snapshot() map[string]any {
 func (c *Context) Clone() *Context {
 	clone := NewContext()
 
-	for key, value := range c.Snapshot() {
-		clone.data[key] = value
-	}
+	maps.Copy(clone.data, c.Snapshot())
 
 	return clone
 }
@@ -216,6 +215,12 @@ func (c *Context) ApplyDelta(delta ContextDelta) {
 	}
 
 	for key, value := range delta.Set {
+		if existing, exists := c.data[key]; exists {
+			c.data[key] = mergeContextValue(existing, value)
+
+			continue
+		}
+
 		c.data[key] = cloneContextValue(value)
 	}
 }
@@ -292,6 +297,60 @@ func cloneContextValue(value any) any {
 	default:
 		return value
 	}
+}
+
+func mergeContextValue(existing any, incoming any) any {
+	switch incomingMap := incoming.(type) {
+	case map[string]any:
+		if existingMap, ok := existing.(map[string]any); ok {
+			return mergeStringContextMap(existingMap, incomingMap)
+		}
+	case map[any]any:
+		if existingMap, ok := existing.(map[any]any); ok {
+			return mergeAnyContextMap(existingMap, incomingMap)
+		}
+	}
+
+	return cloneContextValue(incoming)
+}
+
+func mergeStringContextMap(existing map[string]any, incoming map[string]any) map[string]any {
+	merged := make(map[string]any, len(existing)+len(incoming))
+	for key, value := range existing {
+		merged[key] = cloneContextValue(value)
+	}
+
+	for key, value := range incoming {
+		if existingValue, exists := merged[key]; exists {
+			merged[key] = mergeContextValue(existingValue, value)
+
+			continue
+		}
+
+		merged[key] = cloneContextValue(value)
+	}
+
+	return merged
+}
+
+func mergeAnyContextMap(existing map[any]any, incoming map[any]any) map[any]any {
+	merged := make(map[any]any, len(existing)+len(incoming))
+	for key, value := range existing {
+		merged[cloneContextValue(key)] = cloneContextValue(value)
+	}
+
+	for key, value := range incoming {
+		mergedKey := cloneContextValue(key)
+		if existingValue, exists := merged[mergedKey]; exists {
+			merged[mergedKey] = mergeContextValue(existingValue, value)
+
+			continue
+		}
+
+		merged[mergedKey] = cloneContextValue(value)
+	}
+
+	return merged
 }
 
 // Deadline is not currently used

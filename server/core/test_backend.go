@@ -206,7 +206,9 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 	passDBResult.DisplayNameField = "displayName"
 	passDBResult.Backend = definitions.BackendTest
 	passDBResult.BackendName = tm.backendName
-	passDBResult.Attributes = bktype.AttributeMapping{}
+	passDBResult.Attributes = bktype.AttributeMapping{
+		passDBResult.AccountField: []any{username},
+	}
 
 	if auth.Request.NoAuth {
 		passDBResult.Authenticated = true
