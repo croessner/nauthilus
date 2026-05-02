@@ -148,6 +148,8 @@ func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint s
 	)
 
 	keyvals = appendExternalSessionLogValue(keyvals, a.Request.ExternalSessionID)
+	keyvals = appendStructuredTLSLogValues(keyvals, a)
+	keyvals = appendAuthLoginAttemptLogValue(keyvals, a.Request.AuthLoginAttempt)
 	keyvals = appendHealthCheckLogValue(keyvals, a.IsBackendHealthCheckRequest())
 
 	if len(a.Runtime.AdditionalLogs) > 0 && len(a.Runtime.AdditionalLogs)%2 == 0 {
@@ -189,6 +191,8 @@ func (a *AuthState) fillLogLineProcessingTemplate(keyvals []any, endpoint string
 	)
 
 	keyvals = appendExternalSessionLogValue(keyvals, a.Request.ExternalSessionID)
+	keyvals = appendStructuredTLSLogValues(keyvals, a)
+	keyvals = appendAuthLoginAttemptLogValue(keyvals, a.Request.AuthLoginAttempt)
 	keyvals = appendHealthCheckLogValue(keyvals, a.IsBackendHealthCheckRequest())
 
 	return keyvals
@@ -200,6 +204,47 @@ func appendExternalSessionLogValue(keyvals []any, externalSessionID string) []an
 	}
 
 	return append(keyvals, definitions.LogKeyExternalSession, externalSessionID)
+}
+
+func appendStructuredTLSLogValues(keyvals []any, auth *AuthState) []any {
+	if auth == nil {
+		return keyvals
+	}
+
+	request := auth.Request
+	fields := []struct {
+		key   string
+		value string
+	}{
+		{definitions.LogKeySSL, request.XSSL},
+		{definitions.LogKeySSLSessionID, request.XSSLSessionID},
+		{definitions.LogKeySSLClientVerify, request.XSSLClientVerify},
+		{definitions.LogKeySSLClientDN, request.XSSLClientDN},
+		{definitions.LogKeySSLClientCN, request.XSSLClientCN},
+		{definitions.LogKeySSLIssuer, request.XSSLIssuer},
+		{definitions.LogKeySSLClientNotBefore, request.XSSLClientNotBefore},
+		{definitions.LogKeySSLClientNotAfter, request.XSSLClientNotAfter},
+		{definitions.LogKeySSLSubjectDN, request.XSSLSubjectDN},
+		{definitions.LogKeySSLIssuerDN, request.XSSLIssuerDN},
+		{definitions.LogKeySSLClientSubjectDN, request.XSSLClientSubjectDN},
+		{definitions.LogKeySSLClientIssuerDN, request.XSSLClientIssuerDN},
+		{definitions.LogKeySSLSerial, request.SSLSerial},
+		{definitions.LogKeySSLFingerprint, request.SSLFingerprint},
+	}
+
+	for _, field := range fields {
+		keyvals = append(keyvals, field.key, util.WithNotAvailable(field.value))
+	}
+
+	return keyvals
+}
+
+func appendAuthLoginAttemptLogValue(keyvals []any, attempt uint) []any {
+	if attempt == 0 {
+		return keyvals
+	}
+
+	return append(keyvals, definitions.LogKeyAuthLoginAttempt, attempt)
 }
 
 func appendHealthCheckLogValue(keyvals []any, healthCheck bool) []any {

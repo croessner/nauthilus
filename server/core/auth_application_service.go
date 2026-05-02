@@ -345,6 +345,7 @@ func (s *authApplicationService) newAuthState(
 	auth.ApplyContextData(input.Context)
 
 	if input.AuthLoginAttempt > 0 {
+		auth.Request.AuthLoginAttempt = input.AuthLoginAttempt
 		auth.SyncLoginAttemptsFromAttemptOrdinal(input.AuthLoginAttempt)
 	}
 

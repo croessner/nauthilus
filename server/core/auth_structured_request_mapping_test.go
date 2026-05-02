@@ -192,6 +192,7 @@ func assertAuthStateMatchesStructuredRequest(t *testing.T, auth *AuthState, expe
 	assert.Equal(t, expected.SSLSerial, auth.Request.SSLSerial)
 	assert.Equal(t, expected.SSLFingerprint, auth.Request.SSLFingerprint)
 	assert.Equal(t, expected.OIDCCID, auth.Request.OIDCCID)
+	assert.Equal(t, expected.AuthLoginAttempt, auth.Request.AuthLoginAttempt)
 
 	var password string
 	auth.GetPassword().WithString(func(value string) {

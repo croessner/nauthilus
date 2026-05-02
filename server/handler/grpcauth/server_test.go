@@ -361,10 +361,35 @@ func TestLoggingTracingInterceptorIncludesPhase5Fields(t *testing.T) {
 		Logger: logger,
 	})
 	request := &authv1.AuthRequest{
-		Username:          "log-user@example.test",
-		ClientIp:          "203.0.113.44",
-		Protocol:          "imap",
-		ExternalSessionId: "external-session-44",
+		Username:           "log-user@example.test",
+		ClientIp:           "203.0.113.44",
+		ClientPort:         "43124",
+		ClientHostname:     "client.example.test",
+		ClientId:           "client-id",
+		ExternalSessionId:  "external-session-44",
+		UserAgent:          "grpc-client/1.0",
+		LocalIp:            "127.0.0.1",
+		LocalPort:          "9444",
+		Protocol:           "imap",
+		Method:             "PLAIN",
+		Ssl:                "on",
+		SslSessionId:       "ssl-session",
+		SslClientVerify:    "SUCCESS",
+		SslClientDn:        "CN=client,O=Example",
+		SslClientCn:        "client",
+		SslIssuer:          "CN=issuer",
+		SslClientNotbefore: "2026-01-01T00:00:00Z",
+		SslClientNotafter:  "2026-12-31T23:59:59Z",
+		SslSubjectDn:       "CN=subject",
+		SslIssuerDn:        "CN=issuer-dn",
+		SslClientSubjectDn: "CN=client-subject",
+		SslClientIssuerDn:  "CN=client-issuer",
+		SslProtocol:        "TLSv1.3",
+		SslCipher:          "TLS_AES_256_GCM_SHA384",
+		SslSerial:          "serial-1",
+		SslFingerprint:     "aa:bb:cc",
+		OidcCid:            "oidc-client",
+		AuthLoginAttempt:   4,
 	}
 
 	_, err := interceptor(context.Background(), request, &grpc.UnaryServerInfo{
@@ -385,7 +410,32 @@ func TestLoggingTracingInterceptorIncludesPhase5Fields(t *testing.T) {
 	assertLogAttr(t, attrs, definitions.LogKeyExternalSession, "external-session-44")
 	assertLogAttr(t, attrs, definitions.LogKeyProtocol, "imap")
 	assertLogAttr(t, attrs, definitions.LogKeyClientIP, "203.0.113.44")
+	assertLogAttr(t, attrs, definitions.LogKeyClientPort, "43124")
+	assertLogAttr(t, attrs, definitions.LogKeyClientHost, "client.example.test")
+	assertLogAttr(t, attrs, definitions.LogKeyClientID, "client-id")
+	assertLogAttr(t, attrs, definitions.LogKeyUserAgent, "grpc-client/1.0")
+	assertLogAttr(t, attrs, definitions.LogKeyLocalIP, "127.0.0.1")
+	assertLogAttr(t, attrs, definitions.LogKeyPort, "9444")
+	assertLogAttr(t, attrs, definitions.LogKeyAuthMethod, "PLAIN")
+	assertLogAttr(t, attrs, definitions.LogKeyOIDCCID, "oidc-client")
+	assertLogAttr(t, attrs, definitions.LogKeyTLSSecure, "TLSv1.3")
+	assertLogAttr(t, attrs, definitions.LogKeyTLSCipher, "TLS_AES_256_GCM_SHA384")
 	assertLogAttr(t, attrs, definitions.LogKeyUsername, "log-user@example.test")
+	assertLogAttr(t, attrs, definitions.LogKeySSL, "on")
+	assertLogAttr(t, attrs, definitions.LogKeySSLSessionID, "ssl-session")
+	assertLogAttr(t, attrs, definitions.LogKeySSLClientVerify, "SUCCESS")
+	assertLogAttr(t, attrs, definitions.LogKeySSLClientDN, "CN=client,O=Example")
+	assertLogAttr(t, attrs, definitions.LogKeySSLClientCN, "client")
+	assertLogAttr(t, attrs, definitions.LogKeySSLIssuer, "CN=issuer")
+	assertLogAttr(t, attrs, definitions.LogKeySSLClientNotBefore, "2026-01-01T00:00:00Z")
+	assertLogAttr(t, attrs, definitions.LogKeySSLClientNotAfter, "2026-12-31T23:59:59Z")
+	assertLogAttr(t, attrs, definitions.LogKeySSLSubjectDN, "CN=subject")
+	assertLogAttr(t, attrs, definitions.LogKeySSLIssuerDN, "CN=issuer-dn")
+	assertLogAttr(t, attrs, definitions.LogKeySSLClientSubjectDN, "CN=client-subject")
+	assertLogAttr(t, attrs, definitions.LogKeySSLClientIssuerDN, "CN=client-issuer")
+	assertLogAttr(t, attrs, definitions.LogKeySSLSerial, "serial-1")
+	assertLogAttr(t, attrs, definitions.LogKeySSLFingerprint, "aa:bb:cc")
+	assertLogAttrValue(t, attrs, definitions.LogKeyAuthLoginAttempt, float64(4))
 	assertLogAttr(t, attrs, "decision", authv1.AuthDecision_AUTH_DECISION_OK.String())
 	assertLogAttr(t, attrs, "debug_module", definitions.DbgAuthName)
 }
@@ -896,13 +946,19 @@ func decodeSlogJSONRecord(t *testing.T, data []byte) map[string]any {
 func assertLogAttr(t *testing.T, attrs map[string]any, key string, want string) {
 	t.Helper()
 
+	assertLogAttrValue(t, attrs, key, want)
+}
+
+func assertLogAttrValue(t *testing.T, attrs map[string]any, key string, want any) {
+	t.Helper()
+
 	got, ok := attrs[key]
 	if !ok {
 		t.Fatalf("missing log key %q in %#v", key, attrs)
 	}
 
 	if got != want {
-		t.Fatalf("log key %q = %#v, want %q", key, got, want)
+		t.Fatalf("log key %q = %#v, want %#v", key, got, want)
 	}
 }
 

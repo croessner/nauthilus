@@ -357,37 +357,89 @@ func loggingTracingInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 func grpcRequestLogFields(req any) []any {
 	switch typed := req.(type) {
 	case *authv1.AuthRequest:
-		return grpcCommonRequestLogFields(
-			typed.GetUsername(),
-			typed.GetClientIp(),
-			typed.GetExternalSessionId(),
-			typed.GetProtocol(),
-		)
+		fields := grpcStructuredRequestLogFields(typed)
+
+		return appendNonZeroUint32LogField(fields, definitions.LogKeyAuthLoginAttempt, typed.GetAuthLoginAttempt())
 	case *authv1.LookupIdentityRequest:
-		return grpcCommonRequestLogFields(
-			typed.GetUsername(),
-			typed.GetClientIp(),
-			typed.GetExternalSessionId(),
-			typed.GetProtocol(),
-		)
+		return grpcStructuredRequestLogFields(typed)
 	case *authv1.ListAccountsRequest:
-		return grpcCommonRequestLogFields(
-			typed.GetUsername(),
-			typed.GetClientIp(),
-			typed.GetExternalSessionId(),
-			typed.GetProtocol(),
-		)
+		return grpcCommonRequestLogFields(typed)
 	default:
 		return nil
 	}
 }
 
-func grpcCommonRequestLogFields(username, clientIP, externalSessionID, protocol string) []any {
-	fields := make([]any, 0, 8)
-	fields = appendNonEmptyLogField(fields, definitions.LogKeyUsername, username)
-	fields = appendNonEmptyLogField(fields, definitions.LogKeyClientIP, clientIP)
-	fields = appendNonEmptyLogField(fields, definitions.LogKeyExternalSession, externalSessionID)
-	fields = appendNonEmptyLogField(fields, definitions.LogKeyProtocol, protocol)
+type grpcCommonRequestLogSource interface {
+	GetUsername() string
+	GetClientIp() string
+	GetClientPort() string
+	GetClientHostname() string
+	GetClientId() string
+	GetExternalSessionId() string
+	GetUserAgent() string
+	GetLocalIp() string
+	GetLocalPort() string
+	GetProtocol() string
+	GetMethod() string
+	GetOidcCid() string
+}
+
+type grpcStructuredRequestLogSource interface {
+	grpcCommonRequestLogSource
+	GetSsl() string
+	GetSslSessionId() string
+	GetSslClientVerify() string
+	GetSslClientDn() string
+	GetSslClientCn() string
+	GetSslIssuer() string
+	GetSslClientNotbefore() string
+	GetSslClientNotafter() string
+	GetSslSubjectDn() string
+	GetSslIssuerDn() string
+	GetSslClientSubjectDn() string
+	GetSslClientIssuerDn() string
+	GetSslProtocol() string
+	GetSslCipher() string
+	GetSslSerial() string
+	GetSslFingerprint() string
+}
+
+func grpcCommonRequestLogFields(req grpcCommonRequestLogSource) []any {
+	fields := make([]any, 0, 28)
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyUsername, req.GetUsername())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyClientIP, req.GetClientIp())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyClientPort, req.GetClientPort())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyClientHost, req.GetClientHostname())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyClientID, req.GetClientId())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyExternalSession, req.GetExternalSessionId())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyUserAgent, req.GetUserAgent())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyLocalIP, req.GetLocalIp())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyPort, req.GetLocalPort())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyProtocol, req.GetProtocol())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyAuthMethod, req.GetMethod())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyOIDCCID, req.GetOidcCid())
+
+	return fields
+}
+
+func grpcStructuredRequestLogFields(req grpcStructuredRequestLogSource) []any {
+	fields := grpcCommonRequestLogFields(req)
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSL, req.GetSsl())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLSessionID, req.GetSslSessionId())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLClientVerify, req.GetSslClientVerify())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLClientDN, req.GetSslClientDn())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLClientCN, req.GetSslClientCn())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLIssuer, req.GetSslIssuer())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLClientNotBefore, req.GetSslClientNotbefore())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLClientNotAfter, req.GetSslClientNotafter())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLSubjectDN, req.GetSslSubjectDn())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLIssuerDN, req.GetSslIssuerDn())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLClientSubjectDN, req.GetSslClientSubjectDn())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLClientIssuerDN, req.GetSslClientIssuerDn())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyTLSSecure, req.GetSslProtocol())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeyTLSCipher, req.GetSslCipher())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLSerial, req.GetSslSerial())
+	fields = appendNonEmptyLogField(fields, definitions.LogKeySSLFingerprint, req.GetSslFingerprint())
 
 	return fields
 }
@@ -409,6 +461,14 @@ func grpcResponseLogFields(response any) []any {
 
 func appendNonEmptyLogField(fields []any, key, value string) []any {
 	if value == "" {
+		return fields
+	}
+
+	return append(fields, key, value)
+}
+
+func appendNonZeroUint32LogField(fields []any, key string, value uint32) []any {
+	if value == 0 {
 		return fields
 	}
 

@@ -424,6 +424,9 @@ type AuthRequest struct {
 	// SSLFingerprint is the fingerprint of the SSL certificate.
 	SSLFingerprint string
 
+	// AuthLoginAttempt is the incoming authentication attempt ordinal.
+	AuthLoginAttempt uint
+
 	// XClientID is a custom client identifier.
 	XClientID string
 
@@ -3674,6 +3677,7 @@ func ApplyStructuredAuthRequest(auth State, request *authdto.Request) {
 	authState.ApplyContextData(ctxData)
 
 	if request.AuthLoginAttempt > 0 {
+		authState.Request.AuthLoginAttempt = request.AuthLoginAttempt
 		authState.SyncLoginAttemptsFromAttemptOrdinal(request.AuthLoginAttempt)
 	}
 }
