@@ -223,6 +223,21 @@ func TestCompilerRejectsCurrentFSMEventNames(t *testing.T) {
 	}
 }
 
+func TestCompilerRejectsPreAuthPermitDecision(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies[0].Then.Decision = string(policy.DecisionPermit)
+	cfg.Auth.Policy.Policies[0].Then.ResponseMarker = "auth.response.ok"
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatal("Compile() error = nil, want pre-auth permit rejection")
+	}
+
+	if !strings.Contains(err.Error(), "auth.policy.policies[0].then.decision") {
+		t.Fatalf("Compile() error = %q, want canonical decision path", err)
+	}
+}
+
 func TestCompilerRejectsInvalidNetworkSet(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 	cfg.Auth.Policy.Sets.Networks["trusted_clients"] = []string{"not-a-network"}

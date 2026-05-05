@@ -30,7 +30,29 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const (
+	featureDecisionAbort        = "abort_features"
+	featureDecisionLua          = "feature_lua"
+	featureDecisionOK           = "ok"
+	featureDecisionRBL          = "feature_rbl"
+	featureDecisionRelayDomains = "feature_relay_domains"
+	featureDecisionTLS          = "feature_tls"
+	featureDecisionTempFail     = "tempfail"
+	policyContinueAttribute     = "policy_continue"
+	policyContinueConfigured    = "configured"
+	policySkipRemainingAttr     = "policy_skip_remaining"
+)
+
+type preAuthFeatureOutcome struct {
+	current                 definitions.AuthResult
+	decision                string
+	reject                  bool
+	continuePolicyAuthority bool
+	markPolicyContinue      bool
+}
 
 // isLocalOrEmptyIP checks whether the provided IP is empty, an IPv4 localhost, or an IPv6 localhost.
 func isLocalOrEmptyIP(ip string) bool {
@@ -505,78 +527,164 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(fctx)
 	}
 
+	if a.configuredPreAuthChecksSkipped(ctx) {
+		return finishPreAuthFeatureOK(fsp, true)
+	}
+
 	if !a.cfg().HasFeature(definitions.FeatureBruteForce) {
 		a.refreshUserAccount()
 	}
 
 	if triggered, abortFeatures, err := a.checkLuaFeature(ctx); err != nil {
 		fsp.RecordError(err)
-		fsp.SetAttributes(attribute.String("decision", "tempfail"))
-		fsp.End()
+		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+			current:  definitions.AuthResultTempFail,
+			decision: featureDecisionTempFail,
+		}); handled {
+			return result
+		}
 
-		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultTempFail)
+		return definitions.AuthResultOK
 	} else if triggered {
-		ctx.Set(definitions.CtxFeatureRejectedKey, true)
-
-		fsp.SetAttributes(attribute.String("decision", "feature_lua"))
-		fsp.End()
-
-		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureLua)
+		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+			current:                 definitions.AuthResultFeatureLua,
+			decision:                featureDecisionLua,
+			reject:                  true,
+			continuePolicyAuthority: true,
+			markPolicyContinue:      true,
+		}); handled {
+			return result
+		}
 	} else if abortFeatures {
-		fsp.SetAttributes(attribute.String("decision", "abort_features"))
-		fsp.End()
+		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+			current:  definitions.AuthResultOK,
+			decision: featureDecisionAbort,
+		}); handled {
+			return result
+		}
 
-		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultOK)
+		return definitions.AuthResultOK
 	}
 
 	tlsTriggered := a.checkTLSEncryptionFeature(ctx)
 	a.recordPolicyTLS(ctx, tlsTriggered)
 
 	if tlsTriggered {
-		ctx.Set(definitions.CtxFeatureRejectedKey, true)
-
-		fsp.SetAttributes(attribute.String("decision", "feature_tls"))
-		fsp.End()
-
-		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureTLS)
+		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+			current:                 definitions.AuthResultFeatureTLS,
+			decision:                featureDecisionTLS,
+			reject:                  true,
+			continuePolicyAuthority: true,
+			markPolicyContinue:      true,
+		}); handled {
+			return result
+		}
 	}
 
 	relayTriggered := a.checkRelayDomainsFeature(ctx)
 	a.recordPolicyRelayDomains(ctx, relayTriggered)
 
 	if relayTriggered {
-		ctx.Set(definitions.CtxFeatureRejectedKey, true)
-
-		fsp.SetAttributes(attribute.String("decision", "feature_relay_domains"))
-		fsp.End()
-
-		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureRelayDomain)
+		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+			current:                 definitions.AuthResultFeatureRelayDomain,
+			decision:                featureDecisionRelayDomains,
+			reject:                  true,
+			continuePolicyAuthority: true,
+			markPolicyContinue:      true,
+		}); handled {
+			return result
+		}
 	}
 
 	triggered, err := a.checkRBLFeature(ctx)
 	if err != nil {
 		a.recordPolicyRBL(ctx, triggered, err)
 		fsp.RecordError(err)
-		fsp.SetAttributes(attribute.String("decision", "tempfail"))
-		fsp.End()
+		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+			current:            definitions.AuthResultTempFail,
+			decision:           featureDecisionTempFail,
+			markPolicyContinue: true,
+		}); handled {
+			return result
+		}
 
-		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultTempFail)
+		return definitions.AuthResultOK
 	}
 
 	if triggered {
 		a.recordPolicyRBL(ctx, triggered, nil)
-		ctx.Set(definitions.CtxFeatureRejectedKey, true)
+		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+			current:            definitions.AuthResultFeatureRBL,
+			decision:           featureDecisionRBL,
+			reject:             true,
+			markPolicyContinue: true,
+		}); handled {
+			return result
+		}
 
-		fsp.SetAttributes(attribute.String("decision", "feature_rbl"))
-		fsp.End()
-
-		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureRBL)
+		return definitions.AuthResultOK
 	}
 
 	a.recordPolicyRBL(ctx, triggered, nil)
 
-	fsp.SetAttributes(attribute.String("decision", "ok"))
-	fsp.End()
+	if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
+		current:  definitions.AuthResultOK,
+		decision: featureDecisionOK,
+	}); handled {
+		return result
+	}
 
-	return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultOK)
+	return definitions.AuthResultOK
+}
+
+func (a *AuthState) resolvePreAuthFeatureOutcome(
+	ctx *gin.Context,
+	span trace.Span,
+	outcome preAuthFeatureOutcome,
+) (definitions.AuthResult, bool) {
+	span.SetAttributes(attribute.String("decision", outcome.decision))
+
+	if result, handled := a.configuredPolicyPreAuthResult(ctx, outcome.current); handled {
+		markFeatureRejected(ctx, outcome.reject)
+		span.End()
+
+		return result, true
+	}
+
+	if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
+		if outcome.markPolicyContinue {
+			span.SetAttributes(attribute.String(policyContinueAttribute, policyContinueConfigured))
+		}
+
+		if outcome.continuePolicyAuthority {
+			return definitions.AuthResultOK, false
+		}
+
+		span.End()
+
+		return definitions.AuthResultOK, true
+	}
+
+	markFeatureRejected(ctx, outcome.reject)
+	span.End()
+
+	return a.defaultPolicyPreAuthResult(ctx, outcome.current), true
+}
+
+func markFeatureRejected(ctx *gin.Context, reject bool) {
+	if reject {
+		ctx.Set(definitions.CtxFeatureRejectedKey, true)
+	}
+}
+
+func finishPreAuthFeatureOK(span trace.Span, skipRemaining bool) definitions.AuthResult {
+	attributes := []attribute.KeyValue{attribute.String("decision", featureDecisionOK)}
+	if skipRemaining {
+		attributes = append(attributes, attribute.Bool(policySkipRemainingAttr, true))
+	}
+
+	span.SetAttributes(attributes...)
+	span.End()
+
+	return definitions.AuthResultOK
 }

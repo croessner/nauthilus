@@ -165,10 +165,24 @@ func TestDecisionContextObserveModeKeepsDefaultSetAuthoritative(t *testing.T) {
 	}
 }
 
+func TestDecisionContextConfiguredPreAuthAuthorityUsesEnforceMode(t *testing.T) {
+	ctx := NewDecisionContext(testObserveSnapshot(), policy.OperationAuthenticate, nil)
+	if ctx.ConfiguredPreAuthAuthoritative() {
+		t.Fatal("observe mode must not let configured pre-auth rules decide production output")
+	}
+
+	snapshot := testObserveSnapshot()
+	snapshot.Mode = modeEnforce
+	ctx = NewDecisionContext(snapshot, policy.OperationAuthenticate, nil)
+	if !ctx.ConfiguredPreAuthAuthoritative() {
+		t.Fatal("enforce mode should let configured pre-auth rules decide production output")
+	}
+}
+
 func testSnapshot() *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    42,
-		Mode:          "enforce",
+		Mode:          modeEnforce,
 		DefaultPolicy: policy.BuiltinDefaultSet,
 		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
 			policy.OperationAuthenticate: {

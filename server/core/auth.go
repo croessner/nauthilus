@@ -4243,7 +4243,7 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 // PreproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
 // If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
 // It then performs a post Lua action and triggers a failed authentication response.
-// If a brute force attack is detected, it returns true, otherwise false.
+// If a brute force attack is rejected, it returns true. Configured policy controls may let processing continue.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	tr := monittrace.New("nauthilus/auth")
 	pctx, pspan := tr.Start(ctx.Request.Context(), "auth.features",
@@ -4262,6 +4262,30 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce(ctx) {
+			if a.applyConfiguredPreAuthDecision(ctx) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("reject", true))
+				pspan.End()
+
+				return true
+			}
+
+			if a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("policy_skip_remaining", true))
+				pspan.End()
+
+				return false
+			}
+
+			if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("policy_continue", true))
+				pspan.End()
+
+				return false
+			}
+
 			if a.applyDefaultPreAuthDecision(ctx) {
 				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 				pspan.SetAttributes(attribute.Bool("reject", true))

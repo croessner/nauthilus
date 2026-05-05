@@ -105,6 +105,93 @@ func TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision(t *testing.T) {
 	}
 }
 
+func TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.ClearTextList = nil
+	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(false)))
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.Service = definitions.ServJSON
+	auth.SetStatusCodes(auth.Request.Service)
+
+	auth.runAuthPipelineFSM(ctx)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	if report.Final == nil || report.Final.PolicyName != "custom_deny_tls" {
+		t.Fatalf("final = %#v, want configured TLS denial", report.Final)
+	}
+
+	if got := ctx.Writer.Status(); got != http.StatusForbidden {
+		t.Fatalf("HTTP status = %d, want configured denial status", got)
+	}
+
+	if got := auth.Runtime.StatusMessage; got != "Custom TLS deny" {
+		t.Fatalf("status message = %q, want configured message", got)
+	}
+}
+
+func TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.ClearTextList = nil
+	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(true)))
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
+	got := auth.HandleFeatures(ctx)
+	if got != definitions.AuthResultOK {
+		t.Fatalf("feature result = %v, want OK", got)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	if policyCtx.Report().Final != nil {
+		t.Fatalf("final = %#v, want nil", policyCtx.Report().Final)
+	}
+}
+
+func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.ClearTextList = nil
+	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.recordPolicyBruteForce(ctx, true)
+
+	if auth.applyConfiguredPreAuthDecision(ctx) {
+		t.Fatal("neutral pre-auth control must not apply a terminal decision")
+	}
+
+	if !auth.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
+		t.Fatal("configured brute-force control was not applied")
+	}
+
+	got := auth.HandleFeatures(ctx)
+	if got != definitions.AuthResultOK {
+		t.Fatalf("feature result = %v, want OK", got)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	if _, exists := policyCtx.Report().Checks["tls_encryption"]; exists {
+		t.Fatal("tls check was collected after pre-auth control skipped remaining checks")
+	}
+
+	if got := len(policyCtx.Report().Policies); got != 1 {
+		t.Fatalf("selected policies = %d, want one configured control decision", got)
+	}
+}
+
 func customObserveTLSSnapshot() *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    74,
@@ -113,6 +200,49 @@ func customObserveTLSSnapshot() *policyruntime.Snapshot {
 		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
 			policy.OperationAuthenticate: {
 				policy.StagePreAuth: customObserveTLSStagePlan(),
+			},
+		},
+	}
+}
+
+func customEnforcePreAuthControlSnapshot() *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    76,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage: policy.StagePreAuth,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							Name:       "brute_force",
+							Type:       policy.CheckTypeBruteForce,
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+						},
+						customObserveTLSCheck(),
+					},
+					Policies: []policyruntime.CompiledPolicy{customBruteForceSkipPolicy()},
+				},
+			},
+		},
+	}
+}
+
+func customEnforceTLSSnapshot(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    75,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage:    policy.StagePreAuth,
+					Checks:   []policyruntime.CompiledCheck{customObserveTLSCheck()},
+					Policies: []policyruntime.CompiledPolicy{compiled},
+				},
 			},
 		},
 	}
@@ -154,6 +284,38 @@ func customObserveTLSDenyPolicy() policyruntime.CompiledPolicy {
 			OutcomeMarker:  "auth.outcome.custom_tls_deny",
 			FSMEventMarker: policy.FSMEventMarkerPreAuthDeny,
 			ResponseMarker: policy.ResponseMarkerFail,
+		},
+	}
+}
+
+func customEnforceTLSDenyPolicy(expected bool) policyruntime.CompiledPolicy {
+	compiled := customObserveTLSDenyPolicy()
+	compiled.Then.ResponseMessage = policyruntime.ResponseMessagePlan{
+		Source:  "literal",
+		Literal: "Custom TLS deny",
+	}
+	compiled.Root.Expected = policyruntime.TypedValue{Value: expected}
+
+	return compiled
+}
+
+func customBruteForceSkipPolicy() policyruntime.CompiledPolicy {
+	return policyruntime.CompiledPolicy{
+		Name:          "custom_brute_force_skip",
+		Stage:         policy.StagePreAuth,
+		Operations:    []policy.Operation{policy.OperationAuthenticate},
+		RequireChecks: []string{"brute_force"},
+		Root: policyruntime.CompiledExpr{
+			Kind:        policyruntime.ExprKindAttribute,
+			AttributeID: policy.AttributeBruteForceTriggered,
+			Operator:    "is",
+			Expected:    policyruntime.TypedValue{Value: true},
+		},
+		Then: policyruntime.DecisionPlan{
+			Decision:       policy.DecisionNeutral,
+			OutcomeMarker:  "auth.outcome.custom_brute_force_skip",
+			FSMEventMarker: policy.FSMEventMarkerPreAuthOK,
+			Control:        policyruntime.DecisionControl{SkipRemainingStageChecks: true},
 		},
 	}
 }

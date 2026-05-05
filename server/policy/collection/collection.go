@@ -33,7 +33,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const modeObserve = "observe"
+const (
+	modeEnforce = "enforce"
+	modeObserve = "observe"
+)
 
 // AuthState describes the scheduler-visible authentication state.
 type AuthState string
@@ -125,12 +128,12 @@ func (c *DecisionContext) Snapshot() *policyruntime.Snapshot {
 // SnapshotMetadata returns stable metadata for request-local comparison output.
 func (c *DecisionContext) SnapshotMetadata() (string, string, uint64) {
 	if c == nil || c.snapshot == nil {
-		return "enforce", policy.BuiltinDefaultSet, 0
+		return modeEnforce, policy.BuiltinDefaultSet, 0
 	}
 
 	mode := c.snapshot.Mode
 	if mode == "" {
-		mode = "enforce"
+		mode = modeEnforce
 	}
 
 	defaultPolicy := c.snapshot.DefaultPolicy
@@ -161,6 +164,30 @@ func (c *DecisionContext) BuiltinDefaultAuthoritative() bool {
 	}
 
 	return !hasConfiguredRules(c.snapshot.StagePlans)
+}
+
+// ConfiguredPreAuthAuthoritative reports whether configured pre-auth policy rules decide production output.
+func (c *DecisionContext) ConfiguredPreAuthAuthoritative() bool {
+	if c == nil || c.snapshot == nil || c.report == nil {
+		return false
+	}
+
+	if c.snapshot.Mode == modeObserve {
+		return false
+	}
+
+	defaultPolicy := c.snapshot.DefaultPolicy
+	if defaultPolicy == "" {
+		defaultPolicy = policy.BuiltinDefaultSet
+	}
+
+	if defaultPolicy != policy.BuiltinDefaultSet {
+		return false
+	}
+
+	plan := c.snapshot.StagePlans[c.report.Operation][policy.StagePreAuth]
+
+	return len(plan.Policies) > 0
 }
 
 // BeginCheck opens metric and tracing collection for one check adapter.

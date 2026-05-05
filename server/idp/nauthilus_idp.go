@@ -681,7 +681,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	auth.FinishSetup(ctx)
 
 	if auth.CheckBruteForce(ctx) {
-		if auth.ApplyDefaultPreAuthDecision(ctx) {
+		if auth.ApplyConfiguredPreAuthDecision(ctx) {
 			auth.FinishLogging(ctx, definitions.AuthResultFail)
 
 			err := fmt.Errorf("authentication failed due to brute force protection")
@@ -690,14 +690,25 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 			return nil, err
 		}
 
-		auth.UpdateBruteForceBucketsCounter(ctx)
-		auth.AuthFail(ctx)
-		auth.FinishLogging(ctx, definitions.AuthResultFail)
+		if !auth.ApplyConfiguredPreAuthControl(ctx) && !auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
+			if auth.ApplyDefaultPreAuthDecision(ctx) {
+				auth.FinishLogging(ctx, definitions.AuthResultFail)
 
-		err := fmt.Errorf("authentication failed due to brute force protection")
-		sp.RecordError(err)
+				err := fmt.Errorf("authentication failed due to brute force protection")
+				sp.RecordError(err)
 
-		return nil, err
+				return nil, err
+			}
+
+			auth.UpdateBruteForceBucketsCounter(ctx)
+			auth.AuthFail(ctx)
+			auth.FinishLogging(ctx, definitions.AuthResultFail)
+
+			err := fmt.Errorf("authentication failed due to brute force protection")
+			sp.RecordError(err)
+
+			return nil, err
+		}
 	}
 
 	if res := auth.HandleFeatures(ctx); res != definitions.AuthResultOK && res != definitions.AuthResultUnset {

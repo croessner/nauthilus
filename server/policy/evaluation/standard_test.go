@@ -34,6 +34,8 @@ type standardDecisionCase struct {
 	wantResponseMarker string
 }
 
+const customTLSDenyPolicyName = "custom_deny_tls"
+
 func TestStandardAuthSelectsMappedDecision(t *testing.T) {
 	for _, testCase := range standardDecisionCases() {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -332,6 +334,81 @@ func TestCustomObserveReportsUnsafeCustomOnlyCheckUnavailable(t *testing.T) {
 	}
 }
 
+func TestConfiguredPreAuthEnforceSelectsConfiguredDecision(t *testing.T) {
+	recorder := &recordingRecorder{}
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("tls_encryption", policy.CheckTypeTLSEncryption, policy.StagePreAuth, policy.CheckStatusOK),
+		boolAttr(policy.AttributeTLSSecure, policy.StagePreAuth, policy.OperationAuthenticate, false, nil),
+	)
+	snapshot := enforceSnapshotWithCustomPreAuth(customPreAuthPolicy(
+		customTLSDenyPolicyName,
+		policy.DecisionDeny,
+		policy.FSMEventMarkerPreAuthDeny,
+		policy.ResponseMarkerFail,
+	))
+
+	got := EvaluateConfiguredPreAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 21,
+		Recorder:   recorder,
+	})
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != customTLSDenyPolicyName {
+		t.Fatalf("policy = %q, want %s", got.Final.PolicyName, customTLSDenyPolicyName)
+	}
+
+	if got.Final.Effect != policy.DecisionDeny {
+		t.Fatalf("effect = %q, want deny", got.Final.Effect)
+	}
+
+	if policyReport.Final == nil || policyReport.Final.PolicyName != customTLSDenyPolicyName {
+		t.Fatalf("report final = %#v, want configured decision", policyReport.Final)
+	}
+
+	if len(policyReport.Policies) != 1 || policyReport.Policies[0].Name != customTLSDenyPolicyName {
+		t.Fatalf("selected policies = %#v, want configured policy", policyReport.Policies)
+	}
+
+	if len(recorder.decisions) != 1 {
+		t.Fatalf("decision metrics = %d, want 1", len(recorder.decisions))
+	}
+}
+
+func TestConfiguredPreAuthEnforceDoesNotSelectFinalDefaultDeny(t *testing.T) {
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("tls_encryption", policy.CheckTypeTLSEncryption, policy.StagePreAuth, policy.CheckStatusOK),
+		boolAttr(policy.AttributeTLSSecure, policy.StagePreAuth, policy.OperationAuthenticate, false, nil),
+	)
+	snapshot := enforceSnapshotWithCustomPreAuth(customPreAuthPolicy(
+		"custom_no_tls_match",
+		policy.DecisionDeny,
+		policy.FSMEventMarkerPreAuthDeny,
+		policy.ResponseMarkerFail,
+	))
+	stagePlan := snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth]
+	stagePlan.Policies[0].Root.Expected = policyruntime.TypedValue{Value: true}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth] = stagePlan
+
+	got := EvaluateConfiguredPreAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 22,
+	})
+	if got.Final != nil {
+		t.Fatalf("final decision = %#v, want nil", got.Final)
+	}
+
+	if policyReport.Final != nil {
+		t.Fatalf("report final = %#v, want nil", policyReport.Final)
+	}
+}
+
 func standardReport(
 	operation policy.Operation,
 	checkResult report.CheckResult,
@@ -412,6 +489,61 @@ func observeSnapshotWithUnavailableCheck() *policyruntime.Snapshot {
 	snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision].Policies[0].RequireChecks = []string{"lua_control_risk"}
 
 	return snapshot
+}
+
+func enforceSnapshotWithCustomPreAuth(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage: policy.StagePreAuth,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							Name:        "tls_encryption",
+							Type:        policy.CheckTypeTLSEncryption,
+							Stage:       policy.StagePreAuth,
+							Operations:  []policy.Operation{policy.OperationAuthenticate},
+							RunIf:       policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+							ObserveSafe: true,
+						},
+					},
+					Policies: []policyruntime.CompiledPolicy{compiled},
+				},
+			},
+		},
+	}
+}
+
+func customPreAuthPolicy(
+	name string,
+	decision policy.Decision,
+	fsmMarker string,
+	responseMarker string,
+) policyruntime.CompiledPolicy {
+	return policyruntime.CompiledPolicy{
+		Name:          name,
+		Stage:         policy.StagePreAuth,
+		Operations:    []policy.Operation{policy.OperationAuthenticate},
+		RequireChecks: []string{"tls_encryption"},
+		Root: policyruntime.CompiledExpr{
+			Kind:        policyruntime.ExprKindAttribute,
+			AttributeID: policy.AttributeTLSSecure,
+			Operator:    "is",
+			Expected:    policyruntime.TypedValue{Value: false},
+		},
+		Then: policyruntime.DecisionPlan{
+			Decision:       decision,
+			OutcomeMarker:  "auth.outcome.custom_tls",
+			FSMEventMarker: fsmMarker,
+			ResponseMarker: responseMarker,
+			ResponseMessage: policyruntime.ResponseMessagePlan{
+				Source:  "literal",
+				Literal: "Custom TLS deny",
+			},
+		},
+	}
 }
 
 func customAuthDecisionPolicy(

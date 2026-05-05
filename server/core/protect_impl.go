@@ -79,19 +79,25 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 		ctx.Set(definitions.CtxClientIPKey, clientIP)
 
 		if auth.CheckBruteForce(ctx) {
-			if auth.applyDefaultPreAuthDecision(ctx) {
+			if auth.applyConfiguredPreAuthDecision(ctx) {
 				return
 			}
 
-			auth.markFeatureRejected(ctx)
-			auth.UpdateBruteForceBucketsCounter(ctx)
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			auth.AuthFail(ctx)
-			ctx.Abort()
+			if !auth.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) && !auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
+				if auth.applyDefaultPreAuthDecision(ctx) {
+					return
+				}
 
-			return
+				auth.markFeatureRejected(ctx)
+				auth.UpdateBruteForceBucketsCounter(ctx)
+				result := GetPassDBResultFromPool()
+				auth.PostLuaAction(ctx, result)
+				PutPassDBResultToPool(result)
+				auth.AuthFail(ctx)
+				ctx.Abort()
+
+				return
+			}
 		}
 
 		//nolint:exhaustive // Ignore some results

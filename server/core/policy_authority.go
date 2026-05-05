@@ -22,12 +22,17 @@ import (
 	"github.com/croessner/nauthilus/server/policy"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/policy/evaluation"
+	"github.com/croessner/nauthilus/server/policy/observability"
 	"github.com/croessner/nauthilus/server/policy/report"
 
 	"github.com/gin-gonic/gin"
 )
 
-const policyDirectOutcomeContextKey = "policy_direct_outcome"
+const (
+	policyDirectOutcomeContextKey             = "policy_direct_outcome"
+	policyConfiguredPreAuthDecisionContextKey = "policy_configured_pre_auth_decision"
+	policySkipPreAuthChecksContextKey         = "policy_skip_pre_auth_checks"
+)
 
 func (a *AuthState) defaultPolicyPreAuthResult(ctx *gin.Context, current definitions.AuthResult) definitions.AuthResult {
 	final, ok := a.defaultPolicyPreAuthDecision(ctx)
@@ -39,6 +44,25 @@ func (a *AuthState) defaultPolicyPreAuthResult(ctx *gin.Context, current definit
 	a.applyPolicyResponseMessage(final)
 
 	return preAuthResultFromPolicy(final, current)
+}
+
+func (a *AuthState) configuredPolicyPreAuthResult(ctx *gin.Context, current definitions.AuthResult) (definitions.AuthResult, bool) {
+	final, ok := a.configuredPolicyPreAuthDecision(ctx)
+	if !ok || final == nil {
+		return current, false
+	}
+
+	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(current, a.Runtime.StatusMessage))
+	a.applyPolicyResponseMessage(final)
+	if configuredPreAuthControl(final) {
+		return definitions.AuthResultOK, true
+	}
+
+	if !configuredPreAuthTerminal(final) {
+		return current, false
+	}
+
+	return preAuthResultFromPolicy(final, current), true
 }
 
 func (a *AuthState) defaultPolicyAuthResult(ctx *gin.Context, current definitions.AuthResult) definitions.AuthResult {
@@ -70,6 +94,125 @@ func (a *AuthState) ApplyDefaultPreAuthDecision(ctx *gin.Context) bool {
 	return a.applyDefaultPreAuthDecision(ctx)
 }
 
+// ApplyConfiguredPreAuthDecision applies a terminal configured pre-auth decision when it is authoritative.
+func (a *AuthState) ApplyConfiguredPreAuthDecision(ctx *gin.Context) bool {
+	return a.applyConfiguredPreAuthDecision(ctx)
+}
+
+// ApplyConfiguredPreAuthControl applies a configured pre-auth control when it is authoritative.
+func (a *AuthState) ApplyConfiguredPreAuthControl(ctx *gin.Context) bool {
+	return a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail)
+}
+
+// HasConfiguredPreAuthPolicyAuthority reports whether configured pre-auth rules own production decisions.
+func (a *AuthState) HasConfiguredPreAuthPolicyAuthority(ctx *gin.Context) bool {
+	policyCtx := a.requestPolicyContext(ctx)
+
+	return policyCtx != nil && policyCtx.ConfiguredPreAuthAuthoritative()
+}
+
+func (a *AuthState) applyConfiguredPreAuthDecision(ctx *gin.Context) bool {
+	final, ok := a.configuredPolicyPreAuthDecision(ctx)
+	if !ok || final == nil || !configuredPreAuthTerminal(final) {
+		return false
+	}
+
+	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(preAuthResultFromPolicy(final, definitions.AuthResultUnset), a.Runtime.StatusMessage))
+	a.applyPolicyDecision(ctx, final)
+
+	return true
+}
+
+func (a *AuthState) applyConfiguredPreAuthControl(ctx *gin.Context, current definitions.AuthResult) bool {
+	final, ok := a.configuredPolicyPreAuthDecision(ctx)
+	if !ok || !configuredPreAuthControl(final) {
+		return false
+	}
+
+	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(current, a.Runtime.StatusMessage))
+	a.applyPolicyResponseMessage(final)
+	a.markConfiguredPreAuthChecksSkipped(ctx)
+
+	return true
+}
+
+func (a *AuthState) markConfiguredPreAuthChecksSkipped(ctx *gin.Context) {
+	if ctx == nil {
+		return
+	}
+
+	ctx.Set(policySkipPreAuthChecksContextKey, true)
+}
+
+func (a *AuthState) configuredPreAuthChecksSkipped(ctx *gin.Context) bool {
+	return ctx != nil && ctx.GetBool(policySkipPreAuthChecksContextKey)
+}
+
+func (a *AuthState) configuredPolicyPreAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
+	policyCtx := a.requestPolicyContext(ctx)
+	if policyCtx == nil || !policyCtx.ConfiguredPreAuthAuthoritative() {
+		return nil, false
+	}
+
+	if final, exists := configuredPreAuthDecisionFromContext(ctx); exists {
+		return final, true
+	}
+
+	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
+	result := evaluation.EvaluateConfiguredPreAuth(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
+		Mode:       mode,
+		Set:        defaultPolicy,
+		Generation: generation,
+		Recorder:   observability.DefaultRecorder(),
+		Logger:     a.logger(),
+		Production: evaluation.ProductionOutcome{
+			Surface: a.policyResponseSurface(),
+		},
+	})
+	if result.Final != nil {
+		storeConfiguredPreAuthDecision(ctx, result.Final)
+		observability.Debug(
+			contextFromGin(ctx),
+			a.Cfg(),
+			a.Logger(),
+			observability.ComponentEval,
+			definitions.LogKeyGUID, a.Runtime.GUID,
+			"operation", string(policyCtx.Report().Operation),
+			"stage", string(result.Final.Stage),
+			"snapshot_generation", generation,
+			"policy_name", result.Final.PolicyName,
+			"decision", string(result.Final.Effect),
+			"response_marker", result.Final.ResponseMarker,
+			"fsm_event_marker", result.Final.FSMEventMarker,
+		)
+	}
+
+	return result.Final, true
+}
+
+func configuredPreAuthDecisionFromContext(ctx *gin.Context) (*report.FinalDecision, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+
+	value, ok := ctx.Get(policyConfiguredPreAuthDecisionContextKey)
+	if !ok {
+		return nil, false
+	}
+
+	final, ok := value.(*report.FinalDecision)
+
+	return final, ok
+}
+
+func storeConfiguredPreAuthDecision(ctx *gin.Context, final *report.FinalDecision) {
+	if ctx == nil || final == nil {
+		return
+	}
+
+	ctx.Set(policyConfiguredPreAuthDecisionContextKey, final)
+}
+
 func (a *AuthState) defaultPolicyPreAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
 	policyCtx, ok := a.defaultPolicyContext(ctx)
 	if !ok {
@@ -95,6 +238,22 @@ func (a *AuthState) defaultPolicyContext(ctx *gin.Context) (*policycollection.De
 	}
 
 	return policyCtx, true
+}
+
+func configuredPreAuthTerminal(final *report.FinalDecision) bool {
+	if final == nil || final.Stage != policy.StagePreAuth {
+		return false
+	}
+
+	return final.Effect == policy.DecisionDeny || final.Effect == policy.DecisionTempFail
+}
+
+func configuredPreAuthControl(final *report.FinalDecision) bool {
+	return final != nil &&
+		final.Stage == policy.StagePreAuth &&
+		final.Effect == policy.DecisionNeutral &&
+		final.Control != nil &&
+		final.Control.SkipRemainingStageChecks
 }
 
 func (a *AuthState) applyPolicyDecision(ctx *gin.Context, final *report.FinalDecision) {
@@ -191,7 +350,7 @@ func preAuthDenyResult(final *report.FinalDecision, current definitions.AuthResu
 	case strings.Contains(name, "_brute_force_"):
 		return definitions.AuthResultFail
 	default:
-		return current
+		return definitions.AuthResultFeatureLua
 	}
 }
 

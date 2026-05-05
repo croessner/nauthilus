@@ -25,6 +25,7 @@ import (
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/policy/evaluation"
 	"github.com/croessner/nauthilus/server/policy/observability"
+	"github.com/croessner/nauthilus/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -149,6 +150,10 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		production.Surface = a.policyResponseSurface()
 	}
 
+	if policyCtx.ConfiguredPreAuthAuthoritative() && selectedPreAuthFinal(policyCtx.Report()) {
+		return
+	}
+
 	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
 	result := evaluation.CompareWithProduction(contextFromGin(ctx), policyCtx.Report(), evaluation.CompareInput{
 		Mode:          mode,
@@ -209,6 +214,13 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		"default_fsm_event_marker", result.Production.FSMEventMarker,
 		"custom_fsm_event_marker", result.Shadow.FSMEventMarker,
 	)
+}
+
+func selectedPreAuthFinal(policyReport *report.DecisionReport) bool {
+	return policyReport != nil &&
+		policyReport.Final != nil &&
+		policyReport.Final.Stage == policy.StagePreAuth &&
+		policyReport.Final.PolicyName != ""
 }
 
 func mergePolicyDiagnosticOutcome(
