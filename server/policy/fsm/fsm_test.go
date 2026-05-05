@@ -245,48 +245,42 @@ func allTargetMarkers() []string {
 	}
 }
 
-func TestCurrentAdapterMapsTargetMarkers(t *testing.T) {
-	tests := []struct {
-		marker string
-		want   string
-	}{
-		{marker: policy.FSMEventMarkerParseOK, want: "parse_ok"},
-		{marker: policy.FSMEventMarkerParseFail, want: "parse_fail"},
-		{marker: policy.FSMEventMarkerPreAuthOK, want: "features_ok"},
-		{marker: policy.FSMEventMarkerPreAuthDeny, want: "features_fail"},
-		{marker: policy.FSMEventMarkerPreAuthTempFail, want: "features_tempfail"},
-		{marker: policy.FSMEventMarkerPreAuthAbort, want: "features_unset"},
-		{marker: policy.FSMEventMarkerAuthEvaluated, want: "password_evaluated"},
-		{marker: policy.FSMEventMarkerAccountProviderEvaluated, want: "password_evaluated"},
-		{marker: policy.FSMEventMarkerAuthPermit, want: "password_ok"},
-		{marker: policy.FSMEventMarkerAuthDeny, want: "password_fail"},
-		{marker: policy.FSMEventMarkerAuthTempFail, want: "password_tempfail"},
-		{marker: policy.FSMEventMarkerAuthEmptyUser, want: "password_empty_user"},
-		{marker: policy.FSMEventMarkerAuthEmptyPass, want: "password_empty_pass"},
-		{marker: policy.FSMEventMarkerBasicAuthOK, want: "basic_auth_ok"},
-		{marker: policy.FSMEventMarkerBasicAuthFail, want: "basic_auth_fail"},
-		{marker: policy.FSMEventMarkerAbort, want: "abort"},
+func TestCompareDoesNotSynthesizeProductionPath(t *testing.T) {
+	result := Compare(ComparisonInput{
+		CurrentTerminalState: "auth_ok",
+		TargetEventMarkers: []string{
+			policy.FSMEventMarkerParseOK,
+			policy.FSMEventMarkerPreAuthOK,
+			policy.FSMEventMarkerAuthEvaluated,
+			policy.FSMEventMarkerAuthPermit,
+		},
+		PolicyName:     "standard_auth_success",
+		Operation:      policy.OperationAuthenticate,
+		ResponseMarker: "auth.response.ok",
+	})
+
+	if len(result.CurrentEventPath) != 0 {
+		t.Fatalf("production event path = %v, want empty path without adapter fallback", result.CurrentEventPath)
 	}
 
-	adapter := currentAdapter{}
-	for _, testCase := range tests {
-		t.Run(strings.TrimPrefix(testCase.marker, "auth.fsm.event."), func(t *testing.T) {
-			got, ok := adapter.eventFor(testCase.marker)
-			if !ok {
-				t.Fatal("eventFor() ok = false, want true")
-			}
+	if result.TargetTerminalState != "auth_ok" {
+		t.Fatalf("target terminal = %q, want auth_ok", result.TargetTerminalState)
+	}
 
-			if got != testCase.want {
-				t.Fatalf("event = %q, want %q", got, testCase.want)
-			}
-		})
+	if result.Mismatch {
+		t.Fatal("mismatch = true, want false")
 	}
 }
 
-func TestCompareReportsTerminalMismatchWithoutChangingCurrentPath(t *testing.T) {
+func TestCompareReportsTerminalMismatchWithoutChangingProductionPath(t *testing.T) {
 	result := Compare(ComparisonInput{
 		CurrentTerminalState: "auth_fail",
-		CurrentEventPath:     []string{"features_ok", "password_evaluated", "password_fail"},
+		CurrentEventPath: []string{
+			policy.FSMEventMarkerParseOK,
+			policy.FSMEventMarkerPreAuthOK,
+			policy.FSMEventMarkerAuthEvaluated,
+			policy.FSMEventMarkerAuthDeny,
+		},
 		TargetEventMarkers: []string{
 			policy.FSMEventMarkerParseOK,
 			policy.FSMEventMarkerPreAuthOK,
@@ -310,7 +304,13 @@ func TestCompareReportsTerminalMismatchWithoutChangingCurrentPath(t *testing.T) 
 		t.Fatalf("target terminal = %q, want auth_ok", result.TargetTerminalState)
 	}
 
-	if got := strings.Join(result.CurrentEventPath, ","); got != "features_ok,password_evaluated,password_fail" {
-		t.Fatalf("current event path = %q", got)
+	wantPath := strings.Join([]string{
+		policy.FSMEventMarkerParseOK,
+		policy.FSMEventMarkerPreAuthOK,
+		policy.FSMEventMarkerAuthEvaluated,
+		policy.FSMEventMarkerAuthDeny,
+	}, ",")
+	if got := strings.Join(result.CurrentEventPath, ","); got != wantPath {
+		t.Fatalf("production event path = %q", got)
 	}
 }

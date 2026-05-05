@@ -3237,7 +3237,11 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	defer func() {
 		a.recordPolicyAccountProvider(ginCtx, len(accountList), errSeen)
 		a.completePolicyStage(ginCtx, policy.StageAccountProvider)
-		a.defaultPolicyAuthDecision(ginCtx)
+		final, _ := a.defaultPolicyAuthDecision(ginCtx)
+		if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ginCtx), final)); err != nil {
+			_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, err.Error())
+		}
+
 		a.comparePolicyDecision(ginCtx, evaluation.ProductionOutcome{
 			Effect:                  policy.DecisionPermit,
 			ResponseMarker:          policy.ResponseMarkerListAccountsOK,

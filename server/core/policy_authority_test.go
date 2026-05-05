@@ -16,6 +16,7 @@
 package core
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -85,6 +86,34 @@ func TestAuthBoundaryDefaultSetSelectsFinalDecisionDuringPasswordHandling(t *tes
 
 	if got := policyCtx.Report().Final.PolicyName; got != "standard_auth_failure" {
 		t.Fatalf("policy = %q, want standard_auth_failure", got)
+	}
+}
+
+func TestAuthBoundaryDefaultSetAppliesTargetFSMForDirectPreAuthDecision(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    104,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.recordPolicyTLS(ctx, true)
+
+	if !auth.ApplyDefaultPreAuthDecision(ctx) {
+		t.Fatal("default pre-auth decision was not applied")
+	}
+
+	wantPath := strings.Join([]string{
+		policy.FSMEventMarkerParseOK,
+		policy.FSMEventMarkerPreAuthTempFail,
+	}, ",")
+	if got := strings.Join(auth.Runtime.AuthFSMEventPath, ","); got != wantPath {
+		t.Fatalf("fsm event path = %q, want %q", got, wantPath)
+	}
+
+	if got := auth.Runtime.AuthFSMTerminalState; got != "auth_tempfail" {
+		t.Fatalf("terminal state = %q, want auth_tempfail", got)
 	}
 }
 

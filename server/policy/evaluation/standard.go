@@ -160,7 +160,7 @@ func CompareWithProduction(ctx context.Context, policyReport *report.DecisionRep
 
 	recordEvaluation(spanCtx, recorder, input, policyReport.Operation, evaluation.Final, time.Since(start))
 	production, mismatchType, mismatch := compareProduction(spanCtx, recorder, policyReport, input, evaluation.Final)
-	fsmReport := compareTargetFSM(spanCtx, recorder, policyReport, input, evaluation.Final)
+	fsmReport := compareTargetFSM(spanCtx, policyReport, input, evaluation.Final)
 	setCompareSpanAttributes(span, input, policyReport.Operation, evaluation.Final, mismatchType, mismatch)
 	setFSMSpanAttributes(span, fsmReport)
 	logComparison(spanCtx, input, policyReport.Operation, evaluation.Final, mismatchType, mismatch)
@@ -267,7 +267,6 @@ func compareProduction(
 
 func compareTargetFSM(
 	ctx context.Context,
-	recorder observability.Recorder,
 	policyReport *report.DecisionReport,
 	input CompareInput,
 	final *report.FinalDecision,
@@ -277,7 +276,7 @@ func compareTargetFSM(
 	}
 
 	tracer := observability.NewTracer()
-	spanCtx, span := tracer.Start(ctx, "policy.fsm.apply")
+	_, span := tracer.Start(ctx, "policy.fsm.apply")
 	defer span.End()
 
 	currentTerminal := input.Production.CurrentFSMTerminalState
@@ -291,18 +290,18 @@ func compareTargetFSM(
 		CurrentTerminalState: currentTerminal,
 		Operation:            policyReport.Operation,
 		CurrentEventPath:     input.Production.CurrentFSMEventPath,
-		TargetEventMarkers:   targetFSMEventMarkers(policyReport, final),
+		TargetEventMarkers:   TargetFSMEventMarkers(policyReport, final),
 	})
 	fsmReport := fsmReportFromComparison(comparison)
 	policyReport.FSM = fsmReport
 
-	recordFSMComparison(spanCtx, recorder, final.Stage, fsmReport)
 	setFSMSpanAttributes(span, fsmReport)
 
 	return fsmReport
 }
 
-func targetFSMEventMarkers(policyReport *report.DecisionReport, final *report.FinalDecision) []string {
+// TargetFSMEventMarkers returns the target marker sequence for a selected decision.
+func TargetFSMEventMarkers(policyReport *report.DecisionReport, final *report.FinalDecision) []string {
 	markers := []string{policy.FSMEventMarkerParseOK}
 	if final == nil {
 		return markers
@@ -352,31 +351,6 @@ func fsmReportFromComparison(comparison policyfsm.ComparisonResult) *report.FSMR
 		CurrentEventPath:     append([]string(nil), comparison.CurrentEventPath...),
 		TargetEventPath:      append([]string(nil), comparison.TargetEventPath...),
 		Mismatch:             comparison.Mismatch,
-	}
-}
-
-func recordFSMComparison(
-	ctx context.Context,
-	recorder observability.Recorder,
-	stage policy.Stage,
-	fsmReport *report.FSMReport,
-) {
-	if fsmReport == nil {
-		return
-	}
-
-	result := observability.ResultSuccess
-	if fsmReport.Mismatch || fsmReport.Error != "" {
-		result = observability.ResultFailure
-	}
-
-	for _, marker := range fsmReport.TargetEventPath {
-		recorder.RecordFSMTransition(ctx, observability.FSMMeasurement{
-			Result:         result,
-			FSMEventMarker: marker,
-			Operation:      fsmReport.Operation,
-			Stage:          stage,
-		})
 	}
 }
 

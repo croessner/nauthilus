@@ -15,105 +15,55 @@
 
 package core
 
-import "fmt"
+import (
+	"github.com/croessner/nauthilus/server/policy"
+	policyfsm "github.com/croessner/nauthilus/server/policy/fsm"
+)
 
 type authFSMState string
 
 type authFSMEvent string
 
 const (
-	authFSMStateInit            authFSMState = "init"
-	authFSMStateInputParsed     authFSMState = "input_parsed"
-	authFSMStateFeaturesChecked authFSMState = "features_checked"
-	authFSMStatePasswordChecked authFSMState = "password_checked"
-	authFSMStateAuthOK          authFSMState = "auth_ok"
-	authFSMStateAuthFail        authFSMState = "auth_fail"
-	authFSMStateAuthTempFail    authFSMState = "auth_tempfail"
-	authFSMStateAborted         authFSMState = "aborted"
+	authFSMStateInit                   authFSMState = authFSMState(policyfsm.StateInit)
+	authFSMStateInputParsed            authFSMState = authFSMState(policyfsm.StateInputParsed)
+	authFSMStatePreAuthChecked         authFSMState = authFSMState(policyfsm.StatePreAuthChecked)
+	authFSMStateAuthChecked            authFSMState = authFSMState(policyfsm.StateAuthChecked)
+	authFSMStateAccountProviderChecked authFSMState = authFSMState(policyfsm.StateAccountProviderChecked)
+	authFSMStateAuthOK                 authFSMState = authFSMState(policyfsm.StateAuthOK)
+	authFSMStateAuthFail               authFSMState = authFSMState(policyfsm.StateAuthFail)
+	authFSMStateAuthTempFail           authFSMState = authFSMState(policyfsm.StateAuthTempFail)
+	authFSMStateAborted                authFSMState = authFSMState(policyfsm.StateAborted)
 )
 
 const (
-	authFSMEventParseOK           authFSMEvent = "parse_ok"
-	authFSMEventParseFail         authFSMEvent = "parse_fail"
-	authFSMEventFeaturesOK        authFSMEvent = "features_ok"
-	authFSMEventFeaturesFail      authFSMEvent = "features_fail"
-	authFSMEventFeaturesTempFail  authFSMEvent = "features_tempfail"
-	authFSMEventFeaturesUnset     authFSMEvent = "features_unset"
-	authFSMEventPasswordEvaluated authFSMEvent = "password_evaluated"
-	authFSMEventPasswordOK        authFSMEvent = "password_ok"
-	authFSMEventPasswordFail      authFSMEvent = "password_fail"
-	authFSMEventPasswordTempFail  authFSMEvent = "password_tempfail"
-	authFSMEventPasswordEmptyUser authFSMEvent = "password_empty_user"
-	authFSMEventPasswordEmptyPass authFSMEvent = "password_empty_pass"
-	authFSMEventBasicAuthOK       authFSMEvent = "basic_auth_ok"
-	authFSMEventBasicAuthFail     authFSMEvent = "basic_auth_fail"
-	authFSMEventAbort             authFSMEvent = "abort"
+	authFSMEventParseOK                  authFSMEvent = policy.FSMEventMarkerParseOK
+	authFSMEventParseFail                authFSMEvent = policy.FSMEventMarkerParseFail
+	authFSMEventPreAuthOK                authFSMEvent = policy.FSMEventMarkerPreAuthOK
+	authFSMEventPreAuthDeny              authFSMEvent = policy.FSMEventMarkerPreAuthDeny
+	authFSMEventPreAuthTempFail          authFSMEvent = policy.FSMEventMarkerPreAuthTempFail
+	authFSMEventPreAuthAbort             authFSMEvent = policy.FSMEventMarkerPreAuthAbort
+	authFSMEventAuthEvaluated            authFSMEvent = policy.FSMEventMarkerAuthEvaluated
+	authFSMEventAccountProviderEvaluated authFSMEvent = policy.FSMEventMarkerAccountProviderEvaluated
+	authFSMEventAuthPermit               authFSMEvent = policy.FSMEventMarkerAuthPermit
+	authFSMEventAuthDeny                 authFSMEvent = policy.FSMEventMarkerAuthDeny
+	authFSMEventAuthTempFail             authFSMEvent = policy.FSMEventMarkerAuthTempFail
+	authFSMEventAuthEmptyUser            authFSMEvent = policy.FSMEventMarkerAuthEmptyUser
+	authFSMEventAuthEmptyPass            authFSMEvent = policy.FSMEventMarkerAuthEmptyPass
+	authFSMEventBasicAuthOK              authFSMEvent = policy.FSMEventMarkerBasicAuthOK
+	authFSMEventBasicAuthFail            authFSMEvent = policy.FSMEventMarkerBasicAuthFail
+	authFSMEventAbort                    authFSMEvent = policy.FSMEventMarkerAbort
 )
 
 func isAuthFSMTerminal(state authFSMState) bool {
-	switch state {
-	case authFSMStateAuthOK, authFSMStateAuthFail, authFSMStateAuthTempFail, authFSMStateAborted:
-		return true
-	default:
-		return false
-	}
+	return policyfsm.IsTerminal(string(state))
 }
 
 func nextAuthFSMState(current authFSMState, event authFSMEvent) (authFSMState, error) {
-	if isAuthFSMTerminal(current) {
-		return "", fmt.Errorf("invalid auth fsm transition from terminal state: state=%s event=%s", current, event)
+	next, err := policyfsm.NextState(string(current), string(event))
+	if err != nil {
+		return "", err
 	}
 
-	if event == authFSMEventAbort {
-		return authFSMStateAborted, nil
-	}
-
-	switch current {
-	case authFSMStateInit:
-		switch event {
-		case authFSMEventParseOK:
-			return authFSMStateInputParsed, nil
-		case authFSMEventParseFail:
-			return authFSMStateAborted, nil
-		}
-	case authFSMStateInputParsed:
-		switch event {
-		case authFSMEventBasicAuthOK:
-			return authFSMStateAuthOK, nil
-		case authFSMEventBasicAuthFail:
-			return authFSMStateAuthFail, nil
-		case authFSMEventFeaturesOK:
-			return authFSMStateFeaturesChecked, nil
-		case authFSMEventFeaturesFail:
-			return authFSMStateAuthFail, nil
-		case authFSMEventFeaturesTempFail:
-			return authFSMStateAuthTempFail, nil
-		case authFSMEventFeaturesUnset:
-			return authFSMStateAborted, nil
-		}
-	case authFSMStateFeaturesChecked:
-		switch event {
-		case authFSMEventBasicAuthOK:
-			return authFSMStateAuthOK, nil
-		case authFSMEventBasicAuthFail:
-			return authFSMStateAuthFail, nil
-		case authFSMEventPasswordEvaluated:
-			return authFSMStatePasswordChecked, nil
-		}
-	case authFSMStatePasswordChecked:
-		switch event {
-		case authFSMEventPasswordOK:
-			return authFSMStateAuthOK, nil
-		case authFSMEventPasswordFail:
-			return authFSMStateAuthFail, nil
-		case authFSMEventPasswordTempFail:
-			return authFSMStateAuthTempFail, nil
-		case authFSMEventPasswordEmptyUser:
-			return authFSMStateAuthTempFail, nil
-		case authFSMEventPasswordEmptyPass:
-			return authFSMStateAuthFail, nil
-		}
-	}
-
-	return "", fmt.Errorf("invalid auth fsm transition: state=%s event=%s", current, event)
+	return authFSMState(next), nil
 }

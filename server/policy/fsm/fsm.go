@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package fsm evaluates policy-owned auth FSM markers for migration diagnostics.
+// Package fsm evaluates policy-owned auth FSM markers.
 package fsm
 
 import (
@@ -34,6 +34,35 @@ const (
 	stateAuthFail               state = "auth_fail"
 	stateAuthTempFail           state = "auth_tempfail"
 	stateAborted                state = "aborted"
+)
+
+const (
+	// StateInit is the initial auth FSM state.
+	StateInit = string(stateInit)
+
+	// StateInputParsed is reached after parser success.
+	StateInputParsed = string(stateInputParsed)
+
+	// StatePreAuthChecked is reached after pre-auth checks pass.
+	StatePreAuthChecked = string(statePreAuthChecked)
+
+	// StateAuthChecked is reached after auth backend evaluation.
+	StateAuthChecked = string(stateAuthChecked)
+
+	// StateAccountProviderChecked is reached after account-provider evaluation.
+	StateAccountProviderChecked = string(stateAccountProviderChecked)
+
+	// StateAuthOK is the successful terminal state.
+	StateAuthOK = string(stateAuthOK)
+
+	// StateAuthFail is the denial terminal state.
+	StateAuthFail = string(stateAuthFail)
+
+	// StateAuthTempFail is the temporary-failure terminal state.
+	StateAuthTempFail = string(stateAuthTempFail)
+
+	// StateAborted is the aborted terminal state.
+	StateAborted = string(stateAborted)
 )
 
 // Transition records one accepted target FSM transition.
@@ -140,6 +169,21 @@ func TerminalStateForDecision(decision policy.Decision) string {
 	default:
 		return ""
 	}
+}
+
+// IsTerminal reports whether the state is terminal.
+func IsTerminal(current string) bool {
+	return terminal(state(current))
+}
+
+// NextState returns the next state for the supplied target marker.
+func NextState(current string, marker string) (string, error) {
+	next, err := nextState(state(current), marker)
+	if err != nil {
+		return "", err
+	}
+
+	return string(next), nil
 }
 
 func nextState(current state, marker string) (state, error) {
@@ -249,63 +293,6 @@ func terminal(current state) bool {
 	}
 }
 
-type currentAdapter struct{}
-
 func currentEventPath(input ComparisonInput) []string {
-	if len(input.CurrentEventPath) > 0 {
-		return append([]string(nil), input.CurrentEventPath...)
-	}
-
-	return currentAdapter{}.eventPath(input.TargetEventMarkers)
-}
-
-func (adapter currentAdapter) eventPath(markers []string) []string {
-	events := make([]string, 0, len(markers))
-	for _, marker := range markers {
-		event, ok := adapter.eventFor(marker)
-		if !ok {
-			continue
-		}
-
-		events = append(events, event)
-	}
-
-	return events
-}
-
-func (currentAdapter) eventFor(marker string) (string, bool) {
-	switch marker {
-	case policy.FSMEventMarkerParseOK:
-		return "parse_ok", true
-	case policy.FSMEventMarkerParseFail:
-		return "parse_fail", true
-	case policy.FSMEventMarkerPreAuthOK:
-		return "features_ok", true
-	case policy.FSMEventMarkerPreAuthDeny:
-		return "features_fail", true
-	case policy.FSMEventMarkerPreAuthTempFail:
-		return "features_tempfail", true
-	case policy.FSMEventMarkerPreAuthAbort:
-		return "features_unset", true
-	case policy.FSMEventMarkerAuthEvaluated, policy.FSMEventMarkerAccountProviderEvaluated:
-		return "password_evaluated", true
-	case policy.FSMEventMarkerAuthPermit:
-		return "password_ok", true
-	case policy.FSMEventMarkerAuthDeny:
-		return "password_fail", true
-	case policy.FSMEventMarkerAuthTempFail:
-		return "password_tempfail", true
-	case policy.FSMEventMarkerAuthEmptyUser:
-		return "password_empty_user", true
-	case policy.FSMEventMarkerAuthEmptyPass:
-		return "password_empty_pass", true
-	case policy.FSMEventMarkerBasicAuthOK:
-		return "basic_auth_ok", true
-	case policy.FSMEventMarkerBasicAuthFail:
-		return "basic_auth_fail", true
-	case policy.FSMEventMarkerAbort:
-		return "abort", true
-	default:
-		return "", false
-	}
+	return append([]string(nil), input.CurrentEventPath...)
 }

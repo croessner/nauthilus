@@ -32,7 +32,7 @@ func TestCompareWithProductionAddsFSMComparisonForOperations(t *testing.T) {
 					Effect:                  policy.DecisionPermit,
 					ResponseMarker:          testCase.response,
 					CurrentFSMTerminalState: testCase.terminal,
-					CurrentFSMEventPath:     []string{"features_ok", "password_evaluated", "password_ok"},
+					CurrentFSMEventPath:     testCase.eventPath,
 				},
 				ProductionSet: true,
 			})
@@ -80,7 +80,12 @@ func TestCompareWithProductionReportsFSMMismatchSeparately(t *testing.T) {
 			Effect:                  policy.DecisionPermit,
 			ResponseMarker:          "auth.response.ok",
 			CurrentFSMTerminalState: "auth_fail",
-			CurrentFSMEventPath:     []string{"features_ok", "password_evaluated", "password_fail"},
+			CurrentFSMEventPath: []string{
+				policy.FSMEventMarkerParseOK,
+				policy.FSMEventMarkerPreAuthOK,
+				policy.FSMEventMarkerAuthEvaluated,
+				policy.FSMEventMarkerAuthDeny,
+			},
 		},
 		ProductionSet: true,
 	})
@@ -101,6 +106,7 @@ type fsmComparisonCase struct {
 	policyName  string
 	response    string
 	terminal    string
+	eventPath   []string
 }
 
 func fsmComparisonCases() []fsmComparisonCase {
@@ -118,6 +124,7 @@ func authenticateFSMComparisonCase() fsmComparisonCase {
 		policyName:  "standard_auth_success",
 		response:    "auth.response.ok",
 		terminal:    "auth_ok",
+		eventPath:   authEventPath(policy.FSMEventMarkerAuthPermit),
 		buildReport: authenticateFSMReport,
 	}
 }
@@ -129,6 +136,7 @@ func lookupIdentityFSMComparisonCase() fsmComparisonCase {
 		policyName:  "standard_lookup_identity_success",
 		response:    "auth.response.ok",
 		terminal:    "auth_ok",
+		eventPath:   authEventPath(policy.FSMEventMarkerAuthPermit),
 		buildReport: lookupIdentityFSMReport,
 	}
 }
@@ -140,7 +148,26 @@ func listAccountsFSMComparisonCase() fsmComparisonCase {
 		policyName:  "standard_list_accounts_success",
 		response:    "auth.response.list_accounts.ok",
 		terminal:    "auth_ok",
+		eventPath:   accountProviderEventPath(policy.FSMEventMarkerAuthPermit),
 		buildReport: listAccountsFSMReport,
+	}
+}
+
+func authEventPath(final string) []string {
+	return []string{
+		policy.FSMEventMarkerParseOK,
+		policy.FSMEventMarkerPreAuthOK,
+		policy.FSMEventMarkerAuthEvaluated,
+		final,
+	}
+}
+
+func accountProviderEventPath(final string) []string {
+	return []string{
+		policy.FSMEventMarkerParseOK,
+		policy.FSMEventMarkerPreAuthOK,
+		policy.FSMEventMarkerAccountProviderEvaluated,
+		final,
 	}
 }
 

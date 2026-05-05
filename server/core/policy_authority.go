@@ -106,6 +106,12 @@ func (a *AuthState) applyPolicyDecision(ctx *gin.Context, final *report.FinalDec
 		a.markFeatureRejected(ctx)
 	}
 
+	if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ctx), final)); err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
 	a.applyPolicyResponseMessage(final)
 	a.applyPolicyObligations(ctx, final)
 
@@ -120,6 +126,14 @@ func (a *AuthState) applyPolicyDecision(ctx *gin.Context, final *report.FinalDec
 		ctx.Abort()
 	default:
 	}
+}
+
+func (a *AuthState) policyReport(ctx *gin.Context) *report.DecisionReport {
+	if policyCtx := existingPolicyContext(ctx); policyCtx != nil {
+		return policyCtx.Report()
+	}
+
+	return nil
 }
 
 func (a *AuthState) applyPolicyResponseMessage(final *report.FinalDecision) {
