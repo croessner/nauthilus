@@ -2692,7 +2692,7 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		a.recordPolicyBackendResult(ctx, authResult, nil, nil)
 	}
 
-	return authResult
+	return a.defaultPolicyAuthResult(ctx, authResult)
 }
 
 // usernamePasswordChecks performs checks on the Username and Password fields of the AuthState object.
@@ -3237,9 +3237,10 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	defer func() {
 		a.recordPolicyAccountProvider(ginCtx, len(accountList), errSeen)
 		a.completePolicyStage(ginCtx, policy.StageAccountProvider)
+		a.defaultPolicyAuthDecision(ginCtx)
 		a.comparePolicyDecision(ginCtx, evaluation.ProductionOutcome{
 			Effect:                  policy.DecisionPermit,
-			ResponseMarker:          "auth.response.list_accounts.ok",
+			ResponseMarker:          policy.ResponseMarkerListAccountsOK,
 			CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
 			CurrentFSMEventPath:     a.currentFSMEventPath(),
 		})
@@ -4257,6 +4258,14 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce(ctx) {
+			if a.applyDefaultPreAuthDecision(ctx) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("reject", true))
+				pspan.End()
+
+				return true
+			}
+
 			a.markFeatureRejected(ctx)
 			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)

@@ -79,6 +79,10 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 		ctx.Set(definitions.CtxClientIPKey, clientIP)
 
 		if auth.CheckBruteForce(ctx) {
+			if auth.applyDefaultPreAuthDecision(ctx) {
+				return
+			}
+
 			auth.markFeatureRejected(ctx)
 			auth.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()

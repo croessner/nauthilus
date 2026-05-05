@@ -141,6 +141,10 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		return
 	}
 
+	if directOutcome, ok := directPolicyDiagnostic(ctx); ok {
+		production = mergePolicyDiagnosticOutcome(directOutcome, production)
+	}
+
 	if production.Surface == "" {
 		production.Surface = a.policyResponseSurface()
 	}
@@ -186,6 +190,25 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		"stage", string(result.Shadow.Stage),
 		"mismatch_type", result.MismatchType,
 	)
+}
+
+func mergePolicyDiagnosticOutcome(
+	diagnostic evaluation.ProductionOutcome,
+	current evaluation.ProductionOutcome,
+) evaluation.ProductionOutcome {
+	if diagnostic.Surface == "" {
+		diagnostic.Surface = current.Surface
+	}
+
+	if diagnostic.CurrentFSMTerminalState == "" {
+		diagnostic.CurrentFSMTerminalState = current.CurrentFSMTerminalState
+	}
+
+	if len(diagnostic.CurrentFSMEventPath) == 0 {
+		diagnostic.CurrentFSMEventPath = current.CurrentFSMEventPath
+	}
+
+	return diagnostic
 }
 
 func (a *AuthState) policyResponseSurface() string {

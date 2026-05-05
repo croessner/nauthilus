@@ -514,19 +514,19 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		fsp.SetAttributes(attribute.String("decision", "tempfail"))
 		fsp.End()
 
-		return definitions.AuthResultTempFail
+		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultTempFail)
 	} else if triggered {
 		ctx.Set(definitions.CtxFeatureRejectedKey, true)
 
 		fsp.SetAttributes(attribute.String("decision", "feature_lua"))
 		fsp.End()
 
-		return definitions.AuthResultFeatureLua
+		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureLua)
 	} else if abortFeatures {
 		fsp.SetAttributes(attribute.String("decision", "abort_features"))
 		fsp.End()
 
-		return definitions.AuthResultOK
+		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultOK)
 	}
 
 	tlsTriggered := a.checkTLSEncryptionFeature(ctx)
@@ -538,7 +538,7 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		fsp.SetAttributes(attribute.String("decision", "feature_tls"))
 		fsp.End()
 
-		return definitions.AuthResultFeatureTLS
+		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureTLS)
 	}
 
 	relayTriggered := a.checkRelayDomainsFeature(ctx)
@@ -550,7 +550,7 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		fsp.SetAttributes(attribute.String("decision", "feature_relay_domains"))
 		fsp.End()
 
-		return definitions.AuthResultFeatureRelayDomain
+		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureRelayDomain)
 	}
 
 	triggered, err := a.checkRBLFeature(ctx)
@@ -560,7 +560,7 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		fsp.SetAttributes(attribute.String("decision", "tempfail"))
 		fsp.End()
 
-		return definitions.AuthResultTempFail
+		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultTempFail)
 	}
 
 	if triggered {
@@ -570,7 +570,7 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		fsp.SetAttributes(attribute.String("decision", "feature_rbl"))
 		fsp.End()
 
-		return definitions.AuthResultFeatureRBL
+		return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultFeatureRBL)
 	}
 
 	a.recordPolicyRBL(ctx, triggered, nil)
@@ -578,5 +578,5 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 	fsp.SetAttributes(attribute.String("decision", "ok"))
 	fsp.End()
 
-	return definitions.AuthResultOK
+	return a.defaultPolicyPreAuthResult(ctx, definitions.AuthResultOK)
 }

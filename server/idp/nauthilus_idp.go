@@ -681,6 +681,15 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	auth.FinishSetup(ctx)
 
 	if auth.CheckBruteForce(ctx) {
+		if auth.ApplyDefaultPreAuthDecision(ctx) {
+			auth.FinishLogging(ctx, definitions.AuthResultFail)
+
+			err := fmt.Errorf("authentication failed due to brute force protection")
+			sp.RecordError(err)
+
+			return nil, err
+		}
+
 		auth.UpdateBruteForceBucketsCounter(ctx)
 		auth.AuthFail(ctx)
 		auth.FinishLogging(ctx, definitions.AuthResultFail)

@@ -60,6 +60,31 @@ func TestStandardAuthSelectsMappedDecision(t *testing.T) {
 	}
 }
 
+func TestStandardPreAuthEvaluationDoesNotSelectFinalDefaultDeny(t *testing.T) {
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("tls_encryption", policy.CheckTypeTLSEncryption, policy.StagePreAuth, policy.CheckStatusOK),
+		boolAttr(policy.AttributeTLSSecure, policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
+	)
+
+	got := EvaluateStandardPreAuth(policyReport)
+	if got.Final != nil {
+		t.Fatalf("final decision = %#v, want nil", got.Final)
+	}
+
+	if policyReport.Final != nil {
+		t.Fatalf("report final = %#v, want nil", policyReport.Final)
+	}
+
+	if len(policyReport.Policies) != 1 {
+		t.Fatalf("selected policies = %d, want 1", len(policyReport.Policies))
+	}
+
+	if got := policyReport.Policies[0].Name; got != "implicit_pre_auth_pass" {
+		t.Fatalf("policy = %q, want implicit pre-auth pass", got)
+	}
+}
+
 func standardDecisionCases() []standardDecisionCase {
 	return []standardDecisionCase{
 		bruteForceDecisionCase(),

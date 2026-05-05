@@ -153,6 +153,31 @@ const (
 )
 
 const (
+	// ResponseMarkerOK identifies a successful response class.
+	ResponseMarkerOK = "auth.response.ok"
+
+	// ResponseMarkerFail identifies a denial response class.
+	ResponseMarkerFail = "auth.response.fail"
+
+	// ResponseMarkerTempFail identifies a temporary-failure response class.
+	ResponseMarkerTempFail = "auth.response.tempfail"
+
+	// ResponseMarkerTempFailNoTLS identifies the TLS-required temporary-failure response class.
+	ResponseMarkerTempFailNoTLS = "auth.response.tempfail.no_tls"
+
+	// ResponseMarkerListAccountsOK identifies a successful account-list response class.
+	ResponseMarkerListAccountsOK = "auth.response.list_accounts.ok"
+)
+
+const (
+	// ObligationBruteForceUpdate identifies brute-force counter update enforcement.
+	ObligationBruteForceUpdate = "auth.obligation.brute_force.update"
+
+	// ObligationLuaPostActionEnqueue identifies Lua post-action enqueue enforcement.
+	ObligationLuaPostActionEnqueue = "auth.obligation.lua_post_action.enqueue"
+)
+
+const (
 	// FSMEventMarkerParseOK identifies a successful parser marker.
 	FSMEventMarkerParseOK = "auth.fsm.event.parse_ok"
 

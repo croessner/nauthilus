@@ -116,6 +116,30 @@ func TestScriptSinkRecordsOneCheckPerLuaScript(t *testing.T) {
 	}
 }
 
+func TestDecisionContextDefaultSetAuthorityRequiresNoConfiguredRules(t *testing.T) {
+	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
+	if !ctx.BuiltinDefaultAuthoritative() {
+		t.Fatal("default set should be authoritative when no configured rules exist")
+	}
+
+	withRule := testSnapshot()
+	withRule.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision] = policyruntime.CompiledStagePlan{
+		Stage: policy.StageAuthDecision,
+		Policies: []policyruntime.CompiledPolicy{
+			{
+				Name:       "operator_rule",
+				Stage:      policy.StageAuthDecision,
+				Operations: []policy.Operation{policy.OperationAuthenticate},
+			},
+		},
+	}
+
+	ctx = NewDecisionContext(withRule, policy.OperationAuthenticate, nil)
+	if ctx.BuiltinDefaultAuthoritative() {
+		t.Fatal("configured rules must keep the default set from taking production authority")
+	}
+}
+
 func testSnapshot() *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    42,

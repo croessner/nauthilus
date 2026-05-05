@@ -130,6 +130,24 @@ func (c *DecisionContext) SnapshotMetadata() (string, string, uint64) {
 	return mode, defaultPolicy, c.snapshot.Generation
 }
 
+// BuiltinDefaultAuthoritative reports whether request handling may use the built-in default set as production authority.
+func (c *DecisionContext) BuiltinDefaultAuthoritative() bool {
+	if c == nil || c.snapshot == nil {
+		return false
+	}
+
+	defaultPolicy := c.snapshot.DefaultPolicy
+	if defaultPolicy == "" {
+		defaultPolicy = policy.BuiltinDefaultSet
+	}
+
+	if defaultPolicy != policy.BuiltinDefaultSet {
+		return false
+	}
+
+	return !hasConfiguredRules(c.snapshot.StagePlans)
+}
+
 // BeginCheck opens metric and tracing collection for one check adapter.
 func (c *DecisionContext) BeginCheck(ctx context.Context, selector CheckSelector) *ActiveCheck {
 	if c == nil {
@@ -269,6 +287,18 @@ func (c *DecisionContext) recordAttributeLocked(value AttributeValue) {
 	}
 
 	c.report.Attributes[value.ID] = value
+}
+
+func hasConfiguredRules(stagePlans map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan) bool {
+	for _, stages := range stagePlans {
+		for _, plan := range stages {
+			if len(plan.Policies) > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (c *DecisionContext) resolveCheck(selector CheckSelector) policyruntime.CompiledCheck {

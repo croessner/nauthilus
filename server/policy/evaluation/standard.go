@@ -36,11 +36,11 @@ import (
 )
 
 const (
-	responseMarkerOK                 = "auth.response.ok"
-	responseMarkerFail               = "auth.response.fail"
-	responseMarkerTempFail           = "auth.response.tempfail"
-	responseMarkerNoTLS              = "auth.response.tempfail.no_tls"
-	responseMarkerListAccountsOK     = "auth.response.list_accounts.ok"
+	responseMarkerOK                 = policy.ResponseMarkerOK
+	responseMarkerFail               = policy.ResponseMarkerFail
+	responseMarkerTempFail           = policy.ResponseMarkerTempFail
+	responseMarkerNoTLS              = policy.ResponseMarkerTempFailNoTLS
+	responseMarkerListAccountsOK     = policy.ResponseMarkerListAccountsOK
 	fsmMarkerPreAuthOK               = policy.FSMEventMarkerPreAuthOK
 	fsmMarkerPreAuthDeny             = policy.FSMEventMarkerPreAuthDeny
 	fsmMarkerPreAuthTempFail         = policy.FSMEventMarkerPreAuthTempFail
@@ -49,8 +49,8 @@ const (
 	fsmMarkerAuthTempFail            = policy.FSMEventMarkerAuthTempFail
 	fsmMarkerAuthEmptyUser           = policy.FSMEventMarkerAuthEmptyUser
 	fsmMarkerAuthEmptyPass           = policy.FSMEventMarkerAuthEmptyPass
-	obligationBruteForceUpdate       = "auth.obligation.brute_force.update"
-	obligationLuaPostActionEnqueue   = "auth.obligation.lua_post_action.enqueue"
+	obligationBruteForceUpdate       = policy.ObligationBruteForceUpdate
+	obligationLuaPostActionEnqueue   = policy.ObligationLuaPostActionEnqueue
 	mismatchNone                     = "none"
 	mismatchMultiple                 = "multiple"
 	mismatchFSMTerminal              = "fsm_terminal_state"
@@ -125,15 +125,8 @@ type standardRule struct {
 
 // EvaluateStandardAuth evaluates the built-in default policy from collected facts.
 func EvaluateStandardAuth(policyReport *report.DecisionReport) Result {
-	if policyReport == nil {
-		policyReport = report.NewDecisionReport()
-	}
-
+	policyReport = prepareStandardReport(policyReport)
 	operation := policyReport.Operation
-	if operation == "" {
-		operation = policy.OperationAuthenticate
-		policyReport.Operation = operation
-	}
 
 	if final := evaluatePreAuth(policyReport, operation); isTerminal(final) {
 		return Result{Final: final}
@@ -142,6 +135,13 @@ func EvaluateStandardAuth(policyReport *report.DecisionReport) Result {
 	final := evaluateAuthDecision(policyReport, operation)
 
 	return Result{Final: final}
+}
+
+// EvaluateStandardPreAuth evaluates only the built-in pre-auth rules.
+func EvaluateStandardPreAuth(policyReport *report.DecisionReport) Result {
+	policyReport = prepareStandardReport(policyReport)
+
+	return Result{Final: evaluatePreAuth(policyReport, policyReport.Operation)}
 }
 
 // CompareWithProduction evaluates standard_auth and compares it with current output.
@@ -196,6 +196,22 @@ func normalizeCompareInput(
 	}
 
 	return ctx, policyReport, input
+}
+
+func prepareStandardReport(policyReport *report.DecisionReport) *report.DecisionReport {
+	if policyReport == nil {
+		policyReport = report.NewDecisionReport()
+	}
+
+	if policyReport.Operation == "" {
+		policyReport.Operation = policy.OperationAuthenticate
+	}
+
+	policyReport.Policies = policyReport.Policies[:0]
+	policyReport.Final = nil
+	policyReport.Stage = ""
+
+	return policyReport
 }
 
 func recordEvaluation(

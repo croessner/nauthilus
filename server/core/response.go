@@ -226,7 +226,7 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 	a.responseWriter().OK(ctx, a.View())
 	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
 		Effect:                  policy.DecisionPermit,
-		ResponseMarker:          "auth.response.ok",
+		ResponseMarker:          policy.ResponseMarkerOK,
 		ResponseMessage:         a.Runtime.StatusMessage,
 		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
 		CurrentFSMEventPath:     a.currentFSMEventPath(),
@@ -240,7 +240,7 @@ func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.responseWriter().Fail(ctx, a.View())
 	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
 		Effect:                  policy.DecisionDeny,
-		ResponseMarker:          "auth.response.fail",
+		ResponseMarker:          policy.ResponseMarkerFail,
 		ResponseMessage:         a.Runtime.StatusMessage,
 		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionDeny),
 		CurrentFSMEventPath:     a.currentFSMEventPath(),
@@ -277,10 +277,10 @@ func (a *AuthState) currentFSMEventPath() []string {
 
 func responseMarkerForTempFail(reason string) string {
 	if reason == definitions.TempFailNoTLS {
-		return "auth.response.tempfail.no_tls"
+		return policy.ResponseMarkerTempFailNoTLS
 	}
 
-	return "auth.response.tempfail"
+	return policy.ResponseMarkerTempFail
 }
 
 // OK implements the success response logic (unchanged behavior).
