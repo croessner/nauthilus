@@ -16,6 +16,7 @@
 package feature
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -26,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
+	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/gin-gonic/gin"
 )
 
@@ -244,4 +246,87 @@ end
 	if err == nil {
 		t.Fatal("expected dependency cycle error")
 	}
+}
+
+func TestCallFeatureLuaUsesPolicyScheduleForNoAuthControl(t *testing.T) {
+	scriptDir := t.TempDir()
+	scriptPath := writeFeatureScript(t, scriptDir, "policy_only.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_feature(request)
+    nauthilus_context.context_set("policy_only_feature", "ran")
+    return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
+end
+`)
+
+	luaFeature, err := NewLuaFeature("policy_only", scriptPath)
+	if err != nil {
+		t.Fatalf("failed to compile Lua feature: %v", err)
+	}
+
+	withTestLuaFeatures(t, luaFeature)
+
+	recorder := &policyFeatureScheduleRecorder{
+		plan: policycollection.ScriptSchedulePlan{
+			Configured: true,
+			Schedules: []policycollection.ScriptSchedule{
+				{Name: "policy_only"},
+			},
+		},
+	}
+	request := newFeatureTestRequest()
+	request.NoAuth = true
+	request.ScriptRecorder = recorder
+
+	triggered, abortFeatures, err := request.CallFeatureLua(newFeatureTestContext(), newFeatureTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatalf("CallFeatureLua returned error: %v", err)
+	}
+
+	if triggered {
+		t.Fatal("expected triggered=false")
+	}
+
+	if abortFeatures {
+		t.Fatal("expected abortFeatures=false")
+	}
+
+	if got := request.Get("policy_only_feature"); got != "ran" {
+		t.Fatalf("policy scheduled feature result = %v, want ran", got)
+	}
+
+	if len(recorder.results) != 1 || recorder.results[0].Name != "policy_only" {
+		t.Fatalf("recorded script results = %#v, want policy_only", recorder.results)
+	}
+}
+
+type policyFeatureScheduleRecorder struct {
+	plan    policycollection.ScriptSchedulePlan
+	results []policycollection.ScriptResult
+}
+
+func (r *policyFeatureScheduleRecorder) RecordScriptResult(_ context.Context, result policycollection.ScriptResult) {
+	r.results = append(r.results, result)
+}
+
+func (r *policyFeatureScheduleRecorder) ScriptScheduled(kind policycollection.ScriptKind, name string, _ policycollection.AuthState) bool {
+	if kind != policycollection.ScriptKindControl {
+		return false
+	}
+
+	for _, schedule := range r.plan.Schedules {
+		if schedule.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *policyFeatureScheduleRecorder) ScriptPlan(kind policycollection.ScriptKind, _ policycollection.AuthState) policycollection.ScriptSchedulePlan {
+	if kind != policycollection.ScriptKindControl {
+		return policycollection.ScriptSchedulePlan{}
+	}
+
+	return r.plan
 }

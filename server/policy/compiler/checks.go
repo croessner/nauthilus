@@ -183,7 +183,9 @@ func validateCheckDependencies(checks []policyruntime.CompiledCheck) error {
 				return configPathError(indexedPath("auth.policy.checks."+check.Name+".after", index), "references unknown check")
 			}
 
-			if dependency.Stage != check.Stage || !operationsCover(dependency.Operations, check.Operations) {
+			if dependency.Stage != check.Stage ||
+				!operationsCover(dependency.Operations, check.Operations) ||
+				!runIfCovers(dependency.RunIf.AuthState, check.RunIf.AuthState) {
 				return configPathError(indexedPath("auth.policy.checks."+check.Name+".after", index), "is not scheduler-compatible")
 			}
 		}
@@ -208,6 +210,18 @@ func operationsCover(left []policy.Operation, right []policy.Operation) bool {
 	}
 
 	return true
+}
+
+func runIfCovers(left string, right string) bool {
+	if left == "" {
+		left = runIfAny
+	}
+
+	if right == "" {
+		right = runIfAny
+	}
+
+	return left == runIfAny || left == right
 }
 
 func operationSetFromChecks(checks []policyruntime.CompiledCheck) map[policy.Operation]struct{} {

@@ -262,8 +262,8 @@ func preAuthRules(policyReport *report.DecisionReport, operation policy.Operatio
 	rules = append(rules, relayDomainRules()...)
 	rules = append(rules, rblRules()...)
 
-	if operation == policy.OperationAuthenticate {
-		rules = append(rules, luaControlRules(policyReport)...)
+	if operation == policy.OperationAuthenticate || operation == policy.OperationLookupIdentity {
+		rules = append(rules, luaControlRules(policyReport, operation)...)
 	}
 
 	return rules
@@ -273,10 +273,12 @@ func authDecisionRules(policyReport *report.DecisionReport, operation policy.Ope
 	rules := backendDecisionRules()
 
 	if operation == policy.OperationAuthenticate {
-		rules = append(rules, authenticateDecisionRules(policyReport)...)
+		rules = append(rules, luaFilterRules(policyReport, operation)...)
+		rules = append(rules, authenticateDecisionRules()...)
 	}
 
 	if operation == policy.OperationLookupIdentity {
+		rules = append(rules, luaFilterRules(policyReport, operation)...)
 		rules = append(rules, lookupIdentityRules()...)
 	}
 
@@ -429,9 +431,8 @@ func backendDecisionRules() []standardRule {
 	}
 }
 
-func authenticateDecisionRules(policyReport *report.DecisionReport) []standardRule {
-	rules := append([]standardRule{}, luaFilterRules(policyReport)...)
-	rules = append(rules,
+func authenticateDecisionRules() []standardRule {
+	return []standardRule{
 		newRule(
 			"standard_auth_success",
 			policy.StageAuthDecision,
@@ -452,9 +453,7 @@ func authenticateDecisionRules(policyReport *report.DecisionReport) []standardRu
 			authenticateOps,
 			attrIsFalse(policy.AttributeAuthenticated),
 		),
-	)
-
-	return rules
+	}
 }
 
 func lookupIdentityRules() []standardRule {
@@ -563,10 +562,11 @@ func unknownRelayDomain(policyReport *report.DecisionReport) bool {
 		attrBool(policyReport, policy.AttributeRelayDomainKnown, false)
 }
 
-func luaControlRules(policyReport *report.DecisionReport) []standardRule {
+func luaControlRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
+	operations := []policy.Operation{operation}
 	rules := make([]standardRule, 0)
 	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaControl) {
-		name := strings.TrimPrefix(checkResult.Name, "lua_control_")
+		name := luaScriptName(checkResult, "auth.lua.control.", []string{".error", ".triggered", ".abort"}, "lua_control_")
 		if name == "" {
 			continue
 		}
@@ -580,7 +580,7 @@ func luaControlRules(policyReport *report.DecisionReport) []standardRule {
 				outcomeMarker:  "auth.outcome.lua_control." + name + ".error",
 				fsmMarker:      fsmMarkerPreAuthTempFail,
 				responseMarker: responseMarkerTempFail,
-				operations:     []policy.Operation{policy.OperationAuthenticate},
+				operations:     operations,
 				requiredChecks: []string{checkResult.Name},
 				condition:      attrIsTrue(prefix + ".error"),
 			},
@@ -591,7 +591,7 @@ func luaControlRules(policyReport *report.DecisionReport) []standardRule {
 				outcomeMarker:   "auth.outcome.lua_control." + name + ".reject",
 				fsmMarker:       fsmMarkerPreAuthDeny,
 				responseMarker:  responseMarkerFail,
-				operations:      []policy.Operation{policy.OperationAuthenticate},
+				operations:      operations,
 				requiredChecks:  []string{checkResult.Name},
 				condition:       attrIsTrue(prefix + ".triggered"),
 				messageSelector: attributeMessage(prefix+".triggered", definitions.PasswordFail),
@@ -602,7 +602,7 @@ func luaControlRules(policyReport *report.DecisionReport) []standardRule {
 				effect:         policy.DecisionNeutral,
 				outcomeMarker:  "auth.outcome.pre_auth_ok",
 				fsmMarker:      fsmMarkerPreAuthOK,
-				operations:     []policy.Operation{policy.OperationAuthenticate},
+				operations:     operations,
 				requiredChecks: []string{checkResult.Name},
 				condition:      attrIsTrue(prefix + ".abort"),
 				control: &report.DecisionControl{
@@ -615,10 +615,11 @@ func luaControlRules(policyReport *report.DecisionReport) []standardRule {
 	return rules
 }
 
-func luaFilterRules(policyReport *report.DecisionReport) []standardRule {
+func luaFilterRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
+	operations := []policy.Operation{operation}
 	rules := make([]standardRule, 0)
 	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaFilter) {
-		name := strings.TrimPrefix(checkResult.Name, "lua_filter_")
+		name := luaScriptName(checkResult, "auth.lua.filter.", []string{".error", ".rejected"}, "lua_filter_")
 		if name == "" {
 			continue
 		}
@@ -632,7 +633,7 @@ func luaFilterRules(policyReport *report.DecisionReport) []standardRule {
 				outcomeMarker:  "auth.outcome.lua_filter." + name + ".error",
 				fsmMarker:      fsmMarkerAuthTempFail,
 				responseMarker: responseMarkerTempFail,
-				operations:     []policy.Operation{policy.OperationAuthenticate},
+				operations:     operations,
 				requiredChecks: []string{checkResult.Name},
 				condition:      attrIsTrue(prefix + ".error"),
 			},
@@ -643,7 +644,7 @@ func luaFilterRules(policyReport *report.DecisionReport) []standardRule {
 				outcomeMarker:   "auth.outcome.lua_filter." + name + ".reject",
 				fsmMarker:       fsmMarkerAuthDeny,
 				responseMarker:  responseMarkerFail,
-				operations:      []policy.Operation{policy.OperationAuthenticate},
+				operations:      operations,
 				requiredChecks:  []string{checkResult.Name},
 				condition:       attrIsTrue(prefix + ".rejected"),
 				messageSelector: attributeMessage(prefix+".rejected", definitions.PasswordFail),
@@ -652,6 +653,28 @@ func luaFilterRules(policyReport *report.DecisionReport) []standardRule {
 	}
 
 	return rules
+}
+
+func luaScriptName(checkResult report.CheckResult, attributePrefix string, suffixes []string, namePrefix string) string {
+	for _, attributeID := range checkResult.Attributes {
+		if !strings.HasPrefix(attributeID, attributePrefix) {
+			continue
+		}
+
+		for _, suffix := range suffixes {
+			name := strings.TrimSuffix(strings.TrimPrefix(attributeID, attributePrefix), suffix)
+			if name != strings.TrimPrefix(attributeID, attributePrefix) && name != "" {
+				return name
+			}
+		}
+	}
+
+	name := strings.TrimPrefix(checkResult.Name, namePrefix)
+	if name == checkResult.Name {
+		return ""
+	}
+
+	return name
 }
 
 func defaultDenyRule() standardRule {

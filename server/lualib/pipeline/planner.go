@@ -50,6 +50,12 @@ type Node struct {
 	Value     any
 }
 
+// Schedule selects one script and its request-local dependencies.
+type Schedule struct {
+	Name      string
+	DependsOn []string
+}
+
 // PlannedNode is a runnable node in a dependency level.
 type PlannedNode struct {
 	Name      string
@@ -131,6 +137,30 @@ func BuildPlans(nodes []Node) (Plans, error) {
 	}
 
 	return plans, nil
+}
+
+// ApplySchedule returns nodes selected by a request-local schedule.
+func ApplySchedule(nodes []Node, schedules []Schedule, mode ModeMask) []Node {
+	if len(schedules) == 0 || len(nodes) == 0 {
+		return nil
+	}
+
+	byName := nodesByName(nodes)
+	scheduled := make([]Node, 0, len(schedules))
+
+	for index, schedule := range schedules {
+		node, exists := byName[schedule.Name]
+		if !exists {
+			continue
+		}
+
+		node.DependsOn = append([]string(nil), schedule.DependsOn...)
+		node.Index = index
+		node.Modes = mode
+		scheduled = append(scheduled, node)
+	}
+
+	return scheduled
 }
 
 // PlannedNodeCount returns the number of runnable nodes in a plan.

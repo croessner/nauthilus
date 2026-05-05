@@ -280,6 +280,37 @@ func TestCompilerRejectsAttributeWithoutProducingCheck(t *testing.T) {
 	}
 }
 
+func TestCompilerRejectsRunIfIncompatibleCheckDependency(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies = nil
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      "lua_control_auth_only",
+			Type:      policy.CheckTypeLuaControl,
+			Stage:     string(policy.StagePreAuth),
+			ConfigRef: "auth.controls.lua.controls.auth_only",
+			RunIf:     config.PolicyRunIfConfig{AuthState: policy.RunIfAuthenticated},
+		},
+		{
+			Name:      "lua_control_unauth_only",
+			Type:      policy.CheckTypeLuaControl,
+			Stage:     string(policy.StagePreAuth),
+			ConfigRef: "auth.controls.lua.controls.unauth_only",
+			RunIf:     config.PolicyRunIfConfig{AuthState: policy.RunIfUnauthenticated},
+			After:     []string{"lua_control_auth_only"},
+		},
+	}
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatal("Compile() error = nil, want scheduler compatibility error")
+	}
+
+	if !strings.Contains(err.Error(), "auth.policy.checks.lua_control_unauth_only.after[0]") {
+		t.Fatalf("Compile() error = %q, want dependency path", err)
+	}
+}
+
 func TestCompilerLeavesStoreUnchangedWhenCandidateFails(t *testing.T) {
 	store := policyruntime.NewSnapshotStore(&policyruntime.Snapshot{Generation: 7})
 	cfg := policyCompilerTestConfig()

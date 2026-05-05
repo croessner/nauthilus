@@ -245,6 +245,78 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	}
 }
 
+func TestStandardAuthMapsLuaScriptsForLookupIdentity(t *testing.T) {
+	controlCheck := check("lua_control_risk", policy.CheckTypeLuaControl, policy.StagePreAuth, policy.CheckStatusOK)
+	controlCheck.Operation = policy.OperationLookupIdentity
+	controlReport := standardReport(
+		policy.OperationLookupIdentity,
+		controlCheck,
+		boolAttr("auth.lua.control.risk.triggered", policy.StagePreAuth, policy.OperationLookupIdentity, true, nil),
+	)
+
+	got := EvaluateStandardAuth(controlReport)
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "standard_lua_control_risk_trigger" {
+		t.Fatalf("policy = %q, want standard_lua_control_risk_trigger", got.Final.PolicyName)
+	}
+
+	filterCheck := check("lua_filter_billing", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK)
+	filterCheck.Operation = policy.OperationLookupIdentity
+	filterReport := standardReport(
+		policy.OperationLookupIdentity,
+		filterCheck,
+		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationLookupIdentity, true, nil),
+	)
+
+	got = EvaluateStandardAuth(filterReport)
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "standard_lua_filter_billing_reject" {
+		t.Fatalf("policy = %q, want standard_lua_filter_billing_reject", got.Final.PolicyName)
+	}
+}
+
+func TestStandardAuthMapsLuaScriptsFromEmittedAttributes(t *testing.T) {
+	controlCheck := check("geoip_policy_gate", policy.CheckTypeLuaControl, policy.StagePreAuth, policy.CheckStatusOK)
+	controlCheck.Attributes = []string{"auth.lua.control.geoip.triggered"}
+	controlReport := standardReport(
+		policy.OperationAuthenticate,
+		controlCheck,
+		boolAttr("auth.lua.control.geoip.triggered", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
+	)
+
+	got := EvaluateStandardAuth(controlReport)
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "standard_lua_control_geoip_trigger" {
+		t.Fatalf("policy = %q, want standard_lua_control_geoip_trigger", got.Final.PolicyName)
+	}
+
+	filterCheck := check("billing_policy_gate", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK)
+	filterCheck.Attributes = []string{"auth.lua.filter.billing.rejected"}
+	filterReport := standardReport(
+		policy.OperationAuthenticate,
+		filterCheck,
+		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationAuthenticate, true, nil),
+	)
+
+	got = EvaluateStandardAuth(filterReport)
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "standard_lua_filter_billing_reject" {
+		t.Fatalf("policy = %q, want standard_lua_filter_billing_reject", got.Final.PolicyName)
+	}
+}
+
 func TestCustomObserveComparesConfiguredPolicyWithDefault(t *testing.T) {
 	recorder := &recordingRecorder{}
 	policyReport := standardReport(

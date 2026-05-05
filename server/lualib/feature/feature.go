@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luamod"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
+	"github.com/croessner/nauthilus/server/lualib/policyschedule"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
@@ -140,6 +141,19 @@ func (a *PreCompiledLuaFeatures) planForMode(mode pipeline.ModeMask) (pipeline.P
 	return plan, false, nil
 }
 
+func (a *PreCompiledLuaFeatures) planForRequest(r *Request, mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
+	if r != nil && r.ScriptRecorder != nil {
+		scriptPlan := r.ScriptRecorder.ScriptPlan(policycollection.ScriptKindControl, requestFeatureAuthState(r))
+		if scriptPlan.Configured {
+			plan, err := policyschedule.BuildPlan(featurePipelineNodes(a.LuaScripts), scriptPlan, mode)
+
+			return plan, false, err
+		}
+	}
+
+	return a.planForMode(mode)
+}
+
 // LuaFeature represents a Lua feature that has been compiled.
 // It contains a name identifying the feature and the compiled Lua script.
 type LuaFeature struct {
@@ -202,6 +216,14 @@ func requestFeatureMode(r *Request) pipeline.ModeMask {
 	}
 
 	return pipeline.ModeUnauthenticated
+}
+
+func requestFeatureAuthState(r *Request) policycollection.AuthState {
+	if r != nil && r.Authenticated {
+		return policycollection.AuthStateAuthenticated
+	}
+
+	return policycollection.AuthStateUnauthenticated
 }
 
 // Request represents a request data structure with all the necessary information about a connection and SSL usage.
@@ -291,7 +313,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 	pctx, pspan := tr.Start(ctx.Request.Context(), "features.plan.lookup")
 	_ = pctx
 
-	plan, cached, err := LuaFeatures.planForMode(mode)
+	plan, cached, err := LuaFeatures.planForRequest(r, mode)
 	pspan.SetAttributes(
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),

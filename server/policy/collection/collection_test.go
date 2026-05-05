@@ -134,6 +134,26 @@ func TestScriptSinkRecordsOneCheckPerLuaScript(t *testing.T) {
 	}
 }
 
+func TestScriptSinkResolvesLuaResultByConfigRef(t *testing.T) {
+	ctx := NewDecisionContext(testCustomLuaNameSnapshot(), policy.OperationAuthenticate, nil)
+	sink := NewScriptSink(ctx)
+
+	sink.RecordScriptResult(context.Background(), ScriptResult{
+		Kind:      ScriptKindControl,
+		Name:      "geoip",
+		Triggered: true,
+	})
+
+	report := ctx.Report()
+	if _, ok := report.Checks["geoip_policy_gate"]; !ok {
+		t.Fatal("missing configured Lua check result")
+	}
+
+	if _, ok := report.Checks["lua_control_geoip"]; ok {
+		t.Fatal("Lua result was recorded under fallback check name")
+	}
+}
+
 func TestScriptSinkUsesRunIfForLuaFilterScheduling(t *testing.T) {
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
 	sink := NewScriptSink(ctx)
@@ -144,6 +164,36 @@ func TestScriptSinkUsesRunIfForLuaFilterScheduling(t *testing.T) {
 
 	if !sink.ScriptScheduled(ScriptKindFilter, "billing", AuthStateAuthenticated) {
 		t.Fatal("filter should be scheduled for authenticated auth state")
+	}
+}
+
+func TestScriptSinkBuildsPolicyScriptSchedule(t *testing.T) {
+	ctx := NewDecisionContext(testScriptScheduleSnapshot(), policy.OperationAuthenticate, nil)
+	sink := NewScriptSink(ctx)
+
+	plan := sink.ScriptPlan(ScriptKindControl, AuthStateUnauthenticated)
+	if !plan.Configured {
+		t.Fatal("script plan should be configured")
+	}
+
+	if len(plan.Schedules) != 2 {
+		t.Fatalf("script schedules = %#v, want 2 entries", plan.Schedules)
+	}
+
+	if got := plan.Schedules[0].Name; got != "context" {
+		t.Fatalf("first script = %q, want context", got)
+	}
+
+	if got := plan.Schedules[1].Name; got != "policy_only" {
+		t.Fatalf("second script = %q, want policy_only", got)
+	}
+
+	if got := plan.Schedules[1].After; len(got) != 1 || got[0] != "context" {
+		t.Fatalf("second script dependencies = %#v, want context", got)
+	}
+
+	if sink.ScriptScheduled(ScriptKindControl, "auth_only", AuthStateUnauthenticated) {
+		t.Fatal("auth-only script must not be scheduled for unauthenticated state")
 	}
 }
 
@@ -304,6 +354,73 @@ func testObserveSnapshot() *policyruntime.Snapshot {
 	}
 
 	return snapshot
+}
+
+func testScriptScheduleSnapshot() *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    43,
+		Mode:          modeEnforce,
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage: policy.StagePreAuth,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							Name:       "lua_control_context",
+							Type:       policy.CheckTypeLuaControl,
+							ConfigRef:  "auth.controls.lua.controls.context",
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+						},
+						{
+							Name:       "lua_control_policy_only",
+							Type:       policy.CheckTypeLuaControl,
+							ConfigRef:  "auth.controls.lua.controls.policy_only",
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfUnauthenticated},
+							After:      []string{"lua_control_context"},
+						},
+						{
+							Name:       "lua_control_auth_only",
+							Type:       policy.CheckTypeLuaControl,
+							ConfigRef:  "auth.controls.lua.controls.auth_only",
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAuthenticated},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func testCustomLuaNameSnapshot() *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    44,
+		Mode:          modeEnforce,
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage: policy.StagePreAuth,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							Name:       "geoip_policy_gate",
+							Type:       policy.CheckTypeLuaControl,
+							ConfigRef:  "auth.controls.lua.controls.geoip",
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 type recordingRecorder struct {

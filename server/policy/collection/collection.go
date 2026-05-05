@@ -445,15 +445,15 @@ func (c *DecisionContext) resolveCheck(selector CheckSelector) policyruntime.Com
 }
 
 func checkMatchesSelector(check policyruntime.CompiledCheck, selector CheckSelector) bool {
-	if selector.Name != "" {
-		return check.Name == selector.Name
-	}
-
 	if check.Type != selector.CheckType {
 		return false
 	}
 
-	return selector.ConfigRef == "" || check.ConfigRef == selector.ConfigRef
+	if selector.ConfigRef != "" {
+		return check.ConfigRef == selector.ConfigRef
+	}
+
+	return selector.Name == "" || check.Name == selector.Name
 }
 
 func (c *DecisionContext) stageChecks(stage policy.Stage) []policyruntime.CompiledCheck {

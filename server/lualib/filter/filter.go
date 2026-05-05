@@ -38,6 +38,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
+	"github.com/croessner/nauthilus/server/lualib/policyschedule"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
@@ -710,45 +711,24 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 	LuaFilters.Mu.RLock()
 	defer LuaFilters.Mu.RUnlock()
 
-	// Determine which filters should run based on request state
-	mode := "unauthenticated"
-	scripts := make([]*LuaFilter, 0)
+	modeMask := requestFilterMode(r)
+	mode := filterModeText(modeMask)
 	authState := requestPolicyAuthState(r)
+	scriptPlan := policyFilterScriptPlan(r, authState)
+	runnable := countFiltersForMode(LuaFilters.LuaScripts, modeMask)
+	if scriptPlan.Configured {
+		runnable = len(scriptPlan.Schedules)
+	}
 
 	// Trace selection of applicable filters for the current mode
 	sctx, selSpan := tr.Start(fctx, "filters.select_applicable")
 	_ = sctx
 
-	if r.CommonRequest != nil && r.NoAuth {
-		mode = "no_auth"
-
-		for _, s := range LuaFilters.LuaScripts {
-			if s.Modes&pipeline.ModeNoAuth != 0 {
-				scripts = r.appendScheduledFilter(scripts, s, authState)
-			}
-		}
-	} else if r.CommonRequest != nil && r.Authenticated {
-		mode = "authenticated"
-
-		for _, s := range LuaFilters.LuaScripts {
-			if s.Modes&pipeline.ModeAuthenticated != 0 {
-				scripts = r.appendScheduledFilter(scripts, s, authState)
-			}
-		}
-	} else {
-		mode = "unauthenticated"
-
-		for _, s := range LuaFilters.LuaScripts {
-			if s.Modes&pipeline.ModeUnauthenticated != 0 {
-				scripts = r.appendScheduledFilter(scripts, s, authState)
-			}
-		}
-	}
-
 	selSpan.SetAttributes(
 		attribute.String("mode", mode),
 		attribute.Int("configured_total", len(LuaFilters.LuaScripts)),
-		attribute.Int("runnable", len(scripts)),
+		attribute.Int("runnable", runnable),
+		attribute.Bool("policy_schedule", scriptPlan.Configured),
 	)
 	selSpan.End()
 
@@ -760,17 +740,6 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 	if r.Context == nil {
 		r.Context = lualib.NewContext()
-	}
-
-	// If no scripts should run in this mode, return early with empty aggregates
-	if len(scripts) == 0 {
-		mergedBackendResult := &lualib.LuaBackendResult{
-			Attributes: make(map[any]any),
-			Groups:     []string{},
-			GroupDNs:   []string{},
-		}
-
-		return false, mergedBackendResult, nil, nil
 	}
 
 	// Structure to collect per-filter results
@@ -789,15 +758,15 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		contextDelta    lualib.ContextDelta
 	}
 
-	modeMask := requestFilterMode(r)
 	pctx, pspan := tr.Start(fctx, "filters.plan.lookup")
 	_ = pctx
 
-	plan, cached, err := filterPlanForScripts(r, scripts, modeMask)
+	plan, cached, err := filterPlanForScripts(scriptPlan, modeMask)
+	plannedCount := pipeline.PlannedNodeCount(plan)
 	pspan.SetAttributes(
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),
-		attribute.Int("scripts", pipeline.PlannedNodeCount(plan)),
+		attribute.Int("scripts", plannedCount),
 	)
 	if err != nil {
 		pspan.RecordError(err)
@@ -808,7 +777,18 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 	pspan.End()
 
-	results := make([]*filtResult, 0, len(scripts))
+	// If no scripts should run in this mode, return early with empty aggregates.
+	if plannedCount == 0 {
+		mergedBackendResult := &lualib.LuaBackendResult{
+			Attributes: make(map[any]any),
+			Groups:     []string{},
+			GroupDNs:   []string{},
+		}
+
+		return false, mergedBackendResult, nil, nil
+	}
+
+	results := make([]*filtResult, 0, plannedCount)
 
 	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: cfg.GetLuaFilterVMPoolSize(), Config: cfg})
 
@@ -1368,26 +1348,45 @@ func (r *Request) recordFilterScriptResult(ctx context.Context, name string, act
 	})
 }
 
-func (r *Request) appendScheduledFilter(scripts []*LuaFilter, script *LuaFilter, authState policycollection.AuthState) []*LuaFilter {
-	if script == nil {
-		return scripts
-	}
-
-	if r == nil || r.ScriptRecorder == nil || r.ScriptRecorder.ScriptScheduled(policycollection.ScriptKindFilter, script.Name, authState) {
-		return append(scripts, script)
-	}
-
-	return scripts
-}
-
-func filterPlanForScripts(r *Request, scripts []*LuaFilter, mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
-	if r == nil || r.ScriptRecorder == nil {
+func filterPlanForScripts(scriptPlan policycollection.ScriptSchedulePlan, mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
+	if !scriptPlan.Configured {
 		return LuaFilters.planForMode(mode)
 	}
 
-	plan, err := pipeline.BuildPlan(filterPipelineNodes(scripts), mode)
+	plan, err := policyschedule.BuildPlan(filterPipelineNodes(LuaFilters.LuaScripts), scriptPlan, mode)
 
 	return plan, false, err
+}
+
+func policyFilterScriptPlan(r *Request, authState policycollection.AuthState) policycollection.ScriptSchedulePlan {
+	if r == nil || r.ScriptRecorder == nil {
+		return policycollection.ScriptSchedulePlan{}
+	}
+
+	return r.ScriptRecorder.ScriptPlan(policycollection.ScriptKindFilter, authState)
+}
+
+func countFiltersForMode(filters []*LuaFilter, mode pipeline.ModeMask) int {
+	count := 0
+
+	for _, filter := range filters {
+		if filter != nil && filter.Modes&mode != 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
+func filterModeText(mode pipeline.ModeMask) string {
+	switch mode {
+	case pipeline.ModeNoAuth:
+		return "no_auth"
+	case pipeline.ModeAuthenticated:
+		return "authenticated"
+	default:
+		return "unauthenticated"
+	}
 }
 
 func requestPolicyAuthState(r *Request) policycollection.AuthState {

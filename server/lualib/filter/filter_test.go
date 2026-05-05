@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
+	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/gin-gonic/gin"
 	"github.com/yuin/gopher-lua"
 )
@@ -412,6 +413,85 @@ end
 	if got := request.Get("dependent_value"); got != "seen" {
 		t.Fatalf("expected dependent context value %q, got %v", "seen", got)
 	}
+}
+
+func TestCallFilterLuaUsesPolicyScheduleDependencies(t *testing.T) {
+	scriptDir := t.TempDir()
+	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_filter(request)
+    nauthilus_context.context_set("policy_dependency_value", "ready")
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+end
+`)
+	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+local nauthilus_context = require("nauthilus_context")
+
+function nauthilus_call_filter(request)
+    if nauthilus_context.context_get("policy_dependency_value") ~= "ready" then
+        return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_FAIL
+    end
+
+    nauthilus_context.context_set("policy_dependent_value", "seen")
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+end
+`)
+	first := mustNewLuaFilter(t, "first", firstScriptPath)
+	second := mustNewLuaFilter(t, "second", secondScriptPath)
+
+	withTestLuaFilters(t, first, second)
+
+	request := newFilterTestRequest(nil, nil)
+	request.ScriptRecorder = &policyFilterScheduleRecorder{
+		plan: policycollection.ScriptSchedulePlan{
+			Configured: true,
+			Schedules: []policycollection.ScriptSchedule{
+				{Name: "first"},
+				{Name: "second", After: []string{"first"}},
+			},
+		},
+	}
+	action := runCallFilterLua(t, request)
+
+	if action {
+		t.Fatalf("expected action=false, got true")
+	}
+
+	if got := request.Get("policy_dependent_value"); got != "seen" {
+		t.Fatalf("expected policy dependent context value %q, got %v", "seen", got)
+	}
+}
+
+type policyFilterScheduleRecorder struct {
+	plan    policycollection.ScriptSchedulePlan
+	results []policycollection.ScriptResult
+}
+
+func (r *policyFilterScheduleRecorder) RecordScriptResult(_ context.Context, result policycollection.ScriptResult) {
+	r.results = append(r.results, result)
+}
+
+func (r *policyFilterScheduleRecorder) ScriptScheduled(kind policycollection.ScriptKind, name string, _ policycollection.AuthState) bool {
+	if kind != policycollection.ScriptKindFilter {
+		return false
+	}
+
+	for _, schedule := range r.plan.Schedules {
+		if schedule.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *policyFilterScheduleRecorder) ScriptPlan(kind policycollection.ScriptKind, _ policycollection.AuthState) policycollection.ScriptSchedulePlan {
+	if kind != policycollection.ScriptKindFilter {
+		return policycollection.ScriptSchedulePlan{}
+	}
+
+	return r.plan
 }
 
 func TestCallFilterLuaIndependentScriptsMergeSharedContextTable(t *testing.T) {

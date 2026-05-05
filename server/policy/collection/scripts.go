@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/policy"
+	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 )
 
 // ScriptKind identifies the Lua script family observed by the adapter.
@@ -46,10 +47,23 @@ type ScriptResult struct {
 	Action        bool
 }
 
+// ScriptSchedule is one request-local Lua script scheduling entry.
+type ScriptSchedule struct {
+	Name  string
+	After []string
+}
+
+// ScriptSchedulePlan describes whether policy checks own a Lua script family.
+type ScriptSchedulePlan struct {
+	Schedules  []ScriptSchedule
+	Configured bool
+}
+
 // ScriptRecorder consumes per-script Lua results.
 type ScriptRecorder interface {
 	RecordScriptResult(context.Context, ScriptResult)
 	ScriptScheduled(ScriptKind, string, AuthState) bool
+	ScriptPlan(ScriptKind, AuthState) ScriptSchedulePlan
 }
 
 // ScriptSink stores Lua script results as policy check facts.
@@ -79,9 +93,70 @@ func (s *ScriptSink) ScriptScheduled(kind ScriptKind, name string, authState Aut
 		return true
 	}
 
-	selector := ScriptResult{Kind: kind, Name: name}.selector()
+	plan := s.ScriptPlan(kind, authState)
+	if !plan.Configured {
+		return true
+	}
 
-	return s.ctx.ScriptScheduled(selector, authState)
+	for _, schedule := range plan.Schedules {
+		if schedule.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ScriptPlan returns the request-local Lua script plan selected by policy checks.
+func (s *ScriptSink) ScriptPlan(kind ScriptKind, authState AuthState) ScriptSchedulePlan {
+	if s == nil || s.ctx == nil {
+		return ScriptSchedulePlan{}
+	}
+
+	return s.ctx.ScriptPlan(kind, authState)
+}
+
+// ScriptPlan returns the active Lua script plan for one script family.
+func (c *DecisionContext) ScriptPlan(kind ScriptKind, authState AuthState) ScriptSchedulePlan {
+	if c == nil || c.snapshot == nil || c.report == nil {
+		return ScriptSchedulePlan{}
+	}
+
+	selector := ScriptResult{Kind: kind}.selector()
+	checks := c.stageChecks(selector.Stage)
+	if len(checks) == 0 {
+		return ScriptSchedulePlan{}
+	}
+
+	selected := make([]scriptPlanCheck, 0)
+	configured := false
+
+	for _, check := range checks {
+		if check.Type != selector.CheckType {
+			continue
+		}
+
+		configured = true
+		name := scriptNameFromCheck(kind, check)
+		if name == "" || !runIfMatches(check.RunIf.AuthState, authState) {
+			continue
+		}
+
+		selected = append(selected, scriptPlanCheck{
+			name:  name,
+			check: check.Name,
+			after: append([]string(nil), check.After...),
+		})
+	}
+
+	if !configured {
+		return ScriptSchedulePlan{}
+	}
+
+	return ScriptSchedulePlan{
+		Schedules:  scriptSchedules(selected),
+		Configured: true,
+	}
 }
 
 func (r ScriptResult) selector() CheckSelector {
@@ -101,6 +176,84 @@ func (r ScriptResult) selector() CheckSelector {
 			ConfigRef: "auth.controls.lua.controls." + r.Name,
 		}
 	}
+}
+
+type scriptPlanCheck struct {
+	name  string
+	check string
+	after []string
+}
+
+func scriptSchedules(checks []scriptPlanCheck) []ScriptSchedule {
+	if len(checks) == 0 {
+		return nil
+	}
+
+	nameByCheck := make(map[string]string, len(checks))
+	for _, check := range checks {
+		nameByCheck[check.check] = check.name
+	}
+
+	schedules := make([]ScriptSchedule, 0, len(checks))
+	for _, check := range checks {
+		schedules = append(schedules, ScriptSchedule{
+			Name:  check.name,
+			After: scriptScheduleDependencies(check.after, nameByCheck),
+		})
+	}
+
+	return schedules
+}
+
+func scriptScheduleDependencies(after []string, nameByCheck map[string]string) []string {
+	if len(after) == 0 {
+		return nil
+	}
+
+	dependencies := make([]string, 0, len(after))
+	for _, dependency := range after {
+		if scriptName, exists := nameByCheck[dependency]; exists {
+			dependencies = append(dependencies, scriptName)
+		}
+	}
+
+	return dependencies
+}
+
+func scriptNameFromCheck(kind ScriptKind, check policyruntime.CompiledCheck) string {
+	if name := scriptNameFromConfigRef(kind, check.ConfigRef); name != "" {
+		return name
+	}
+
+	return scriptNameFromCheckName(kind, check.Name)
+}
+
+func scriptNameFromConfigRef(kind ScriptKind, configRef string) string {
+	prefix := "auth.controls.lua.controls."
+	if kind == ScriptKindFilter {
+		prefix = "auth.controls.lua.filters."
+	}
+
+	name := strings.TrimPrefix(configRef, prefix)
+	if name == configRef {
+		return ""
+	}
+
+	return strings.TrimSpace(name)
+}
+
+func scriptNameFromCheckName(kind ScriptKind, checkName string) string {
+	prefix := "lua_control_"
+	if kind == ScriptKindFilter {
+		prefix = "lua_filter_"
+	}
+
+	name := strings.TrimPrefix(checkName, prefix)
+	if name == checkName {
+		return ""
+	}
+
+	return strings.TrimSpace(name)
 }
 
 func (r ScriptResult) checkResult(operation policy.Operation) CheckResult {
