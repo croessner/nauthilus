@@ -166,23 +166,6 @@ func PreCompileLuaFilters(cfgFile config.File) (err error) {
 				return err
 			}
 
-			// Apply execution flags with sane defaults for backward compatibility
-			wa := cfg.WhenAuthenticated
-			wu := cfg.WhenUnauthenticated
-			wn := cfg.WhenNoAuth
-
-			if !wa && !wu && !wn {
-				// No flags specified in config → run in authenticated and unauthenticated by default
-				wa = true
-				wu = true
-				wn = false
-			}
-
-			luaFilter.WhenAuthenticated = wa
-			luaFilter.WhenUnauthenticated = wu
-			luaFilter.WhenNoAuth = wn
-			luaFilter.DependsOn = append([]string(nil), cfg.DependsOn...)
-
 			// Add compiled Lua Filters.
 			LuaFilters.Add(luaFilter)
 		}
@@ -273,12 +256,8 @@ type LuaFilter struct {
 	// It represents a compiled Lua function that can be executed by a Lua VM.
 	CompiledScript *lua.FunctionProto
 
-	DependsOn []string
-
-	// Execution flags: control in which authentication states this filter should run
-	WhenAuthenticated   bool
-	WhenUnauthenticated bool
-	WhenNoAuth          bool
+	Dependencies []string
+	Modes        pipeline.ModeMask
 }
 
 // NewLuaFilter creates a new LuaFilter with the provided name and scriptPath by compiling the Lua script.
@@ -300,6 +279,7 @@ func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 	return &LuaFilter{
 		Name:           name,
 		CompiledScript: compiledScript,
+		Modes:          pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated,
 	}, nil
 }
 
@@ -313,32 +293,14 @@ func filterPipelineNodes(filters []*LuaFilter) []pipeline.Node {
 	for index, filter := range filters {
 		nodes = append(nodes, pipeline.Node{
 			Name:      filter.Name,
-			DependsOn: append([]string(nil), filter.DependsOn...),
+			DependsOn: append([]string(nil), filter.Dependencies...),
 			Index:     index,
-			Modes:     filterModeMask(filter),
+			Modes:     filter.Modes,
 			Value:     filter,
 		})
 	}
 
 	return nodes
-}
-
-func filterModeMask(filter *LuaFilter) pipeline.ModeMask {
-	var modes pipeline.ModeMask
-
-	if filter.WhenAuthenticated {
-		modes |= pipeline.ModeAuthenticated
-	}
-
-	if filter.WhenUnauthenticated {
-		modes |= pipeline.ModeUnauthenticated
-	}
-
-	if filter.WhenNoAuth {
-		modes |= pipeline.ModeNoAuth
-	}
-
-	return modes
 }
 
 func requestFilterMode(r *Request) pipeline.ModeMask {
@@ -761,7 +723,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		mode = "no_auth"
 
 		for _, s := range LuaFilters.LuaScripts {
-			if s.WhenNoAuth {
+			if s.Modes&pipeline.ModeNoAuth != 0 {
 				scripts = r.appendScheduledFilter(scripts, s, authState)
 			}
 		}
@@ -769,7 +731,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		mode = "authenticated"
 
 		for _, s := range LuaFilters.LuaScripts {
-			if s.WhenAuthenticated {
+			if s.Modes&pipeline.ModeAuthenticated != 0 {
 				scripts = r.appendScheduledFilter(scripts, s, authState)
 			}
 		}
@@ -777,7 +739,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		mode = "unauthenticated"
 
 		for _, s := range LuaFilters.LuaScripts {
-			if s.WhenUnauthenticated {
+			if s.Modes&pipeline.ModeUnauthenticated != 0 {
 				scripts = r.appendScheduledFilter(scripts, s, authState)
 			}
 		}

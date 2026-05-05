@@ -222,9 +222,7 @@ func mustNewLuaFilter(t *testing.T, name, scriptPath string) *LuaFilter {
 		t.Fatalf("failed to compile Lua filter %q: %v", name, err)
 	}
 
-	lf.WhenAuthenticated = true
-	lf.WhenUnauthenticated = true
-	lf.WhenNoAuth = true
+	lf.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
 
 	return lf
 }
@@ -243,8 +241,8 @@ func withTestLuaFilters(t *testing.T, filters ...*LuaFilter) {
 func TestPreCompiledLuaFiltersCachesPlansForModes(t *testing.T) {
 	filters := &PreCompiledLuaFilters{
 		LuaScripts: []*LuaFilter{
-			{Name: "context", WhenAuthenticated: true, WhenUnauthenticated: true},
-			{Name: "monitor", DependsOn: []string{"context"}, WhenAuthenticated: true},
+			{Name: "context", Modes: pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated},
+			{Name: "monitor", Dependencies: []string{"context"}, Modes: pipeline.ModeAuthenticated},
 		},
 	}
 
@@ -400,7 +398,7 @@ end
 `)
 	first := mustNewLuaFilter(t, "first", firstScriptPath)
 	second := mustNewLuaFilter(t, "second", secondScriptPath)
-	second.DependsOn = []string{"first"}
+	second.Dependencies = []string{"first"}
 
 	withTestLuaFilters(t, first, second)
 
@@ -470,8 +468,8 @@ func TestCallFilterLuaRejectsDependencyCycle(t *testing.T) {
 	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", selectBackendFilterScript("second.backend.local", 2002))
 	first := mustNewLuaFilter(t, "first", firstScriptPath)
 	second := mustNewLuaFilter(t, "second", secondScriptPath)
-	first.DependsOn = []string{"second"}
-	second.DependsOn = []string{"first"}
+	first.Dependencies = []string{"second"}
+	second.Dependencies = []string{"first"}
 
 	withTestLuaFilters(t, first, second)
 
@@ -519,7 +517,7 @@ end
 `)
 	first := mustNewLuaFilter(t, "first", firstScriptPath)
 	second := mustNewLuaFilter(t, "second", secondScriptPath)
-	second.DependsOn = []string{"first"}
+	second.Dependencies = []string{"first"}
 
 	withTestLuaFilters(t, first, second)
 

@@ -719,8 +719,7 @@ func (s *ServerSection) normalizeConfiguredFeatures() {
 			}
 
 			features = append(features, &Feature{
-				name:       control.Get(),
-				whenNoAuth: control.GetWhenNoAuth(),
+				name: control.Get(),
 			})
 		}
 

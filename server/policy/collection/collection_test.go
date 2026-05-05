@@ -171,6 +171,40 @@ func TestDecisionContextDefaultSetAuthorityRequiresNoConfiguredRules(t *testing.
 	}
 }
 
+func TestDecisionContextDefaultSetAuthorityIsStageScoped(t *testing.T) {
+	withAuthRule := testSnapshot()
+	withAuthRule.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision] = policyruntime.CompiledStagePlan{
+		Stage: policy.StageAuthDecision,
+		Policies: []policyruntime.CompiledPolicy{
+			{
+				Name:       "operator_rule",
+				Stage:      policy.StageAuthDecision,
+				Operations: []policy.Operation{policy.OperationAuthenticate},
+			},
+		},
+	}
+
+	ctx := NewDecisionContext(withAuthRule, policy.OperationAuthenticate, nil)
+	if !ctx.BuiltinDefaultAuthoritativeForStage(policy.StagePreAuth) {
+		t.Fatal("default set should own pre-auth when only final auth rules are configured")
+	}
+
+	if ctx.BuiltinDefaultAuthoritativeForStage(policy.StageAuthDecision) {
+		t.Fatal("default set should not own final auth when final auth rules are configured")
+	}
+
+	withPreAuthRule := testObserveSnapshot()
+	withPreAuthRule.Mode = modeEnforce
+	ctx = NewDecisionContext(withPreAuthRule, policy.OperationAuthenticate, nil)
+	if ctx.BuiltinDefaultAuthoritativeForStage(policy.StagePreAuth) {
+		t.Fatal("default set should not own pre-auth when pre-auth rules are configured")
+	}
+
+	if !ctx.BuiltinDefaultAuthoritativeForStage(policy.StageAuthDecision) {
+		t.Fatal("default set should own final auth when only pre-auth rules are configured")
+	}
+}
+
 func TestDecisionContextObserveModeKeepsDefaultSetAuthoritative(t *testing.T) {
 	ctx := NewDecisionContext(testObserveSnapshot(), policy.OperationAuthenticate, nil)
 	if !ctx.BuiltinDefaultAuthoritative() {

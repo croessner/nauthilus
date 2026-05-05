@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	featurelib "github.com/croessner/nauthilus/server/lualib/feature"
+	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -372,9 +373,7 @@ func withCurrentBehaviorLuaFeature(t *testing.T, script string) {
 		t.Fatalf("failed to compile Lua control: %v", err)
 	}
 
-	luaFeature.WhenAuthenticated = true
-	luaFeature.WhenUnauthenticated = true
-	luaFeature.WhenNoAuth = true
+	luaFeature.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
 
 	previous := featurelib.LuaFeatures
 	compiled := &featurelib.PreCompiledLuaFeatures{LuaScripts: []*featurelib.LuaFeature{luaFeature}}

@@ -293,7 +293,7 @@ func storeConfiguredAuthDecision(ctx *gin.Context, final *report.FinalDecision) 
 }
 
 func (a *AuthState) defaultPolicyPreAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
-	policyCtx, ok := a.defaultPolicyContext(ctx)
+	policyCtx, ok := a.defaultPolicyContext(ctx, policy.StagePreAuth)
 	if !ok {
 		return nil, false
 	}
@@ -302,7 +302,7 @@ func (a *AuthState) defaultPolicyPreAuthDecision(ctx *gin.Context) (*report.Fina
 }
 
 func (a *AuthState) defaultPolicyAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
-	policyCtx, ok := a.defaultPolicyContext(ctx)
+	policyCtx, ok := a.defaultPolicyContext(ctx, policy.StageAuthDecision)
 	if !ok {
 		return nil, false
 	}
@@ -310,9 +310,9 @@ func (a *AuthState) defaultPolicyAuthDecision(ctx *gin.Context) (*report.FinalDe
 	return evaluation.EvaluateStandardAuth(policyCtx.Report()).Final, true
 }
 
-func (a *AuthState) defaultPolicyContext(ctx *gin.Context) (*policycollection.DecisionContext, bool) {
+func (a *AuthState) defaultPolicyContext(ctx *gin.Context, stage policy.Stage) (*policycollection.DecisionContext, bool) {
 	policyCtx := a.requestPolicyContext(ctx)
-	if policyCtx == nil || !policyCtx.BuiltinDefaultAuthoritative() {
+	if policyCtx == nil || !policyCtx.BuiltinDefaultAuthoritativeForStage(stage) {
 		return nil, false
 	}
 

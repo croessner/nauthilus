@@ -49,7 +49,10 @@ class GenerateVimSyntaxTest(unittest.TestCase):
             generated = output_path.read_text(encoding="utf-8")
 
         self.assertIn(r"\zsscript_path\ze:", generated)
-        self.assertIn(r"\zswhen_no_auth\ze:", generated)
+        self.assertNotIn(r"\zswhen_no_auth\ze:", generated)
+        self.assertNotIn(r"\zswhen_authenticated\ze:", generated)
+        self.assertNotIn(r"\zswhen_unauthenticated\ze:", generated)
+        self.assertNotIn(r"\zsdepends_on\ze:", generated)
         self.assertIn(r"\zsname\ze:", generated)
         self.assertIn(r"\zsmappings\ze:", generated)
 

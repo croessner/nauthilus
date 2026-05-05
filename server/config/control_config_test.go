@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,9 +205,8 @@ func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
 			"lua": map[string]any{
 				"controls": []any{
 					map[string]any{
-						"name":         "test_context_chain",
-						"script_path":  testLuaControlScriptPath(t),
-						"when_no_auth": true,
+						"name":        "test_context_chain",
+						"script_path": testLuaControlScriptPath(t),
 					},
 				},
 			},
@@ -230,9 +230,105 @@ func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
 	if luaCfg.GetFeatures()[0].Name != "test_context_chain" {
 		t.Fatalf("expected Lua control %q, got %q", "test_context_chain", luaCfg.GetFeatures()[0].Name)
 	}
+}
 
-	if !luaCfg.GetFeatures()[0].WhenNoAuth {
-		t.Fatal("expected when_no_auth from lua.controls to be preserved")
+func TestHandleFile_LuaControlsRejectRemovedSchedulerKeys(t *testing.T) {
+	for _, testCase := range removedLuaSchedulerKeyCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+
+			setRemovedLuaSchedulerKeyConfig(t, testCase)
+			assertRemovedLuaSchedulerKeyRejected(t, testCase)
+		})
+	}
+}
+
+type removedLuaSchedulerKeyCase struct {
+	name  string
+	kind  string
+	key   string
+	value any
+	path  string
+}
+
+func removedLuaSchedulerKeyCases() []removedLuaSchedulerKeyCase {
+	return []removedLuaSchedulerKeyCase{
+		{name: "control when_no_auth", kind: "controls", key: "when_no_auth", value: true, path: "auth.controls.lua.controls[0]"},
+		{name: "control depends_on", kind: "controls", key: "depends_on", value: []any{"context"}, path: "auth.controls.lua.controls[0]"},
+		{name: "filter when_authenticated", kind: "filters", key: "when_authenticated", value: true, path: "auth.controls.lua.filters[0]"},
+		{name: "filter depends_on", kind: "filters", key: "depends_on", value: []any{"context"}, path: "auth.controls.lua.filters[0]"},
+	}
+}
+
+func setRemovedLuaSchedulerKeyConfig(t *testing.T, testCase removedLuaSchedulerKeyCase) {
+	t.Helper()
+
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("auth", map[string]any{
+		"controls": map[string]any{
+			"lua": map[string]any{
+				testCase.kind: []any{
+					map[string]any{
+						"name":        "test_context_chain",
+						"script_path": testLuaControlScriptPath(t),
+						testCase.key:  testCase.value,
+					},
+				},
+			},
+		},
+	})
+}
+
+func assertRemovedLuaSchedulerKeyRejected(t *testing.T, testCase removedLuaSchedulerKeyCase) {
+	t.Helper()
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want removed scheduler key rejection")
+	}
+
+	if !strings.Contains(err.Error(), testCase.path) || !strings.Contains(err.Error(), testCase.key) {
+		t.Fatalf("HandleFile() error = %q, want path %q and key %q", err, testCase.path, testCase.key)
+	}
+}
+
+func TestHandleFile_ServerControlsRejectRemovedWhenNoAuthShape(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("auth", map[string]any{
+		"controls": map[string]any{
+			"enabled": []any{
+				map[string]any{
+					"name":         "tls_encryption",
+					"when_no_auth": true,
+				},
+			},
+		},
+	})
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+
+	cfg := &FileSettings{}
+	if err := cfg.HandleFile(); err == nil {
+		t.Fatal("HandleFile() error = nil, want removed when_no_auth shape rejection")
 	}
 }
 

@@ -166,6 +166,28 @@ func (c *DecisionContext) BuiltinDefaultAuthoritative() bool {
 	return !hasConfiguredRules(c.snapshot.StagePlans)
 }
 
+// BuiltinDefaultAuthoritativeForStage reports whether the built-in default set owns one production stage.
+func (c *DecisionContext) BuiltinDefaultAuthoritativeForStage(stage policy.Stage) bool {
+	if c == nil || c.snapshot == nil || c.report == nil {
+		return false
+	}
+
+	defaultPolicy := c.snapshot.DefaultPolicy
+	if defaultPolicy == "" {
+		defaultPolicy = policy.BuiltinDefaultSet
+	}
+
+	if defaultPolicy != policy.BuiltinDefaultSet {
+		return false
+	}
+
+	if c.snapshot.Mode == modeObserve {
+		return true
+	}
+
+	return !hasConfiguredRulesForStage(c.snapshot.StagePlans, c.report.Operation, stage)
+}
+
 // ConfiguredPreAuthAuthoritative reports whether configured pre-auth policy rules decide production output.
 func (c *DecisionContext) ConfiguredPreAuthAuthoritative() bool {
 	return c.configuredAuthorityForStage(policy.StagePreAuth)
@@ -396,6 +418,16 @@ func hasConfiguredRules(stagePlans map[policy.Operation]map[policy.Stage]policyr
 	}
 
 	return false
+}
+
+func hasConfiguredRulesForStage(
+	stagePlans map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan,
+	operation policy.Operation,
+	stage policy.Stage,
+) bool {
+	plan := stagePlans[operation][stage]
+
+	return len(plan.Policies) > 0
 }
 
 func (c *DecisionContext) resolveCheck(selector CheckSelector) policyruntime.CompiledCheck {

@@ -334,8 +334,7 @@ func (b *Backend) GetName() string {
 
 // Feature is a container for Nauthilus features.
 type Feature struct {
-	name       string `mapstructure:"-"`
-	whenNoAuth bool   `mapstructure:"-"`
+	name string `mapstructure:"-"`
 }
 
 func (f *Feature) String() string {
@@ -344,24 +343,6 @@ func (f *Feature) String() string {
 	}
 
 	return f.name
-}
-
-// SetWhenNoAuth sets the whenNoAuth field of the Feature.
-func (f *Feature) SetWhenNoAuth(value bool) {
-	if f == nil {
-		return
-	}
-
-	f.whenNoAuth = value
-}
-
-// GetWhenNoAuth returns the value of the whenNoAuth field.
-func (f *Feature) GetWhenNoAuth() bool {
-	if f == nil {
-		return false
-	}
-
-	return f.whenNoAuth
 }
 
 // Set updates the feature name based on the provided value.
@@ -397,8 +378,7 @@ func (f *Feature) Get() string {
 
 // Control is a container for server controls.
 type Control struct {
-	name       string `mapstructure:"-"`
-	whenNoAuth bool   `mapstructure:"-"`
+	name string `mapstructure:"-"`
 }
 
 func (c *Control) String() string {
@@ -407,24 +387,6 @@ func (c *Control) String() string {
 	}
 
 	return c.name
-}
-
-// SetWhenNoAuth sets the whenNoAuth field of the Control.
-func (c *Control) SetWhenNoAuth(value bool) {
-	if c == nil {
-		return
-	}
-
-	c.whenNoAuth = value
-}
-
-// GetWhenNoAuth returns the value of the whenNoAuth field.
-func (c *Control) GetWhenNoAuth() bool {
-	if c == nil {
-		return false
-	}
-
-	return c.whenNoAuth
 }
 
 // Set updates the control name based on the provided value.

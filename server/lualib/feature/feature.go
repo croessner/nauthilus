@@ -69,22 +69,6 @@ func PreCompileLuaFeatures(cfg config.File, _ *slog.Logger) (err error) {
 				return err
 			}
 
-			// Apply execution flags with sane defaults for backward compatibility
-			wa := cfg.GetLua().Features[index].WhenAuthenticated
-			wu := cfg.GetLua().Features[index].WhenUnauthenticated
-			wn := cfg.GetLua().Features[index].WhenNoAuth
-
-			if !wa && !wu && !wn {
-				// No flags specified in config → run in authenticated and unauthenticated by default
-				wa = true
-				wu = true
-			}
-
-			luaFeature.WhenAuthenticated = wa
-			luaFeature.WhenUnauthenticated = wu
-			luaFeature.WhenNoAuth = wn
-			luaFeature.DependsOn = append([]string(nil), cfg.GetLua().Features[index].DependsOn...)
-
 			// Add compiled Lua features.
 			LuaFeatures.Add(luaFeature)
 		}
@@ -159,12 +143,10 @@ func (a *PreCompiledLuaFeatures) planForMode(mode pipeline.ModeMask) (pipeline.P
 // LuaFeature represents a Lua feature that has been compiled.
 // It contains a name identifying the feature and the compiled Lua script.
 type LuaFeature struct {
-	Name                string
-	CompiledScript      *lua.FunctionProto
-	DependsOn           []string
-	WhenAuthenticated   bool
-	WhenUnauthenticated bool
-	WhenNoAuth          bool
+	Name           string
+	CompiledScript *lua.FunctionProto
+	Dependencies   []string
+	Modes          pipeline.ModeMask
 }
 
 // NewLuaFeature creates a new LuaFeature instance by compiling the Lua script found at the given path and assigning its name.
@@ -186,6 +168,7 @@ func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
 	return &LuaFeature{
 		Name:           name,
 		CompiledScript: compiledScript,
+		Modes:          pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated,
 	}, nil
 }
 
@@ -199,32 +182,14 @@ func featurePipelineNodes(features []*LuaFeature) []pipeline.Node {
 	for index, feature := range features {
 		nodes = append(nodes, pipeline.Node{
 			Name:      feature.Name,
-			DependsOn: append([]string(nil), feature.DependsOn...),
+			DependsOn: append([]string(nil), feature.Dependencies...),
 			Index:     index,
-			Modes:     featureModeMask(feature),
+			Modes:     feature.Modes,
 			Value:     feature,
 		})
 	}
 
 	return nodes
-}
-
-func featureModeMask(feature *LuaFeature) pipeline.ModeMask {
-	var modes pipeline.ModeMask
-
-	if feature.WhenAuthenticated {
-		modes |= pipeline.ModeAuthenticated
-	}
-
-	if feature.WhenUnauthenticated {
-		modes |= pipeline.ModeUnauthenticated
-	}
-
-	if feature.WhenNoAuth {
-		modes |= pipeline.ModeNoAuth
-	}
-
-	return modes
 }
 
 func requestFeatureMode(r *Request) pipeline.ModeMask {

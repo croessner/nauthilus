@@ -3143,7 +3143,7 @@ func (f *FileSettings) ShouldRunFeature(feature string, noAuth bool) bool {
 	for _, item := range f.GetServer().Features {
 		if item.Get() == feature {
 			if noAuth {
-				return item.GetWhenNoAuth()
+				return false
 			}
 
 			return true
@@ -3216,88 +3216,14 @@ func processDebugModules(input any) (any, error) {
 	return processStringSettableSlice(input, func() *DbgModule { return &DbgModule{} })
 }
 
-type whenNoAuthSettable interface {
-	stringSettable
-	SetWhenNoAuth(bool)
-}
-
-func configureWhenNoAuthItem[T whenNoAuthSettable](item T, data any) error {
-	switch v := data.(type) {
-	case string:
-		return item.Set(v)
-	case map[string]any:
-		return configureWhenNoAuthItemFromMap(item, v["name"], v["when_no_auth"])
-	case map[any]any:
-		return configureWhenNoAuthItemFromMap(item, v["name"], v["when_no_auth"])
-	default:
-		return fmt.Errorf("invalid feature type %T", data)
-	}
-}
-
-func configureWhenNoAuthItemFromMap[T whenNoAuthSettable](item T, nameValue any, whenNoAuthValue any) error {
-	name, ok := nameValue.(string)
-	if !ok {
-		return fmt.Errorf("feature name missing or not a string")
-	}
-
-	if err := item.Set(name); err != nil {
-		return err
-	}
-
-	if whenNoAuth, ok := whenNoAuthValue.(bool); ok {
-		item.SetWhenNoAuth(whenNoAuth)
-	}
-
-	return nil
-}
-
-func processWhenNoAuthStringSettableSlice[T whenNoAuthSettable](input any, newFn func() T) (any, error) {
-	var items []T
-
-	addItem := func(data any) error {
-		item := newFn()
-
-		if err := configureWhenNoAuthItem(item, data); err != nil {
-			return err
-		}
-
-		items = append(items, item)
-
-		return nil
-	}
-
-	switch data := input.(type) {
-	case string:
-		if err := addItem(data); err != nil {
-			return nil, err
-		}
-	case []string:
-		for _, item := range data {
-			if err := addItem(item); err != nil {
-				return nil, err
-			}
-		}
-	case []any:
-		for _, item := range data {
-			if err := addItem(item); err != nil {
-				return nil, err
-			}
-		}
-	default:
-		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
-	}
-
-	return items, nil
-}
-
 // processControls converts input values into a slice of Control pointers or returns an error for invalid input types or values.
 func processControls(input any) (any, error) {
-	return processWhenNoAuthStringSettableSlice(input, func() *Control { return &Control{} })
+	return processStringSettableSlice(input, func() *Control { return &Control{} })
 }
 
 // processFeatures converts input values into a slice of Feature pointers or returns an error for invalid input types or values.
 func processFeatures(input any) (any, error) {
-	return processWhenNoAuthStringSettableSlice(input, func() *Feature { return &Feature{} })
+	return processStringSettableSlice(input, func() *Feature { return &Feature{} })
 }
 
 // processServices converts input values into a slice of Service pointers or returns an error for invalid input types or values.

@@ -151,6 +151,55 @@ func TestAuthBoundaryDefaultSetAuthDecisionDoesNotEmitObserveReportInEnforceMode
 	}
 }
 
+func TestAuthBoundaryDefaultPreAuthAppliesWhenConfiguredFinalRulesExist(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.ClearTextList = nil
+	activatePolicySnapshotForTest(t, customEnforceAuthSnapshotForTest())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	got := auth.HandleFeatures(ctx)
+	if got != definitions.AuthResultFeatureTLS {
+		t.Fatalf("feature result = %v, want %v", got, definitions.AuthResultFeatureTLS)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	if policyCtx.Report().Final == nil || policyCtx.Report().Final.PolicyName != "standard_tls_enforcement" {
+		t.Fatalf("final = %#v, want standard_tls_enforcement", policyCtx.Report().Final)
+	}
+}
+
+func TestAuthBoundaryDefaultFinalDecisionAppliesWhenConfiguredPreAuthRulesExist(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(true)))
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	passDBResult := GetPassDBResultFromPool()
+	passDBResult.Authenticated = false
+	passDBResult.UserFound = true
+	passDBResult.Backend = definitions.BackendTest
+	defer PutPassDBResultToPool(passDBResult)
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
+
+	got := auth.defaultPolicyAuthResult(ctx, definitions.AuthResultOK)
+	if got != definitions.AuthResultFail {
+		t.Fatalf("auth result = %v, want %v", got, definitions.AuthResultFail)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	if policyCtx.Report().Final == nil || policyCtx.Report().Final.PolicyName != "standard_auth_failure" {
+		t.Fatalf("final = %#v, want standard_auth_failure", policyCtx.Report().Final)
+	}
+}
+
 func TestAuthBoundaryConfiguredFinalDecisionOverridesBackendSuccess(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	activatePolicySnapshotForTest(t, customEnforceAuthSnapshotForTest())

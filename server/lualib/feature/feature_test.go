@@ -48,9 +48,7 @@ func mustNewLuaFeature(t *testing.T, name, scriptPath string) *LuaFeature {
 		t.Fatalf("failed to compile Lua feature %q: %v", name, err)
 	}
 
-	lf.WhenAuthenticated = true
-	lf.WhenUnauthenticated = true
-	lf.WhenNoAuth = true
+	lf.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
 
 	return lf
 }
@@ -69,8 +67,8 @@ func withTestLuaFeatures(t *testing.T, features ...*LuaFeature) {
 func TestPreCompiledLuaFeaturesCachesPlansForModes(t *testing.T) {
 	features := &PreCompiledLuaFeatures{
 		LuaScripts: []*LuaFeature{
-			{Name: "context", WhenAuthenticated: true, WhenUnauthenticated: true},
-			{Name: "monitor", DependsOn: []string{"context"}, WhenAuthenticated: true},
+			{Name: "context", Modes: pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated},
+			{Name: "monitor", Dependencies: []string{"context"}, Modes: pipeline.ModeAuthenticated},
 		},
 	}
 
@@ -144,7 +142,7 @@ end
 `)
 	first := mustNewLuaFeature(t, "first", firstScriptPath)
 	second := mustNewLuaFeature(t, "second", secondScriptPath)
-	second.DependsOn = []string{"first"}
+	second.Dependencies = []string{"first"}
 
 	withTestLuaFeatures(t, first, second)
 
@@ -236,8 +234,8 @@ end
 `)
 	first := mustNewLuaFeature(t, "first", firstScriptPath)
 	second := mustNewLuaFeature(t, "second", secondScriptPath)
-	first.DependsOn = []string{"second"}
-	second.DependsOn = []string{"first"}
+	first.Dependencies = []string{"second"}
+	second.Dependencies = []string{"first"}
 
 	withTestLuaFeatures(t, first, second)
 
