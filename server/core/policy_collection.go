@@ -159,6 +159,16 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		Production:    production,
 		ProductionSet: true,
 	})
+	if customResult := evaluation.CompareCustomObserve(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
+		Mode:       mode,
+		Set:        defaultPolicy,
+		Generation: generation,
+		Recorder:   observability.DefaultRecorder(),
+		Logger:     a.logger(),
+		Production: production,
+	}); customResult.Shadow != nil {
+		result = customResult
+	}
 
 	if fsmReport := policyCtx.Report().FSM; fsmReport != nil {
 		observability.Debug(
@@ -188,7 +198,16 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		definitions.LogKeyGUID, a.Runtime.GUID,
 		"operation", string(policyCtx.Report().Operation),
 		"stage", string(result.Shadow.Stage),
+		"snapshot_generation", generation,
 		"mismatch_type", result.MismatchType,
+		"default_policy_name", result.Production.PolicyName,
+		"custom_policy_name", result.Shadow.PolicyName,
+		"default_effect", string(result.Production.Effect),
+		"custom_effect", string(result.Shadow.Effect),
+		"default_response_marker", result.Production.ResponseMarker,
+		"custom_response_marker", result.Shadow.ResponseMarker,
+		"default_fsm_event_marker", result.Production.FSMEventMarker,
+		"custom_fsm_event_marker", result.Shadow.FSMEventMarker,
 	)
 }
 

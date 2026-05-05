@@ -16,6 +16,7 @@
 package core
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -67,6 +68,93 @@ func TestAuthPathCollectsTLSCheckWithoutChangingFeatureDecision(t *testing.T) {
 
 	if got := report.Attributes["auth.tls.secure"].Value; got != false {
 		t.Fatalf("tls secure attribute = %v, want false", got)
+	}
+}
+
+func TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.ClearTextList = nil
+	activatePolicySnapshotForTest(t, customObserveTLSSnapshot())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.Service = definitions.ServJSON
+	auth.SetStatusCodes(auth.Request.Service)
+
+	auth.runAuthPipelineFSM(ctx)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	if report.Final == nil || report.Final.PolicyName != "standard_tls_enforcement" {
+		t.Fatalf("final = %#v, want authoritative TLS default", report.Final)
+	}
+
+	if report.Observe == nil || !report.Observe.Mismatch {
+		t.Fatalf("observe report = %#v, want custom mismatch", report.Observe)
+	}
+
+	if report.Observe.Shadow == nil || report.Observe.Shadow.PolicyName != "custom_deny_tls" {
+		t.Fatalf("custom shadow = %#v, want custom_deny_tls", report.Observe.Shadow)
+	}
+
+	if got := ctx.Writer.Status(); got != http.StatusInternalServerError {
+		t.Fatalf("HTTP status = %d, want default tempfail status", got)
+	}
+}
+
+func customObserveTLSSnapshot() *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    74,
+		Mode:          "observe",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: customObserveTLSStagePlan(),
+			},
+		},
+	}
+}
+
+func customObserveTLSStagePlan() policyruntime.CompiledStagePlan {
+	return policyruntime.CompiledStagePlan{
+		Stage:    policy.StagePreAuth,
+		Checks:   []policyruntime.CompiledCheck{customObserveTLSCheck()},
+		Policies: []policyruntime.CompiledPolicy{customObserveTLSDenyPolicy()},
+	}
+}
+
+func customObserveTLSCheck() policyruntime.CompiledCheck {
+	return policyruntime.CompiledCheck{
+		Name:        "tls_encryption",
+		Type:        policy.CheckTypeTLSEncryption,
+		Stage:       policy.StagePreAuth,
+		Operations:  []policy.Operation{policy.OperationAuthenticate},
+		RunIf:       policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+		ObserveSafe: true,
+	}
+}
+
+func customObserveTLSDenyPolicy() policyruntime.CompiledPolicy {
+	return policyruntime.CompiledPolicy{
+		Name:          "custom_deny_tls",
+		Stage:         policy.StagePreAuth,
+		Operations:    []policy.Operation{policy.OperationAuthenticate},
+		RequireChecks: []string{"tls_encryption"},
+		Root: policyruntime.CompiledExpr{
+			Kind:        policyruntime.ExprKindAttribute,
+			AttributeID: policy.AttributeTLSSecure,
+			Operator:    "is",
+			Expected:    policyruntime.TypedValue{Value: false},
+		},
+		Then: policyruntime.DecisionPlan{
+			Decision:       policy.DecisionDeny,
+			OutcomeMarker:  "auth.outcome.custom_tls_deny",
+			FSMEventMarker: policy.FSMEventMarkerPreAuthDeny,
+			ResponseMarker: policy.ResponseMarkerFail,
+		},
 	}
 }
 

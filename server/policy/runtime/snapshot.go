@@ -139,14 +139,15 @@ type CompiledStagePlan struct {
 
 // CompiledCheck contains a validated check plan entry.
 type CompiledCheck struct {
-	RunIf      RunIfPlan
-	Name       string
-	Type       string
-	ConfigRef  string
-	Output     string
-	Stage      policy.Stage
-	Operations []policy.Operation
-	After      []string
+	RunIf       RunIfPlan
+	Name        string
+	Type        string
+	ConfigRef   string
+	Output      string
+	Stage       policy.Stage
+	Operations  []policy.Operation
+	After       []string
+	ObserveSafe bool
 }
 
 // RunIfPlan contains the compiled structural scheduler guard.

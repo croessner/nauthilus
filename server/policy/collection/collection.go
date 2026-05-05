@@ -33,6 +33,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const modeObserve = "observe"
+
 // AuthState describes the scheduler-visible authentication state.
 type AuthState string
 
@@ -111,6 +113,15 @@ func (c *DecisionContext) Report() *report.DecisionReport {
 	return c.report
 }
 
+// Snapshot returns the runtime snapshot captured for this request.
+func (c *DecisionContext) Snapshot() *policyruntime.Snapshot {
+	if c == nil || c.snapshot == nil {
+		return nil
+	}
+
+	return c.snapshot.Clone()
+}
+
 // SnapshotMetadata returns stable metadata for request-local comparison output.
 func (c *DecisionContext) SnapshotMetadata() (string, string, uint64) {
 	if c == nil || c.snapshot == nil {
@@ -143,6 +154,10 @@ func (c *DecisionContext) BuiltinDefaultAuthoritative() bool {
 
 	if defaultPolicy != policy.BuiltinDefaultSet {
 		return false
+	}
+
+	if c.snapshot.Mode == modeObserve {
+		return true
 	}
 
 	return !hasConfiguredRules(c.snapshot.StagePlans)
@@ -199,6 +214,12 @@ func (c *DecisionContext) CompleteStage(stage policy.Stage, authState AuthState)
 			continue
 		}
 
+		if c.observeMode() && !c.checkObserveSafe(check) {
+			c.recordUnavailableLocked(check, "not_observe_safe")
+
+			continue
+		}
+
 		if c.report.MissingChecks == nil {
 			c.report.MissingChecks = make(map[string]string)
 		}
@@ -221,6 +242,24 @@ func (c *DecisionContext) MarkUnavailable(name string, reason string) {
 	}
 
 	c.report.Unavailable[name] = report.UnavailableFact{Name: name, Reason: reason}
+}
+
+func (c *DecisionContext) recordUnavailableLocked(check policyruntime.CompiledCheck, reason string) {
+	if check.Name == "" {
+		return
+	}
+
+	if c.report.Unavailable == nil {
+		c.report.Unavailable = make(map[string]report.UnavailableFact)
+	}
+
+	c.report.Unavailable[check.Name] = report.UnavailableFact{Name: check.Name, Reason: reason}
+	c.recorder.RecordObserveUnavailable(context.Background(), observability.ObserveUnavailableMeasurement{
+		Operation:  c.report.Operation,
+		Stage:      check.Stage,
+		Check:      check.Name,
+		ReasonCode: reason,
+	})
 }
 
 // Record stores a completed check result.
@@ -341,6 +380,24 @@ func (c *DecisionContext) stageChecks(stage policy.Stage) []policyruntime.Compil
 	}
 
 	return plan.Checks
+}
+
+func (c *DecisionContext) observeMode() bool {
+	return c != nil && c.snapshot != nil && c.snapshot.Mode == modeObserve
+}
+
+func (c *DecisionContext) checkObserveSafe(check policyruntime.CompiledCheck) bool {
+	if check.ObserveSafe {
+		return true
+	}
+
+	if c == nil || c.snapshot == nil {
+		return false
+	}
+
+	definition, ok := c.snapshot.CheckTypeRegistry[check.Type]
+
+	return ok && definition.ObserveSafeDefault
 }
 
 func fallbackCheck(selector CheckSelector, operation policy.Operation) policyruntime.CompiledCheck {

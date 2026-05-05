@@ -82,6 +82,24 @@ func TestDecisionContextReportsSkippedMissingAndUnavailableFacts(t *testing.T) {
 	}
 }
 
+func TestDecisionContextReportsUnsafeObserveChecksUnavailable(t *testing.T) {
+	ctx := NewDecisionContext(testObserveSnapshot(), policy.OperationAuthenticate, nil)
+	ctx.CompleteStage(policy.StagePreAuth, AuthStateUnauthenticated)
+
+	report := ctx.Report()
+	if got := report.Unavailable["lua_control_risk"].Reason; got != "not_observe_safe" {
+		t.Fatalf("unavailable reason = %q, want not_observe_safe", got)
+	}
+
+	if _, exists := report.MissingChecks["lua_control_risk"]; exists {
+		t.Fatal("unsafe observe check was also recorded as missing")
+	}
+
+	if got := report.MissingChecks["tls_encryption"]; got != "not_recorded" {
+		t.Fatalf("safe missing reason = %q, want not_recorded", got)
+	}
+}
+
 func TestScriptSinkRecordsOneCheckPerLuaScript(t *testing.T) {
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
 	sink := NewScriptSink(ctx)
@@ -140,6 +158,13 @@ func TestDecisionContextDefaultSetAuthorityRequiresNoConfiguredRules(t *testing.
 	}
 }
 
+func TestDecisionContextObserveModeKeepsDefaultSetAuthoritative(t *testing.T) {
+	ctx := NewDecisionContext(testObserveSnapshot(), policy.OperationAuthenticate, nil)
+	if !ctx.BuiltinDefaultAuthoritative() {
+		t.Fatal("observe mode must keep the default set authoritative with configured rules")
+	}
+}
+
 func testSnapshot() *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    42,
@@ -184,6 +209,42 @@ func testSnapshot() *policyruntime.Snapshot {
 	}
 }
 
+func testObserveSnapshot() *policyruntime.Snapshot {
+	snapshot := testSnapshot()
+	snapshot.Mode = modeObserve
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth] = policyruntime.CompiledStagePlan{
+		Stage: policy.StagePreAuth,
+		Checks: []policyruntime.CompiledCheck{
+			{
+				Name:        "lua_control_risk",
+				Type:        policy.CheckTypeLuaControl,
+				Stage:       policy.StagePreAuth,
+				Operations:  []policy.Operation{policy.OperationAuthenticate},
+				RunIf:       policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+				ObserveSafe: false,
+			},
+			{
+				Name:        "tls_encryption",
+				Type:        policy.CheckTypeTLSEncryption,
+				Stage:       policy.StagePreAuth,
+				Operations:  []policy.Operation{policy.OperationAuthenticate},
+				RunIf:       policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+				ObserveSafe: true,
+			},
+		},
+		Policies: []policyruntime.CompiledPolicy{
+			{
+				Name:          "custom_deny_risk",
+				Stage:         policy.StagePreAuth,
+				Operations:    []policy.Operation{policy.OperationAuthenticate},
+				RequireChecks: []string{"lua_control_risk"},
+			},
+		},
+	}
+
+	return snapshot
+}
+
 type recordingRecorder struct {
 	checks []observability.CheckMeasurement
 }
@@ -201,6 +262,8 @@ func (r *recordingRecorder) RecordDecision(context.Context, observability.Decisi
 func (r *recordingRecorder) RecordRequireCheck(context.Context, observability.RequireCheckMeasurement) {
 }
 func (r *recordingRecorder) RecordObserveComparison(context.Context, observability.ObserveMeasurement) {
+}
+func (r *recordingRecorder) RecordObserveUnavailable(context.Context, observability.ObserveUnavailableMeasurement) {
 }
 func (r *recordingRecorder) RecordFSMTransition(context.Context, observability.FSMMeasurement) {}
 func (r *recordingRecorder) RecordResponseRender(context.Context, observability.RendererMeasurement) {

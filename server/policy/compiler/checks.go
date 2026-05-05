@@ -124,6 +124,8 @@ func compileCheck(
 		After:      append([]string(nil), checkConfig.After...),
 		ConfigRef:  checkConfig.ConfigRef,
 		Output:     checkConfig.Output,
+		ObserveSafe: definition.ObserveSafeDefault ||
+			(checkConfig.ObserveSafe != nil && *checkConfig.ObserveSafe),
 	}, nil
 }
 

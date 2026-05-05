@@ -128,15 +128,17 @@ type DecisionControl struct {
 	SkipRemainingStageChecks bool `json:"skip_remaining_stage_checks,omitempty"`
 }
 
-// ObserveReport stores built-in default comparison output.
+// ObserveReport stores observe comparison output.
 type ObserveReport struct {
-	Production           *FinalDecision `json:"production,omitempty"`
-	Shadow               *FinalDecision `json:"shadow,omitempty"`
-	Surface              string         `json:"surface,omitempty"`
-	MismatchType         string         `json:"mismatch_type,omitempty"`
-	Mismatch             bool           `json:"mismatch"`
-	ResponseMessageMatch bool           `json:"response_message_match"`
-	ObligationsMatch     bool           `json:"obligations_match"`
+	Production              *FinalDecision `json:"production,omitempty"`
+	Shadow                  *FinalDecision `json:"shadow,omitempty"`
+	Surface                 string         `json:"surface,omitempty"`
+	MismatchType            string         `json:"mismatch_type,omitempty"`
+	ProductionTerminalState string         `json:"production_terminal_state,omitempty"`
+	ShadowTerminalState     string         `json:"shadow_terminal_state,omitempty"`
+	Mismatch                bool           `json:"mismatch"`
+	ResponseMessageMatch    bool           `json:"response_message_match"`
+	ObligationsMatch        bool           `json:"obligations_match"`
 }
 
 // FSMReport stores current-vs-target FSM comparison output.

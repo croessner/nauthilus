@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/policy/observability"
 	"github.com/croessner/nauthilus/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 )
 
 type standardDecisionCase struct {
@@ -251,6 +252,86 @@ func TestCompareWithProductionReportsMismatch(t *testing.T) {
 	}
 }
 
+func TestCustomObserveComparesConfiguredPolicyWithDefault(t *testing.T) {
+	recorder := &recordingRecorder{}
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("ldap_backend", policy.CheckTypeLDAPBackend, policy.StageAuthBackend, policy.CheckStatusOK),
+		boolAttr(policy.AttributeAuthenticated, policy.StageAuthBackend, policy.OperationAuthenticate, true, nil),
+	)
+	snapshot := observeSnapshotWithCustomDecision(customAuthDecisionPolicy(
+		"custom_deny_success",
+		policy.DecisionDeny,
+		policy.FSMEventMarkerAuthDeny,
+		policy.ResponseMarkerFail,
+	))
+
+	got := CompareCustomObserve(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "observe",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 12,
+		Recorder:   recorder,
+	})
+
+	if !got.Mismatch {
+		t.Fatal("mismatch = false, want true")
+	}
+
+	if got.Production == nil || got.Production.PolicyName != "standard_auth_success" {
+		t.Fatalf("production = %#v, want standard auth success", got.Production)
+	}
+
+	if got.Shadow == nil || got.Shadow.PolicyName != "custom_deny_success" {
+		t.Fatalf("shadow = %#v, want custom deny", got.Shadow)
+	}
+
+	if policyReport.Final == nil || policyReport.Final.PolicyName != "standard_auth_success" {
+		t.Fatalf("final = %#v, want authoritative default", policyReport.Final)
+	}
+
+	if policyReport.Observe == nil || policyReport.Observe.ProductionTerminalState != "auth_ok" ||
+		policyReport.Observe.ShadowTerminalState != "auth_fail" {
+		t.Fatalf("observe terminal states = %#v, want default auth_ok and custom auth_fail", policyReport.Observe)
+	}
+
+	if len(recorder.comparisons) != 1 || recorder.comparisons[0].Result != observability.ResultFailure {
+		t.Fatalf("comparison metrics = %#v, want one failure", recorder.comparisons)
+	}
+}
+
+func TestCustomObserveReportsUnsafeCustomOnlyCheckUnavailable(t *testing.T) {
+	recorder := &recordingRecorder{}
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("ldap_backend", policy.CheckTypeLDAPBackend, policy.StageAuthBackend, policy.CheckStatusOK),
+		boolAttr(policy.AttributeAuthenticated, policy.StageAuthBackend, policy.OperationAuthenticate, true, nil),
+	)
+	snapshot := observeSnapshotWithUnavailableCheck()
+
+	got := CompareCustomObserve(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "observe",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 13,
+		Recorder:   recorder,
+	})
+
+	if !got.Mismatch {
+		t.Fatal("mismatch = false, want default-vs-custom mismatch")
+	}
+
+	if got := policyReport.Unavailable["lua_control_risk"].Reason; got != "not_observe_safe" {
+		t.Fatalf("unavailable reason = %q, want not_observe_safe", got)
+	}
+
+	if len(recorder.unavailable) != 1 {
+		t.Fatalf("unavailable metrics = %d, want 1", len(recorder.unavailable))
+	}
+
+	if recorder.unavailable[0].Check != "lua_control_risk" {
+		t.Fatalf("unavailable check = %q, want lua_control_risk", recorder.unavailable[0].Check)
+	}
+}
+
 func standardReport(
 	operation policy.Operation,
 	checkResult report.CheckResult,
@@ -295,9 +376,77 @@ func boolAttr(
 	}
 }
 
+func observeSnapshotWithCustomDecision(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Mode:          "observe",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StageAuthDecision: {
+					Stage:    policy.StageAuthDecision,
+					Policies: []policyruntime.CompiledPolicy{compiled},
+				},
+			},
+		},
+	}
+}
+
+func observeSnapshotWithUnavailableCheck() *policyruntime.Snapshot {
+	snapshot := observeSnapshotWithCustomDecision(customAuthDecisionPolicy(
+		"custom_deny_risk",
+		policy.DecisionDeny,
+		policy.FSMEventMarkerAuthDeny,
+		policy.ResponseMarkerFail,
+	))
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth] = policyruntime.CompiledStagePlan{
+		Stage: policy.StagePreAuth,
+		Checks: []policyruntime.CompiledCheck{
+			{
+				Name:       "lua_control_risk",
+				Type:       policy.CheckTypeLuaControl,
+				Stage:      policy.StagePreAuth,
+				Operations: []policy.Operation{policy.OperationAuthenticate},
+			},
+		},
+	}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision].Policies[0].RequireChecks = []string{"lua_control_risk"}
+
+	return snapshot
+}
+
+func customAuthDecisionPolicy(
+	name string,
+	decision policy.Decision,
+	fsmMarker string,
+	responseMarker string,
+) policyruntime.CompiledPolicy {
+	return policyruntime.CompiledPolicy{
+		Name:       name,
+		Stage:      policy.StageAuthDecision,
+		Operations: []policy.Operation{policy.OperationAuthenticate},
+		Root: policyruntime.CompiledExpr{
+			Kind:        policyruntime.ExprKindAttribute,
+			AttributeID: policy.AttributeAuthenticated,
+			Operator:    "is",
+			Expected:    policyruntime.TypedValue{Value: true},
+		},
+		Then: policyruntime.DecisionPlan{
+			Decision:       decision,
+			OutcomeMarker:  "auth.outcome.custom",
+			FSMEventMarker: fsmMarker,
+			ResponseMarker: responseMarker,
+			ResponseMessage: policyruntime.ResponseMessagePlan{
+				Source:  "literal",
+				Literal: "Custom deny",
+			},
+		},
+	}
+}
+
 type recordingRecorder struct {
 	decisions   []observability.DecisionMeasurement
 	comparisons []observability.ObserveMeasurement
+	unavailable []observability.ObserveUnavailableMeasurement
 }
 
 func (r *recordingRecorder) RecordSnapshotBuild(context.Context, observability.SnapshotBuildMeasurement) {
@@ -320,4 +469,8 @@ func (r *recordingRecorder) RecordDecision(_ context.Context, measurement observ
 
 func (r *recordingRecorder) RecordObserveComparison(_ context.Context, measurement observability.ObserveMeasurement) {
 	r.comparisons = append(r.comparisons, measurement)
+}
+
+func (r *recordingRecorder) RecordObserveUnavailable(_ context.Context, measurement observability.ObserveUnavailableMeasurement) {
+	r.unavailable = append(r.unavailable, measurement)
 }

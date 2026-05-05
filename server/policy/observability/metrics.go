@@ -99,6 +99,14 @@ type ObserveMeasurement struct {
 	Stage        policy.Stage
 }
 
+// ObserveUnavailableMeasurement records unavailable custom-only check output.
+type ObserveUnavailableMeasurement struct {
+	Operation  policy.Operation
+	Stage      policy.Stage
+	Check      string
+	ReasonCode string
+}
+
 // FSMMeasurement records target FSM marker instrumentation.
 type FSMMeasurement struct {
 	Result         Result
@@ -137,6 +145,7 @@ type Recorder interface {
 	RecordDecision(context.Context, DecisionMeasurement)
 	RecordRequireCheck(context.Context, RequireCheckMeasurement)
 	RecordObserveComparison(context.Context, ObserveMeasurement)
+	RecordObserveUnavailable(context.Context, ObserveUnavailableMeasurement)
 	RecordFSMTransition(context.Context, FSMMeasurement)
 	RecordResponseRender(context.Context, RendererMeasurement)
 	RecordObligation(context.Context, ObligationMeasurement)
@@ -152,10 +161,12 @@ func (nopRecorder) RecordStageEvaluation(context.Context, StageMeasurement)     
 func (nopRecorder) RecordDecision(context.Context, DecisionMeasurement)           {}
 func (nopRecorder) RecordRequireCheck(context.Context, RequireCheckMeasurement)   {}
 func (nopRecorder) RecordObserveComparison(context.Context, ObserveMeasurement)   {}
-func (nopRecorder) RecordFSMTransition(context.Context, FSMMeasurement)           {}
-func (nopRecorder) RecordResponseRender(context.Context, RendererMeasurement)     {}
-func (nopRecorder) RecordObligation(context.Context, ObligationMeasurement)       {}
-func (nopRecorder) RecordAdvice(context.Context, AdviceMeasurement)               {}
+func (nopRecorder) RecordObserveUnavailable(context.Context, ObserveUnavailableMeasurement) {
+}
+func (nopRecorder) RecordFSMTransition(context.Context, FSMMeasurement)       {}
+func (nopRecorder) RecordResponseRender(context.Context, RendererMeasurement) {}
+func (nopRecorder) RecordObligation(context.Context, ObligationMeasurement)   {}
+func (nopRecorder) RecordAdvice(context.Context, AdviceMeasurement)           {}
 
 // SafeRecorder returns a no-op recorder when recorder is nil.
 func SafeRecorder(recorder Recorder) Recorder {
@@ -200,6 +211,7 @@ type PrometheusRecorder struct {
 	decisionsTotal            *prometheus.CounterVec
 	requireChecksTotal        *prometheus.CounterVec
 	observeComparisonsTotal   *prometheus.CounterVec
+	observeUnavailableTotal   *prometheus.CounterVec
 	fsmTransitionsTotal       *prometheus.CounterVec
 	responseRenderSeconds     *prometheus.HistogramVec
 	obligationDurationSeconds *prometheus.HistogramVec
@@ -224,6 +236,7 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 		decisionsTotal:            newPolicyCounterVec("policy_decisions_total", "Total number of policy decisions.", "mode", "operation", "stage", "decision", "policy_name", "response_marker", "fsm_event_marker"),
 		requireChecksTotal:        newPolicyCounterVec("policy_require_checks_total", "Total number of policy require-check applicability results.", "mode", "operation", "stage", "policy_name", "check", "result"),
 		observeComparisonsTotal:   newPolicyCounterVec("policy_observe_comparisons_total", "Total number of policy observe comparisons.", "operation", "stage", "result", "mismatch_type"),
+		observeUnavailableTotal:   newPolicyCounterVec("policy_observe_unavailable_checks_total", "Total number of unavailable custom-only checks in observe mode.", "operation", "stage", "check", "reason_code"),
 		fsmTransitionsTotal:       newPolicyCounterVec("policy_fsm_transitions_total", "Total number of policy FSM marker applications.", "operation", "stage", "fsm_event_marker", "result"),
 		responseRenderSeconds:     newPolicyHistogramVec("policy_response_render_seconds", "Duration of policy response rendering.", "surface", "response_marker", "result"),
 		obligationDurationSeconds: newPolicyHistogramVec("policy_obligation_duration_seconds", "Duration of policy obligation execution.", "obligation", "result"),
@@ -250,6 +263,7 @@ func (r *PrometheusRecorder) collectors() []prometheus.Collector {
 		r.decisionsTotal,
 		r.requireChecksTotal,
 		r.observeComparisonsTotal,
+		r.observeUnavailableTotal,
 		r.fsmTransitionsTotal,
 		r.responseRenderSeconds,
 		r.obligationDurationSeconds,
@@ -403,6 +417,20 @@ func (r *PrometheusRecorder) RecordObserveComparison(_ context.Context, measurem
 		string(measurement.Stage),
 		string(measurement.Result),
 		measurement.MismatchType,
+	).Inc()
+}
+
+// RecordObserveUnavailable records unavailable custom-only check metrics.
+func (r *PrometheusRecorder) RecordObserveUnavailable(_ context.Context, measurement ObserveUnavailableMeasurement) {
+	if r == nil {
+		return
+	}
+
+	r.observeUnavailableTotal.WithLabelValues(
+		string(measurement.Operation),
+		string(measurement.Stage),
+		measurement.Check,
+		measurement.ReasonCode,
 	).Inc()
 }
 
