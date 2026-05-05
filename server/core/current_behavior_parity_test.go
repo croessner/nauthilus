@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	featurelib "github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/model/authdto"
+	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
@@ -120,6 +121,23 @@ func TestCurrentBehaviorParityBuiltInPreAuthControls(t *testing.T) {
 				t.Fatalf("feature result = %v, want %v", got, testCase.wantResult)
 			}
 		})
+	}
+}
+
+func TestCurrentBehaviorParityPolicyConfigDoesNotChangePreAuthControls(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.Auth = &config.AuthSection{
+		Policy: config.AuthPolicySection{
+			Mode:          "enforce",
+			DefaultPolicy: policy.BuiltinDefaultSet,
+		},
+	}
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
+	got := auth.HandleFeatures(ctx)
+	if got != definitions.AuthResultFeatureTLS {
+		t.Fatalf("feature result = %v, want %v", got, definitions.AuthResultFeatureTLS)
 	}
 }
 

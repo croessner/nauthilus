@@ -58,6 +58,20 @@ const (
 	AttributeTypeDateTime AttributeType = "datetime"
 )
 
+// AttributeCategory identifies the XACML-style attribute category.
+type AttributeCategory string
+
+const (
+	// AttributeCategoryEnvironment identifies environment attributes.
+	AttributeCategoryEnvironment AttributeCategory = "environment"
+
+	// AttributeCategorySubject identifies subject attributes.
+	AttributeCategorySubject AttributeCategory = "subject"
+
+	// AttributeCategoryResource identifies resource attributes.
+	AttributeCategoryResource AttributeCategory = "resource"
+)
+
 // AttributeSource identifies the component that owns an attribute definition.
 type AttributeSource string
 
@@ -79,13 +93,16 @@ type DetailDefinition struct {
 
 // AttributeDefinition describes one registered policy attribute.
 type AttributeDefinition struct {
-	ID          string
-	Description string
-	Stage       policy.Stage
-	Operations  []policy.Operation
-	Type        AttributeType
-	Source      AttributeSource
-	Details     map[string]DetailDefinition
+	ID            string
+	Description   string
+	Stage         policy.Stage
+	Operations    []policy.Operation
+	ProducerTypes []string
+	ProducerCheck string
+	Category      AttributeCategory
+	Type          AttributeType
+	Source        AttributeSource
+	Details       map[string]DetailDefinition
 }
 
 // AttributeRegistry stores policy attribute definitions for snapshot building.
@@ -114,7 +131,7 @@ func (r *AttributeRegistry) Register(definition AttributeDefinition) error {
 		return fmt.Errorf("%w: %s", ErrDuplicateAttributeID, definition.ID)
 	}
 
-	r.attribute[definition.ID] = cloneDefinition(definition)
+	r.attribute[definition.ID] = CloneDefinition(definition)
 
 	return nil
 }
@@ -129,7 +146,7 @@ func (r *AttributeRegistry) Lookup(id string) (AttributeDefinition, bool) {
 		return AttributeDefinition{}, false
 	}
 
-	return cloneDefinition(definition), true
+	return CloneDefinition(definition), true
 }
 
 // Snapshot returns a detached copy of all registered definitions.
@@ -139,15 +156,17 @@ func (r *AttributeRegistry) Snapshot() map[string]AttributeDefinition {
 
 	snapshot := make(map[string]AttributeDefinition, len(r.attribute))
 	for id, definition := range r.attribute {
-		snapshot[id] = cloneDefinition(definition)
+		snapshot[id] = CloneDefinition(definition)
 	}
 
 	return snapshot
 }
 
-func cloneDefinition(definition AttributeDefinition) AttributeDefinition {
+// CloneDefinition returns a detached copy of an attribute definition.
+func CloneDefinition(definition AttributeDefinition) AttributeDefinition {
 	cloned := definition
 	cloned.Operations = append([]policy.Operation(nil), definition.Operations...)
+	cloned.ProducerTypes = append([]string(nil), definition.ProducerTypes...)
 
 	if definition.Details != nil {
 		cloned.Details = make(map[string]DetailDefinition, len(definition.Details))

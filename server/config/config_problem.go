@@ -41,6 +41,17 @@ type Problem struct {
 	Message string      `mapstructure:"-"`
 }
 
+// NewValidationProblem returns a formatted single validation problem.
+func NewValidationProblem(path string, message string) error {
+	return formatConfigProblems([]Problem{
+		{
+			Kind:    configProblemValidation,
+			Path:    path,
+			Message: message,
+		},
+	})
+}
+
 func formatConfigProblems(problems []Problem) error {
 	if len(problems) == 0 {
 		return nil

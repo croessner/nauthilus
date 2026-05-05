@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/opsfx"
+	"github.com/croessner/nauthilus/server/app/policyfx"
 	"github.com/croessner/nauthilus/server/app/reloadfx"
 	"github.com/croessner/nauthilus/server/app/restartfx"
 	"github.com/croessner/nauthilus/server/app/signalsfx"
@@ -121,6 +122,7 @@ func main() {
 		languagefx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),
+		policyfx.Module(),
 		reloadfx.Module(),
 		restartfx.Module(),
 		fx.Provide(newActionWorkers),

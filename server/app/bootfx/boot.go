@@ -34,6 +34,8 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/policy/compiler"
+	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util/keygen"
@@ -222,6 +224,13 @@ func SetupConfiguration() error {
 	file, err := config.NewFile()
 	if err != nil {
 		return fmt.Errorf("unable to load config file: %w", err)
+	}
+
+	if err := compiler.CompileAndActivate(context.Background(), policyruntime.DefaultStore(), compiler.NewCompiler(), compiler.Input{
+		Config:     file,
+		Generation: 1,
+	}); err != nil {
+		return fmt.Errorf("unable to build policy snapshot: %w", err)
 	}
 
 	log.SetupLogging(
