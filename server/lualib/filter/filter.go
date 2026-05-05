@@ -43,6 +43,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/policy"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -364,6 +365,7 @@ type Request struct {
 	*lualib.CommonRequest
 
 	ScriptRecorder policycollection.ScriptRecorder
+	PolicyContext  *policycollection.DecisionContext
 }
 
 // handleError logs Lua execution errors for filters with stacktrace when available,
@@ -1085,7 +1087,14 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					}
 				}
 
-				// 11) nauthilus_backend (preload stateless placeholder, then request-bound)
+				// 11) nauthilus_policy
+				bindFilterModuleIntoReq(
+					Llocal,
+					definitions.LuaModPolicy,
+					lualib.LoaderModPolicy(localRequest.PolicyContext, policy.StageAuthFilters),
+				)
+
+				// 12) nauthilus_backend (preload stateless placeholder, then request-bound)
 				Llocal.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
 				{
 					loader := LoaderModBackendWithCurrent(luaCtx, cfg, logger, &localRequest, &localBackendResult, &localRemoveAttrs, mergedBackendResult, mergedRemoveAttributes.GetStringSlice())

@@ -2,6 +2,13 @@
 
 This directory contains Lua action plugins for the Nauthilus authentication system. Action plugins are executed in response to authentication events and can perform various tasks such as tracking failed logins, implementing dynamic security responses, and sending notifications.
 
+## Policy Integration
+
+Action plugins run after the decision-relevant checks. They must not create a second authority path; use them for
+obligations, notifications, metrics, and response follow-up. When a preceding control or filter stored
+`policy_facts`, actions can read them with `nauthilus_context.context_get("policy_facts")` and include selected
+public facts in notifications or reports.
+
 ## Available Plugins
 
 ### analytics.lua

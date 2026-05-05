@@ -24,19 +24,42 @@ Hook plugins are executed at specific points in the system's lifecycle or in res
 ### [init](./init/)
 Initialization plugins are executed when the system starts up, setting up required components, registering services, and preparing the environment for other plugins.
 
+### [policy](./policy/)
+Policy registry scripts register the custom Lua-owned attributes emitted by bundled plugins.
+
 ### [share](./share/)
 Shared utility modules provide common functions and utilities that can be used by other plugins throughout the system, promoting code reuse and consistency.
 
 ## Plugin Execution Flow
+
+The policy decision layer owns the effective execution plan for Lua controls and filters. A configured
+`auth.policy.checks` entry with type `lua.control` or `lua.filter` selects the script by `config_ref`, applies its
+`after` scheduling dependencies, and records the script result as policy attributes:
+
+- Lua controls: `auth.lua.control.<name>.triggered`, `auth.lua.control.<name>.abort`, and
+  `auth.lua.control.<name>.error`
+- Lua filters: `auth.lua.filter.<name>.rejected` and `auth.lua.filter.<name>.error`
+- Public status messages are attached as the `status_message` detail on triggered or rejected script attributes.
+
+The bundled policy-aware plugins use `share/nauthilus_policy_facts.lua` to emit custom Lua-owned attributes such as
+`lua.plugin.blocklist.matched` or `lua.plugin.geoip.rejected` into the request-local policy report. These attributes are
+registered by `policy/registry.lua` and must be made available through `auth.policy.registry_scripts` before emitted
+plugin attributes can be used by policy rules. Missing or mistyped registrations fail at runtime instead of becoming
+silent facts.
+
+The helper still stores the same values under `nauthilus_context.context_get("policy_facts")` for later Lua actions.
+Use `emit`/`emit_many` for internal policy attributes, `emit_public`/`emit_many_public` when the value should also be
+copied to custom logs, and `status_message` for a normal Nauthilus status message plus a policy-visible message
+attribute.
 
 The Nauthilus authentication system executes plugins in a specific order during the authentication process:
 
 1. **Initialization**: When the system starts, all plugins in the `init` directory are executed to set up the environment.
 
 2. **Authentication Request**: When an authentication request is received:
-   - **Filters**: Filter plugins are executed to validate and potentially modify the request.
-   - **Features**: Feature plugins are executed to add additional functionality to the authentication process.
+   - **Controls/Features**: Lua controls run in `pre_auth` when selected by policy.
    - **Backend**: The appropriate backend plugin is used to verify credentials and retrieve user information.
+   - **Filters**: Lua filters run in `auth_filters` after backend facts are available.
    - **Actions**: After authentication (success or failure), action plugins are executed to perform post-authentication tasks.
 
 3. **Hooks**: Hook plugins can be executed at various points in the system's lifecycle, either on a schedule or in response to specific events.

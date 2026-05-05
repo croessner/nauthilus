@@ -13,17 +13,23 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-
--- Phase 1 implementation from docs/attacker_detection_ideas.md:
---  - Per-account unique IPs via HyperLogLog over 24h and 7d windows
---  - Per-account failure timestamps over up to 7d
---  - Optional privacy-preserving password-spray token counters (if provided)
+-- Per-account long-window metrics used by policy and post-action processing.
 -- This feature only collects metrics and never blocks; it is safe to enable in learning mode.
+--
+-- Emitted policy attributes:
+--  - lua.plugin.account_longwindow.username
+--  - lua.plugin.account_longwindow.authenticated
+--  - lua.plugin.account_longwindow.uniq_ips_24h
+--  - lua.plugin.account_longwindow.uniq_ips_7d
+--  - lua.plugin.account_longwindow.fails_24h
+--  - lua.plugin.account_longwindow.fails_7d
+--  - lua.plugin.account_longwindow.has_pw_token
 
 local N = "account_longwindow_metrics"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_misc = require("nauthilus_misc")
@@ -124,6 +130,15 @@ function nauthilus_call_feature(request)
         has_pw_token = (pw_token ~= nil),
     }
     nauthilus_util.log_info(request, logs)
+    policy_facts.emit_many("account_longwindow", {
+        username = username or "",
+        authenticated = authenticated,
+        uniq_ips_24h = uniq24,
+        uniq_ips_7d = uniq7d,
+        fails_24h = fails_24h,
+        fails_7d = fails_7d,
+        has_pw_token = (pw_token ~= nil),
+    })
 
     return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
 end

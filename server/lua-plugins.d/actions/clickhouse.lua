@@ -122,17 +122,45 @@ function nauthilus_call_action(request)
 
     -- Get result table
     local rt = nauthilus_context.context_get("rt") or {}
+    local policy_facts = nauthilus_context.context_get("policy_facts") or {}
+
+    local function fact(namespace, key)
+        if type(policy_facts) ~= "table" or type(policy_facts[namespace]) ~= "table" then
+            return nil
+        end
+
+        return policy_facts[namespace][key]
+    end
+
+    local function add_feature(name)
+        if not nauthilus_util.exists_in_table(feature_from_ctx, name) then
+            table.insert(feature_from_ctx, name)
+        end
+    end
 
     if type(rt) == "table" and nauthilus_util.table_length(rt) > 0 then
         if rt.feature_blocklist then
-            table.insert(feature_from_ctx, "blocklist")
+            add_feature("blocklist")
         end
         if rt.filter_geoippolicyd and rt.geoip_info and rt.geoip_info.status and rt.geoip_info.status == "reject" then
-            table.insert(feature_from_ctx, "geoip_policyd")
+            add_feature("geoip_policyd")
         end
         if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
-            table.insert(feature_from_ctx, "account_protection")
+            add_feature("account_protection")
         end
+    end
+
+    if fact("blocklist", "matched") == true then
+        add_feature("blocklist")
+    end
+    if fact("geoip", "rejected") == true then
+        add_feature("geoip_policyd")
+    end
+    if fact("failed_login_hotspot", "triggered") == true then
+        add_feature("failed_login_hotspot")
+    end
+    if fact("account_protection", "active") == true then
+        add_feature("account_protection")
     end
 
     local features = table.concat(feature_from_ctx, ",")

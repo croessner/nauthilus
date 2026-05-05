@@ -4,6 +4,36 @@ This directory contains shared Lua utility modules for the Nauthilus authenticat
 
 ## Available Modules
 
+### nauthilus_policy_facts.lua
+Stores request-local policy facts, emits Lua-owned policy attributes, and optionally writes redaction-safe custom logs.
+
+**Functions:**
+- `set(namespace, key, value)`: Stores an internal fact under `policy_facts.<namespace>.<key>`
+- `emit(namespace, key, value, details)`: Stores the fact and emits `lua.plugin.<namespace>.<key>`
+- `emit_public(namespace, key, value, details)`: Emits the attribute, stores the fact, and writes a custom log
+- `set_many(namespace, values)`: Stores multiple internal facts in one context update
+- `emit_many(namespace, values)`: Stores and emits multiple internal policy attributes
+- `emit_many_public(namespace, values)`: Stores, emits, and logs multiple public policy attributes
+- `set_public(namespace, key, value)`: Compatibility alias for `emit_public`
+- `set_many_public(namespace, values)`: Compatibility alias for `emit_many_public`
+- `set_public_log(namespace, key, value)`: Writes only a `policy_fact_<namespace>_<key>` custom log
+- `status_message(namespace, message)`: Sets the normal Nauthilus status message and emits a message attribute
+
+**Usage:**
+```lua
+local policy_facts = require("nauthilus_policy_facts")
+
+policy_facts.set("geoip", "guid", response.guid)
+policy_facts.emit_public("geoip", "rejected", true, {
+    status_message = "Policy violation",
+})
+policy_facts.status_message("geoip", "Policy violation")
+```
+
+Configure `auth.policy.registry_scripts` with `lua-plugins.d/policy/registry.lua` before using bundled emitted
+attributes in policy rules. Use `emit_public` only for data that is already safe for normal custom logs. Use `emit` for
+policy material that should not be copied to logs.
+
 ### nauthilus_util.lua
 A comprehensive utility module that provides common functions used throughout the Nauthilus plugin system.
 

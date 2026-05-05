@@ -86,6 +86,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	commonRequest.UserFound = passDBResult.UserFound
 	commonRequest.Authenticated = passDBResult.Authenticated
 
+	policyCtx := auth.PolicyDecisionContext(ctx)
 	filterRequest := &filter.Request{
 		Session:            auth.Runtime.GUID,
 		Username:           auth.Request.Username,
@@ -100,6 +101,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		Context:            auth.Runtime.Context,
 		CommonRequest:      commonRequest,
 		ScriptRecorder:     auth.PolicyScriptRecorder(ctx),
+		PolicyContext:      policyCtx,
 	}
 
 	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())

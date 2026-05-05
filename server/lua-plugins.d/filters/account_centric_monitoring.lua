@@ -15,8 +15,18 @@
 
 local N = "account_centric_monitoring"
 
+-- Emitted policy attributes:
+--  - lua.plugin.account_monitoring.attack_detected
+--  - lua.plugin.account_monitoring.username
+--  - lua.plugin.account_monitoring.uniq_ips_1h
+--  - lua.plugin.account_monitoring.uniq_ips_24h
+--  - lua.plugin.account_monitoring.uniq_ips_7d
+--  - lua.plugin.account_monitoring.failed_24h
+--  - lua.plugin.account_monitoring.ratio_24h
+
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_otel = require("nauthilus_opentelemetry")
@@ -132,7 +142,24 @@ function nauthilus_call_filter(request)
         uniq_24h, fails_24h, ratio_24h = ui2, fa2, r2
         uniq_7d, fails_7d = ui3, fa3
 
+        policy_facts.emit_many("account_monitoring", {
+            attack_detected = suspicious,
+            username = username,
+            uniq_ips_1h = uniq_1h,
+            uniq_ips_24h = uniq_24h,
+            uniq_ips_7d = uniq_7d,
+            failed_24h = fails_24h,
+            ratio_24h = ratio_24h,
+        })
+
         if suspicious then
+            policy_facts.set_public_log("account_monitoring", "attack_detected", true)
+            policy_facts.set_public_log("account_monitoring", "username", username)
+            policy_facts.set_public_log("account_monitoring", "uniq_ips_1h", uniq_1h)
+            policy_facts.set_public_log("account_monitoring", "uniq_ips_24h", uniq_24h)
+            policy_facts.set_public_log("account_monitoring", "uniq_ips_7d", uniq_7d)
+            policy_facts.set_public_log("account_monitoring", "failed_24h", fails_24h)
+            policy_facts.set_public_log("account_monitoring", "ratio_24h", ratio_24h)
             nauthilus_builtin.custom_log_add(N .. "_attack_detected", "true")
             nauthilus_builtin.custom_log_add(N .. "_username", username)
             nauthilus_builtin.custom_log_add(N .. "_uniq_ips_1h", uniq_1h)

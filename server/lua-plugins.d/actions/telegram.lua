@@ -43,11 +43,20 @@ function nauthilus_call_action(request)
     local password_hash = "n/a"
     local ts
 
+    local function fact(facts, namespace, key)
+        if type(facts) ~= "table" or type(facts[namespace]) ~= "table" then
+            return nil
+        end
+
+        return facts[namespace][key]
+    end
+
     -- Get result table
     local rt = nauthilus_context.context_get("rt")
     if rt == nil then
         rt = {}
     end
+    local policy_facts = nauthilus_context.context_get("policy_facts") or {}
 
     if nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0 then
         -- brute_force_haproxy
@@ -120,6 +129,30 @@ function nauthilus_call_action(request)
             headline = "Dynamic Response"
             log_prefix = "dynamic_response_"
         end
+    end
+
+    if fact(policy_facts, "blocklist", "matched") == true then
+        send_message = true
+        headline = "Blocklist"
+        log_prefix = "blocklist_"
+    end
+
+    if fact(policy_facts, "geoip", "rejected") == true then
+        send_message = true
+        headline = "GeoIP-Policyd"
+        log_prefix = "geoippolicyd_"
+    end
+
+    if fact(policy_facts, "failed_login_hotspot", "triggered") == true then
+        send_message = true
+        headline = "Failed-Login Hotspot"
+        log_prefix = "failed_login_"
+    end
+
+    if fact(policy_facts, "account_protection", "active") == true then
+        send_message = true
+        headline = "Account Protection"
+        log_prefix = "acct_protection_"
     end
 
     local pwnd = nauthilus_context.context_get("haveibeenpwnd_hash_info")

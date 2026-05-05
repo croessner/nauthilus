@@ -38,6 +38,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/policyschedule"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/policy"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -247,6 +248,7 @@ type Request struct {
 	HTTPClientContext *gin.Context
 	HTTPClientRequest *http.Request
 	ScriptRecorder    policycollection.ScriptRecorder
+	PolicyContext     *policycollection.DecisionContext
 	Authenticated     bool
 	NoAuth            bool
 	BruteForceCounter uint
@@ -420,6 +422,11 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
 				modManager.BindAllDefault(Llocal, localRequest.Context, luaCtx, tolerate.GetTolerate())
+				modManager.BindModule(
+					Llocal,
+					definitions.LuaModPolicy,
+					lualib.LoaderModPolicy(localRequest.PolicyContext, policy.StagePreAuth),
+				)
 
 				if ctx != nil && ctx.Request != nil {
 					modManager.BindHTTP(Llocal, lualib.NewHTTPMetaFromRequest(ctx.Request))

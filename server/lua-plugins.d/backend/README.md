@@ -2,6 +2,13 @@
 
 This directory contains Lua backend plugins for the Nauthilus authentication system. Backend plugins provide integration with external data sources for user authentication, account management, and credential verification.
 
+## Policy Integration
+
+Lua backends are represented by the built-in `backend.lua` check type in `auth.policy.checks`. Backend result objects
+produce the standard backend attributes such as `auth.authenticated`, `auth.identity.found`,
+`auth.backend.tempfail`, `auth.backend.empty_username`, and `auth.backend.empty_password`. Backend scripts should keep
+authentication facts in the backend result object instead of creating a parallel Lua filter decision.
+
 ## Available Plugins
 
 ### backend.lua

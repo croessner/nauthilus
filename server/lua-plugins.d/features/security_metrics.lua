@@ -28,11 +28,17 @@
 --  - security_sprayed_password_tokens_total{window} -> account_longwindow_metrics.lua
 --  - security_stepup_challenges_issued_total -> account_protection_mode.lua
 --  - security_pow_challenges_issued_total -> TBD when PoW is implemented
+--
+-- Emitted policy attributes:
+--  - lua.plugin.security_metrics.global_ips_per_user_24h
+--  - lua.plugin.security_metrics.global_ips_per_user_7d
+--  - lua.plugin.security_metrics.protected_accounts
 
 local N = "security_metrics"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local policy_facts = require("nauthilus_policy_facts")
 
 local prom = require("nauthilus_prometheus")
 local nauthilus_redis = require("nauthilus_redis")
@@ -216,6 +222,11 @@ function nauthilus_call_feature(request)
     local prot_set = nauthilus_util.get_redis_key(request, "acct:protection_active:proto:" .. protocol)
     local prot_count = tonumber(nauthilus_redis.redis_scard(client, prot_set) or 0) or 0
     prom.set_gauge("security_accounts_in_protection_mode_total", prot_count, { })
+    policy_facts.emit_many("security_metrics", {
+        global_ips_per_user_24h = g24,
+        global_ips_per_user_7d = g7d,
+        protected_accounts = prot_count,
+    })
 
     return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
 end

@@ -13,11 +13,9 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
--- Phase 3: Automated per-account protection mode and protocol-aware backoff
--- Implements protection mode decisions based on long-window account metrics and
--- account-centric attack flags. Applies progressive backoff (sleep) and, for
--- failing authentications, can return a temporary rejection via filter semantics.
--- For HTTP/OIDC, we set a Redis flag to allow a frontend to enforce Step-Up/PoW.
+-- Automated per-account protection mode and protocol-aware backoff.
+-- The filter turns long-window account metrics and account-centric attack flags
+-- into policy-visible Lua filter results plus request-local policy facts.
 --
 -- Keys used:
 --  - ntc:acct:<username>:proto:<protocol>:longwindow (HSET by account_longwindow_metrics.lua)
@@ -36,11 +34,20 @@
 --  - PROTECT_BACKOFF_MAX_LEVEL default 5
 --  - PROTECT_MODE_TTL_SEC default 3600 (1h)
 --  - CUSTOM_REDIS_POOL_NAME optional pool
+--
+-- Emitted policy attributes:
+--  - lua.plugin.account_protection.active
+--  - lua.plugin.account_protection.reason
+--  - lua.plugin.account_protection.backoff_level
+--  - lua.plugin.account_protection.delay_ms
+--  - lua.plugin.account_protection.enforce_reject
+--  - lua.plugin.account_protection.status_message
 
 local N = "account_protection_mode"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_prometheus = require("nauthilus_prometheus")
@@ -232,6 +239,14 @@ function nauthilus_call_filter(request)
         -- Count a slow-attack suspicion
         nauthilus_prometheus.increment_counter("security_slow_attack_suspicions_total", {})
         nauthilus_prometheus.increment_counter("security_stepup_challenges_issued_total", {})
+        local response_message = "Temporary protection active"
+        policy_facts.emit_public("account_protection", "active", true, { status_message = response_message })
+        policy_facts.set_many_public("account_protection", {
+            reason = hits_str,
+            backoff_level = backoff_level,
+            delay_ms = applied_ms,
+        })
+        policy_facts.emit("account_protection", "enforce_reject", ENFORCE_REJECT)
 
         -- Expose a response header so frontends can enforce a CAPTCHA/Step-Up
         pcall(function()
@@ -274,7 +289,7 @@ function nauthilus_call_filter(request)
         -- Decide filter result: If authentication failed, we either reject (enforcement) or allow (dry-run)
         if not request.authenticated then
             if ENFORCE_REJECT then
-                nauthilus_builtin.status_message_set("Temporary protection active")
+                policy_facts.status_message("account_protection", response_message)
                 return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
             else
                 -- Dry-run mode: expose header for frontends and do not block here

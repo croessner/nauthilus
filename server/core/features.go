@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/policy"
+	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -106,6 +107,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 
 	a.FillCommonRequest(cr)
 
+	policyCtx := a.requestPolicyContext(ctx)
 	fr := &feature.Request{
 		Session:            a.Runtime.GUID,
 		Username:           a.Request.Username,
@@ -123,7 +125,8 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		MasterUserMode:     a.Runtime.MasterUserMode,
 		AdditionalFeatures: a.Runtime.AdditionalFeatures,
 		CommonRequest:      cr,
-		ScriptRecorder:     a.PolicyScriptRecorder(ctx),
+		ScriptRecorder:     policycollection.NewScriptSink(policyCtx),
+		PolicyContext:      policyCtx,
 	}
 
 	triggered, abortFeatures, err = fr.CallFeatureLua(ctx, a.Cfg(), a.Logger(), a.Redis())

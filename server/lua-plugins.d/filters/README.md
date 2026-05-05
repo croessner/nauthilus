@@ -2,6 +2,19 @@
 
 This directory contains Lua filter plugins for the Nauthilus authentication system. Filter plugins are executed during the authentication process to analyze, validate, or modify authentication requests before they are processed.
 
+## Policy Integration
+
+Configure filter scripts as `lua.filter` checks under `auth.policy.checks`. Use
+`config_ref: auth.controls.lua.filters.<name>` so the policy scheduler can select the configured script and apply its
+`after` dependencies. The decision layer records `auth.lua.filter.<name>.rejected` and
+`auth.lua.filter.<name>.error`; a status message set by the script becomes the public `status_message` detail on the
+rejected attribute.
+
+Filters may also emit Lua-owned attributes through `nauthilus_policy_facts`. The bundled filter attributes are
+registered by `../policy/registry.lua` and use IDs below `lua.plugin.*`, for example
+`lua.plugin.geoip.rejected` or `lua.plugin.account_protection.active`. The same values remain available as
+request-local `policy_facts` for later actions and custom-log correlation.
+
 ## Available Plugins
 
 ### account_centric_monitoring.lua

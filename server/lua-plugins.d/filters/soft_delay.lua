@@ -13,10 +13,8 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
--- Phase 2 (soft measures) per docs/attacker_detection_ideas.md:
---  - Introduce small, risk-based delays (50–200 ms) without blocking
---  - Rely on long-window account metrics and flags
---  - Log decisions; remain conservative to avoid harming legit users
+-- Risk-based soft delays. The filter never denies a request; it records
+-- policy facts so actions and custom logs can explain why a delay happened.
 
 -- Env thresholds (defaults conservative):
 --  - SOFT_DELAY_MIN_MS default 50
@@ -26,11 +24,16 @@
 --  - SOFT_DELAY_THRESH_FAIL24 default 5
 --  - SOFT_DELAY_THRESH_FAIL7D default 10
 --  - CUSTOM_REDIS_POOL_NAME optional pool
+--
+-- Emitted policy attributes:
+--  - lua.plugin.soft_delay.risky
+--  - lua.plugin.soft_delay.applied_ms
 
 local N = "soft_delay"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_otel = require("nauthilus_opentelemetry")
@@ -203,6 +206,11 @@ function nauthilus_call_filter(request)
 
     -- Add to custom logs for correlation
     nauthilus_builtin.custom_log_add(N .. "_delay_ms", applied_delay_ms)
+    policy_facts.emit("soft_delay", "risky", risky)
+    policy_facts.emit("soft_delay", "applied_ms", applied_delay_ms)
+    if risky then
+        policy_facts.set_public_log("soft_delay", "applied_ms", applied_delay_ms)
+    end
 
     return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end

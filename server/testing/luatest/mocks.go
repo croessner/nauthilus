@@ -72,6 +72,21 @@ func LoaderModContextMock(mockData *ContextMock) lua.LGFunction {
 	}
 }
 
+// LoaderModPolicyMock creates a no-op nauthilus_policy module for fixture tests.
+func LoaderModPolicyMock() lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.NewTable()
+		L.SetFuncs(mod, map[string]lua.LGFunction{
+			definitions.LuaFnPolicyEmitAttribute: func(_ *lua.LState) int {
+				return 0
+			},
+		})
+		L.Push(mod)
+
+		return 1
+	}
+}
+
 // LoaderModLDAPMock creates a mock nauthilus_ldap module.
 func LoaderModLDAPMock(mockData *LDAPMock) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -2415,6 +2430,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	L.PreloadModule(definitions.LuaBackendResultTypeName, LoaderModBackendResultMock(backendResultMock))
 	L.PreloadModule(definitions.LuaModHTTPRequest, LoaderModHTTPRequestMock(httpRequestMock))
 	L.PreloadModule(definitions.LuaModHTTPResponse, LoaderModHTTPResponseMock(httpResponseMock))
+	L.PreloadModule(definitions.LuaModPolicy, LoaderModPolicyMock())
 	L.PreloadModule(definitions.LuaModLDAP, LoaderModLDAPMock(ldapMock))
 	L.PreloadModule(definitions.LuaModDNS, LoaderModDNSMock(dnsMock))
 	L.PreloadModule(definitions.LuaModPrometheus, LoaderModPrometheusMock(prometheusMock))

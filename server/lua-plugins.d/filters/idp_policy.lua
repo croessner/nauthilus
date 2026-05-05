@@ -42,10 +42,18 @@
 --   nauthilus_builtin.FILTER_REJECT  - Deny the request
 --   nauthilus_builtin.FILTER_RESULT_OK   - No error during filter execution
 --   nauthilus_builtin.FILTER_RESULT_FAIL - Error during filter execution
+--
+-- Emitted policy attributes:
+--  - lua.plugin.idp_policy.rejected
+--  - lua.plugin.idp_policy.reason
+--  - lua.plugin.idp_policy.oidc_cid
+--  - lua.plugin.idp_policy.grant_type
+--  - lua.plugin.idp_policy.status_message
 
 local N = "idp_policy"
 
 local nauthilus_util = require("nauthilus_util")
+local policy_facts = require("nauthilus_policy_facts")
 
 -- Helper: check if a user belongs to at least one of the given groups.
 local function has_any_group(user_groups, required_groups)
@@ -210,7 +218,12 @@ function nauthilus_call_filter(request)
             })
 
             nauthilus_builtin.custom_log_add(N .. "_rejected_reason", reason)
-            nauthilus_builtin.status_message_set("Access denied: " .. reason)
+            local response_message = "Access denied: " .. reason
+            policy_facts.emit_public(N, "rejected", true, { status_message = response_message })
+            policy_facts.set_public(N, "reason", reason)
+            policy_facts.emit(N, "oidc_cid", request.oidc_cid or "")
+            policy_facts.emit(N, "grant_type", request.grant_type or "")
+            policy_facts.status_message(N, response_message)
 
             return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
         end
@@ -224,6 +237,9 @@ function nauthilus_call_filter(request)
         oidc_cid = request.oidc_cid or "",
         grant_type = request.grant_type or "",
     })
+    policy_facts.emit(N, "rejected", false)
+    policy_facts.emit(N, "oidc_cid", request.oidc_cid or "")
+    policy_facts.emit(N, "grant_type", request.grant_type or "")
 
     return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end

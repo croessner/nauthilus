@@ -16,10 +16,17 @@
 -- Derives a feature signal from ntc:top_failed_logins (count/rank by username)
 -- This feature is read-only against Redis and can be enabled safely. It enriches
 -- the runtime table (rt) for downstream actions like analytics and telegram.
+--
+-- Emitted policy attributes:
+--  - lua.plugin.failed_login_hotspot.username
+--  - lua.plugin.failed_login_hotspot.count
+--  - lua.plugin.failed_login_hotspot.rank
+--  - lua.plugin.failed_login_hotspot.triggered
 
 local N = "failed_login_hotspot"
 
 local nauthilus_util = require("nauthilus_util")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
@@ -143,8 +150,17 @@ function nauthilus_call_feature(request)
     if rank_num >= 0 then
         nauthilus_builtin.custom_log_add("failed_login_rank", tostring(rank_num))
     end
+    policy_facts.emit_many(N, {
+        username = username,
+        count = score_num,
+        rank = rank_num,
+        triggered = is_hot,
+    })
 
     if is_hot then
+        policy_facts.set_public_log(N, "triggered", true)
+        policy_facts.set_public_log(N, "count", score_num)
+        policy_facts.set_public_log(N, "rank", rank_num)
         nauthilus_prometheus.increment_counter(N .. "_count", { state = "hot" })
         return nauthilus_builtin.FEATURE_TRIGGER_YES, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
     end

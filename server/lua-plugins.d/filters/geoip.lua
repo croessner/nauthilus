@@ -15,7 +15,16 @@
 
 local N = "geoippolicyd"
 
+-- Emitted policy attributes:
+--  - lua.plugin.geoip.guid
+--  - lua.plugin.geoip.current_country_code
+--  - lua.plugin.geoip.country_codes
+--  - lua.plugin.geoip.rejected
+--  - lua.plugin.geoip.error
+--  - lua.plugin.geoip.status_message
+
 local nauthilus_util = require("nauthilus_util")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_prometheus = require("nauthilus_prometheus")
 local nauthilus_context = require("nauthilus_context")
@@ -246,10 +255,19 @@ function nauthilus_call_filter(request)
     if response.err == nil then
         local current_iso_code = process_response_and_context(response)
         local iso_seen = nauthilus_context.context_get(N .. "_iso_codes_seen") or {}
+        policy_facts.emit_many("geoip", {
+            guid = response.guid or "",
+            current_country_code = current_iso_code or "",
+            country_codes = iso_seen,
+        })
 
         if response.object and response.object.policy_reject then
+            local message = "Policy violation"
             nauthilus_prometheus.increment_counter(N .. "_count", { country = current_iso_code, status = "reject" })
             nauthilus_builtin.custom_log_add(N, "blocked")
+            policy_facts.emit_public("geoip", "rejected", true, { status_message = message })
+            policy_facts.set_public_log("geoip", "current_country_code", current_iso_code or "")
+            policy_facts.set_public_log("geoip", "country_codes", iso_seen)
 
             local rt = nauthilus_context.context_get("rt") or {}
             if nauthilus_util.is_table(rt) then
@@ -257,12 +275,13 @@ function nauthilus_call_filter(request)
                 nauthilus_context.context_set("rt", rt)
             end
 
-            nauthilus_builtin.status_message_set("Policy violation")
+            policy_facts.status_message("geoip", message)
 
             return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
         end
 
         nauthilus_prometheus.increment_counter(N .. "_count", { country = current_iso_code, status = "accept" })
+        policy_facts.emit("geoip", "rejected", false)
 
         local rt = nauthilus_context.context_get("rt") or {}
         if nauthilus_util.is_table(rt) then
@@ -273,6 +292,8 @@ function nauthilus_call_filter(request)
         if not request.authenticated then
             return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_FAIL
         end
+
+        policy_facts.emit("geoip", "error", true)
 
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
     end

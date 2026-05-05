@@ -2,6 +2,17 @@
 
 This directory contains Lua feature plugins for the Nauthilus authentication system. Feature plugins extend the core functionality of Nauthilus by adding new capabilities, integrations, or advanced security features.
 
+## Policy Integration
+
+Configure feature scripts as `lua.control` checks under `auth.policy.checks`. The check name controls scheduling, while
+`config_ref: auth.controls.lua.controls.<name>` selects the configured Lua control. The decision layer records
+`auth.lua.control.<name>.triggered`, `auth.lua.control.<name>.abort`, and `auth.lua.control.<name>.error`.
+
+Scripts that collect supporting signals can emit Lua-owned attributes through `nauthilus_policy_facts`. The bundled
+feature attributes are registered by `../policy/registry.lua` and use IDs below `lua.plugin.*`, for example
+`lua.plugin.blocklist.matched` or `lua.plugin.failed_login_hotspot.triggered`. The same values remain available under
+`policy_facts` for later actions.
+
 ## Available Plugins
 
 ### blocklist.lua

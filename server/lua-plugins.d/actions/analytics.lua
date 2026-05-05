@@ -25,13 +25,23 @@ function nauthilus_call_action(request)
         return nauthilus_builtin.ACTION_RESULT_OK
     end
 
+    local function fact(facts, namespace, key)
+        if type(facts) ~= "table" or type(facts[namespace]) ~= "table" then
+            return nil
+        end
+
+        return facts[namespace][key]
+    end
+
     -- Get result table
     local rt = nauthilus_context.context_get("rt")
     if rt == nil then
         rt = {}
     end
+    local policy_facts = nauthilus_context.context_get("policy_facts") or {}
+    local rt_has_data = nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0
 
-    if nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0 then
+    if rt_has_data then
         -- brute_force_haproxy
         if rt.brute_force_haproxy then
             nauthilus_prometheus.increment_counter(N .. "_count", { feature = "brute_force" })
@@ -39,28 +49,31 @@ function nauthilus_call_action(request)
 
         -- feature_haproxy (not part of demo plugins)
         if rt.feature_haproxy then
-            send_message = true
             if request.feature and request.feature ~= "" then
                 nauthilus_prometheus.increment_counter(N .. "_count", { feature = request.feature })
             else
                 nauthilus_prometheus.increment_counter(N .. "_count", { feature = "unspec" })
             end
         end
+    end
 
-        -- feature_blocklist
-        if rt.feature_blocklist then
-            nauthilus_prometheus.increment_counter(N .. "_count", { feature = "blocklist" })
-        end
+    -- feature_blocklist
+    if (rt_has_data and rt.feature_blocklist) or fact(policy_facts, "blocklist", "matched") == true then
+        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "blocklist" })
+    end
 
-        -- filter_geoippolicyd
-        if rt.filter_geoippolicyd then
-            nauthilus_prometheus.increment_counter(N .. "_count", { feature = "geoip" })
-        end
+    -- filter_geoippolicyd
+    if (rt_has_data and rt.filter_geoippolicyd) or fact(policy_facts, "geoip", "rejected") == true then
+        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "geoip" })
+    end
 
-        -- feature_failed_login_hotspot
-        if rt.feature_failed_login_hotspot then
-            nauthilus_prometheus.increment_counter(N .. "_count", { feature = "failed_login_hotspot" })
-        end
+    -- feature_failed_login_hotspot
+    if (rt_has_data and rt.feature_failed_login_hotspot) or fact(policy_facts, "failed_login_hotspot", "triggered") == true then
+        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "failed_login_hotspot" })
+    end
+
+    if (rt_has_data and rt.filter_account_protection_mode) or fact(policy_facts, "account_protection", "active") == true then
+        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "account_protection" })
     end
 
     rt.post_analytics = true

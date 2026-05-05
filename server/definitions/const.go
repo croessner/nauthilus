@@ -1408,6 +1408,9 @@ const (
 	// LuaModOpenTelemetry is the module name exposed to Lua for OpenTelemetry helpers.
 	LuaModOpenTelemetry = "nauthilus_opentelemetry"
 
+	// LuaModPolicy is the module name exposed to Lua for request-local policy emission.
+	LuaModPolicy = "nauthilus_policy"
+
 	// LuaUDTracer is the userdata type name for an OpenTelemetry Tracer in Lua.
 	LuaUDTracer = "nauthilus_otel_tracer_ud"
 
@@ -1788,6 +1791,9 @@ const (
 
 	// LuaFnBfIsIPAddressBlocked determines if a given IP address is blocked due to brute force or other security rules.
 	LuaFnBfIsIPAddressBlocked = "is_ip_address_blocked"
+
+	// LuaFnPolicyEmitAttribute records a Lua-owned custom policy attribute.
+	LuaFnPolicyEmitAttribute = "emit_attribute"
 )
 
 const (

@@ -13,6 +13,30 @@
       {
         "method": "context_set",
         "arg_contains": "rt"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "policy_facts"
       }
     ]
   },
@@ -49,7 +73,10 @@
     "feature_status": 0,
     "logs_contain": [
       "blocklist_ip",
-      "IP address blocked"
+      "IP address blocked",
+      "policy_fact_blocklist_matched",
+      "policy_fact_blocklist_client_ip",
+      "policy_fact_blocklist_status_message"
     ],
     "error_expected": false
   }

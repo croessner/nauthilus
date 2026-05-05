@@ -97,6 +97,29 @@ func TestCompilerRunsLuaRegistryScript(t *testing.T) {
 	}
 }
 
+func TestCompilerLoadsBundledLuaPluginRegistry(t *testing.T) {
+	scriptPath := filepath.Join("..", "..", "lua-plugins.d", "policy", "registry.lua")
+	cfg := luaRegistryPolicyConfig(scriptPath)
+	cfg.Auth.Policy.Policies = nil
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	for _, attributeID := range []string{
+		"lua.plugin.blocklist.matched",
+		"lua.plugin.geoip.rejected",
+		"lua.plugin.account_protection.active",
+		"lua.plugin.failed_login_hotspot.triggered",
+		"lua.plugin.director.backend_server",
+	} {
+		if _, ok := snapshot.AttributeRegistry[attributeID]; !ok {
+			t.Fatalf("bundled Lua plugin attribute %q missing", attributeID)
+		}
+	}
+}
+
 func validLuaRegistryScript() string {
 	return `
 nauthilus_policy.register_attribute({

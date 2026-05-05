@@ -4,13 +4,13 @@
     "password": "irrelevant",
     "client_ip": "203.0.113.10",
     "protocol": "imap",
-    "session": "analytics-session",
+    "session": "analytics-policy-facts-session",
     "no_auth": false,
     "authenticated": false,
     "expected_calls": [
       {
         "method": "context_set",
-        "arg_contains": "rt"
+        "arg_contains": "policy_facts"
       },
       {
         "method": "context_get",
@@ -41,7 +41,8 @@
     "logs_contain": [
       "analytics_count:blocklist",
       "analytics_count:geoip",
-      "analytics_count:failed_login_hotspot"
+      "analytics_count:failed_login_hotspot",
+      "analytics_count:account_protection"
     ],
     "error_expected": false
   }

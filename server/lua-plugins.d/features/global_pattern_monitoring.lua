@@ -15,7 +15,16 @@
 
 local N = "global_pattern_monitoring"
 
+-- Emitted policy attributes:
+--  - lua.plugin.global_pattern.attempts
+--  - lua.plugin.global_pattern.unique_ips
+--  - lua.plugin.global_pattern.unique_users
+--  - lua.plugin.global_pattern.attempts_per_ip
+--  - lua.plugin.global_pattern.attempts_per_user
+--  - lua.plugin.global_pattern.ips_per_user
+
 local nauthilus_util = require("nauthilus_util")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
@@ -103,6 +112,14 @@ function nauthilus_call_feature(request)
     logs.ips_per_user = ips_per_user
 
     nauthilus_util.log_info(request, logs)
+    policy_facts.emit_many("global_pattern", {
+        attempts = attempts,
+        unique_ips = unique_ips,
+        unique_users = unique_users,
+        attempts_per_ip = attempts_per_ip,
+        attempts_per_user = attempts_per_user,
+        ips_per_user = ips_per_user,
+    })
 
     -- Enrich rt for downstream actions (e.g., telegram)
     do

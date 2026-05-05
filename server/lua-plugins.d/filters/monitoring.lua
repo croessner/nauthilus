@@ -14,12 +14,16 @@
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 local nauthilus_util = require("nauthilus_util")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_http_request = require("nauthilus_http_request")
 local nauthilus_backend = require("nauthilus_backend")
 local nauthilus_redis = require("nauthilus_redis")
 
 local N = "director"
+
+-- Emitted policy attributes:
+--  - lua.plugin.director.backend_server
 
 local function get_service()
     local header = nauthilus_http_request.get_http_request_header("X-Nauthilus-Service")
@@ -221,6 +225,7 @@ function nauthilus_call_filter(request)
         attributes["Proxy-Host"] = server_host
 
         nauthilus_builtin.custom_log_add(N .. "_backend_server", server_host)
+        policy_facts.set_public(N, "backend_server", server_host)
 
         backend_result:attributes(attributes)
         nauthilus_backend.apply_backend_result(backend_result)

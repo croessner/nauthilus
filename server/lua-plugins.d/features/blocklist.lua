@@ -15,7 +15,13 @@
 
 local N = "blocklist"
 
+-- Emitted policy attributes:
+--  - lua.plugin.blocklist.matched
+--  - lua.plugin.blocklist.client_ip
+--  - lua.plugin.blocklist.status_message
+
 local nauthilus_util = require("nauthilus_util")
+local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_prometheus = require("nauthilus_prometheus")
@@ -124,7 +130,10 @@ function nauthilus_call_feature(request)
         end
 
         nauthilus_builtin.custom_log_add(N .. "_ip", request.client_ip)
-        nauthilus_builtin.status_message_set("IP address blocked")
+        local message = "IP address blocked"
+        policy_facts.emit_public(N, "matched", true, { status_message = message })
+        policy_facts.set_public(N, "client_ip", request.client_ip or "")
+        policy_facts.status_message(N, message)
 
         if nauthilus_otel and nauthilus_otel.is_enabled() then
             local tr = nauthilus_otel.tracer("nauthilus/lua/blocklist")

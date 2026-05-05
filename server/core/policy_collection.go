@@ -229,6 +229,11 @@ func existingPolicyContext(ctx *gin.Context) *policycollection.DecisionContext {
 	return policyCtx
 }
 
+// PolicyDecisionContext returns the request-local policy collection context.
+func (a *AuthState) PolicyDecisionContext(ctx *gin.Context) *policycollection.DecisionContext {
+	return a.requestPolicyContext(ctx)
+}
+
 // PolicyScriptRecorder returns the request-local Lua script result sink.
 func (a *AuthState) PolicyScriptRecorder(ctx *gin.Context) policycollection.ScriptRecorder {
 	policyCtx := a.requestPolicyContext(ctx)
