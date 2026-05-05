@@ -50,6 +50,7 @@ import (
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
@@ -2677,7 +2678,14 @@ func (a *AuthState) SFKeyHash() string {
 // HandlePassword handles the authentication process for the password flow.
 // Delegate orchestration to the Authenticator to keep responsibilities separated.
 func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
-	return defaultAuthenticator.Authenticate(ctx, a)
+	defer a.completePolicyStage(ctx, policy.StageAuthBackend)
+
+	authResult = defaultAuthenticator.Authenticate(ctx, a)
+	if authResult == definitions.AuthResultEmptyUsername || authResult == definitions.AuthResultEmptyPassword {
+		a.recordPolicyBackendResult(ctx, authResult, nil, nil)
+	}
+
+	return authResult
 }
 
 // usernamePasswordChecks performs checks on the Username and Password fields of the AuthState object.
@@ -2735,6 +2743,7 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	// the PassDB stage has already decided previously. Reflect that in AuthState
 	// so final logs include authn=true for cache hits.
 	a.Runtime.Authenticated = true
+	a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
 
 	authResult := definitions.AuthResultOK
 
@@ -3126,6 +3135,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	if passDBResult, err = a.processVerifyPassword(ctx, passDBs); err != nil {
 		// tempfail: no backend decision could be made
 		a.Runtime.Authenticated = false
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
 
 		return definitions.AuthResultTempFail
 	}
@@ -3135,6 +3145,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	if accountName, err = a.processUserFound(passDBResult); err != nil || passDBResult == nil {
 		// treat as tempfail
 		a.Runtime.Authenticated = false
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
 
 		return definitions.AuthResultTempFail
 	}
@@ -3142,6 +3153,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	if err = a.processCache(ctx, passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
 		// tempfail during cache processing
 		a.Runtime.Authenticated = false
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
 
 		return definitions.AuthResultTempFail
 	}
@@ -3158,6 +3170,12 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		a.Runtime.Authenticated = false
 	}
 
+	if passDBResult.Authenticated {
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+	} else {
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
+	}
+
 	authResult = a.FilterLua(ctx, passDBResult)
 	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
@@ -3171,6 +3189,8 @@ func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) defi
 	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "filter.lua") {
 		return definitions.AuthResultTempFail
 	}
+
+	defer a.completePolicyStage(ctx, policy.StageAuthFilters)
 
 	tr := monittrace.New("nauthilus/auth")
 	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.filter",
@@ -3204,6 +3224,13 @@ func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) defi
 // ListUserAccounts returns the list of all known users from the account databases.
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
+	ginCtx := a.Request.HTTPClientContext
+	errSeen := false
+
+	defer func() {
+		a.recordPolicyAccountProvider(ginCtx, len(accountList), errSeen)
+		a.completePolicyStage(ginCtx, policy.StageAccountProvider)
+	}()
 
 	// Pre-allocate the accounts slice to avoid continuous reallocation
 	// This is a conservative estimate, we'll allocate based on the number of backends
@@ -3252,6 +3279,8 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		if err == nil {
 			accountList = append(accountList, result...)
 		} else {
+			errSeen = true
+
 			if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
 				level.Error(a.logger()).Log(
 					definitions.LogKeyGUID, a.Runtime.GUID,

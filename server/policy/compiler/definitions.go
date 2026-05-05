@@ -26,19 +26,19 @@ import (
 )
 
 const (
-	checkTypeBruteForce      = "builtin.brute_force"
-	checkTypeTLSEncryption   = "builtin.tls_encryption"
-	checkTypeRelayDomains    = "builtin.relay_domains"
-	checkTypeRBL             = "builtin.rbl"
-	checkTypeLuaControl      = "lua.control"
-	checkTypeLDAPBackend     = "backend.ldap"
-	checkTypeLuaBackend      = "backend.lua"
-	checkTypeLuaFilter       = "lua.filter"
-	checkTypeAccountProvider = "backend.account_provider"
+	checkTypeBruteForce      = policy.CheckTypeBruteForce
+	checkTypeTLSEncryption   = policy.CheckTypeTLSEncryption
+	checkTypeRelayDomains    = policy.CheckTypeRelayDomains
+	checkTypeRBL             = policy.CheckTypeRBL
+	checkTypeLuaControl      = policy.CheckTypeLuaControl
+	checkTypeLDAPBackend     = policy.CheckTypeLDAPBackend
+	checkTypeLuaBackend      = policy.CheckTypeLuaBackend
+	checkTypeLuaFilter       = policy.CheckTypeLuaFilter
+	checkTypeAccountProvider = policy.CheckTypeAccountProvider
 
-	runIfAny             = "any"
-	runIfAuthenticated   = "authenticated"
-	runIfUnauthenticated = "unauthenticated"
+	runIfAny             = policy.RunIfAny
+	runIfAuthenticated   = policy.RunIfAuthenticated
+	runIfUnauthenticated = policy.RunIfUnauthenticated
 )
 
 var simpleIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)

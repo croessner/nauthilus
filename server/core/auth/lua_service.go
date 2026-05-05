@@ -99,6 +99,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		Logs:               nil,
 		Context:            auth.Runtime.Context,
 		CommonRequest:      commonRequest,
+		ScriptRecorder:     auth.PolicyScriptRecorder(ctx),
 	}
 
 	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())

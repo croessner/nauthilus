@@ -37,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -258,6 +259,7 @@ type Request struct {
 
 	HTTPClientContext *gin.Context
 	HTTPClientRequest *http.Request
+	ScriptRecorder    policycollection.ScriptRecorder
 	Authenticated     bool
 	NoAuth            bool
 	BruteForceCounter uint
@@ -353,6 +355,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			feature := planned.Value.(*LuaFeature)
 
 			g.Go(func() error {
+				scriptStarted := time.Now()
 				util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature,
 					definitions.LogKeyGUID, r.Session,
 					definitions.LogKeyMsg, "Executing feature script",
@@ -361,6 +364,8 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 				Llocal, acqErr := pool.Acquire(egCtx)
 				if acqErr != nil {
+					r.recordFeatureScriptResult(egCtx, feature.Name, false, false, "", time.Since(scriptStarted), acqErr)
+
 					return acqErr
 				}
 
@@ -440,12 +445,14 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, feature.Name, stopTimer)
+					r.recordFeatureScriptResult(egCtx, feature.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
 
 				if e := lualib.DoCompiledFile(Llocal, feature.CompiledScript); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, feature.Name, stopTimer)
+					r.recordFeatureScriptResult(egCtx, feature.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
@@ -464,6 +471,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				if callFeaturesFunc.Type() == lua.LTFunction {
 					if e := Llocal.CallByParam(lua.P{Fn: callFeaturesFunc, NRet: 3, Protect: true}, request); e != nil {
 						r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, feature.Name, stopTimer)
+						r.recordFeatureScriptResult(egCtx, feature.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
 
 						return e
 					}
@@ -502,6 +510,8 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					stopTimer()
 				}
 
+				r.recordFeatureScriptResult(egCtx, feature.Name, fr.triggered, fr.abort, statusText(localStatus), time.Since(scriptStarted), nil)
+
 				mu.Lock()
 				levelResults = append(levelResults, fr)
 				mu.Unlock()
@@ -537,6 +547,30 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 	}
 
 	return triggered, abortFeatures, nil
+}
+
+func (r *Request) recordFeatureScriptResult(ctx context.Context, name string, triggered bool, abort bool, message string, duration time.Duration, err error) {
+	if r == nil || r.ScriptRecorder == nil {
+		return
+	}
+
+	r.ScriptRecorder.RecordScriptResult(ctx, policycollection.ScriptResult{
+		Err:           err,
+		Kind:          policycollection.ScriptKindControl,
+		Name:          name,
+		StatusMessage: message,
+		Duration:      duration,
+		Triggered:     triggered,
+		Abort:         abort,
+	})
+}
+
+func statusText(status *string) string {
+	if status == nil {
+		return ""
+	}
+
+	return *status
 }
 
 // handleError logs the error message and cancels the Lua context.

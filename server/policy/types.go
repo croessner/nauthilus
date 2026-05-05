@@ -23,6 +23,105 @@ const BuiltinDefaultSet = "standard_auth"
 type Stage string
 
 const (
+	// CheckTypeBruteForce identifies the built-in brute-force evaluator.
+	CheckTypeBruteForce = "builtin.brute_force"
+
+	// CheckTypeTLSEncryption identifies the built-in TLS evaluator.
+	CheckTypeTLSEncryption = "builtin.tls_encryption"
+
+	// CheckTypeRelayDomains identifies the built-in relay-domain evaluator.
+	CheckTypeRelayDomains = "builtin.relay_domains"
+
+	// CheckTypeRBL identifies the built-in RBL evaluator.
+	CheckTypeRBL = "builtin.rbl"
+
+	// CheckTypeLuaControl identifies one named Lua control evaluator.
+	CheckTypeLuaControl = "lua.control"
+
+	// CheckTypeLDAPBackend identifies LDAP backend evaluation.
+	CheckTypeLDAPBackend = "backend.ldap"
+
+	// CheckTypeLuaBackend identifies Lua backend evaluation.
+	CheckTypeLuaBackend = "backend.lua"
+
+	// CheckTypeLuaFilter identifies one named Lua filter evaluator.
+	CheckTypeLuaFilter = "lua.filter"
+
+	// CheckTypeAccountProvider identifies account-provider evaluation.
+	CheckTypeAccountProvider = "backend.account_provider"
+)
+
+const (
+	// RunIfAny selects a check regardless of authentication state.
+	RunIfAny = "any"
+
+	// RunIfAuthenticated selects a check only after authentication succeeded.
+	RunIfAuthenticated = "authenticated"
+
+	// RunIfUnauthenticated selects a check only before authentication succeeds.
+	RunIfUnauthenticated = "unauthenticated"
+)
+
+const (
+	// AttributeRequestOperation stores the active request operation.
+	AttributeRequestOperation = "request.operation"
+
+	// AttributeRequestTime stores the request evaluation timestamp.
+	AttributeRequestTime = "request.time.now"
+
+	// AttributeRequestClientIP stores the request client IP.
+	AttributeRequestClientIP = "request.client.ip"
+
+	// AttributeRequestProtocol stores the request protocol.
+	AttributeRequestProtocol = "request.protocol"
+
+	// AttributeBruteForceTriggered stores whether brute-force matched.
+	AttributeBruteForceTriggered = "auth.brute_force.triggered"
+
+	// AttributeBruteForceError stores a modeled brute-force error.
+	AttributeBruteForceError = "auth.brute_force.error"
+
+	// AttributeTLSSecure stores the accepted TLS state.
+	AttributeTLSSecure = "auth.tls.secure"
+
+	// AttributeRelayDomainPresent stores whether a relay domain was present.
+	AttributeRelayDomainPresent = "auth.relay_domain.present"
+
+	// AttributeRelayDomainKnown stores whether a relay domain is configured.
+	AttributeRelayDomainKnown = "auth.relay_domain.known"
+
+	// AttributeRelayDomainError stores a modeled relay-domain error.
+	AttributeRelayDomainError = "auth.relay_domain.error"
+
+	// AttributeRBLThresholdReached stores whether RBL threshold matched.
+	AttributeRBLThresholdReached = "auth.rbl.threshold_reached"
+
+	// AttributeRBLError stores a modeled RBL error.
+	AttributeRBLError = "auth.rbl.error"
+
+	// AttributeAuthenticated stores backend authentication success.
+	AttributeAuthenticated = "auth.authenticated"
+
+	// AttributeIdentityFound stores identity lookup success.
+	AttributeIdentityFound = "auth.identity.found"
+
+	// AttributeBackendTempFail stores a modeled backend temporary failure.
+	AttributeBackendTempFail = "auth.backend.tempfail"
+
+	// AttributeBackendEmptyUsername stores an empty username result.
+	AttributeBackendEmptyUsername = "auth.backend.empty_username"
+
+	// AttributeBackendEmptyPassword stores an empty password result.
+	AttributeBackendEmptyPassword = "auth.backend.empty_password"
+
+	// AttributeAccountProviderCompleted stores account-provider completion.
+	AttributeAccountProviderCompleted = "auth.account_provider.completed"
+
+	// AttributeAccountProviderTempFail stores account-provider temporary failure.
+	AttributeAccountProviderTempFail = "auth.account_provider.tempfail"
+)
+
+const (
 	// StagePreAuth covers controls that run before backend authentication.
 	StagePreAuth Stage = "pre_auth"
 

@@ -304,9 +304,14 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	if !cfg.HasFeature(definitions.FeatureBruteForce) {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "feature_disabled"))
+		a.markPolicyUnavailable(ctx, "brute_force", "feature_disabled")
 
 		return false
 	}
+
+	defer func() {
+		a.recordPolicyBruteForce(ctx, blockClientIP)
+	}()
 
 	if isLocalOrEmptyIP(a.Request.ClientIP) {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "local_or_empty_ip"))

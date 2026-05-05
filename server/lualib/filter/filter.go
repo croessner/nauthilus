@@ -42,6 +42,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
@@ -398,6 +399,8 @@ type Request struct {
 
 	// CommonRequest represents a common request object with various properties used in different functionalities.
 	*lualib.CommonRequest
+
+	ScriptRecorder policycollection.ScriptRecorder
 }
 
 // handleError logs Lua execution errors for filters with stacktrace when available,
@@ -873,6 +876,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			idx := planned.Index
 			sc := planned.Value.(*LuaFilter)
 			g.Go(func() error {
+				scriptStarted := time.Now()
 				// Per-script span
 				sCtx, sSpan := tr.Start(fctx, "filters.script",
 					attribute.String("name", sc.Name),
@@ -890,6 +894,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				if acqErr != nil {
 					sSpan.RecordError(acqErr)
 					sSpan.End()
+					r.recordFilterScriptResult(egCtx, sc.Name, false, "", time.Since(scriptStarted), acqErr)
 
 					return acqErr
 				}
@@ -1166,6 +1171,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					execSpan.RecordError(e)
 					execSpan.End()
+					r.recordFilterScriptResult(egCtx, sc.Name, false, filterStatusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
@@ -1174,6 +1180,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 					execSpan.RecordError(e)
 					execSpan.End()
+					r.recordFilterScriptResult(egCtx, sc.Name, false, filterStatusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
@@ -1195,6 +1202,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 						r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
 						execSpan.RecordError(e)
 						execSpan.End()
+						r.recordFilterScriptResult(egCtx, sc.Name, false, filterStatusText(localStatus), time.Since(scriptStarted), e)
 
 						return e
 					}
@@ -1259,6 +1267,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				if stopTimer != nil {
 					stopTimer()
 				}
+
+				r.recordFilterScriptResult(egCtx, sc.Name, fr.action, filterStatusText(localStatus), time.Since(scriptStarted), nil)
 
 				mu.Lock()
 				levelResults = append(levelResults, fr)
@@ -1378,4 +1388,27 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 	removeAttributes = mergedRemoveAttributes.GetStringSlice()
 
 	return action, backendResult, removeAttributes, nil
+}
+
+func (r *Request) recordFilterScriptResult(ctx context.Context, name string, action bool, message string, duration time.Duration, err error) {
+	if r == nil || r.ScriptRecorder == nil {
+		return
+	}
+
+	r.ScriptRecorder.RecordScriptResult(ctx, policycollection.ScriptResult{
+		Err:           err,
+		Kind:          policycollection.ScriptKindFilter,
+		Name:          name,
+		StatusMessage: message,
+		Duration:      duration,
+		Action:        action,
+	})
+}
+
+func filterStatusText(status *string) string {
+	if status == nil {
+		return ""
+	}
+
+	return *status
 }

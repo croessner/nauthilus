@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/feature"
+	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -100,6 +101,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		MasterUserMode:     a.Runtime.MasterUserMode,
 		AdditionalFeatures: a.Runtime.AdditionalFeatures,
 		CommonRequest:      cr,
+		ScriptRecorder:     a.PolicyScriptRecorder(ctx),
 	}
 
 	triggered, abortFeatures, err = fr.CallFeatureLua(ctx, a.Cfg(), a.Logger(), a.Redis())
@@ -487,6 +489,8 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		return definitions.AuthResultTempFail
 	}
 
+	defer a.completePolicyStage(ctx, policy.StagePreAuth)
+
 	// Root span for features evaluation
 	tr := monittrace.New("nauthilus/features")
 	fctx, fsp := tr.Start(ctx.Request.Context(), "features.evaluate",
@@ -525,7 +529,10 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		return definitions.AuthResultOK
 	}
 
-	if a.checkTLSEncryptionFeature(ctx) {
+	tlsTriggered := a.checkTLSEncryptionFeature(ctx)
+	a.recordPolicyTLS(ctx, tlsTriggered)
+
+	if tlsTriggered {
 		ctx.Set(definitions.CtxFeatureRejectedKey, true)
 
 		fsp.SetAttributes(attribute.String("decision", "feature_tls"))
@@ -534,7 +541,10 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		return definitions.AuthResultFeatureTLS
 	}
 
-	if a.checkRelayDomainsFeature(ctx) {
+	relayTriggered := a.checkRelayDomainsFeature(ctx)
+	a.recordPolicyRelayDomains(ctx, relayTriggered)
+
+	if relayTriggered {
 		ctx.Set(definitions.CtxFeatureRejectedKey, true)
 
 		fsp.SetAttributes(attribute.String("decision", "feature_relay_domains"))
@@ -543,13 +553,18 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		return definitions.AuthResultFeatureRelayDomain
 	}
 
-	if triggered, err := a.checkRBLFeature(ctx); err != nil {
+	triggered, err := a.checkRBLFeature(ctx)
+	if err != nil {
+		a.recordPolicyRBL(ctx, triggered, err)
 		fsp.RecordError(err)
 		fsp.SetAttributes(attribute.String("decision", "tempfail"))
 		fsp.End()
 
 		return definitions.AuthResultTempFail
-	} else if triggered {
+	}
+
+	if triggered {
+		a.recordPolicyRBL(ctx, triggered, nil)
 		ctx.Set(definitions.CtxFeatureRejectedKey, true)
 
 		fsp.SetAttributes(attribute.String("decision", "feature_rbl"))
@@ -557,6 +572,8 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 
 		return definitions.AuthResultFeatureRBL
 	}
+
+	a.recordPolicyRBL(ctx, triggered, nil)
 
 	fsp.SetAttributes(attribute.String("decision", "ok"))
 	fsp.End()

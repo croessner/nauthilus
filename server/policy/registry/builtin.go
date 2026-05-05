@@ -18,13 +18,13 @@ package registry
 import "github.com/croessner/nauthilus/server/policy"
 
 const (
-	producerBruteForce      = "builtin.brute_force"
-	producerTLSEncryption   = "builtin.tls_encryption"
-	producerRelayDomains    = "builtin.relay_domains"
-	producerRBL             = "builtin.rbl"
-	producerLDAPBackend     = "backend.ldap"
-	producerLuaBackend      = "backend.lua"
-	producerAccountProvider = "backend.account_provider"
+	producerBruteForce      = policy.CheckTypeBruteForce
+	producerTLSEncryption   = policy.CheckTypeTLSEncryption
+	producerRelayDomains    = policy.CheckTypeRelayDomains
+	producerRBL             = policy.CheckTypeRBL
+	producerLDAPBackend     = policy.CheckTypeLDAPBackend
+	producerLuaBackend      = policy.CheckTypeLuaBackend
+	producerAccountProvider = policy.CheckTypeAccountProvider
 )
 
 // NewBuiltinAttributeRegistry returns the minimum Go-owned attribute registry.
@@ -71,17 +71,17 @@ func newOperationSets() operationSets {
 
 func requestAttributes(allOperations []policy.Operation) []AttributeDefinition {
 	return []AttributeDefinition{
-		requestAttribute("request.operation", AttributeTypeString, allOperations),
-		requestAttribute("request.time.now", AttributeTypeDateTime, allOperations),
-		requestAttribute("request.client.ip", AttributeTypeIP, allOperations),
-		requestAttribute("request.protocol", AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestOperation, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestTime, AttributeTypeDateTime, allOperations),
+		requestAttribute(policy.AttributeRequestClientIP, AttributeTypeIP, allOperations),
+		requestAttribute(policy.AttributeRequestProtocol, AttributeTypeString, allOperations),
 	}
 }
 
 func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operation) []AttributeDefinition {
 	return []AttributeDefinition{
 		{
-			ID:            "auth.brute_force.triggered",
+			ID:            policy.AttributeBruteForceTriggered,
 			Description:   "Brute-force protection matched the current request.",
 			Stage:         policy.StagePreAuth,
 			Operations:    authOnly,
@@ -96,7 +96,7 @@ func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operatio
 			},
 		},
 		{
-			ID:            "auth.brute_force.error",
+			ID:            policy.AttributeBruteForceError,
 			Description:   "Brute-force evaluation failed due to a technical runtime error.",
 			Stage:         policy.StagePreAuth,
 			Operations:    authOnly,
@@ -107,7 +107,7 @@ func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operatio
 			Details:       errorDetails(true),
 		},
 		{
-			ID:            "auth.tls.secure",
+			ID:            policy.AttributeTLSSecure,
 			Description:   "The request arrived over an accepted TLS path.",
 			Stage:         policy.StagePreAuth,
 			Operations:    authLookup,
@@ -121,23 +121,23 @@ func preAuthAttributes(authOnly []policy.Operation, authLookup []policy.Operatio
 
 func backendAttributes(authOnly []policy.Operation, authLookup []policy.Operation) []AttributeDefinition {
 	return []AttributeDefinition{
-		relayDomainAttribute("auth.relay_domain.present", "A relay domain was present in the request.", authOnly),
-		relayDomainAttribute("auth.relay_domain.known", "The relay domain is known to the configured control.", authOnly),
+		relayDomainAttribute(policy.AttributeRelayDomainPresent, "A relay domain was present in the request.", authOnly),
+		relayDomainAttribute(policy.AttributeRelayDomainKnown, "The relay domain is known to the configured control.", authOnly),
 		relayDomainErrorAttribute(authOnly),
 		rblThresholdAttribute(authLookup),
 		rblErrorAttribute(authLookup),
-		backendAttribute("auth.authenticated", "Backend authentication succeeded.", policy.StageAuthBackend, authOnly, AttributeCategorySubject, AttributeTypeBool, "backend"),
-		backendAttribute("auth.identity.found", "Backend identity lookup found the requested user.", policy.StageAuthBackend, []policy.Operation{policy.OperationLookupIdentity}, AttributeCategorySubject, AttributeTypeBool, "backend"),
+		backendAttribute(policy.AttributeAuthenticated, "Backend authentication succeeded.", policy.StageAuthBackend, authOnly, AttributeCategorySubject, AttributeTypeBool, "backend"),
+		backendAttribute(policy.AttributeIdentityFound, "Backend identity lookup found the requested user.", policy.StageAuthBackend, []policy.Operation{policy.OperationLookupIdentity}, AttributeCategorySubject, AttributeTypeBool, "backend"),
 		backendTempfailAttribute(authLookup),
-		backendAttribute("auth.backend.empty_username", "The request has no username.", policy.StageAuthBackend, authLookup, AttributeCategorySubject, AttributeTypeBool),
-		backendAttribute("auth.backend.empty_password", "The request has no password.", policy.StageAuthBackend, authOnly, AttributeCategorySubject, AttributeTypeBool),
+		backendAttribute(policy.AttributeBackendEmptyUsername, "The request has no username.", policy.StageAuthBackend, authLookup, AttributeCategorySubject, AttributeTypeBool),
+		backendAttribute(policy.AttributeBackendEmptyPassword, "The request has no password.", policy.StageAuthBackend, authOnly, AttributeCategorySubject, AttributeTypeBool),
 	}
 }
 
 func accountProviderAttributes(listOnly []policy.Operation) []AttributeDefinition {
 	return []AttributeDefinition{
 		{
-			ID:            "auth.account_provider.completed",
+			ID:            policy.AttributeAccountProviderCompleted,
 			Description:   "Account-provider evaluation completed.",
 			Stage:         policy.StageAccountProvider,
 			Operations:    listOnly,
@@ -150,7 +150,7 @@ func accountProviderAttributes(listOnly []policy.Operation) []AttributeDefinitio
 			},
 		},
 		{
-			ID:            "auth.account_provider.tempfail",
+			ID:            policy.AttributeAccountProviderTempFail,
 			Description:   "Account-provider evaluation failed temporarily.",
 			Stage:         policy.StageAccountProvider,
 			Operations:    listOnly,
@@ -179,7 +179,7 @@ func relayDomainAttribute(id string, description string, operations []policy.Ope
 
 func relayDomainErrorAttribute(operations []policy.Operation) AttributeDefinition {
 	return AttributeDefinition{
-		ID:            "auth.relay_domain.error",
+		ID:            policy.AttributeRelayDomainError,
 		Description:   "Relay-domain evaluation failed due to a technical runtime error.",
 		Stage:         policy.StagePreAuth,
 		Operations:    operations,
@@ -193,7 +193,7 @@ func relayDomainErrorAttribute(operations []policy.Operation) AttributeDefinitio
 
 func rblThresholdAttribute(operations []policy.Operation) AttributeDefinition {
 	return AttributeDefinition{
-		ID:            "auth.rbl.threshold_reached",
+		ID:            policy.AttributeRBLThresholdReached,
 		Description:   "RBL evaluation reached the configured rejection threshold.",
 		Stage:         policy.StagePreAuth,
 		Operations:    operations,
@@ -209,7 +209,7 @@ func rblThresholdAttribute(operations []policy.Operation) AttributeDefinition {
 
 func rblErrorAttribute(operations []policy.Operation) AttributeDefinition {
 	return AttributeDefinition{
-		ID:            "auth.rbl.error",
+		ID:            policy.AttributeRBLError,
 		Description:   "RBL evaluation failed due to a technical runtime error.",
 		Stage:         policy.StagePreAuth,
 		Operations:    operations,
@@ -223,7 +223,7 @@ func rblErrorAttribute(operations []policy.Operation) AttributeDefinition {
 
 func backendTempfailAttribute(operations []policy.Operation) AttributeDefinition {
 	return AttributeDefinition{
-		ID:            "auth.backend.tempfail",
+		ID:            policy.AttributeBackendTempFail,
 		Description:   "Backend evaluation failed due to a temporary technical runtime error.",
 		Stage:         policy.StageAuthBackend,
 		Operations:    operations,

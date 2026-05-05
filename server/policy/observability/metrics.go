@@ -17,6 +17,7 @@ package observability
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/policy"
@@ -163,6 +164,27 @@ func SafeRecorder(recorder Recorder) Recorder {
 	}
 
 	return recorder
+}
+
+var (
+	defaultRecorder     Recorder
+	defaultRecorderOnce sync.Once
+)
+
+// DefaultRecorder returns the process-wide policy metrics recorder.
+func DefaultRecorder() Recorder {
+	defaultRecorderOnce.Do(func() {
+		recorder, err := NewPrometheusRecorder(nil)
+		if err != nil {
+			defaultRecorder = nopRecorder{}
+
+			return
+		}
+
+		defaultRecorder = recorder
+	})
+
+	return SafeRecorder(defaultRecorder)
 }
 
 // PrometheusRecorder owns policy-specific Prometheus collectors.

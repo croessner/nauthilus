@@ -60,9 +60,21 @@ type AttributeValue struct {
 
 // CheckResult is the report-facing shape for a collected check.
 type CheckResult struct {
-	Name   string             `json:"name"`
-	Stage  policy.Stage       `json:"stage"`
-	Status policy.CheckStatus `json:"status"`
+	Name         string             `json:"name"`
+	Type         string             `json:"type,omitempty"`
+	Reason       string             `json:"reason,omitempty"`
+	Operation    policy.Operation   `json:"operation,omitempty"`
+	Stage        policy.Stage       `json:"stage"`
+	Status       policy.CheckStatus `json:"status"`
+	DecisionHint policy.Decision    `json:"decision_hint,omitempty"`
+	Matched      bool               `json:"matched,omitempty"`
+	Attributes   []string           `json:"attributes,omitempty"`
+}
+
+// UnavailableFact records a fact source that was intentionally not executed.
+type UnavailableFact struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // PolicyDecision is the report-facing shape for one selected policy rule.
@@ -88,22 +100,26 @@ type ObserveReport struct {
 
 // DecisionReport is the redaction-aware container for policy diagnostics.
 type DecisionReport struct {
-	SessionID  string                    `json:"session_id,omitempty"`
-	Operation  policy.Operation          `json:"operation,omitempty"`
-	Stage      policy.Stage              `json:"stage,omitempty"`
-	Attributes map[string]AttributeValue `json:"attributes"`
-	Checks     map[string]CheckResult    `json:"checks"`
-	Policies   []PolicyDecision          `json:"policies"`
-	Final      *FinalDecision            `json:"final,omitempty"`
-	Observe    *ObserveReport            `json:"observe,omitempty"`
+	SessionID     string                     `json:"session_id,omitempty"`
+	Operation     policy.Operation           `json:"operation,omitempty"`
+	Stage         policy.Stage               `json:"stage,omitempty"`
+	Attributes    map[string]AttributeValue  `json:"attributes"`
+	Checks        map[string]CheckResult     `json:"checks"`
+	MissingChecks map[string]string          `json:"missing_checks,omitempty"`
+	Unavailable   map[string]UnavailableFact `json:"unavailable,omitempty"`
+	Policies      []PolicyDecision           `json:"policies"`
+	Final         *FinalDecision             `json:"final,omitempty"`
+	Observe       *ObserveReport             `json:"observe,omitempty"`
 }
 
 // NewDecisionReport returns an empty report with initialized collections.
 func NewDecisionReport() *DecisionReport {
 	return &DecisionReport{
-		Attributes: make(map[string]AttributeValue),
-		Checks:     make(map[string]CheckResult),
-		Policies:   make([]PolicyDecision, 0),
+		Attributes:    make(map[string]AttributeValue),
+		Checks:        make(map[string]CheckResult),
+		MissingChecks: make(map[string]string),
+		Unavailable:   make(map[string]UnavailableFact),
+		Policies:      make([]PolicyDecision, 0),
 	}
 }
 
@@ -114,14 +130,16 @@ func (r *DecisionReport) Redacted() *DecisionReport {
 	}
 
 	redacted := &DecisionReport{
-		SessionID:  r.SessionID,
-		Operation:  r.Operation,
-		Stage:      r.Stage,
-		Attributes: make(map[string]AttributeValue, len(r.Attributes)),
-		Checks:     make(map[string]CheckResult, len(r.Checks)),
-		Policies:   append([]PolicyDecision(nil), r.Policies...),
-		Final:      r.Final,
-		Observe:    r.Observe,
+		SessionID:     r.SessionID,
+		Operation:     r.Operation,
+		Stage:         r.Stage,
+		Attributes:    make(map[string]AttributeValue, len(r.Attributes)),
+		Checks:        make(map[string]CheckResult, len(r.Checks)),
+		MissingChecks: make(map[string]string, len(r.MissingChecks)),
+		Unavailable:   make(map[string]UnavailableFact, len(r.Unavailable)),
+		Policies:      append([]PolicyDecision(nil), r.Policies...),
+		Final:         r.Final,
+		Observe:       r.Observe,
 	}
 
 	for id, attribute := range r.Attributes {
@@ -130,6 +148,14 @@ func (r *DecisionReport) Redacted() *DecisionReport {
 
 	for name, check := range r.Checks {
 		redacted.Checks[name] = check
+	}
+
+	for name, reason := range r.MissingChecks {
+		redacted.MissingChecks[name] = reason
+	}
+
+	for name, fact := range r.Unavailable {
+		redacted.Unavailable[name] = fact
 	}
 
 	return redacted
