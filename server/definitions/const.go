@@ -1148,6 +1148,9 @@ const (
 
 	// DbgCookie represents the debug module for cookie-related operations.
 	DbgCookie
+
+	// DbgPolicy represents the debug module for internal policy diagnostics.
+	DbgPolicy
 )
 
 const (
@@ -1213,6 +1216,9 @@ const (
 
 	// DbgCookieName is the debug identifier for cookie
 	DbgCookieName = "cookie"
+
+	// DbgPolicyName is the debug identifier for internal policy diagnostics.
+	DbgPolicyName = "policy"
 )
 
 const (

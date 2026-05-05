@@ -136,6 +136,7 @@ func NewDbgModuleMapping() *DbgModuleMapping {
 			DbgIdpName:       DbgIdp,
 			DbgAccountName:   DbgAccount,
 			DbgCookieName:    DbgCookie,
+			DbgPolicyName:    DbgPolicy,
 		},
 		ModToStr: map[DbgModule]string{
 			DbgAll:       DbgAllName,
@@ -158,6 +159,7 @@ func NewDbgModuleMapping() *DbgModuleMapping {
 			DbgJWT:       DbgJWTName,
 			DbgHTTP:      DbgHTTPName,
 			DbgCookie:    DbgCookieName,
+			DbgPolicy:    DbgPolicyName,
 		},
 	}
 }
