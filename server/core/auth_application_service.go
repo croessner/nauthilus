@@ -88,8 +88,12 @@ type AuthOutcome struct {
 
 // ListAccountsOutcome contains the account-provider response.
 type ListAccountsOutcome struct {
-	Accounts AccountList
-	Session  string
+	Accounts      AccountList
+	Decision      AuthDecision
+	Session       string
+	StatusMessage string
+	Error         string
+	HTTPStatus    int
 }
 
 // AuthApplicationService runs auth use cases behind transport adapters.
@@ -270,9 +274,15 @@ func (s *authApplicationService) ListAccounts(ctx context.Context, input AuthInp
 	accounts := auth.ListUserAccounts()
 	_ = level.Info(auth.logger()).Log(definitions.LogKeyGUID, auth.Runtime.GUID, definitions.LogKeyMode, string(AuthModeListAccounts))
 
+	if captured := capture.Outcome(); captured.Decision != CapturedAuthDecisionUnset {
+		return listAccountsOutcomeFromCaptured(captured), nil
+	}
+
 	return &ListAccountsOutcome{
-		Accounts: accounts,
-		Session:  auth.Runtime.GUID,
+		Accounts:   accounts,
+		Decision:   AuthDecisionOK,
+		Session:    auth.Runtime.GUID,
+		HTTPStatus: http.StatusOK,
 	}, nil
 }
 
@@ -417,6 +427,16 @@ func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
 		Error:           captured.Error,
 		Backend:         captured.Backend,
 		HTTPStatus:      captured.HTTPStatus,
+	}
+}
+
+func listAccountsOutcomeFromCaptured(captured CapturedAuthOutcome) *ListAccountsOutcome {
+	return &ListAccountsOutcome{
+		Decision:      authDecisionFromCaptured(captured.Decision),
+		Session:       captured.Session,
+		StatusMessage: captured.StatusMessage,
+		Error:         captured.Error,
+		HTTPStatus:    captured.HTTPStatus,
 	}
 }
 

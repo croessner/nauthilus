@@ -241,8 +241,8 @@ func TestAuthApplicationService_AuthenticateValidatesStructuredInput(t *testing.
 		t.Fatal("expected validation error")
 	}
 
-	var inputErr *AuthInputError
-	if !stderrors.As(err, &inputErr) {
+	inputErr, ok := stderrors.AsType[*AuthInputError](err)
+	if !ok {
 		t.Fatalf("error = %T, want *AuthInputError", err)
 	}
 
@@ -297,8 +297,8 @@ func TestAuthApplicationService_ValidatesRequiredInputs(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 
-			var inputErr *AuthInputError
-			if !stderrors.As(err, &inputErr) {
+			inputErr, ok := stderrors.AsType[*AuthInputError](err)
+			if !ok {
 				t.Fatalf("error = %T, want *AuthInputError", err)
 			}
 
@@ -372,8 +372,7 @@ func TestAuthApplicationService_ListAccountsRejectsOIDCClaimsWithoutScope(t *tes
 		t.Fatal("expected list-accounts scope rejection")
 	}
 
-	var permissionErr *AuthPermissionDeniedError
-	if !stderrors.As(err, &permissionErr) {
+	if _, ok := stderrors.AsType[*AuthPermissionDeniedError](err); !ok {
 		t.Fatalf("error = %T, want *AuthPermissionDeniedError", err)
 	}
 }

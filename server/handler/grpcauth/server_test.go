@@ -677,6 +677,7 @@ func TestBufconnAuthServiceListAccountsSuccess(t *testing.T) {
 	service := &recordingService{
 		listOutcome: &core.ListAccountsOutcome{
 			Accounts: core.AccountList{"alpha@example.test", "zeta@example.test"},
+			Decision: core.AuthDecisionOK,
 			Session:  "bufconn-list-session",
 		},
 	}
@@ -700,6 +701,39 @@ func TestBufconnAuthServiceListAccountsSuccess(t *testing.T) {
 
 	if service.listInput.Mode != core.AuthModeListAccounts {
 		t.Fatalf("mode = %q, want %q", service.listInput.Mode, core.AuthModeListAccounts)
+	}
+}
+
+func TestBufconnAuthServiceListAccountsPolicyDenialUsesResponseMetadata(t *testing.T) {
+	service := &recordingService{
+		listOutcome: &core.ListAccountsOutcome{
+			Decision:      core.AuthDecisionFail,
+			Session:       "bufconn-list-deny-session",
+			StatusMessage: "Custom account listing deny",
+			HTTPStatus:    403,
+		},
+	}
+	client := newBufconnAuthServiceClient(t, service)
+	ctx := outgoingBasicAuthContext(context.Background())
+	var header metadata.MD
+
+	response, err := client.ListAccounts(ctx, &authv1.ListAccountsRequest{
+		ClientIp: "203.0.113.34",
+	}, grpc.Header(&header))
+	if err != nil {
+		t.Fatalf("ListAccounts returned transport error: %v", err)
+	}
+
+	if len(response.GetAccounts()) != 0 {
+		t.Fatalf("accounts = %#v, want empty response data on policy denial", response.GetAccounts())
+	}
+
+	if response.GetSession() != "bufconn-list-deny-session" {
+		t.Fatalf("session = %q, want bufconn-list-deny-session", response.GetSession())
+	}
+
+	if got := header.Get("auth-status"); len(got) != 1 || got[0] != "Custom account listing deny" {
+		t.Fatalf("auth-status metadata = %#v, want configured denial message", got)
 	}
 }
 

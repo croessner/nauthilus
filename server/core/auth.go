@@ -52,6 +52,7 @@ import (
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/policy/evaluation"
+	"github.com/croessner/nauthilus/server/policy/report"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
@@ -3247,11 +3248,8 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	errSeen := false
 
 	defer func() {
-		a.recordPolicyAccountProvider(ginCtx, len(accountList), errSeen)
-		a.completePolicyStage(ginCtx, policy.StageAccountProvider)
-		final, _ := a.defaultPolicyAuthDecision(ginCtx)
-		if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ginCtx), final)); err != nil {
-			_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, err.Error())
+		if a.finishListAccountsPolicy(ginCtx, len(accountList), errSeen) {
+			return
 		}
 
 		a.comparePolicyDecision(ginCtx, evaluation.ProductionOutcome{
@@ -3328,6 +3326,54 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	}
 
 	return accountList
+}
+
+func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSeen bool) bool {
+	a.recordPolicyAccountProvider(ctx, count, errSeen)
+	a.completePolicyStage(ctx, policy.StageAccountProvider)
+
+	final, configured := a.listAccountsPolicyDecision(ctx)
+	if final == nil {
+		return false
+	}
+
+	if configured {
+		a.storeDirectPolicyDiagnostic(ctx, evaluation.ProductionOutcome{
+			Effect:                  policy.DecisionPermit,
+			ResponseMarker:          policy.ResponseMarkerListAccountsOK,
+			CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
+			CurrentFSMEventPath:     a.currentFSMEventPath(),
+		})
+		if listAccountsPolicyTerminates(final) {
+			a.applyPolicyDecision(ctx, final)
+
+			return true
+		}
+	}
+
+	if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ctx), final)); err != nil {
+		_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, err.Error())
+	}
+
+	return false
+}
+
+func (a *AuthState) listAccountsPolicyDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
+	if final, ok := a.configuredPolicyAuthDecision(ctx); ok {
+		return final, true
+	}
+
+	final, _ := a.defaultPolicyAuthDecision(ctx)
+
+	return final, false
+}
+
+func listAccountsPolicyTerminates(final *report.FinalDecision) bool {
+	if final == nil {
+		return false
+	}
+
+	return final.Effect == policy.DecisionDeny || final.Effect == policy.DecisionTempFail
 }
 
 // String returns a human-readable representation of the PassDBResult.

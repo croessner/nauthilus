@@ -191,6 +191,10 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 // any of the supported types.
 func (a *AuthState) writeListAccountsResponse(ctx *gin.Context) {
 	accounts := a.ListUserAccounts()
+	if ctx.IsAborted() || ctx.Writer.Written() {
+		return
+	}
+
 	chosen := listAccountsNegotiator.BestMatch(ctx.GetHeader("Accept"))
 
 	switch chosen {

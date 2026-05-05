@@ -26,7 +26,9 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -113,10 +115,45 @@ func (h *Handler) ListAccounts(
 		return nil, status.Error(codes.Internal, "auth application service returned no list-accounts outcome")
 	}
 
+	if listAccountsDenied(outcome) {
+		setListAccountsHeaders(ctx, outcome)
+
+		return &authv1.ListAccountsResponse{
+			Session: outcome.Session,
+		}, nil
+	}
+
 	return &authv1.ListAccountsResponse{
 		Accounts: []string(outcome.Accounts),
 		Session:  outcome.Session,
 	}, nil
+}
+
+func listAccountsDenied(outcome *core.ListAccountsOutcome) bool {
+	return outcome != nil &&
+		outcome.Decision != "" &&
+		outcome.Decision != core.AuthDecisionOK
+}
+
+func setListAccountsHeaders(ctx context.Context, outcome *core.ListAccountsOutcome) {
+	pairs := make([]string, 0, 6)
+	if outcome.StatusMessage != "" {
+		pairs = append(pairs, "auth-status", outcome.StatusMessage)
+	}
+
+	if outcome.Error != "" {
+		pairs = append(pairs, "auth-error", outcome.Error)
+	}
+
+	if outcome.Session != "" {
+		pairs = append(pairs, "x-nauthilus-session", outcome.Session)
+	}
+
+	if len(pairs) == 0 {
+		return
+	}
+
+	_ = grpc.SetHeader(ctx, metadata.Pairs(pairs...))
 }
 
 func authOutcomeToProto(outcome *core.AuthOutcome) *authv1.AuthResponse {
@@ -184,18 +221,15 @@ func grpcErrorFromServiceError(err error) error {
 		return nil
 	}
 
-	var inputErr *core.AuthInputError
-	if stderrors.As(err, &inputErr) {
+	if inputErr, ok := stderrors.AsType[*core.AuthInputError](err); ok {
 		return status.Error(codes.InvalidArgument, inputErr.Error())
 	}
 
-	var rejectedErr *core.AuthPreprocessRejectedError
-	if stderrors.As(err, &rejectedErr) {
+	if rejectedErr, ok := stderrors.AsType[*core.AuthPreprocessRejectedError](err); ok {
 		return status.Error(codes.PermissionDenied, rejectedErr.Error())
 	}
 
-	var permissionErr *core.AuthPermissionDeniedError
-	if stderrors.As(err, &permissionErr) {
+	if permissionErr, ok := stderrors.AsType[*core.AuthPermissionDeniedError](err); ok {
 		return status.Error(codes.PermissionDenied, permissionErr.Error())
 	}
 
