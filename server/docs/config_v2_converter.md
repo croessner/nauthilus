@@ -32,6 +32,8 @@ Current scope:
 - structural rewrite from legacy roots such as `server`, `ldap`, `lua`, `idp`, `realtime_blackhole_lists`, and `brute_force`
 - migration of optional LDAP pools and optional Lua backends
 - migration of legacy `server.features` and `lua.features` aliases
+- generation of the target `auth.policy` skeleton, policy checks, and `standard_auth`-equivalent rules
+- rewrite of legacy Lua scheduler keys into policy `operations`, `run_if.auth_state`, and `after`
 - preservation of top-level extension roots such as `x-claim-*`, `x-scope-*`, and similar `x-*` mappings
 - support for legacy dotted keys such as `server.oidc_auth.enabled` and `server.keep_alive.enabled`
 - preservation of legacy YAML mapping order where the target structure still allows it
@@ -86,6 +88,10 @@ The converter is intentionally conservative:
 - canonical names are enforced where old aliases are no longer accepted
 - runtime listener settings are emitted under `runtime.servers.http`
 - shared runtime timeouts are emitted under `runtime.timeouts` so HTTP and gRPC transports use the same values
+- legacy `when_no_auth`, `when_authenticated`, and `when_unauthenticated` values are converted into policy check scheduling
+- legacy Lua `depends_on` values are converted into policy check-plan `after` dependencies
+- generated Lua policy checks are per script, using `lua.control` and `lua.filter` check types instead of aggregate checks
+- generated target YAML does not retain legacy `when_*` or Lua `depends_on` keys
 - current config-v2 roots already present in the file are preserved
 - top-level `x-*` extension roots are preserved as-is
 - best-effort `x-*` anchor/alias reuse is restored in the generated YAML when the converted structure still references the same subtree

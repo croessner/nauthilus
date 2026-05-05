@@ -39,6 +39,12 @@ VALIDATE_CMD = ("go", "run", "./server")
 V2_ROOTS = ("runtime", "observability", "storage", "auth", "identity")
 LOADER_ROOTS = ("includes", "env", "patch")
 TOP_LEVEL_ORDER = ("includes", "env", "patch", "runtime", "observability", "storage", "auth", "identity")
+AUTHENTICATE_OPERATION = "authenticate"
+LOOKUP_IDENTITY_OPERATION = "lookup_identity"
+LIST_ACCOUNTS_OPERATION = "list_accounts"
+STANDARD_AUTH_POLICY = "standard_auth"
+LEGACY_SCHEDULER_KEYS = ("when_no_auth", "when_authenticated", "when_unauthenticated")
+LUA_DEPENDENCY_KEY = "depends_on"
 
 CONTROL_NAME_MAP = {
     "brute_force": "brute_force",
@@ -218,6 +224,405 @@ class AnchorRegistry:
     fingerprint_to_anchor: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class PolicyCheckDescriptor:
+    """Describe one generated policy check before YAML materialization."""
+
+    name: str
+    check_type: str
+    stage: str
+    config_ref: str
+    output: str
+    operations: list[str] = field(default_factory=list)
+    after: list[str] = field(default_factory=list)
+    run_if_auth_state: str | None = None
+    script_name: str = ""
+
+    def as_config(self) -> dict[str, Any]:
+        """Return the policy check in config order."""
+        config: dict[str, Any] = {
+            "name": self.name,
+            "type": self.check_type,
+            "stage": self.stage,
+        }
+
+        if self.operations:
+            config["operations"] = append_unique_items([], self.operations)
+
+        if self.run_if_auth_state:
+            config["run_if"] = {"auth_state": self.run_if_auth_state}
+
+        if self.after:
+            config["after"] = append_unique_items([], self.after)
+
+        config["config_ref"] = self.config_ref
+        config["output"] = self.output
+
+        return config
+
+
+class PolicyConversionPlanner:
+    """Generate target auth.policy config from migrated mechanism config."""
+
+    def __init__(
+        self,
+        document: dict[str, Any],
+        report: ConversionReport,
+        control_scheduler_hints: dict[str, dict[str, Any]] | None = None,
+    ):
+        self.document = document
+        self.report = report
+        self.control_scheduler_hints = control_scheduler_hints or {}
+        self.checks: list[PolicyCheckDescriptor] = []
+        self.lua_control_checks: list[PolicyCheckDescriptor] = []
+        self.lua_filter_checks: list[PolicyCheckDescriptor] = []
+        self.backend_checks: list[PolicyCheckDescriptor] = []
+        self.account_provider_check: PolicyCheckDescriptor | None = None
+
+    def apply(self) -> None:
+        """Apply generated target policy config and remove legacy scheduler keys."""
+        policy_config = self._ensure_policy_section()
+        self.checks = self._build_checks()
+        self._merge_named_list(policy_config, "checks", [check.as_config() for check in self.checks])
+        self._merge_named_list(policy_config, "policies", self._build_policies())
+        self._strip_legacy_scheduler_surface()
+
+    def _ensure_policy_section(self) -> dict[str, Any]:
+        auth = ensure_mapping(self.document, ("auth",))
+        policy_config = ensure_mapping(auth, ("policy",))
+
+        policy_config.setdefault("mode", "enforce")
+        policy_config.setdefault("default_policy", STANDARD_AUTH_POLICY)
+        policy_config.setdefault("registry_scripts", [])
+
+        sets = ensure_mapping(policy_config, ("sets",))
+        sets.setdefault("networks", {})
+        sets.setdefault("time_windows", {})
+
+        report = ensure_mapping(policy_config, ("report",))
+        report.setdefault("enabled", False)
+        report.setdefault("include_fsm", True)
+        report.setdefault("include_checks", True)
+        report.setdefault("include_attributes", False)
+
+        return policy_config
+
+    def _build_checks(self) -> list[PolicyCheckDescriptor]:
+        checks: list[PolicyCheckDescriptor] = []
+        controls = self._enabled_control_items()
+
+        if "brute_force" in controls:
+            checks.append(
+                builtin_check(
+                    "brute_force",
+                    "builtin.brute_force",
+                    "pre_auth",
+                    "auth.controls.brute_force",
+                    [AUTHENTICATE_OPERATION],
+                )
+            )
+
+        self.lua_control_checks = self._lua_script_checks(
+            ("auth", "controls", "lua", "controls"),
+            "lua_control",
+            "lua.control",
+            "pre_auth",
+            "auth.controls.lua.controls",
+        )
+        checks.extend(self.lua_control_checks)
+
+        if "tls_encryption" in controls:
+            checks.append(
+                builtin_check(
+                    "tls_encryption",
+                    "builtin.tls_encryption",
+                    "pre_auth",
+                    "auth.controls.tls_encryption",
+                    operations_from_lookup_flag(controls["tls_encryption"].get("when_no_auth")),
+                )
+            )
+
+        if "relay_domains" in controls:
+            checks.append(
+                builtin_check(
+                    "relay_domains",
+                    "builtin.relay_domains",
+                    "pre_auth",
+                    "auth.controls.relay_domains",
+                    [AUTHENTICATE_OPERATION],
+                )
+            )
+
+        if "rbl" in controls:
+            checks.append(
+                builtin_check(
+                    "rbl",
+                    "builtin.rbl",
+                    "pre_auth",
+                    "auth.controls.rbl",
+                    operations_from_lookup_flag(controls["rbl"].get("when_no_auth")),
+                )
+            )
+
+        self.backend_checks = self._backend_checks()
+        checks.extend(self.backend_checks)
+
+        self.lua_filter_checks = self._lua_script_checks(
+            ("auth", "controls", "lua", "filters"),
+            "lua_filter",
+            "lua.filter",
+            "auth_filters",
+            "auth.controls.lua.filters",
+        )
+        checks.extend(self.lua_filter_checks)
+
+        self.account_provider_check = self._account_provider_check()
+        if self.account_provider_check is not None:
+            checks.append(self.account_provider_check)
+
+        return checks
+
+    def _enabled_control_items(self) -> dict[str, dict[str, Any]]:
+        value, exists = get_nested_value(self.document, ("auth", "controls", "enabled"))
+        if not exists or not isinstance(value, list):
+            return {}
+
+        controls: dict[str, dict[str, Any]] = {}
+        for entry in value:
+            if isinstance(entry, str):
+                controls.setdefault(entry, {"name": entry})
+                continue
+
+            if not isinstance(entry, dict):
+                continue
+
+            name = entry.get("name")
+            if isinstance(name, str) and name:
+                controls[name] = copy.deepcopy(entry)
+
+        for name, hints in self.control_scheduler_hints.items():
+            controls.setdefault(name, {"name": name}).update(copy.deepcopy(hints))
+
+        return controls
+
+    def _lua_script_checks(
+        self,
+        path: tuple[str, ...],
+        check_prefix: str,
+        check_type: str,
+        stage: str,
+        config_prefix: str,
+    ) -> list[PolicyCheckDescriptor]:
+        scripts, exists = get_nested_value(self.document, path)
+        if not exists or not isinstance(scripts, list):
+            return []
+
+        checks: list[PolicyCheckDescriptor] = []
+
+        for script in scripts:
+            if not isinstance(script, dict):
+                continue
+
+            name = script.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+
+            check_name = f"{check_prefix}_{name}"
+            after = [
+                f"{check_prefix}_{dependency}"
+                for dependency in script.get(LUA_DEPENDENCY_KEY, [])
+                if isinstance(dependency, str) and dependency
+            ]
+            checks.append(
+                PolicyCheckDescriptor(
+                    name=check_name,
+                    check_type=check_type,
+                    stage=stage,
+                    operations=operations_from_lookup_flag(script.get("when_no_auth")),
+                    run_if_auth_state=run_if_auth_state(script),
+                    after=after,
+                    config_ref=f"{config_prefix}.{name}",
+                    output=f"checks.{check_name}",
+                    script_name=name,
+                )
+            )
+
+        return checks
+
+    def _backend_checks(self) -> list[PolicyCheckDescriptor]:
+        checks: list[PolicyCheckDescriptor] = []
+        backend_order = self._backend_order()
+
+        if "ldap" in backend_order or self._has_nonempty_result(("auth", "backends", "ldap")):
+            checks.append(
+                builtin_check(
+                    "ldap_backend",
+                    "backend.ldap",
+                    "auth_backend",
+                    "auth.backends.ldap",
+                    [AUTHENTICATE_OPERATION, LOOKUP_IDENTITY_OPERATION],
+                )
+            )
+
+        if "lua" in backend_order or self._has_nonempty_result(("auth", "backends", "lua", "backend")):
+            checks.append(
+                builtin_check(
+                    "lua_backend",
+                    "backend.lua",
+                    "auth_backend",
+                    "auth.backends.lua.backend",
+                    [AUTHENTICATE_OPERATION, LOOKUP_IDENTITY_OPERATION],
+                )
+            )
+
+        return checks
+
+    def _backend_order(self) -> set[str]:
+        value, exists = get_nested_value(self.document, ("auth", "backends", "order"))
+        if not exists or not isinstance(value, list):
+            return set()
+
+        return {item for item in value if isinstance(item, str)}
+
+    def _account_provider_check(self) -> PolicyCheckDescriptor | None:
+        if not self._has_account_provider_material():
+            return None
+
+        return builtin_check(
+            "account_provider",
+            "backend.account_provider",
+            "account_provider",
+            "auth.backends",
+            [LIST_ACCOUNTS_OPERATION],
+        )
+
+    def _has_account_provider_material(self) -> bool:
+        if self._has_nonempty_result(("auth", "backends", "ldap", "pools")):
+            return True
+
+        if self._has_nonempty_result(("auth", "backends", "lua", "backend", "named_backends")):
+            return True
+
+        for path in (
+            ("auth", "backends", "ldap", "search"),
+            ("auth", "backends", "lua", "backend", "search"),
+        ):
+            value, exists = get_nested_value(self.document, path)
+            if exists and contains_protocol(value, "list-account"):
+                return True
+
+        return False
+
+    def _has_nonempty_result(self, path: tuple[str, ...]) -> bool:
+        value, exists = get_nested_value(self.document, path)
+        if not exists:
+            return False
+
+        return not is_empty_value(value)
+
+    def _build_policies(self) -> list[dict[str, Any]]:
+        policies: list[dict[str, Any]] = []
+        check_names = {check.name: check for check in self.checks}
+
+        if "brute_force" in check_names:
+            policies.extend(brute_force_policies())
+
+        if "tls_encryption" in check_names:
+            policies.append(tls_policy(check_names["tls_encryption"].operations))
+
+        if "relay_domains" in check_names:
+            policies.extend(relay_domain_policies())
+
+        if "rbl" in check_names:
+            policies.extend(rbl_policies(check_names["rbl"].operations))
+
+        for check in self.lua_control_checks:
+            policies.extend(lua_control_policies(check))
+
+        if self.backend_checks:
+            policies.extend(backend_decision_policies())
+
+        for check in self.lua_filter_checks:
+            policies.extend(lua_filter_policies(check))
+
+        if self.backend_checks:
+            policies.extend(auth_result_policies())
+            policies.extend(lookup_identity_policies())
+
+        if self.account_provider_check is not None:
+            policies.extend(list_accounts_policies())
+
+        policies.append(default_deny_policy())
+
+        return policies
+
+    def _merge_named_list(self, policy_config: dict[str, Any], key: str, generated: list[dict[str, Any]]) -> None:
+        existing = policy_config.get(key)
+        if not isinstance(existing, list):
+            existing = []
+
+        merged = [copy.deepcopy(item) for item in existing]
+        seen = {
+            item.get("name")
+            for item in merged
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+
+        for item in generated:
+            name = item.get("name")
+            if isinstance(name, str) and name in seen:
+                self.report.warnings.append(
+                    f"generated auth.policy.{key} entry {name!r} already exists and was preserved"
+                )
+
+                continue
+
+            if isinstance(name, str):
+                seen.add(name)
+
+            merged.append(copy.deepcopy(item))
+
+        policy_config[key] = merged
+
+    def _strip_legacy_scheduler_surface(self) -> None:
+        controls, controls_exist = get_nested_value(self.document, ("auth", "controls", "enabled"))
+        if controls_exist and isinstance(controls, list):
+            stripped_controls = []
+            for control in controls:
+                if isinstance(control, dict) and isinstance(control.get("name"), str):
+                    stripped_controls.append(control["name"])
+                    continue
+
+                stripped_controls.append(control)
+
+            set_nested_value(self.document, ("auth", "controls", "enabled"), stripped_controls)
+
+        for path in (
+            ("auth", "controls", "lua", "controls"),
+            ("auth", "controls", "lua", "filters"),
+        ):
+            self._strip_lua_script_fields(path)
+
+    def _strip_lua_script_fields(self, path: tuple[str, ...]) -> None:
+        scripts, exists = get_nested_value(self.document, path)
+        if not exists or not isinstance(scripts, list):
+            return
+
+        sanitized: list[Any] = []
+        for script in scripts:
+            if not isinstance(script, dict):
+                sanitized.append(script)
+                continue
+
+            cleaned = copy.deepcopy(script)
+            for key in (*LEGACY_SCHEDULER_KEYS, LUA_DEPENDENCY_KEY):
+                cleaned.pop(key, None)
+
+            sanitized.append(cleaned)
+
+        set_nested_value(self.document, path, sanitized)
+
+
 class LegacyConfigConverter:
     """Convert old monolithic config layouts to the current config-v2 structure."""
 
@@ -226,6 +631,7 @@ class LegacyConfigConverter:
         self.report = ConversionReport()
         self.result: dict[str, Any] = {}
         self.handled_prefixes: set[tuple[str, ...]] = set()
+        self.control_scheduler_hints: dict[str, dict[str, Any]] = {}
 
     def convert(self) -> tuple[dict[str, Any], ConversionReport]:
         """Convert the loaded source document."""
@@ -305,6 +711,7 @@ class LegacyConfigConverter:
                         "name": normalized_name,
                         "when_no_auth": when_no_auth,
                     }
+                    self._record_control_scheduler_hint(normalized_name, "when_no_auth", when_no_auth)
 
             elif explicit_when_no_auth:
                 self.report.warnings.append(
@@ -375,6 +782,9 @@ class LegacyConfigConverter:
         self.report.dropped_paths.append(format_path(source_path))
 
         return None
+
+    def _record_control_scheduler_hint(self, name: str, key: str, value: Any) -> None:
+        self.control_scheduler_hints.setdefault(name, {})[key] = value
 
     def _map_path(self, path: tuple[Any, ...], value: Any) -> tuple[tuple[Any, ...] | None, Any]:
         str_path = tuple(part for part in path if isinstance(part, str))
@@ -484,6 +894,10 @@ class LegacyConfigConverter:
             ),
         )
         self._auto_enable_service("backend_health_checks", self._has_nonempty_path(("backend_server_monitoring",)))
+        self._build_policy_target_config()
+
+    def _build_policy_target_config(self) -> None:
+        PolicyConversionPlanner(self.result, self.report, self.control_scheduler_hints).apply()
 
     def _normalize_list(self, dotted_path: str, rename_map: dict[str, str]) -> None:
         path = tuple(dotted_path.split("."))
@@ -591,6 +1005,530 @@ class LegacyConfigConverter:
             return False
 
         return not is_empty_value(value)
+
+
+def append_unique_items(target: list[Any], items: Iterable[Any]) -> list[Any]:
+    """Append items while preserving the first occurrence order."""
+    for item in items:
+        if item not in target:
+            target.append(item)
+
+    return target
+
+
+def ensure_mapping(root: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any]:
+    """Return a nested mapping, creating missing mappings on demand."""
+    current: dict[str, Any] = root
+    for part in path:
+        value = current.get(part)
+        if not isinstance(value, dict):
+            value = {}
+            current[part] = value
+
+        current = value
+
+    return current
+
+
+def operations_from_lookup_flag(value: Any) -> list[str]:
+    """Map old no-auth scheduling to target operation scoping."""
+    operations = [AUTHENTICATE_OPERATION]
+    if value is True:
+        operations.append(LOOKUP_IDENTITY_OPERATION)
+
+    return operations
+
+
+def run_if_auth_state(script: dict[str, Any]) -> str | None:
+    """Map old authenticated/unauthenticated scheduler flags to run_if.auth_state."""
+    authenticated = script.get("when_authenticated") is True
+    unauthenticated = script.get("when_unauthenticated") is True
+
+    if authenticated and not unauthenticated:
+        return "authenticated"
+
+    if unauthenticated and not authenticated:
+        return "unauthenticated"
+
+    return None
+
+
+def contains_protocol(value: Any, protocol: str) -> bool:
+    """Report whether a protocol mapping contains the requested protocol."""
+    if isinstance(value, dict):
+        return any(contains_protocol(child, protocol) for child in value.values())
+
+    if isinstance(value, list):
+        return any(contains_protocol(child, protocol) for child in value)
+
+    return value == protocol
+
+
+def builtin_check(
+    name: str,
+    check_type: str,
+    stage: str,
+    config_ref: str,
+    operations: list[str],
+) -> PolicyCheckDescriptor:
+    """Create a built-in policy check descriptor."""
+    return PolicyCheckDescriptor(
+        name=name,
+        check_type=check_type,
+        stage=stage,
+        operations=operations,
+        config_ref=config_ref,
+        output=f"checks.{name}",
+    )
+
+
+def policy_rule(
+    name: str,
+    stage: str,
+    condition: dict[str, Any],
+    then: dict[str, Any],
+    require_checks: list[str] | None = None,
+    operations: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create one ordered policy rule in stable config order."""
+    rule: dict[str, Any] = {
+        "name": name,
+        "stage": stage,
+    }
+
+    if operations and operations != [AUTHENTICATE_OPERATION]:
+        rule["operations"] = append_unique_items([], operations)
+
+    if require_checks:
+        rule["require_checks"] = require_checks
+
+    rule["if"] = condition
+    rule["then"] = then
+
+    return rule
+
+
+def attr_condition(attribute: str, value: bool) -> dict[str, Any]:
+    """Create a boolean attribute condition."""
+    return {
+        "attribute": attribute,
+        "is": value,
+    }
+
+
+def always_condition() -> dict[str, Any]:
+    """Create an always-matching condition."""
+    return {"always": True}
+
+
+def all_condition(children: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create an all-composition condition."""
+    return {"all": children}
+
+
+def then_block(
+    decision: str,
+    outcome_marker: str,
+    fsm_event_marker: str,
+    response_marker: str | None = None,
+    response_message: dict[str, Any] | None = None,
+    obligations: list[dict[str, Any]] | None = None,
+    control: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a policy then block in stable config order."""
+    block: dict[str, Any] = {
+        "decision": decision,
+        "outcome_marker": outcome_marker,
+        "fsm_event_marker": fsm_event_marker,
+    }
+
+    if response_marker:
+        block["response_marker"] = response_marker
+
+    if response_message:
+        block["response_message"] = response_message
+
+    if obligations:
+        block["obligations"] = obligations
+
+    if control:
+        block["control"] = control
+
+    return block
+
+
+def response_message_from_attribute(attribute: str) -> dict[str, Any]:
+    """Select a public Lua status_message detail with the current fallback text."""
+    return {
+        "from": "attribute_detail",
+        "attribute": attribute,
+        "detail": "status_message",
+        "fallback": "Invalid login or password",
+    }
+
+
+def brute_force_policies() -> list[dict[str, Any]]:
+    """Return generated standard-auth brute-force rules."""
+    return [
+        policy_rule(
+            "standard_brute_force_error_tempfail",
+            "pre_auth",
+            attr_condition("auth.brute_force.error", True),
+            then_block(
+                "tempfail",
+                "auth.outcome.brute_force_error",
+                "auth.fsm.event.pre_auth_tempfail",
+                "auth.response.tempfail",
+            ),
+            require_checks=["brute_force"],
+        ),
+        policy_rule(
+            "standard_brute_force_deny",
+            "pre_auth",
+            attr_condition("auth.brute_force.triggered", True),
+            then_block(
+                "deny",
+                "auth.outcome.brute_force_reject",
+                "auth.fsm.event.pre_auth_deny",
+                "auth.response.fail",
+                obligations=[
+                    {"id": "auth.obligation.brute_force.update"},
+                    {
+                        "id": "auth.obligation.lua_post_action.enqueue",
+                        "args": {"action": "brute_force"},
+                    },
+                ],
+            ),
+            require_checks=["brute_force"],
+        ),
+    ]
+
+
+def tls_policy(operations: list[str]) -> dict[str, Any]:
+    """Return the generated standard-auth TLS rule."""
+    return policy_rule(
+        "standard_tls_enforcement",
+        "pre_auth",
+        attr_condition("auth.tls.secure", False),
+        then_block(
+            "tempfail",
+            "auth.outcome.tls_required",
+            "auth.fsm.event.pre_auth_tempfail",
+            "auth.response.tempfail.no_tls",
+        ),
+        require_checks=["tls_encryption"],
+        operations=operations,
+    )
+
+
+def relay_domain_policies() -> list[dict[str, Any]]:
+    """Return generated standard-auth relay-domain rules."""
+    return [
+        policy_rule(
+            "standard_relay_domain_error_tempfail",
+            "pre_auth",
+            attr_condition("auth.relay_domain.error", True),
+            then_block(
+                "tempfail",
+                "auth.outcome.relay_domain_error",
+                "auth.fsm.event.pre_auth_tempfail",
+                "auth.response.tempfail",
+            ),
+            require_checks=["relay_domains"],
+        ),
+        policy_rule(
+            "standard_relay_domain_reject",
+            "pre_auth",
+            all_condition(
+                [
+                    attr_condition("auth.relay_domain.present", True),
+                    attr_condition("auth.relay_domain.known", False),
+                ]
+            ),
+            then_block(
+                "deny",
+                "auth.outcome.relay_domain_reject",
+                "auth.fsm.event.pre_auth_deny",
+                "auth.response.fail",
+            ),
+            require_checks=["relay_domains"],
+        ),
+    ]
+
+
+def rbl_policies(operations: list[str]) -> list[dict[str, Any]]:
+    """Return generated standard-auth RBL rules."""
+    return [
+        policy_rule(
+            "standard_rbl_error_tempfail",
+            "pre_auth",
+            attr_condition("auth.rbl.error", True),
+            then_block(
+                "tempfail",
+                "auth.outcome.rbl_error",
+                "auth.fsm.event.pre_auth_tempfail",
+                "auth.response.tempfail",
+            ),
+            require_checks=["rbl"],
+            operations=operations,
+        ),
+        policy_rule(
+            "standard_rbl_reject",
+            "pre_auth",
+            attr_condition("auth.rbl.threshold_reached", True),
+            then_block(
+                "deny",
+                "auth.outcome.rbl_reject",
+                "auth.fsm.event.pre_auth_deny",
+                "auth.response.fail",
+            ),
+            require_checks=["rbl"],
+            operations=operations,
+        ),
+    ]
+
+
+def lua_control_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
+    """Return generated standard-auth policies for one Lua control."""
+    prefix = f"auth.lua.control.{check.script_name}"
+
+    return [
+        policy_rule(
+            f"standard_lua_control_{check.script_name}_error",
+            "pre_auth",
+            attr_condition(f"{prefix}.error", True),
+            then_block(
+                "tempfail",
+                f"auth.outcome.lua_control.{check.script_name}.error",
+                "auth.fsm.event.pre_auth_tempfail",
+                "auth.response.tempfail",
+            ),
+            require_checks=[check.name],
+            operations=check.operations,
+        ),
+        policy_rule(
+            f"standard_lua_control_{check.script_name}_trigger",
+            "pre_auth",
+            attr_condition(f"{prefix}.triggered", True),
+            then_block(
+                "deny",
+                f"auth.outcome.lua_control.{check.script_name}.reject",
+                "auth.fsm.event.pre_auth_deny",
+                "auth.response.fail",
+                response_message=response_message_from_attribute(f"{prefix}.triggered"),
+            ),
+            require_checks=[check.name],
+            operations=check.operations,
+        ),
+        policy_rule(
+            f"standard_lua_control_{check.script_name}_abort",
+            "pre_auth",
+            attr_condition(f"{prefix}.abort", True),
+            then_block(
+                "neutral",
+                "auth.outcome.pre_auth_ok",
+                "auth.fsm.event.pre_auth_ok",
+                control={"skip_remaining_stage_checks": True},
+            ),
+            require_checks=[check.name],
+            operations=check.operations,
+        ),
+    ]
+
+
+def backend_decision_policies() -> list[dict[str, Any]]:
+    """Return generated standard-auth backend technical-result rules."""
+    return [
+        policy_rule(
+            "standard_backend_tempfail",
+            "auth_decision",
+            attr_condition("auth.backend.tempfail", True),
+            then_block(
+                "tempfail",
+                "auth.outcome.backend_tempfail",
+                "auth.fsm.event.auth_tempfail",
+                "auth.response.tempfail",
+            ),
+            operations=[AUTHENTICATE_OPERATION, LOOKUP_IDENTITY_OPERATION],
+        ),
+        policy_rule(
+            "standard_empty_username",
+            "auth_decision",
+            attr_condition("auth.backend.empty_username", True),
+            then_block(
+                "tempfail",
+                "auth.outcome.empty_username",
+                "auth.fsm.event.auth_empty_user",
+                "auth.response.tempfail",
+            ),
+            operations=[AUTHENTICATE_OPERATION, LOOKUP_IDENTITY_OPERATION],
+        ),
+        policy_rule(
+            "standard_empty_password",
+            "auth_decision",
+            attr_condition("auth.backend.empty_password", True),
+            then_block(
+                "deny",
+                "auth.outcome.empty_password",
+                "auth.fsm.event.auth_empty_pass",
+                "auth.response.fail",
+            ),
+        ),
+    ]
+
+
+def lua_filter_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
+    """Return generated standard-auth policies for one Lua filter."""
+    prefix = f"auth.lua.filter.{check.script_name}"
+
+    return [
+        policy_rule(
+            f"standard_lua_filter_{check.script_name}_error",
+            "auth_decision",
+            attr_condition(f"{prefix}.error", True),
+            then_block(
+                "tempfail",
+                f"auth.outcome.lua_filter.{check.script_name}.error",
+                "auth.fsm.event.auth_tempfail",
+                "auth.response.tempfail",
+            ),
+            require_checks=[check.name],
+            operations=check.operations,
+        ),
+        policy_rule(
+            f"standard_lua_filter_{check.script_name}_reject",
+            "auth_decision",
+            attr_condition(f"{prefix}.rejected", True),
+            then_block(
+                "deny",
+                f"auth.outcome.lua_filter.{check.script_name}.reject",
+                "auth.fsm.event.auth_deny",
+                "auth.response.fail",
+                response_message=response_message_from_attribute(f"{prefix}.rejected"),
+            ),
+            require_checks=[check.name],
+            operations=check.operations,
+        ),
+    ]
+
+
+def auth_result_policies() -> list[dict[str, Any]]:
+    """Return generated standard-auth authenticate result rules."""
+    return [
+        policy_rule(
+            "standard_auth_success",
+            "auth_decision",
+            attr_condition("auth.authenticated", True),
+            then_block(
+                "permit",
+                "auth.outcome.auth_success",
+                "auth.fsm.event.auth_permit",
+                "auth.response.ok",
+            ),
+        ),
+        policy_rule(
+            "standard_auth_failure",
+            "auth_decision",
+            attr_condition("auth.authenticated", False),
+            then_block(
+                "deny",
+                "auth.outcome.auth_failure",
+                "auth.fsm.event.auth_deny",
+                "auth.response.fail",
+            ),
+        ),
+    ]
+
+
+def lookup_identity_policies() -> list[dict[str, Any]]:
+    """Return generated standard-auth lookup-identity result rules."""
+    return [
+        policy_rule(
+            "standard_lookup_identity_success",
+            "auth_decision",
+            attr_condition("auth.identity.found", True),
+            then_block(
+                "permit",
+                "auth.outcome.lookup_identity_success",
+                "auth.fsm.event.auth_permit",
+                "auth.response.ok",
+            ),
+            operations=[LOOKUP_IDENTITY_OPERATION],
+        ),
+        policy_rule(
+            "standard_lookup_identity_failure",
+            "auth_decision",
+            attr_condition("auth.identity.found", False),
+            then_block(
+                "deny",
+                "auth.outcome.lookup_identity_failure",
+                "auth.fsm.event.auth_deny",
+                "auth.response.fail",
+            ),
+            operations=[LOOKUP_IDENTITY_OPERATION],
+        ),
+    ]
+
+
+def list_accounts_policies() -> list[dict[str, Any]]:
+    """Return generated standard-auth list-account rules."""
+    return [
+        policy_rule(
+            "standard_list_accounts_tempfail",
+            "auth_decision",
+            attr_condition("auth.account_provider.tempfail", True),
+            then_block(
+                "tempfail",
+                "auth.outcome.list_accounts_tempfail",
+                "auth.fsm.event.auth_tempfail",
+                "auth.response.tempfail",
+            ),
+            require_checks=["account_provider"],
+            operations=[LIST_ACCOUNTS_OPERATION],
+        ),
+        policy_rule(
+            "standard_list_accounts_success",
+            "auth_decision",
+            attr_condition("auth.account_provider.completed", True),
+            then_block(
+                "permit",
+                "auth.outcome.list_accounts_success",
+                "auth.fsm.event.auth_permit",
+                "auth.response.list_accounts.ok",
+            ),
+            require_checks=["account_provider"],
+            operations=[LIST_ACCOUNTS_OPERATION],
+        ),
+        policy_rule(
+            "standard_list_accounts_failure",
+            "auth_decision",
+            attr_condition("auth.account_provider.completed", False),
+            then_block(
+                "deny",
+                "auth.outcome.list_accounts_failure",
+                "auth.fsm.event.auth_deny",
+                "auth.response.fail",
+            ),
+            require_checks=["account_provider"],
+            operations=[LIST_ACCOUNTS_OPERATION],
+        ),
+    ]
+
+
+def default_deny_policy() -> dict[str, Any]:
+    """Return the final deny-biased decision rule."""
+    return policy_rule(
+        "standard_default_deny",
+        "auth_decision",
+        always_condition(),
+        then_block(
+            "deny",
+            "auth.outcome.default_deny",
+            "auth.fsm.event.auth_deny",
+            "auth.response.fail",
+        ),
+        operations=[AUTHENTICATE_OPERATION, LOOKUP_IDENTITY_OPERATION, LIST_ACCOUNTS_OPERATION],
+    )
 
 
 def flatten_node(node: Any, path: tuple[Any, ...] = ()) -> Iterable[tuple[tuple[Any, ...], Any]]:

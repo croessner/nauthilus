@@ -92,7 +92,17 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertIn("enabled: true", converted)
             self.assertIn("x-claim-email:", converted)
             self.assertIn("x-scope-profile:", converted)
-            self.assertIn("when_no_auth: true", converted)
+            self.assertIn("policy:", converted)
+            self.assertIn('default_policy: "standard_auth"', converted)
+            self.assertIn('type: "lua.control"', converted)
+            self.assertIn('config_ref: "auth.controls.lua.controls.test_context_chain"', converted)
+            self.assertIn('attribute: "auth.lua.control.test_context_chain.triggered"', converted)
+            self.assertRegex(
+                converted,
+                re.compile(
+                    r'name: "tls_encryption"[\s\S]*?operations:\n\s+- "authenticate"\n\s+- "lookup_identity"'
+                ),
+            )
 
             self.assertNotRegex(converted, re.compile(r"^server:", re.MULTILINE))
             self.assertNotRegex(converted, re.compile(r"^ldap:", re.MULTILINE))
@@ -103,6 +113,9 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertNotIn("soft_whitelist", converted)
             self.assertNotIn("ip_whitelist", converted)
             self.assertNotIn("backend_server_monitoring", converted)
+            self.assertNotIn("when_no_auth", converted)
+            self.assertNotIn("when_authenticated", converted)
+            self.assertNotIn("when_unauthenticated", converted)
 
             self.assertIn("validation passed", report)
             self.assertIn("migrated paths", report)
@@ -222,7 +235,88 @@ cleartext_networks:
 
             self.assertIn('name: "tls_encryption"', converted)
             self.assertIn('name: "rbl"', converted)
+            self.assertIn('name: "tls_encryption"\n        type: "builtin.tls_encryption"', converted)
+            self.assertIn('name: "rbl"\n        type: "builtin.rbl"', converted)
+            self.assertNotIn("when_no_auth", converted)
             self.assertNotIn("- auto-enabled controls: rbl, tls_encryption", report)
+
+    def test_conversion_rewrites_legacy_lua_scheduler_to_policy_plan(self) -> None:
+        env = os.environ.copy()
+        env.setdefault("GOEXPERIMENT", "runtimesecret")
+        legacy = """\
+lua:
+  features:
+    - name: "context_seed"
+      script_path: "/tmp/context-seed.lua"
+      when_authenticated: true
+    - name: "geo_block"
+      script_path: "/tmp/geo-block.lua"
+      when_no_auth: true
+      depends_on:
+        - "context_seed"
+  filters:
+    - name: "billing_seed"
+      script_path: "/tmp/billing-seed.lua"
+      when_authenticated: true
+    - name: "billing_lock"
+      script_path: "/tmp/billing-lock.lua"
+      when_authenticated: true
+      depends_on:
+        - "billing_seed"
+    - name: "failed_login"
+      script_path: "/tmp/failed-login.lua"
+      when_unauthenticated: true
+"""
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_path = Path(tmp_dir) / "legacy.yml"
+            output_path = Path(tmp_dir) / "converted.yml"
+            input_path.write_text(legacy, encoding="utf-8")
+
+            result = subprocess.run(
+                (
+                    "python3",
+                    str(SCRIPT_PATH),
+                    str(input_path),
+                    "--output",
+                    str(output_path),
+                ),
+                cwd=ROOT_DIR,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual("", result.stdout)
+
+            converted = output_path.read_text(encoding="utf-8")
+
+            self.assertNotIn("when_no_auth", converted)
+            self.assertNotIn("when_authenticated", converted)
+            self.assertNotIn("when_unauthenticated", converted)
+            self.assertNotIn("depends_on", converted)
+            self.assertNotIn('type: "lua.controls"', converted)
+            self.assertNotIn('type: "lua.filters"', converted)
+
+            self.assertIn('name: "lua_control_context_seed"', converted)
+            self.assertIn('config_ref: "auth.controls.lua.controls.context_seed"', converted)
+            self.assertIn('auth_state: "authenticated"', converted)
+            self.assertRegex(
+                converted,
+                re.compile(
+                    r'name: "lua_control_geo_block"[\s\S]*?operations:\n\s+- "authenticate"\n\s+- "lookup_identity"[\s\S]*?after:\n\s+- "lua_control_context_seed"'
+                ),
+            )
+            self.assertRegex(
+                converted,
+                re.compile(
+                    r'name: "lua_filter_billing_lock"[\s\S]*?after:\n\s+- "lua_filter_billing_seed"'
+                ),
+            )
+            self.assertIn('attribute: "auth.lua.control.geo_block.triggered"', converted)
+            self.assertIn('attribute: "auth.lua.filter.billing_lock.rejected"', converted)
+            self.assertIn('name: "standard_default_deny"', converted)
 
     def test_preserve_existing_runtime_root_without_v2_rewrite(self) -> None:
         env = os.environ.copy()
