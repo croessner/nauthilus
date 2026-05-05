@@ -51,6 +51,7 @@ import (
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/server/policy/evaluation"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
@@ -3230,6 +3231,10 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	defer func() {
 		a.recordPolicyAccountProvider(ginCtx, len(accountList), errSeen)
 		a.completePolicyStage(ginCtx, policy.StageAccountProvider)
+		a.comparePolicyDecision(ginCtx, evaluation.ProductionOutcome{
+			Effect:         policy.DecisionPermit,
+			ResponseMarker: "auth.response.list_accounts.ok",
+		})
 	}()
 
 	// Pre-allocate the accounts slice to avoid continuous reallocation

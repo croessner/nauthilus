@@ -111,6 +111,25 @@ func (c *DecisionContext) Report() *report.DecisionReport {
 	return c.report
 }
 
+// SnapshotMetadata returns stable metadata for request-local comparison output.
+func (c *DecisionContext) SnapshotMetadata() (string, string, uint64) {
+	if c == nil || c.snapshot == nil {
+		return "enforce", policy.BuiltinDefaultSet, 0
+	}
+
+	mode := c.snapshot.Mode
+	if mode == "" {
+		mode = "enforce"
+	}
+
+	defaultPolicy := c.snapshot.DefaultPolicy
+	if defaultPolicy == "" {
+		defaultPolicy = policy.BuiltinDefaultSet
+	}
+
+	return mode, defaultPolicy, c.snapshot.Generation
+}
+
 // BeginCheck opens metric and tracing collection for one check adapter.
 func (c *DecisionContext) BeginCheck(ctx context.Context, selector CheckSelector) *ActiveCheck {
 	if c == nil {

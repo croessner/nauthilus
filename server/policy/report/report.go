@@ -79,23 +79,64 @@ type UnavailableFact struct {
 
 // PolicyDecision is the report-facing shape for one selected policy rule.
 type PolicyDecision struct {
-	Name           string          `json:"policy_name"`
-	Stage          policy.Stage    `json:"stage"`
-	Effect         policy.Decision `json:"effect"`
-	ResponseMarker string          `json:"response_marker,omitempty"`
-	FSMEventMarker string          `json:"fsm_event_marker,omitempty"`
+	ResponseMessage *ResponseMessageSelection `json:"response_message,omitempty"`
+	Control         *DecisionControl          `json:"control,omitempty"`
+	Name            string                    `json:"policy_name"`
+	Reason          string                    `json:"reason,omitempty"`
+	OutcomeMarker   string                    `json:"outcome_marker,omitempty"`
+	ResponseMarker  string                    `json:"response_marker,omitempty"`
+	FSMEventMarker  string                    `json:"fsm_event_marker,omitempty"`
+	Stage           policy.Stage              `json:"stage"`
+	Effect          policy.Decision           `json:"effect"`
+	Obligations     []EffectRequest           `json:"obligations,omitempty"`
+	Advice          []EffectRequest           `json:"advice,omitempty"`
 }
 
 // FinalDecision is the report-facing final policy decision.
 type FinalDecision struct {
-	Effect         policy.Decision `json:"effect"`
-	ResponseMarker string          `json:"response_marker,omitempty"`
-	FSMEventMarker string          `json:"fsm_event_marker,omitempty"`
+	ResponseMessage *ResponseMessageSelection `json:"response_message,omitempty"`
+	Control         *DecisionControl          `json:"control,omitempty"`
+	PolicyName      string                    `json:"policy_name,omitempty"`
+	Reason          string                    `json:"reason,omitempty"`
+	OutcomeMarker   string                    `json:"outcome_marker,omitempty"`
+	ResponseMarker  string                    `json:"response_marker,omitempty"`
+	FSMEventMarker  string                    `json:"fsm_event_marker,omitempty"`
+	Stage           policy.Stage              `json:"stage,omitempty"`
+	Effect          policy.Decision           `json:"effect"`
+	Obligations     []EffectRequest           `json:"obligations,omitempty"`
+	Advice          []EffectRequest           `json:"advice,omitempty"`
 }
 
-// ObserveReport is reserved for later default-vs-custom comparison output.
+// ResponseMessageSelection describes the selected client-visible message.
+type ResponseMessageSelection struct {
+	Source       string `json:"source,omitempty"`
+	Message      string `json:"message,omitempty"`
+	AttributeID  string `json:"attribute,omitempty"`
+	Detail       string `json:"detail,omitempty"`
+	Fallback     string `json:"fallback,omitempty"`
+	FallbackUsed bool   `json:"fallback_used,omitempty"`
+}
+
+// EffectRequest describes a planned policy effect.
+type EffectRequest struct {
+	ID   string         `json:"id"`
+	Args map[string]any `json:"args,omitempty"`
+}
+
+// DecisionControl describes stage-local control selected by policy.
+type DecisionControl struct {
+	SkipRemainingStageChecks bool `json:"skip_remaining_stage_checks,omitempty"`
+}
+
+// ObserveReport stores built-in default comparison output.
 type ObserveReport struct {
-	Mismatch bool `json:"mismatch"`
+	Production           *FinalDecision `json:"production,omitempty"`
+	Shadow               *FinalDecision `json:"shadow,omitempty"`
+	Surface              string         `json:"surface,omitempty"`
+	MismatchType         string         `json:"mismatch_type,omitempty"`
+	Mismatch             bool           `json:"mismatch"`
+	ResponseMessageMatch bool           `json:"response_message_match"`
+	ObligationsMatch     bool           `json:"obligations_match"`
 }
 
 // DecisionReport is the redaction-aware container for policy diagnostics.
@@ -137,9 +178,9 @@ func (r *DecisionReport) Redacted() *DecisionReport {
 		Checks:        make(map[string]CheckResult, len(r.Checks)),
 		MissingChecks: make(map[string]string, len(r.MissingChecks)),
 		Unavailable:   make(map[string]UnavailableFact, len(r.Unavailable)),
-		Policies:      append([]PolicyDecision(nil), r.Policies...),
-		Final:         r.Final,
-		Observe:       r.Observe,
+		Policies:      clonePolicyDecisions(r.Policies),
+		Final:         cloneFinalDecision(r.Final),
+		Observe:       cloneObserveReport(r.Observe),
 	}
 
 	for id, attribute := range r.Attributes {
@@ -159,6 +200,82 @@ func (r *DecisionReport) Redacted() *DecisionReport {
 	}
 
 	return redacted
+}
+
+func clonePolicyDecisions(decisions []PolicyDecision) []PolicyDecision {
+	cloned := append([]PolicyDecision(nil), decisions...)
+	for index := range cloned {
+		cloned[index].ResponseMessage = cloneResponseMessage(cloned[index].ResponseMessage)
+		cloned[index].Control = cloneDecisionControl(cloned[index].Control)
+		cloned[index].Obligations = cloneEffectRequests(cloned[index].Obligations)
+		cloned[index].Advice = cloneEffectRequests(cloned[index].Advice)
+	}
+
+	return cloned
+}
+
+func cloneFinalDecision(decision *FinalDecision) *FinalDecision {
+	if decision == nil {
+		return nil
+	}
+
+	cloned := *decision
+	cloned.ResponseMessage = cloneResponseMessage(decision.ResponseMessage)
+	cloned.Control = cloneDecisionControl(decision.Control)
+	cloned.Obligations = cloneEffectRequests(decision.Obligations)
+	cloned.Advice = cloneEffectRequests(decision.Advice)
+
+	return &cloned
+}
+
+func cloneObserveReport(observe *ObserveReport) *ObserveReport {
+	if observe == nil {
+		return nil
+	}
+
+	cloned := *observe
+	cloned.Production = cloneFinalDecision(observe.Production)
+	cloned.Shadow = cloneFinalDecision(observe.Shadow)
+
+	return &cloned
+}
+
+func cloneResponseMessage(message *ResponseMessageSelection) *ResponseMessageSelection {
+	if message == nil {
+		return nil
+	}
+
+	cloned := *message
+
+	return &cloned
+}
+
+func cloneDecisionControl(control *DecisionControl) *DecisionControl {
+	if control == nil {
+		return nil
+	}
+
+	cloned := *control
+
+	return &cloned
+}
+
+func cloneEffectRequests(requests []EffectRequest) []EffectRequest {
+	cloned := append([]EffectRequest(nil), requests...)
+	for index := range cloned {
+		if cloned[index].Args == nil {
+			continue
+		}
+
+		args := make(map[string]any, len(cloned[index].Args))
+		for key, value := range cloned[index].Args {
+			args[key] = value
+		}
+
+		cloned[index].Args = args
+	}
+
+	return cloned
 }
 
 // Redacted returns an attribute copy with unsafe details removed or masked.

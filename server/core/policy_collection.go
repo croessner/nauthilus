@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/policy"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
+	"github.com/croessner/nauthilus/server/policy/evaluation"
 	"github.com/croessner/nauthilus/server/policy/observability"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 
@@ -45,10 +46,8 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 		return nil
 	}
 
-	if value, ok := ctx.Get(policyCollectionContextKey); ok {
-		if policyCtx, ok := value.(*policycollection.DecisionContext); ok {
-			return policyCtx
-		}
+	if policyCtx := existingPolicyContext(ctx); policyCtx != nil {
+		return policyCtx
 	}
 
 	snapshot := policyruntime.DefaultStore().Active()
@@ -134,6 +133,96 @@ func (a *AuthState) markPolicyUnavailable(ctx *gin.Context, name string, reason 
 	if policyCtx := a.requestPolicyContext(ctx); policyCtx != nil {
 		policyCtx.MarkUnavailable(name, reason)
 	}
+}
+
+func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluation.ProductionOutcome) {
+	policyCtx := existingPolicyContext(ctx)
+	if policyCtx == nil {
+		return
+	}
+
+	if production.Surface == "" {
+		production.Surface = a.policyResponseSurface()
+	}
+
+	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
+	result := evaluation.CompareWithProduction(contextFromGin(ctx), policyCtx.Report(), evaluation.CompareInput{
+		Mode:          mode,
+		Set:           defaultPolicy,
+		Generation:    generation,
+		Recorder:      observability.DefaultRecorder(),
+		Logger:        a.logger(),
+		Production:    production,
+		ProductionSet: true,
+	})
+
+	if !result.Mismatch || result.Shadow == nil {
+		return
+	}
+
+	observability.Debug(
+		contextFromGin(ctx),
+		a.Cfg(),
+		a.Logger(),
+		observability.ComponentObserve,
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		"operation", string(policyCtx.Report().Operation),
+		"stage", string(result.Shadow.Stage),
+		"mismatch_type", result.MismatchType,
+	)
+}
+
+func (a *AuthState) policyResponseSurface() string {
+	if a == nil {
+		return "http_json"
+	}
+
+	if a.Request.ListAccounts {
+		if a.Request.Service == definitions.ServGRPC {
+			return "grpc_list_accounts"
+		}
+
+		return "http_list_accounts"
+	}
+
+	if a.Request.NoAuth && a.Request.Service == definitions.ServGRPC {
+		return "grpc_lookup_identity"
+	}
+
+	switch a.Request.Service {
+	case definitions.ServCBOR:
+		return "http_cbor"
+	case definitions.ServNginx:
+		return "nginx_auth_request"
+	case definitions.ServHeader:
+		return "http_header"
+	case definitions.ServGRPC:
+		return "grpc_auth_service"
+	case definitions.ServIdP:
+		return "idp_browser"
+	case definitions.ServJSON:
+		return "http_json"
+	default:
+		return "http_plain"
+	}
+}
+
+func existingPolicyContext(ctx *gin.Context) *policycollection.DecisionContext {
+	if ctx == nil {
+		return nil
+	}
+
+	value, ok := ctx.Get(policyCollectionContextKey)
+	if !ok {
+		return nil
+	}
+
+	policyCtx, ok := value.(*policycollection.DecisionContext)
+	if !ok {
+		return nil
+	}
+
+	return policyCtx
 }
 
 // PolicyScriptRecorder returns the request-local Lua script result sink.
