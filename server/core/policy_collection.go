@@ -156,6 +156,22 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		ProductionSet: true,
 	})
 
+	if fsmReport := policyCtx.Report().FSM; fsmReport != nil {
+		observability.Debug(
+			contextFromGin(ctx),
+			a.Cfg(),
+			a.Logger(),
+			observability.ComponentFSM,
+			definitions.LogKeyGUID, a.Runtime.GUID,
+			"operation", string(fsmReport.Operation),
+			"policy_name", fsmReport.PolicyName,
+			"response_marker", fsmReport.ResponseMarker,
+			"current_terminal_state", fsmReport.CurrentTerminalState,
+			"target_terminal_state", fsmReport.TargetTerminalState,
+			"fsm_mismatch", fsmReport.Mismatch,
+		)
+	}
+
 	if !result.Mismatch || result.Shadow == nil {
 		return
 	}

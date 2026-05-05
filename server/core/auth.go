@@ -465,6 +465,9 @@ type AuthRuntime struct {
 	// StatusMessage is a message describing the status of the request.
 	StatusMessage string
 
+	// AuthFSMTerminalState contains the current auth FSM terminal state when known.
+	AuthFSMTerminalState string
+
 	// AccountField is the name of the field containing the account information.
 	AccountField string
 
@@ -500,6 +503,9 @@ type AuthRuntime struct {
 
 	// AdditionalFeatures contains additional feature-specific data.
 	AdditionalFeatures map[string]any
+
+	// AuthFSMEventPath contains current auth FSM events seen by this request.
+	AuthFSMEventPath []string
 
 	// Context is the Lua context associated with the request.
 	Context *lualib.Context
@@ -3232,8 +3238,10 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		a.recordPolicyAccountProvider(ginCtx, len(accountList), errSeen)
 		a.completePolicyStage(ginCtx, policy.StageAccountProvider)
 		a.comparePolicyDecision(ginCtx, evaluation.ProductionOutcome{
-			Effect:         policy.DecisionPermit,
-			ResponseMarker: "auth.response.list_accounts.ok",
+			Effect:                  policy.DecisionPermit,
+			ResponseMarker:          "auth.response.list_accounts.ok",
+			CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
+			CurrentFSMEventPath:     a.currentFSMEventPath(),
 		})
 	}()
 

@@ -824,20 +824,20 @@ func defaultFSMEventMarker(stage policy.Stage, decision policy.Decision) string 
 	case policy.StagePreAuth:
 		switch decision {
 		case policy.DecisionNeutral:
-			return "auth.fsm.event.pre_auth_ok"
+			return policy.FSMEventMarkerPreAuthOK
 		case policy.DecisionDeny:
-			return "auth.fsm.event.pre_auth_deny"
+			return policy.FSMEventMarkerPreAuthDeny
 		case policy.DecisionTempFail:
-			return "auth.fsm.event.pre_auth_tempfail"
+			return policy.FSMEventMarkerPreAuthTempFail
 		}
 	case policy.StageAuthDecision:
 		switch decision {
 		case policy.DecisionPermit:
-			return "auth.fsm.event.auth_permit"
+			return policy.FSMEventMarkerAuthPermit
 		case policy.DecisionDeny:
-			return "auth.fsm.event.auth_deny"
+			return policy.FSMEventMarkerAuthDeny
 		case policy.DecisionTempFail:
-			return "auth.fsm.event.auth_tempfail"
+			return policy.FSMEventMarkerAuthTempFail
 		}
 	}
 

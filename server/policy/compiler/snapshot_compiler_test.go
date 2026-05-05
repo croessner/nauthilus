@@ -209,6 +209,20 @@ func TestCompilerRejectsInvalidPolicyWithCanonicalPath(t *testing.T) {
 	}
 }
 
+func TestCompilerRejectsCurrentFSMEventNames(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies[0].Then.FSMEventMarker = "features_ok"
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatal("Compile() error = nil, want current event name rejection")
+	}
+
+	if !strings.Contains(err.Error(), "auth.policy.policies[0].then.fsm_event_marker") {
+		t.Fatalf("Compile() error = %q, want canonical FSM marker path", err)
+	}
+}
+
 func TestCompilerRejectsInvalidNetworkSet(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 	cfg.Auth.Policy.Sets.Networks["trusted_clients"] = []string{"not-a-network"}

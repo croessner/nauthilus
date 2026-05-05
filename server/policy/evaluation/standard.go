@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/policy"
+	policyfsm "github.com/croessner/nauthilus/server/policy/fsm"
 	"github.com/croessner/nauthilus/server/policy/observability"
 	"github.com/croessner/nauthilus/server/policy/report"
 
@@ -40,18 +41,19 @@ const (
 	responseMarkerTempFail           = "auth.response.tempfail"
 	responseMarkerNoTLS              = "auth.response.tempfail.no_tls"
 	responseMarkerListAccountsOK     = "auth.response.list_accounts.ok"
-	fsmMarkerPreAuthOK               = "auth.fsm.event.pre_auth_ok"
-	fsmMarkerPreAuthDeny             = "auth.fsm.event.pre_auth_deny"
-	fsmMarkerPreAuthTempFail         = "auth.fsm.event.pre_auth_tempfail"
-	fsmMarkerAuthPermit              = "auth.fsm.event.auth_permit"
-	fsmMarkerAuthDeny                = "auth.fsm.event.auth_deny"
-	fsmMarkerAuthTempFail            = "auth.fsm.event.auth_tempfail"
-	fsmMarkerAuthEmptyUser           = "auth.fsm.event.auth_empty_user"
-	fsmMarkerAuthEmptyPass           = "auth.fsm.event.auth_empty_pass"
+	fsmMarkerPreAuthOK               = policy.FSMEventMarkerPreAuthOK
+	fsmMarkerPreAuthDeny             = policy.FSMEventMarkerPreAuthDeny
+	fsmMarkerPreAuthTempFail         = policy.FSMEventMarkerPreAuthTempFail
+	fsmMarkerAuthPermit              = policy.FSMEventMarkerAuthPermit
+	fsmMarkerAuthDeny                = policy.FSMEventMarkerAuthDeny
+	fsmMarkerAuthTempFail            = policy.FSMEventMarkerAuthTempFail
+	fsmMarkerAuthEmptyUser           = policy.FSMEventMarkerAuthEmptyUser
+	fsmMarkerAuthEmptyPass           = policy.FSMEventMarkerAuthEmptyPass
 	obligationBruteForceUpdate       = "auth.obligation.brute_force.update"
 	obligationLuaPostActionEnqueue   = "auth.obligation.lua_post_action.enqueue"
 	mismatchNone                     = "none"
 	mismatchMultiple                 = "multiple"
+	mismatchFSMTerminal              = "fsm_terminal_state"
 	defaultMode                      = "enforce"
 	maxSelectedResponseMessageLength = 256
 )
@@ -74,12 +76,14 @@ type Result struct {
 
 // ProductionOutcome describes the current authoritative runtime result.
 type ProductionOutcome struct {
-	ResponseMessage string
-	ResponseMarker  string
-	FSMEventMarker  string
-	Surface         string
-	Effect          policy.Decision
-	Obligations     []report.EffectRequest
+	ResponseMessage         string
+	ResponseMarker          string
+	FSMEventMarker          string
+	Surface                 string
+	CurrentFSMTerminalState string
+	Effect                  policy.Decision
+	Obligations             []report.EffectRequest
+	CurrentFSMEventPath     []string
 }
 
 // CompareInput carries comparison dependencies and runtime metadata.
@@ -97,6 +101,7 @@ type CompareInput struct {
 type CompareResult struct {
 	Shadow       *report.FinalDecision
 	Production   *report.FinalDecision
+	FSM          *report.FSMReport
 	MismatchType string
 	Mismatch     bool
 }
@@ -155,12 +160,15 @@ func CompareWithProduction(ctx context.Context, policyReport *report.DecisionRep
 
 	recordEvaluation(spanCtx, recorder, input, policyReport.Operation, evaluation.Final, time.Since(start))
 	production, mismatchType, mismatch := compareProduction(spanCtx, recorder, policyReport, input, evaluation.Final)
+	fsmReport := compareTargetFSM(spanCtx, recorder, policyReport, input, evaluation.Final)
 	setCompareSpanAttributes(span, input, policyReport.Operation, evaluation.Final, mismatchType, mismatch)
+	setFSMSpanAttributes(span, fsmReport)
 	logComparison(spanCtx, input, policyReport.Operation, evaluation.Final, mismatchType, mismatch)
 
 	return CompareResult{
 		Shadow:       evaluation.Final,
 		Production:   production,
+		FSM:          fsmReport,
 		MismatchType: mismatchType,
 		Mismatch:     mismatch,
 	}
@@ -241,6 +249,121 @@ func compareProduction(
 	return production, mismatchType, mismatch
 }
 
+func compareTargetFSM(
+	ctx context.Context,
+	recorder observability.Recorder,
+	policyReport *report.DecisionReport,
+	input CompareInput,
+	final *report.FinalDecision,
+) *report.FSMReport {
+	if final == nil {
+		return nil
+	}
+
+	tracer := observability.NewTracer()
+	spanCtx, span := tracer.Start(ctx, "policy.fsm.apply")
+	defer span.End()
+
+	currentTerminal := input.Production.CurrentFSMTerminalState
+	if currentTerminal == "" {
+		currentTerminal = policyfsm.TerminalStateForDecision(input.Production.Effect)
+	}
+
+	comparison := policyfsm.Compare(policyfsm.ComparisonInput{
+		PolicyName:           final.PolicyName,
+		ResponseMarker:       final.ResponseMarker,
+		CurrentTerminalState: currentTerminal,
+		Operation:            policyReport.Operation,
+		CurrentEventPath:     input.Production.CurrentFSMEventPath,
+		TargetEventMarkers:   targetFSMEventMarkers(policyReport, final),
+	})
+	fsmReport := fsmReportFromComparison(comparison)
+	policyReport.FSM = fsmReport
+
+	recordFSMComparison(spanCtx, recorder, final.Stage, fsmReport)
+	setFSMSpanAttributes(span, fsmReport)
+
+	return fsmReport
+}
+
+func targetFSMEventMarkers(policyReport *report.DecisionReport, final *report.FinalDecision) []string {
+	markers := []string{policy.FSMEventMarkerParseOK}
+	if final == nil {
+		return markers
+	}
+
+	if final.Stage == policy.StagePreAuth {
+		return append(markers, final.FSMEventMarker)
+	}
+
+	markers = append(markers, selectedPreAuthMarker(policyReport))
+	if policyReport != nil && policyReport.Operation == policy.OperationListAccounts {
+		markers = append(markers, policy.FSMEventMarkerAccountProviderEvaluated)
+	} else {
+		markers = append(markers, policy.FSMEventMarkerAuthEvaluated)
+	}
+
+	return append(markers, final.FSMEventMarker)
+}
+
+func selectedPreAuthMarker(policyReport *report.DecisionReport) string {
+	if policyReport == nil {
+		return policy.FSMEventMarkerPreAuthOK
+	}
+
+	marker := ""
+	for _, decision := range policyReport.Policies {
+		if decision.Stage == policy.StagePreAuth && decision.FSMEventMarker != "" {
+			marker = decision.FSMEventMarker
+		}
+	}
+
+	if marker == "" {
+		return policy.FSMEventMarkerPreAuthOK
+	}
+
+	return marker
+}
+
+func fsmReportFromComparison(comparison policyfsm.ComparisonResult) *report.FSMReport {
+	return &report.FSMReport{
+		PolicyName:           comparison.PolicyName,
+		ResponseMarker:       comparison.ResponseMarker,
+		CurrentTerminalState: comparison.CurrentTerminalState,
+		TargetTerminalState:  comparison.TargetTerminalState,
+		Error:                comparison.Error,
+		Operation:            comparison.Operation,
+		CurrentEventPath:     append([]string(nil), comparison.CurrentEventPath...),
+		TargetEventPath:      append([]string(nil), comparison.TargetEventPath...),
+		Mismatch:             comparison.Mismatch,
+	}
+}
+
+func recordFSMComparison(
+	ctx context.Context,
+	recorder observability.Recorder,
+	stage policy.Stage,
+	fsmReport *report.FSMReport,
+) {
+	if fsmReport == nil {
+		return
+	}
+
+	result := observability.ResultSuccess
+	if fsmReport.Mismatch || fsmReport.Error != "" {
+		result = observability.ResultFailure
+	}
+
+	for _, marker := range fsmReport.TargetEventPath {
+		recorder.RecordFSMTransition(ctx, observability.FSMMeasurement{
+			Result:         result,
+			FSMEventMarker: marker,
+			Operation:      fsmReport.Operation,
+			Stage:          stage,
+		})
+	}
+}
+
 func observeReport(
 	shadow *report.FinalDecision,
 	production *report.FinalDecision,
@@ -305,6 +428,34 @@ func setCompareSpanAttributes(
 		attribute.Bool("policy.observe_mismatch", mismatch),
 		attribute.String("policy.mismatch_type", mismatchType),
 	)
+}
+
+func setFSMSpanAttributes(span interface{ SetAttributes(...attribute.KeyValue) }, fsmReport *report.FSMReport) {
+	if fsmReport == nil {
+		return
+	}
+
+	span.SetAttributes(
+		attribute.String("policy.operation", string(fsmReport.Operation)),
+		attribute.String("policy.name", fsmReport.PolicyName),
+		attribute.String("policy.response_marker", fsmReport.ResponseMarker),
+		attribute.String("policy.fsm.current_terminal_state", fsmReport.CurrentTerminalState),
+		attribute.String("policy.fsm.target_terminal_state", fsmReport.TargetTerminalState),
+		attribute.Bool("policy.fsm.mismatch", fsmReport.Mismatch),
+		attribute.String("policy.mismatch_type", fsmMismatchType(fsmReport)),
+	)
+}
+
+func fsmMismatchType(fsmReport *report.FSMReport) string {
+	if fsmReport == nil || !fsmReport.Mismatch {
+		return mismatchNone
+	}
+
+	if fsmReport.Error != "" {
+		return "fsm_error"
+	}
+
+	return mismatchFSMTerminal
 }
 
 func logComparison(

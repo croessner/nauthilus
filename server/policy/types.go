@@ -152,6 +152,56 @@ const (
 	OperationListAccounts Operation = "list_accounts"
 )
 
+const (
+	// FSMEventMarkerParseOK identifies a successful parser marker.
+	FSMEventMarkerParseOK = "auth.fsm.event.parse_ok"
+
+	// FSMEventMarkerParseFail identifies a parser failure marker.
+	FSMEventMarkerParseFail = "auth.fsm.event.parse_fail"
+
+	// FSMEventMarkerPreAuthOK identifies a successful pre-auth marker.
+	FSMEventMarkerPreAuthOK = "auth.fsm.event.pre_auth_ok"
+
+	// FSMEventMarkerPreAuthDeny identifies a pre-auth denial marker.
+	FSMEventMarkerPreAuthDeny = "auth.fsm.event.pre_auth_deny"
+
+	// FSMEventMarkerPreAuthTempFail identifies a pre-auth temporary failure marker.
+	FSMEventMarkerPreAuthTempFail = "auth.fsm.event.pre_auth_tempfail"
+
+	// FSMEventMarkerPreAuthAbort identifies a pre-auth abort marker.
+	FSMEventMarkerPreAuthAbort = "auth.fsm.event.pre_auth_abort"
+
+	// FSMEventMarkerAuthEvaluated identifies completed auth evaluation.
+	FSMEventMarkerAuthEvaluated = "auth.fsm.event.auth_evaluated"
+
+	// FSMEventMarkerAccountProviderEvaluated identifies completed account-provider evaluation.
+	FSMEventMarkerAccountProviderEvaluated = "auth.fsm.event.account_provider_evaluated"
+
+	// FSMEventMarkerAuthPermit identifies a final permit marker.
+	FSMEventMarkerAuthPermit = "auth.fsm.event.auth_permit"
+
+	// FSMEventMarkerAuthDeny identifies a final deny marker.
+	FSMEventMarkerAuthDeny = "auth.fsm.event.auth_deny"
+
+	// FSMEventMarkerAuthTempFail identifies a final temporary failure marker.
+	FSMEventMarkerAuthTempFail = "auth.fsm.event.auth_tempfail"
+
+	// FSMEventMarkerAuthEmptyUser identifies empty-user handling.
+	FSMEventMarkerAuthEmptyUser = "auth.fsm.event.auth_empty_user"
+
+	// FSMEventMarkerAuthEmptyPass identifies empty-password handling.
+	FSMEventMarkerAuthEmptyPass = "auth.fsm.event.auth_empty_pass"
+
+	// FSMEventMarkerBasicAuthOK identifies successful caller auth.
+	FSMEventMarkerBasicAuthOK = "auth.fsm.event.basic_auth_ok"
+
+	// FSMEventMarkerBasicAuthFail identifies failed caller auth.
+	FSMEventMarkerBasicAuthFail = "auth.fsm.event.basic_auth_fail"
+
+	// FSMEventMarkerAbort identifies a generic abort marker.
+	FSMEventMarkerAbort = "auth.fsm.event.abort"
+)
+
 // Decision is the transport-independent policy effect.
 type Decision string
 

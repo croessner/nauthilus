@@ -139,6 +139,19 @@ type ObserveReport struct {
 	ObligationsMatch     bool           `json:"obligations_match"`
 }
 
+// FSMReport stores current-vs-target FSM comparison output.
+type FSMReport struct {
+	PolicyName           string           `json:"policy_name,omitempty"`
+	ResponseMarker       string           `json:"response_marker,omitempty"`
+	CurrentTerminalState string           `json:"current_terminal_state,omitempty"`
+	TargetTerminalState  string           `json:"target_terminal_state,omitempty"`
+	Error                string           `json:"error,omitempty"`
+	Operation            policy.Operation `json:"operation,omitempty"`
+	CurrentEventPath     []string         `json:"current_event_path,omitempty"`
+	TargetEventPath      []string         `json:"target_event_path,omitempty"`
+	Mismatch             bool             `json:"mismatch"`
+}
+
 // DecisionReport is the redaction-aware container for policy diagnostics.
 type DecisionReport struct {
 	SessionID     string                     `json:"session_id,omitempty"`
@@ -151,6 +164,7 @@ type DecisionReport struct {
 	Policies      []PolicyDecision           `json:"policies"`
 	Final         *FinalDecision             `json:"final,omitempty"`
 	Observe       *ObserveReport             `json:"observe,omitempty"`
+	FSM           *FSMReport                 `json:"fsm,omitempty"`
 }
 
 // NewDecisionReport returns an empty report with initialized collections.
@@ -181,6 +195,7 @@ func (r *DecisionReport) Redacted() *DecisionReport {
 		Policies:      clonePolicyDecisions(r.Policies),
 		Final:         cloneFinalDecision(r.Final),
 		Observe:       cloneObserveReport(r.Observe),
+		FSM:           cloneFSMReport(r.FSM),
 	}
 
 	for id, attribute := range r.Attributes {
@@ -236,6 +251,18 @@ func cloneObserveReport(observe *ObserveReport) *ObserveReport {
 	cloned := *observe
 	cloned.Production = cloneFinalDecision(observe.Production)
 	cloned.Shadow = cloneFinalDecision(observe.Shadow)
+
+	return &cloned
+}
+
+func cloneFSMReport(fsm *FSMReport) *FSMReport {
+	if fsm == nil {
+		return nil
+	}
+
+	cloned := *fsm
+	cloned.CurrentEventPath = append([]string(nil), fsm.CurrentEventPath...)
+	cloned.TargetEventPath = append([]string(nil), fsm.TargetEventPath...)
 
 	return &cloned
 }

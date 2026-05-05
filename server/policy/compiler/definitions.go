@@ -152,22 +152,22 @@ func backendCheckTypes() map[string]policyruntime.CheckTypeDefinition {
 
 func builtinFSMEventRegistry() map[string]policyruntime.FSMEventDefinition {
 	return map[string]policyruntime.FSMEventDefinition{
-		"auth.fsm.event.parse_ok":                   {ID: "auth.fsm.event.parse_ok"},
-		"auth.fsm.event.parse_fail":                 {ID: "auth.fsm.event.parse_fail"},
-		"auth.fsm.event.pre_auth_ok":                {ID: "auth.fsm.event.pre_auth_ok", AllowedStage: policy.StagePreAuth, PolicyVisible: true},
-		"auth.fsm.event.pre_auth_deny":              {ID: "auth.fsm.event.pre_auth_deny", AllowedStage: policy.StagePreAuth, PolicyVisible: true},
-		"auth.fsm.event.pre_auth_tempfail":          {ID: "auth.fsm.event.pre_auth_tempfail", AllowedStage: policy.StagePreAuth, PolicyVisible: true},
-		"auth.fsm.event.pre_auth_abort":             {ID: "auth.fsm.event.pre_auth_abort", AllowedStage: policy.StagePreAuth, PolicyVisible: true},
-		"auth.fsm.event.auth_evaluated":             {ID: "auth.fsm.event.auth_evaluated"},
-		"auth.fsm.event.account_provider_evaluated": {ID: "auth.fsm.event.account_provider_evaluated"},
-		"auth.fsm.event.auth_permit":                {ID: "auth.fsm.event.auth_permit", AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
-		"auth.fsm.event.auth_deny":                  {ID: "auth.fsm.event.auth_deny", AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
-		"auth.fsm.event.auth_tempfail":              {ID: "auth.fsm.event.auth_tempfail", AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
-		"auth.fsm.event.auth_empty_user":            {ID: "auth.fsm.event.auth_empty_user", AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
-		"auth.fsm.event.auth_empty_pass":            {ID: "auth.fsm.event.auth_empty_pass", AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
-		"auth.fsm.event.basic_auth_ok":              {ID: "auth.fsm.event.basic_auth_ok"},
-		"auth.fsm.event.basic_auth_fail":            {ID: "auth.fsm.event.basic_auth_fail"},
-		"auth.fsm.event.abort":                      {ID: "auth.fsm.event.abort"},
+		policy.FSMEventMarkerParseOK:                  {ID: policy.FSMEventMarkerParseOK},
+		policy.FSMEventMarkerParseFail:                {ID: policy.FSMEventMarkerParseFail},
+		policy.FSMEventMarkerPreAuthOK:                {ID: policy.FSMEventMarkerPreAuthOK, AllowedStage: policy.StagePreAuth, PolicyVisible: true},
+		policy.FSMEventMarkerPreAuthDeny:              {ID: policy.FSMEventMarkerPreAuthDeny, AllowedStage: policy.StagePreAuth, PolicyVisible: true},
+		policy.FSMEventMarkerPreAuthTempFail:          {ID: policy.FSMEventMarkerPreAuthTempFail, AllowedStage: policy.StagePreAuth, PolicyVisible: true},
+		policy.FSMEventMarkerPreAuthAbort:             {ID: policy.FSMEventMarkerPreAuthAbort, AllowedStage: policy.StagePreAuth, PolicyVisible: true},
+		policy.FSMEventMarkerAuthEvaluated:            {ID: policy.FSMEventMarkerAuthEvaluated},
+		policy.FSMEventMarkerAccountProviderEvaluated: {ID: policy.FSMEventMarkerAccountProviderEvaluated},
+		policy.FSMEventMarkerAuthPermit:               {ID: policy.FSMEventMarkerAuthPermit, AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
+		policy.FSMEventMarkerAuthDeny:                 {ID: policy.FSMEventMarkerAuthDeny, AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
+		policy.FSMEventMarkerAuthTempFail:             {ID: policy.FSMEventMarkerAuthTempFail, AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
+		policy.FSMEventMarkerAuthEmptyUser:            {ID: policy.FSMEventMarkerAuthEmptyUser, AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
+		policy.FSMEventMarkerAuthEmptyPass:            {ID: policy.FSMEventMarkerAuthEmptyPass, AllowedStage: policy.StageAuthDecision, PolicyVisible: true},
+		policy.FSMEventMarkerBasicAuthOK:              {ID: policy.FSMEventMarkerBasicAuthOK},
+		policy.FSMEventMarkerBasicAuthFail:            {ID: policy.FSMEventMarkerBasicAuthFail},
+		policy.FSMEventMarkerAbort:                    {ID: policy.FSMEventMarkerAbort},
 	}
 }
 

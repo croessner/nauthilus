@@ -305,6 +305,11 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 }
 
 func (a *AuthState) auditAuthFSMTransition(from authFSMState, event authFSMEvent, to authFSMState) {
+	a.Runtime.AuthFSMEventPath = append(a.Runtime.AuthFSMEventPath, string(event))
+	if isAuthFSMTerminal(to) {
+		a.Runtime.AuthFSMTerminalState = string(to)
+	}
+
 	stats.GetMetrics().GetAuthFSMTransitionsTotal().WithLabelValues(string(from), string(event), string(to)).Inc()
 
 	if a.deps.Logger == nil || a.deps.Cfg == nil {

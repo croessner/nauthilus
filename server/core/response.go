@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/policy/evaluation"
+	policyfsm "github.com/croessner/nauthilus/server/policy/fsm"
 	"github.com/croessner/nauthilus/server/stats"
 
 	"github.com/gin-gonic/gin"
@@ -224,9 +225,11 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 func (a *AuthState) AuthOK(ctx *gin.Context) {
 	a.responseWriter().OK(ctx, a.View())
 	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
-		Effect:          policy.DecisionPermit,
-		ResponseMarker:  "auth.response.ok",
-		ResponseMessage: a.Runtime.StatusMessage,
+		Effect:                  policy.DecisionPermit,
+		ResponseMarker:          "auth.response.ok",
+		ResponseMessage:         a.Runtime.StatusMessage,
+		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
+		CurrentFSMEventPath:     a.currentFSMEventPath(),
 	})
 }
 
@@ -236,9 +239,11 @@ func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
 	a.responseWriter().Fail(ctx, a.View())
 	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
-		Effect:          policy.DecisionDeny,
-		ResponseMarker:  "auth.response.fail",
-		ResponseMessage: a.Runtime.StatusMessage,
+		Effect:                  policy.DecisionDeny,
+		ResponseMarker:          "auth.response.fail",
+		ResponseMessage:         a.Runtime.StatusMessage,
+		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionDeny),
+		CurrentFSMEventPath:     a.currentFSMEventPath(),
 	})
 }
 
@@ -246,10 +251,28 @@ func (a *AuthState) AuthFail(ctx *gin.Context) {
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	a.responseWriter().TempFail(ctx, a.View(), reason)
 	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
-		Effect:          policy.DecisionTempFail,
-		ResponseMarker:  responseMarkerForTempFail(reason),
-		ResponseMessage: a.Runtime.StatusMessage,
+		Effect:                  policy.DecisionTempFail,
+		ResponseMarker:          responseMarkerForTempFail(reason),
+		ResponseMessage:         a.Runtime.StatusMessage,
+		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionTempFail),
+		CurrentFSMEventPath:     a.currentFSMEventPath(),
 	})
+}
+
+func (a *AuthState) currentFSMTerminal(decision policy.Decision) string {
+	if a != nil && a.Runtime.AuthFSMTerminalState != "" {
+		return a.Runtime.AuthFSMTerminalState
+	}
+
+	return policyfsm.TerminalStateForDecision(decision)
+}
+
+func (a *AuthState) currentFSMEventPath() []string {
+	if a == nil {
+		return nil
+	}
+
+	return append([]string(nil), a.Runtime.AuthFSMEventPath...)
 }
 
 func responseMarkerForTempFail(reason string) string {
