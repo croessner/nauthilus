@@ -3252,12 +3252,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 			return
 		}
 
-		a.comparePolicyDecision(ginCtx, evaluation.ProductionOutcome{
-			Effect:                  policy.DecisionPermit,
-			ResponseMarker:          policy.ResponseMarkerListAccountsOK,
-			CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
-			CurrentFSMEventPath:     a.currentFSMEventPath(),
-		})
+		a.observeConfiguredPolicyDecision(ginCtx)
 	}()
 
 	// Pre-allocate the accounts slice to avoid continuous reallocation
@@ -3338,12 +3333,6 @@ func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSee
 	}
 
 	if configured {
-		a.storeDirectPolicyDiagnostic(ctx, evaluation.ProductionOutcome{
-			Effect:                  policy.DecisionPermit,
-			ResponseMarker:          policy.ResponseMarkerListAccountsOK,
-			CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
-			CurrentFSMEventPath:     a.currentFSMEventPath(),
-		})
 		if listAccountsPolicyTerminates(final) {
 			a.applyPolicyDecision(ctx, final)
 

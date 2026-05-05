@@ -245,44 +245,6 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	}
 }
 
-func TestCompareWithProductionReportsMismatch(t *testing.T) {
-	recorder := &recordingRecorder{}
-	policyReport := standardReport(
-		policy.OperationAuthenticate,
-		check("ldap_backend", policy.CheckTypeLDAPBackend, policy.StageAuthBackend, policy.CheckStatusOK),
-		boolAttr(policy.AttributeAuthenticated, policy.StageAuthBackend, policy.OperationAuthenticate, false, nil),
-	)
-
-	got := CompareWithProduction(context.Background(), policyReport, CompareInput{
-		Mode:          "enforce",
-		Set:           policy.BuiltinDefaultSet,
-		Generation:    11,
-		Recorder:      recorder,
-		Production:    ProductionOutcome{Effect: policy.DecisionPermit, ResponseMarker: "auth.response.ok"},
-		ProductionSet: true,
-	})
-
-	if !got.Mismatch {
-		t.Fatal("mismatch = false, want true")
-	}
-
-	if policyReport.Observe == nil || !policyReport.Observe.Mismatch {
-		t.Fatalf("observe report = %#v, want mismatch", policyReport.Observe)
-	}
-
-	if policyReport.Final == nil || policyReport.Final.PolicyName != "standard_auth_failure" {
-		t.Fatalf("final = %#v, want standard auth failure", policyReport.Final)
-	}
-
-	if len(recorder.decisions) != 1 {
-		t.Fatalf("decision metrics = %d, want 1", len(recorder.decisions))
-	}
-
-	if len(recorder.comparisons) != 1 || recorder.comparisons[0].Result != observability.ResultFailure {
-		t.Fatalf("comparison metrics = %#v, want one failure", recorder.comparisons)
-	}
-}
-
 func TestCustomObserveComparesConfiguredPolicyWithDefault(t *testing.T) {
 	recorder := &recordingRecorder{}
 	policyReport := standardReport(

@@ -24,9 +24,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/policy"
-	"github.com/croessner/nauthilus/server/policy/evaluation"
-	policyfsm "github.com/croessner/nauthilus/server/policy/fsm"
 	"github.com/croessner/nauthilus/server/stats"
 
 	"github.com/gin-gonic/gin"
@@ -224,13 +221,7 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 // AuthOK is the general method to indicate authentication success.
 func (a *AuthState) AuthOK(ctx *gin.Context) {
 	a.responseWriter().OK(ctx, a.View())
-	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
-		Effect:                  policy.DecisionPermit,
-		ResponseMarker:          policy.ResponseMarkerOK,
-		ResponseMessage:         a.Runtime.StatusMessage,
-		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionPermit),
-		CurrentFSMEventPath:     a.currentFSMEventPath(),
-	})
+	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // AuthFail handles the failure of authentication.
@@ -238,49 +229,13 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
 	a.responseWriter().Fail(ctx, a.View())
-	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
-		Effect:                  policy.DecisionDeny,
-		ResponseMarker:          policy.ResponseMarkerFail,
-		ResponseMessage:         a.Runtime.StatusMessage,
-		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionDeny),
-		CurrentFSMEventPath:     a.currentFSMEventPath(),
-	})
+	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // AuthTempFail sends a temporary failure response with the provided reason and logs the error.
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	a.responseWriter().TempFail(ctx, a.View(), reason)
-	a.comparePolicyDecision(ctx, evaluation.ProductionOutcome{
-		Effect:                  policy.DecisionTempFail,
-		ResponseMarker:          responseMarkerForTempFail(reason),
-		ResponseMessage:         a.Runtime.StatusMessage,
-		CurrentFSMTerminalState: a.currentFSMTerminal(policy.DecisionTempFail),
-		CurrentFSMEventPath:     a.currentFSMEventPath(),
-	})
-}
-
-func (a *AuthState) currentFSMTerminal(decision policy.Decision) string {
-	if a != nil && a.Runtime.AuthFSMTerminalState != "" {
-		return a.Runtime.AuthFSMTerminalState
-	}
-
-	return policyfsm.TerminalStateForDecision(decision)
-}
-
-func (a *AuthState) currentFSMEventPath() []string {
-	if a == nil {
-		return nil
-	}
-
-	return append([]string(nil), a.Runtime.AuthFSMEventPath...)
-}
-
-func responseMarkerForTempFail(reason string) string {
-	if reason == definitions.TempFailNoTLS {
-		return policy.ResponseMarkerTempFailNoTLS
-	}
-
-	return policy.ResponseMarkerTempFail
+	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // OK implements the success response logic (unchanged behavior).

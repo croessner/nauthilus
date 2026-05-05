@@ -24,7 +24,9 @@ import (
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 )
 
-func TestAuthBoundaryRecordsStandardAuthShadowForTLSTempfail(t *testing.T) {
+const cleanupStandardTLSEnforcementPolicy = "standard_tls_enforcement"
+
+func TestAuthBoundaryDefaultSetDoesNotCreateMigrationObserveReportForTLSTempfail(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
@@ -46,19 +48,19 @@ func TestAuthBoundaryRecordsStandardAuthShadowForTLSTempfail(t *testing.T) {
 
 	policyReport := policyCtx.Report()
 	if policyReport.Final == nil {
-		t.Fatal("missing shadow final decision")
+		t.Fatal("missing final policy decision")
 	}
 
-	if policyReport.Final.PolicyName != "standard_tls_enforcement" {
-		t.Fatalf("shadow policy = %q, want standard_tls_enforcement", policyReport.Final.PolicyName)
+	if policyReport.Final.PolicyName != cleanupStandardTLSEnforcementPolicy {
+		t.Fatalf("policy = %q, want %s", policyReport.Final.PolicyName, cleanupStandardTLSEnforcementPolicy)
 	}
 
-	if policyReport.Final.ResponseMarker != "auth.response.tempfail.no_tls" {
+	if policyReport.Final.ResponseMarker != policy.ResponseMarkerTempFailNoTLS {
 		t.Fatalf("response marker = %q, want no TLS tempfail", policyReport.Final.ResponseMarker)
 	}
 
-	if policyReport.Observe == nil || policyReport.Observe.Mismatch {
-		t.Fatalf("observe report = %#v, want no mismatch", policyReport.Observe)
+	if policyReport.Observe != nil {
+		t.Fatalf("observe report = %#v, want nil outside configured observe mode", policyReport.Observe)
 	}
 
 	if ctx.Writer.Status() != http.StatusInternalServerError {

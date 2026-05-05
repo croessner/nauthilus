@@ -117,7 +117,7 @@ func TestAuthBoundaryDefaultSetAppliesTargetFSMForDirectPreAuthDecision(t *testi
 	}
 }
 
-func TestAuthBoundaryKeepsDirectOutcomeDiagnosticWhenDefaultSetOverrides(t *testing.T) {
+func TestAuthBoundaryDefaultSetAuthDecisionDoesNotEmitObserveReportInEnforceMode(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    103,
@@ -146,16 +146,8 @@ func TestAuthBoundaryKeepsDirectOutcomeDiagnosticWhenDefaultSetOverrides(t *test
 		t.Fatal("missing policy decision context")
 	}
 
-	if policyCtx.Report().Observe == nil {
-		t.Fatal("missing direct outcome diagnostic")
-	}
-
-	if !policyCtx.Report().Observe.Mismatch {
-		t.Fatalf("observe report = %#v, want mismatch against direct outcome", policyCtx.Report().Observe)
-	}
-
-	if got := policyCtx.Report().Observe.MismatchType; got != "multiple" {
-		t.Fatalf("mismatch type = %q, want multiple", got)
+	if policyCtx.Report().Observe != nil {
+		t.Fatalf("observe report = %#v, want nil in enforce mode", policyCtx.Report().Observe)
 	}
 }
 

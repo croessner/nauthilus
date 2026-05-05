@@ -70,8 +70,8 @@ func CompareCustomObserve(
 	unavailable := markUnavailableCustomOnlyChecks(spanCtx, recorder, snapshot, policyReport)
 	customFinal := evaluateConfiguredPolicySet(spanCtx, snapshot, policyReport, recorder, input)
 	mismatchType, mismatch := compareObserveDecisions(defaultResult.Final, customFinal)
-	policyReport.Observe = customObserveReport(defaultResult.Final, customFinal, input.Production.Surface, mismatchType, mismatch)
-	recordCustomComparison(spanCtx, recorder, policyReport.Operation, customFinal, input.Production.Surface, mismatchType, mismatch)
+	policyReport.Observe = customObserveReport(defaultResult.Final, customFinal, input.Surface, mismatchType, mismatch)
+	recordCustomComparison(spanCtx, recorder, policyReport.Operation, customFinal, input.Surface, mismatchType, mismatch)
 	setCustomCompareSpanAttributes(span, input, policyReport.Operation, defaultResult.Final, customFinal, mismatchType, mismatch, unavailable)
 	logCustomObserveMismatch(spanCtx, input, policyReport.Operation, defaultResult.Final, customFinal, mismatchType, mismatch)
 

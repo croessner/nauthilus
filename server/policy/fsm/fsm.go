@@ -79,29 +79,6 @@ type Result struct {
 	Transitions     []Transition
 }
 
-// ComparisonInput contains current production FSM facts and target markers.
-type ComparisonInput struct {
-	PolicyName           string
-	ResponseMarker       string
-	CurrentTerminalState string
-	Operation            policy.Operation
-	CurrentEventPath     []string
-	TargetEventMarkers   []string
-}
-
-// ComparisonResult contains the side-by-side FSM diagnostic result.
-type ComparisonResult struct {
-	PolicyName           string
-	ResponseMarker       string
-	CurrentTerminalState string
-	TargetTerminalState  string
-	Error                string
-	Operation            policy.Operation
-	CurrentEventPath     []string
-	TargetEventPath      []string
-	Mismatch             bool
-}
-
 // Evaluate applies target FSM event markers from the initial state.
 func Evaluate(markers []string) (Result, error) {
 	current := stateInit
@@ -130,31 +107,6 @@ func Evaluate(markers []string) (Result, error) {
 	result.TerminalState = string(current)
 
 	return result, nil
-}
-
-// Compare evaluates target markers and compares their terminal state with production.
-func Compare(input ComparisonInput) ComparisonResult {
-	result := ComparisonResult{
-		PolicyName:           input.PolicyName,
-		ResponseMarker:       input.ResponseMarker,
-		CurrentTerminalState: input.CurrentTerminalState,
-		Operation:            input.Operation,
-		CurrentEventPath:     currentEventPath(input),
-	}
-
-	evaluation, err := Evaluate(input.TargetEventMarkers)
-	result.TargetTerminalState = evaluation.TerminalState
-	result.TargetEventPath = append([]string(nil), evaluation.TargetEventPath...)
-	if err != nil {
-		result.Error = err.Error()
-		result.Mismatch = true
-
-		return result
-	}
-
-	result.Mismatch = result.CurrentTerminalState != "" && result.CurrentTerminalState != result.TargetTerminalState
-
-	return result
 }
 
 // TerminalStateForDecision returns the target terminal state for a final effect.
@@ -291,8 +243,4 @@ func terminal(current state) bool {
 	default:
 		return false
 	}
-}
-
-func currentEventPath(input ComparisonInput) []string {
-	return append([]string(nil), input.CurrentEventPath...)
 }

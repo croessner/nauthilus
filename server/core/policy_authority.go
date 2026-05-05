@@ -31,7 +31,6 @@ import (
 )
 
 const (
-	policyDirectOutcomeContextKey             = "policy_direct_outcome"
 	policyConfiguredPreAuthDecisionContextKey = "policy_configured_pre_auth_decision"
 	policyConfiguredAuthDecisionContextKey    = "policy_configured_auth_decision"
 	policyPostActionResultContextKey          = "policy_post_action_result"
@@ -53,7 +52,6 @@ func (a *AuthState) defaultPolicyPreAuthResult(ctx *gin.Context, current definit
 		return current
 	}
 
-	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(current, a.Runtime.StatusMessage))
 	a.applyPolicyResponseMessage(final)
 
 	return preAuthResultFromPolicy(final, current)
@@ -65,7 +63,6 @@ func (a *AuthState) configuredPolicyPreAuthResult(ctx *gin.Context, current defi
 		return current, false
 	}
 
-	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(current, a.Runtime.StatusMessage))
 	a.applyPolicyResponseMessage(final)
 	if configuredPreAuthControl(final) {
 		return definitions.AuthResultOK, true
@@ -84,7 +81,6 @@ func (a *AuthState) defaultPolicyAuthResult(ctx *gin.Context, current definition
 		return current
 	}
 
-	a.storeDirectPolicyDiagnostic(ctx, authProductionOutcome(current, a.Runtime.StatusMessage))
 	a.applyPolicyResponseMessage(final)
 
 	return authResultFromPolicy(final, current)
@@ -96,7 +92,6 @@ func (a *AuthState) configuredPolicyAuthResult(ctx *gin.Context, current definit
 		return current, false
 	}
 
-	a.storeDirectPolicyDiagnostic(ctx, authProductionOutcome(current, a.Runtime.StatusMessage))
 	a.applyPolicyResponseMessage(final)
 	a.applyPolicyObligations(ctx, final)
 	releasePolicyPostActionResult(ctx)
@@ -110,7 +105,6 @@ func (a *AuthState) applyDefaultPreAuthDecision(ctx *gin.Context) bool {
 		return false
 	}
 
-	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(preAuthResultFromPolicy(final, definitions.AuthResultUnset), a.Runtime.StatusMessage))
 	a.applyPolicyDecision(ctx, final)
 
 	return true
@@ -151,7 +145,6 @@ func (a *AuthState) applyConfiguredPreAuthDecision(ctx *gin.Context) bool {
 		return false
 	}
 
-	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(preAuthResultFromPolicy(final, definitions.AuthResultUnset), a.Runtime.StatusMessage))
 	a.applyPolicyDecision(ctx, final)
 
 	return true
@@ -163,7 +156,6 @@ func (a *AuthState) applyConfiguredPreAuthControl(ctx *gin.Context, current defi
 		return false
 	}
 
-	a.storeDirectPolicyDiagnostic(ctx, preAuthProductionOutcome(current, a.Runtime.StatusMessage))
 	a.applyPolicyResponseMessage(final)
 	a.markConfiguredPreAuthChecksSkipped(ctx)
 
@@ -221,9 +213,7 @@ func (a *AuthState) configuredPolicyDecision(ctx *gin.Context, resolver configur
 		Generation: generation,
 		Recorder:   observability.DefaultRecorder(),
 		Logger:     a.logger(),
-		Production: evaluation.ProductionOutcome{
-			Surface: a.policyResponseSurface(),
-		},
+		Surface:    a.policyResponseSurface(),
 	})
 	if result.Final != nil {
 		a.storeConfiguredPolicyDecision(ctx, policyCtx, generation, result.Final, resolver.store)
@@ -515,138 +505,5 @@ func tempFailReasonFromPolicy(final *report.FinalDecision) string {
 		return final.ResponseMessage.Message
 	default:
 		return definitions.TempFailDefault
-	}
-}
-
-func (a *AuthState) storeDirectPolicyDiagnostic(ctx *gin.Context, outcome evaluation.ProductionOutcome) {
-	if ctx == nil || outcome.Effect == "" {
-		return
-	}
-
-	ctx.Set(policyDirectOutcomeContextKey, outcome)
-}
-
-func directPolicyDiagnostic(ctx *gin.Context) (evaluation.ProductionOutcome, bool) {
-	if ctx == nil {
-		return evaluation.ProductionOutcome{}, false
-	}
-
-	value, ok := ctx.Get(policyDirectOutcomeContextKey)
-	if !ok {
-		return evaluation.ProductionOutcome{}, false
-	}
-
-	outcome, ok := value.(evaluation.ProductionOutcome)
-
-	return outcome, ok
-}
-
-func preAuthProductionOutcome(current definitions.AuthResult, responseMessage string) evaluation.ProductionOutcome {
-	message := preAuthResponseMessage(current, responseMessage)
-
-	switch current {
-	case definitions.AuthResultFeatureTLS:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionTempFail,
-			ResponseMarker:  policy.ResponseMarkerTempFailNoTLS,
-			FSMEventMarker:  policy.FSMEventMarkerPreAuthTempFail,
-			ResponseMessage: message,
-		}
-	case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua, definitions.AuthResultFail:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionDeny,
-			ResponseMarker:  policy.ResponseMarkerFail,
-			FSMEventMarker:  policy.FSMEventMarkerPreAuthDeny,
-			ResponseMessage: message,
-		}
-	case definitions.AuthResultTempFail:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionTempFail,
-			ResponseMarker:  policy.ResponseMarkerTempFail,
-			FSMEventMarker:  policy.FSMEventMarkerPreAuthTempFail,
-			ResponseMessage: message,
-		}
-	default:
-		return evaluation.ProductionOutcome{}
-	}
-}
-
-func authProductionOutcome(current definitions.AuthResult, responseMessage string) evaluation.ProductionOutcome {
-	message := authResponseMessage(current, responseMessage)
-
-	switch current {
-	case definitions.AuthResultOK:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionPermit,
-			ResponseMarker:  policy.ResponseMarkerOK,
-			FSMEventMarker:  policy.FSMEventMarkerAuthPermit,
-			ResponseMessage: message,
-		}
-	case definitions.AuthResultFail:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionDeny,
-			ResponseMarker:  policy.ResponseMarkerFail,
-			FSMEventMarker:  policy.FSMEventMarkerAuthDeny,
-			ResponseMessage: message,
-		}
-	case definitions.AuthResultTempFail:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionTempFail,
-			ResponseMarker:  policy.ResponseMarkerTempFail,
-			FSMEventMarker:  policy.FSMEventMarkerAuthTempFail,
-			ResponseMessage: message,
-		}
-	case definitions.AuthResultEmptyUsername:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionTempFail,
-			ResponseMarker:  policy.ResponseMarkerTempFail,
-			FSMEventMarker:  policy.FSMEventMarkerAuthEmptyUser,
-			ResponseMessage: message,
-		}
-	case definitions.AuthResultEmptyPassword:
-		return evaluation.ProductionOutcome{
-			Effect:          policy.DecisionDeny,
-			ResponseMarker:  policy.ResponseMarkerFail,
-			FSMEventMarker:  policy.FSMEventMarkerAuthEmptyPass,
-			ResponseMessage: message,
-		}
-	default:
-		return evaluation.ProductionOutcome{}
-	}
-}
-
-func preAuthResponseMessage(current definitions.AuthResult, responseMessage string) string {
-	if responseMessage != "" {
-		return responseMessage
-	}
-
-	switch current {
-	case definitions.AuthResultFeatureTLS:
-		return definitions.TempFailNoTLS
-	case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua, definitions.AuthResultFail:
-		return definitions.PasswordFail
-	case definitions.AuthResultTempFail:
-		return definitions.TempFailDefault
-	default:
-		return ""
-	}
-}
-
-func authResponseMessage(current definitions.AuthResult, responseMessage string) string {
-	if responseMessage != "" {
-		return responseMessage
-	}
-
-	switch current {
-	case definitions.AuthResultOK:
-		return "OK"
-	case definitions.AuthResultFail, definitions.AuthResultEmptyPassword:
-		return definitions.PasswordFail
-	case definitions.AuthResultTempFail:
-		return definitions.TempFailDefault
-	case definitions.AuthResultEmptyUsername:
-		return definitions.TempFailEmptyUser
-	default:
-		return ""
 	}
 }

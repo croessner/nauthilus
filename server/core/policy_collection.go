@@ -25,7 +25,6 @@ import (
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/policy/evaluation"
 	"github.com/croessner/nauthilus/server/policy/observability"
-	"github.com/croessner/nauthilus/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -136,64 +135,21 @@ func (a *AuthState) markPolicyUnavailable(ctx *gin.Context, name string, reason 
 	}
 }
 
-func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluation.ProductionOutcome) {
+func (a *AuthState) observeConfiguredPolicyDecision(ctx *gin.Context) {
 	policyCtx := existingPolicyContext(ctx)
 	if policyCtx == nil {
 		return
 	}
 
-	if directOutcome, ok := directPolicyDiagnostic(ctx); ok {
-		production = mergePolicyDiagnosticOutcome(directOutcome, production)
-	}
-
-	if production.Surface == "" {
-		production.Surface = a.policyResponseSurface()
-	}
-
-	if policyCtx.ConfiguredPreAuthAuthoritative() && selectedPreAuthFinal(policyCtx.Report()) {
-		return
-	}
-
-	if policyCtx.ConfiguredAuthDecisionAuthoritative() && selectedAuthFinal(policyCtx.Report()) {
-		return
-	}
-
 	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
-	result := evaluation.CompareWithProduction(contextFromGin(ctx), policyCtx.Report(), evaluation.CompareInput{
-		Mode:          mode,
-		Set:           defaultPolicy,
-		Generation:    generation,
-		Recorder:      observability.DefaultRecorder(),
-		Logger:        a.logger(),
-		Production:    production,
-		ProductionSet: true,
-	})
-	if customResult := evaluation.CompareCustomObserve(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
+	result := evaluation.CompareCustomObserve(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
 		Mode:       mode,
 		Set:        defaultPolicy,
 		Generation: generation,
 		Recorder:   observability.DefaultRecorder(),
 		Logger:     a.logger(),
-		Production: production,
-	}); customResult.Shadow != nil {
-		result = customResult
-	}
-
-	if fsmReport := policyCtx.Report().FSM; fsmReport != nil {
-		observability.Debug(
-			contextFromGin(ctx),
-			a.Cfg(),
-			a.Logger(),
-			observability.ComponentFSM,
-			definitions.LogKeyGUID, a.Runtime.GUID,
-			"operation", string(fsmReport.Operation),
-			"policy_name", fsmReport.PolicyName,
-			"response_marker", fsmReport.ResponseMarker,
-			"current_terminal_state", fsmReport.CurrentTerminalState,
-			"target_terminal_state", fsmReport.TargetTerminalState,
-			"fsm_mismatch", fsmReport.Mismatch,
-		)
-	}
+		Surface:    a.policyResponseSurface(),
+	})
 
 	if !result.Mismatch || result.Shadow == nil {
 		return
@@ -218,39 +174,6 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		"default_fsm_event_marker", result.Production.FSMEventMarker,
 		"custom_fsm_event_marker", result.Shadow.FSMEventMarker,
 	)
-}
-
-func selectedPreAuthFinal(policyReport *report.DecisionReport) bool {
-	return policyReport != nil &&
-		policyReport.Final != nil &&
-		policyReport.Final.Stage == policy.StagePreAuth &&
-		policyReport.Final.PolicyName != ""
-}
-
-func selectedAuthFinal(policyReport *report.DecisionReport) bool {
-	return policyReport != nil &&
-		policyReport.Final != nil &&
-		policyReport.Final.Stage == policy.StageAuthDecision &&
-		policyReport.Final.PolicyName != ""
-}
-
-func mergePolicyDiagnosticOutcome(
-	diagnostic evaluation.ProductionOutcome,
-	current evaluation.ProductionOutcome,
-) evaluation.ProductionOutcome {
-	if diagnostic.Surface == "" {
-		diagnostic.Surface = current.Surface
-	}
-
-	if diagnostic.CurrentFSMTerminalState == "" {
-		diagnostic.CurrentFSMTerminalState = current.CurrentFSMTerminalState
-	}
-
-	if len(diagnostic.CurrentFSMEventPath) == 0 {
-		diagnostic.CurrentFSMEventPath = current.CurrentFSMEventPath
-	}
-
-	return diagnostic
 }
 
 func (a *AuthState) policyResponseSurface() string {

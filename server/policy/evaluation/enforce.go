@@ -222,12 +222,12 @@ func recordConfiguredDecision(
 		Operation:      operation,
 		Stage:          final.Stage,
 	})
-	if input.Production.Surface == "" {
+	if input.Surface == "" {
 		return
 	}
 
 	recorder.RecordResponseRender(ctx, observability.RendererMeasurement{
-		Surface:        input.Production.Surface,
+		Surface:        input.Surface,
 		ResponseMarker: final.ResponseMarker,
 		Result:         observability.ResultSuccess,
 	})

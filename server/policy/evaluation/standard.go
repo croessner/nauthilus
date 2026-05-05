@@ -22,17 +22,12 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/policy"
-	policyfsm "github.com/croessner/nauthilus/server/policy/fsm"
 	"github.com/croessner/nauthilus/server/policy/observability"
 	"github.com/croessner/nauthilus/server/policy/report"
-
-	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -53,7 +48,6 @@ const (
 	obligationLuaPostActionEnqueue   = policy.ObligationLuaPostActionEnqueue
 	mismatchNone                     = "none"
 	mismatchMultiple                 = "multiple"
-	mismatchFSMTerminal              = "fsm_terminal_state"
 	defaultMode                      = "enforce"
 	maxSelectedResponseMessageLength = 256
 )
@@ -74,34 +68,20 @@ type Result struct {
 	Mismatch bool
 }
 
-// ProductionOutcome describes the current authoritative runtime result.
-type ProductionOutcome struct {
-	ResponseMessage         string
-	ResponseMarker          string
-	FSMEventMarker          string
-	Surface                 string
-	CurrentFSMTerminalState string
-	Effect                  policy.Decision
-	Obligations             []report.EffectRequest
-	CurrentFSMEventPath     []string
-}
-
 // CompareInput carries comparison dependencies and runtime metadata.
 type CompareInput struct {
-	Logger        *slog.Logger
-	Recorder      observability.Recorder
-	Production    ProductionOutcome
-	Mode          string
-	Set           string
-	Generation    uint64
-	ProductionSet bool
+	Logger     *slog.Logger
+	Recorder   observability.Recorder
+	Mode       string
+	Set        string
+	Surface    string
+	Generation uint64
 }
 
 // CompareResult describes the default-policy comparison outcome.
 type CompareResult struct {
 	Shadow       *report.FinalDecision
 	Production   *report.FinalDecision
-	FSM          *report.FSMReport
 	MismatchType string
 	Mismatch     bool
 }
@@ -144,36 +124,6 @@ func EvaluateStandardPreAuth(policyReport *report.DecisionReport) Result {
 	return Result{Final: evaluatePreAuth(policyReport, policyReport.Operation)}
 }
 
-// CompareWithProduction evaluates standard_auth and compares it with current output.
-func CompareWithProduction(ctx context.Context, policyReport *report.DecisionReport, input CompareInput) CompareResult {
-	ctx, policyReport, input = normalizeCompareInput(ctx, policyReport, input)
-	recorder := observability.SafeRecorder(input.Recorder)
-	tracer := observability.NewTracer()
-	start := time.Now()
-	spanCtx, span := tracer.Start(ctx, "policy.observe.compare")
-	defer span.End()
-
-	evaluation := EvaluateStandardAuth(policyReport)
-	if evaluation.Final == nil {
-		return CompareResult{}
-	}
-
-	recordEvaluation(spanCtx, recorder, input, policyReport.Operation, evaluation.Final, time.Since(start))
-	production, mismatchType, mismatch := compareProduction(spanCtx, recorder, policyReport, input, evaluation.Final)
-	fsmReport := compareTargetFSM(spanCtx, policyReport, input, evaluation.Final)
-	setCompareSpanAttributes(span, input, policyReport.Operation, evaluation.Final, mismatchType, mismatch)
-	setFSMSpanAttributes(span, fsmReport)
-	logComparison(spanCtx, input, policyReport.Operation, evaluation.Final, mismatchType, mismatch)
-
-	return CompareResult{
-		Shadow:       evaluation.Final,
-		Production:   production,
-		FSM:          fsmReport,
-		MismatchType: mismatchType,
-		Mismatch:     mismatch,
-	}
-}
-
 func normalizeCompareInput(
 	ctx context.Context,
 	policyReport *report.DecisionReport,
@@ -214,92 +164,6 @@ func prepareStandardReport(policyReport *report.DecisionReport) *report.Decision
 	return policyReport
 }
 
-func recordEvaluation(
-	ctx context.Context,
-	recorder observability.Recorder,
-	input CompareInput,
-	operation policy.Operation,
-	final *report.FinalDecision,
-	duration time.Duration,
-) {
-	recorder.RecordStageEvaluation(ctx, observability.StageMeasurement{
-		Duration:  duration,
-		Mode:      input.Mode,
-		Operation: operation,
-		Stage:     final.Stage,
-	})
-	recorder.RecordDecision(ctx, observability.DecisionMeasurement{
-		Mode:           input.Mode,
-		PolicyName:     final.PolicyName,
-		ResponseMarker: final.ResponseMarker,
-		FSMEventMarker: final.FSMEventMarker,
-		Operation:      operation,
-		Stage:          final.Stage,
-		Decision:       final.Effect,
-	})
-	recorder.RecordFSMTransition(ctx, observability.FSMMeasurement{
-		Result:         observability.ResultSuccess,
-		FSMEventMarker: final.FSMEventMarker,
-		Operation:      operation,
-		Stage:          final.Stage,
-	})
-}
-
-func compareProduction(
-	ctx context.Context,
-	recorder observability.Recorder,
-	policyReport *report.DecisionReport,
-	input CompareInput,
-	shadow *report.FinalDecision,
-) (*report.FinalDecision, string, bool) {
-	production := input.Production.finalDecision()
-	if !input.ProductionSet {
-		return production, mismatchNone, false
-	}
-
-	mismatchType := compareDecisions(shadow, production, input.Production)
-	mismatch := mismatchType != mismatchNone
-	policyReport.Observe = observeReport(shadow, production, input.Production, mismatchType, mismatch)
-	recordComparison(ctx, recorder, policyReport.Operation, shadow, input.Production, mismatchType, mismatch)
-
-	return production, mismatchType, mismatch
-}
-
-func compareTargetFSM(
-	ctx context.Context,
-	policyReport *report.DecisionReport,
-	input CompareInput,
-	final *report.FinalDecision,
-) *report.FSMReport {
-	if final == nil {
-		return nil
-	}
-
-	tracer := observability.NewTracer()
-	_, span := tracer.Start(ctx, "policy.fsm.apply")
-	defer span.End()
-
-	currentTerminal := input.Production.CurrentFSMTerminalState
-	if currentTerminal == "" {
-		currentTerminal = policyfsm.TerminalStateForDecision(input.Production.Effect)
-	}
-
-	comparison := policyfsm.Compare(policyfsm.ComparisonInput{
-		PolicyName:           final.PolicyName,
-		ResponseMarker:       final.ResponseMarker,
-		CurrentTerminalState: currentTerminal,
-		Operation:            policyReport.Operation,
-		CurrentEventPath:     input.Production.CurrentFSMEventPath,
-		TargetEventMarkers:   TargetFSMEventMarkers(policyReport, final),
-	})
-	fsmReport := fsmReportFromComparison(comparison)
-	policyReport.FSM = fsmReport
-
-	setFSMSpanAttributes(span, fsmReport)
-
-	return fsmReport
-}
-
 // TargetFSMEventMarkers returns the target marker sequence for a selected decision.
 func TargetFSMEventMarkers(policyReport *report.DecisionReport, final *report.FinalDecision) []string {
 	markers := []string{policy.FSMEventMarkerParseOK}
@@ -338,138 +202,6 @@ func selectedPreAuthMarker(policyReport *report.DecisionReport) string {
 	}
 
 	return marker
-}
-
-func fsmReportFromComparison(comparison policyfsm.ComparisonResult) *report.FSMReport {
-	return &report.FSMReport{
-		PolicyName:           comparison.PolicyName,
-		ResponseMarker:       comparison.ResponseMarker,
-		CurrentTerminalState: comparison.CurrentTerminalState,
-		TargetTerminalState:  comparison.TargetTerminalState,
-		Error:                comparison.Error,
-		Operation:            comparison.Operation,
-		CurrentEventPath:     append([]string(nil), comparison.CurrentEventPath...),
-		TargetEventPath:      append([]string(nil), comparison.TargetEventPath...),
-		Mismatch:             comparison.Mismatch,
-	}
-}
-
-func observeReport(
-	shadow *report.FinalDecision,
-	production *report.FinalDecision,
-	outcome ProductionOutcome,
-	mismatchType string,
-	mismatch bool,
-) *report.ObserveReport {
-	return &report.ObserveReport{
-		Production:           production,
-		Shadow:               cloneFinal(shadow),
-		Surface:              outcome.Surface,
-		MismatchType:         mismatchType,
-		Mismatch:             mismatch,
-		ResponseMessageMatch: responseMessagesMatch(shadow, outcome),
-		ObligationsMatch:     obligationsMatchWhenKnown(shadow.Obligations, outcome.Obligations),
-	}
-}
-
-func recordComparison(
-	ctx context.Context,
-	recorder observability.Recorder,
-	operation policy.Operation,
-	shadow *report.FinalDecision,
-	outcome ProductionOutcome,
-	mismatchType string,
-	mismatch bool,
-) {
-	recorder.RecordObserveComparison(ctx, observability.ObserveMeasurement{
-		Result:       observeResult(mismatch),
-		MismatchType: mismatchType,
-		Operation:    operation,
-		Stage:        shadow.Stage,
-	})
-	if outcome.Surface == "" {
-		return
-	}
-
-	recorder.RecordResponseRender(ctx, observability.RendererMeasurement{
-		Surface:        outcome.Surface,
-		ResponseMarker: shadow.ResponseMarker,
-		Result:         observeResult(mismatch),
-	})
-}
-
-func setCompareSpanAttributes(
-	span interface{ SetAttributes(...attribute.KeyValue) },
-	input CompareInput,
-	operation policy.Operation,
-	final *report.FinalDecision,
-	mismatchType string,
-	mismatch bool,
-) {
-	span.SetAttributes(
-		attribute.String("policy.mode", input.Mode),
-		attribute.String("policy.name", final.PolicyName),
-		attribute.String("policy.operation", string(operation)),
-		attribute.String("policy.stage", string(final.Stage)),
-		attribute.String("policy.decision", string(final.Effect)),
-		attribute.String("policy.response_marker", final.ResponseMarker),
-		attribute.String("policy.fsm_event_marker", final.FSMEventMarker),
-		attribute.Int64("policy.snapshot_generation", int64(input.Generation)),
-		attribute.Bool("policy.observe_mismatch", mismatch),
-		attribute.String("policy.mismatch_type", mismatchType),
-	)
-}
-
-func setFSMSpanAttributes(span interface{ SetAttributes(...attribute.KeyValue) }, fsmReport *report.FSMReport) {
-	if fsmReport == nil {
-		return
-	}
-
-	span.SetAttributes(
-		attribute.String("policy.operation", string(fsmReport.Operation)),
-		attribute.String("policy.name", fsmReport.PolicyName),
-		attribute.String("policy.response_marker", fsmReport.ResponseMarker),
-		attribute.String("policy.fsm.current_terminal_state", fsmReport.CurrentTerminalState),
-		attribute.String("policy.fsm.target_terminal_state", fsmReport.TargetTerminalState),
-		attribute.Bool("policy.fsm.mismatch", fsmReport.Mismatch),
-		attribute.String("policy.mismatch_type", fsmMismatchType(fsmReport)),
-	)
-}
-
-func fsmMismatchType(fsmReport *report.FSMReport) string {
-	if fsmReport == nil || !fsmReport.Mismatch {
-		return mismatchNone
-	}
-
-	if fsmReport.Error != "" {
-		return "fsm_error"
-	}
-
-	return mismatchFSMTerminal
-}
-
-func logComparison(
-	ctx context.Context,
-	input CompareInput,
-	operation policy.Operation,
-	final *report.FinalDecision,
-	mismatchType string,
-	mismatch bool,
-) {
-	observability.LogDecision(ctx, input.Logger, observability.DecisionLogEntry{
-		Mode:               input.Mode,
-		Set:                input.Set,
-		Name:               final.PolicyName,
-		Reason:             final.Reason,
-		ResponseMarker:     final.ResponseMarker,
-		FSMEventMarker:     final.FSMEventMarker,
-		Operation:          operation,
-		Stage:              final.Stage,
-		Decision:           final.Effect,
-		SnapshotGeneration: input.Generation,
-		ObserveMismatch:    mismatch,
-	})
-	logMismatch(ctx, input.Logger, mismatch, mismatchType, final)
 }
 
 func evaluatePreAuth(policyReport *report.DecisionReport, operation policy.Operation) *report.FinalDecision {
@@ -1154,75 +886,8 @@ func sanitizeResponseMessage(message string, maxLength int) string {
 	return builder.String()
 }
 
-func (p ProductionOutcome) finalDecision() *report.FinalDecision {
-	return &report.FinalDecision{
-		PolicyName:      "current_production",
-		Effect:          p.Effect,
-		ResponseMarker:  p.ResponseMarker,
-		FSMEventMarker:  p.FSMEventMarker,
-		ResponseMessage: productionMessage(p.ResponseMessage),
-		Obligations:     cloneEffectRequests(p.Obligations),
-	}
-}
-
-func productionMessage(message string) *report.ResponseMessageSelection {
-	if message == "" {
-		return nil
-	}
-
-	return &report.ResponseMessageSelection{
-		Source:  "current_response",
-		Message: message,
-	}
-}
-
-func compareDecisions(shadow *report.FinalDecision, production *report.FinalDecision, outcome ProductionOutcome) string {
-	mismatches := make([]string, 0, 4)
-	if shadow.Effect != production.Effect {
-		mismatches = append(mismatches, "effect")
-	}
-
-	if outcome.ResponseMarker != "" && shadow.ResponseMarker != production.ResponseMarker {
-		mismatches = append(mismatches, "response_marker")
-	}
-
-	if outcome.FSMEventMarker != "" && shadow.FSMEventMarker != production.FSMEventMarker {
-		mismatches = append(mismatches, "fsm_event_marker")
-	}
-
-	if !responseMessagesMatch(shadow, outcome) {
-		mismatches = append(mismatches, "response_message")
-	}
-
-	if len(outcome.Obligations) > 0 && !obligationsMatch(shadow.Obligations, outcome.Obligations) {
-		mismatches = append(mismatches, "obligations")
-	}
-
-	switch len(mismatches) {
-	case 0:
-		return mismatchNone
-	case 1:
-		return mismatches[0]
-	default:
-		return mismatchMultiple
-	}
-}
-
-func responseMessagesMatch(shadow *report.FinalDecision, production ProductionOutcome) bool {
-	shadowMessage := ""
-	if shadow != nil && shadow.ResponseMessage != nil {
-		shadowMessage = shadow.ResponseMessage.Message
-	}
-
-	return shadowMessage == production.ResponseMessage
-}
-
 func obligationsMatch(left []report.EffectRequest, right []report.EffectRequest) bool {
 	return reflect.DeepEqual(left, right)
-}
-
-func obligationsMatchWhenKnown(left []report.EffectRequest, right []report.EffectRequest) bool {
-	return len(right) == 0 || obligationsMatch(left, right)
 }
 
 func observeResult(mismatch bool) observability.Result {
@@ -1231,26 +896,6 @@ func observeResult(mismatch bool) observability.Result {
 	}
 
 	return observability.ResultSuccess
-}
-
-func logMismatch(
-	ctx context.Context,
-	logger *slog.Logger,
-	mismatch bool,
-	mismatchType string,
-	final *report.FinalDecision,
-) {
-	if !mismatch || logger == nil || final == nil {
-		return
-	}
-
-	_ = level.Warn(logger).WithContext(ctx).Log(
-		"policy_set", policy.BuiltinDefaultSet,
-		"policy_name", final.PolicyName,
-		"stage", string(final.Stage),
-		"mismatch_type", mismatchType,
-		"msg", "Built-in policy shadow result differs from current production result",
-	)
 }
 
 func cloneFinal(decision *report.FinalDecision) *report.FinalDecision {
