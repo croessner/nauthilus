@@ -16,6 +16,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -24,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/policy/evaluation"
 	"github.com/croessner/nauthilus/server/policy/observability"
 	"github.com/croessner/nauthilus/server/policy/report"
+	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,8 +33,19 @@ import (
 const (
 	policyDirectOutcomeContextKey             = "policy_direct_outcome"
 	policyConfiguredPreAuthDecisionContextKey = "policy_configured_pre_auth_decision"
+	policyConfiguredAuthDecisionContextKey    = "policy_configured_auth_decision"
+	policyPostActionResultContextKey          = "policy_post_action_result"
 	policySkipPreAuthChecksContextKey         = "policy_skip_pre_auth_checks"
 )
+
+type configuredDecisionEvaluator func(context.Context, *policyruntime.Snapshot, *report.DecisionReport, evaluation.CompareInput) evaluation.Result
+
+type configuredDecisionResolver struct {
+	authoritative func(*policycollection.DecisionContext) bool
+	load          func(*gin.Context) (*report.FinalDecision, bool)
+	store         func(*gin.Context, *report.FinalDecision)
+	evaluate      configuredDecisionEvaluator
+}
 
 func (a *AuthState) defaultPolicyPreAuthResult(ctx *gin.Context, current definitions.AuthResult) definitions.AuthResult {
 	final, ok := a.defaultPolicyPreAuthDecision(ctx)
@@ -77,6 +90,20 @@ func (a *AuthState) defaultPolicyAuthResult(ctx *gin.Context, current definition
 	return authResultFromPolicy(final, current)
 }
 
+func (a *AuthState) configuredPolicyAuthResult(ctx *gin.Context, current definitions.AuthResult) (definitions.AuthResult, bool) {
+	final, ok := a.configuredPolicyAuthDecision(ctx)
+	if !ok || final == nil {
+		return current, false
+	}
+
+	a.storeDirectPolicyDiagnostic(ctx, authProductionOutcome(current, a.Runtime.StatusMessage))
+	a.applyPolicyResponseMessage(final)
+	a.applyPolicyObligations(ctx, final)
+	releasePolicyPostActionResult(ctx)
+
+	return authResultFromPolicy(final, current), true
+}
+
 func (a *AuthState) applyDefaultPreAuthDecision(ctx *gin.Context) bool {
 	final, ok := a.defaultPolicyPreAuthDecision(ctx)
 	if !ok || final == nil {
@@ -109,6 +136,13 @@ func (a *AuthState) HasConfiguredPreAuthPolicyAuthority(ctx *gin.Context) bool {
 	policyCtx := a.requestPolicyContext(ctx)
 
 	return policyCtx != nil && policyCtx.ConfiguredPreAuthAuthoritative()
+}
+
+// HasConfiguredAuthPolicyAuthority reports whether configured final auth rules own production decisions.
+func (a *AuthState) HasConfiguredAuthPolicyAuthority(ctx *gin.Context) bool {
+	policyCtx := a.requestPolicyContext(ctx)
+
+	return policyCtx != nil && policyCtx.ConfiguredAuthDecisionAuthoritative()
 }
 
 func (a *AuthState) applyConfiguredPreAuthDecision(ctx *gin.Context) bool {
@@ -149,17 +183,39 @@ func (a *AuthState) configuredPreAuthChecksSkipped(ctx *gin.Context) bool {
 }
 
 func (a *AuthState) configuredPolicyPreAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
+	return a.configuredPolicyDecision(ctx, configuredDecisionResolver{
+		authoritative: func(policyCtx *policycollection.DecisionContext) bool {
+			return policyCtx.ConfiguredPreAuthAuthoritative()
+		},
+		load:     configuredPreAuthDecisionFromContext,
+		store:    storeConfiguredPreAuthDecision,
+		evaluate: evaluation.EvaluateConfiguredPreAuth,
+	})
+}
+
+func (a *AuthState) configuredPolicyAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
+	return a.configuredPolicyDecision(ctx, configuredDecisionResolver{
+		authoritative: func(policyCtx *policycollection.DecisionContext) bool {
+			return policyCtx.ConfiguredAuthDecisionAuthoritative()
+		},
+		load:     configuredAuthDecisionFromContext,
+		store:    storeConfiguredAuthDecision,
+		evaluate: evaluation.EvaluateConfiguredAuth,
+	})
+}
+
+func (a *AuthState) configuredPolicyDecision(ctx *gin.Context, resolver configuredDecisionResolver) (*report.FinalDecision, bool) {
 	policyCtx := a.requestPolicyContext(ctx)
-	if policyCtx == nil || !policyCtx.ConfiguredPreAuthAuthoritative() {
+	if policyCtx == nil || !resolver.authoritative(policyCtx) {
 		return nil, false
 	}
 
-	if final, exists := configuredPreAuthDecisionFromContext(ctx); exists {
+	if final, exists := resolver.load(ctx); exists {
 		return final, true
 	}
 
 	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
-	result := evaluation.EvaluateConfiguredPreAuth(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
+	result := resolver.evaluate(contextFromGin(ctx), policyCtx.Snapshot(), policyCtx.Report(), evaluation.CompareInput{
 		Mode:       mode,
 		Set:        defaultPolicy,
 		Generation: generation,
@@ -170,24 +226,34 @@ func (a *AuthState) configuredPolicyPreAuthDecision(ctx *gin.Context) (*report.F
 		},
 	})
 	if result.Final != nil {
-		storeConfiguredPreAuthDecision(ctx, result.Final)
-		observability.Debug(
-			contextFromGin(ctx),
-			a.Cfg(),
-			a.Logger(),
-			observability.ComponentEval,
-			definitions.LogKeyGUID, a.Runtime.GUID,
-			"operation", string(policyCtx.Report().Operation),
-			"stage", string(result.Final.Stage),
-			"snapshot_generation", generation,
-			"policy_name", result.Final.PolicyName,
-			"decision", string(result.Final.Effect),
-			"response_marker", result.Final.ResponseMarker,
-			"fsm_event_marker", result.Final.FSMEventMarker,
-		)
+		a.storeConfiguredPolicyDecision(ctx, policyCtx, generation, result.Final, resolver.store)
 	}
 
 	return result.Final, true
+}
+
+func (a *AuthState) storeConfiguredPolicyDecision(
+	ctx *gin.Context,
+	policyCtx *policycollection.DecisionContext,
+	generation uint64,
+	final *report.FinalDecision,
+	store func(*gin.Context, *report.FinalDecision),
+) {
+	store(ctx, final)
+	observability.Debug(
+		contextFromGin(ctx),
+		a.Cfg(),
+		a.Logger(),
+		observability.ComponentEval,
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		"operation", string(policyCtx.Report().Operation),
+		"stage", string(final.Stage),
+		"snapshot_generation", generation,
+		"policy_name", final.PolicyName,
+		"decision", string(final.Effect),
+		"response_marker", final.ResponseMarker,
+		"fsm_event_marker", final.FSMEventMarker,
+	)
 }
 
 func configuredPreAuthDecisionFromContext(ctx *gin.Context) (*report.FinalDecision, bool) {
@@ -211,6 +277,29 @@ func storeConfiguredPreAuthDecision(ctx *gin.Context, final *report.FinalDecisio
 	}
 
 	ctx.Set(policyConfiguredPreAuthDecisionContextKey, final)
+}
+
+func configuredAuthDecisionFromContext(ctx *gin.Context) (*report.FinalDecision, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+
+	value, ok := ctx.Get(policyConfiguredAuthDecisionContextKey)
+	if !ok {
+		return nil, false
+	}
+
+	final, ok := value.(*report.FinalDecision)
+
+	return final, ok
+}
+
+func storeConfiguredAuthDecision(ctx *gin.Context, final *report.FinalDecision) {
+	if ctx == nil || final == nil {
+		return
+	}
+
+	ctx.Set(policyConfiguredAuthDecisionContextKey, final)
 }
 
 func (a *AuthState) defaultPolicyPreAuthDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
@@ -313,11 +402,52 @@ func (a *AuthState) applyPolicyObligations(ctx *gin.Context, final *report.Final
 		case policy.ObligationBruteForceUpdate:
 			a.UpdateBruteForceBucketsCounter(ctx)
 		case policy.ObligationLuaPostActionEnqueue:
-			result := GetPassDBResultFromPool()
+			result, release := takePolicyPostActionResult(ctx)
+			if result == nil {
+				result = GetPassDBResultFromPool()
+				release = true
+			}
+
 			a.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
+			if release {
+				PutPassDBResultToPool(result)
+			}
 		default:
 		}
+	}
+}
+
+func (a *AuthState) storePolicyPostActionResult(ctx *gin.Context, result *PassDBResult) {
+	if ctx == nil || result == nil {
+		return
+	}
+
+	if previous, release := takePolicyPostActionResult(ctx); release {
+		PutPassDBResultToPool(previous)
+	}
+
+	ctx.Set(policyPostActionResultContextKey, result.Clone())
+}
+
+func takePolicyPostActionResult(ctx *gin.Context) (*PassDBResult, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+
+	value, ok := ctx.Get(policyPostActionResultContextKey)
+	if !ok {
+		return nil, false
+	}
+
+	ctx.Set(policyPostActionResultContextKey, nil)
+	result, ok := value.(*PassDBResult)
+
+	return result, ok && result != nil
+}
+
+func releasePolicyPostActionResult(ctx *gin.Context) {
+	if result, release := takePolicyPostActionResult(ctx); release {
+		PutPassDBResultToPool(result)
 	}
 }
 

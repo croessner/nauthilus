@@ -49,6 +49,7 @@ type ScriptResult struct {
 // ScriptRecorder consumes per-script Lua results.
 type ScriptRecorder interface {
 	RecordScriptResult(context.Context, ScriptResult)
+	ScriptScheduled(ScriptKind, string, AuthState) bool
 }
 
 // ScriptSink stores Lua script results as policy check facts.
@@ -70,6 +71,17 @@ func (s *ScriptSink) RecordScriptResult(ctx context.Context, result ScriptResult
 	selector := result.selector()
 	check := s.ctx.BeginCheck(ctx, selector)
 	check.Finish(result.checkResult(s.ctx.Report().Operation))
+}
+
+// ScriptScheduled reports whether the active check plan selects a Lua script.
+func (s *ScriptSink) ScriptScheduled(kind ScriptKind, name string, authState AuthState) bool {
+	if s == nil || s.ctx == nil || strings.TrimSpace(name) == "" {
+		return true
+	}
+
+	selector := ScriptResult{Kind: kind, Name: name}.selector()
+
+	return s.ctx.ScriptScheduled(selector, authState)
 }
 
 func (r ScriptResult) selector() CheckSelector {

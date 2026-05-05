@@ -751,6 +751,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 	// Determine which filters should run based on request state
 	mode := "unauthenticated"
 	scripts := make([]*LuaFilter, 0)
+	authState := requestPolicyAuthState(r)
 
 	// Trace selection of applicable filters for the current mode
 	sctx, selSpan := tr.Start(fctx, "filters.select_applicable")
@@ -761,7 +762,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 		for _, s := range LuaFilters.LuaScripts {
 			if s.WhenNoAuth {
-				scripts = append(scripts, s)
+				scripts = r.appendScheduledFilter(scripts, s, authState)
 			}
 		}
 	} else if r.CommonRequest != nil && r.Authenticated {
@@ -769,25 +770,25 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 
 		for _, s := range LuaFilters.LuaScripts {
 			if s.WhenAuthenticated {
-				scripts = append(scripts, s)
+				scripts = r.appendScheduledFilter(scripts, s, authState)
 			}
 		}
-
-		selSpan.SetAttributes(
-			attribute.String("mode", mode),
-			attribute.Int("configured_total", len(LuaFilters.LuaScripts)),
-			attribute.Int("runnable", len(scripts)),
-		)
-		selSpan.End()
 	} else {
 		mode = "unauthenticated"
 
 		for _, s := range LuaFilters.LuaScripts {
 			if s.WhenUnauthenticated {
-				scripts = append(scripts, s)
+				scripts = r.appendScheduledFilter(scripts, s, authState)
 			}
 		}
 	}
+
+	selSpan.SetAttributes(
+		attribute.String("mode", mode),
+		attribute.Int("configured_total", len(LuaFilters.LuaScripts)),
+		attribute.Int("runnable", len(scripts)),
+	)
+	selSpan.End()
 
 	if r.Logs == nil {
 		r.Logs = new(lualib.CustomLogKeyValue)
@@ -830,7 +831,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 	pctx, pspan := tr.Start(fctx, "filters.plan.lookup")
 	_ = pctx
 
-	plan, cached, err := LuaFilters.planForMode(modeMask)
+	plan, cached, err := filterPlanForScripts(r, scripts, modeMask)
 	pspan.SetAttributes(
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),
@@ -1403,6 +1404,36 @@ func (r *Request) recordFilterScriptResult(ctx context.Context, name string, act
 		Duration:      duration,
 		Action:        action,
 	})
+}
+
+func (r *Request) appendScheduledFilter(scripts []*LuaFilter, script *LuaFilter, authState policycollection.AuthState) []*LuaFilter {
+	if script == nil {
+		return scripts
+	}
+
+	if r == nil || r.ScriptRecorder == nil || r.ScriptRecorder.ScriptScheduled(policycollection.ScriptKindFilter, script.Name, authState) {
+		return append(scripts, script)
+	}
+
+	return scripts
+}
+
+func filterPlanForScripts(r *Request, scripts []*LuaFilter, mode pipeline.ModeMask) (pipeline.Plan, bool, error) {
+	if r == nil || r.ScriptRecorder == nil {
+		return LuaFilters.planForMode(mode)
+	}
+
+	plan, err := pipeline.BuildPlan(filterPipelineNodes(scripts), mode)
+
+	return plan, false, err
+}
+
+func requestPolicyAuthState(r *Request) policycollection.AuthState {
+	if r != nil && r.CommonRequest != nil && r.Authenticated {
+		return policycollection.AuthStateAuthenticated
+	}
+
+	return policycollection.AuthStateUnauthenticated
 }
 
 func filterStatusText(status *string) string {

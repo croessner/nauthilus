@@ -168,6 +168,15 @@ func (c *DecisionContext) BuiltinDefaultAuthoritative() bool {
 
 // ConfiguredPreAuthAuthoritative reports whether configured pre-auth policy rules decide production output.
 func (c *DecisionContext) ConfiguredPreAuthAuthoritative() bool {
+	return c.configuredAuthorityForStage(policy.StagePreAuth)
+}
+
+// ConfiguredAuthDecisionAuthoritative reports whether configured final auth rules decide production output.
+func (c *DecisionContext) ConfiguredAuthDecisionAuthoritative() bool {
+	return c.configuredAuthorityForStage(policy.StageAuthDecision)
+}
+
+func (c *DecisionContext) configuredAuthorityForStage(stage policy.Stage) bool {
 	if c == nil || c.snapshot == nil || c.report == nil {
 		return false
 	}
@@ -185,9 +194,31 @@ func (c *DecisionContext) ConfiguredPreAuthAuthoritative() bool {
 		return false
 	}
 
-	plan := c.snapshot.StagePlans[c.report.Operation][policy.StagePreAuth]
+	plan := c.snapshot.StagePlans[c.report.Operation][stage]
 
 	return len(plan.Policies) > 0
+}
+
+// ScriptScheduled reports whether a script should run for the current request state.
+func (c *DecisionContext) ScriptScheduled(selector CheckSelector, authState AuthState) bool {
+	if c == nil || c.snapshot == nil || c.report == nil {
+		return true
+	}
+
+	checks := c.stageChecks(selector.Stage)
+	if len(checks) == 0 {
+		return true
+	}
+
+	for _, check := range checks {
+		if !checkMatchesSelector(check, selector) {
+			continue
+		}
+
+		return runIfMatches(check.RunIf.AuthState, authState)
+	}
+
+	return false
 }
 
 // BeginCheck opens metric and tracing collection for one check adapter.
@@ -373,22 +404,24 @@ func (c *DecisionContext) resolveCheck(selector CheckSelector) policyruntime.Com
 	}
 
 	for _, check := range c.stageChecks(selector.Stage) {
-		if selector.Name != "" && check.Name == selector.Name {
+		if checkMatchesSelector(check, selector) {
 			return check
 		}
-
-		if check.Type != selector.CheckType {
-			continue
-		}
-
-		if selector.ConfigRef != "" && check.ConfigRef != selector.ConfigRef {
-			continue
-		}
-
-		return check
 	}
 
 	return policyruntime.CompiledCheck{}
+}
+
+func checkMatchesSelector(check policyruntime.CompiledCheck, selector CheckSelector) bool {
+	if selector.Name != "" {
+		return check.Name == selector.Name
+	}
+
+	if check.Type != selector.CheckType {
+		return false
+	}
+
+	return selector.ConfigRef == "" || check.ConfigRef == selector.ConfigRef
 }
 
 func (c *DecisionContext) stageChecks(stage policy.Stage) []policyruntime.CompiledCheck {

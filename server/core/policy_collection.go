@@ -154,6 +154,10 @@ func (a *AuthState) comparePolicyDecision(ctx *gin.Context, production evaluatio
 		return
 	}
 
+	if policyCtx.ConfiguredAuthDecisionAuthoritative() && selectedAuthFinal(policyCtx.Report()) {
+		return
+	}
+
 	mode, defaultPolicy, generation := policyCtx.SnapshotMetadata()
 	result := evaluation.CompareWithProduction(contextFromGin(ctx), policyCtx.Report(), evaluation.CompareInput{
 		Mode:          mode,
@@ -220,6 +224,13 @@ func selectedPreAuthFinal(policyReport *report.DecisionReport) bool {
 	return policyReport != nil &&
 		policyReport.Final != nil &&
 		policyReport.Final.Stage == policy.StagePreAuth &&
+		policyReport.Final.PolicyName != ""
+}
+
+func selectedAuthFinal(policyReport *report.DecisionReport) bool {
+	return policyReport != nil &&
+		policyReport.Final != nil &&
+		policyReport.Final.Stage == policy.StageAuthDecision &&
 		policyReport.Final.PolicyName != ""
 }
 

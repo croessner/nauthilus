@@ -336,7 +336,11 @@ func terminalConfiguredDecision(decision *report.FinalDecision) bool {
 }
 
 func configuredDefaultDeny() *report.FinalDecision {
-	decision := report.PolicyDecision{
+	return finalDecisionFromPolicy(configuredDefaultDenyDecision())
+}
+
+func configuredDefaultDenyDecision() report.PolicyDecision {
+	return report.PolicyDecision{
 		Name:            customDefaultDenyPolicy,
 		Stage:           policy.StageAuthDecision,
 		Effect:          policy.DecisionDeny,
@@ -345,8 +349,6 @@ func configuredDefaultDeny() *report.FinalDecision {
 		ResponseMarker:  policy.ResponseMarkerFail,
 		ResponseMessage: defaultResponseMessage(policy.ResponseMarkerFail),
 	}
-
-	return finalDecisionFromPolicy(decision)
 }
 
 func reportDecisionFromCompiled(
@@ -417,6 +419,10 @@ func attributeDetailMessage(
 		if attributeValue, ok := policyReport.Attributes[plan.AttributeID]; ok {
 			if detail, detailOK := attributeValue.Details[plan.Detail]; detailOK {
 				if value, stringOK := detail.Value.(string); stringOK && strings.TrimSpace(value) != "" {
+					detail.Selected = true
+					attributeValue.Details[plan.Detail] = detail
+					policyReport.Attributes[plan.AttributeID] = attributeValue
+
 					return &report.ResponseMessageSelection{
 						Source:      "attribute_detail",
 						Message:     sanitizeResponseMessage(value, plan.MaxLength),

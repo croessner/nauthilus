@@ -188,6 +188,35 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		t.Fatal("selected Lua response detail was not marked for redaction")
 	}
 
+	filterReport := standardReport(
+		policy.OperationAuthenticate,
+		check("lua_filter_billing", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK),
+		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationAuthenticate, true, map[string]report.DetailValue{
+			"status_message": {
+				Value:       "Filtered by Lua",
+				Sensitivity: report.SensitivityPublic,
+				Purpose:     report.PurposeResponseMessage,
+			},
+		}),
+	)
+
+	got = EvaluateStandardAuth(filterReport)
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "standard_lua_filter_billing_reject" {
+		t.Fatalf("policy = %q, want standard_lua_filter_billing_reject", got.Final.PolicyName)
+	}
+
+	if got.Final.ResponseMessage == nil || got.Final.ResponseMessage.Message != "Filtered by Lua" {
+		t.Fatalf("filter response message = %#v, want Lua detail", got.Final.ResponseMessage)
+	}
+
+	if !filterReport.Attributes["auth.lua.filter.billing.rejected"].Details["status_message"].Selected {
+		t.Fatal("selected Lua filter response detail was not marked")
+	}
+
 	bruteForceReport := standardReport(
 		policy.OperationAuthenticate,
 		check("brute_force", policy.CheckTypeBruteForce, policy.StagePreAuth, policy.CheckStatusOK),
@@ -409,6 +438,80 @@ func TestConfiguredPreAuthEnforceDoesNotSelectFinalDefaultDeny(t *testing.T) {
 	}
 }
 
+func TestConfiguredAuthEnforceSelectsBackendDecision(t *testing.T) {
+	recorder := &recordingRecorder{}
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("ldap_backend", policy.CheckTypeLDAPBackend, policy.StageAuthBackend, policy.CheckStatusOK),
+		boolAttr(policy.AttributeAuthenticated, policy.StageAuthBackend, policy.OperationAuthenticate, true, nil),
+	)
+	snapshot := enforceSnapshotWithCustomAuth(customAuthDecisionPolicy(
+		"custom_deny_authenticated_user",
+		policy.DecisionDeny,
+		policy.FSMEventMarkerAuthDeny,
+		policy.ResponseMarkerFail,
+	))
+
+	got := EvaluateConfiguredAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 31,
+		Recorder:   recorder,
+	})
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "custom_deny_authenticated_user" {
+		t.Fatalf("policy = %q, want custom_deny_authenticated_user", got.Final.PolicyName)
+	}
+
+	if got.Final.Effect != policy.DecisionDeny {
+		t.Fatalf("effect = %q, want deny", got.Final.Effect)
+	}
+
+	if policyReport.Final == nil || policyReport.Final.PolicyName != "custom_deny_authenticated_user" {
+		t.Fatalf("report final = %#v, want configured auth decision", policyReport.Final)
+	}
+
+	if len(recorder.decisions) != 1 {
+		t.Fatalf("decision metrics = %d, want 1", len(recorder.decisions))
+	}
+}
+
+func TestConfiguredAuthEnforceSelectsLuaFilterStatusMessage(t *testing.T) {
+	details := map[string]report.DetailValue{
+		"status_message": {
+			Value:       "Billing lock",
+			Sensitivity: report.SensitivityPublic,
+			Purpose:     report.PurposeResponseMessage,
+		},
+	}
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("lua_filter_billing", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK),
+		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationAuthenticate, true, details),
+	)
+	snapshot := enforceSnapshotWithCustomAuth(customLuaFilterPolicy())
+
+	got := EvaluateConfiguredAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 32,
+	})
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.ResponseMessage == nil || got.Final.ResponseMessage.Message != "Billing lock" {
+		t.Fatalf("response message = %#v, want Lua filter detail", got.Final.ResponseMessage)
+	}
+
+	if !policyReport.Attributes["auth.lua.filter.billing.rejected"].Details["status_message"].Selected {
+		t.Fatal("selected Lua filter response detail was not marked")
+	}
+}
+
 func standardReport(
 	operation policy.Operation,
 	checkResult report.CheckResult,
@@ -516,6 +619,21 @@ func enforceSnapshotWithCustomPreAuth(compiled policyruntime.CompiledPolicy) *po
 	}
 }
 
+func enforceSnapshotWithCustomAuth(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StageAuthDecision: {
+					Stage:    policy.StageAuthDecision,
+					Policies: []policyruntime.CompiledPolicy{compiled},
+				},
+			},
+		},
+	}
+}
+
 func customPreAuthPolicy(
 	name string,
 	decision policy.Decision,
@@ -570,6 +688,34 @@ func customAuthDecisionPolicy(
 			ResponseMessage: policyruntime.ResponseMessagePlan{
 				Source:  "literal",
 				Literal: "Custom deny",
+			},
+		},
+	}
+}
+
+func customLuaFilterPolicy() policyruntime.CompiledPolicy {
+	return policyruntime.CompiledPolicy{
+		Name:          "custom_billing_filter_deny",
+		Stage:         policy.StageAuthDecision,
+		Operations:    []policy.Operation{policy.OperationAuthenticate},
+		RequireChecks: []string{"lua_filter_billing"},
+		Root: policyruntime.CompiledExpr{
+			Kind:        policyruntime.ExprKindAttribute,
+			AttributeID: "auth.lua.filter.billing.rejected",
+			Operator:    "is",
+			Expected:    policyruntime.TypedValue{Value: true},
+		},
+		Then: policyruntime.DecisionPlan{
+			Decision:       policy.DecisionDeny,
+			OutcomeMarker:  "auth.outcome.custom_billing",
+			FSMEventMarker: policy.FSMEventMarkerAuthDeny,
+			ResponseMarker: policy.ResponseMarkerFail,
+			ResponseMessage: policyruntime.ResponseMessagePlan{
+				Source:      "attribute_detail",
+				AttributeID: "auth.lua.filter.billing.rejected",
+				Detail:      "status_message",
+				Fallback:    "Invalid login or password",
+				MaxLength:   256,
 			},
 		},
 	}

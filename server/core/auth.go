@@ -2692,6 +2692,10 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		a.recordPolicyBackendResult(ctx, authResult, nil, nil)
 	}
 
+	if configuredResult, ok := a.configuredPolicyAuthResult(ctx, authResult); ok {
+		return configuredResult
+	}
+
 	return a.defaultPolicyAuthResult(ctx, authResult)
 }
 
@@ -2758,7 +2762,11 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 		authResult = lf.Filter(ctx, a.View(), passDBResult)
 	}
 
-	a.PostLuaAction(ctx, passDBResult)
+	if a.HasConfiguredAuthPolicyAuthority(ctx) {
+		a.storePolicyPostActionResult(ctx, passDBResult)
+	} else {
+		a.PostLuaAction(ctx, passDBResult)
+	}
 
 	return authResult
 }
@@ -3186,7 +3194,11 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	authResult = a.FilterLua(ctx, passDBResult)
 	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
-	a.PostLuaAction(ctx, passDBResult)
+	if a.HasConfiguredAuthPolicyAuthority(ctx) {
+		a.storePolicyPostActionResult(ctx, passDBResult)
+	} else {
+		a.PostLuaAction(ctx, passDBResult)
+	}
 
 	return authResult
 }

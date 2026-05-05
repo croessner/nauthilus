@@ -134,6 +134,19 @@ func TestScriptSinkRecordsOneCheckPerLuaScript(t *testing.T) {
 	}
 }
 
+func TestScriptSinkUsesRunIfForLuaFilterScheduling(t *testing.T) {
+	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
+	sink := NewScriptSink(ctx)
+
+	if sink.ScriptScheduled(ScriptKindFilter, "billing", AuthStateUnauthenticated) {
+		t.Fatal("filter should not be scheduled for unauthenticated auth state")
+	}
+
+	if !sink.ScriptScheduled(ScriptKindFilter, "billing", AuthStateAuthenticated) {
+		t.Fatal("filter should be scheduled for authenticated auth state")
+	}
+}
+
 func TestDecisionContextDefaultSetAuthorityRequiresNoConfiguredRules(t *testing.T) {
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
 	if !ctx.BuiltinDefaultAuthoritative() {
@@ -214,7 +227,7 @@ func testSnapshot() *policyruntime.Snapshot {
 							ConfigRef:  "auth.controls.lua.filters.billing",
 							Stage:      policy.StageAuthFilters,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
-							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAuthenticated},
 						},
 					},
 				},

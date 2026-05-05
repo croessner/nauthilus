@@ -158,3 +158,117 @@ func TestAuthBoundaryKeepsDirectOutcomeDiagnosticWhenDefaultSetOverrides(t *test
 		t.Fatalf("mismatch type = %q, want multiple", got)
 	}
 }
+
+func TestAuthBoundaryConfiguredFinalDecisionOverridesBackendSuccess(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, customEnforceAuthSnapshotForTest())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	passDBResult := GetPassDBResultFromPool()
+	passDBResult.Authenticated = true
+	passDBResult.UserFound = true
+	passDBResult.Backend = definitions.BackendTest
+	defer PutPassDBResultToPool(passDBResult)
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+
+	got, ok := auth.configuredPolicyAuthResult(ctx, definitions.AuthResultOK)
+	if !ok {
+		t.Fatal("configured auth decision was not evaluated")
+	}
+
+	if got != definitions.AuthResultFail {
+		t.Fatalf("auth result = %v, want %v", got, definitions.AuthResultFail)
+	}
+
+	if got := auth.Runtime.StatusMessage; got != "Custom backend deny" {
+		t.Fatalf("status message = %q, want configured message", got)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	if policyCtx.Report().Final == nil || policyCtx.Report().Final.PolicyName != "custom_deny_backend_success" {
+		t.Fatalf("final = %#v, want custom_deny_backend_success", policyCtx.Report().Final)
+	}
+}
+
+func TestAuthBoundaryConfiguredFinalDecisionRunsPostActionObligation(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	snapshot := customEnforceAuthSnapshotForTest()
+	compiled := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision]
+	compiled.Policies[0].Then.Obligations = []policyruntime.EffectRequest{
+		{ID: policy.ObligationLuaPostActionEnqueue},
+	}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision] = compiled
+	activatePolicySnapshotForTest(t, snapshot)
+
+	postAction := &countingPostAction{}
+	previousPostAction := getPostAction()
+	RegisterPostAction(postAction)
+	t.Cleanup(func() {
+		RegisterPostAction(previousPostAction)
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	passDBResult := GetPassDBResultFromPool()
+	passDBResult.Authenticated = true
+	passDBResult.UserFound = true
+	passDBResult.Backend = definitions.BackendTest
+	defer PutPassDBResultToPool(passDBResult)
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+	auth.storePolicyPostActionResult(ctx, passDBResult)
+
+	if _, ok := auth.configuredPolicyAuthResult(ctx, definitions.AuthResultOK); !ok {
+		t.Fatal("configured auth decision was not evaluated")
+	}
+
+	if got := postAction.Count(); got != 1 {
+		t.Fatalf("post actions = %d, want 1", got)
+	}
+
+	if _, release := takePolicyPostActionResult(ctx); release {
+		t.Fatal("stored post-action result was not released")
+	}
+}
+
+func customEnforceAuthSnapshotForTest() *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    105,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StageAuthDecision: {
+					Stage: policy.StageAuthDecision,
+					Policies: []policyruntime.CompiledPolicy{
+						{
+							Name:       "custom_deny_backend_success",
+							Stage:      policy.StageAuthDecision,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							Root: policyruntime.CompiledExpr{
+								Kind:        policyruntime.ExprKindAttribute,
+								AttributeID: policy.AttributeAuthenticated,
+								Operator:    "is",
+								Expected:    policyruntime.TypedValue{Value: true},
+							},
+							Then: policyruntime.DecisionPlan{
+								Decision:       policy.DecisionDeny,
+								OutcomeMarker:  "auth.outcome.custom_backend_deny",
+								FSMEventMarker: policy.FSMEventMarkerAuthDeny,
+								ResponseMarker: policy.ResponseMarkerFail,
+								ResponseMessage: policyruntime.ResponseMessagePlan{
+									Source:  "literal",
+									Literal: "Custom backend deny",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}

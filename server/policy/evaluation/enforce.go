@@ -46,14 +46,48 @@ func EvaluateConfiguredPreAuth(
 	defer span.End()
 
 	final := selectConfiguredPreAuth(spanCtx, snapshot, policyReport, recorder, input)
-	recordConfiguredPreAuth(spanCtx, recorder, input, policyReport.Operation, final, time.Since(start))
-	setConfiguredPreAuthSpanAttributes(span, input, policyReport.Operation, final)
-	logConfiguredPreAuth(spanCtx, input, policyReport.Operation, final)
+	recordConfiguredDecision(spanCtx, recorder, input, policyReport.Operation, policy.StagePreAuth, final, time.Since(start))
+	setConfiguredSpanAttributes(span, input, policyReport.Operation, policy.StagePreAuth, final)
+	logConfiguredDecision(spanCtx, input, policyReport.Operation, final)
+
+	return Result{Final: final}
+}
+
+// EvaluateConfiguredAuth evaluates configured final auth rules in enforce mode.
+func EvaluateConfiguredAuth(
+	ctx context.Context,
+	snapshot *policyruntime.Snapshot,
+	policyReport *report.DecisionReport,
+	input CompareInput,
+) Result {
+	ctx, policyReport, input = normalizeCompareInput(ctx, policyReport, input)
+	if !configuredAuthEnabled(snapshot, policyReport.Operation) {
+		return Result{}
+	}
+
+	recorder := observability.SafeRecorder(input.Recorder)
+	tracer := observability.NewTracer()
+	start := time.Now()
+	spanCtx, span := tracer.Start(ctx, "policy.evaluate")
+	defer span.End()
+
+	final := selectConfiguredAuth(spanCtx, snapshot, policyReport, recorder, input)
+	recordConfiguredDecision(spanCtx, recorder, input, policyReport.Operation, policy.StageAuthDecision, final, time.Since(start))
+	setConfiguredSpanAttributes(span, input, policyReport.Operation, policy.StageAuthDecision, final)
+	logConfiguredDecision(spanCtx, input, policyReport.Operation, final)
 
 	return Result{Final: final}
 }
 
 func configuredPreAuthEnabled(snapshot *policyruntime.Snapshot, operation policy.Operation) bool {
+	return configuredStageEnabled(snapshot, operation, policy.StagePreAuth)
+}
+
+func configuredAuthEnabled(snapshot *policyruntime.Snapshot, operation policy.Operation) bool {
+	return configuredStageEnabled(snapshot, operation, policy.StageAuthDecision)
+}
+
+func configuredStageEnabled(snapshot *policyruntime.Snapshot, operation policy.Operation, stage policy.Stage) bool {
 	if snapshot == nil || snapshot.Mode == modeObserve {
 		return false
 	}
@@ -62,7 +96,7 @@ func configuredPreAuthEnabled(snapshot *policyruntime.Snapshot, operation policy
 		return false
 	}
 
-	plan, ok := snapshot.StagePlans[operation][policy.StagePreAuth]
+	plan, ok := snapshot.StagePlans[operation][stage]
 
 	return ok && len(plan.Policies) > 0
 }
@@ -98,6 +132,38 @@ func selectConfiguredPreAuth(
 	return nil
 }
 
+func selectConfiguredAuth(
+	ctx context.Context,
+	snapshot *policyruntime.Snapshot,
+	policyReport *report.DecisionReport,
+	recorder observability.Recorder,
+	input CompareInput,
+) *report.FinalDecision {
+	plan := snapshot.StagePlans[policyReport.Operation][policy.StageAuthDecision]
+	for _, compiled := range plan.Policies {
+		if !requiredChecksSatisfied(ctx, compiled, policyReport, recorder, input.Mode) {
+			continue
+		}
+
+		if !exprMatches(compiled.Root, policyReport) {
+			continue
+		}
+
+		decision := reportDecisionFromCompiled(compiled, policyReport)
+		appendConfiguredAuth(policyReport, decision)
+
+		final := finalDecisionFromPolicy(decision)
+		if terminalConfiguredDecision(final) {
+			return final
+		}
+	}
+
+	decision := configuredDefaultDenyDecision()
+	appendConfiguredAuth(policyReport, decision)
+
+	return finalDecisionFromPolicy(decision)
+}
+
 func appendConfiguredPreAuth(policyReport *report.DecisionReport, decision report.PolicyDecision) {
 	policyReport.Policies = append(policyReport.Policies, decision)
 	policyReport.Stage = decision.Stage
@@ -105,6 +171,12 @@ func appendConfiguredPreAuth(policyReport *report.DecisionReport, decision repor
 		return
 	}
 
+	policyReport.Final = finalDecisionFromPolicy(decision)
+}
+
+func appendConfiguredAuth(policyReport *report.DecisionReport, decision report.PolicyDecision) {
+	policyReport.Policies = append(policyReport.Policies, decision)
+	policyReport.Stage = decision.Stage
 	policyReport.Final = finalDecisionFromPolicy(decision)
 }
 
@@ -116,11 +188,12 @@ func configuredPreAuthControl(final *report.FinalDecision) bool {
 		final.Control.SkipRemainingStageChecks
 }
 
-func recordConfiguredPreAuth(
+func recordConfiguredDecision(
 	ctx context.Context,
 	recorder observability.Recorder,
 	input CompareInput,
 	operation policy.Operation,
+	stage policy.Stage,
 	final *report.FinalDecision,
 	duration time.Duration,
 ) {
@@ -128,7 +201,7 @@ func recordConfiguredPreAuth(
 		Duration:  duration,
 		Mode:      input.Mode,
 		Operation: operation,
-		Stage:     policy.StagePreAuth,
+		Stage:     stage,
 	})
 	if final == nil {
 		return
@@ -160,16 +233,17 @@ func recordConfiguredPreAuth(
 	})
 }
 
-func setConfiguredPreAuthSpanAttributes(
+func setConfiguredSpanAttributes(
 	span interface{ SetAttributes(...attribute.KeyValue) },
 	input CompareInput,
 	operation policy.Operation,
+	stage policy.Stage,
 	final *report.FinalDecision,
 ) {
 	attributes := []attribute.KeyValue{
 		attribute.String("policy.mode", input.Mode),
 		attribute.String("policy.operation", string(operation)),
-		attribute.String("policy.stage", string(policy.StagePreAuth)),
+		attribute.String("policy.stage", string(stage)),
 		attribute.Int64("policy.snapshot_generation", int64(input.Generation)),
 		attribute.Bool("policy.selected", final != nil),
 	}
@@ -185,7 +259,7 @@ func setConfiguredPreAuthSpanAttributes(
 	span.SetAttributes(attributes...)
 }
 
-func logConfiguredPreAuth(
+func logConfiguredDecision(
 	ctx context.Context,
 	input CompareInput,
 	operation policy.Operation,
