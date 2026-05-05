@@ -65,6 +65,24 @@ func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
 			next:    authFSMStatePasswordChecked,
 		},
 		{
+			name:    "FeaturesFail",
+			current: authFSMStateInputParsed,
+			event:   authFSMEventFeaturesFail,
+			next:    authFSMStateAuthFail,
+		},
+		{
+			name:    "FeaturesTempFail",
+			current: authFSMStateInputParsed,
+			event:   authFSMEventFeaturesTempFail,
+			next:    authFSMStateAuthTempFail,
+		},
+		{
+			name:    "FeaturesUnset",
+			current: authFSMStateInputParsed,
+			event:   authFSMEventFeaturesUnset,
+			next:    authFSMStateAborted,
+		},
+		{
 			name:    "FeaturesBasicAuthOK",
 			current: authFSMStateFeaturesChecked,
 			event:   authFSMEventBasicAuthOK,
@@ -83,10 +101,28 @@ func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
 			next:    authFSMStateAuthOK,
 		},
 		{
+			name:    "PasswordCheckedPasswordFail",
+			current: authFSMStatePasswordChecked,
+			event:   authFSMEventPasswordFail,
+			next:    authFSMStateAuthFail,
+		},
+		{
+			name:    "PasswordCheckedPasswordTempFail",
+			current: authFSMStatePasswordChecked,
+			event:   authFSMEventPasswordTempFail,
+			next:    authFSMStateAuthTempFail,
+		},
+		{
 			name:    "PasswordCheckedPasswordEmptyUser",
 			current: authFSMStatePasswordChecked,
 			event:   authFSMEventPasswordEmptyUser,
 			next:    authFSMStateAuthTempFail,
+		},
+		{
+			name:    "PasswordCheckedPasswordEmptyPass",
+			current: authFSMStatePasswordChecked,
+			event:   authFSMEventPasswordEmptyPass,
+			next:    authFSMStateAuthFail,
 		},
 		{
 			name:    "AbortFromInput",
@@ -165,6 +201,24 @@ func TestMapAuthFeatureResultToFSMEvent(t *testing.T) {
 			name:    "FeatureRelayDomain",
 			result:  definitions.AuthResultFeatureRelayDomain,
 			wantEvt: authFSMEventFeaturesFail,
+			wantOK:  true,
+		},
+		{
+			name:    "FeatureRBL",
+			result:  definitions.AuthResultFeatureRBL,
+			wantEvt: authFSMEventFeaturesFail,
+			wantOK:  true,
+		},
+		{
+			name:    "FeatureLua",
+			result:  definitions.AuthResultFeatureLua,
+			wantEvt: authFSMEventFeaturesFail,
+			wantOK:  true,
+		},
+		{
+			name:    "FeatureTempFail",
+			result:  definitions.AuthResultTempFail,
+			wantEvt: authFSMEventFeaturesTempFail,
 			wantOK:  true,
 		},
 		{
