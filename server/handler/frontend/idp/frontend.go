@@ -41,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -820,12 +821,34 @@ func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *m
 
 	h.setLoginRememberData(ctx, data, sess.oidcCID, sess.samlEntityID)
 
-	// Clean up cookie so they start over.
+	h.resetDelayedResponseFailureForRetry(ctx, sess.mgr)
+
+	// Clean up MFA cookie state so the next login attempt starts fresh.
 	CleanupMFAState(sess.mgr)
 
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 
 	return true
+}
+
+func (h *FrontendHandler) resetDelayedResponseFailureForRetry(ctx *gin.Context, mgr cookie.Manager) bool {
+	if ctx == nil {
+		return false
+	}
+
+	var (
+		redisClient rediscli.Client
+		redisPrefix string
+	)
+
+	if h != nil && h.deps != nil {
+		redisClient = h.deps.Redis
+		if h.deps.Cfg != nil && h.deps.Cfg.GetServer() != nil {
+			redisPrefix = h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+		}
+	}
+
+	return resetFlowAuthOutcomeForRetry(ctx.Request.Context(), mgr, redisClient, redisPrefix)
 }
 
 // PostLogin handles the login submission.

@@ -195,6 +195,30 @@ func TestControllerSetAuthOutcomeIsSticky(t *testing.T) {
 	}
 }
 
+func TestControllerResetAuthOutcomeForRetryClearsFailLatch(t *testing.T) {
+	now := time.Date(2026, time.May, 6, 18, 15, 0, 0, time.UTC)
+	store := &memoryStore{state: &State{
+		FlowID:      "f-1",
+		FlowType:    FlowTypeOIDCAuthorization,
+		Protocol:    FlowProtocolOIDC,
+		CurrentStep: FlowStepMFA,
+		AuthOutcome: AuthOutcomeFailLatched,
+	}}
+	controller := NewController(store)
+
+	if err := controller.ResetAuthOutcomeForRetry(t.Context(), "f-1", now); err != nil {
+		t.Fatalf("unexpected error resetting auth outcome: %v", err)
+	}
+
+	if store.state.AuthOutcome != AuthOutcomeUnknown {
+		t.Fatalf("expected auth_outcome=%s, got %s", AuthOutcomeUnknown, store.state.AuthOutcome)
+	}
+
+	if store.state.UpdatedAt != now {
+		t.Fatalf("expected updated_at=%s, got %s", now, store.state.UpdatedAt)
+	}
+}
+
 func TestControllerAdvanceRejectsSuccessPathWhenFailLatched(t *testing.T) {
 	store := &memoryStore{state: &State{
 		FlowID:      "f-1",

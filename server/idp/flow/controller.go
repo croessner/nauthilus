@@ -218,6 +218,24 @@ func (c *Controller) SetAuthOutcome(ctx context.Context, flowID string, outcome 
 	return nil
 }
 
+// ResetAuthOutcomeForRetry clears a previous terminal first-factor result
+// after the user has been returned to the login page for a new attempt.
+func (c *Controller) ResetAuthOutcomeForRetry(ctx context.Context, flowID string, now time.Time) error {
+	state, err := c.State(ctx, flowID)
+	if err != nil {
+		return err
+	}
+
+	state.AuthOutcome = AuthOutcomeUnknown
+	state.Normalize(now)
+
+	if err = c.store.Save(ctx, state); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Recover handles recovery for transition violations and stale flow IDs.
 func (c *Controller) Recover(ctx context.Context, flowID string, cause error) (Decision, error) {
 	if c == nil || c.store == nil {
