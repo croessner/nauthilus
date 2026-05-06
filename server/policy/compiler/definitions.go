@@ -39,6 +39,9 @@ const (
 	runIfAny             = policy.RunIfAny
 	runIfAuthenticated   = policy.RunIfAuthenticated
 	runIfUnauthenticated = policy.RunIfUnauthenticated
+
+	effectKindObligation = "obligation"
+	effectKindAdvice     = "advice"
 )
 
 var simpleIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -219,14 +222,15 @@ func builtinResponseRegistry() map[string]policyruntime.ResponseDefinition {
 
 func builtinObligationRegistry() map[string]policyruntime.EffectDefinition {
 	return map[string]policyruntime.EffectDefinition{
-		"auth.obligation.brute_force.update":      {ID: "auth.obligation.brute_force.update", Kind: "obligation"},
-		"auth.obligation.lua_post_action.enqueue": {ID: "auth.obligation.lua_post_action.enqueue", Kind: "obligation"},
+		policy.ObligationBruteForceUpdate:     {ID: policy.ObligationBruteForceUpdate, Kind: effectKindObligation},
+		policy.ObligationLuaActionDispatch:    {ID: policy.ObligationLuaActionDispatch, Kind: effectKindObligation},
+		policy.ObligationLuaPostActionEnqueue: {ID: policy.ObligationLuaPostActionEnqueue, Kind: effectKindObligation},
 	}
 }
 
 func builtinAdviceRegistry() map[string]policyruntime.EffectDefinition {
 	return map[string]policyruntime.EffectDefinition{
-		"auth.advice.audit_reason": {ID: "auth.advice.audit_reason", Kind: "advice"},
+		"auth.advice.audit_reason": {ID: "auth.advice.audit_reason", Kind: effectKindAdvice},
 	}
 }
 

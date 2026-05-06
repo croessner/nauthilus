@@ -53,6 +53,7 @@ func (a *AuthState) defaultPolicyPreAuthResult(ctx *gin.Context, current definit
 	}
 
 	a.applyPolicyResponseMessage(final)
+	a.applyPolicyObligations(ctx, final)
 
 	return preAuthResultFromPolicy(final, current)
 }
@@ -64,6 +65,7 @@ func (a *AuthState) configuredPolicyPreAuthResult(ctx *gin.Context, current defi
 	}
 
 	a.applyPolicyResponseMessage(final)
+	a.applyPolicyObligations(ctx, final)
 	if configuredPreAuthControl(final) {
 		return definitions.AuthResultOK, true
 	}
@@ -387,24 +389,7 @@ func (a *AuthState) applyPolicyObligations(ctx *gin.Context, final *report.Final
 		return
 	}
 
-	for _, obligation := range final.Obligations {
-		switch obligation.ID {
-		case policy.ObligationBruteForceUpdate:
-			a.UpdateBruteForceBucketsCounter(ctx)
-		case policy.ObligationLuaPostActionEnqueue:
-			result, release := takePolicyPostActionResult(ctx)
-			if result == nil {
-				result = GetPassDBResultFromPool()
-				release = true
-			}
-
-			a.PostLuaAction(ctx, result)
-			if release {
-				PutPassDBResultToPool(result)
-			}
-		default:
-		}
-	}
+	newPolicyObligationExecutor(a).Execute(ctx, final)
 }
 
 func (a *AuthState) storePolicyPostActionResult(ctx *gin.Context, result *PassDBResult) {

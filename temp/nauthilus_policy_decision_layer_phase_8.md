@@ -2,115 +2,139 @@
 
 ## Goal
 
-Phase 8 makes the target auth FSM authoritative for production auth orchestration and removes the temporary target-to-current FSM adapter introduced earlier.
+Phase 8 makes the built-in `standard_auth` policy set the authoritative production decision source when the active policy snapshot has no configured custom policy rules.
 
-This slice does not start custom policy observe or enforce mode, does not add a new public config root, and does not change the policy compiler surface. The built-in `standard_auth` default policy remains the only authoritative policy set when no configured policy rules exist.
+This slice keeps custom policies non-authoritative, keeps the current auth FSM authoritative, keeps current response rendering in place, and does not add any public config root or field. Current behavior remains represented by `standard_auth`; no separate legacy execution pipeline was introduced.
 
 ## Implemented Files and Modules
 
-- `server/policy/fsm/fsm.go`
-  - Removes the private target-to-current event adapter.
-  - Exposes the target state constants and transition helper so production code uses the same target transition table as policy diagnostics.
-  - Keeps comparison helpers from synthesizing a production event path from old event names.
-
-- `server/core/auth_fsm.go`
-  - Replaces the old core FSM state and event vocabulary with target states and target marker IDs.
-  - Delegates transition validation to `server/policy/fsm`.
-
-- `server/core/rest.go`
-  - Starts auth pipeline FSM tracking at `init` and applies `auth.fsm.event.parse_ok`.
-  - Maps feature outcomes to target `pre_auth_*` markers.
-  - Maps backend/password outcomes to target final auth markers.
-  - Records target FSM transition metrics on the production path.
-
-- `server/core/policy_authority.go`
-  - Applies target FSM marker sequences for direct authoritative policy decisions before rendering the current response.
-
-- `server/core/auth.go`
-  - Applies target FSM marker sequences for list-account policy decisions before the existing response comparison.
+- `server/policy/types.go`
+  - Adds central response-marker and obligation constants for the built-in policy decision surface.
+  - Keeps stable public marker values as `auth.response.*` and `auth.obligation.*` strings instead of current internal enum names.
 
 - `server/policy/evaluation/standard.go`
-  - Exposes target marker sequence construction for production FSM application.
-  - Stops recording adapter-comparison FSM metrics from the comparison path.
+  - Adds a pre-auth-only built-in evaluator so terminal pre-auth decisions can be selected without falling through to final default-deny.
+  - Normalizes built-in evaluation so repeated authority and comparison runs replace the selected policy sequence instead of appending duplicate decisions.
+  - Reuses central response-marker and obligation constants.
 
-- `server/policy/evaluation/fsm_compare_test.go`
-  - Updates production event-path fixtures to target marker IDs.
+- `server/policy/collection/collection.go`
+  - Adds a request-context guard that allows built-in default authority only when the active snapshot default is `standard_auth` and no configured rules exist in any compiled stage plan.
+  - Leaves configured/custom policy sets in diagnostic-only mode for this slice.
+
+- `server/core/policy_authority.go`
+  - Adds the private authority adapter from selected `standard_auth` decisions to current `AuthResult` values and current response helpers.
+  - Applies selected response messages before current response rendering.
+  - Executes policy-owned obligations from the authoritative decision, currently brute-force counter update and Lua post-action enqueue.
+  - Stores the old direct outcome as a request-local diagnostic so shadow comparison against the old direct path remains available after the authoritative policy decision is applied.
+
+- `server/core/policy_collection.go`
+  - Merges the request-local direct-outcome diagnostic into the existing policy comparison path.
+  - Keeps current response surface and current FSM path details from the response-time comparison when the diagnostic did not know them yet.
+
+- `server/core/features.go`
+  - Routes terminal pre-auth feature results through built-in policy authority when the active snapshot is the default-only set.
+  - Preserves current external `AuthResult` mappings while selecting the built-in policy decision first.
+
+- `server/core/auth.go`
+  - Routes password/backend final decisions through built-in policy authority.
+  - Applies the built-in pre-auth decision at the brute-force checkpoint before falling back to the old direct brute-force handling.
+  - Evaluates list-account built-in final decisions before the existing comparison path while leaving list-account public rendering unchanged.
+
+- `server/core/protect_impl.go`
+  - Applies the built-in pre-auth decision for protected endpoint brute-force rejection before the old direct fallback.
+
+- `server/idp/nauthilus_idp.go`
+  - Applies the built-in pre-auth decision for IdP brute-force rejection before the old direct fallback.
+
+- `server/core/response.go`
+  - Reuses central response-marker constants for comparison output.
 
 ## Tests and Validation
 
-Focused tests were added before implementation. The first focused run failed because core still exposed old FSM names and the policy FSM comparison still synthesized a production path through the adapter.
+Focused tests were added before behavior-changing code. The first focused runs failed because the default-only authority guard, pre-auth-only evaluator, auth-boundary authority selection, and old-direct diagnostic preservation did not exist yet.
 
-Added or updated tests:
+Added tests:
 
-- `server/core/auth_fsm_test.go`
-  - Verifies target transitions through `pre_auth_checked`, `auth_checked`, and `account_provider_checked`.
-  - Verifies feature and password/backend results map to target marker IDs.
-  - Verifies core event values are target marker IDs.
+- `server/policy/evaluation/standard_test.go`
+  - Verifies pre-auth-only built-in evaluation selects the implicit pre-auth pass without selecting final default-deny.
 
-- `server/policy/fsm/fsm_test.go`
-  - Replaces adapter mapping coverage with a check that no production event path is synthesized without an actual production path.
-  - Verifies comparison preserves an already supplied target production path.
+- `server/policy/collection/collection_test.go`
+  - Verifies the built-in default set is authoritative only when no configured policy rules exist.
 
 - `server/core/policy_authority_test.go`
-  - Verifies a direct authoritative pre-auth decision applies a target FSM event path and target terminal state.
+  - Verifies pre-auth feature handling selects `standard_tls_enforcement` as the authoritative decision under a default-only snapshot.
+  - Verifies password/final handling selects `standard_auth_failure` as the authoritative decision under a default-only snapshot.
+  - Verifies the old direct outcome remains available as a comparison diagnostic when the authoritative default decision overrides the old direct result.
 
-Validation run:
+Validation run so far:
 
 ```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestNextAuthFSMState|TestMapAuthFeatureResultToFSMEvent|TestMapAuthPasswordResultToFSMEvent|TestAuthFSMEventValuesAreTargetMarkers|TestCompareDoesNotSynthesizeProductionPath|TestCompareReportsTerminalMismatchWithoutChangingProductionPath' ./server/core ./server/policy/fsm
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryDefaultSetAppliesTargetFSMForDirectPreAuthDecision|TestAuthBoundaryDefaultSetSelects|TestAuthBoundaryKeepsDirectOutcomeDiagnostic' ./server/core
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/fsm ./server/policy/evaluation ./server/policy/report ./server/policy/collection ./server/policy/compiler
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/idp
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run TestAuthBoundaryKeepsDirectOutcomeDiagnosticWhenDefaultSetOverrides ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryDefaultSetSelects|TestAuthBoundaryKeepsDirectOutcomeDiagnostic|TestStandardPreAuthEvaluation|TestDecisionContextDefaultSetAuthority' ./server/core ./server/policy/evaluation ./server/policy/collection
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryRecordsStandardAuthShadowForTLSTempfail|TestAuthBoundaryKeepsDirectOutcomeDiagnosticWhenDefaultSetOverrides' ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/idp
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache GOMODCACHE=/tmp/nauthilus-gomod-cache make test
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache GOMODCACHE=/tmp/nauthilus-gomod-cache make guardrails
 git diff --check
 git diff -- '*.go' | rg -n -i '^\+.*phase'
+git diff --no-index -- /dev/null server/core/policy_authority.go | rg -n -i '^\+.*phase'
+git diff --no-index -- /dev/null server/core/policy_authority_test.go | rg -n -i '^\+.*phase'
 ```
 
-Result: passed.
+Result: passed after the missing authority and diagnostic code was implemented.
 
-`make guardrails` first caught one unchecked log return and missing revive comments for exported FSM helpers. Those findings were fixed directly, and the final `make guardrails` run passed with `0 issues`. The command still prints the pre-existing warning about unknown `gomnd` entries in `//nolint` directives.
+The first broad affected-package run exposed a review gap in the direct-outcome diagnostic: pre-auth diagnostics compared the empty pre-render state instead of the old direct renderer's default response message. That produced a false `response_message` mismatch for the TLS tempfail parity test. The gap was fixed by deriving old direct default messages for pre-auth and final auth diagnostics.
 
-The only remaining historical FSM string found by a repository scan is `features_ok` in `server/policy/compiler/snapshot_compiler_test.go`, where it is intentionally used to prove old current-event names are rejected by policy marker validation.
+`make guardrails` passed. It emitted the existing warning about unknown `gomnd` entries in `//nolint` directives and then reported `0 issues`.
+
+The Go diff scan produced no matches for added case-insensitive `phase` strings. Because `server/core/policy_authority.go` and `server/core/policy_authority_test.go` are new untracked Go files, both files were additionally scanned with `git diff --no-index` against `/dev/null`; those scans also produced no matches.
 
 ## Active Temporary Adapters
 
-- The target-to-current FSM adapter has been removed.
+- Private built-in authority adapter in `server/core/policy_authority.go`.
+  - Purpose: translate selected `standard_auth` response markers and FSM markers into current `AuthResult` values and current response helpers while the current FSM and response renderer remain in place.
+  - Exposure: private Go implementation detail only. It is not a public config field, YAML key, registry entry, report schema addition, or supported plugin API.
+  - Removal plan: narrow after the target FSM becomes authoritative in the next slice and remove obsolete current-result translation in the final migration cleanup.
 
-- The private current-result translation in `server/core/policy_authority.go` remains active.
-  - Purpose: keep current response rendering and `AuthResult` compatibility while the policy-selected decision is authoritative.
-  - Removal plan: remove obsolete current-result translation during final cleanup once response rendering and remaining direct fallback scaffolding are fully policy-owned.
+- Request-local direct-outcome diagnostic in `server/core/policy_authority.go` and `server/core/policy_collection.go`.
+  - Purpose: keep old-direct-path comparison available after the built-in default policy has become authoritative.
+  - Exposure: private Gin context value only.
+  - Removal plan: remove with old-vs-new migration diagnostics in the final cleanup after the policy decision path and target FSM are fully authoritative.
 
-- The request-local direct-outcome diagnostic remains active.
-  - Purpose: keep old-direct-path comparison available after built-in default policy authority.
-  - Removal plan: remove with old-vs-new migration diagnostics in the final cleanup.
+- Current response/FSM bridge in existing response and auth-FSM code.
+  - Purpose: preserve external behavior while policy markers select the decision and current handlers render the response.
+  - Removal plan: replace with direct target-FSM and policy-renderer ownership in the later authority slices.
 
 ## Planned Later Removal
 
-- Final cleanup removes obsolete old-direct comparison scaffolding that is not part of supported observe mode.
-- Later response-authority work can replace current response writer bridging with direct policy response rendering, but that is outside this slice.
+- Remove or narrow the current-result translation once the target FSM is authoritative.
+- Remove the request-local direct-outcome diagnostic when old direct decisions are no longer needed for migration comparison.
+- Remove old direct brute-force fallback handling once all in-scope pre-auth gates are fully owned by policy orchestration and no diagnostic fallback is required.
 
 ## Open Risks and Deliberately Deferred Points
 
-- Custom policies remain non-authoritative by design.
-- Current response writers still render HTTP, gRPC, IdP, and protected-endpoint responses.
-- The policy report still has current-vs-target comparison fields for bounded diagnostics, but production event paths now contain target markers and no adapter-generated old event names.
-- No config UX work was needed because no `auth.policy` schema fields, `mapstructure` tags, schema-index entries, dump fields, or `ConfigProblem` paths changed.
+- Custom policy sets remain non-authoritative by design in this slice.
+- The target FSM is still not the production FSM; current FSM transition code remains in place until the next authority slice.
+- Current response writers still render HTTP, gRPC, IdP, and protected-endpoint responses. The selected policy decision feeds the existing response classes and messages.
+- Built-in `standard_auth` currently has no runtime advice side effects to execute; selected advice remains report material.
+- No new config UX work was required because no `auth.policy` schema fields, `mapstructure` tags, schema-index entries, dump fields, or `ConfigProblem` paths changed.
 - Atomic reload was not touched; snapshot activation and failed-build rollback behavior remain owned by the existing runtime store/compiler code.
 
 ## Review-Abgleich
 
-Second pass completed against the Phase 8 requirements, section 9.7 target FSM semantics, section 17.3 FSM marker registry, section 17.7 `standard_auth` mapping checklist, and the completion rules from section 18.1.
+Second pass completed against the Phase 8 requirements, the general completion rules from section 18.1, the section 17 registry and mapping tables, section 12 `standard_auth` target mapping, and the Phase 9 boundary.
 
-- Scope: implementation is limited to target-FSM authority, adapter removal, production FSM metrics, tests, and this implementation note. No compiler-authority switch, custom policy observe/enforce mode, new config root, or response-rendering authority switch was started.
-- Tests first: focused core FSM and policy FSM tests were written before code changes. The first focused run failed on missing target core event names and adapter-synthesized production paths.
-- Target FSM authority: production auth orchestration now applies target marker IDs directly through the target transition table shared from `server/policy/fsm`.
-- Adapter removal: the private target-to-current FSM adapter and its old event mapping were removed. Policy FSM comparison no longer synthesizes production paths from old names.
-- Old event names: core auth decision mapping no longer emits `features_*` or `password_*` names. A Go scan finds only the compiler rejection test that intentionally uses `features_ok` as invalid input.
-- Metrics and observability: production FSM application records `policy_fsm_transitions_total` through the policy recorder. Adapter-comparison FSM metric recording was removed from the comparison path.
-- Reports and logs: existing bounded FSM report fields remain, but production event paths now carry target marker IDs. No old event name is generated for report, log, trace, metric, registry, or config surfaces.
-- `standard_auth` mapping: pre-auth outcomes map to `pre_auth_*` markers, auth outcomes map to `auth_*` markers, and list-account decisions use `account_provider_evaluated` before final markers.
-- Brute force: brute force remains first-class `standard_auth` pre-auth material; no separate brute-force FSM or decision side path was introduced.
-- Config UX: no config structs, schema index, dump behavior, redaction, or `ConfigProblem` paths changed.
-- Atomic reload: no snapshot activation code changed; existing immutable snapshot behavior remains unchanged.
-- Diff hygiene: `git diff --check` passed and the Go diff scan for added case-insensitive `phase` strings produced no matches.
+- Scope: implementation is limited to default-only built-in decision authority, current-result translation, response-message application, policy-owned obligations, old-direct comparison diagnostics, tests, and this implementation note. No custom policy authority, target-FSM authority, compiler authority switch, or public config root was started.
+- Tests first: focused policy/evaluation, collection, and auth-boundary tests were added before the corresponding code. The diagnostic test first failed because comparison used the policy-derived response outcome instead of the old direct outcome; the gap was fixed by the request-local direct-outcome diagnostic.
+- Default-only guard: `standard_auth` becomes authoritative only when the active snapshot has no configured compiled policy rules. A snapshot with any configured rule remains non-authoritative.
+- Brute force: brute force remains first-class policy material. The brute-force checkpoint records a policy check and applies `standard_brute_force_deny` through policy authority before the old direct fallback can run.
+- Decisions and response markers: selected built-in pre-auth and final auth decisions drive the current `AuthResult` mapping and response marker class. Central response-marker constants avoid duplicate string ownership.
+- Response messages: selected public response-message material is copied into `AuthState.Runtime.StatusMessage` before current response rendering.
+- Obligations: policy-owned obligations are executed from the authoritative final decision. The old direct brute-force fallback is bypassed when default policy authority applies.
+- Advice: no built-in rule in this slice selects runtime advice with side effects; advice remains selected report data.
+- Shadow comparison: old direct outcomes remain available as temporary diagnostics even when the authoritative built-in decision changes the production result.
+- Operations: `authenticate` pre-auth and final auth paths are authoritative under the default-only guard. `list_accounts` built-in decisions are evaluated and compared while caller authorization and public rendering remain current-path prerequisites.
+- Config UX: no new public config fields or roots were introduced; policy config remains under `auth.policy`; no `policy_engine` root or historical public names were added.
+- Observability and reports: the authoritative selection feeds existing policy reports, comparison, metrics, debug-module output, and OTel spans through the existing evaluation/compare path. No new redaction-sensitive payload fields were introduced.
+- Atomic reload: no snapshot build or activation code changed, so existing atomic snapshot behavior remains in force.
+- Diff hygiene: `git diff --check` passed, and the Go diff scan for added case-insensitive `phase` strings produced no matches, including the two new untracked Go files scanned via `git diff --no-index`.

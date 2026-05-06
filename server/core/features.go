@@ -395,7 +395,7 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 		}
 
 		if triggered {
-			a.processFeatureAction(ctx, definitions.FeatureLua, definitions.LuaActionLua, definitions.LuaActionLuaName)
+			a.processFeatureAction(ctx, definitions.FeatureLua)
 		}
 
 		if abortFeatures {
@@ -427,7 +427,7 @@ func (a *AuthState) checkTLSEncryptionFeature(ctx *gin.Context) (triggered bool)
 
 	checkFunc := func() {
 		if triggered = a.FeatureTLSEncryption(ctx); triggered {
-			a.processFeatureAction(ctx, definitions.FeatureTLSEncryption, definitions.LuaActionTLS, definitions.LuaActionTLSName)
+			a.processFeatureAction(ctx, definitions.FeatureTLSEncryption)
 		}
 	}
 
@@ -464,7 +464,7 @@ func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) 
 
 	checkFunc := func() {
 		if triggered = a.FeatureRelayDomains(); triggered {
-			a.processFeatureAction(ctx, definitions.FeatureRelayDomains, definitions.LuaActionRelayDomains, definitions.LuaActionRelayDomainsName)
+			a.processFeatureAction(ctx, definitions.FeatureRelayDomains)
 		}
 	}
 
@@ -514,7 +514,7 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 			return
 		}
 
-		a.processFeatureAction(ctx, definitions.FeatureRBL, definitions.LuaActionRBL, definitions.LuaActionRBLName)
+		a.processFeatureAction(ctx, definitions.FeatureRBL)
 	}
 
 	if a.cfg().ShouldRunFeature(definitions.FeatureRBL, a.Request.NoAuth) {
@@ -536,21 +536,13 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 	return
 }
 
-// processFeatureAction updates the feature and increments the brute force counter if learning is enabled for the feature.
-// It executes a specified Lua action using the provided action name.
-func (a *AuthState) processFeatureAction(ctx *gin.Context, featureName string, luaAction definitions.LuaAction, luaActionName string) {
+// processFeatureAction records the triggering feature for policy-selected obligations.
+func (a *AuthState) processFeatureAction(ctx *gin.Context, featureName string) {
 	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "feature.action") {
 		return
 	}
 
 	a.Runtime.FeatureName = featureName
-
-	bruteForce := a.cfg().GetBruteForce()
-	if bruteForce != nil && bruteForce.LearnFromFeature(featureName) {
-		a.UpdateBruteForceBucketsCounter(ctx)
-	}
-
-	a.performAction(luaAction, luaActionName)
 }
 
 // performAction triggers the execution of a specified Lua action if Lua actions are enabled in the configuration.

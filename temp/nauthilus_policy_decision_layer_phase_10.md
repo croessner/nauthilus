@@ -2,153 +2,116 @@
 
 ## Goal
 
-Phase 10 enables configured custom policy enforcement for the `pre_auth` stage only.
+Phase 10 enables custom policy observe mode while keeping the built-in `standard_auth` policy set authoritative.
 
-The implemented scope is limited to:
-
-1. brute force;
-2. Lua controls;
-3. TLS enforcement;
-4. relay domains;
-5. RBL.
-
-This slice does not start custom enforcement for backend results, Lua filters, lookup-identity, account listing, final `auth_decision` rules, config compiler authority changes, or any new FSM vocabulary. `standard_auth` remains the built-in default policy set and remains the final auth-decision authority until the later backend/filter enforcement slice.
+This slice does not start custom policy enforcement, does not introduce a new public config root, and does not change compiler authority, response-rendering authority, or target-FSM authority. Custom policy output is evaluated only for diagnostics, comparison, metrics, traces, logs, and reports.
 
 ## Implemented Files and Modules
 
-- `server/policy/evaluation/enforce.go`
-  - Adds configured `pre_auth` evaluation for `mode: enforce`.
-  - Evaluates configured snapshot policies from collected request facts.
-  - Records stage, decision, FSM-marker, and response-render instrumentation for selected custom decisions.
-  - Leaves unmatched configured `pre_auth` rules as neutral continuation and does not synthesize final default-deny in `pre_auth`.
+- `server/policy/runtime/snapshot.go`
+  - Adds the compiled `ObserveSafe` check flag to immutable snapshots.
+
+- `server/policy/compiler/checks.go`
+  - Carries check-type registry observe-safety defaults and allowed operator assertions into compiled check plans.
 
 - `server/policy/collection/collection.go`
-  - Adds request-local authority detection for configured `pre_auth` rules in enforce mode.
-  - Keeps observe mode diagnostic-only.
+  - Keeps `standard_auth` authoritative when the active snapshot is in `observe` mode, even when configured custom rules exist.
+  - Exposes the request snapshot for observe comparison.
+  - Records unexecuted non-observe-safe custom-only checks as unavailable with reason `not_observe_safe`.
 
-- `server/core/policy_authority.go`
-  - Routes selected configured `pre_auth` decisions into current auth results or direct enforcement.
-  - Applies configured response messages before the existing response surfaces render.
-  - Emits policy debug-module logs for selected configured decisions.
+- `server/policy/evaluation/observe.go`
+  - Adds side-effect-free custom policy observe evaluation from compiled snapshot policies and collected request facts.
+  - Evaluates `require_checks`, condition expressions, selected response-message sources, target FSM markers, response markers, outcome markers, and terminal states.
+  - Compares custom policy output with the authoritative default-policy output.
+  - Leaves `policyReport.Final` on the authoritative default decision and stores custom output in `policyReport.Observe.Shadow`.
 
-- `server/core/features.go`
-  - Allows configured `pre_auth` policy rules to override current Lua-control, TLS, relay-domain, RBL, and technical-error outcomes.
-  - Continues later current pre-auth controls when configured policy authority is active and no terminal configured decision was selected.
+- `server/policy/observability/metrics.go`
+  - Adds `policy_observe_unavailable_checks_total` for unavailable custom-only checks.
+  - Extends the policy recorder boundary with unavailable observe measurements.
 
-- `server/core/protect_impl.go`, `server/core/auth.go`, `server/idp/nauthilus_idp.go`
-  - Route brute-force pre-auth blocks through configured policy authority first.
-  - Continue later pre-auth controls when configured policy authority is active and the configured policy does not select a terminal decision.
+- `server/policy/report/report.go`
+  - Extends observe reports with default and custom terminal states.
 
 - `server/core/policy_collection.go`
-  - Preserves selected configured `pre_auth` finals during response side-effect comparison so the default-policy diagnostic path does not overwrite the authoritative configured result.
+  - Runs custom observe comparison after the existing default-policy comparison when the active snapshot is in observe mode.
 
 ## Tests and Validation
 
-Focused tests were added before implementation. The first focused run failed because configured `pre_auth` enforce evaluation did not exist and auth-boundary handling still used the built-in/default or direct result.
+Focused tests were added before implementation. The first focused run failed because `ObserveSafe`, custom observe comparison, observe terminal-state report fields, and unavailable observe metrics did not exist yet.
 
 Added or updated tests:
 
-- `server/policy/compiler/snapshot_compiler_test.go`
-  - Verifies `permit` remains invalid in `pre_auth`.
+- `server/policy/collection/collection_test.go`
+  - Verifies observe mode keeps the default set authoritative even when custom rules exist.
+  - Verifies non-observe-safe custom-only checks are reported as unavailable and are not also reported as missing.
 
 - `server/policy/evaluation/standard_test.go`
-  - Verifies configured `pre_auth` enforce selects a configured terminal decision.
-  - Verifies configured `pre_auth` enforce does not synthesize final default-deny when no configured `pre_auth` rule matches.
-
-- `server/policy/collection/collection_test.go`
-  - Verifies configured `pre_auth` authority is active only in enforce mode, not observe mode.
+  - Verifies custom observe comparison reports default-vs-custom mismatches while preserving the authoritative default decision.
+  - Verifies unavailable custom-only checks are reported and metered.
 
 - `server/core/policy_collection_test.go`
-  - Verifies a configured `pre_auth` deny overrides the current TLS tempfail result at the auth boundary.
-  - Verifies an unmatched configured `pre_auth` rule lets a current TLS tempfail continue as neutral.
-  - Verifies a configured brute-force `skip_remaining_stage_checks` control prevents later pre-auth checks from running and records the selected control decision only once.
+  - Verifies an auth-boundary custom observe deny does not change the default TLS tempfail production response.
 
-Initial reproducer run:
+Validation:
 
 ```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestCompilerRejectsPreAuthPermitDecision|TestConfiguredPreAuthEnforceSelectsConfiguredDecision|TestConfiguredPreAuthEnforceDoesNotSelectFinalDefaultDeny|TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult|TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue' ./server/policy/compiler ./server/policy/evaluation ./server/core
-```
-
-Result: failed before implementation on the missing configured enforce evaluator and auth-boundary behavior.
-
-Focused validation after implementation:
-
-```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestCompilerRejectsPreAuthPermitDecision|TestConfiguredPreAuthEnforceSelectsConfiguredDecision|TestConfiguredPreAuthEnforceDoesNotSelectFinalDefaultDeny|TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult|TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue|TestDecisionContextConfiguredPreAuthAuthorityUsesEnforceMode' ./server/policy/compiler ./server/policy/evaluation ./server/policy/collection ./server/core
-```
-
-Result: passed.
-
-Additional validation after the review fix:
-
-```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks ./server/core
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/idp ./server/config ./server/app/policyfx
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestDecisionContextReportsUnsafeObserveChecksUnavailable|TestDecisionContextObserveModeKeepsDefaultSetAuthoritative|TestCustomObserveComparesConfiguredPolicyWithDefault|TestCustomObserveReportsUnsafeCustomOnlyCheckUnavailable|TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision' ./server/policy/collection ./server/policy/evaluation ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/config ./server/app/policyfx
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make test
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make guardrails
 git diff --check
 git diff -- '*.go' | rg -n -i '^\+.*phase'
-rg -n -i 'phase' server/policy/evaluation/enforce.go
+git diff --no-index -- /dev/null server/policy/evaluation/observe.go | rg -n -i '^\+.*phase'
 ```
 
-Result:
+Result: passed.
 
-- focused and package validations passed;
-- `make test` passed;
-- `make guardrails` passed with the existing `gomnd` nolint warning and `0 issues`;
-- `git diff --check` passed;
-- the Go diff check for new technical `phase` names returned no matches;
-- the new evaluator file scan returned no matches for technical `phase` names.
+Notes:
+
+- `make guardrails` reported the existing golangci-lint runner warning about unknown `gomnd` nolint directives, but finished with `0 issues` and exit code 0.
+- The two `/phase/i` diff scans returned no matches. The `rg` commands therefore exited with code 1, which is the expected no-match result.
 
 ## Active Temporary Adapters
 
+- The request-local direct-outcome diagnostic remains active.
+  - Purpose: keep old-direct-path diagnostics available while `standard_auth` is authoritative.
+  - Removal plan: remove with old-vs-new migration diagnostics in the final cleanup.
+
 - Current mechanism collection adapters remain active.
-  - Purpose: reuse current brute-force, Lua control, TLS, relay-domain, and RBL mechanism execution as fact producers.
-  - Removal plan: replace with native policy check executors before final cleanup.
+  - Purpose: reuse current brute-force, Lua control, TLS, relay-domain, RBL, backend, Lua filter, and account-provider execution as fact producers.
+  - Removal plan: replace with native policy check executors as custom enforcement and final cleanup remove the remaining bridge code.
 
-- Current feature side effects still run through current mechanism code for Lua controls, TLS, relay-domain, and RBL triggers.
-  - Purpose: preserve current behavior while configured `pre_auth` decisions become authoritative.
-  - Removal plan: move remaining side effects behind registered policy obligations when native check executors and response enforcement are completed.
-
-- Brute force still starts from the current early check call sites.
-  - Purpose: preserve current Redis bucket and cache behavior while making the configured policy decision authoritative when it selects a terminal result.
-  - Removal plan: remove old direct-gate scaffolding once native pre-auth orchestration owns check scheduling end to end.
-
-- Current response writers still render HTTP, gRPC, IdP, and protected-endpoint responses.
-  - Purpose: preserve the existing response surfaces while configured `response_marker` and `response_message` are bridged through current auth results and status messages.
-  - Removal plan: replace with direct policy response rendering in the later response-authority work.
-
-- Generic configured `pre_auth` deny currently maps to an existing deny-capable auth result carrier.
-  - Purpose: keep the current FSM and response writers on a denial path without exposing old names in policy config.
-  - Removal plan: remove this current-result translation when policy response rendering is fully authoritative.
+- Custom observe mode does not execute custom obligations, Lua POST-Action enqueueing, counters, learning updates, or mutable side effects.
+  - Purpose: keep observe mode diagnostic-only.
+  - Removal plan: enforcement starts only in later slices, where side effects must execute exclusively from authoritative policy decisions.
 
 ## Planned Later Removal
 
-- Remove old direct-result comparison scaffolding that is not part of supported observe mode.
-- Replace current response-result translation with direct policy response rendering.
-- Replace mechanism-local feature side effects with registered policy obligations.
-- Remove remaining old direct-gate call-site assumptions after native pre-auth check scheduling is complete.
+- Remove old-direct comparison scaffolding that is not part of supported custom observe mode.
+- Replace current response-writer bridging with direct policy response rendering in later authority work.
+- Replace current mechanism collection adapters with native policy check executors before final cleanup.
 
 ## Open Risks and Deliberately Deferred Points
 
-- Custom backend, Lua filter, status-message, lookup-identity, and list-account enforcement remain deliberately out of scope.
-- Existing current mechanism code may still perform current feature side effects before a configured policy decision is selected. This is documented as a temporary adapter and must be removed by later native check-executor and obligation work.
-- The configured `pre_auth` evaluator uses collected facts from current adapters. Custom-only check execution beyond current fact producers remains deferred.
-- Atomic reload semantics were not changed; the evaluator reads the immutable snapshot captured for the request.
-- No new public config paths were added; existing `auth.policy` schema, `mapstructure`, dump, redaction, and `ConfigProblem` behavior remain in force.
+- Custom policies remain non-authoritative by design.
+- Custom-only checks that are not already produced by the current runtime path are not executed by this slice. Non-observe-safe custom-only checks are reported as unavailable; observe-safe custom-only checks without a current fact source remain missing until native check executors own scheduling in later slices.
+- Current response writers still render HTTP, gRPC, IdP, and protected-endpoint responses.
+- No config UX work was needed because no new `auth.policy` fields, schema-index entries, dump fields, redaction rules, or `ConfigProblem` paths changed.
+- Atomic reload was not changed; snapshots remain built completely before activation.
 
 ## Review-Abgleich
 
-The second review re-read the Phase 10 requirements, the general completion rules, and the section 17 registry and mapping tables.
+Second pass completed against the Phase 10 requirements, section 7.3 observe-mode rules, section 15 observability and report rules, section 17 implementation tables, section 17.7 `standard_auth` mapping, and the completion rules from section 18.1.
 
-Result:
-
-- Phase scope stayed limited to custom `pre_auth` enforcement for brute force, Lua controls, TLS, relay domains, and RBL. Backend, Lua filter, lookup-identity, list-account, response-authority, compiler-surface, and FSM-vocabulary changes were not started.
-- The first added tests covered the missing configured evaluator and auth-boundary behavior before implementation. A second review test then exposed and fixed one gap: brute-force `skip_remaining_stage_checks` controls now skip later pre-auth checks instead of merely continuing to the current feature path. The same test also guards against duplicate report entries from repeated request-local evaluation calls.
-- `permit` remains rejected for `pre_auth` by the compiler test.
-- No configured `pre_auth` fallback default-deny was introduced. Unmatched configured `pre_auth` rules remain neutral and final auth default-deny semantics stay unchanged.
-- Brute force is handled as first-class policy input through the collected `builtin.brute_force` facts and no separate legacy decision pipeline was added.
-- Config UX stayed under the existing `auth.policy` model. No new public config root, `mapstructure`, schema, dump, redaction, or `ConfigProblem` changes were required for this slice.
-- Observability for selected configured `pre_auth` decisions records policy metrics, a `policy.evaluate` span, structured policy decision logs, debug-module output, report decisions, FSM markers, and response-render measurements when the surface is known.
-- Atomic reload behavior stayed unchanged. Request handling evaluates the immutable snapshot clone captured by the request-local decision context.
-- Section 17 mapping stayed aligned: the implementation uses existing registered pre-auth check types, attributes, FSM markers, response markers, and the `standard_auth` pre-auth semantics as the default behavior model.
+- Scope: implementation is limited to custom observe mode. No custom enforce path, compiler authority change, FSM authority change, public config root, or historical public names were added.
+- Tests first: focused collection, evaluation, and auth-boundary tests were added before the corresponding code. The initial focused run failed on the missing observe-mode implementation.
+- Default authority: `standard_auth` remains the production decision source in observe mode even with configured custom policy rules.
+- Custom evaluation: configured policies are evaluated from the immutable snapshot and request-local collected facts. The evaluator does not execute obligations, POST-Actions, counters, learning updates, or mutable side effects.
+- Observe safety: non-observe-safe custom-only checks are reported as unavailable with `not_observe_safe` and are metered through `policy_observe_unavailable_checks_total`.
+- Mismatch comparison: observe comparison records effect, selected custom policy, outcome marker, FSM marker, response marker, response-message source and rendered sanitized message, and terminal state.
+- Observability: observe comparison metrics and OTel span attributes include mismatch type; unavailable facts are metered and attached to the custom observe span.
+- Observability gap fixed during review: custom observe normal mismatch logs and policy debug logs now include operation, stage, snapshot generation, selected policy names, effects, response markers, and FSM markers.
+- Reports and redaction: custom output is stored in `Observe.Shadow`, default output remains `Observe.Production`, terminal states are explicit, and attribute details retain existing redaction behavior.
+- `standard_auth` mapping: default decisions continue to use the built-in mapping. Brute force remains first-class policy material and no separate brute-force side path was introduced.
+- Config UX: no public config additions were needed; existing `auth.policy.mode`, `observe_safe`, schema, dump, and validation behavior remain under `auth.policy`.
+- Atomic reload: no snapshot activation semantics changed; the observe evaluator reads the active immutable snapshot captured for the request.

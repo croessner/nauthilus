@@ -17,11 +17,17 @@ package core
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringFeatureHandling(t *testing.T) {
@@ -276,6 +282,209 @@ func TestAuthBoundaryConfiguredFinalDecisionRunsPostActionObligation(t *testing.
 	}
 }
 
+func TestAuthBoundaryConfiguredPreAuthDecisionWithoutLuaActionObligationSkipsSynchronousAction(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.ClearTextList = nil
+	cfg.Lua = policyActionTestLuaConfig(definitions.LuaActionTLSName)
+	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(false)))
+
+	dispatcher := &recordingActionDispatcher{}
+	previous := getActionDispatcher()
+	RegisterActionDispatcher(dispatcher)
+	t.Cleanup(func() {
+		RegisterActionDispatcher(previous)
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.HandleFeatures(ctx)
+
+	if got := dispatcher.Count(); got != 0 {
+		t.Fatalf("lua actions = %d, want no synchronous action without selected obligation", got)
+	}
+}
+
+func TestAuthBoundaryConfiguredPreAuthDecisionRunsSelectedLuaActionObligationOnce(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg.ClearTextList = nil
+	cfg.Lua = policyActionTestLuaConfig(definitions.LuaActionTLSName)
+
+	compiled := customEnforceTLSDenyPolicy(false)
+	compiled.Then.Obligations = []policyruntime.EffectRequest{
+		{
+			ID: policy.ObligationLuaActionDispatch,
+			Args: map[string]any{
+				policy.ObligationArgAction:  definitions.LuaActionTLSName,
+				policy.ObligationArgFeature: "selected_tls_action",
+			},
+		},
+	}
+	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(compiled))
+
+	dispatcher := &recordingActionDispatcher{}
+	previous := getActionDispatcher()
+	RegisterActionDispatcher(dispatcher)
+	t.Cleanup(func() {
+		RegisterActionDispatcher(previous)
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.HandleFeatures(ctx)
+
+	if got := dispatcher.Count(); got != 1 {
+		t.Fatalf("lua actions = %d, want one selected obligation dispatch", got)
+	}
+
+	call := dispatcher.Last()
+	if call.action != definitions.LuaActionTLS {
+		t.Fatalf("lua action = %v, want TLS action", call.action)
+	}
+
+	if call.feature != "selected_tls_action" {
+		t.Fatalf("feature = %q, want selected obligation feature", call.feature)
+	}
+}
+
+func TestPolicyObligationExecutorSkipsMutableEffectsInObserveMode(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    106,
+		Mode:          "observe",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	_ = auth.requestPolicyContext(ctx)
+
+	calls := &recordingObligationHandlers{}
+	executor := newPolicyObligationExecutor(auth)
+	executor.handlers = policyObligationHandlers{
+		updateBruteForce: calls.updateBruteForce,
+		dispatchLua:      calls.dispatchLua,
+		enqueuePost:      calls.enqueuePost,
+	}
+	final := reportFinalWithMutableObligations()
+	executor.Execute(ctx, final)
+
+	if got := calls.Total(); got != 0 {
+		t.Fatalf("mutable obligation calls = %d, want none in observe mode", got)
+	}
+}
+
+func TestPolicyObligationExecutorSkipsMutableEffectsWithoutPolicyContext(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
+	calls := &recordingObligationHandlers{}
+	executor := newPolicyObligationExecutor(auth)
+	executor.handlers = policyObligationHandlers{
+		updateBruteForce: calls.updateBruteForce,
+		dispatchLua:      calls.dispatchLua,
+		enqueuePost:      calls.enqueuePost,
+	}
+	executor.Execute(ctx, reportFinalWithMutableObligations())
+
+	if got := calls.Total(); got != 0 {
+		t.Fatalf("mutable obligation calls = %d, want none without policy context", got)
+	}
+}
+
+func TestPolicyBruteForceLuaActionPreservesCommonRequestShape(t *testing.T) {
+	const ruleName = "existing_block"
+
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Lua = policyActionTestLuaConfig(definitions.LuaActionBruteForceName)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    107,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	dispatcher := &recordingActionDispatcher{}
+	previous := getActionDispatcher()
+	RegisterActionDispatcher(dispatcher)
+	t.Cleanup(func() {
+		RegisterActionDispatcher(previous)
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	_ = auth.requestPolicyContext(ctx)
+	auth.Security.BruteForceName = ruleName + ",guessed"
+	auth.Security.BruteForceCounter = map[string]uint{ruleName: 3}
+	auth.Runtime.BFClientNet = "203.0.113.0/24"
+	auth.Runtime.BFRepeating = true
+	auth.Runtime.FeatureName = definitions.FeatureBruteForce
+
+	newPolicyObligationExecutor(auth).Execute(ctx, bruteForceActionFinalDecision())
+
+	if got := dispatcher.Count(); got != 1 {
+		t.Fatalf("lua actions = %d, want one brute-force action", got)
+	}
+
+	call := dispatcher.Last()
+	if call.common.bruteForceName != ruleName {
+		t.Fatalf("brute-force name = %q, want rule name", call.common.bruteForceName)
+	}
+
+	if call.common.bruteForceCounter != 3 {
+		t.Fatalf("brute-force counter = %d, want 3", call.common.bruteForceCounter)
+	}
+
+	if call.common.clientNet != "203.0.113.0/24" {
+		t.Fatalf("client net = %q, want stored brute-force network", call.common.clientNet)
+	}
+
+	if !call.common.repeating {
+		t.Fatal("repeating = false, want true")
+	}
+
+	if call.common.featureName != definitions.FeatureBruteForce {
+		t.Fatalf("feature name = %q, want brute_force", call.common.featureName)
+	}
+}
+
+func TestBruteForceLuaActionAccountRefreshPreservesCommonRequestAccountField(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	auth, _, mock := newCurrentBehaviorAuthState(t, cfg)
+	mock.Regexp().ExpectHGet(".*", ".*").SetVal("account-from-cache")
+
+	auth.refreshBruteForceLuaActionAccount()
+
+	if got := auth.Runtime.AccountName; got != "account-from-cache" {
+		t.Fatalf("account = %q, want refreshed account", got)
+	}
+
+	if got := auth.Runtime.AccountField; got != definitions.MetaUserAccount {
+		t.Fatalf("account field = %q, want %q", got, definitions.MetaUserAccount)
+	}
+
+	attr, ok := auth.GetAttribute(definitions.MetaUserAccount)
+	if !ok || len(attr) == 0 || attr[0] != "account-from-cache" {
+		t.Fatalf("account attribute = %#v, want refreshed account", attr)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("redis expectations were not met: %v", err)
+	}
+}
+
+func bruteForceActionFinalDecision() *report.FinalDecision {
+	return &report.FinalDecision{
+		PolicyName:     "standard_brute_force_deny",
+		Stage:          policy.StagePreAuth,
+		Effect:         policy.DecisionDeny,
+		FSMEventMarker: policy.FSMEventMarkerPreAuthDeny,
+		ResponseMarker: policy.ResponseMarkerFail,
+		Obligations: []report.EffectRequest{
+			{
+				ID: policy.ObligationLuaActionDispatch,
+				Args: map[string]any{
+					policy.ObligationArgAction: policy.LuaActionDispatchBruteForce,
+				},
+			},
+		},
+	}
+}
+
 func customEnforceAuthSnapshotForTest() *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    105,
@@ -310,6 +519,138 @@ func customEnforceAuthSnapshotForTest() *policyruntime.Snapshot {
 					},
 				},
 			},
+		},
+	}
+}
+
+func policyActionTestLuaConfig(actionName string) *config.LuaSection {
+	return &config.LuaSection{
+		Actions: []config.LuaAction{
+			{
+				ActionType: actionName,
+				ScriptName: actionName + "_script",
+				ScriptPath: "/tmp/policy-action-test.lua",
+			},
+		},
+	}
+}
+
+type recordedActionDispatch struct {
+	common  recordedCommonRequest
+	feature string
+	action  definitions.LuaAction
+}
+
+type recordedCommonRequest struct {
+	featureName       string
+	clientNet         string
+	bruteForceName    string
+	bruteForceCounter uint
+	repeating         bool
+	userFound         bool
+	authenticated     bool
+	noAuth            bool
+}
+
+type recordingActionDispatcher struct {
+	mu    sync.Mutex
+	calls []recordedActionDispatch
+}
+
+func (d *recordingActionDispatcher) Dispatch(view *StateView, featureName string, luaAction definitions.LuaAction) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	call := recordedActionDispatch{feature: featureName, action: luaAction}
+	if view != nil {
+		auth := view.Auth()
+		commonRequest := lualib.GetCommonRequest()
+		defer lualib.PutCommonRequest(commonRequest)
+
+		auth.FillCommonRequest(commonRequest)
+		commonRequest.UserFound = auth.GetAccount() != ""
+		commonRequest.FeatureName = featureName
+		call.common = recordedCommonRequest{
+			featureName:       commonRequest.FeatureName,
+			clientNet:         commonRequest.ClientNet,
+			bruteForceName:    commonRequest.BruteForceName,
+			bruteForceCounter: commonRequest.BruteForceCounter,
+			repeating:         commonRequest.Repeating,
+			userFound:         commonRequest.UserFound,
+			authenticated:     commonRequest.Authenticated,
+			noAuth:            commonRequest.NoAuth,
+		}
+	}
+
+	d.calls = append(d.calls, call)
+}
+
+func (d *recordingActionDispatcher) Count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return len(d.calls)
+}
+
+func (d *recordingActionDispatcher) Last() recordedActionDispatch {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.calls) == 0 {
+		return recordedActionDispatch{}
+	}
+
+	return d.calls[len(d.calls)-1]
+}
+
+type recordingObligationHandlers struct {
+	mu              sync.Mutex
+	updateCount     int
+	dispatchCount   int
+	postActionCount int
+}
+
+func (h *recordingObligationHandlers) updateBruteForce(*gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.updateCount++
+}
+
+func (h *recordingObligationHandlers) dispatchLua(*gin.Context, luaActionObligation) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.dispatchCount++
+
+	return true
+}
+
+func (h *recordingObligationHandlers) enqueuePost(*gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.postActionCount++
+}
+
+func (h *recordingObligationHandlers) Total() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.updateCount + h.dispatchCount + h.postActionCount
+}
+
+func reportFinalWithMutableObligations() *report.FinalDecision {
+	return &report.FinalDecision{
+		PolicyName:     "custom_observe_mutable_outputs",
+		Stage:          policy.StagePreAuth,
+		Effect:         policy.DecisionDeny,
+		FSMEventMarker: policy.FSMEventMarkerPreAuthDeny,
+		ResponseMarker: policy.ResponseMarkerFail,
+		Obligations: []report.EffectRequest{
+			{ID: policy.ObligationBruteForceUpdate},
+			{ID: policy.ObligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: definitions.LuaActionTLSName}},
+			{ID: policy.ObligationLuaPostActionEnqueue},
 		},
 	}
 }

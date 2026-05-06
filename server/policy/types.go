@@ -263,9 +263,54 @@ const (
 	// ObligationBruteForceUpdate identifies brute-force counter update enforcement.
 	ObligationBruteForceUpdate = "auth.obligation.brute_force.update"
 
+	// ObligationLuaActionDispatch identifies synchronous Lua action dispatch enforcement.
+	ObligationLuaActionDispatch = "auth.obligation.lua_action.dispatch"
+
 	// ObligationLuaPostActionEnqueue identifies Lua post-action enqueue enforcement.
 	ObligationLuaPostActionEnqueue = "auth.obligation.lua_post_action.enqueue"
 )
+
+const (
+	// ObligationArgAction names the bounded action argument for Lua action dispatch.
+	ObligationArgAction = "action"
+
+	// ObligationArgFeature names the optional feature argument for Lua action dispatch.
+	ObligationArgFeature = "feature"
+
+	// ObligationArgWait names the optional wait argument for Lua action dispatch.
+	ObligationArgWait = "wait"
+)
+
+const (
+	// LuaActionDispatchBruteForce is the brute-force synchronous action name.
+	LuaActionDispatchBruteForce = "brute_force"
+
+	// LuaActionDispatchLua is the generic Lua-control synchronous action name.
+	LuaActionDispatchLua = "lua"
+
+	// LuaActionDispatchTLS is the TLS synchronous action name.
+	LuaActionDispatchTLS = "tls_encryption"
+
+	// LuaActionDispatchRelayDomains is the relay-domain synchronous action name.
+	LuaActionDispatchRelayDomains = "relay_domains"
+
+	// LuaActionDispatchRBL is the RBL synchronous action name.
+	LuaActionDispatchRBL = "rbl"
+)
+
+// LuaActionDispatchActionAllowed reports whether name is a registered synchronous Lua action target.
+func LuaActionDispatchActionAllowed(name string) bool {
+	switch name {
+	case LuaActionDispatchBruteForce,
+		LuaActionDispatchLua,
+		LuaActionDispatchTLS,
+		LuaActionDispatchRelayDomains,
+		LuaActionDispatchRBL:
+		return true
+	default:
+		return false
+	}
+}
 
 const (
 	// FSMEventMarkerParseOK identifies a successful parser marker.

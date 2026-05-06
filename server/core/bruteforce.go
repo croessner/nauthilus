@@ -17,179 +17,24 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 )
-
-// handleBruteForceLuaAction handles the brute force Lua action based on the provided authentication state and rule config.
-func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
-	tr := monittrace.New("nauthilus/auth")
-	bctx, bspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.lua_action",
-		attribute.String("service", a.Request.Service),
-		attribute.String("username", a.Request.Username),
-		attribute.String("rule", rule.Name),
-		attribute.Bool("already_triggered", alreadyTriggered),
-	)
-
-	ctx.Request = ctx.Request.WithContext(bctx)
-	if a.Request.HTTPClientRequest != nil {
-		a.Request.HTTPClientRequest = a.Request.HTTPClientRequest.WithContext(bctx)
-	}
-
-	defer bspan.End()
-
-	cfg := a.cfg()
-
-	if cfg.HaveLuaActions() {
-		finished := make(chan action.Done)
-		accountName := a.GetAccount()
-
-		// Get a CommonRequest from the pool
-		commonRequest := lualib.GetCommonRequest()
-
-		defer lualib.PutCommonRequest(commonRequest)
-
-		// Set the fields
-		commonRequest.Debug = cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-		// repeating is true if either pre-detection flagged (alreadyTriggered) or the
-		// brute-force bucket counter has reached or exceeded the rule limit.
-		bfCount := a.Security.BruteForceCounter[rule.Name]
-
-		// Derive client_net robustly: prefer provided network; fallback to CIDR from ClientIP and rule.
-		clientNet := ""
-
-		if network != nil && network.IP != nil && network.Mask != nil {
-			clientNet = network.String()
-		} else if a.Request.ClientIP != "" && rule.CIDR > 0 {
-			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.Request.ClientIP, rule.CIDR)); err == nil && n != nil {
-				clientNet = n.String()
-			}
-		}
-
-		isRepeating := alreadyTriggered || (bfCount >= rule.GetFailedRequests())
-
-		// If still unknown, combine account lookup + repeating flag via Redis pipeline
-		if (!isRepeating || accountName == "") && clientNet != "" {
-			prefix := a.cfg().GetServer().GetRedis().GetPrefix()
-			userKey := rediscli.GetUserHashKey(prefix, a.Request.Username)
-			banKey := rediscli.GetBruteForceBanKey(prefix, clientNet)
-
-			dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx.Request.Context(), a.cfg())
-			pipe := a.Redis().GetReadHandle().Pipeline()
-			userCmd := pipe.HGet(dCtx, userKey, a.Request.Username)
-			bfCmd := pipe.Exists(dCtx, banKey)
-			_, err := pipe.Exec(dCtx)
-			cancel()
-
-			if err == nil || errors.Is(err, redis.Nil) {
-				acc, _ := userCmd.Result()
-				repVal, _ := bfCmd.Result()
-				rep := repVal > 0
-
-				if accountName == "" && acc != "" {
-					accountName = acc
-					// Mirror into AuthState
-					if a.Runtime.AccountField == "" {
-						a.Runtime.AccountField = definitions.MetaUserAccount
-					}
-
-					if len(a.Attributes.Attributes) == 0 {
-						attrs := make(bktype.AttributeMapping)
-						attrs[definitions.MetaUserAccount] = []any{acc}
-						a.ReplaceAllAttributes(attrs)
-					}
-
-					// Store into in-process account cache
-					a.AccountCache().Set(a.Cfg(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, acc)
-				}
-
-				if !isRepeating && rep {
-					isRepeating = true
-				}
-			}
-		}
-
-		bspan.SetAttributes(
-			attribute.Bool("repeating", isRepeating),
-			attribute.Int("bf.count", int(a.Security.BruteForceCounter[rule.Name])),
-		)
-
-		commonRequest.Repeating = isRepeating
-		commonRequest.UserFound = func() bool { return accountName != "" }()
-		commonRequest.Authenticated = false // unavailable
-		commonRequest.NoAuth = a.Request.NoAuth
-		commonRequest.BruteForceCounter = a.Security.BruteForceCounter[rule.Name]
-		commonRequest.Service = a.Request.Service
-		commonRequest.Session = a.Runtime.GUID
-		commonRequest.ExternalSessionID = a.Request.ExternalSessionID
-		commonRequest.ClientIP = a.Request.ClientIP
-		commonRequest.ClientPort = a.Request.XClientPort
-		commonRequest.ClientNet = clientNet
-		commonRequest.ClientHost = a.Request.ClientHost
-		commonRequest.ClientID = a.Request.XClientID
-		commonRequest.LocalIP = a.Request.XLocalIP
-		commonRequest.LocalPort = a.Request.XPort
-		commonRequest.UserAgent = a.Request.UserAgent
-		commonRequest.Username = a.Request.Username
-		commonRequest.Account = accountName
-		commonRequest.AccountField = a.GetAccountField()
-		commonRequest.UniqueUserID = "" // unavailable
-		commonRequest.DisplayName = ""  // unavailable
-		commonRequest.Password = a.passwordBytes()
-		commonRequest.Protocol = a.Request.Protocol.Get()
-		commonRequest.BruteForceName = rule.Name
-		commonRequest.FeatureName = a.Runtime.FeatureName
-		commonRequest.StatusMessage = &a.Runtime.StatusMessage
-		commonRequest.XSSL = a.Request.XSSL
-		commonRequest.XSSLSessionID = a.Request.XSSLSessionID
-		commonRequest.XSSLClientVerify = a.Request.XSSLClientVerify
-		commonRequest.XSSLClientDN = a.Request.XSSLClientDN
-		commonRequest.XSSLClientCN = a.Request.XSSLClientCN
-		commonRequest.XSSLIssuer = a.Request.XSSLIssuer
-		commonRequest.XSSLClientNotBefore = a.Request.XSSLClientNotBefore
-		commonRequest.XSSLClientNotAfter = a.Request.XSSLClientNotAfter
-		commonRequest.XSSLSubjectDN = a.Request.XSSLSubjectDN
-		commonRequest.XSSLIssuerDN = a.Request.XSSLIssuerDN
-		commonRequest.XSSLClientSubjectDN = a.Request.XSSLClientSubjectDN
-		commonRequest.XSSLClientIssuerDN = a.Request.XSSLClientIssuerDN
-		commonRequest.XSSLProtocol = a.Request.XSSLProtocol
-		commonRequest.XSSLCipher = a.Request.XSSLCipher
-		commonRequest.SSLSerial = a.Request.SSLSerial
-		commonRequest.SSLFingerprint = a.Request.SSLFingerprint
-		commonRequest.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
-
-		action.RequestChan <- &action.Action{
-			LuaAction:     definitions.LuaActionBruteForce,
-			Context:       a.Runtime.Context,
-			FinishedChan:  finished,
-			HTTPRequest:   ctx.Request,
-			HTTPContext:   ctx,
-			CommonRequest: commonRequest,
-		}
-
-		<-finished
-	}
-}
 
 // logBruteForceDebug logs debug information related to brute force authentication attempts.
 func (a *AuthState) logBruteForceDebug(ctx context.Context) {
@@ -533,17 +378,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	if triggered || alreadyTriggered {
 		a.updateLuaContext(definitions.FeatureBruteForce)
-
-		// Time the Lua action execution
-		var stopLua func()
-		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_lua_action_total", ctx.FullPath()); s != nil {
-			stopLua = s
-		}
-
-		a.handleBruteForceLuaAction(ctx, alreadyTriggered, &rules[ruleNumber], network)
-		if stopLua != nil {
-			stopLua()
-		}
 	}
 
 	// Always return triggered (block status) even if alreadyTriggered was true

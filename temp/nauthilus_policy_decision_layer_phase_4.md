@@ -72,7 +72,7 @@ Result: no matches.
 
 - Current-production-to-policy comparison bridge in `server/core/policy_collection.go`.
   - Purpose: compare current terminal outcomes with the built-in `standard_auth` shadow result.
-  - Removal plan: remove or narrow after Phase 7 makes `standard_auth` authoritative and after Phase 13 removes old-vs-new migration diagnostics.
+  - Removal plan: remove or narrow after Phase 8 makes `standard_auth` authoritative and after Phase 14 removes old-vs-new migration diagnostics.
 
 - Current response surface classifier in `server/core/policy_collection.go`.
   - Purpose: provide response-surface comparison labels before the target response renderer becomes authoritative.
@@ -88,13 +88,13 @@ There is no separate legacy decision pipeline. Brute force remains represented a
 
 The temporary comparison bridge is expected to be removed in the final cleanup after:
 
-- Phase 7 makes `standard_auth` the production decision path when no custom policy is configured.
-- Phase 8 makes the target FSM authoritative and removes old event-name adapter dependencies.
-- Phase 13 removes old direct-gate and old-vs-new comparison scaffolding that is not part of supported observe mode.
+- Phase 8 makes `standard_auth` the production decision path when no custom policy is configured.
+- Phase 9 makes the target FSM authoritative and removes old event-name adapter dependencies.
+- Phase 14 removes old direct-gate and old-vs-new comparison scaffolding that is not part of supported observe mode.
 
 ## Open Risks and Deliberately Deferred Points
 
-- Custom policies are not evaluated in observe mode. That belongs to Phase 9.
+- Custom policies are not evaluated in observe mode. That belongs to Phase 10.
 - `standard_auth` is still shadow-only. It does not execute obligations, mutate counters, enqueue Lua POST-Actions, or render responses.
 - Current FSM event names remain production-internal. Target FSM authority and target-vs-current FSM comparison are not part of this phase.
 - Public config shape is unchanged in this phase. No new `auth.policy` fields or public roots were added.

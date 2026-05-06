@@ -66,7 +66,7 @@ The Go-name check found no changed Go files and no added Go diff lines containin
 ## Planned Later Removal
 
 - Remove runtime dependence on mechanism-local Lua scheduler fields after the policy check plan becomes authoritative.
-- Remove any old direct-gate or scheduler bridge code in the final cleanup once Phase 7 and Phase 8 have made `standard_auth` and the target FSM authoritative.
+- Remove any old direct-gate or scheduler bridge code in the final cleanup once Phase 8 and Phase 9 have made `standard_auth` and the target FSM authoritative.
 - Keep `standard_auth` itself as the supported built-in default policy, not as a legacy path.
 
 ## Open Risks and Deliberately Deferred Points

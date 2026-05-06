@@ -2,116 +2,115 @@
 
 ## Goal
 
-Phase 9 enables custom policy observe mode while keeping the built-in `standard_auth` policy set authoritative.
+Phase 9 makes the target auth FSM authoritative for production auth orchestration and removes the temporary target-to-current FSM adapter introduced earlier.
 
-This slice does not start custom policy enforcement, does not introduce a new public config root, and does not change compiler authority, response-rendering authority, or target-FSM authority. Custom policy output is evaluated only for diagnostics, comparison, metrics, traces, logs, and reports.
+This slice does not start custom policy observe or enforce mode, does not add a new public config root, and does not change the policy compiler surface. The built-in `standard_auth` default policy remains the only authoritative policy set when no configured policy rules exist.
 
 ## Implemented Files and Modules
 
-- `server/policy/runtime/snapshot.go`
-  - Adds the compiled `ObserveSafe` check flag to immutable snapshots.
+- `server/policy/fsm/fsm.go`
+  - Removes the private target-to-current event adapter.
+  - Exposes the target state constants and transition helper so production code uses the same target transition table as policy diagnostics.
+  - Keeps comparison helpers from synthesizing a production event path from old event names.
 
-- `server/policy/compiler/checks.go`
-  - Carries check-type registry observe-safety defaults and allowed operator assertions into compiled check plans.
+- `server/core/auth_fsm.go`
+  - Replaces the old core FSM state and event vocabulary with target states and target marker IDs.
+  - Delegates transition validation to `server/policy/fsm`.
 
-- `server/policy/collection/collection.go`
-  - Keeps `standard_auth` authoritative when the active snapshot is in `observe` mode, even when configured custom rules exist.
-  - Exposes the request snapshot for observe comparison.
-  - Records unexecuted non-observe-safe custom-only checks as unavailable with reason `not_observe_safe`.
+- `server/core/rest.go`
+  - Starts auth pipeline FSM tracking at `init` and applies `auth.fsm.event.parse_ok`.
+  - Maps feature outcomes to target `pre_auth_*` markers.
+  - Maps backend/password outcomes to target final auth markers.
+  - Records target FSM transition metrics on the production path.
 
-- `server/policy/evaluation/observe.go`
-  - Adds side-effect-free custom policy observe evaluation from compiled snapshot policies and collected request facts.
-  - Evaluates `require_checks`, condition expressions, selected response-message sources, target FSM markers, response markers, outcome markers, and terminal states.
-  - Compares custom policy output with the authoritative default-policy output.
-  - Leaves `policyReport.Final` on the authoritative default decision and stores custom output in `policyReport.Observe.Shadow`.
+- `server/core/policy_authority.go`
+  - Applies target FSM marker sequences for direct authoritative policy decisions before rendering the current response.
 
-- `server/policy/observability/metrics.go`
-  - Adds `policy_observe_unavailable_checks_total` for unavailable custom-only checks.
-  - Extends the policy recorder boundary with unavailable observe measurements.
+- `server/core/auth.go`
+  - Applies target FSM marker sequences for list-account policy decisions before the existing response comparison.
 
-- `server/policy/report/report.go`
-  - Extends observe reports with default and custom terminal states.
+- `server/policy/evaluation/standard.go`
+  - Exposes target marker sequence construction for production FSM application.
+  - Stops recording adapter-comparison FSM metrics from the comparison path.
 
-- `server/core/policy_collection.go`
-  - Runs custom observe comparison after the existing default-policy comparison when the active snapshot is in observe mode.
+- `server/policy/evaluation/fsm_compare_test.go`
+  - Updates production event-path fixtures to target marker IDs.
 
 ## Tests and Validation
 
-Focused tests were added before implementation. The first focused run failed because `ObserveSafe`, custom observe comparison, observe terminal-state report fields, and unavailable observe metrics did not exist yet.
+Focused tests were added before implementation. The first focused run failed because core still exposed old FSM names and the policy FSM comparison still synthesized a production path through the adapter.
 
 Added or updated tests:
 
-- `server/policy/collection/collection_test.go`
-  - Verifies observe mode keeps the default set authoritative even when custom rules exist.
-  - Verifies non-observe-safe custom-only checks are reported as unavailable and are not also reported as missing.
+- `server/core/auth_fsm_test.go`
+  - Verifies target transitions through `pre_auth_checked`, `auth_checked`, and `account_provider_checked`.
+  - Verifies feature and password/backend results map to target marker IDs.
+  - Verifies core event values are target marker IDs.
 
-- `server/policy/evaluation/standard_test.go`
-  - Verifies custom observe comparison reports default-vs-custom mismatches while preserving the authoritative default decision.
-  - Verifies unavailable custom-only checks are reported and metered.
+- `server/policy/fsm/fsm_test.go`
+  - Replaces adapter mapping coverage with a check that no production event path is synthesized without an actual production path.
+  - Verifies comparison preserves an already supplied target production path.
 
-- `server/core/policy_collection_test.go`
-  - Verifies an auth-boundary custom observe deny does not change the default TLS tempfail production response.
+- `server/core/policy_authority_test.go`
+  - Verifies a direct authoritative pre-auth decision applies a target FSM event path and target terminal state.
 
-Validation:
+Validation run:
 
 ```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestDecisionContextReportsUnsafeObserveChecksUnavailable|TestDecisionContextObserveModeKeepsDefaultSetAuthoritative|TestCustomObserveComparesConfiguredPolicyWithDefault|TestCustomObserveReportsUnsafeCustomOnlyCheckUnavailable|TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision' ./server/policy/collection ./server/policy/evaluation ./server/core
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/config ./server/app/policyfx
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make test
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make guardrails
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestNextAuthFSMState|TestMapAuthFeatureResultToFSMEvent|TestMapAuthPasswordResultToFSMEvent|TestAuthFSMEventValuesAreTargetMarkers|TestCompareDoesNotSynthesizeProductionPath|TestCompareReportsTerminalMismatchWithoutChangingProductionPath' ./server/core ./server/policy/fsm
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryDefaultSetAppliesTargetFSMForDirectPreAuthDecision|TestAuthBoundaryDefaultSetSelects|TestAuthBoundaryKeepsDirectOutcomeDiagnostic' ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/fsm ./server/policy/evaluation ./server/policy/report ./server/policy/collection ./server/policy/compiler
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/idp
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache GOMODCACHE=/tmp/nauthilus-gomod-cache make test
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache GOMODCACHE=/tmp/nauthilus-gomod-cache make guardrails
 git diff --check
 git diff -- '*.go' | rg -n -i '^\+.*phase'
-git diff --no-index -- /dev/null server/policy/evaluation/observe.go | rg -n -i '^\+.*phase'
 ```
 
 Result: passed.
 
-Notes:
+`make guardrails` first caught one unchecked log return and missing revive comments for exported FSM helpers. Those findings were fixed directly, and the final `make guardrails` run passed with `0 issues`. The command still prints the pre-existing warning about unknown `gomnd` entries in `//nolint` directives.
 
-- `make guardrails` reported the existing golangci-lint runner warning about unknown `gomnd` nolint directives, but finished with `0 issues` and exit code 0.
-- The two `/phase/i` diff scans returned no matches. The `rg` commands therefore exited with code 1, which is the expected no-match result.
+The only remaining historical FSM string found by a repository scan is `features_ok` in `server/policy/compiler/snapshot_compiler_test.go`, where it is intentionally used to prove old current-event names are rejected by policy marker validation.
 
 ## Active Temporary Adapters
 
+- The target-to-current FSM adapter has been removed.
+
+- The private current-result translation in `server/core/policy_authority.go` remains active.
+  - Purpose: keep current response rendering and `AuthResult` compatibility while the policy-selected decision is authoritative.
+  - Removal plan: remove obsolete current-result translation during final cleanup once response rendering and remaining direct fallback scaffolding are fully policy-owned.
+
 - The request-local direct-outcome diagnostic remains active.
-  - Purpose: keep old-direct-path diagnostics available while `standard_auth` is authoritative.
+  - Purpose: keep old-direct-path comparison available after built-in default policy authority.
   - Removal plan: remove with old-vs-new migration diagnostics in the final cleanup.
-
-- Current mechanism collection adapters remain active.
-  - Purpose: reuse current brute-force, Lua control, TLS, relay-domain, RBL, backend, Lua filter, and account-provider execution as fact producers.
-  - Removal plan: replace with native policy check executors as custom enforcement and final cleanup remove the remaining bridge code.
-
-- Custom observe mode does not execute custom obligations, Lua POST-Action enqueueing, counters, learning updates, or mutable side effects.
-  - Purpose: keep observe mode diagnostic-only.
-  - Removal plan: enforcement starts only in later slices, where side effects must execute exclusively from authoritative policy decisions.
 
 ## Planned Later Removal
 
-- Remove old-direct comparison scaffolding that is not part of supported custom observe mode.
-- Replace current response-writer bridging with direct policy response rendering in later authority work.
-- Replace current mechanism collection adapters with native policy check executors before final cleanup.
+- Final cleanup removes obsolete old-direct comparison scaffolding that is not part of supported observe mode.
+- Later response-authority work can replace current response writer bridging with direct policy response rendering, but that is outside this slice.
 
 ## Open Risks and Deliberately Deferred Points
 
 - Custom policies remain non-authoritative by design.
-- Custom-only checks that are not already produced by the current runtime path are not executed by this slice. Non-observe-safe custom-only checks are reported as unavailable; observe-safe custom-only checks without a current fact source remain missing until native check executors own scheduling in later slices.
 - Current response writers still render HTTP, gRPC, IdP, and protected-endpoint responses.
-- No config UX work was needed because no new `auth.policy` fields, schema-index entries, dump fields, redaction rules, or `ConfigProblem` paths changed.
-- Atomic reload was not changed; snapshots remain built completely before activation.
+- The policy report still has current-vs-target comparison fields for bounded diagnostics, but production event paths now contain target markers and no adapter-generated old event names.
+- No config UX work was needed because no `auth.policy` schema fields, `mapstructure` tags, schema-index entries, dump fields, or `ConfigProblem` paths changed.
+- Atomic reload was not touched; snapshot activation and failed-build rollback behavior remain owned by the existing runtime store/compiler code.
 
 ## Review-Abgleich
 
-Second pass completed against the Phase 9 requirements, section 7.3 observe-mode rules, section 15 observability and report rules, section 17 implementation tables, section 17.7 `standard_auth` mapping, and the completion rules from section 18.1.
+Second pass completed against the Phase 9 requirements, section 9.7 target FSM semantics, section 17.3 FSM marker registry, section 17.7 `standard_auth` mapping checklist, and the completion rules from section 18.1.
 
-- Scope: implementation is limited to custom observe mode. No custom enforce path, compiler authority change, FSM authority change, public config root, or historical public names were added.
-- Tests first: focused collection, evaluation, and auth-boundary tests were added before the corresponding code. The initial focused run failed on the missing observe-mode implementation.
-- Default authority: `standard_auth` remains the production decision source in observe mode even with configured custom policy rules.
-- Custom evaluation: configured policies are evaluated from the immutable snapshot and request-local collected facts. The evaluator does not execute obligations, POST-Actions, counters, learning updates, or mutable side effects.
-- Observe safety: non-observe-safe custom-only checks are reported as unavailable with `not_observe_safe` and are metered through `policy_observe_unavailable_checks_total`.
-- Mismatch comparison: observe comparison records effect, selected custom policy, outcome marker, FSM marker, response marker, response-message source and rendered sanitized message, and terminal state.
-- Observability: observe comparison metrics and OTel span attributes include mismatch type; unavailable facts are metered and attached to the custom observe span.
-- Observability gap fixed during review: custom observe normal mismatch logs and policy debug logs now include operation, stage, snapshot generation, selected policy names, effects, response markers, and FSM markers.
-- Reports and redaction: custom output is stored in `Observe.Shadow`, default output remains `Observe.Production`, terminal states are explicit, and attribute details retain existing redaction behavior.
-- `standard_auth` mapping: default decisions continue to use the built-in mapping. Brute force remains first-class policy material and no separate brute-force side path was introduced.
-- Config UX: no public config additions were needed; existing `auth.policy.mode`, `observe_safe`, schema, dump, and validation behavior remain under `auth.policy`.
-- Atomic reload: no snapshot activation semantics changed; the observe evaluator reads the active immutable snapshot captured for the request.
+- Scope: implementation is limited to target-FSM authority, adapter removal, production FSM metrics, tests, and this implementation note. No compiler-authority switch, custom policy observe/enforce mode, new config root, or response-rendering authority switch was started.
+- Tests first: focused core FSM and policy FSM tests were written before code changes. The first focused run failed on missing target core event names and adapter-synthesized production paths.
+- Target FSM authority: production auth orchestration now applies target marker IDs directly through the target transition table shared from `server/policy/fsm`.
+- Adapter removal: the private target-to-current FSM adapter and its old event mapping were removed. Policy FSM comparison no longer synthesizes production paths from old names.
+- Old event names: core auth decision mapping no longer emits `features_*` or `password_*` names. A Go scan finds only the compiler rejection test that intentionally uses `features_ok` as invalid input.
+- Metrics and observability: production FSM application records `policy_fsm_transitions_total` through the policy recorder. Adapter-comparison FSM metric recording was removed from the comparison path.
+- Reports and logs: existing bounded FSM report fields remain, but production event paths now carry target marker IDs. No old event name is generated for report, log, trace, metric, registry, or config surfaces.
+- `standard_auth` mapping: pre-auth outcomes map to `pre_auth_*` markers, auth outcomes map to `auth_*` markers, and list-account decisions use `account_provider_evaluated` before final markers.
+- Brute force: brute force remains first-class `standard_auth` pre-auth material; no separate brute-force FSM or decision side path was introduced.
+- Config UX: no config structs, schema index, dump behavior, redaction, or `ConfigProblem` paths changed.
+- Atomic reload: no snapshot activation code changed; existing immutable snapshot behavior remains unchanged.
+- Diff hygiene: `git diff --check` passed and the Go diff scan for added case-insensitive `phase` strings produced no matches.

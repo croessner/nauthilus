@@ -45,6 +45,7 @@ const (
 	fsmMarkerAuthEmptyUser           = policy.FSMEventMarkerAuthEmptyUser
 	fsmMarkerAuthEmptyPass           = policy.FSMEventMarkerAuthEmptyPass
 	obligationBruteForceUpdate       = policy.ObligationBruteForceUpdate
+	obligationLuaActionDispatch      = policy.ObligationLuaActionDispatch
 	obligationLuaPostActionEnqueue   = policy.ObligationLuaPostActionEnqueue
 	mismatchNone                     = "none"
 	mismatchMultiple                 = "multiple"
@@ -322,14 +323,15 @@ func bruteForceDenyRule() standardRule {
 	)
 	rule.obligations = []report.EffectRequest{
 		{ID: obligationBruteForceUpdate},
-		{ID: obligationLuaPostActionEnqueue, Args: map[string]any{"action": "brute_force"}},
+		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchBruteForce}},
+		{ID: obligationLuaPostActionEnqueue, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchBruteForce}},
 	}
 
 	return rule
 }
 
 func tlsRule() standardRule {
-	return ruleWithCheck(
+	rule := ruleWithCheck(
 		"standard_tls_enforcement",
 		policy.StagePreAuth,
 		policy.DecisionTempFail,
@@ -340,59 +342,76 @@ func tlsRule() standardRule {
 		"tls_encryption",
 		attrIsFalse(policy.AttributeTLSSecure),
 	)
+	rule.obligations = []report.EffectRequest{
+		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchTLS}},
+	}
+
+	return rule
 }
 
 func relayDomainRules() []standardRule {
+	errorRule := ruleWithCheck(
+		"standard_relay_domain_error_tempfail",
+		policy.StagePreAuth,
+		policy.DecisionTempFail,
+		"auth.outcome.relay_domain_error",
+		fsmMarkerPreAuthTempFail,
+		responseMarkerTempFail,
+		authenticateOps,
+		"relay_domains",
+		attrIsTrue(policy.AttributeRelayDomainError),
+	)
+	rejectRule := ruleWithCheck(
+		"standard_relay_domain_reject",
+		policy.StagePreAuth,
+		policy.DecisionDeny,
+		"auth.outcome.relay_domain_reject",
+		fsmMarkerPreAuthDeny,
+		responseMarkerFail,
+		authenticateOps,
+		"relay_domains",
+		unknownRelayDomain,
+	)
+	rejectRule.obligations = []report.EffectRequest{
+		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchRelayDomains}},
+	}
+
 	return []standardRule{
-		ruleWithCheck(
-			"standard_relay_domain_error_tempfail",
-			policy.StagePreAuth,
-			policy.DecisionTempFail,
-			"auth.outcome.relay_domain_error",
-			fsmMarkerPreAuthTempFail,
-			responseMarkerTempFail,
-			authenticateOps,
-			"relay_domains",
-			attrIsTrue(policy.AttributeRelayDomainError),
-		),
-		ruleWithCheck(
-			"standard_relay_domain_reject",
-			policy.StagePreAuth,
-			policy.DecisionDeny,
-			"auth.outcome.relay_domain_reject",
-			fsmMarkerPreAuthDeny,
-			responseMarkerFail,
-			authenticateOps,
-			"relay_domains",
-			unknownRelayDomain,
-		),
+		errorRule,
+		rejectRule,
 	}
 }
 
 func rblRules() []standardRule {
+	errorRule := ruleWithCheck(
+		"standard_rbl_error_tempfail",
+		policy.StagePreAuth,
+		policy.DecisionTempFail,
+		"auth.outcome.rbl_error",
+		fsmMarkerPreAuthTempFail,
+		responseMarkerTempFail,
+		authLookupOps,
+		"rbl",
+		attrIsTrue(policy.AttributeRBLError),
+	)
+	rejectRule := ruleWithCheck(
+		"standard_rbl_reject",
+		policy.StagePreAuth,
+		policy.DecisionDeny,
+		"auth.outcome.rbl_reject",
+		fsmMarkerPreAuthDeny,
+		responseMarkerFail,
+		authLookupOps,
+		"rbl",
+		attrIsTrue(policy.AttributeRBLThresholdReached),
+	)
+	rejectRule.obligations = []report.EffectRequest{
+		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchRBL}},
+	}
+
 	return []standardRule{
-		ruleWithCheck(
-			"standard_rbl_error_tempfail",
-			policy.StagePreAuth,
-			policy.DecisionTempFail,
-			"auth.outcome.rbl_error",
-			fsmMarkerPreAuthTempFail,
-			responseMarkerTempFail,
-			authLookupOps,
-			"rbl",
-			attrIsTrue(policy.AttributeRBLError),
-		),
-		ruleWithCheck(
-			"standard_rbl_reject",
-			policy.StagePreAuth,
-			policy.DecisionDeny,
-			"auth.outcome.rbl_reject",
-			fsmMarkerPreAuthDeny,
-			responseMarkerFail,
-			authLookupOps,
-			"rbl",
-			attrIsTrue(policy.AttributeRBLThresholdReached),
-		),
+		errorRule,
+		rejectRule,
 	}
 }
 
@@ -572,6 +591,27 @@ func luaControlRules(policyReport *report.DecisionReport, operation policy.Opera
 		}
 
 		prefix := "auth.lua.control." + name
+		triggerRule := standardRule{
+			name:            "standard_lua_control_" + name + "_trigger",
+			stage:           policy.StagePreAuth,
+			effect:          policy.DecisionDeny,
+			outcomeMarker:   "auth.outcome.lua_control." + name + ".reject",
+			fsmMarker:       fsmMarkerPreAuthDeny,
+			responseMarker:  responseMarkerFail,
+			operations:      operations,
+			requiredChecks:  []string{checkResult.Name},
+			condition:       attrIsTrue(prefix + ".triggered"),
+			messageSelector: attributeMessage(prefix+".triggered", definitions.PasswordFail),
+			obligations: []report.EffectRequest{
+				{
+					ID: obligationLuaActionDispatch,
+					Args: map[string]any{
+						policy.ObligationArgAction:  policy.LuaActionDispatchLua,
+						policy.ObligationArgFeature: checkResult.Name,
+					},
+				},
+			},
+		}
 		rules = append(rules,
 			standardRule{
 				name:           "standard_lua_control_" + name + "_error",
@@ -584,18 +624,7 @@ func luaControlRules(policyReport *report.DecisionReport, operation policy.Opera
 				requiredChecks: []string{checkResult.Name},
 				condition:      attrIsTrue(prefix + ".error"),
 			},
-			standardRule{
-				name:            "standard_lua_control_" + name + "_trigger",
-				stage:           policy.StagePreAuth,
-				effect:          policy.DecisionDeny,
-				outcomeMarker:   "auth.outcome.lua_control." + name + ".reject",
-				fsmMarker:       fsmMarkerPreAuthDeny,
-				responseMarker:  responseMarkerFail,
-				operations:      operations,
-				requiredChecks:  []string{checkResult.Name},
-				condition:       attrIsTrue(prefix + ".triggered"),
-				messageSelector: attributeMessage(prefix+".triggered", definitions.PasswordFail),
-			},
+			triggerRule,
 			standardRule{
 				name:           "standard_lua_control_" + name + "_abort",
 				stage:          policy.StagePreAuth,

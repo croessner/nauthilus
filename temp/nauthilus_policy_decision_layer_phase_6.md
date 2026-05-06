@@ -95,20 +95,20 @@ Diff hygiene:
 - Private target-to-current FSM adapter in `server/policy/fsm/fsm.go`.
   - Purpose: map target `pre_auth_*`, final `auth_*`, `auth_evaluated`, and `account_provider_evaluated` markers into current internal event names while the current FSM remains authoritative.
   - Exposure: private Go implementation detail only. It is not exposed in YAML, registry scripts, config conversion output, or as a stable report field.
-  - Removal plan: remove in Phase 8 when the target FSM becomes authoritative, with final cleanup in Phase 13.
+  - Removal plan: remove in Phase 9 when the target FSM becomes authoritative, with final cleanup in Phase 14.
 
 - Current production terminal/path bridge in `server/core/rest.go`, `server/core/response.go`, and `server/core/auth.go`.
   - Purpose: provide current terminal state and event-path facts to comparison diagnostics without changing current response behavior.
-  - Removal plan: remove or narrow after Phase 8 makes the target FSM authoritative and Phase 13 removes old-vs-new migration diagnostics.
+  - Removal plan: remove or narrow after Phase 9 makes the target FSM authoritative and Phase 14 removes old-vs-new migration diagnostics.
 
 - `standard_auth` remains shadow-only.
   - Purpose: provide the target marker sequence for comparison from built-in default-policy evaluation.
-  - Removal plan: Phase 7 makes `standard_auth` authoritative for default behavior; Phase 13 removes obsolete old-vs-new scaffolding.
+  - Removal plan: Phase 8 makes `standard_auth` authoritative for default behavior; Phase 14 removes obsolete old-vs-new scaffolding.
 
 ## Planned Later Removal
 
-- Phase 8 removes the private FSM adapter and applies target markers directly to the authoritative target FSM.
-- Phase 13 removes current-event-name dependencies and migration-only comparison scaffolding that is not part of supported observe mode.
+- Phase 9 removes the private FSM adapter and applies target markers directly to the authoritative target FSM.
+- Phase 14 removes current-event-name dependencies and migration-only comparison scaffolding that is not part of supported observe mode.
 
 ## Open Risks and Deliberately Deferred Points
 

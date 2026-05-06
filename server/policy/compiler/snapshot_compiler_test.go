@@ -448,6 +448,89 @@ func TestCompilerRejectsPreAuthPermitDecision(t *testing.T) {
 	}
 }
 
+func TestCompilerAcceptsLuaActionDispatchObligationArgs(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies[0].Then.Obligations = []config.PolicyEffectConfig{
+		{
+			ID: policy.ObligationLuaActionDispatch,
+			Args: map[string]any{
+				policy.ObligationArgAction:  policy.LuaActionDispatchLua,
+				policy.ObligationArgFeature: "lua_control_named_script",
+				policy.ObligationArgWait:    true,
+			},
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	obligations := snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth].Policies[0].Then.Obligations
+	if len(obligations) != 1 {
+		t.Fatalf("obligations = %d, want one lua action obligation", len(obligations))
+	}
+
+	if got := obligations[0].Args[policy.ObligationArgAction]; got != policy.LuaActionDispatchLua {
+		t.Fatalf("action arg = %v, want %s", got, policy.LuaActionDispatchLua)
+	}
+}
+
+func TestCompilerRejectsLuaActionDispatchInvalidArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr string
+	}{
+		{
+			name:    "unknown action",
+			args:    map[string]any{policy.ObligationArgAction: "smtp"},
+			wantErr: "allowed Lua action",
+		},
+		{
+			name:    "non-string action",
+			args:    map[string]any{policy.ObligationArgAction: true},
+			wantErr: "must be a string",
+		},
+		{
+			name:    "non-string feature",
+			args:    map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchLua, policy.ObligationArgFeature: true},
+			wantErr: "must be a string",
+		},
+		{
+			name:    "non-boolean wait",
+			args:    map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchLua, policy.ObligationArgWait: "yes"},
+			wantErr: "must be a boolean",
+		},
+		{
+			name:    "unknown argument",
+			args:    map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchLua, "label": "bad"},
+			wantErr: "is not supported",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := policyCompilerTestConfig()
+			cfg.Auth.Policy.Policies[0].Then.Obligations = []config.PolicyEffectConfig{
+				{
+					ID:   policy.ObligationLuaActionDispatch,
+					Args: testCase.args,
+				},
+			}
+
+			_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+			if err == nil {
+				t.Fatal("Compile() error = nil, want invalid lua action obligation args")
+			}
+
+			if !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Compile() error = %q, want %q", err, testCase.wantErr)
+			}
+		})
+	}
+}
+
 func TestCompilerRejectsInvalidNetworkSet(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 	cfg.Auth.Policy.Sets.Networks["trusted_clients"] = []string{"not-a-network"}

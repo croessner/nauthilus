@@ -2,139 +2,195 @@
 
 ## Goal
 
-Phase 7 makes the built-in `standard_auth` policy set the authoritative production decision source when the active policy snapshot has no configured custom policy rules.
+Phase 7 moves decision-dependent request-time Lua action dispatch behind
+registered policy obligations in the already-renumbered target-model codebase.
 
-This slice keeps custom policies non-authoritative, keeps the current auth FSM authoritative, keeps current response rendering in place, and does not add any public config root or field. Current behavior remains represented by `standard_auth`; no separate legacy execution pipeline was introduced.
+The retrofit closes the gap left after the later authority, observe, enforce,
+and cleanup work had already landed: synchronous Lua actions are no longer run
+directly by policy-authoritative feature or brute-force mechanisms. They are
+selected and executed through `auth.obligation.lua_action.dispatch`.
 
 ## Implemented Files and Modules
 
 - `server/policy/types.go`
-  - Adds central response-marker and obligation constants for the built-in policy decision surface.
-  - Keeps stable public marker values as `auth.response.*` and `auth.obligation.*` strings instead of current internal enum names.
+  - Registered `auth.obligation.lua_action.dispatch`.
+  - Added the bounded synchronous action names `brute_force`, `lua`,
+    `tls_encryption`, `relay_domains`, and `rbl`.
+  - Added a shared action-name validator used by compiler and runtime code.
+
+- `server/policy/compiler/definitions.go`
+  - Added the synchronous Lua action obligation to the built-in obligation
+    registry.
+
+- `server/policy/compiler/policies.go`
+  - Added typed argument validation for
+    `auth.obligation.lua_action.dispatch`.
+  - Validates required `action`, optional string `feature`, optional boolean
+    `wait`, and rejects unsupported argument keys.
 
 - `server/policy/evaluation/standard.go`
-  - Adds a pre-auth-only built-in evaluator so terminal pre-auth decisions can be selected without falling through to final default-deny.
-  - Normalizes built-in evaluation so repeated authority and comparison runs replace the selected policy sequence instead of appending duplicate decisions.
-  - Reuses central response-marker and obligation constants.
+  - Added planned synchronous Lua action obligations to `standard_auth` rows
+    for `brute_force`, `tls_encryption`, `relay_domains`, `rbl`, and named Lua
+    control triggers.
+  - Keeps brute-force update and Lua POST-Action enqueueing as registered
+    obligations.
 
-- `server/policy/collection/collection.go`
-  - Adds a request-context guard that allows built-in default authority only when the active snapshot default is `standard_auth` and no configured rules exist in any compiled stage plan.
-  - Leaves configured/custom policy sets in diagnostic-only mode for this slice.
+- `server/core/policy_obligations.go`
+  - Added the central runtime obligation executor used by
+    `applyPolicyObligations`.
+  - Executes only obligations attached to the selected `FinalDecision`.
+  - Skips mutable effects when the active request policy context is in observe
+    mode.
+  - Records obligation metrics and policy debug-module entries.
+  - Dispatches synchronous Lua actions through the existing action dispatcher,
+    preserving request context, cancellation checks, action latency metrics, and
+    feature-learning semantics.
+  - Preserves the historical brute-force Lua action `CommonRequest` shape by
+    exposing the matched rule name during dispatch while keeping the internal
+    repeating/guessed security marker after dispatch.
 
 - `server/core/policy_authority.go`
-  - Adds the private authority adapter from selected `standard_auth` decisions to current `AuthResult` values and current response helpers.
-  - Applies selected response messages before current response rendering.
-  - Executes policy-owned obligations from the authoritative decision, currently brute-force counter update and Lua post-action enqueue.
-  - Stores the old direct outcome as a request-local diagnostic so shadow comparison against the old direct path remains available after the authoritative policy decision is applied.
-
-- `server/core/policy_collection.go`
-  - Merges the request-local direct-outcome diagnostic into the existing policy comparison path.
-  - Keeps current response surface and current FSM path details from the response-time comparison when the diagnostic did not know them yet.
+  - Routes pre-auth default and configured decisions through the central
+    obligation executor before translating the selected policy result back to
+    current `AuthResult` carriers.
+  - Keeps final auth Lua POST-Action enqueueing on the same central executor.
 
 - `server/core/features.go`
-  - Routes terminal pre-auth feature results through built-in policy authority when the active snapshot is the default-only set.
-  - Preserves current external `AuthResult` mappings while selecting the built-in policy decision first.
+  - Keeps current mechanism execution as a fact producer.
+  - Removes mechanism-owned synchronous Lua action dispatch.
+  - Moves feature-learning updates behind the selected Lua action obligation.
 
-- `server/core/auth.go`
-  - Routes password/backend final decisions through built-in policy authority.
-  - Applies the built-in pre-auth decision at the brute-force checkpoint before falling back to the old direct brute-force handling.
-  - Evaluates list-account built-in final decisions before the existing comparison path while leaving list-account public rendering unchanged.
+- `server/core/bruteforce.go`
+  - Keeps brute-force trigger detection and policy fact production.
+  - Removes the direct brute-force Lua action dispatcher.
+  - Runs the brute-force synchronous Lua action only through the selected
+    `auth.obligation.lua_action.dispatch` obligation.
 
-- `server/core/protect_impl.go`
-  - Applies the built-in pre-auth decision for protected endpoint brute-force rejection before the old direct fallback.
-
-- `server/idp/nauthilus_idp.go`
-  - Applies the built-in pre-auth decision for IdP brute-force rejection before the old direct fallback.
-
-- `server/core/response.go`
-  - Reuses central response-marker constants for comparison output.
+- Tests:
+  - `server/core/policy_authority_test.go`
+  - `server/policy/compiler/snapshot_compiler_test.go`
+  - `server/policy/evaluation/standard_test.go`
 
 ## Tests and Validation
 
-Focused tests were added before behavior-changing code. The first focused runs failed because the default-only authority guard, pre-auth-only evaluator, auth-boundary authority selection, and old-direct diagnostic preservation did not exist yet.
+Focused reproducer tests were added before implementation.
 
-Added tests:
-
-- `server/policy/evaluation/standard_test.go`
-  - Verifies pre-auth-only built-in evaluation selects the implicit pre-auth pass without selecting final default-deny.
-
-- `server/policy/collection/collection_test.go`
-  - Verifies the built-in default set is authoritative only when no configured policy rules exist.
-
-- `server/core/policy_authority_test.go`
-  - Verifies pre-auth feature handling selects `standard_tls_enforcement` as the authoritative decision under a default-only snapshot.
-  - Verifies password/final handling selects `standard_auth_failure` as the authoritative decision under a default-only snapshot.
-  - Verifies the old direct outcome remains available as a comparison diagnostic when the authoritative default decision overrides the old direct result.
-
-Validation run so far:
+Initial focused run failed before implementation:
 
 ```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run TestAuthBoundaryKeepsDirectOutcomeDiagnosticWhenDefaultSetOverrides ./server/core
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryDefaultSetSelects|TestAuthBoundaryKeepsDirectOutcomeDiagnostic|TestStandardPreAuthEvaluation|TestDecisionContextDefaultSetAuthority' ./server/core ./server/policy/evaluation ./server/policy/collection
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryRecordsStandardAuthShadowForTLSTempfail|TestAuthBoundaryKeepsDirectOutcomeDiagnosticWhenDefaultSetOverrides' ./server/core
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/idp
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache GOMODCACHE=/tmp/nauthilus-gomod-cache make test
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache GOMODCACHE=/tmp/nauthilus-gomod-cache make guardrails
-git diff --check
-git diff -- '*.go' | rg -n -i '^\+.*phase'
-git diff --no-index -- /dev/null server/core/policy_authority.go | rg -n -i '^\+.*phase'
-git diff --no-index -- /dev/null server/core/policy_authority_test.go | rg -n -i '^\+.*phase'
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryConfiguredPreAuthDecision(WithoutLuaActionObligationSkipsSynchronousAction|RunsSelectedLuaActionObligationOnce)|TestPolicyObligationExecutorSkipsMutableEffectsInObserveMode|TestCompiler(AcceptsLuaActionDispatchObligationArgs|RejectsLuaActionDispatchInvalidArgs)' ./server/core ./server/policy/compiler
 ```
 
-Result: passed after the missing authority and diagnostic code was implemented.
+The failure showed:
 
-The first broad affected-package run exposed a review gap in the direct-outcome diagnostic: pre-auth diagnostics compared the empty pre-render state instead of the old direct renderer's default response message. That produced a false `response_message` mismatch for the TLS tempfail parity test. The gap was fixed by deriving old direct default messages for pre-auth and final auth diagnostics.
+- `auth.obligation.lua_action.dispatch` was missing from the compiler
+  registry;
+- no central runtime obligation executor existed yet.
 
-`make guardrails` passed. It emitted the existing warning about unknown `gomnd` entries in `//nolint` directives and then reported `0 issues`.
+Validation after implementation:
 
-The Go diff scan produced no matches for added case-insensitive `phase` strings. Because `server/core/policy_authority.go` and `server/core/policy_authority_test.go` are new untracked Go files, both files were additionally scanned with `git diff --no-index` against `/dev/null`; those scans also produced no matches.
+```bash
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryConfiguredPreAuthDecision(WithoutLuaActionObligationSkipsSynchronousAction|RunsSelectedLuaActionObligationOnce)|TestPolicyObligationExecutorSkipsMutableEffectsInObserveMode|TestCompiler(AcceptsLuaActionDispatchObligationArgs|RejectsLuaActionDispatchInvalidArgs)' ./server/core ./server/policy/compiler
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/lualib/feature ./server/lualib/filter ./server/lualib/pipeline ./server/lualib/policyschedule
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make test
+```
+
+Result: passed.
 
 ## Active Temporary Adapters
 
-- Private built-in authority adapter in `server/core/policy_authority.go`.
-  - Purpose: translate selected `standard_auth` response markers and FSM markers into current `AuthResult` values and current response helpers while the current FSM and response renderer remain in place.
-  - Exposure: private Go implementation detail only. It is not a public config field, YAML key, registry entry, report schema addition, or supported plugin API.
-  - Removal plan: narrow after the target FSM becomes authoritative in the next slice and remove obsolete current-result translation in the final migration cleanup.
+- Current action dispatcher bridge in `server/core/auth/action_service.go`.
+  - Purpose: reuses existing Lua action worker, request context object,
+    timeout/cancel behavior, and script configuration.
+  - Planned removal: replace only when a native policy enforcement context owns
+    Lua action dispatch directly.
 
-- Request-local direct-outcome diagnostic in `server/core/policy_authority.go` and `server/core/policy_collection.go`.
-  - Purpose: keep old-direct-path comparison available after the built-in default policy has become authoritative.
-  - Exposure: private Gin context value only.
-  - Removal plan: remove with old-vs-new migration diagnostics in the final cleanup after the policy decision path and target FSM are fully authoritative.
-
-- Current response/FSM bridge in existing response and auth-FSM code.
-  - Purpose: preserve external behavior while policy markers select the decision and current handlers render the response.
-  - Removal plan: replace with direct target-FSM and policy-renderer ownership in the later authority slices.
+- Existing response-writer, gRPC metadata, mechanism fact, Lua execution, and
+  AuthResult translation bridges remain from the later completed work.
+  - Purpose: preserve current transport behavior while policy owns decisions.
+  - Planned removal: revisit only with native policy response profiles and
+    native check executors.
 
 ## Planned Later Removal
 
-- Remove or narrow the current-result translation once the target FSM is authoritative.
-- Remove the request-local direct-outcome diagnostic when old direct decisions are no longer needed for migration comparison.
-- Remove old direct brute-force fallback handling once all in-scope pre-auth gates are fully owned by policy orchestration and no diagnostic fallback is required.
+- No synchronous Lua action mechanism fallback remains after this retrofit.
+- Replace the action dispatcher bridge only when Lua action execution has a
+  native policy enforcement context.
+- Keep `wait` typed and validated for the obligation contract; no async action
+  mode was introduced in this retrofit.
 
-## Open Risks and Deliberately Deferred Points
+## Open Risks and Deliberately Not Implemented
 
-- Custom policy sets remain non-authoritative by design in this slice.
-- The target FSM is still not the production FSM; current FSM transition code remains in place until the next authority slice.
-- Current response writers still render HTTP, gRPC, IdP, and protected-endpoint responses. The selected policy decision feeds the existing response classes and messages.
-- Built-in `standard_auth` currently has no runtime advice side effects to execute; selected advice remains report material.
-- No new config UX work was required because no `auth.policy` schema fields, `mapstructure` tags, schema-index entries, dump fields, or `ConfigProblem` paths changed.
-- Atomic reload was not touched; snapshot activation and failed-build rollback behavior remain owned by the existing runtime store/compiler code.
+- No new public configuration root or historical public name was introduced.
+- No compiler authority switch, FSM authority change, response-profile renderer,
+  or native check-executor architecture was started.
+- Existing Lua action script configuration and the current action worker remain
+  unchanged.
+- Brute-force remains first-class policy material. No brute-force bypass or
+  separate old-behavior pipeline was added.
+- Observe mode now skips the central mutable obligation executor. Existing
+  observe comparison remains report-only and still records planned custom
+  obligations without executing them.
 
 ## Review-Abgleich
 
-Second pass completed against the Phase 7 requirements, the general completion rules from section 18.1, the section 17 registry and mapping tables, section 12 `standard_auth` target mapping, and the Phase 8 boundary.
+Second pass re-read the Phase 7 requirements, the completion rules from section
+18.1, the obligation/advice registry in section 17.5, the `standard_auth`
+mapping checklist in section 17.7, and the observe/enforce side-effect rules.
 
-- Scope: implementation is limited to default-only built-in decision authority, current-result translation, response-message application, policy-owned obligations, old-direct comparison diagnostics, tests, and this implementation note. No custom policy authority, target-FSM authority, compiler authority switch, or public config root was started.
-- Tests first: focused policy/evaluation, collection, and auth-boundary tests were added before the corresponding code. The diagnostic test first failed because comparison used the policy-derived response outcome instead of the old direct outcome; the gap was fixed by the request-local direct-outcome diagnostic.
-- Default-only guard: `standard_auth` becomes authoritative only when the active snapshot has no configured compiled policy rules. A snapshot with any configured rule remains non-authoritative.
-- Brute force: brute force remains first-class policy material. The brute-force checkpoint records a policy check and applies `standard_brute_force_deny` through policy authority before the old direct fallback can run.
-- Decisions and response markers: selected built-in pre-auth and final auth decisions drive the current `AuthResult` mapping and response marker class. Central response-marker constants avoid duplicate string ownership.
-- Response messages: selected public response-message material is copied into `AuthState.Runtime.StatusMessage` before current response rendering.
-- Obligations: policy-owned obligations are executed from the authoritative final decision. The old direct brute-force fallback is bypassed when default policy authority applies.
-- Advice: no built-in rule in this slice selects runtime advice with side effects; advice remains selected report data.
-- Shadow comparison: old direct outcomes remain available as temporary diagnostics even when the authoritative built-in decision changes the production result.
-- Operations: `authenticate` pre-auth and final auth paths are authoritative under the default-only guard. `list_accounts` built-in decisions are evaluated and compared while caller authorization and public rendering remain current-path prerequisites.
-- Config UX: no new public config fields or roots were introduced; policy config remains under `auth.policy`; no `policy_engine` root or historical public names were added.
-- Observability and reports: the authoritative selection feeds existing policy reports, comparison, metrics, debug-module output, and OTel spans through the existing evaluation/compare path. No new redaction-sensitive payload fields were introduced.
-- Atomic reload: no snapshot build or activation code changed, so existing atomic snapshot behavior remains in force.
-- Diff hygiene: `git diff --check` passed, and the Go diff scan for added case-insensitive `phase` strings produced no matches, including the two new untracked Go files scanned via `git diff --no-index`.
+Result:
+
+- Scope stayed limited to policy-owned runtime obligations for synchronous Lua
+  action dispatch and the already-existing brute-force update / Lua POST-Action
+  executor boundary. No later authority work was restarted.
+- `auth.obligation.lua_action.dispatch` is registered and validates bounded
+  typed arguments.
+- Only `brute_force`, `lua`, `tls_encryption`, `relay_domains`, and `rbl` are
+  accepted action names.
+- Optional `feature` is preserved for policy-selected action context and
+  feature-learning semantics.
+- Feature-triggered and brute-force-triggered synchronous Lua actions no longer
+  dispatch from mechanism paths; the direct brute-force action helper was
+  removed.
+- `standard_auth` now plans Lua action obligations for the required
+  `brute_force`, `lua`, `tls_encryption`, `relay_domains`, and `rbl` outcomes.
+- Configured pre-auth decisions without `auth.obligation.lua_action.dispatch`
+  do not run synchronous Lua actions even when a triggering fact exists.
+- Configured pre-auth decisions with `auth.obligation.lua_action.dispatch`
+  dispatch exactly once through the selected obligation.
+- Observe mode skips mutable central obligation execution, including synchronous
+  Lua actions, Lua POST-Action enqueueing, brute-force updates, and learning
+  updates handled by the Lua action obligation path.
+- The review pass tightened the boundary so the executor also skips mutable
+  effects when no request-local policy context exists. This is covered by
+  `TestPolicyObligationExecutorSkipsMutableEffectsWithoutPolicyContext`.
+- The CommonRequest review found and fixed a brute-force parity gap: the generic
+  dispatcher would have exposed `rule,guessed` as `brute_force_bucket`, while the
+  old dispatcher exposed the matched rule name. The executor now restores the
+  old Lua request shape for dispatch and then restores the internal security
+  name. `TestBruteForceLuaActionAccountRefreshPreservesCommonRequestAccountField`
+  covers the old account-field refresh behavior.
+- Reports keep planned obligations on selected decisions; metrics and policy
+  debug logs record executed runtime obligations.
+- No new config UX surface was required; everything remains under `auth.policy`.
+- The Go diff scan for newly added case-insensitive `phase` strings is part of
+  final validation and must remain empty.
+
+## Final Validation
+
+Passed:
+
+```bash
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryConfiguredPreAuthDecision(WithoutLuaActionObligationSkipsSynchronousAction|RunsSelectedLuaActionObligationOnce)|TestPolicyObligationExecutorSkipsMutableEffectsInObserveMode|TestCompiler(AcceptsLuaActionDispatchObligationArgs|RejectsLuaActionDispatchInvalidArgs)' ./server/core ./server/policy/compiler
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestPolicyObligationExecutorSkipsMutableEffectsWithoutPolicyContext' ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestPolicyBruteForceLuaActionPreservesCommonRequestShape' ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestBruteForceLuaActionAccountRefreshPreservesCommonRequestAccountField' ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/lualib/feature ./server/lualib/filter ./server/lualib/pipeline ./server/lualib/policyschedule
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make test
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make guardrails
+git diff --check
+git diff -- '*.go' | rg -n -i '^\+.*phase'
+git diff --no-index -- /dev/null server/core/policy_obligations.go | rg -n -i '^\+.*phase'
+```
+
+The two Go diff scans returned no matches.

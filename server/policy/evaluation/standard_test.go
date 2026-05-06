@@ -224,12 +224,16 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	)
 
 	got = EvaluateStandardAuth(bruteForceReport)
-	if len(got.Final.Obligations) != 2 {
-		t.Fatalf("obligations = %d, want 2 planned obligations", len(got.Final.Obligations))
+	if len(got.Final.Obligations) != 3 {
+		t.Fatalf("obligations = %d, want 3 planned obligations", len(got.Final.Obligations))
 	}
 
 	if got.Final.Obligations[0].ID != "auth.obligation.brute_force.update" {
 		t.Fatalf("first obligation = %q, want brute force update", got.Final.Obligations[0].ID)
+	}
+
+	if got.Final.Obligations[1].ID != policy.ObligationLuaActionDispatch {
+		t.Fatalf("second obligation = %q, want lua action dispatch", got.Final.Obligations[1].ID)
 	}
 
 	abortReport := standardReport(

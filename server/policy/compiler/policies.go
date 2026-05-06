@@ -989,9 +989,9 @@ func compileEffectRequests(
 			return nil, configPathError(childPath(effectPath, "id"), "references unknown registered effect")
 		}
 
-		args := make(map[string]any, len(effectConfig.Args))
-		for key, value := range effectConfig.Args {
-			args[key] = value
+		args, err := compileEffectArgs(effectConfig.ID, effectConfig.Args, childPath(effectPath, "args"))
+		if err != nil {
+			return nil, err
 		}
 
 		requests = append(requests, policyruntime.EffectRequest{
@@ -1001,4 +1001,58 @@ func compileEffectRequests(
 	}
 
 	return requests, nil
+}
+
+func compileEffectArgs(id string, input map[string]any, path string) (map[string]any, error) {
+	if id == policy.ObligationLuaActionDispatch {
+		return compileLuaActionDispatchArgs(input, path)
+	}
+
+	args := make(map[string]any, len(input))
+	for key, value := range input {
+		args[key] = value
+	}
+
+	return args, nil
+}
+
+func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string]any, error) {
+	args := make(map[string]any, len(input))
+	for key, value := range input {
+		switch key {
+		case policy.ObligationArgAction:
+			actionName, ok := value.(string)
+			if !ok {
+				return nil, configPathError(childPath(path, key), "must be a string")
+			}
+
+			if !policy.LuaActionDispatchActionAllowed(actionName) {
+				return nil, configPathError(childPath(path, key), "must be an allowed Lua action")
+			}
+
+			args[key] = actionName
+		case policy.ObligationArgFeature:
+			featureName, ok := value.(string)
+			if !ok {
+				return nil, configPathError(childPath(path, key), "must be a string")
+			}
+
+			args[key] = featureName
+		case policy.ObligationArgWait:
+			wait, ok := value.(bool)
+			if !ok {
+				return nil, configPathError(childPath(path, key), "must be a boolean")
+			}
+
+			args[key] = wait
+		default:
+			return nil, configPathError(childPath(path, key), "is not supported")
+		}
+	}
+
+	if _, ok := args[policy.ObligationArgAction]; !ok {
+		return nil, configPathError(childPath(path, policy.ObligationArgAction), "is required")
+	}
+
+	return args, nil
 }

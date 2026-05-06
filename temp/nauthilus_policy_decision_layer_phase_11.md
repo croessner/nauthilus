@@ -2,168 +2,153 @@
 
 ## Goal
 
-Phase 11 extends configured custom policy enforcement from `pre_auth` into the final backend/filter decision path.
+Phase 11 enables configured custom policy enforcement for the `pre_auth` stage only.
 
 The implemented scope is limited to:
 
-1. backend success, failure, tempfail, empty username, and empty password facts as inputs to configured final auth decisions;
-2. Lua filter script-specific attributes and public response-message details as inputs to configured final auth decisions;
-3. `run_if.auth_state` as the policy check-plan boundary for Lua filter scheduling;
-4. Lua POST-Action enqueueing for configured final auth authority through registered obligations only;
-5. response-message selection from configured literal messages or Lua filter public `status_message` details.
+1. brute force;
+2. Lua controls;
+3. TLS enforcement;
+4. relay domains;
+5. RBL.
 
-This slice does not start lookup-identity or list-account custom enforcement. It also does not introduce a new config root, a separate old-behavior pipeline, a compiler authority change, or a new FSM vocabulary.
+This slice does not start custom enforcement for backend results, Lua filters, lookup-identity, account listing, final `auth_decision` rules, config compiler authority changes, or any new FSM vocabulary. `standard_auth` remains the built-in default policy set and remains the final auth-decision authority until the later backend/filter enforcement slice.
 
 ## Implemented Files and Modules
 
 - `server/policy/evaluation/enforce.go`
-  - Adds configured final auth evaluation for `mode: enforce`.
-  - Evaluates configured `auth_decision` policies from the request-local report.
-  - Keeps final default-deny semantics when no configured final rule matches.
-  - Reuses the existing configured-decision observability path for stage, decision, FSM marker, response marker, and response-render metrics.
-
-- `server/policy/evaluation/observe.go`
-  - Reuses the configured default-deny decision for enforce and observe helpers.
-  - Marks selected `attribute_detail` response-message details as selected in the report.
+  - Adds configured `pre_auth` evaluation for `mode: enforce`.
+  - Evaluates configured snapshot policies from collected request facts.
+  - Records stage, decision, FSM-marker, and response-render instrumentation for selected custom decisions.
+  - Leaves unmatched configured `pre_auth` rules as neutral continuation and does not synthesize final default-deny in `pre_auth`.
 
 - `server/policy/collection/collection.go`
-  - Adds request-local authority detection for configured final auth rules in enforce mode.
-  - Adds script scheduling checks against the compiled check plan and `run_if.auth_state`.
-
-- `server/policy/collection/scripts.go`
-  - Extends the Lua script recorder interface with script scheduling.
-  - Keeps one check result per named Lua filter or Lua control script.
-
-- `server/lualib/filter/filter.go`
-  - Applies the policy script scheduler before building the Lua filter execution plan.
-  - Keeps the current Lua filter mode selection as a temporary candidate adapter, then narrows it through the policy check plan.
-  - Keeps policy-filtered plans request-local instead of reusing the old mode-only cache.
-
-- `server/core/auth.go`
-  - Routes password/backend results through configured final auth policy authority before the built-in default-policy bridge.
-  - Defers direct Lua POST-Action enqueueing when configured final auth policy authority is active.
+  - Adds request-local authority detection for configured `pre_auth` rules in enforce mode.
+  - Keeps observe mode diagnostic-only.
 
 - `server/core/policy_authority.go`
-  - Adds the final auth authority handoff.
-  - Applies selected response messages before existing response writers render the result.
-  - Executes Lua POST-Action enqueueing only through the registered obligation when configured final auth authority is active.
-  - Stores a cloned backend result as temporary obligation input and releases it after policy obligation handling.
+  - Routes selected configured `pre_auth` decisions into current auth results or direct enforcement.
+  - Applies configured response messages before the existing response surfaces render.
+  - Emits policy debug-module logs for selected configured decisions.
+
+- `server/core/features.go`
+  - Allows configured `pre_auth` policy rules to override current Lua-control, TLS, relay-domain, RBL, and technical-error outcomes.
+  - Continues later current pre-auth controls when configured policy authority is active and no terminal configured decision was selected.
+
+- `server/core/protect_impl.go`, `server/core/auth.go`, `server/idp/nauthilus_idp.go`
+  - Route brute-force pre-auth blocks through configured policy authority first.
+  - Continue later pre-auth controls when configured policy authority is active and the configured policy does not select a terminal decision.
 
 - `server/core/policy_collection.go`
-  - Preserves selected configured final auth decisions during response side-effect comparison, so the default-policy diagnostic path does not overwrite the authoritative custom result.
+  - Preserves selected configured `pre_auth` finals during response side-effect comparison so the default-policy diagnostic path does not overwrite the authoritative configured result.
 
 ## Tests and Validation
 
-Focused tests were added before implementation. The first focused run failed because configured final auth evaluation, script scheduling, and the core auth authority handoff did not exist.
+Focused tests were added before implementation. The first focused run failed because configured `pre_auth` enforce evaluation did not exist and auth-boundary handling still used the built-in/default or direct result.
 
 Added or updated tests:
 
+- `server/policy/compiler/snapshot_compiler_test.go`
+  - Verifies `permit` remains invalid in `pre_auth`.
+
 - `server/policy/evaluation/standard_test.go`
-  - Verifies configured final auth enforcement selects a backend-driven configured decision.
-  - Verifies configured final auth enforcement selects a Lua filter public `status_message` detail.
-  - Verifies selected Lua filter response-message details are marked in the report.
+  - Verifies configured `pre_auth` enforce selects a configured terminal decision.
+  - Verifies configured `pre_auth` enforce does not synthesize final default-deny when no configured `pre_auth` rule matches.
 
 - `server/policy/collection/collection_test.go`
-  - Verifies `run_if.auth_state` controls Lua filter scheduling through the request-local script sink.
+  - Verifies configured `pre_auth` authority is active only in enforce mode, not observe mode.
 
-- `server/core/policy_authority_test.go`
-  - Verifies the auth boundary converts a backend success into the configured final auth denial and applies the configured response message.
-  - Verifies configured Lua POST-Action enqueueing runs only through the registered obligation and consumes the deferred backend result.
+- `server/core/policy_collection_test.go`
+  - Verifies a configured `pre_auth` deny overrides the current TLS tempfail result at the auth boundary.
+  - Verifies an unmatched configured `pre_auth` rule lets a current TLS tempfail continue as neutral.
+  - Verifies a configured brute-force `skip_remaining_stage_checks` control prevents later pre-auth checks from running and records the selected control decision only once.
 
 Initial reproducer run:
 
 ```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/evaluation ./server/policy/collection ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestCompilerRejectsPreAuthPermitDecision|TestConfiguredPreAuthEnforceSelectsConfiguredDecision|TestConfiguredPreAuthEnforceDoesNotSelectFinalDefaultDeny|TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult|TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue' ./server/policy/compiler ./server/policy/evaluation ./server/core
 ```
 
-Result: failed before implementation on missing `EvaluateConfiguredAuth`, missing script scheduling, and missing core final auth authority.
+Result: failed before implementation on the missing configured enforce evaluator and auth-boundary behavior.
 
 Focused validation after implementation:
 
 ```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/evaluation ./server/policy/collection ./server/core
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/lualib/filter
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/evaluation ./server/policy/collection ./server/lualib/filter
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/lualib/filter ./server/handler/grpcauth ./server/handler/auth ./server/idp ./server/config ./server/app/policyfx
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestCompilerRejectsPreAuthPermitDecision|TestConfiguredPreAuthEnforceSelectsConfiguredDecision|TestConfiguredPreAuthEnforceDoesNotSelectFinalDefaultDeny|TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult|TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue|TestDecisionContextConfiguredPreAuthAuthorityUsesEnforceMode' ./server/policy/compiler ./server/policy/evaluation ./server/policy/collection ./server/core
 ```
 
 Result: passed.
 
-Repository validation:
+Additional validation after the review fix:
 
 ```bash
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks ./server/core
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/idp ./server/config ./server/app/policyfx
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make test
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make guardrails
-git diff -U0 -- '*.go' | rg -n -i '^\+.*phase'
 git diff --check
+git diff -- '*.go' | rg -n -i '^\+.*phase'
+rg -n -i 'phase' server/policy/evaluation/enforce.go
 ```
 
 Result:
 
-- `make test`: passed.
-- `make guardrails`: passed after removing a duplicate configured-decision helper reported by `dupl`.
-- Go diff `phase` check: no matches.
-- Diff whitespace check: passed.
+- focused and package validations passed;
+- `make test` passed;
+- `make guardrails` passed with the existing `gomnd` nolint warning and `0 issues`;
+- `git diff --check` passed;
+- the Go diff check for new technical `phase` names returned no matches;
+- the new evaluator file scan returned no matches for technical `phase` names.
 
 ## Active Temporary Adapters
 
-- Current backend mechanism adapters remain active.
-  - Purpose: reuse current backend evaluation as the fact-producing layer for `auth.authenticated`, `auth.identity.found`, `auth.backend.tempfail`, `auth.backend.empty_username`, and `auth.backend.empty_password`.
+- Current mechanism collection adapters remain active.
+  - Purpose: reuse current brute-force, Lua control, TLS, relay-domain, and RBL mechanism execution as fact producers.
   - Removal plan: replace with native policy check executors before final cleanup.
 
-- Current Lua filter runtime remains active.
-  - Purpose: reuse current named Lua filter execution while emitting script-specific policy attributes.
-  - Removal plan: replace mechanism-local scheduling with the compiled policy check plan as the only scheduler.
+- Current feature side effects still run through current mechanism code for Lua controls, TLS, relay-domain, and RBL triggers.
+  - Purpose: preserve current behavior while configured `pre_auth` decisions become authoritative.
+  - Removal plan: move remaining side effects behind registered policy obligations when native check executors and response enforcement are completed.
 
-- Lua filter mode flags are still used as a temporary candidate selector before policy scheduling.
-  - Purpose: preserve current behavior while `run_if.auth_state` starts controlling configured filter checks.
-  - Removal plan: remove old mechanism-local scheduling flags when the Lua filter executor is fully policy-plan driven.
+- Brute force still starts from the current early check call sites.
+  - Purpose: preserve current Redis bucket and cache behavior while making the configured policy decision authoritative when it selects a terminal result.
+  - Removal plan: remove old direct-gate scaffolding once native pre-auth orchestration owns check scheduling end to end.
 
-- Current AuthResult and response-writer handoff remains active for final auth results.
-  - Purpose: preserve current HTTP, gRPC, IdP, and protected-endpoint response rendering while configured policy chooses the final effect, markers, and response message.
+- Current response writers still render HTTP, gRPC, IdP, and protected-endpoint responses.
+  - Purpose: preserve the existing response surfaces while configured `response_marker` and `response_message` are bridged through current auth results and status messages.
   - Removal plan: replace with direct policy response rendering in the later response-authority work.
 
-- A cloned `PassDBResult` is temporarily stored for configured final auth obligations.
-  - Purpose: prevent direct Lua POST-Action enqueueing before the configured final policy decision is known while preserving enough current context for the registered enqueue obligation.
-  - Removal plan: replace with a native policy enforcement context once obligations own post-decision side effects end to end.
+- Generic configured `pre_auth` deny currently maps to an existing deny-capable auth result carrier.
+  - Purpose: keep the current FSM and response writers on a denial path without exposing old names in policy config.
+  - Removal plan: remove this current-result translation when policy response rendering is fully authoritative.
 
 ## Planned Later Removal
 
 - Remove old direct-result comparison scaffolding that is not part of supported observe mode.
-- Replace current AuthResult translation with direct policy response rendering.
-- Replace backend and Lua filter mechanism-local schedulers with native policy check executors.
-- Remove the temporary `PassDBResult` obligation handoff once enforcement has a native decision context.
-- Start lookup-identity and account-listing custom enforcement only in Phase 12.
+- Replace current response-result translation with direct policy response rendering.
+- Replace mechanism-local feature side effects with registered policy obligations.
+- Remove remaining old direct-gate call-site assumptions after native pre-auth check scheduling is complete.
 
 ## Open Risks and Deliberately Deferred Points
 
-- Lookup-identity and list-account custom enforcement remain deliberately out of scope for Phase 11.
-- The current Lua filter mode flags still participate as an internal candidate adapter before policy scheduling. Policy `run_if.auth_state` narrows execution for configured checks, but the old flags are not removed in this slice.
-- Existing response writers still render final responses. This preserves current transport behavior, but direct policy response rendering remains a later cleanup item.
-- Atomic reload semantics were not changed; the evaluator reads the immutable snapshot captured by the request-local decision context.
+- Custom backend, Lua filter, status-message, lookup-identity, and list-account enforcement remain deliberately out of scope.
+- Existing current mechanism code may still perform current feature side effects before a configured policy decision is selected. This is documented as a temporary adapter and must be removed by later native check-executor and obligation work.
+- The configured `pre_auth` evaluator uses collected facts from current adapters. Custom-only check execution beyond current fact producers remains deferred.
+- Atomic reload semantics were not changed; the evaluator reads the immutable snapshot captured for the request.
 - No new public config paths were added; existing `auth.policy` schema, `mapstructure`, dump, redaction, and `ConfigProblem` behavior remain in force.
 
 ## Review-Abgleich
 
-The second review pass re-read the Phase 11 requirements, the general completion rules, and the relevant registry and mapping tables before closing this slice.
+The second review re-read the Phase 11 requirements, the general completion rules, and the section 17 registry and mapping tables.
 
-Results:
+Result:
 
-- Scope boundary: implemented only final auth enforcement for backend facts, Lua filters, response messages, and Lua POST-Action obligations. Lookup-identity and list-account custom enforcement were left untouched for the next slice.
-- Completion rules: focused failing tests were added first, retained as regression coverage, and then expanded after review for `standard_auth` Lua filter messages and obligation enqueueing.
-- Backend mapping: current backend results now feed configured final auth decisions through request-local policy attributes and are translated back to existing response surfaces only after the configured final decision is selected.
-- Lua filter mapping: named Lua filters keep script-specific attributes and selected public `status_message` details; `standard_auth` still selects Lua status-message details through the built-in policy.
-- `run_if.auth_state`: Lua filter scheduling is checked against the compiled request-local check plan for authenticated and unauthenticated states.
-- Lua POST-Action enqueueing: direct enqueueing is deferred while configured final auth authority is active; enqueueing runs through the registered obligation with a temporary cloned backend result.
-- `standard_auth`: old behavior stays represented by the built-in default policy path; no separate old-behavior pipeline was added.
-- Config UX: no new public root or historical public name was introduced; existing `auth.policy` schema, `mapstructure`, `ConfigProblem`, dump, and redaction behavior were not changed.
-- Observability: configured final decisions use the existing policy evaluation span, metrics recorder, structured debug log, report selection markers, and response-render metric path.
-- Atomic reload: unchanged; evaluation reads the immutable snapshot already attached to the request-local decision context.
-- Registry/mapping alignment: no new policy vocabulary was introduced; existing check selectors, final markers, response-message strategies, and obligation identifiers are reused.
-- Go naming guardrail: the final Go diff contains no newly added case-insensitive `phase` occurrence.
-
-Gaps found and fixed during review:
-
-- Added coverage that `standard_auth` preserves Lua filter `status_message` selection.
-- Added coverage that configured final auth Lua POST-Action enqueueing is obligation-driven.
-- Refactored duplicated configured-decision authority logic after `make guardrails` flagged it with `dupl`.
+- Phase scope stayed limited to custom `pre_auth` enforcement for brute force, Lua controls, TLS, relay domains, and RBL. Backend, Lua filter, lookup-identity, list-account, response-authority, compiler-surface, and FSM-vocabulary changes were not started.
+- The first added tests covered the missing configured evaluator and auth-boundary behavior before implementation. A second review test then exposed and fixed one gap: brute-force `skip_remaining_stage_checks` controls now skip later pre-auth checks instead of merely continuing to the current feature path. The same test also guards against duplicate report entries from repeated request-local evaluation calls.
+- `permit` remains rejected for `pre_auth` by the compiler test.
+- No configured `pre_auth` fallback default-deny was introduced. Unmatched configured `pre_auth` rules remain neutral and final auth default-deny semantics stay unchanged.
+- Brute force is handled as first-class policy input through the collected `builtin.brute_force` facts and no separate legacy decision pipeline was added.
+- Config UX stayed under the existing `auth.policy` model. No new public config root, `mapstructure`, schema, dump, redaction, or `ConfigProblem` changes were required for this slice.
+- Observability for selected configured `pre_auth` decisions records policy metrics, a `policy.evaluate` span, structured policy decision logs, debug-module output, report decisions, FSM markers, and response-render measurements when the surface is known.
+- Atomic reload behavior stayed unchanged. Request handling evaluates the immutable snapshot clone captured by the request-local decision context.
+- Section 17 mapping stayed aligned: the implementation uses existing registered pre-auth check types, attributes, FSM markers, response markers, and the `standard_auth` pre-auth semantics as the default behavior model.
