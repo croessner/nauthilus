@@ -3,7 +3,7 @@
 **Status:** Implementation-ready specification v0.6
 **Date:** 2026-05-06
 **Purpose:** align the Policy Decision Layer specification with the current Nauthilus codebase and `config v2` surface, then define a non-legacy target model
-**Scope:** authentication decision flow, pre-auth controls, backend/filter outcomes, Lua-triggered decisions, auth-FSM integration, decision reporting
+**Scope:** authentication decision flow, pre-auth controls, backend/subject-source outcomes, Lua-triggered decisions, auth-FSM integration, decision reporting
 **Out of scope:** implementing the layer described here
 
 ---
@@ -111,10 +111,16 @@ auth:
       adaptive_toleration:
       pw_history_for_known_accounts:
     lua:
-      actions:
-      controls:
-      filters:
       hooks:
+
+  policy:
+    attribute_sources:
+      lua:
+        environment:
+        subject:
+    obligation_targets:
+      lua:
+        actions:
 
   services:
     enabled:
@@ -127,7 +133,7 @@ Important consequences:
 1. `auth.controls.rbl` is the public home of the RBL feature.
 2. `auth.controls.relay_domains` is the public home of relay-domain checks.
 3. `auth.controls.brute_force` is the public home of brute-force configuration.
-4. `auth.controls.lua.controls`, `auth.controls.lua.filters`, and `auth.controls.lua.actions` are the public homes of Lua-based auth-time decision logic.
+4. `auth.policy.attribute_sources.lua.environment`, `auth.policy.attribute_sources.lua.subject`, and `auth.policy.obligation_targets.lua.actions` are the public homes of Lua-based auth-time decision logic.
 5. `auth.controls.lua.hooks` exists, but hooks are custom HTTP endpoints and are **not** automatically part of the auth decision flow.
 6. `auth.services.backend_health_checks` is a background/runtime service, not an auth decision control.
 
@@ -190,7 +196,7 @@ This distinction matters because all target pre-auth checks must eventually map 
 
 `HandleFeatures` currently evaluates, in order:
 
-1. Lua controls/features
+1. Lua environment sources
 2. TLS enforcement
 3. relay domains
 4. RBL
@@ -346,7 +352,7 @@ as the target placement.
 
 ### 3.3 Brute Force Must Not Be Oversimplified
 
-The target model must not treat brute force as if it already fit the same `feature -> AuthResultFeatureX -> features_* event` path as TLS, relay domains, RBL, and Lua controls.
+The target model must not treat brute force as if it already fit the same `feature -> AuthResultFeatureX -> features_* event` path as TLS, relay domains, RBL, and Lua environment sources.
 
 That is not true today.
 
@@ -371,20 +377,20 @@ Current public names are:
 
 1. `auth.controls.rbl`
 2. `auth.controls.relay_domains.static`
-3. `auth.controls.lua.controls`
+3. `auth.policy.attribute_sources.lua.environment`
 4. `allowlist`
 
 ### 3.5 Hooks Must Not Be Accidentally Treated as Auth Decision Checks
 
 `auth.controls.lua.hooks` are custom HTTP endpoints. They are not equivalent to:
 
-1. Lua controls/features
-2. Lua filters
+1. Lua environment sources
+2. Lua subject sources
 3. Lua actions
 
 Hooks can remain in the broader Lua surface, but they are not part of the primary authentication decision layer and must not be modeled as ordinary auth-time checks.
 
-Hooks may still influence later auth decisions indirectly through normal shared storage such as Redis, caches, or external databases. For example, a custom hook may maintain administrative state or reputation data, and a later request-time Lua control or Lua filter may read that state and emit registered policy attributes.
+Hooks may still influence later auth decisions indirectly through normal shared storage such as Redis, caches, or external databases. For example, a custom hook may maintain administrative state or reputation data, and a later request-time Lua environment source or Lua subject source may read that state and emit registered policy attributes.
 
 This indirect pattern is allowed only with a request-time check as the policy boundary:
 
@@ -420,7 +426,7 @@ The policy layer must assume:
 The target Policy Decision Layer must:
 
 1. make existing auth decisions explicit and reportable;
-2. preserve current semantics for brute force, TLS enforcement, relay domains, RBL, Lua controls, Lua filters, backend results, and Lua post actions;
+2. preserve current semantics for brute force, TLS enforcement, relay domains, RBL, Lua environment sources, Lua subject sources, backend results, and Lua post actions;
 3. integrate with the current auth-FSM where the FSM is already authoritative;
 4. represent current pre-auth and auth-stage outcomes as structured check results;
 5. allow operator policies to interpret those check results without rewriting the underlying mechanisms;
@@ -440,7 +446,7 @@ The first policy-layer rollout is explicitly **not** intended to:
 1. replace the brute-force subsystem;
 2. change brute-force Redis semantics or bucket logic;
 3. replace LDAP or Lua backends;
-4. replace the current Lua control/filter execution model;
+4. replace the current Lua environment/subject source execution model;
 5. make Lua hooks part of the core auth decision path;
 6. introduce a generic top-level policy root outside `auth`;
 7. reintroduce historical public root sections;
@@ -512,7 +518,7 @@ Target public config must use current names:
 
 1. `rbl`, not `realtime_blackhole_lists`
 2. `allowlist`, not `soft_whitelist`
-3. `auth.controls.lua.controls`, not `lua.features`
+3. `auth.policy.attribute_sources.lua.environment`, not `lua.features`
 4. `auth.backends.lua.backend`, not `lua.config`
 
 Historical names may still appear internally during migration, but not as the target public spec surface.
@@ -572,14 +578,19 @@ auth:
       ip_allowlist: []
 
     lua:
-      controls: []
-      filters: []
-      actions: []
+      hooks: []
 
   policy:
     mode: enforce
     default_policy: standard_auth
     registry_scripts: []
+    attribute_sources:
+      lua:
+        environment: []
+        subject: []
+    obligation_targets:
+      lua:
+        actions: []
 
     sets:
       networks: {}
@@ -634,7 +645,7 @@ Observe-mode rules:
 11. checks that are needed only by the custom policy may run in observe mode only when they are observe-safe;
 12. a check is observe-safe when its check-type registry marks it as safe, or when the concrete check configuration explicitly sets `observe_safe: true` for a check type that allows operator assertion;
 13. observe-safe checks must not mutate external state, update counters, enqueue POST-Actions, dispatch synchronous Lua actions, alter request-visible state, or depend on irreversible side effects;
-14. Lua controls and Lua filters are not observe-safe by default, because the engine cannot prove that arbitrary Lua code is side-effect free;
+14. Lua environment and subject sources are not observe-safe by default, because the engine cannot prove that arbitrary Lua code is side-effect free;
 15. custom-only checks that are not observe-safe are not executed in observe mode;
 16. attributes that would have been produced only by a non-observe-safe custom-only check are unavailable to the custom policy and must be reported as unavailable;
 17. `unavailable` is a decision-report availability state, not a `CheckResult.status` value.
@@ -712,12 +723,12 @@ Example built-in attribute definitions:
   type: datetime
   description: The request evaluation timestamp captured once for the current DecisionContext.
 
-- id: auth.lua.control.geo_block.triggered
+- id: auth.lua.environment.geo_block.triggered
   phase: pre_auth
   operations: [authenticate]
   category: environment
   type: bool
-  description: The named Lua control rejected the current request.
+  description: The named Lua environment source rejected the current request.
   details:
     status_message:
       type: string
@@ -725,30 +736,30 @@ Example built-in attribute definitions:
       purpose: response_message
       max_length: 256
 
-- id: auth.lua.control.geo_block.abort
+- id: auth.lua.environment.geo_block.abort
   phase: pre_auth
   operations: [authenticate]
   category: environment
   type: bool
-  description: The named Lua control requested that remaining pre-auth checks be skipped.
+  description: The named Lua environment source requested that remaining pre-auth checks be skipped.
 
-- id: auth.lua.control.geo_block.error
+- id: auth.lua.environment.geo_block.error
   phase: pre_auth
   operations: [authenticate]
   category: environment
   type: bool
-  description: The named Lua control failed due to a technical runtime error.
+  description: The named Lua environment source failed due to a technical runtime error.
   details:
     reason_code:
       type: string
       sensitivity: internal
 
-- id: auth.lua.filter.billing_lock.rejected
-  phase: auth_filters
+- id: auth.lua.subject.billing_lock.rejected
+  phase: subject_analysis
   operations: [authenticate]
   category: subject
   type: bool
-  description: The named Lua filter rejected an otherwise evaluated request.
+  description: The named Lua subject source rejected an otherwise evaluated request.
   details:
     status_message:
       type: string
@@ -756,12 +767,12 @@ Example built-in attribute definitions:
       purpose: response_message
       max_length: 256
 
-- id: auth.lua.filter.billing_lock.error
-  phase: auth_filters
+- id: auth.lua.subject.billing_lock.error
+  phase: subject_analysis
   operations: [authenticate]
   category: subject
   type: bool
-  description: The named Lua filter failed due to a technical runtime error.
+  description: The named Lua subject source failed due to a technical runtime error.
   details:
     reason_code:
       type: string
@@ -810,7 +821,7 @@ Example built-in attribute definitions:
 
 The account list itself is response data. It must not automatically become a policy attribute because that would make policies depend on potentially large or sensitive result payloads.
 
-Lua control and Lua filter check attributes are generated per named script. The target model must not expose only aggregate attributes such as `auth.lua.control.triggered` or `auth.lua.filter.rejected`, because aggregate attributes hide which script produced the fact and make `require_checks`, `run_if`, and decision reports ambiguous.
+Lua environment source and Lua subject source check attributes are generated per named script. The target model must not expose only aggregate attributes such as `auth.lua.environment.triggered` or `auth.lua.subject.rejected`, because aggregate attributes hide which script produced the fact and make `require_checks`, `run_if`, and decision reports ambiguous.
 
 Operation scoping rules for attributes:
 
@@ -827,7 +838,7 @@ Expanded detail metadata example:
 
 ```yaml
 - id: lua.billing.account_locked
-  phase: auth_filters
+  phase: subject_analysis
   category: subject
   type: bool
   description: The account is locked by a local billing policy.
@@ -863,7 +874,7 @@ attributes:
   auth.tls.secure:
     value: false
 
-  auth.lua.filter.billing_lock.rejected:
+  auth.lua.subject.billing_lock.rejected:
     value: true
     details:
       status_message: "Your account is locked; unpaid invoice"
@@ -915,7 +926,7 @@ Lua-provided policy attribute definitions must come from a dedicated configurabl
 This keeps lifecycle semantics separate:
 
 1. Lua registry scripts define attribute metadata;
-2. Lua controls and filters emit registered attributes during request evaluation;
+2. Lua environment and subject sources emit registered attributes during request evaluation;
 3. general Lua initialization remains for normal runtime setup.
 
 Proposed config placement:
@@ -965,7 +976,7 @@ Lua registry scripts may also declare response-message hints. A response-message
 ```lua
 nauthilus_policy.register_attribute({
   id = "lua.billing.account_locked",
-  phase = "auth_filters",
+  phase = "subject_analysis",
   category = "subject",
   type = "bool",
   description = "The account is locked by a local billing policy",
@@ -984,7 +995,7 @@ nauthilus_policy.register_attribute({
 })
 ```
 
-Request-time Lua controls or filters may then emit registered values:
+Request-time Lua environment or subject sources may then emit registered values:
 
 ```lua
 nauthilus_policy.emit_attribute("lua.geo.country_blocked", true, {
@@ -1227,7 +1238,7 @@ Observe-mode custom-only checks that are not observe-safe must not add a fourth 
 
 `skipped` is not a dependency-cascade status. If a check is selected by operation and `run_if`, it must either run and produce `ok`, or fail as `error`.
 
-Technical check errors are normal policy inputs. A check with `Status=error` must also emit one or more registered error attributes when the error belongs to the modeled auth decision flow. Examples include `auth.rbl.error`, `auth.lua.control.<name>.error`, `auth.backend.tempfail`, and `auth.account_provider.tempfail`.
+Technical check errors are normal policy inputs. A check with `Status=error` must also emit one or more registered error attributes when the error belongs to the modeled auth decision flow. Examples include `auth.rbl.error`, `auth.lua.environment.<name>.error`, `auth.backend.tempfail`, and `auth.account_provider.tempfail`.
 
 The policy engine must not silently convert normal check errors into final decisions. The built-in `standard_auth` policy maps these error attributes to the current external tempfail behavior. Custom policies may match the same registered attributes explicitly.
 
@@ -1627,7 +1638,7 @@ The target model must normalize current behavior into these stages:
 ```text
 pre_auth
 auth_backend
-auth_filters
+subject_analysis
 account_provider
 auth_decision
 ```
@@ -1636,9 +1647,9 @@ auth_decision
 
 | Stage | Meaning | Current runtime owner |
 |---|---|---|
-| `pre_auth` | controls that can block before backend auth | brute force, Lua controls, TLS, relay domains, RBL |
+| `pre_auth` | checks that can block before backend auth | brute force, Lua environment sources, TLS, relay domains, RBL |
 | `auth_backend` | password/backend/cache evaluation | current `HandlePassword` path |
-| `auth_filters` | Lua filters and result shaping | current `FilterLua` path |
+| `subject_analysis` | Lua subject sources and result shaping | current `SubjectLua` path |
 | `account_provider` | account-list provider evaluation | current `ListUserAccounts` / list-accounts path |
 | `auth_decision` | map operation outcome to final decision | current password result mapping and list-accounts response selection |
 
@@ -1673,10 +1684,10 @@ YAML check and policy entries may declare `operations`. If they omit it, they ap
 `lookup_identity` rules:
 
 1. it uses the same policy runtime snapshot as normal authentication;
-2. it may run `pre_auth`, `auth_backend`, `auth_filters`, and `auth_decision` stages, but only with checks enabled for `lookup_identity`;
+2. it may run `pre_auth`, `auth_backend`, `subject_analysis`, and `auth_decision` stages, but only with checks enabled for `lookup_identity`;
 3. it does not perform password validation or password verification;
 4. brute-force checks are not enabled for `lookup_identity` by the built-in default policy;
-5. Lua controls and filters run only when the policy check plan explicitly opts them into `lookup_identity`;
+5. Lua environment and subject sources run only when the policy check plan explicitly opts them into `lookup_identity`;
 6. backend evaluation is identity lookup, not credential verification;
 7. backend user-found semantics map to lookup success;
 8. `auth_decision` means "identity lookup permitted and found", not "password authenticated";
@@ -1736,13 +1747,13 @@ This prevents the old mechanism-local scheduler and the new policy check plan fr
 
 #### Lua Script Check Granularity
 
-Lua controls and Lua filters are individual policy checks in the target model.
+Lua environment and subject sources are individual policy checks in the target model.
 
 Rules:
 
-1. each named Lua control script becomes one `lua.control` policy check;
-2. each named Lua filter script becomes one `lua.filter` policy check;
-3. aggregate target checks such as `lua_controls` or `lua_filters` are not part of the target policy language;
+1. each named Lua environment source script becomes one `lua.environment` policy check;
+2. each named Lua subject source script becomes one `lua.subject` policy check;
+3. aggregate target checks such as `lua_environments` or `lua_subjects` are not part of the target policy language;
 4. `operations`, `run_if`, `require_checks`, reports, and generated Lua result attributes apply to the individual script check;
 5. generated Lua result attributes must include script ownership in their attribute ID or equivalent registry metadata;
 6. generated Lua result-attribute operation metadata must match the operations where the script check can run;
@@ -1759,20 +1770,20 @@ Example:
 
 ```yaml
 checks:
-  - name: lua_filter_context_seed
-    type: lua.filter
-    stage: auth_filters
+  - name: lua_subject_context_seed
+    type: lua.subject
+    stage: subject_analysis
     run_if:
       auth_state: authenticated
-    config_ref: auth.controls.lua.filters.context_seed
+    config_ref: auth.policy.attribute_sources.lua.subject.context_seed
 
-  - name: lua_filter_billing_lock
-    type: lua.filter
-    stage: auth_filters
-    after: [lua_filter_context_seed]
+  - name: lua_subject_billing_lock
+    type: lua.subject
+    stage: subject_analysis
+    after: [lua_subject_context_seed]
     run_if:
       auth_state: authenticated
-    config_ref: auth.controls.lua.filters.billing_lock
+    config_ref: auth.policy.attribute_sources.lua.subject.billing_lock
 ```
 
 `after` is the target replacement for Lua `depends_on`.
@@ -1801,25 +1812,25 @@ Example:
 auth:
   policy:
     checks:
-      - name: billing_filter_after_success
-        type: lua.filter
-        stage: auth_filters
+      - name: billing_subject_after_success
+        type: lua.subject
+        stage: subject_analysis
         run_if:
           auth_state: authenticated
-        config_ref: auth.controls.lua.filters.billing_filter
+        config_ref: auth.policy.attribute_sources.lua.subject.billing_subject
 
-      - name: failed_login_filter
-        type: lua.filter
-        stage: auth_filters
+      - name: failed_login_subject
+        type: lua.subject
+        stage: subject_analysis
         run_if:
           auth_state: unauthenticated
-        config_ref: auth.controls.lua.filters.failed_login
+        config_ref: auth.policy.attribute_sources.lua.subject.failed_login
 
-      - name: lookup_filter
-        type: lua.filter
-        stage: auth_filters
+      - name: lookup_subject
+        type: lua.subject
+        stage: subject_analysis
         operations: [lookup_identity]
-        config_ref: auth.controls.lua.filters.lookup_filter
+        config_ref: auth.policy.attribute_sources.lua.subject.lookup_subject
 ```
 
 Runtime order for each stage:
@@ -1867,8 +1878,8 @@ Validation rules:
 7. `after` dependencies must be resolvable inside each compiled operation/stage plan where the dependent check can run;
 8. `after` dependencies must be scheduler-compatible with the dependent check's operation and `run_if` scope;
 9. `after` dependency cycles are startup or reload errors;
-10. Lua check types must be singular `lua.control` or `lua.filter`;
-11. aggregate Lua check types such as `lua.controls` and `lua.filters` must be rejected;
+10. Lua check types must be singular `lua.environment` or `lua.subject`;
+11. aggregate Lua check types such as `lua.environments` and `lua.subjects` must be rejected;
 12. old `when_*` keys must not be accepted in the target config structs;
 13. a policy may reference attributes from earlier completed stages if the registry allows that stage use;
 14. a policy must not reference attributes from future stages;
@@ -2008,9 +2019,9 @@ The target model separates four concepts:
 
 `response_message` may override only the client-visible message inside that response class. It must not change HTTP status codes, gRPC status codes, response body mode, redirect behavior, OIDC/SAML protocol semantics, or IdP flow state.
 
-This separation is important because many real deployments need specific denial messages. Examples include unpaid billing state, administrative account locks, monitored accounts, or other customer-specific filter results. These messages are valid operational behavior and must remain expressible.
+This separation is important because many real deployments need specific denial messages. Examples include unpaid billing state, administrative account locks, monitored accounts, or other customer-specific subject-source results. These messages are valid operational behavior and must remain expressible.
 
-However, request-time Lua code must not directly mutate the final response after policy evaluation. Lua controls and filters may emit response-message candidates as typed policy attribute details. The policy then decides whether that candidate becomes the final status message.
+However, request-time Lua code must not directly mutate the final response after policy evaluation. Lua environment and subject sources may emit response-message candidates as typed policy attribute details. The policy then decides whether that candidate becomes the final status message.
 
 Example Lua-emitted attribute value:
 
@@ -2103,9 +2114,9 @@ IdP support is required because IdP login and MFA flows consume the same auth de
 
 gRPC support is required for the same reason. A user authentication denial is a normal auth decision and must be represented in the AuthService response. gRPC status errors remain reserved for caller authentication failures, malformed requests, unavailable services, and internal execution failures.
 
-The built-in default policy set must preserve current external behavior for existing Lua feature and filter scripts that set a status message. Internally, the migration path must convert the current Lua status-message output into a registered response-message hint attribute and let the built-in default policy select that hint when the corresponding Lua decision denies or tempfails the request.
+The built-in default policy set must preserve current external behavior for existing Lua environment and subject source scripts that set a status message. Internally, the migration path must convert the current Lua status-message output into a registered response-message hint attribute and let the built-in default policy select that hint when the corresponding Lua decision denies or tempfails the request.
 
-This conversion is per script. A Lua control or filter script becomes one policy check, and the status-message hint belongs to the script-specific generated attribute for that check. The target model must not collapse all Lua controls or all Lua filters into one aggregate check.
+This conversion is per script. A Lua environment or subject source script becomes one policy check, and the status-message hint belongs to the script-specific generated attribute for that check. The target model must not collapse all Lua environment sources or all Lua subject sources into one aggregate check.
 
 Lua POST-Actions are excluded from this mechanism. They run after the request-time decision and must not change the already selected status message.
 
@@ -2185,7 +2196,7 @@ There must be no outgoing transitions from terminal states.
 
 An operation still reaches the `pre_auth_checked` checkpoint when it has no configured pre-auth checks. In that case the policy engine emits the neutral `auth.fsm.event.pre_auth_ok` marker unless parsing, preprocessing, or a configured pre-auth policy produced a terminal outcome.
 
-`auth_checked` represents that backend and filter processing have produced the attributes needed by `auth_decision`. It replaces the current password-oriented checkpoint in the target vocabulary. The current implementation can temporarily translate final auth policy markers to current `password_*` events during migration.
+`auth_checked` represents that backend and subject-source processing have produced the attributes needed by `auth_decision`. It replaces the current password-oriented checkpoint in the target vocabulary. The current implementation can temporarily translate final auth policy markers to current `password_*` events during migration.
 
 `account_provider_checked` represents that account-provider processing has produced the attributes needed by `auth_decision` for `list_accounts`. It is not a password-authentication checkpoint.
 
@@ -2225,13 +2236,13 @@ Only the brute-force evaluator remains specialized. Its orchestration must not b
 | Target check name | Current public config source | Current runtime owner | Notes |
 |---|---|---|---|
 | `brute_force` | `auth.controls.brute_force` | `CheckBruteForce`, bucket update logic | first-class pre-auth check |
-| `lua_control.<name>` | `auth.controls.lua.controls.<name>` | named Lua control execution | one target pre-auth check per Lua control script |
+| `lua_environment.<name>` | `auth.policy.attribute_sources.lua.environment.<name>` | named Lua environment source execution | one target pre-auth check per Lua environment source script |
 | `tls_encryption` | `auth.controls.tls_encryption` | `checkTLSEncryptionFeature` | target pre-auth tempfail decision |
 | `relay_domains` | `auth.controls.relay_domains` | `checkRelayDomainsFeature` | target pre-auth deny decision |
 | `rbl` | `auth.controls.rbl` | `checkRBLFeature` | internal threshold model, policy sees typed attributes |
 | `ldap_backend` | `auth.backends.ldap` | backend evaluation path | auth-backend stage |
 | `lua_backend` | `auth.backends.lua.backend` | backend evaluation path | auth-backend stage |
-| `lua_filter.<name>` | `auth.controls.lua.filters.<name>` | named Lua filter execution | one auth-filter check per Lua filter script |
+| `lua_subject.<name>` | `auth.policy.attribute_sources.lua.subject.<name>` | named Lua subject source execution | one subject-analysis check per Lua subject source script |
 | `account_provider` | `auth.backends.*` account-provider settings | `ListUserAccounts` / account-provider backend path | `account_provider` stage for `list_accounts` |
 
 ### 10.2 Side-Effect Executors, Not Core Checks
@@ -2240,7 +2251,7 @@ These belong to the broader auth runtime but must not be modeled as primary deci
 
 | Runtime area | Current public config source | Why not a primary decision check |
 |---|---|---|
-| Lua actions | `auth.controls.lua.actions` | side effects selected through registered obligations, not fact-producing checks |
+| Lua actions | `auth.policy.obligation_targets.lua.actions` | side effects selected through registered obligations, not fact-producing checks |
 | Lua hooks | `auth.controls.lua.hooks` | custom HTTP surface, not part of the core auth pipeline |
 | backend health checks | `auth.services.backend_health_checks` | background service, not request-time auth decision |
 
@@ -2256,7 +2267,7 @@ These are current auth-facing config sections, but they must stay outside the fi
 
 | Current public config source | Why it stays outside the first policy scope |
 |---|---|
-| `auth.backchannel.basic_auth` | transport/backchannel authentication mechanism, not a policy control in the same sense as TLS/RBL/relay/Lua controls |
+| `auth.backchannel.basic_auth` | transport/backchannel authentication mechanism, not a policy check in the same sense as TLS/RBL/relay/Lua environment sources |
 | `auth.backchannel.oidc_bearer` | backchannel API authentication mechanism, not part of the first request-time policy check inventory |
 
 They can later feed policy attributes into the decision context, but they must not be the first check types the policy layer is built around.
@@ -2345,7 +2356,7 @@ Current, externally visible behavior that must be reproduced by the built-in def
 | Current outcome | Default effect | Target FSM event marker | Current internal mapping during migration |
 |---|---|---|---|
 | brute force triggered | `deny` | `auth.fsm.event.pre_auth_deny` | current direct `AuthFail` behavior |
-| Lua control triggered | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultFeatureLua` / `features_fail` |
+| Lua environment source triggered | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultFeatureLua` / `features_fail` |
 | TLS enforcement triggered | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `AuthResultFeatureTLS` / `features_tempfail` |
 | relay domain rejected | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultFeatureRelayDomain` / `features_fail` |
 | RBL threshold exceeded | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultFeatureRBL` / `features_fail` |
@@ -2409,7 +2420,7 @@ CheckResult(brute_force)
 
 and not as a direct gate outside the policy engine.
 
-For the built-in `standard_auth` default, the `authenticate`/`pre_auth` plan must still preserve the current early-gate behavior. `brute_force` is the first pre-auth check segment, followed by an immediate policy checkpoint. If that checkpoint selects `standard_brute_force_error_tempfail` or `standard_brute_force_deny`, the stage terminates and later pre-auth checks such as Lua controls, TLS, relay-domain checks, and RBL are not invoked for that request.
+For the built-in `standard_auth` default, the `authenticate`/`pre_auth` plan must still preserve the current early-gate behavior. `brute_force` is the first pre-auth check segment, followed by an immediate policy checkpoint. If that checkpoint selects `standard_brute_force_error_tempfail` or `standard_brute_force_deny`, the stage terminates and later pre-auth checks such as Lua environment sources, TLS, relay-domain checks, and RBL are not invoked for that request.
 
 This default ordering must not be represented as an implicit `after: [brute_force]` on every other pre-auth check. Operators who define custom checks keep explicit scheduling control; Nauthilus must not silently add hidden `after` dependencies to their policy YAML.
 
@@ -2511,37 +2522,39 @@ Current semantics:
 2. its auth-FSM mapping is tempfail-oriented;
 3. its current external behavior must remain intact through the built-in default policy.
 
-### 13.5 Lua Controls
+### 13.5 Lua Environment Sources
 
 Current public config:
 
 ```yaml
 auth:
-  controls:
-    lua:
-      controls:
+  policy:
+    attribute_sources:
+      lua:
+        environment:
 ```
 
 Current semantics:
 
-1. a triggered Lua control currently maps to `AuthResultFeatureLua`;
+1. a triggered Lua environment source currently maps to `AuthResultFeatureLua`;
 2. `abort_features` semantics already exist and must remain expressible;
 3. current learning/action side effects must remain compatible.
 
-### 13.6 Lua Filters
+### 13.6 Lua Subject Sources
 
 Current public config:
 
 ```yaml
 auth:
-  controls:
-    lua:
-      filters:
+  policy:
+    attribute_sources:
+      lua:
+        subject:
 ```
 
 Current semantics:
 
-1. Lua filters remain in the backend/password result path;
+1. Lua subject sources remain in the backend/password result path;
 2. they do not currently have a dedicated auth-FSM state;
 3. in early phases, their outputs must still be bridged through existing password/auth result handling.
 
@@ -2626,7 +2639,7 @@ Example request-context YAML:
 - name: deny_lua_idp_client_block
   stage: auth_decision
   operations: [authenticate]
-  require_checks: [lua_control_idp_client_block]
+  require_checks: [lua_environment_idp_client_block]
   if:
     attribute: lua.idp.client_block.triggered
     is: true
@@ -3111,8 +3124,8 @@ Validation rules must include:
 14. cyclic `after` dependencies must be rejected;
 15. `observe_safe: true` must be accepted only for check types whose registry permits operator assertion;
 16. check types that are never observe-safe must reject `observe_safe: true`;
-17. Lua check types must be singular `lua.control` or `lua.filter`;
-18. aggregate Lua check types such as `lua.controls` and `lua.filters` must be rejected;
+17. Lua check types must be singular `lua.environment` or `lua.subject`;
+18. aggregate Lua check types such as `lua.environments` and `lua.subjects` must be rejected;
 19. `when_no_auth`, `when_authenticated`, and `when_unauthenticated` must not exist in target config structs;
 20. old `when_*` keys must fail through the existing unknown-key config semantics;
 21. Go built-in policy attributes must declare a non-empty operation list explicitly;
@@ -3477,21 +3490,23 @@ auth:
           rbl: allow.example.net
           allow_failure: true
 
-    lua:
-      controls:
-        - name: geo_block
-          script_path: /etc/nauthilus/lua/controls/geo_block.lua
-      filters:
-        - name: context_seed
-          script_path: /etc/nauthilus/lua/filters/context_seed.lua
-        - name: billing_lock
-          script_path: /etc/nauthilus/lua/filters/billing_lock.lua
-      actions: []
-
   policy:
     mode: enforce
     default_policy: standard_auth
     registry_scripts: []
+    attribute_sources:
+      lua:
+        environment:
+          - name: geo_block
+            script_path: /etc/nauthilus/lua/environment/geo_block.lua
+        subject:
+          - name: context_seed
+            script_path: /etc/nauthilus/lua/subject/context_seed.lua
+          - name: billing_lock
+            script_path: /etc/nauthilus/lua/subject/billing_lock.lua
+    obligation_targets:
+      lua:
+        actions: []
 
     sets:
       networks:
@@ -3519,11 +3534,11 @@ auth:
         config_ref: auth.controls.brute_force
         output: checks.brute_force
 
-      - name: lua_control_geo_block
-        type: lua.control
+      - name: lua_environment_geo_block
+        type: lua.environment
         stage: pre_auth
-        config_ref: auth.controls.lua.controls.geo_block
-        output: checks.lua_control_geo_block
+        config_ref: auth.policy.attribute_sources.lua.environment.geo_block
+        output: checks.lua_environment_geo_block
 
       - name: tls_encryption
         type: builtin.tls_encryption
@@ -3557,22 +3572,22 @@ auth:
         config_ref: auth.backends.lua.backend
         output: checks.lua_backend
 
-      - name: lua_filter_context_seed
-        type: lua.filter
-        stage: auth_filters
+      - name: lua_subject_context_seed
+        type: lua.subject
+        stage: subject_analysis
         run_if:
           auth_state: authenticated
-        config_ref: auth.controls.lua.filters.context_seed
-        output: checks.lua_filter_context_seed
+        config_ref: auth.policy.attribute_sources.lua.subject.context_seed
+        output: checks.lua_subject_context_seed
 
-      - name: lua_filter_billing_lock
-        type: lua.filter
-        stage: auth_filters
-        after: [lua_filter_context_seed]
+      - name: lua_subject_billing_lock
+        type: lua.subject
+        stage: subject_analysis
+        after: [lua_subject_context_seed]
         run_if:
           auth_state: authenticated
-        config_ref: auth.controls.lua.filters.billing_lock
-        output: checks.lua_filter_billing_lock
+        config_ref: auth.policy.attribute_sources.lua.subject.billing_lock
+        output: checks.lua_subject_billing_lock
 
       - name: account_provider
         type: backend.account_provider
@@ -3689,45 +3704,45 @@ auth:
               args:
                 action: rbl
 
-      - name: standard_lua_control_geo_block_error
+      - name: standard_lua_environment_geo_block_error
         stage: pre_auth
-        require_checks: [lua_control_geo_block]
+        require_checks: [lua_environment_geo_block]
         if:
-          attribute: auth.lua.control.geo_block.error
+          attribute: auth.lua.environment.geo_block.error
           is: true
         then:
           decision: tempfail
-          outcome_marker: auth.outcome.lua_control.geo_block.error
+          outcome_marker: auth.outcome.lua_environment.geo_block.error
           fsm_event_marker: auth.fsm.event.pre_auth_tempfail
           response_marker: auth.response.tempfail
 
-      - name: standard_lua_control_geo_block_trigger
+      - name: standard_lua_environment_geo_block_trigger
         stage: pre_auth
-        require_checks: [lua_control_geo_block]
+        require_checks: [lua_environment_geo_block]
         if:
-          attribute: auth.lua.control.geo_block.triggered
+          attribute: auth.lua.environment.geo_block.triggered
           is: true
         then:
           decision: deny
-          outcome_marker: auth.outcome.lua_control.geo_block.reject
+          outcome_marker: auth.outcome.lua_environment.geo_block.reject
           fsm_event_marker: auth.fsm.event.pre_auth_deny
           response_marker: auth.response.fail
           response_message:
             from: attribute_detail
-            attribute: auth.lua.control.geo_block.triggered
+            attribute: auth.lua.environment.geo_block.triggered
             detail: status_message
             fallback: "Invalid login or password"
           obligations:
             - id: auth.obligation.lua_action.dispatch
               args:
                 action: lua
-                feature: lua_control_geo_block
+                feature: lua_environment_geo_block
 
-      - name: standard_lua_control_geo_block_abort
+      - name: standard_lua_environment_geo_block_abort
         stage: pre_auth
-        require_checks: [lua_control_geo_block]
+        require_checks: [lua_environment_geo_block]
         if:
-          attribute: auth.lua.control.geo_block.abort
+          attribute: auth.lua.environment.geo_block.abort
           is: true
         then:
           decision: neutral
@@ -3771,32 +3786,32 @@ auth:
           fsm_event_marker: auth.fsm.event.auth_empty_pass
           response_marker: auth.response.fail
 
-      - name: standard_lua_filter_billing_lock_error
+      - name: standard_lua_subject_billing_lock_error
         stage: auth_decision
-        require_checks: [lua_filter_billing_lock]
+        require_checks: [lua_subject_billing_lock]
         if:
-          attribute: auth.lua.filter.billing_lock.error
+          attribute: auth.lua.subject.billing_lock.error
           is: true
         then:
           decision: tempfail
-          outcome_marker: auth.outcome.lua_filter.billing_lock.error
+          outcome_marker: auth.outcome.lua_subject.billing_lock.error
           fsm_event_marker: auth.fsm.event.auth_tempfail
           response_marker: auth.response.tempfail
 
-      - name: standard_lua_filter_billing_lock_reject
+      - name: standard_lua_subject_billing_lock_reject
         stage: auth_decision
-        require_checks: [lua_filter_billing_lock]
+        require_checks: [lua_subject_billing_lock]
         if:
-          attribute: auth.lua.filter.billing_lock.rejected
+          attribute: auth.lua.subject.billing_lock.rejected
           is: true
         then:
           decision: deny
-          outcome_marker: auth.outcome.lua_filter.billing_lock.reject
+          outcome_marker: auth.outcome.lua_subject.billing_lock.reject
           fsm_event_marker: auth.fsm.event.auth_deny
           response_marker: auth.response.fail
           response_message:
             from: attribute_detail
-            attribute: auth.lua.filter.billing_lock.rejected
+            attribute: auth.lua.subject.billing_lock.rejected
             detail: status_message
             fallback: "Invalid login or password"
 
@@ -3918,10 +3933,10 @@ The check-type registry is built into Go. Lua registry scripts may register attr
 | `builtin.tls_encryption` | `pre_auth` | `authenticate`, `lookup_identity` | `auth.controls.tls_encryption` | `auth.tls.secure` | true | Read-only request inspection. |
 | `builtin.relay_domains` | `pre_auth` | `authenticate` | `auth.controls.relay_domains` | `auth.relay_domain.present`, `auth.relay_domain.known`, `auth.relay_domain.error` | true | Read-only request/config inspection. |
 | `builtin.rbl` | `pre_auth` | `authenticate`, `lookup_identity` | `auth.controls.rbl` | `auth.rbl.threshold_reached`, `auth.rbl.error` | false | May perform network lookups or cache access; non-observe-safe unless implemented as a provably read-only/cache-only check. |
-| `lua.control` | `pre_auth` | default `authenticate`, explicit opt-in allowed | one named `auth.controls.lua.controls.<name>` entry | `auth.lua.control.<name>.triggered`, `auth.lua.control.<name>.abort`, `auth.lua.control.<name>.error`, plus registered Lua attributes | false | Arbitrary Lua may have side effects; observe execution requires explicit `observe_safe: true`. |
+| `lua.environment` | `pre_auth` | default `authenticate`, explicit opt-in allowed | one named `auth.policy.attribute_sources.lua.environment.<name>` entry | `auth.lua.environment.<name>.triggered`, `auth.lua.environment.<name>.abort`, `auth.lua.environment.<name>.error`, plus registered Lua attributes | false | Arbitrary Lua may have side effects; observe execution requires explicit `observe_safe: true`. |
 | `backend.ldap` | `auth_backend` | `authenticate`, `lookup_identity` | `auth.backends.ldap` | `auth.authenticated`, `auth.identity.found`, `auth.backend.tempfail`, `auth.backend.empty_username`, `auth.backend.empty_password` | false | Performs backend I/O and may update backend-local telemetry or caches. |
 | `backend.lua` | `auth_backend` | `authenticate`, `lookup_identity` | `auth.backends.lua.backend` | `auth.authenticated`, `auth.identity.found`, `auth.backend.tempfail`, `auth.backend.empty_username`, `auth.backend.empty_password`, plus registered Lua attributes | false | Arbitrary Lua may have side effects; observe execution requires explicit `observe_safe: true`. |
-| `lua.filter` | `auth_filters` | default `authenticate`, explicit opt-in allowed | one named `auth.controls.lua.filters.<name>` entry | `auth.lua.filter.<name>.rejected`, `auth.lua.filter.<name>.error`, plus registered Lua attributes | false | Arbitrary Lua may have side effects and may depend on `lualib.Context`. |
+| `lua.subject` | `subject_analysis` | default `authenticate`, explicit opt-in allowed | one named `auth.policy.attribute_sources.lua.subject.<name>` entry | `auth.lua.subject.<name>.rejected`, `auth.lua.subject.<name>.error`, plus registered Lua attributes | false | Arbitrary Lua may have side effects and may depend on `lualib.Context`. |
 | `backend.account_provider` | `account_provider` | `list_accounts` | account-provider config under `auth.backends` | `auth.account_provider.completed`, `auth.account_provider.tempfail` | false | Performs backend I/O; the account list is response data and must not become a policy attribute. |
 
 Implicit request-context emitters are not configured as checks. They populate request-scoped attributes such as `request.operation`, `request.time.now`, `request.client.ip`, `request.protocol`, and `auth.tls.secure` before policy evaluation reaches the relevant stage.
@@ -3944,16 +3959,16 @@ The Go built-in registry must include at least these attributes. Lua-generated s
 | `auth.relay_domain.error` | `pre_auth` | `authenticate` | bool | `reason_code`, `retryable` | `builtin.relay_domains` |
 | `auth.rbl.threshold_reached` | `pre_auth` | `authenticate`, `lookup_identity` | bool | `lists` | `builtin.rbl` |
 | `auth.rbl.error` | `pre_auth` | `authenticate`, `lookup_identity` | bool | `reason_code`, `retryable` | `builtin.rbl` |
-| `auth.lua.control.<name>.triggered` | `pre_auth` | per script definition | bool | optional public `status_message` | `lua.control` |
-| `auth.lua.control.<name>.abort` | `pre_auth` | per script definition | bool | none | `lua.control` |
-| `auth.lua.control.<name>.error` | `pre_auth` | per script definition | bool | `reason_code` | `lua.control` |
+| `auth.lua.environment.<name>.triggered` | `pre_auth` | per script definition | bool | optional public `status_message` | `lua.environment` |
+| `auth.lua.environment.<name>.abort` | `pre_auth` | per script definition | bool | none | `lua.environment` |
+| `auth.lua.environment.<name>.error` | `pre_auth` | per script definition | bool | `reason_code` | `lua.environment` |
 | `auth.authenticated` | `auth_backend` | `authenticate` | bool | `backend` | backend checks |
 | `auth.identity.found` | `auth_backend` | `lookup_identity` | bool | `backend` | backend checks |
 | `auth.backend.tempfail` | `auth_backend` | `authenticate`, `lookup_identity` | bool | `backend`, `reason_code`, `retryable` | backend checks |
 | `auth.backend.empty_username` | `auth_backend` | `authenticate`, `lookup_identity` | bool | none | backend checks |
 | `auth.backend.empty_password` | `auth_backend` | `authenticate` | bool | none | backend checks |
-| `auth.lua.filter.<name>.rejected` | `auth_filters` | per script definition | bool | optional public `status_message` | `lua.filter` |
-| `auth.lua.filter.<name>.error` | `auth_filters` | per script definition | bool | `reason_code` | `lua.filter` |
+| `auth.lua.subject.<name>.rejected` | `subject_analysis` | per script definition | bool | optional public `status_message` | `lua.subject` |
+| `auth.lua.subject.<name>.error` | `subject_analysis` | per script definition | bool | `reason_code` | `lua.subject` |
 | `auth.account_provider.completed` | `account_provider` | `list_accounts` | bool | `count` | `backend.account_provider` |
 | `auth.account_provider.tempfail` | `account_provider` | `list_accounts` | bool | `reason_code`, `retryable` | `backend.account_provider` |
 
@@ -4033,8 +4048,8 @@ Every matrix row must be tested for at least these outcome classes:
 1. built-in default success;
 2. built-in default deny;
 3. built-in default tempfail;
-4. Lua control deny with public status message;
-5. Lua filter deny with public status message;
+4. Lua environment source deny with public status message;
+5. Lua subject source deny with public status message;
 6. backend tempfail;
 7. default deny when no final policy matches;
 8. observe-mode mismatch reporting without side effects.
@@ -4054,17 +4069,17 @@ For `authenticate`/`pre_auth`, rows 10 and 20 are evaluated at the built-in chec
 | 50 | `authenticate` | `pre_auth` | `standard_relay_domain_reject` | `relay_domains` | `auth.relay_domain.present is true` and `auth.relay_domain.known is false` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.lua_action.dispatch(action=relay_domains)` if configured |
 | 60 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_rbl_error_tempfail` | `rbl` | `auth.rbl.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
 | 70 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_rbl_reject` | `rbl` | `auth.rbl.threshold_reached is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.lua_action.dispatch(action=rbl)` if configured |
-| 80 | `authenticate` | `pre_auth` | `standard_lua_control_<name>_error` | named Lua control | `auth.lua.control.<name>.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
-| 90 | `authenticate` | `pre_auth` | `standard_lua_control_<name>_trigger` | named Lua control | `auth.lua.control.<name>.triggered is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | select public `status_message` detail if present; `auth.obligation.lua_action.dispatch(action=lua, feature=<check_name>)` if configured |
-| 100 | `authenticate` | `pre_auth` | `standard_lua_control_<name>_abort` | named Lua control | `auth.lua.control.<name>.abort is true` | `neutral` | `auth.fsm.event.pre_auth_ok` | none | `skip_remaining_stage_checks` |
+| 80 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_error` | named Lua environment source | `auth.lua.environment.<name>.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
+| 90 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_trigger` | named Lua environment source | `auth.lua.environment.<name>.triggered is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | select public `status_message` detail if present; `auth.obligation.lua_action.dispatch(action=lua, feature=<check_name>)` if configured |
+| 100 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_abort` | named Lua environment source | `auth.lua.environment.<name>.abort is true` | `neutral` | `auth.fsm.event.pre_auth_ok` | none | `skip_remaining_stage_checks` |
 | 110 | all | `pre_auth` | implicit pre-auth pass | active pre-auth plan | no prior first-match terminal result | `neutral` | `auth.fsm.event.pre_auth_ok` | none | continue to the operation-specific next stage |
 | 200 | `authenticate`, `lookup_identity` | `auth_decision` | `standard_backend_tempfail` | backend plan | `auth.backend.tempfail is true` | `tempfail` | `auth.fsm.event.auth_tempfail` | `auth.response.tempfail` | none |
 | 210 | `authenticate`, `lookup_identity` | `auth_decision` | `standard_empty_username` | backend plan | `auth.backend.empty_username is true` | `tempfail` | `auth.fsm.event.auth_empty_user` | `auth.response.tempfail` | preserve current empty-username accounting |
 | 220 | `authenticate` | `auth_decision` | `standard_empty_password` | backend plan | `auth.backend.empty_password is true` | `deny` | `auth.fsm.event.auth_empty_pass` | `auth.response.fail` | preserve current empty-password accounting |
-| 230 | `authenticate` | `auth_decision` | `standard_lua_filter_<name>_error` | named Lua filter | `auth.lua.filter.<name>.error is true` | `tempfail` | `auth.fsm.event.auth_tempfail` | `auth.response.tempfail` | none |
-| 240 | `authenticate` | `auth_decision` | `standard_lua_filter_<name>_reject` | named Lua filter | `auth.lua.filter.<name>.rejected is true` | `deny` | `auth.fsm.event.auth_deny` | `auth.response.fail` | select public `status_message` detail if present |
-| 250 | `authenticate` | `auth_decision` | `standard_auth_success` | backend and filters | `auth.authenticated is true` | `permit` | `auth.fsm.event.auth_permit` | `auth.response.ok` | enqueue success POST-Actions only through registered obligations if current behavior requires it |
-| 260 | `authenticate` | `auth_decision` | `standard_auth_failure` | backend and filters | `auth.authenticated is false` | `deny` | `auth.fsm.event.auth_deny` | `auth.response.fail` | preserve current failure accounting |
+| 230 | `authenticate` | `auth_decision` | `standard_lua_subject_<name>_error` | named Lua subject source | `auth.lua.subject.<name>.error is true` | `tempfail` | `auth.fsm.event.auth_tempfail` | `auth.response.tempfail` | none |
+| 240 | `authenticate` | `auth_decision` | `standard_lua_subject_<name>_reject` | named Lua subject source | `auth.lua.subject.<name>.rejected is true` | `deny` | `auth.fsm.event.auth_deny` | `auth.response.fail` | select public `status_message` detail if present |
+| 250 | `authenticate` | `auth_decision` | `standard_auth_success` | backend and subject sources | `auth.authenticated is true` | `permit` | `auth.fsm.event.auth_permit` | `auth.response.ok` | enqueue success POST-Actions only through registered obligations if current behavior requires it |
+| 260 | `authenticate` | `auth_decision` | `standard_auth_failure` | backend and subject sources | `auth.authenticated is false` | `deny` | `auth.fsm.event.auth_deny` | `auth.response.fail` | preserve current failure accounting |
 | 300 | `lookup_identity` | `auth_decision` | `standard_lookup_identity_success` | backend plan | `auth.identity.found is true` | `permit` | `auth.fsm.event.auth_permit` | `auth.response.ok` | none |
 | 310 | `lookup_identity` | `auth_decision` | `standard_lookup_identity_failure` | backend plan | `auth.identity.found is false` | `deny` | `auth.fsm.event.auth_deny` | `auth.response.fail` | none |
 | 400 | `list_accounts` | `auth_decision` | `standard_list_accounts_tempfail` | `account_provider` | `auth.account_provider.tempfail is true` | `tempfail` | `auth.fsm.event.auth_tempfail` | `auth.response.tempfail` | none |
@@ -4101,13 +4116,13 @@ Add or keep regression tests for:
 
 1. brute-force direct block;
 2. brute-force learning behavior;
-3. Lua control trigger;
-4. Lua control abort;
+3. Lua environment source trigger;
+4. Lua environment source abort;
 5. TLS tempfail;
 6. relay-domain reject;
 7. RBL reject;
 8. backend success, failure, and tempfail;
-9. Lua filter reject and Lua-provided status message;
+9. Lua subject source reject and Lua-provided status message;
 10. auth-FSM feature and password transitions;
 11. lookup-identity / no-auth success, failure, and tempfail parity;
 12. list-accounts success, scope/caller-auth rejection, and response-media parity;
@@ -4154,8 +4169,8 @@ Wrap current mechanisms so they emit structured `CheckResult` values and registe
 
 Implementation requirements:
 
-1. collect `CheckResult` values for brute force, Lua controls, TLS, relay domains, RBL, backends, Lua filters, and account providers;
-2. create one check result per named Lua control and Lua filter;
+1. collect `CheckResult` values for brute force, Lua environment sources, TLS, relay domains, RBL, backends, Lua subject sources, and account providers;
+2. create one check result per named Lua environment source and Lua subject source;
 3. preserve Lua `lualib.Context` behavior through compiled `after` ordering;
 4. validate `run_if`, `operations`, `after`, and `require_checks` against the compiled plan;
 5. record missing, skipped, error, and unavailable facts in reports;
@@ -4192,9 +4207,9 @@ Conversion requirements:
 1. rewrite old `when_no_auth` usage into policy `operations`, normally by adding `lookup_identity` where the old mechanism was enabled for no-auth;
 2. rewrite old `when_authenticated` usage into policy check scheduling, normally `run_if.auth_state: authenticated`;
 3. rewrite old `when_unauthenticated` usage into policy check scheduling, normally `run_if.auth_state: unauthenticated`;
-4. generate one `lua.control` policy check for each Lua control script entry;
-5. generate one `lua.filter` policy check for each Lua filter script entry;
-6. do not generate aggregate `lua_controls` or `lua_filters` policy checks;
+4. generate one `lua.environment` policy check for each Lua environment source script entry;
+5. generate one `lua.subject` policy check for each Lua subject source script entry;
+6. do not generate aggregate `lua_environments` or `lua_subjects` policy checks;
 7. generate stable check names and script-specific generated attributes from the Lua script name;
 8. generate policy check entries rather than preserving old mechanism-local scheduling flags;
 9. rewrite old Lua `depends_on` into check-plan `after` dependencies using the generated check names;
@@ -4294,7 +4309,7 @@ Enable custom policy enforcement first for the pre-auth stage.
 Initial enforce scope:
 
 1. brute force;
-2. Lua controls;
+2. Lua environment sources;
 3. TLS;
 4. relay domains;
 5. RBL.
@@ -4308,15 +4323,15 @@ Completion requirements:
 5. selected `response_marker` and `response_message` render correctly across HTTP JSON, HTTP CBOR, Nginx auth-request, header-style HTTP, plain HTTP, gRPC AuthService, and IdP auth flows;
 6. policy metrics, OTel spans, reports, and debug logs cover custom-policy decisions.
 
-### Phase 12: Custom Policy Enforce for Backend, Filters, and Status Messages
+### Phase 12: Custom Policy Enforce for Backend, Subject Sources, and Status Messages
 
-Extend custom policy enforcement to backend and auth-filter decisions.
+Extend custom policy enforcement to backend and subject-analysis decisions.
 
 Implementation requirements:
 
 1. backend success, failure, tempfail, empty username, and empty password map through policy attributes and final decisions;
-2. Lua filters emit script-specific attributes and public response-message details;
-3. `run_if.auth_state` controls authenticated and unauthenticated filter scheduling;
+2. Lua subject sources emit script-specific attributes and public response-message details;
+3. `run_if.auth_state` controls authenticated and unauthenticated subject-source scheduling;
 4. Lua POST-Action enqueueing happens only through registered obligations;
 5. final response-message selection preserves current Lua status-message behavior where the built-in default policy is used;
 6. response rendering parity covers all configured auth transports.

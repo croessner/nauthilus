@@ -78,7 +78,7 @@ Notes:
   - Removal plan: remove with old-vs-new migration diagnostics in the final cleanup.
 
 - Current mechanism collection adapters remain active.
-  - Purpose: reuse current brute-force, Lua control, TLS, relay-domain, RBL, backend, Lua filter, and account-provider execution as fact producers.
+  - Purpose: reuse current brute-force, Lua environment source, TLS, relay-domain, RBL, backend, Lua subject source, and account-provider execution as fact producers.
   - Removal plan: replace with native policy check executors as custom enforcement and final cleanup remove the remaining bridge code.
 
 - Custom observe mode does not execute custom obligations, Lua POST-Action enqueueing, counters, learning updates, or mutable side effects.

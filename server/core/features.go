@@ -22,7 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/feature"
+	"github.com/croessner/nauthilus/server/lualib/environment"
 	"github.com/croessner/nauthilus/server/policy"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	"github.com/croessner/nauthilus/server/stats"
@@ -88,8 +88,8 @@ func (a *AuthState) updateLuaContext(feature string) {
 	a.Runtime.Context.Set(definitions.LuaCtxBuiltin, featureList)
 }
 
-// FeatureLua runs Lua scripts and returns a trigger result.
-func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+// EnvironmentLua runs Lua environment source scripts and returns a trigger result.
+func (a *AuthState) EnvironmentLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if isLocalOrEmptyIP(a.Request.ClientIP) {
 		a.logAddLocalhost(definitions.FeatureLua)
 
@@ -108,7 +108,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	a.FillCommonRequest(cr)
 
 	policyCtx := a.requestPolicyContext(ctx)
-	fr := &feature.Request{
+	fr := &environment.Request{
 		Session:            a.Runtime.GUID,
 		Username:           a.Request.Username,
 		Password:           a.passwordBytes(),
@@ -129,7 +129,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		PolicyContext:      policyCtx,
 	}
 
-	triggered, abortFeatures, err = fr.CallFeatureLua(ctx, a.Cfg(), a.Logger(), a.Redis())
+	triggered, abortFeatures, err = fr.CallEnvironmentLua(ctx, a.Cfg(), a.Logger(), a.Redis())
 
 	if err != nil {
 		return
@@ -368,13 +368,13 @@ func (a *AuthState) checkFeatureWithWhitelist(featureName string, isWhitelisted 
 	}
 }
 
-// checkLuaFeature evaluates Lua-based features for the given authentication context.
+// checkLuaEnvironmentSource evaluates Lua-based features for the given authentication context.
 // It determines if a feature is triggered or if further processing should be aborted.
-// It uses a whitelist check and processes feature actions if the Lua feature is activated.
-// Returns 'triggered' if a Lua feature is triggered, 'abortFeatures' if further features should be halted.
-func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+// It uses a whitelist check and processes environment source actions if the Lua environment source is activated.
+// Returns triggered when a Lua environment source triggered and abortFeatures when later server features should be skipped.
+func (a *AuthState) checkLuaEnvironmentSource(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	tr := monittrace.New("nauthilus/auth")
-	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.lua",
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.environment.lua",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
 	)
@@ -387,7 +387,7 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 	defer fspan.End()
 
 	checkFunc := func() {
-		triggered, abortFeatures, err = a.FeatureLua(ctx)
+		triggered, abortFeatures, err = a.EnvironmentLua(ctx)
 		if err != nil {
 			a.Runtime.FeatureName = ""
 
@@ -600,7 +600,7 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		a.refreshUserAccount()
 	}
 
-	if triggered, abortFeatures, err := a.checkLuaFeature(ctx); err != nil {
+	if triggered, abortFeatures, err := a.checkLuaEnvironmentSource(ctx); err != nil {
 		fsp.RecordError(err)
 		if result, handled := a.resolvePreAuthFeatureOutcome(ctx, fsp, preAuthFeatureOutcome{
 			current:  definitions.AuthResultTempFail,
@@ -710,7 +710,7 @@ func (a *AuthState) resolvePreAuthFeatureOutcome(
 	span.SetAttributes(attribute.String("decision", outcome.decision))
 
 	if result, handled := a.configuredPolicyPreAuthResult(ctx, outcome.current); handled {
-		markFeatureRejected(ctx, outcome.reject)
+		markEnvironmentRejected(ctx, outcome.reject)
 		span.End()
 
 		return result, true
@@ -730,15 +730,15 @@ func (a *AuthState) resolvePreAuthFeatureOutcome(
 		return definitions.AuthResultOK, true
 	}
 
-	markFeatureRejected(ctx, outcome.reject)
+	markEnvironmentRejected(ctx, outcome.reject)
 	span.End()
 
 	return a.defaultPolicyPreAuthResult(ctx, outcome.current), true
 }
 
-func markFeatureRejected(ctx *gin.Context, reject bool) {
+func markEnvironmentRejected(ctx *gin.Context, reject bool) {
 	if reject {
-		ctx.Set(definitions.CtxFeatureRejectedKey, true)
+		ctx.Set(definitions.CtxEnvironmentRejectedKey, true)
 	}
 }
 

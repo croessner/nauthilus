@@ -270,13 +270,13 @@ func (m *mockOIDCCfg) HandleFile() error     { return nil }
 func (m *mockOIDCCfg) GetConfigFileAsJSON() ([]byte, error) {
 	return []byte("{}"), nil
 }
-func (m *mockOIDCCfg) HaveLuaFeatures() bool { return false }
-func (m *mockOIDCCfg) HaveLuaFilters() bool  { return false }
-func (m *mockOIDCCfg) HaveLuaHooks() bool    { return false }
-func (m *mockOIDCCfg) HaveLuaActions() bool  { return false }
-func (m *mockOIDCCfg) HaveLua() bool         { return false }
-func (m *mockOIDCCfg) HaveLuaBackend() bool  { return false }
-func (m *mockOIDCCfg) HaveLDAPBackend() bool { return false }
+func (m *mockOIDCCfg) HaveLuaEnvironmentSources() bool { return false }
+func (m *mockOIDCCfg) HaveLuaSubjectSources() bool     { return false }
+func (m *mockOIDCCfg) HaveLuaHooks() bool              { return false }
+func (m *mockOIDCCfg) HaveLuaActions() bool            { return false }
+func (m *mockOIDCCfg) HaveLua() bool                   { return false }
+func (m *mockOIDCCfg) HaveLuaBackend() bool            { return false }
+func (m *mockOIDCCfg) HaveLDAPBackend() bool           { return false }
 func (m *mockOIDCCfg) GetLDAP() *config.LDAPSection {
 	return &config.LDAPSection{}
 }
@@ -354,16 +354,16 @@ func (m *mockOIDCCfg) GetSSLIssuerDN() string       { return "" }
 func (m *mockOIDCCfg) GetSSLClientSubjectDN() string {
 	return ""
 }
-func (m *mockOIDCCfg) GetSSLClientIssuerDN() string     { return "" }
-func (m *mockOIDCCfg) GetSSLCipher() string             { return "" }
-func (m *mockOIDCCfg) GetSSLProtocol() string           { return "" }
-func (m *mockOIDCCfg) GetSSLSerial() string             { return "" }
-func (m *mockOIDCCfg) GetSSLFingerprint() string        { return "" }
-func (m *mockOIDCCfg) GetLuaNumberOfWorkers() int       { return 0 }
-func (m *mockOIDCCfg) GetLuaActionNumberOfWorkers() int { return 0 }
-func (m *mockOIDCCfg) GetLuaFeatureVMPoolSize() int     { return 0 }
-func (m *mockOIDCCfg) GetLuaFilterVMPoolSize() int      { return 0 }
-func (m *mockOIDCCfg) GetLuaHookVMPoolSize() int        { return 0 }
+func (m *mockOIDCCfg) GetSSLClientIssuerDN() string           { return "" }
+func (m *mockOIDCCfg) GetSSLCipher() string                   { return "" }
+func (m *mockOIDCCfg) GetSSLProtocol() string                 { return "" }
+func (m *mockOIDCCfg) GetSSLSerial() string                   { return "" }
+func (m *mockOIDCCfg) GetSSLFingerprint() string              { return "" }
+func (m *mockOIDCCfg) GetLuaNumberOfWorkers() int             { return 0 }
+func (m *mockOIDCCfg) GetLuaActionNumberOfWorkers() int       { return 0 }
+func (m *mockOIDCCfg) GetLuaEnvironmentSourceVMPoolSize() int { return 0 }
+func (m *mockOIDCCfg) GetLuaSubjectSourceVMPoolSize() int     { return 0 }
+func (m *mockOIDCCfg) GetLuaHookVMPoolSize() int              { return 0 }
 func (m *mockOIDCCfg) GetLuaSearchProtocol(string, string) (*config.LuaSearchProtocol, error) {
 	return nil, nil
 }

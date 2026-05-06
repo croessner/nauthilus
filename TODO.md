@@ -493,8 +493,8 @@ Several optimizations have already been implemented, particularly in Redis conne
 Based on recent changes in this repository:
 
 - Section 4.1 Asynchronous Script Execution: status is now partially implemented (⚠️).
-  - Implemented: Lua features and filters now execute in parallel using errgroup with per-script timeouts and first-error propagation; results are aggregated after all goroutines complete. This reduces end-to-end latency for requests with multiple scripts.
+  - Implemented: Lua environment and subject sources now execute in parallel using errgroup with per-script timeouts and first-error propagation; results are aggregated after all goroutines complete. This reduces end-to-end latency for requests with multiple scripts.
   - Still open: result caching for deterministic scripts; optional script execution queue.
-- Minor code quality: resolved a variable shadowing issue in Lua filters (local variable renamed to avoid shadowing the named return parameter). This does not change TODO status items but improves maintainability.
+- Minor code quality: resolved a variable shadowing issue in Lua subject sources (local variable renamed to avoid shadowing the named return parameter). This does not change TODO status items but improves maintainability.
 
 Note: The TODO list contains duplicated sections; the above update applies to both occurrences of Section 4.1 in this file.

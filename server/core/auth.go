@@ -293,9 +293,9 @@ type State interface {
 	// HandlePassword processes the password-based authentication for a user and returns the authentication result.
 	HandlePassword(ctx *gin.Context) definitions.AuthResult
 
-	// FilterLua applies Lua-based filtering logic to the provided execution context and PassDBResult.
-	// It returns an AuthResult indicating the outcome of the filtering process.
-	FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
+	// SubjectLua applies Lua-based subject analysis logic to the provided execution context and PassDBResult.
+	// It returns an AuthResult indicating the outcome of the subject analysis process.
+	SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
 
 	// PostLuaAction performs actions or post-processing after executing Lua scripts during authentication workflow.
 	PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult)
@@ -2679,7 +2679,7 @@ func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) 
 	filterStageExpected := true
 
 	if ctx != nil {
-		featureRejected = ctx.GetBool(definitions.CtxFeatureRejectedKey)
+		featureRejected = ctx.GetBool(definitions.CtxEnvironmentRejectedKey)
 	}
 
 	if featureRejected {
@@ -2692,21 +2692,21 @@ func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) 
 
 	if disp := getPostAction(); disp != nil {
 		disp.Run(PostActionInput{
-			View:                 a.View(),
-			Result:               passDBResult,
-			FeatureRejected:      featureRejected,
-			FeatureStageExpected: featureStageExpected,
-			FilterStageExpected:  filterStageExpected,
+			View:                     a.View(),
+			Result:                   passDBResult,
+			EnvironmentRejected:      featureRejected,
+			EnvironmentStageExpected: featureStageExpected,
+			SubjectStageExpected:     filterStageExpected,
 		})
 	}
 }
 
-func (a *AuthState) markFeatureRejected(ctx *gin.Context) {
+func (a *AuthState) markEnvironmentRejected(ctx *gin.Context) {
 	if ctx == nil {
 		return
 	}
 
-	ctx.Set(definitions.CtxFeatureRejectedKey, true)
+	ctx.Set(definitions.CtxEnvironmentRejectedKey, true)
 }
 
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
@@ -2775,7 +2775,7 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 
 // handleLocalCache handles the local cache authentication logic for the AuthState object.
 // It sets the operation mode and initializes the passDBResult.
-// Then, it filters the authentication result through the Lua filter.
+// Then, it applies Lua subject analysis to the authentication result.
 // After that, the PostLuaAction is executed on the passDBResult.
 // Finally, it returns the authResult of type definitions.AuthResult.
 func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
@@ -2798,8 +2798,8 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 
 	authResult := definitions.AuthResultOK
 
-	if lf := getLuaFilter(); lf != nil {
-		authResult = lf.Filter(ctx, a.View(), passDBResult)
+	if lf := getLuaSubject(); lf != nil {
+		authResult = lf.Analyze(ctx, a.View(), passDBResult)
 	}
 
 	if a.HasConfiguredAuthPolicyAuthority(ctx) {
@@ -3155,7 +3155,7 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 // It then tries to get all password histories of the user. If the user is not found, it updates the brute force buckets counter,
 // call post Lua action and return authentication failure.
 // It also checks if the user is found during password verification, if true, it sets a new username to the user.
-// Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
+// Afterward, it applies Lua subject analysis to the result and calls the post Lua action, and finally, it returns the authentication result.
 func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) definitions.AuthResult {
 	tr := monittrace.New("nauthilus/auth")
 	actx, aspan := tr.Start(ctx.Request.Context(), "auth.authenticate",
@@ -3231,7 +3231,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
 	}
 
-	authResult = a.FilterLua(ctx, passDBResult)
+	authResult = a.SubjectLua(ctx, passDBResult)
 	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
 	if a.HasConfiguredAuthPolicyAuthority(ctx) {
@@ -3243,16 +3243,16 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	return authResult
 }
 
-// FilterLua calls Lua filters which can change the backend result.
-func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
-	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "filter.lua") {
+// SubjectLua calls Lua subject sources which can change the backend result.
+func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
+	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "subject.lua") {
 		return definitions.AuthResultTempFail
 	}
 
-	defer a.completePolicyStage(ctx, policy.StageAuthFilters)
+	defer a.completePolicyStage(ctx, policy.StageSubjectAnalysis)
 
 	tr := monittrace.New("nauthilus/auth")
-	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.filter",
+	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.subject",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
 	)
@@ -3264,18 +3264,18 @@ func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) defi
 
 	defer lspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_filter_lua_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_subject_lua_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
-	if lf := getLuaFilter(); lf != nil {
-		res := lf.Filter(ctx, a.View(), passDBResult)
+	if lf := getLuaSubject(); lf != nil {
+		res := lf.Analyze(ctx, a.View(), passDBResult)
 		lspan.SetAttributes(attribute.String("result", string(res)))
 
 		return res
 	}
 
-	level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, "LuaFilter not registered")
+	_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, "LuaSubject not registered")
 
 	return definitions.AuthResultTempFail
 }
@@ -4077,7 +4077,7 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 
 	// Default flags
 	a.Runtime.Authenticated = false // not decided yet
-	a.Runtime.Authorized = true     // default allow unless a filter rejects
+	a.Runtime.Authorized = true     // default allow unless subject analysis rejects
 
 	switch a.Request.Service {
 	case definitions.ServBasic:
@@ -4380,7 +4380,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 				return true
 			}
 
-			a.markFeatureRejected(ctx)
+			a.markEnvironmentRejected(ctx)
 			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()

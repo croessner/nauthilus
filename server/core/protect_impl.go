@@ -88,7 +88,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 					return
 				}
 
-				auth.markFeatureRejected(ctx)
+				auth.markEnvironmentRejected(ctx)
 				auth.UpdateBruteForceBucketsCounter(ctx)
 				result := GetPassDBResultFromPool()
 				auth.PostLuaAction(ctx, result)

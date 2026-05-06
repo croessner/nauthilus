@@ -77,6 +77,8 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertIn("allow_cleartext_networks", converted)
             self.assertIn("ip_allowlist", converted)
             self.assertIn("hooks:", converted)
+            self.assertIn("obligation_targets:", converted)
+            self.assertIn("attribute_sources:", converted)
             self.assertIn("http_location", converted)
             self.assertIn("scopes", converted)
             self.assertIn("remember_me_ttl", converted)
@@ -86,6 +88,8 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertIn("list-account:", converted)
             self.assertIn("named_backends:", converted)
             self.assertIn("lookup-secondary:", converted)
+            self.assertIn("environment_vm_pool_size: 8", converted)
+            self.assertIn("subject_vm_pool_size: 9", converted)
             self.assertIn("oidc_bearer:", converted)
             self.assertIn("basic_auth:", converted)
             self.assertIn("keep_alive:", converted)
@@ -94,9 +98,9 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertIn("x-scope-profile:", converted)
             self.assertIn("policy:", converted)
             self.assertIn('default_policy: "standard_auth"', converted)
-            self.assertIn('type: "lua.control"', converted)
-            self.assertIn('config_ref: "auth.controls.lua.controls.test_context_chain"', converted)
-            self.assertIn('attribute: "auth.lua.control.test_context_chain.triggered"', converted)
+            self.assertIn('type: "lua.environment"', converted)
+            self.assertIn('config_ref: "auth.policy.attribute_sources.lua.environment.test_context_chain"', converted)
+            self.assertIn('attribute: "auth.lua.environment.test_context_chain.triggered"', converted)
             self.assertRegex(
                 converted,
                 re.compile(
@@ -119,6 +123,11 @@ class ConvertConfigV1ToV2Test(unittest.TestCase):
             self.assertNotIn("when_no_auth", converted)
             self.assertNotIn("when_authenticated", converted)
             self.assertNotIn("when_unauthenticated", converted)
+            self.assertNotIn("auth.controls.lua.actions", converted)
+            self.assertNotIn("auth.controls.lua.controls", converted)
+            self.assertNotIn("auth.controls.lua.filters", converted)
+            self.assertNotIn("feature_vm_pool_size", converted)
+            self.assertNotIn("filter_vm_pool_size", converted)
 
             self.assertIn("validation passed", report)
             self.assertIn("migrated paths", report)
@@ -299,26 +308,26 @@ lua:
             self.assertNotIn("when_authenticated", converted)
             self.assertNotIn("when_unauthenticated", converted)
             self.assertNotIn("depends_on", converted)
-            self.assertNotIn('type: "lua.controls"', converted)
-            self.assertNotIn('type: "lua.filters"', converted)
+            self.assertNotIn('type: "lua.control"', converted)
+            self.assertNotIn('type: "lua.filter"', converted)
 
-            self.assertIn('name: "lua_control_context_seed"', converted)
-            self.assertIn('config_ref: "auth.controls.lua.controls.context_seed"', converted)
+            self.assertIn('name: "lua_environment_context_seed"', converted)
+            self.assertIn('config_ref: "auth.policy.attribute_sources.lua.environment.context_seed"', converted)
             self.assertIn('auth_state: "authenticated"', converted)
             self.assertRegex(
                 converted,
                 re.compile(
-                    r'name: "lua_control_geo_block"[\s\S]*?operations:\n\s+- "authenticate"\n\s+- "lookup_identity"[\s\S]*?after:\n\s+- "lua_control_context_seed"'
+                    r'name: "lua_environment_geo_block"[\s\S]*?operations:\n\s+- "authenticate"\n\s+- "lookup_identity"[\s\S]*?after:\n\s+- "lua_environment_context_seed"'
                 ),
             )
             self.assertRegex(
                 converted,
                 re.compile(
-                    r'name: "lua_filter_billing_lock"[\s\S]*?after:\n\s+- "lua_filter_billing_seed"'
+                    r'name: "lua_subject_billing_lock"[\s\S]*?after:\n\s+- "lua_subject_billing_seed"'
                 ),
             )
-            self.assertIn('attribute: "auth.lua.control.geo_block.triggered"', converted)
-            self.assertIn('attribute: "auth.lua.filter.billing_lock.rejected"', converted)
+            self.assertIn('attribute: "auth.lua.environment.geo_block.triggered"', converted)
+            self.assertIn('attribute: "auth.lua.subject.billing_lock.rejected"', converted)
             self.assertIn('name: "standard_default_deny"', converted)
 
     def test_preserve_existing_runtime_root_without_v2_rewrite(self) -> None:

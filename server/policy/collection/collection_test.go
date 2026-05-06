@@ -65,11 +65,11 @@ func TestDecisionContextRecordsCheckResultAndAttributes(t *testing.T) {
 
 func TestDecisionContextReportsSkippedMissingAndUnavailableFacts(t *testing.T) {
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
-	ctx.MarkUnavailable("lua_control_risk", "not_observe_safe")
+	ctx.MarkUnavailable("lua_environment_risk", "not_observe_safe")
 	ctx.CompleteStage(policy.StagePreAuth, AuthStateUnauthenticated)
 
 	report := ctx.Report()
-	if got := report.Checks["lua_control_auth_only"].Status; got != policy.CheckStatusSkipped {
+	if got := report.Checks["lua_environment_auth_only"].Status; got != policy.CheckStatusSkipped {
 		t.Fatalf("skipped status = %q, want %q", got, policy.CheckStatusSkipped)
 	}
 
@@ -77,7 +77,7 @@ func TestDecisionContextReportsSkippedMissingAndUnavailableFacts(t *testing.T) {
 		t.Fatalf("missing tls reason = %q, want not_recorded", got)
 	}
 
-	if got := report.Unavailable["lua_control_risk"].Reason; got != "not_observe_safe" {
+	if got := report.Unavailable["lua_environment_risk"].Reason; got != "not_observe_safe" {
 		t.Fatalf("unavailable reason = %q, want not_observe_safe", got)
 	}
 }
@@ -87,11 +87,11 @@ func TestDecisionContextReportsUnsafeObserveChecksUnavailable(t *testing.T) {
 	ctx.CompleteStage(policy.StagePreAuth, AuthStateUnauthenticated)
 
 	report := ctx.Report()
-	if got := report.Unavailable["lua_control_risk"].Reason; got != "not_observe_safe" {
+	if got := report.Unavailable["lua_environment_risk"].Reason; got != "not_observe_safe" {
 		t.Fatalf("unavailable reason = %q, want not_observe_safe", got)
 	}
 
-	if _, exists := report.MissingChecks["lua_control_risk"]; exists {
+	if _, exists := report.MissingChecks["lua_environment_risk"]; exists {
 		t.Fatal("unsafe observe check was also recorded as missing")
 	}
 
@@ -105,32 +105,32 @@ func TestScriptSinkRecordsOneCheckPerLuaScript(t *testing.T) {
 	sink := NewScriptSink(ctx)
 
 	sink.RecordScriptResult(context.Background(), ScriptResult{
-		Kind:          ScriptKindControl,
+		Kind:          ScriptKindEnvironment,
 		Name:          "risk",
 		Triggered:     true,
 		StatusMessage: "Denied by Lua",
 	})
 	sink.RecordScriptResult(context.Background(), ScriptResult{
-		Kind:   ScriptKindFilter,
+		Kind:   ScriptKindSubject,
 		Name:   "billing",
 		Action: true,
 	})
 
 	report := ctx.Report()
-	if _, ok := report.Checks["lua_control_risk"]; !ok {
-		t.Fatal("missing Lua control check result")
+	if _, ok := report.Checks["lua_environment_risk"]; !ok {
+		t.Fatal("missing Lua environment check result")
 	}
 
-	if _, ok := report.Checks["lua_filter_billing"]; !ok {
-		t.Fatal("missing Lua filter check result")
+	if _, ok := report.Checks["lua_subject_billing"]; !ok {
+		t.Fatal("missing Lua subject check result")
 	}
 
-	if got := report.Attributes["auth.lua.control.risk.triggered"].Details["status_message"].Value; got != "Denied by Lua" {
+	if got := report.Attributes["auth.lua.environment.risk.triggered"].Details["status_message"].Value; got != "Denied by Lua" {
 		t.Fatalf("Lua status detail = %v, want Denied by Lua", got)
 	}
 
-	if got := report.Attributes["auth.lua.filter.billing.rejected"].Value; got != true {
-		t.Fatalf("Lua filter rejected attribute = %v, want true", got)
+	if got := report.Attributes["auth.lua.subject.billing.rejected"].Value; got != true {
+		t.Fatalf("Lua subject rejected attribute = %v, want true", got)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestScriptSinkResolvesLuaResultByConfigRef(t *testing.T) {
 	sink := NewScriptSink(ctx)
 
 	sink.RecordScriptResult(context.Background(), ScriptResult{
-		Kind:      ScriptKindControl,
+		Kind:      ScriptKindEnvironment,
 		Name:      "geoip",
 		Triggered: true,
 	})
@@ -149,20 +149,20 @@ func TestScriptSinkResolvesLuaResultByConfigRef(t *testing.T) {
 		t.Fatal("missing configured Lua check result")
 	}
 
-	if _, ok := report.Checks["lua_control_geoip"]; ok {
+	if _, ok := report.Checks["lua_environment_geoip"]; ok {
 		t.Fatal("Lua result was recorded under fallback check name")
 	}
 }
 
-func TestScriptSinkUsesRunIfForLuaFilterScheduling(t *testing.T) {
+func TestScriptSinkUsesRunIfForLuaSubjectSourceScheduling(t *testing.T) {
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
 	sink := NewScriptSink(ctx)
 
-	if sink.ScriptScheduled(ScriptKindFilter, "billing", AuthStateUnauthenticated) {
+	if sink.ScriptScheduled(ScriptKindSubject, "billing", AuthStateUnauthenticated) {
 		t.Fatal("filter should not be scheduled for unauthenticated auth state")
 	}
 
-	if !sink.ScriptScheduled(ScriptKindFilter, "billing", AuthStateAuthenticated) {
+	if !sink.ScriptScheduled(ScriptKindSubject, "billing", AuthStateAuthenticated) {
 		t.Fatal("filter should be scheduled for authenticated auth state")
 	}
 }
@@ -171,7 +171,7 @@ func TestScriptSinkBuildsPolicyScriptSchedule(t *testing.T) {
 	ctx := NewDecisionContext(testScriptScheduleSnapshot(), policy.OperationAuthenticate, nil)
 	sink := NewScriptSink(ctx)
 
-	plan := sink.ScriptPlan(ScriptKindControl, AuthStateUnauthenticated)
+	plan := sink.ScriptPlan(ScriptKindEnvironment, AuthStateUnauthenticated)
 	if !plan.Configured {
 		t.Fatal("script plan should be configured")
 	}
@@ -192,7 +192,7 @@ func TestScriptSinkBuildsPolicyScriptSchedule(t *testing.T) {
 		t.Fatalf("second script dependencies = %#v, want context", got)
 	}
 
-	if sink.ScriptScheduled(ScriptKindControl, "auth_only", AuthStateUnauthenticated) {
+	if sink.ScriptScheduled(ScriptKindEnvironment, "auth_only", AuthStateUnauthenticated) {
 		t.Fatal("auth-only script must not be scheduled for unauthenticated state")
 	}
 }
@@ -294,22 +294,22 @@ func testSnapshot() *policyruntime.Snapshot {
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
 						},
 						{
-							Name:       "lua_control_auth_only",
-							Type:       policy.CheckTypeLuaControl,
+							Name:       "lua_environment_auth_only",
+							Type:       policy.CheckTypeLuaEnvironment,
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAuthenticated},
 						},
 					},
 				},
-				policy.StageAuthFilters: {
-					Stage: policy.StageAuthFilters,
+				policy.StageSubjectAnalysis: {
+					Stage: policy.StageSubjectAnalysis,
 					Checks: []policyruntime.CompiledCheck{
 						{
-							Name:       "lua_filter_billing",
-							Type:       policy.CheckTypeLuaFilter,
-							ConfigRef:  "auth.controls.lua.filters.billing",
-							Stage:      policy.StageAuthFilters,
+							Name:       "lua_subject_billing",
+							Type:       policy.CheckTypeLuaSubjectSource,
+							ConfigRef:  "auth.policy.attribute_sources.lua.subject.billing",
+							Stage:      policy.StageSubjectAnalysis,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAuthenticated},
 						},
@@ -327,8 +327,8 @@ func testObserveSnapshot() *policyruntime.Snapshot {
 		Stage: policy.StagePreAuth,
 		Checks: []policyruntime.CompiledCheck{
 			{
-				Name:        "lua_control_risk",
-				Type:        policy.CheckTypeLuaControl,
+				Name:        "lua_environment_risk",
+				Type:        policy.CheckTypeLuaEnvironment,
 				Stage:       policy.StagePreAuth,
 				Operations:  []policy.Operation{policy.OperationAuthenticate},
 				RunIf:       policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
@@ -348,7 +348,7 @@ func testObserveSnapshot() *policyruntime.Snapshot {
 				Name:          "custom_deny_risk",
 				Stage:         policy.StagePreAuth,
 				Operations:    []policy.Operation{policy.OperationAuthenticate},
-				RequireChecks: []string{"lua_control_risk"},
+				RequireChecks: []string{"lua_environment_risk"},
 			},
 		},
 	}
@@ -367,26 +367,26 @@ func testScriptScheduleSnapshot() *policyruntime.Snapshot {
 					Stage: policy.StagePreAuth,
 					Checks: []policyruntime.CompiledCheck{
 						{
-							Name:       "lua_control_context",
-							Type:       policy.CheckTypeLuaControl,
-							ConfigRef:  "auth.controls.lua.controls.context",
+							Name:       "lua_environment_context",
+							Type:       policy.CheckTypeLuaEnvironment,
+							ConfigRef:  "auth.policy.attribute_sources.lua.environment.context",
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
 						},
 						{
-							Name:       "lua_control_policy_only",
-							Type:       policy.CheckTypeLuaControl,
-							ConfigRef:  "auth.controls.lua.controls.policy_only",
+							Name:       "lua_environment_policy_only",
+							Type:       policy.CheckTypeLuaEnvironment,
+							ConfigRef:  "auth.policy.attribute_sources.lua.environment.policy_only",
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfUnauthenticated},
-							After:      []string{"lua_control_context"},
+							After:      []string{"lua_environment_context"},
 						},
 						{
-							Name:       "lua_control_auth_only",
-							Type:       policy.CheckTypeLuaControl,
-							ConfigRef:  "auth.controls.lua.controls.auth_only",
+							Name:       "lua_environment_auth_only",
+							Type:       policy.CheckTypeLuaEnvironment,
+							ConfigRef:  "auth.policy.attribute_sources.lua.environment.auth_only",
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAuthenticated},
@@ -410,8 +410,8 @@ func testCustomLuaNameSnapshot() *policyruntime.Snapshot {
 					Checks: []policyruntime.CompiledCheck{
 						{
 							Name:       "geoip_policy_gate",
-							Type:       policy.CheckTypeLuaControl,
-							ConfigRef:  "auth.controls.lua.controls.geoip",
+							Type:       policy.CheckTypeLuaEnvironment,
+							ConfigRef:  "auth.policy.attribute_sources.lua.environment.geoip",
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},

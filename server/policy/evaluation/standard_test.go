@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+//nolint:goconst
 package evaluation
 
 import (
@@ -171,8 +172,8 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 	}
 	luaReport := standardReport(
 		policy.OperationAuthenticate,
-		check("lua_control_risk", policy.CheckTypeLuaControl, policy.StagePreAuth, policy.CheckStatusOK),
-		boolAttr("auth.lua.control.risk.triggered", policy.StagePreAuth, policy.OperationAuthenticate, true, details),
+		check("lua_environment_risk", policy.CheckTypeLuaEnvironment, policy.StagePreAuth, policy.CheckStatusOK),
+		boolAttr("auth.lua.environment.risk.triggered", policy.StagePreAuth, policy.OperationAuthenticate, true, details),
 	)
 
 	got := EvaluateStandardAuth(luaReport)
@@ -184,14 +185,14 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		t.Fatalf("response message = %#v, want Lua detail", got.Final.ResponseMessage)
 	}
 
-	if !luaReport.Attributes["auth.lua.control.risk.triggered"].Details["status_message"].Selected {
+	if !luaReport.Attributes["auth.lua.environment.risk.triggered"].Details["status_message"].Selected {
 		t.Fatal("selected Lua response detail was not marked for redaction")
 	}
 
 	filterReport := standardReport(
 		policy.OperationAuthenticate,
-		check("lua_filter_billing", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK),
-		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationAuthenticate, true, map[string]report.DetailValue{
+		check("lua_subject_billing", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK),
+		boolAttr("auth.lua.subject.billing.rejected", policy.StageSubjectAnalysis, policy.OperationAuthenticate, true, map[string]report.DetailValue{
 			"status_message": {
 				Value:       "Filtered by Lua",
 				Sensitivity: report.SensitivityPublic,
@@ -205,16 +206,16 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		t.Fatal("final decision is nil")
 	}
 
-	if got.Final.PolicyName != "standard_lua_filter_billing_reject" {
-		t.Fatalf("policy = %q, want standard_lua_filter_billing_reject", got.Final.PolicyName)
+	if got.Final.PolicyName != "standard_lua_subject_billing_reject" {
+		t.Fatalf("policy = %q, want standard_lua_subject_billing_reject", got.Final.PolicyName)
 	}
 
 	if got.Final.ResponseMessage == nil || got.Final.ResponseMessage.Message != "Filtered by Lua" {
 		t.Fatalf("filter response message = %#v, want Lua detail", got.Final.ResponseMessage)
 	}
 
-	if !filterReport.Attributes["auth.lua.filter.billing.rejected"].Details["status_message"].Selected {
-		t.Fatal("selected Lua filter response detail was not marked")
+	if !filterReport.Attributes["auth.lua.subject.billing.rejected"].Details["status_message"].Selected {
+		t.Fatal("selected Lua subject response detail was not marked")
 	}
 
 	bruteForceReport := standardReport(
@@ -238,8 +239,8 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 
 	abortReport := standardReport(
 		policy.OperationAuthenticate,
-		check("lua_control_risk", policy.CheckTypeLuaControl, policy.StagePreAuth, policy.CheckStatusOK),
-		boolAttr("auth.lua.control.risk.abort", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
+		check("lua_environment_risk", policy.CheckTypeLuaEnvironment, policy.StagePreAuth, policy.CheckStatusOK),
+		boolAttr("auth.lua.environment.risk.abort", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
 	)
 
 	got = EvaluateStandardAuth(abortReport)
@@ -250,12 +251,12 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 }
 
 func TestStandardAuthMapsLuaScriptsForLookupIdentity(t *testing.T) {
-	controlCheck := check("lua_control_risk", policy.CheckTypeLuaControl, policy.StagePreAuth, policy.CheckStatusOK)
+	controlCheck := check("lua_environment_risk", policy.CheckTypeLuaEnvironment, policy.StagePreAuth, policy.CheckStatusOK)
 	controlCheck.Operation = policy.OperationLookupIdentity
 	controlReport := standardReport(
 		policy.OperationLookupIdentity,
 		controlCheck,
-		boolAttr("auth.lua.control.risk.triggered", policy.StagePreAuth, policy.OperationLookupIdentity, true, nil),
+		boolAttr("auth.lua.environment.risk.triggered", policy.StagePreAuth, policy.OperationLookupIdentity, true, nil),
 	)
 
 	got := EvaluateStandardAuth(controlReport)
@@ -263,16 +264,16 @@ func TestStandardAuthMapsLuaScriptsForLookupIdentity(t *testing.T) {
 		t.Fatal("final decision is nil")
 	}
 
-	if got.Final.PolicyName != "standard_lua_control_risk_trigger" {
-		t.Fatalf("policy = %q, want standard_lua_control_risk_trigger", got.Final.PolicyName)
+	if got.Final.PolicyName != "standard_lua_environment_risk_trigger" {
+		t.Fatalf("policy = %q, want standard_lua_environment_risk_trigger", got.Final.PolicyName)
 	}
 
-	filterCheck := check("lua_filter_billing", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK)
+	filterCheck := check("lua_subject_billing", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK)
 	filterCheck.Operation = policy.OperationLookupIdentity
 	filterReport := standardReport(
 		policy.OperationLookupIdentity,
 		filterCheck,
-		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationLookupIdentity, true, nil),
+		boolAttr("auth.lua.subject.billing.rejected", policy.StageSubjectAnalysis, policy.OperationLookupIdentity, true, nil),
 	)
 
 	got = EvaluateStandardAuth(filterReport)
@@ -280,18 +281,18 @@ func TestStandardAuthMapsLuaScriptsForLookupIdentity(t *testing.T) {
 		t.Fatal("final decision is nil")
 	}
 
-	if got.Final.PolicyName != "standard_lua_filter_billing_reject" {
-		t.Fatalf("policy = %q, want standard_lua_filter_billing_reject", got.Final.PolicyName)
+	if got.Final.PolicyName != "standard_lua_subject_billing_reject" {
+		t.Fatalf("policy = %q, want standard_lua_subject_billing_reject", got.Final.PolicyName)
 	}
 }
 
 func TestStandardAuthMapsLuaScriptsFromEmittedAttributes(t *testing.T) {
-	controlCheck := check("geoip_policy_gate", policy.CheckTypeLuaControl, policy.StagePreAuth, policy.CheckStatusOK)
-	controlCheck.Attributes = []string{"auth.lua.control.geoip.triggered"}
+	controlCheck := check("geoip_policy_gate", policy.CheckTypeLuaEnvironment, policy.StagePreAuth, policy.CheckStatusOK)
+	controlCheck.Attributes = []string{"auth.lua.environment.geoip.triggered"}
 	controlReport := standardReport(
 		policy.OperationAuthenticate,
 		controlCheck,
-		boolAttr("auth.lua.control.geoip.triggered", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
+		boolAttr("auth.lua.environment.geoip.triggered", policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
 	)
 
 	got := EvaluateStandardAuth(controlReport)
@@ -299,16 +300,16 @@ func TestStandardAuthMapsLuaScriptsFromEmittedAttributes(t *testing.T) {
 		t.Fatal("final decision is nil")
 	}
 
-	if got.Final.PolicyName != "standard_lua_control_geoip_trigger" {
-		t.Fatalf("policy = %q, want standard_lua_control_geoip_trigger", got.Final.PolicyName)
+	if got.Final.PolicyName != "standard_lua_environment_geoip_trigger" {
+		t.Fatalf("policy = %q, want standard_lua_environment_geoip_trigger", got.Final.PolicyName)
 	}
 
-	filterCheck := check("billing_policy_gate", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK)
-	filterCheck.Attributes = []string{"auth.lua.filter.billing.rejected"}
+	filterCheck := check("billing_policy_gate", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK)
+	filterCheck.Attributes = []string{"auth.lua.subject.billing.rejected"}
 	filterReport := standardReport(
 		policy.OperationAuthenticate,
 		filterCheck,
-		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationAuthenticate, true, nil),
+		boolAttr("auth.lua.subject.billing.rejected", policy.StageSubjectAnalysis, policy.OperationAuthenticate, true, nil),
 	)
 
 	got = EvaluateStandardAuth(filterReport)
@@ -316,8 +317,8 @@ func TestStandardAuthMapsLuaScriptsFromEmittedAttributes(t *testing.T) {
 		t.Fatal("final decision is nil")
 	}
 
-	if got.Final.PolicyName != "standard_lua_filter_billing_reject" {
-		t.Fatalf("policy = %q, want standard_lua_filter_billing_reject", got.Final.PolicyName)
+	if got.Final.PolicyName != "standard_lua_subject_billing_reject" {
+		t.Fatalf("policy = %q, want standard_lua_subject_billing_reject", got.Final.PolicyName)
 	}
 }
 
@@ -388,7 +389,7 @@ func TestCustomObserveReportsUnsafeCustomOnlyCheckUnavailable(t *testing.T) {
 		t.Fatal("mismatch = false, want default-vs-custom mismatch")
 	}
 
-	if got := policyReport.Unavailable["lua_control_risk"].Reason; got != "not_observe_safe" {
+	if got := policyReport.Unavailable["lua_environment_risk"].Reason; got != "not_observe_safe" {
 		t.Fatalf("unavailable reason = %q, want not_observe_safe", got)
 	}
 
@@ -396,8 +397,8 @@ func TestCustomObserveReportsUnsafeCustomOnlyCheckUnavailable(t *testing.T) {
 		t.Fatalf("unavailable metrics = %d, want 1", len(recorder.unavailable))
 	}
 
-	if recorder.unavailable[0].Check != "lua_control_risk" {
-		t.Fatalf("unavailable check = %q, want lua_control_risk", recorder.unavailable[0].Check)
+	if recorder.unavailable[0].Check != "lua_environment_risk" {
+		t.Fatalf("unavailable check = %q, want lua_environment_risk", recorder.unavailable[0].Check)
 	}
 }
 
@@ -517,7 +518,7 @@ func TestConfiguredAuthEnforceSelectsBackendDecision(t *testing.T) {
 	}
 }
 
-func TestConfiguredAuthEnforceSelectsLuaFilterStatusMessage(t *testing.T) {
+func TestConfiguredAuthEnforceSelectsLuaSubjectSourceStatusMessage(t *testing.T) {
 	details := map[string]report.DetailValue{
 		"status_message": {
 			Value:       "Billing lock",
@@ -527,10 +528,10 @@ func TestConfiguredAuthEnforceSelectsLuaFilterStatusMessage(t *testing.T) {
 	}
 	policyReport := standardReport(
 		policy.OperationAuthenticate,
-		check("lua_filter_billing", policy.CheckTypeLuaFilter, policy.StageAuthFilters, policy.CheckStatusOK),
-		boolAttr("auth.lua.filter.billing.rejected", policy.StageAuthFilters, policy.OperationAuthenticate, true, details),
+		check("lua_subject_billing", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK),
+		boolAttr("auth.lua.subject.billing.rejected", policy.StageSubjectAnalysis, policy.OperationAuthenticate, true, details),
 	)
-	snapshot := enforceSnapshotWithCustomAuth(customLuaFilterPolicy())
+	snapshot := enforceSnapshotWithCustomAuth(customLuaSubjectSourcePolicy())
 
 	got := EvaluateConfiguredAuth(context.Background(), snapshot, policyReport, CompareInput{
 		Mode:       "enforce",
@@ -542,11 +543,11 @@ func TestConfiguredAuthEnforceSelectsLuaFilterStatusMessage(t *testing.T) {
 	}
 
 	if got.Final.ResponseMessage == nil || got.Final.ResponseMessage.Message != "Billing lock" {
-		t.Fatalf("response message = %#v, want Lua filter detail", got.Final.ResponseMessage)
+		t.Fatalf("response message = %#v, want Lua subject detail", got.Final.ResponseMessage)
 	}
 
-	if !policyReport.Attributes["auth.lua.filter.billing.rejected"].Details["status_message"].Selected {
-		t.Fatal("selected Lua filter response detail was not marked")
+	if !policyReport.Attributes["auth.lua.subject.billing.rejected"].Details["status_message"].Selected {
+		t.Fatal("selected Lua subject response detail was not marked")
 	}
 }
 
@@ -620,14 +621,14 @@ func observeSnapshotWithUnavailableCheck() *policyruntime.Snapshot {
 		Stage: policy.StagePreAuth,
 		Checks: []policyruntime.CompiledCheck{
 			{
-				Name:       "lua_control_risk",
-				Type:       policy.CheckTypeLuaControl,
+				Name:       "lua_environment_risk",
+				Type:       policy.CheckTypeLuaEnvironment,
 				Stage:      policy.StagePreAuth,
 				Operations: []policy.Operation{policy.OperationAuthenticate},
 			},
 		},
 	}
-	snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision].Policies[0].RequireChecks = []string{"lua_control_risk"}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision].Policies[0].RequireChecks = []string{"lua_environment_risk"}
 
 	return snapshot
 }
@@ -731,15 +732,15 @@ func customAuthDecisionPolicy(
 	}
 }
 
-func customLuaFilterPolicy() policyruntime.CompiledPolicy {
+func customLuaSubjectSourcePolicy() policyruntime.CompiledPolicy {
 	return policyruntime.CompiledPolicy{
 		Name:          "custom_billing_filter_deny",
 		Stage:         policy.StageAuthDecision,
 		Operations:    []policy.Operation{policy.OperationAuthenticate},
-		RequireChecks: []string{"lua_filter_billing"},
+		RequireChecks: []string{"lua_subject_billing"},
 		Root: policyruntime.CompiledExpr{
 			Kind:        policyruntime.ExprKindAttribute,
-			AttributeID: "auth.lua.filter.billing.rejected",
+			AttributeID: "auth.lua.subject.billing.rejected",
 			Operator:    "is",
 			Expected:    policyruntime.TypedValue{Value: true},
 		},
@@ -750,7 +751,7 @@ func customLuaFilterPolicy() policyruntime.CompiledPolicy {
 			ResponseMarker: policy.ResponseMarkerFail,
 			ResponseMessage: policyruntime.ResponseMessagePlan{
 				Source:      "attribute_detail",
-				AttributeID: "auth.lua.filter.billing.rejected",
+				AttributeID: "auth.lua.subject.billing.rejected",
 				Detail:      "status_message",
 				Fallback:    "Invalid login or password",
 				MaxLength:   256,

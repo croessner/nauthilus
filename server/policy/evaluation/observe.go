@@ -234,7 +234,7 @@ func orderedStages(operation policy.Operation) []policy.Stage {
 	return []policy.Stage{
 		policy.StagePreAuth,
 		policy.StageAuthBackend,
-		policy.StageAuthFilters,
+		policy.StageSubjectAnalysis,
 		policy.StageAuthDecision,
 	}
 }

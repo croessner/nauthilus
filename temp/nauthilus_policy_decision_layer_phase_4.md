@@ -107,7 +107,7 @@ Second pass completed against the Phase 4 requirements, section 11.5, section 17
 - Tests first: focused evaluator and auth-boundary tests were added before implementation; the initial focused run failed because the evaluator/report fields did not exist yet.
 - Current authority: current `ResponseWriter` and account-list output remain authoritative; shadow comparison runs only after current production output is selected.
 - Ordered first-match: `standard_auth` evaluates the section 17.7 rows in order, keeps the brute-force checkpoint first, skips non-applicable rules when required checks are missing, and leaves the final default-deny rule last.
-- Mapping coverage: pre-auth brute force, TLS, relay-domain, RBL, Lua control, implicit pass, backend tempfail, empty credentials, Lua filter, auth success/failure, lookup identity, list accounts, and default deny rows are represented by the built-in evaluator.
+- Mapping coverage: pre-auth brute force, TLS, relay-domain, RBL, Lua environment source, implicit pass, backend tempfail, empty credentials, Lua subject source, auth success/failure, lookup identity, list accounts, and default deny rows are represented by the built-in evaluator.
 - Brute force: modeled as first-class collected policy facts plus normal planned obligations; no new direct special path was added.
 - Response and reporting: response markers, selected public Lua status messages, outcome markers, FSM markers, planned obligations, observe reports, logs, metrics, response-render metrics, and an OTel comparison span are produced.
 - Config UX: no new public config root or new `auth.policy` field was added in this phase, so `mapstructure`, schema, `ConfigProblem`, dump, and redaction behavior for config are unchanged.

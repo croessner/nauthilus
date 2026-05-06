@@ -12,8 +12,8 @@ Phase 3 adds request-local `CheckResult` collection and explicit adapters for th
 - `server/policy/observability/metrics.go`: added a process-wide safe policy metrics recorder for request-time check measurements.
 - `server/policy/compiler/definitions.go` and `server/policy/registry/builtin.go`: reused the shared policy constants instead of duplicating registry strings.
 - `server/core/policy_collection.go`: added request-local policy collection wiring for request attributes, built-in adapters, backend/account-provider adapters, stage completion, and the Lua script-recorder handoff.
-- `server/core/bruteforce.go`, `server/core/features.go`, `server/core/auth.go`, and `server/core/auth/lua_service.go`: attached collection to brute force, Lua controls, TLS, relay domains, RBL, backend authentication, Lua filters, and account-provider paths without changing returned `AuthResult` values.
-- `server/lualib/feature/feature.go` and `server/lualib/filter/filter.go`: attached one per-script collection event to the existing dependency-plan execution path after each named Lua control or filter finishes or errors.
+- `server/core/bruteforce.go`, `server/core/features.go`, `server/core/auth.go`, and `server/core/auth/lua_service.go`: attached collection to brute force, Lua environment sources, TLS, relay domains, RBL, backend authentication, Lua subject sources, and account-provider paths without changing returned `AuthResult` values.
+- `server/lualib/environment/environment.go` and `server/lualib/subject/subject.go`: attached one per-script collection event to the existing dependency-plan execution path after each named Lua environment or subject source finishes or errors.
 
 ## Tests and Validation
 
@@ -21,7 +21,7 @@ Phase 3 adds request-local `CheckResult` collection and explicit adapters for th
 - Added auth-boundary parity coverage in `server/core/policy_collection_test.go` proving TLS collection does not change the current TLS feature decision.
 - Validated focused packages with:
   - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/collection ./server/core -run 'TestDecisionContext|TestScriptSink|TestAuthPathCollectsTLSCheck'`
-  - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/lualib/feature ./server/lualib/filter ./server/policy/compiler ./server/policy/report ./server/policy/observability`
+  - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/lualib/environment ./server/lualib/subject ./server/policy/compiler ./server/policy/report ./server/policy/observability`
   - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core`
 - The sandboxed full `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./...` failed because tests could not bind local listeners or miniredis sockets (`bind: operation not permitted`). The same command passed outside the sandbox.
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make guardrails` first found and fixed a new Revive flow-style issue. The sandboxed rerun then reached tests but failed on the same listener/miniredis restriction and cache writes outside the workspace. The same command passed outside the sandbox.
@@ -30,14 +30,14 @@ Phase 3 adds request-local `CheckResult` collection and explicit adapters for th
 
 - The current auth implementation remains the authoritative decision path. The collection layer is a migration adapter that observes current mechanisms and emits target-model facts.
 - `server/core/policy_collection.go` maps current built-in functions to target check names: `brute_force`, `tls_encryption`, `relay_domains`, `rbl`, `ldap_backend`, `lua_backend`, and `account_provider`.
-- `server/lualib/feature` and `server/lualib/filter` emit named Lua check results through an internal `ScriptRecorder` adapter while preserving the existing dependency-plan execution and `lualib.Context` delta merge.
+- `server/lualib/environment` and `server/lualib/subject` emit named Lua check results through an internal `ScriptRecorder` adapter while preserving the existing dependency-plan execution and `lualib.Context` delta merge.
 - Backend selection maps the current LDAP/Test/cache-compatible paths to `ldap_backend` unless the observed backend is Lua. This keeps the target check surface stable while the current backend path remains authoritative.
 
 ## Planned Adapter Removal
 
 - The current-auth authoritative bridge is removed when policy check execution, policy decision evaluation, and response/FSM rendering become authoritative in a later implementation step.
 - The built-in function wrappers in `server/core/policy_collection.go` should be replaced by native check executors or narrowed to telemetry-only shims after the policy engine owns decision selection.
-- The Lua `ScriptRecorder` handoff remains until named Lua controls and filters are first-class policy check executors that emit their registered attributes directly.
+- The Lua `ScriptRecorder` handoff remains until named Lua environment and subject sources are first-class policy check executors that emit their registered attributes directly.
 - The backend mapping adapter is removed once backend checks are represented as explicit policy executors for LDAP, Lua, and any later supported backend source.
 
 ## Open Risks and Deliberately Not Implemented
@@ -58,13 +58,13 @@ Phase 3 adds request-local `CheckResult` collection and explicit adapters for th
 - Completion rule 18.1.6: package-local unit tests cover collection/report behavior, and `server/core` contains an auth-boundary parity test.
 - Completion rule 18.1.7: atomic reload behavior is unaffected. The request collector reads the active snapshot from the runtime store and does not mutate snapshot activation.
 - Completion rule 18.1.8: active temporary adapters and planned removal are listed above.
-- Phase 3 requirement 1: brute force, Lua controls, TLS, relay domains, RBL, backend, Lua filters, and account providers now emit structured check results and registered attributes.
-- Phase 3 requirement 2: Lua controls and Lua filters emit one result per named script through the script sink.
+- Phase 3 requirement 1: brute force, Lua environment sources, TLS, relay domains, RBL, backend, Lua subject sources, and account providers now emit structured check results and registered attributes.
+- Phase 3 requirement 2: Lua environment and subject sources emit one result per named script through the script sink.
 - Phase 3 requirement 3: the implementation attaches to the existing compiled Lua dependency-plan execution path and records after each planned script result; `lualib.Context` deltas are still merged in the existing order.
 - Phase 3 requirement 4: `run_if`, `operations`, `after`, and `require_checks` remain compiler-validated against the compiled plan from the prior step; request-time collection resolves adapters against that plan and records missing/skipped facts.
 - Phase 3 requirement 5: reports now include check results plus missing, skipped, error, and unavailable facts.
 - Phase 3 requirement 6: check execution emits policy metrics and OTel spans.
 - Phase 3 requirement 7: collected results do not change production decisions.
-- Section 17 mapping: the implemented check names and attribute IDs align with the registry and mapping tables for `brute_force`, `lua_control.<name>`, `tls_encryption`, `relay_domains`, `rbl`, `ldap_backend`, `lua_backend`, `lua_filter.<name>`, and `account_provider`.
-- Review-fixed gap: Lua script results can be emitted concurrently by the existing per-level Lua execution. `DecisionContext` now guards report maps with a mutex so parallel named Lua control/filter adapters cannot race while recording facts.
+- Section 17 mapping: the implemented check names and attribute IDs align with the registry and mapping tables for `brute_force`, `lua_environment.<name>`, `tls_encryption`, `relay_domains`, `rbl`, `ldap_backend`, `lua_backend`, `lua_subject.<name>`, and `account_provider`.
+- Review-fixed gap: Lua script results can be emitted concurrently by the existing per-level Lua execution. `DecisionContext` now guards report maps with a mutex so parallel named Lua environment/subject source adapters cannot race while recording facts.
 - No new Go code contains a technical name, comment, or string matching `/phase/i`; this was checked with `git diff -- '*.go' | rg -n -i '^\+.*phase'`.

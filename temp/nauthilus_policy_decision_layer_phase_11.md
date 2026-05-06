@@ -7,12 +7,12 @@ Phase 11 enables configured custom policy enforcement for the `pre_auth` stage o
 The implemented scope is limited to:
 
 1. brute force;
-2. Lua controls;
+2. Lua environment sources;
 3. TLS enforcement;
 4. relay domains;
 5. RBL.
 
-This slice does not start custom enforcement for backend results, Lua filters, lookup-identity, account listing, final `auth_decision` rules, config compiler authority changes, or any new FSM vocabulary. `standard_auth` remains the built-in default policy set and remains the final auth-decision authority until the later backend/filter enforcement slice.
+This slice does not start custom enforcement for backend results, Lua subject sources, lookup-identity, account listing, final `auth_decision` rules, config compiler authority changes, or any new FSM vocabulary. `standard_auth` remains the built-in default policy set and remains the final auth-decision authority until the later backend/subject-source enforcement slice.
 
 ## Implemented Files and Modules
 
@@ -103,10 +103,10 @@ Result:
 ## Active Temporary Adapters
 
 - Current mechanism collection adapters remain active.
-  - Purpose: reuse current brute-force, Lua control, TLS, relay-domain, and RBL mechanism execution as fact producers.
+  - Purpose: reuse current brute-force, Lua environment source, TLS, relay-domain, and RBL mechanism execution as fact producers.
   - Removal plan: replace with native policy check executors before final cleanup.
 
-- Current feature side effects still run through current mechanism code for Lua controls, TLS, relay-domain, and RBL triggers.
+- Current feature side effects still run through current mechanism code for Lua environment sources, TLS, relay-domain, and RBL triggers.
   - Purpose: preserve current behavior while configured `pre_auth` decisions become authoritative.
   - Removal plan: move remaining side effects behind registered policy obligations when native check executors and response enforcement are completed.
 
@@ -131,7 +131,7 @@ Result:
 
 ## Open Risks and Deliberately Deferred Points
 
-- Custom backend, Lua filter, status-message, lookup-identity, and list-account enforcement remain deliberately out of scope.
+- Custom backend, Lua subject source, status-message, lookup-identity, and list-account enforcement remain deliberately out of scope.
 - Existing current mechanism code may still perform current feature side effects before a configured policy decision is selected. This is documented as a temporary adapter and must be removed by later native check-executor and obligation work.
 - The configured `pre_auth` evaluator uses collected facts from current adapters. Custom-only check execution beyond current fact producers remains deferred.
 - Atomic reload semantics were not changed; the evaluator reads the immutable snapshot captured for the request.
@@ -143,7 +143,7 @@ The second review re-read the Phase 11 requirements, the general completion rule
 
 Result:
 
-- Phase scope stayed limited to custom `pre_auth` enforcement for brute force, Lua controls, TLS, relay domains, and RBL. Backend, Lua filter, lookup-identity, list-account, response-authority, compiler-surface, and FSM-vocabulary changes were not started.
+- Phase scope stayed limited to custom `pre_auth` enforcement for brute force, Lua environment sources, TLS, relay domains, and RBL. Backend, Lua subject source, lookup-identity, list-account, response-authority, compiler-surface, and FSM-vocabulary changes were not started.
 - The first added tests covered the missing configured evaluator and auth-boundary behavior before implementation. A second review test then exposed and fixed one gap: brute-force `skip_remaining_stage_checks` controls now skip later pre-auth checks instead of merely continuing to the current feature path. The same test also guards against duplicate report entries from repeated request-local evaluation calls.
 - `permit` remains rejected for `pre_auth` by the compiler test.
 - No configured `pre_auth` fallback default-deny was introduced. Unmatched configured `pre_auth` rules remain neutral and final auth default-deny semantics stay unchanged.

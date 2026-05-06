@@ -28,11 +28,11 @@ import (
 type ScriptKind string
 
 const (
-	// ScriptKindControl identifies a Lua control script.
-	ScriptKindControl ScriptKind = "control"
+	// ScriptKindEnvironment identifies a Lua environment attribute source.
+	ScriptKindEnvironment ScriptKind = "environment"
 
-	// ScriptKindFilter identifies a Lua filter script.
-	ScriptKindFilter ScriptKind = "filter"
+	// ScriptKindSubject identifies a Lua subject attribute source.
+	ScriptKindSubject ScriptKind = "subject"
 )
 
 // ScriptResult is the per-script result emitted by Lua runtime adapters.
@@ -161,19 +161,19 @@ func (c *DecisionContext) ScriptPlan(kind ScriptKind, authState AuthState) Scrip
 
 func (r ScriptResult) selector() CheckSelector {
 	switch r.Kind {
-	case ScriptKindFilter:
+	case ScriptKindSubject:
 		return CheckSelector{
-			CheckType: policy.CheckTypeLuaFilter,
-			Stage:     policy.StageAuthFilters,
-			Name:      "lua_filter_" + r.Name,
-			ConfigRef: "auth.controls.lua.filters." + r.Name,
+			CheckType: policy.CheckTypeLuaSubjectSource,
+			Stage:     policy.StageSubjectAnalysis,
+			Name:      "lua_subject_" + r.Name,
+			ConfigRef: "auth.policy.attribute_sources.lua.subject." + r.Name,
 		}
 	default:
 		return CheckSelector{
-			CheckType: policy.CheckTypeLuaControl,
+			CheckType: policy.CheckTypeLuaEnvironment,
 			Stage:     policy.StagePreAuth,
-			Name:      "lua_control_" + r.Name,
-			ConfigRef: "auth.controls.lua.controls." + r.Name,
+			Name:      "lua_environment_" + r.Name,
+			ConfigRef: "auth.policy.attribute_sources.lua.environment." + r.Name,
 		}
 	}
 }
@@ -229,9 +229,9 @@ func scriptNameFromCheck(kind ScriptKind, check policyruntime.CompiledCheck) str
 }
 
 func scriptNameFromConfigRef(kind ScriptKind, configRef string) string {
-	prefix := "auth.controls.lua.controls."
-	if kind == ScriptKindFilter {
-		prefix = "auth.controls.lua.filters."
+	prefix := "auth.policy.attribute_sources.lua.environment."
+	if kind == ScriptKindSubject {
+		prefix = "auth.policy.attribute_sources.lua.subject."
 	}
 
 	name := strings.TrimPrefix(configRef, prefix)
@@ -243,9 +243,9 @@ func scriptNameFromConfigRef(kind ScriptKind, configRef string) string {
 }
 
 func scriptNameFromCheckName(kind ScriptKind, checkName string) string {
-	prefix := "lua_control_"
-	if kind == ScriptKindFilter {
-		prefix = "lua_filter_"
+	prefix := "lua_environment_"
+	if kind == ScriptKindSubject {
+		prefix = "lua_subject_"
 	}
 
 	name := strings.TrimPrefix(checkName, prefix)
@@ -258,14 +258,14 @@ func scriptNameFromCheckName(kind ScriptKind, checkName string) string {
 
 func (r ScriptResult) checkResult(operation policy.Operation) CheckResult {
 	switch r.Kind {
-	case ScriptKindFilter:
-		return r.filterResult(operation)
+	case ScriptKindSubject:
+		return r.subjectResult(operation)
 	default:
-		return r.controlResult(operation)
+		return r.environmentResult(operation)
 	}
 }
 
-func (r ScriptResult) controlResult(operation policy.Operation) CheckResult {
+func (r ScriptResult) environmentResult(operation policy.Operation) CheckResult {
 	attributes := []AttributeValue{
 		BoolAttribute(scriptAttributeID(r.Kind, r.Name, "triggered"), policy.StagePreAuth, operation, r.Triggered, statusMessageDetails(r.StatusMessage)),
 		BoolAttribute(scriptAttributeID(r.Kind, r.Name, "abort"), policy.StagePreAuth, operation, r.Abort, nil),
@@ -281,20 +281,20 @@ func (r ScriptResult) controlResult(operation policy.Operation) CheckResult {
 		Err:          r.Err,
 		Status:       statusFromError(r.Err),
 		Matched:      r.Triggered || r.Abort,
-		DecisionHint: controlDecision(r),
+		DecisionHint: environmentDecision(r),
 		Reason:       reasonFromError(r.Err),
 		Duration:     r.Duration,
 		Attributes:   attributes,
 	}
 }
 
-func (r ScriptResult) filterResult(operation policy.Operation) CheckResult {
+func (r ScriptResult) subjectResult(operation policy.Operation) CheckResult {
 	attributes := []AttributeValue{
-		BoolAttribute(scriptAttributeID(r.Kind, r.Name, "rejected"), policy.StageAuthFilters, operation, r.Action, statusMessageDetails(r.StatusMessage)),
+		BoolAttribute(scriptAttributeID(r.Kind, r.Name, "rejected"), policy.StageSubjectAnalysis, operation, r.Action, statusMessageDetails(r.StatusMessage)),
 	}
 
 	if r.Err != nil {
-		attributes = append(attributes, BoolAttribute(scriptAttributeID(r.Kind, r.Name, "error"), policy.StageAuthFilters, operation, true, map[string]DetailValue{
+		attributes = append(attributes, BoolAttribute(scriptAttributeID(r.Kind, r.Name, "error"), policy.StageSubjectAnalysis, operation, true, map[string]DetailValue{
 			"reason_code": InternalDetail("lua_error"),
 		}))
 	}
@@ -303,7 +303,7 @@ func (r ScriptResult) filterResult(operation policy.Operation) CheckResult {
 		Err:          r.Err,
 		Status:       statusFromError(r.Err),
 		Matched:      r.Action,
-		DecisionHint: filterDecision(r),
+		DecisionHint: subjectDecision(r),
 		Reason:       reasonFromError(r.Err),
 		Duration:     r.Duration,
 		Attributes:   attributes,
@@ -312,10 +312,10 @@ func (r ScriptResult) filterResult(operation policy.Operation) CheckResult {
 
 func (k ScriptKind) policySegment() string {
 	switch k {
-	case ScriptKindFilter:
-		return "filter"
+	case ScriptKindSubject:
+		return "subject"
 	default:
-		return "control"
+		return "environment"
 	}
 }
 
@@ -345,7 +345,7 @@ func reasonFromError(err error) string {
 	return ""
 }
 
-func controlDecision(result ScriptResult) policy.Decision {
+func environmentDecision(result ScriptResult) policy.Decision {
 	if result.Err != nil {
 		return policy.DecisionTempFail
 	}
@@ -357,7 +357,7 @@ func controlDecision(result ScriptResult) policy.Decision {
 	return policy.DecisionNeutral
 }
 
-func filterDecision(result ScriptResult) policy.Decision {
+func subjectDecision(result ScriptResult) policy.Decision {
 	if result.Err != nil {
 		return policy.DecisionTempFail
 	}

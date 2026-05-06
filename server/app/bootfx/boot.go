@@ -31,9 +31,9 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/lualib/feature"
-	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/lualib/environment"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/lualib/subject"
 	"github.com/croessner/nauthilus/server/policy/compiler"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -85,7 +85,7 @@ func ParseFlagsAndPrintVersion(version string) {
 
 	// Lua testing flags
 	testLuaScript := flag.String("test-lua", "", "path to Lua script to test")
-	testCallback := flag.String("test-callback", "", "callback type: filter, feature, action, backend, hook, cache_flush")
+	testCallback := flag.String("test-callback", "", "callback type: subject, environment, action, backend, hook, cache_flush")
 	testMockData := flag.String("test-mock", "", "path to JSON file with mock data")
 
 	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus", []flagutil.UsageGroup{
@@ -249,13 +249,13 @@ func SetupConfiguration() error {
 	return nil
 }
 
-// SetupLuaScripts pre-compiles Lua scripts for features, filters, init scripts, and hooks.
+// SetupLuaScripts pre-compiles Lua scripts for environment sources, subject sources, init scripts, and hooks.
 func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
-	if err := PreCompileFeatures(cfg, logger); err != nil {
+	if err := PreCompileEnvironmentSources(cfg, logger); err != nil {
 		return err
 	}
 
-	if err := PreCompileFilters(cfg, logger); err != nil {
+	if err := PreCompileSubjectSources(cfg, logger); err != nil {
 		return err
 	}
 
@@ -266,10 +266,10 @@ func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
 	return PreCompileHooks(cfg)
 }
 
-// PreCompileFeatures pre-compiles Lua features if enabled.
-func PreCompileFeatures(cfg config.File, logger *slog.Logger) error {
-	if cfg.HaveLuaFeatures() {
-		if err := feature.PreCompileLuaFeatures(cfg, logger); err != nil {
+// PreCompileEnvironmentSources pre-compiles Lua environment sources if enabled.
+func PreCompileEnvironmentSources(cfg config.File, logger *slog.Logger) error {
+	if cfg.HaveLuaEnvironmentSources() {
+		if err := environment.PreCompileLuaEnvironmentSources(cfg, logger); err != nil {
 			return err
 		}
 	}
@@ -277,10 +277,10 @@ func PreCompileFeatures(cfg config.File, logger *slog.Logger) error {
 	return nil
 }
 
-// PreCompileFilters pre-compiles Lua filters if enabled.
-func PreCompileFilters(cfg config.File, logger *slog.Logger) error {
-	if cfg.HaveLuaFilters() {
-		if err := filter.PreCompileLuaFilters(cfg); err != nil {
+// PreCompileSubjectSources pre-compiles Lua subject sources if enabled.
+func PreCompileSubjectSources(cfg config.File, _ *slog.Logger) error {
+	if cfg.HaveLuaSubjectSources() {
+		if err := subject.PreCompileLuaSubjectSources(cfg); err != nil {
 			return err
 		}
 	}

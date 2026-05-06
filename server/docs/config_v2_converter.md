@@ -90,9 +90,12 @@ The converter is intentionally conservative:
 - shared runtime timeouts are emitted under `runtime.timeouts` so HTTP and gRPC transports use the same values
 - legacy `when_no_auth`, `when_authenticated`, and `when_unauthenticated` values are converted into policy check scheduling
 - legacy Lua `depends_on` values are converted into policy check-plan `after` dependencies
-- generated Lua policy checks are per script, using `lua.control` and `lua.filter` check types instead of aggregate checks
+- legacy Lua controls and features become `auth.policy.attribute_sources.lua.environment`
+- legacy `lua.filters` entries become Lua subject sources under `auth.policy.attribute_sources.lua.subject`
+- legacy Lua actions become `auth.policy.obligation_targets.lua.actions`
+- generated Lua policy checks are per script, using `lua.environment` and `lua.subject` check types instead of aggregate checks
 - generated target YAML does not retain legacy `when_*` or Lua `depends_on` keys
-- current config-v2 roots already present in the file are preserved
+- current config-v2 roots already present in the file are copied unchanged; this converter does not migrate older v2 variants
 - top-level `x-*` extension roots are preserved as-is
 - best-effort `x-*` anchor/alias reuse is restored in the generated YAML when the converted structure still references the same subtree
 - unsupported legacy paths are reported for manual review instead of being silently guessed

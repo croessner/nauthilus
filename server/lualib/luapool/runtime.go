@@ -200,8 +200,8 @@ func resetRequestEnv(L *lua.LState) {
 	}
 
 	// Remove transient globals (as outlined in the plan)
-	L.SetGlobal(definitions.LuaFnCallFilter, lua.LNil)
-	L.SetGlobal(definitions.LuaFnCallFeature, lua.LNil)
+	L.SetGlobal(definitions.LuaFnCallSubject, lua.LNil)
+	L.SetGlobal(definitions.LuaFnCallEnvironment, lua.LNil)
 	L.SetGlobal(definitions.LuaFnCallAction, lua.LNil)
 	L.SetGlobal(definitions.LuaDefaultTable, lua.LNil)
 

@@ -138,14 +138,14 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	addLuaPluginSharePath(t, L)
 
 	builtin := L.NewTable()
-	builtin.RawSetString("FILTER_ACCEPT", lua.LNumber(0))
-	builtin.RawSetString("FILTER_RESULT_OK", lua.LNumber(0))
+	builtin.RawSetString("SUBJECT_ACCEPT", lua.LBool(false))
+	builtin.RawSetString("SUBJECT_RESULT_OK", lua.LNumber(0))
 	builtin.RawSetString("custom_log_add", L.NewFunction(func(L *lua.LState) int {
 		return 0
 	}))
 	L.SetGlobal("nauthilus_builtin", builtin)
 
-	scriptPath := filepath.Join("..", "lua-plugins.d", "filters", "account_centric_monitoring.lua")
+	scriptPath := filepath.Join("..", "lua-plugins.d", "subject", "account_centric_monitoring.lua")
 	if err := L.DoFile(scriptPath); err != nil {
 		t.Fatalf("failed to load script: %v", err)
 	}
@@ -159,11 +159,11 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	req.RawSetString("protocol", lua.LString("imap"))
 
 	if err := L.CallByParam(lua.P{
-		Fn:      L.GetGlobal("nauthilus_call_filter"),
+		Fn:      L.GetGlobal("nauthilus_call_subject"),
 		NRet:    2,
 		Protect: true,
 	}, req); err != nil {
-		t.Fatalf("failed to call filter: %v", err)
+		t.Fatalf("failed to call subject source: %v", err)
 	}
 
 	keysVal := L.GetGlobal("last_keys")

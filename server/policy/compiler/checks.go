@@ -306,45 +306,45 @@ func sortChecksForPlan(checks []policyruntime.CompiledCheck) error {
 
 func registerGeneratedLuaAttributes(check policyruntime.CompiledCheck, registry *policyregistry.AttributeRegistry) error {
 	switch check.Type {
-	case checkTypeLuaControl:
-		name := normalizeIdentifierFromConfigRef("auth.controls.lua.controls.", check.ConfigRef, check.Name)
-		return registerLuaControlAttributes(name, check, registry)
-	case checkTypeLuaFilter:
-		name := normalizeIdentifierFromConfigRef("auth.controls.lua.filters.", check.ConfigRef, check.Name)
-		return registerLuaFilterAttributes(name, check, registry)
+	case checkTypeLuaEnvironment:
+		name := normalizeIdentifierFromConfigRef("auth.policy.attribute_sources.lua.environment.", check.ConfigRef, check.Name)
+		return registerLuaEnvironmentAttributes(name, check, registry)
+	case checkTypeLuaSubjectSource:
+		name := normalizeIdentifierFromConfigRef("auth.policy.attribute_sources.lua.subject.", check.ConfigRef, check.Name)
+		return registerLuaSubjectSourceAttributes(name, check, registry)
 	default:
 		return nil
 	}
 }
 
-func registerLuaControlAttributes(
+func registerLuaEnvironmentAttributes(
 	name string,
 	check policyruntime.CompiledCheck,
 	registry *policyregistry.AttributeRegistry,
 ) error {
 	if name == "" {
-		return configPathError("auth.policy.checks."+check.Name+".config_ref", "must identify a named Lua control")
+		return configPathError("auth.policy.checks."+check.Name+".config_ref", "must identify a named Lua environment attribute source")
 	}
 
 	return registerGeneratedAttributes(registry, []policyregistry.AttributeDefinition{
-		generatedLuaAttribute(fmt.Sprintf("auth.lua.control.%s.triggered", name), policy.StagePreAuth, check, true),
-		generatedLuaAttribute(fmt.Sprintf("auth.lua.control.%s.abort", name), policy.StagePreAuth, check, false),
-		generatedLuaErrorAttribute(fmt.Sprintf("auth.lua.control.%s.error", name), policy.StagePreAuth, check),
+		generatedLuaAttribute(fmt.Sprintf("auth.lua.environment.%s.triggered", name), policy.StagePreAuth, check, true),
+		generatedLuaAttribute(fmt.Sprintf("auth.lua.environment.%s.abort", name), policy.StagePreAuth, check, false),
+		generatedLuaErrorAttribute(fmt.Sprintf("auth.lua.environment.%s.error", name), policy.StagePreAuth, check),
 	})
 }
 
-func registerLuaFilterAttributes(
+func registerLuaSubjectSourceAttributes(
 	name string,
 	check policyruntime.CompiledCheck,
 	registry *policyregistry.AttributeRegistry,
 ) error {
 	if name == "" {
-		return configPathError("auth.policy.checks."+check.Name+".config_ref", "must identify a named Lua filter")
+		return configPathError("auth.policy.checks."+check.Name+".config_ref", "must identify a named Lua subject attribute source")
 	}
 
 	return registerGeneratedAttributes(registry, []policyregistry.AttributeDefinition{
-		generatedLuaAttribute(fmt.Sprintf("auth.lua.filter.%s.rejected", name), policy.StageAuthFilters, check, true),
-		generatedLuaErrorAttribute(fmt.Sprintf("auth.lua.filter.%s.error", name), policy.StageAuthFilters, check),
+		generatedLuaAttribute(fmt.Sprintf("auth.lua.subject.%s.rejected", name), policy.StageSubjectAnalysis, check, true),
+		generatedLuaErrorAttribute(fmt.Sprintf("auth.lua.subject.%s.error", name), policy.StageSubjectAnalysis, check),
 	})
 }
 

@@ -69,34 +69,34 @@ function nauthilus_call_action(request)
             end
         end
 
-        -- feature_haproxy (not part of demo plugins)
-        if rt.feature_haproxy then
+        -- environment_haproxy (not part of demo plugins)
+        if rt.environment_haproxy then
             send_message = true
             if request.feature and request.feature ~= "" then
-                headline = "Feature " .. request.feature .. " triggered"
+                headline = "Environment " .. request.feature .. " triggered"
                 log_prefix = request.feature .. "_"
             else
-                headline = "Feature triggered"
-                log_prefix = "feature_"
+                headline = "Environment triggered"
+                log_prefix = "environment_"
             end
         end
 
-        -- feature_blocklist
-        if rt.feature_blocklist then
+        -- environment_blocklist
+        if rt.environment_blocklist then
             send_message = true
-            headline = "Feature " .. request.feature .. " (blocklist) triggered"
+            headline = "Environment " .. request.feature .. " (blocklist) triggered"
             log_prefix = request.feature .. "_"
         end
 
-        -- feature_failed_login_hotspot
-        if rt.feature_failed_login_hotspot and rt.failed_login_info then
+        -- environment_failed_login_hotspot
+        if rt.environment_failed_login_hotspot and rt.failed_login_info then
             send_message = true
             headline = "Failed-Login Hotspot"
             log_prefix = "failed_login_"
         end
 
-        -- filter_geoippolicyd
-        if rt.filter_geoippolicyd then
+        -- subject_geoippolicyd
+        if rt.subject_geoippolicyd then
             send_message = true
             headline = "GeoIP-Policyd"
             log_prefix = "geoippolicyd_"
@@ -109,15 +109,15 @@ function nauthilus_call_action(request)
             log_preifx = "haveibeenpwnd_"
         end
 
-        -- feature_global_pattern
-        if rt.feature_global_pattern then
+        -- environment_global_pattern
+        if rt.environment_global_pattern then
             send_message = true
             headline = "Global Pattern Update"
             log_prefix = "global_pattern_"
         end
 
         -- account protection mode
-        if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
+        if rt.subject_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
             send_message = true
             headline = "Account Protection"
             log_prefix = "acct_protection_"

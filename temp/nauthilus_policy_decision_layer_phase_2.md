@@ -31,7 +31,7 @@ Phase 2 adds the policy configuration and snapshot compiler surface without maki
 
 - The production decision path remains the existing auth implementation. This is the intentional Phase 2 migration bridge: the new policy snapshot is built and published, but policy checks and policy decisions are not executed as the request-time authority.
 - The omitted `auth.policy` block compiles to an internal default snapshot with `mode: enforce` and `default_policy: standard_auth`. This preserves current behavior while later phases add explicit check-result collection and then switch authority to the compiled `standard_auth` mapping.
-- Lua control and Lua filter per-script attributes are generated from configured policy checks during snapshot build. This is an internal compiler adapter for named Lua scripts until request-time Lua check adapters emit the same registered attributes.
+- Lua environment source and Lua subject source per-script attributes are generated from configured policy checks during snapshot build. This is an internal compiler adapter for named Lua scripts until request-time Lua check adapters emit the same registered attributes.
 
 ## Planned Adapter Removal
 

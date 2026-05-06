@@ -264,7 +264,7 @@ func preAuthRules(policyReport *report.DecisionReport, operation policy.Operatio
 	rules = append(rules, rblRules()...)
 
 	if operation == policy.OperationAuthenticate || operation == policy.OperationLookupIdentity {
-		rules = append(rules, luaControlRules(policyReport, operation)...)
+		rules = append(rules, luaEnvironmentRules(policyReport, operation)...)
 	}
 
 	return rules
@@ -274,12 +274,12 @@ func authDecisionRules(policyReport *report.DecisionReport, operation policy.Ope
 	rules := backendDecisionRules()
 
 	if operation == policy.OperationAuthenticate {
-		rules = append(rules, luaFilterRules(policyReport, operation)...)
+		rules = append(rules, luaSubjectRules(policyReport, operation)...)
 		rules = append(rules, authenticateDecisionRules()...)
 	}
 
 	if operation == policy.OperationLookupIdentity {
-		rules = append(rules, luaFilterRules(policyReport, operation)...)
+		rules = append(rules, luaSubjectRules(policyReport, operation)...)
 		rules = append(rules, lookupIdentityRules()...)
 	}
 
@@ -581,21 +581,21 @@ func unknownRelayDomain(policyReport *report.DecisionReport) bool {
 		attrBool(policyReport, policy.AttributeRelayDomainKnown, false)
 }
 
-func luaControlRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
+func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
 	operations := []policy.Operation{operation}
 	rules := make([]standardRule, 0)
-	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaControl) {
-		name := luaScriptName(checkResult, "auth.lua.control.", []string{".error", ".triggered", ".abort"}, "lua_control_")
+	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaEnvironment) {
+		name := luaScriptName(checkResult, "auth.lua.environment.", []string{".error", ".triggered", ".abort"}, "lua_environment_")
 		if name == "" {
 			continue
 		}
 
-		prefix := "auth.lua.control." + name
+		prefix := "auth.lua.environment." + name
 		triggerRule := standardRule{
-			name:            "standard_lua_control_" + name + "_trigger",
+			name:            "standard_lua_environment_" + name + "_trigger",
 			stage:           policy.StagePreAuth,
 			effect:          policy.DecisionDeny,
-			outcomeMarker:   "auth.outcome.lua_control." + name + ".reject",
+			outcomeMarker:   "auth.outcome.lua_environment." + name + ".reject",
 			fsmMarker:       fsmMarkerPreAuthDeny,
 			responseMarker:  responseMarkerFail,
 			operations:      operations,
@@ -614,10 +614,10 @@ func luaControlRules(policyReport *report.DecisionReport, operation policy.Opera
 		}
 		rules = append(rules,
 			standardRule{
-				name:           "standard_lua_control_" + name + "_error",
+				name:           "standard_lua_environment_" + name + "_error",
 				stage:          policy.StagePreAuth,
 				effect:         policy.DecisionTempFail,
-				outcomeMarker:  "auth.outcome.lua_control." + name + ".error",
+				outcomeMarker:  "auth.outcome.lua_environment." + name + ".error",
 				fsmMarker:      fsmMarkerPreAuthTempFail,
 				responseMarker: responseMarkerTempFail,
 				operations:     operations,
@@ -626,7 +626,7 @@ func luaControlRules(policyReport *report.DecisionReport, operation policy.Opera
 			},
 			triggerRule,
 			standardRule{
-				name:           "standard_lua_control_" + name + "_abort",
+				name:           "standard_lua_environment_" + name + "_abort",
 				stage:          policy.StagePreAuth,
 				effect:         policy.DecisionNeutral,
 				outcomeMarker:  "auth.outcome.pre_auth_ok",
@@ -644,22 +644,22 @@ func luaControlRules(policyReport *report.DecisionReport, operation policy.Opera
 	return rules
 }
 
-func luaFilterRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
+func luaSubjectRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
 	operations := []policy.Operation{operation}
 	rules := make([]standardRule, 0)
-	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaFilter) {
-		name := luaScriptName(checkResult, "auth.lua.filter.", []string{".error", ".rejected"}, "lua_filter_")
+	for _, checkResult := range sortedChecks(policyReport, policy.CheckTypeLuaSubjectSource) {
+		name := luaScriptName(checkResult, "auth.lua.subject.", []string{".error", ".rejected"}, "lua_subject_")
 		if name == "" {
 			continue
 		}
 
-		prefix := "auth.lua.filter." + name
+		prefix := "auth.lua.subject." + name
 		rules = append(rules,
 			standardRule{
-				name:           "standard_lua_filter_" + name + "_error",
+				name:           "standard_lua_subject_" + name + "_error",
 				stage:          policy.StageAuthDecision,
 				effect:         policy.DecisionTempFail,
-				outcomeMarker:  "auth.outcome.lua_filter." + name + ".error",
+				outcomeMarker:  "auth.outcome.lua_subject." + name + ".error",
 				fsmMarker:      fsmMarkerAuthTempFail,
 				responseMarker: responseMarkerTempFail,
 				operations:     operations,
@@ -667,10 +667,10 @@ func luaFilterRules(policyReport *report.DecisionReport, operation policy.Operat
 				condition:      attrIsTrue(prefix + ".error"),
 			},
 			standardRule{
-				name:            "standard_lua_filter_" + name + "_reject",
+				name:            "standard_lua_subject_" + name + "_reject",
 				stage:           policy.StageAuthDecision,
 				effect:          policy.DecisionDeny,
-				outcomeMarker:   "auth.outcome.lua_filter." + name + ".reject",
+				outcomeMarker:   "auth.outcome.lua_subject." + name + ".reject",
 				fsmMarker:       fsmMarkerAuthDeny,
 				responseMarker:  responseMarkerFail,
 				operations:      operations,

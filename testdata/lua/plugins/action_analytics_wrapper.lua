@@ -11,9 +11,9 @@ nauthilus_prometheus.increment_counter = function(metric, labels)
 end
 
 nauthilus_context.context_set("rt", {
-    feature_blocklist = true,
-    filter_geoippolicyd = true,
-    feature_failed_login_hotspot = true,
+    environment_blocklist = true,
+    subject_geoippolicyd = true,
+    environment_failed_login_hotspot = true,
 })
 
 dofile("server/lua-plugins.d/actions/analytics.lua")

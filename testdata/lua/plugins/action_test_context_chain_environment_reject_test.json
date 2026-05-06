@@ -1,0 +1,97 @@
+{
+  "context": {
+    "username": "chain@example.com",
+    "client_ip": "198.51.100.55",
+    "protocol": "imap",
+    "session": "context-chain-session",
+    "no_auth": false,
+    "authenticated": false,
+    "status_message": "Environment source rejected the request",
+    "expected_calls": [
+      {
+        "method": "context_set",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      }
+    ]
+  },
+  "expected_output": {
+    "action_result": true,
+    "error_expected": false
+  }
+}

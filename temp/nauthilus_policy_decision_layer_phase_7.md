@@ -91,7 +91,7 @@ Validation after implementation:
 
 ```bash
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryConfiguredPreAuthDecision(WithoutLuaActionObligationSkipsSynchronousAction|RunsSelectedLuaActionObligationOnce)|TestPolicyObligationExecutorSkipsMutableEffectsInObserveMode|TestCompiler(AcceptsLuaActionDispatchObligationArgs|RejectsLuaActionDispatchInvalidArgs)' ./server/core ./server/policy/compiler
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/lualib/feature ./server/lualib/filter ./server/lualib/pipeline ./server/lualib/policyschedule
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/lualib/environment ./server/lualib/subject ./server/lualib/pipeline ./server/lualib/policyschedule
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make test
 ```
 
@@ -185,7 +185,7 @@ GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAut
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestPolicyObligationExecutorSkipsMutableEffectsWithoutPolicyContext' ./server/core
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestPolicyBruteForceLuaActionPreservesCommonRequestShape' ./server/core
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestBruteForceLuaActionAccountRefreshPreservesCommonRequestAccountField' ./server/core
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/lualib/feature ./server/lualib/filter ./server/lualib/pipeline ./server/lualib/policyschedule
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/... ./server/lualib/environment ./server/lualib/subject ./server/lualib/pipeline ./server/lualib/policyschedule
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make test
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make guardrails
 git diff --check

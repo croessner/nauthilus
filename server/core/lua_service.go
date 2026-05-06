@@ -20,21 +20,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// LuaFilter encapsulates the Lua filter pipeline and returns an AuthResult.
+// LuaSubject encapsulates the Lua subject source pipeline and returns an AuthResult.
 //
 //goland:nointerface
-type LuaFilter interface {
-	Filter(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
+type LuaSubject interface {
+	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
 }
 
 // PostActionInput aggregates the minimal inputs required for the Lua post action.
 // It deliberately reduces dozens of parameters to a compact value object.
 type PostActionInput struct {
-	View                 *StateView
-	Result               *PassDBResult
-	FeatureRejected      bool
-	FeatureStageExpected bool
-	FilterStageExpected  bool
+	View                     *StateView
+	Result                   *PassDBResult
+	EnvironmentRejected      bool
+	EnvironmentStageExpected bool
+	SubjectStageExpected     bool
 }
 
 // PostAction encapsulates the asynchronous post-action dispatch to the Lua worker.
@@ -44,12 +44,12 @@ type PostAction interface {
 	Run(input PostActionInput)
 }
 
-// FeatureEngine encapsulates the evaluation of Lua-based features.
-// It returns whether a feature was triggered, whether further features should be aborted,
+// EnvironmentEngine encapsulates the evaluation of Lua environment sources.
+// It returns whether an environment source was triggered, whether later sources should be aborted,
 // and optional logs plus a new StatusMessage.
 //
 //goland:nointerface
-type FeatureEngine interface {
+type EnvironmentEngine interface {
 	Evaluate(ctx *gin.Context, view *StateView) (triggered bool, abort bool, logs []any, newStatus *string, err error)
 }
 

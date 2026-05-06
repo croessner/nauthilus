@@ -13,7 +13,7 @@ This phase is limited to the conversion tool and converter documentation. It doe
   - Emits `mode: enforce`, `default_policy: standard_auth`, empty registry and set defaults, report defaults, generated checks, and generated `standard_auth`-equivalent policies.
   - Converts old `when_no_auth` state into policy check `operations`, adding `lookup_identity` where the legacy mechanism was enabled for no-auth.
   - Converts old `when_authenticated` and `when_unauthenticated` state into `run_if.auth_state`.
-  - Generates one `lua.control` check per Lua control script and one `lua.filter` check per Lua filter script.
+  - Generates one `lua.environment` check per Lua environment source script and one `lua.subject` check per Lua subject source script.
   - Converts Lua `depends_on` into check-plan `after` dependencies using generated check names.
   - Removes legacy `when_*` and Lua `depends_on` keys from the emitted target YAML.
   - Generates script-specific Lua policy attributes in the produced policy rules, matching the registry/compiler convention.
@@ -87,10 +87,10 @@ Second pass completed against the Phase 5 requirements, the general completion r
 - Config placement: generated policy config lives under `auth.policy`; no `policy_engine` or historical public root was introduced.
 - `when_no_auth`: converted into policy `operations`, including `lookup_identity` where legacy no-auth scheduling was enabled. Review gap fixed: `server.features[].when_no_auth` is now preserved as an internal scheduler hint even if later `server.controls` migration overwrites `auth.controls.enabled`.
 - `when_authenticated` and `when_unauthenticated`: converted into `run_if.auth_state`.
-- Lua checks: the converter generates one `lua.control` check per Lua control script and one `lua.filter` check per Lua filter script. It does not generate aggregate `lua_controls` or `lua_filters` checks.
+- Lua checks: the converter generates one `lua.environment` check per Lua environment source script and one `lua.subject` check per Lua subject source script. It does not generate aggregate `lua_environments` or `lua_subjects` checks.
 - Lua dependencies: `depends_on` is converted to `after` with generated check names. Review gap fixed: unknown dependency names are now carried into `after` so policy validation can report the broken dependency instead of silently dropping it.
 - Target output cut: generated YAML strips `when_no_auth`, `when_authenticated`, `when_unauthenticated`, and Lua `depends_on`.
-- `standard_auth`: generated rules cover brute force, TLS, relay-domain, RBL, Lua controls, backend technical outcomes, Lua filters, auth success/failure, lookup identity, list accounts, and final default deny where corresponding checks exist. Brute force remains a first-class policy check and policy rule, not a side path.
+- `standard_auth`: generated rules cover brute force, TLS, relay-domain, RBL, Lua environment sources, backend technical outcomes, Lua subject sources, auth success/failure, lookup identity, list accounts, and final default deny where corresponding checks exist. Brute force remains a first-class policy check and policy rule, not a side path.
 - Config UX: the converter emits only existing `auth.policy` schema fields with existing `mapstructure`, schema-index, dump, and `ConfigProblem` support. The `--validate` run confirms the generated target config passes current config-check.
 - Observability and reports: no new runtime path was introduced, so no new logs, reports, metrics, OTel spans, or redaction surfaces were required in this phase.
 - Atomic reload: no snapshot activation code changed; current atomic compiler behavior remains covered by existing compiler tests and guardrails.

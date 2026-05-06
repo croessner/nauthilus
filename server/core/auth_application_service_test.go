@@ -398,13 +398,13 @@ func setupPhase4AuthApplicationServiceTest(t *testing.T, backendName string) (Au
 	util.SetDefaultEnvironment(config.GetEnvironment())
 
 	previousVerifier := getPasswordVerifier()
-	previousFilter := getLuaFilter()
+	previousFilter := getLuaSubject()
 	RegisterPasswordVerifier(testPasswordVerifier{})
-	RegisterLuaFilter(testLuaFilter{})
+	RegisterLuaSubject(testLuaSubject{})
 
 	t.Cleanup(func() {
 		RegisterPasswordVerifier(previousVerifier)
-		RegisterLuaFilter(previousFilter)
+		RegisterLuaSubject(previousFilter)
 	})
 
 	db, mock := redismock.NewClientMock()
@@ -477,9 +477,9 @@ func (tempfailPasswordVerifier) Verify(
 	return nil, stderrors.New("backend unavailable")
 }
 
-type testLuaFilter struct{}
+type testLuaSubject struct{}
 
-func (testLuaFilter) Filter(_ *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult {
+func (testLuaSubject) Analyze(_ *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult {
 	if result != nil && result.Authenticated {
 		view.Auth().Runtime.Authorized = true
 

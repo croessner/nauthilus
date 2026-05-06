@@ -513,7 +513,7 @@ func bruteForceBucketFactsRepeat(facts []bruteforce.BucketPolicyFact) bool {
 // without learning being active for that feature. In that case, the password was never verified,
 // so recording it in the RWP window would be incorrect.
 func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager) {
-	if ctx.GetBool(definitions.CtxFeatureRejectedKey) {
+	if ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
 		bfCfg := a.cfg().GetBruteForce()
 
 		if bfCfg == nil || !bfCfg.LearnFromFeature(a.Runtime.FeatureName) {

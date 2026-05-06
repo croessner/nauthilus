@@ -2,16 +2,16 @@ package luatest
 
 import "testing"
 
-func TestFilterRunnerSupportsProductionReturnSignature(t *testing.T) {
+func TestSubjectRunnerSupportsProductionReturnSignature(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	scriptPath := writeTempLuaTestFile(t, tmpDir, "filter.lua", `
-function nauthilus_call_filter(request)
-    return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
+	scriptPath := writeTempLuaTestFile(t, tmpDir, "subject.lua", `
+function nauthilus_call_subject(request)
+    return nauthilus_builtin.SUBJECT_REJECT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
 `)
 
-	runner, err := NewTestRunner(scriptPath, "filter", "")
+	runner, err := NewTestRunner(scriptPath, "subject", "")
 	if err != nil {
 		t.Fatalf("NewTestRunner failed: %v", err)
 	}
@@ -22,30 +22,30 @@ end
 	}
 
 	if !result.Success {
-		t.Fatalf("expected production filter signature to pass, got errors: %v", result.Errors)
+		t.Fatalf("expected production subject signature to pass, got errors: %v", result.Errors)
 	}
 
-	if result.FilterAction == nil || !*result.FilterAction {
-		t.Fatalf("expected filter action=true, got %#v", result.FilterAction)
+	if result.SubjectRejected == nil || !*result.SubjectRejected {
+		t.Fatalf("expected subject rejected=true, got %#v", result.SubjectRejected)
 	}
 
-	if result.FilterResult == nil || *result.FilterResult != 0 {
-		t.Fatalf("expected filter result code 0, got %#v", result.FilterResult)
+	if result.SubjectResult == nil || *result.SubjectResult != 0 {
+		t.Fatalf("expected subject result code 0, got %#v", result.SubjectResult)
 	}
 }
 
-func TestFeatureRunnerCapturesProductionReturnSignature(t *testing.T) {
+func TestEnvironmentRunnerCapturesProductionReturnSignature(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	scriptPath := writeTempLuaTestFile(t, tmpDir, "feature.lua", `
-function nauthilus_call_feature(request)
-    return nauthilus_builtin.FEATURE_TRIGGER_YES,
-        nauthilus_builtin.FEATURES_ABORT_YES,
-        nauthilus_builtin.FEATURE_RESULT_OK
+	scriptPath := writeTempLuaTestFile(t, tmpDir, "environment.lua", `
+function nauthilus_call_environment(request)
+    return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES,
+        nauthilus_builtin.ENVIRONMENT_ABORT_YES,
+        nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `)
 
-	runner, err := NewTestRunner(scriptPath, "feature", "")
+	runner, err := NewTestRunner(scriptPath, "environment", "")
 	if err != nil {
 		t.Fatalf("NewTestRunner failed: %v", err)
 	}
@@ -56,19 +56,19 @@ end
 	}
 
 	if !result.Success {
-		t.Fatalf("expected production feature signature to pass, got errors: %v", result.Errors)
+		t.Fatalf("expected production environment signature to pass, got errors: %v", result.Errors)
 	}
 
-	if result.FeatureResult == nil || !*result.FeatureResult {
-		t.Fatalf("expected feature trigger=true, got %#v", result.FeatureResult)
+	if result.EnvironmentTriggered == nil || !*result.EnvironmentTriggered {
+		t.Fatalf("expected environment trigger=true, got %#v", result.EnvironmentTriggered)
 	}
 
-	if result.FeatureAbort == nil || !*result.FeatureAbort {
-		t.Fatalf("expected feature abort=true, got %#v", result.FeatureAbort)
+	if result.EnvironmentAbort == nil || !*result.EnvironmentAbort {
+		t.Fatalf("expected environment abort=true, got %#v", result.EnvironmentAbort)
 	}
 
-	if result.FeatureStatus == nil || *result.FeatureStatus != 0 {
-		t.Fatalf("expected feature status 0, got %#v", result.FeatureStatus)
+	if result.EnvironmentResult == nil || *result.EnvironmentResult != 0 {
+		t.Fatalf("expected environment status 0, got %#v", result.EnvironmentResult)
 	}
 }
 

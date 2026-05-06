@@ -119,11 +119,11 @@ type File interface {
 		Lua-related methods
 	*/
 
-	// HaveLuaFeatures checks if Lua features are available.
-	HaveLuaFeatures() bool
+	// HaveLuaEnvironmentSources checks if Lua environment sources are available.
+	HaveLuaEnvironmentSources() bool
 
-	// HaveLuaFilters checks if Lua filters are active.
-	HaveLuaFilters() bool
+	// HaveLuaSubjectSources checks if Lua subject sources are active.
+	HaveLuaSubjectSources() bool
 
 	// HaveLuaActions checks if Lua actions are enabled.
 	HaveLuaActions() bool
@@ -155,11 +155,11 @@ type File interface {
 	// GetLuaActionNumberOfWorkers returns the number of Lua Action workers.
 	GetLuaActionNumberOfWorkers() int
 
-	// GetLuaFeatureVMPoolSize returns the VM pool size for Lua features.
-	GetLuaFeatureVMPoolSize() int
+	// GetLuaEnvironmentSourceVMPoolSize returns the VM pool size for Lua environment sources.
+	GetLuaEnvironmentSourceVMPoolSize() int
 
-	// GetLuaFilterVMPoolSize returns the VM pool size for Lua filters.
-	GetLuaFilterVMPoolSize() int
+	// GetLuaSubjectSourceVMPoolSize returns the VM pool size for Lua subject sources.
+	GetLuaSubjectSourceVMPoolSize() int
 
 	// GetLuaHookVMPoolSize returns the VM pool size for Lua hooks.
 	GetLuaHookVMPoolSize() int
@@ -339,7 +339,7 @@ type File interface {
 	// GetBruteForce retrieves the BruteForceSection configuration, containing brute force protection rules and settings.
 	GetBruteForce() *BruteForceSection
 
-	// GetLua retrieves the LuaSection from the configuration, containing actions, features, filters, hooks, and related config.
+	// GetLua retrieves the LuaSection from the configuration, containing actions, environment sources, subject sources, hooks, and related config.
 	GetLua() *LuaSection
 
 	// GetLDAP returns the LDAPSection object containing configuration and search definitions for LDAP operations.
@@ -448,10 +448,6 @@ func (f *FileSettings) GetLua() *LuaSection {
 
 	if f.Lua == nil {
 		f.materializeLegacySections()
-	}
-
-	if f.Lua != nil && f.Lua.Features == nil {
-		f.Lua.normalizeConfiguredFeatures()
 	}
 
 	return f.Lua
@@ -975,8 +971,8 @@ func (f *FileSettings) GetLuaActionNumberOfWorkers() int {
 	return definitions.MaxActionWorkers
 }
 
-// GetLuaFeatureVMPoolSize returns the VM pool size for Lua features.
-func (f *FileSettings) GetLuaFeatureVMPoolSize() int {
+// GetLuaEnvironmentSourceVMPoolSize returns the VM pool size for Lua environment sources.
+func (f *FileSettings) GetLuaEnvironmentSourceVMPoolSize() int {
 	if f == nil {
 		return definitions.DefaultNumberOfWorkers
 	}
@@ -987,14 +983,14 @@ func (f *FileSettings) GetLuaFeatureVMPoolSize() int {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
-		return luaConf.GetFeatureVMPoolSize()
+		return luaConf.GetEnvironmentVMPoolSize()
 	}
 
 	return definitions.DefaultNumberOfWorkers
 }
 
-// GetLuaFilterVMPoolSize returns the VM pool size for Lua filters.
-func (f *FileSettings) GetLuaFilterVMPoolSize() int {
+// GetLuaSubjectSourceVMPoolSize returns the VM pool size for Lua subject sources.
+func (f *FileSettings) GetLuaSubjectSourceVMPoolSize() int {
 	if f == nil {
 		return definitions.DefaultNumberOfWorkers
 	}
@@ -1005,7 +1001,7 @@ func (f *FileSettings) GetLuaFilterVMPoolSize() int {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
-		return luaConf.GetFilterVMPoolSize()
+		return luaConf.GetSubjectVMPoolSize()
 	}
 
 	return definitions.DefaultNumberOfWorkers
@@ -1219,31 +1215,31 @@ func (f *FileSettings) GetLuaOptionalBackends() map[string]*LuaConf {
 	return backends
 }
 
-// HaveLuaFilters is a method on the FileSettings struct.
-// It checks if the FileSettings struct has Lua filters.
-// It returns true if there are Lua filters, and false otherwise.
-func (f *FileSettings) HaveLuaFilters() bool {
+// HaveLuaSubjectSources is a method on the FileSettings struct.
+// It checks if the FileSettings struct has Lua subject sources.
+// It returns true if there are Lua subject sources, and false otherwise.
+func (f *FileSettings) HaveLuaSubjectSources() bool {
 	if f == nil {
 		return false
 	}
 
 	if f.HaveLua() {
-		return len(f.GetLua().GetFilters()) > 0
+		return len(f.GetLua().GetSubjectSources()) > 0
 	}
 
 	return false
 }
 
-// HaveLuaFeatures is a method on the FileSettings struct.
-// It checks if the FileSettings struct has Lua features.
-// It returns true if there are Lua features, and false otherwise.
-func (f *FileSettings) HaveLuaFeatures() bool {
+// HaveLuaEnvironmentSources is a method on the FileSettings struct.
+// It checks if the FileSettings struct has Lua environment sources.
+// It returns true if there are Lua environment sources, and false otherwise.
+func (f *FileSettings) HaveLuaEnvironmentSources() bool {
 	if f == nil {
 		return false
 	}
 
 	if f.HaveLua() {
-		return len(f.GetLua().GetFeatures()) > 0
+		return len(f.GetLua().GetEnvironmentSources()) > 0
 	}
 
 	return false
@@ -3443,9 +3439,6 @@ func (f *FileSettings) normalizeConfigAliases() {
 		f.Server.normalizeConfiguredFeatures()
 	}
 
-	if f.Lua != nil {
-		f.Lua.normalizeConfiguredFeatures()
-	}
 }
 
 // bindEnvs recursively binds struct fields to environment variables using Viper, constructing keys from struct tags or field names.

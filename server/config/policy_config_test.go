@@ -152,9 +152,9 @@ func TestAuthPolicyConfigRejectsRemovedSchedulerKeys(t *testing.T) {
 	viper.Set("auth.policy", map[string]any{
 		"checks": []any{
 			map[string]any{
-				"name":               "lua_filter",
-				"type":               "lua.filter",
-				"stage":              "auth_filters",
+				"name":               "lua_subject",
+				"type":               "lua.subject",
+				"stage":              "subject_analysis",
 				"when_authenticated": true,
 			},
 		},

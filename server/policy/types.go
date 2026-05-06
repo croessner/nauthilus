@@ -35,8 +35,8 @@ const (
 	// CheckTypeRBL identifies the built-in RBL evaluator.
 	CheckTypeRBL = "builtin.rbl"
 
-	// CheckTypeLuaControl identifies one named Lua control evaluator.
-	CheckTypeLuaControl = "lua.control"
+	// CheckTypeLuaEnvironment identifies one named Lua environment attribute source.
+	CheckTypeLuaEnvironment = "lua.environment"
 
 	// CheckTypeLDAPBackend identifies LDAP backend evaluation.
 	CheckTypeLDAPBackend = "backend.ldap"
@@ -44,8 +44,8 @@ const (
 	// CheckTypeLuaBackend identifies Lua backend evaluation.
 	CheckTypeLuaBackend = "backend.lua"
 
-	// CheckTypeLuaFilter identifies one named Lua filter evaluator.
-	CheckTypeLuaFilter = "lua.filter"
+	// CheckTypeLuaSubjectSource identifies one named Lua subject attribute source.
+	CheckTypeLuaSubjectSource = "lua.subject"
 
 	// CheckTypeAccountProvider identifies account-provider evaluation.
 	CheckTypeAccountProvider = "backend.account_provider"
@@ -212,14 +212,14 @@ const (
 )
 
 const (
-	// StagePreAuth covers controls that run before backend authentication.
+	// StagePreAuth covers checks that run before backend authentication.
 	StagePreAuth Stage = "pre_auth"
 
 	// StageAuthBackend covers backend and password evaluation facts.
 	StageAuthBackend Stage = "auth_backend"
 
-	// StageAuthFilters covers request filters after backend evaluation.
-	StageAuthFilters Stage = "auth_filters"
+	// StageSubjectAnalysis covers subject analysis after backend evaluation.
+	StageSubjectAnalysis Stage = "subject_analysis"
 
 	// StageAccountProvider covers account-list provider facts.
 	StageAccountProvider Stage = "account_provider"

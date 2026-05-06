@@ -365,10 +365,10 @@ func (tr *TestRunner) executeCallback(L *lua.LState) (*TestResult, error) {
 	}
 
 	switch tr.callbackType {
-	case "filter":
-		return tr.executeFilter(L)
-	case "feature":
-		return tr.executeFeature(L)
+	case "subject":
+		return tr.executeSubject(L)
+	case "environment":
+		return tr.executeEnvironment(L)
 	case "action":
 		return tr.executeAction(L)
 	case "backend":
@@ -382,25 +382,25 @@ func (tr *TestRunner) executeCallback(L *lua.LState) (*TestResult, error) {
 	}
 }
 
-// executeFilter executes a filter callback.
-func (tr *TestRunner) executeFilter(L *lua.LState) (*TestResult, error) {
+// executeSubject executes a subject source callback.
+func (tr *TestRunner) executeSubject(L *lua.LState) (*TestResult, error) {
 	result := &TestResult{Success: false}
 
-	fn := resolveLuaFunction(L, definitions.LuaFnCallFilter)
+	fn := resolveLuaFunction(L, definitions.LuaFnCallSubject)
 	if fn.Type() != lua.LTFunction {
-		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnCallFilter)
+		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnCallSubject)
 	}
 
 	// Create request table
 	requestTable := tr.createRequestTable(L)
 
-	// Call the filter with request table
+	// Call the subject source with request table
 	if err := L.CallByParam(lua.P{
 		Fn:      fn,
 		NRet:    2,
 		Protect: true,
 	}, requestTable); err != nil {
-		return result, fmt.Errorf("filter execution failed: %w", err)
+		return result, fmt.Errorf("subject source execution failed: %w", err)
 	}
 
 	actionValue := L.Get(-2)
@@ -408,15 +408,15 @@ func (tr *TestRunner) executeFilter(L *lua.LState) (*TestResult, error) {
 	L.Pop(2)
 
 	if actionValue.Type() == lua.LTBool && resultValue.Type() == lua.LTNumber {
-		filterAction := lua.LVAsBool(actionValue)
-		filterResult := int(lua.LVAsNumber(resultValue))
+		subjectRejected := lua.LVAsBool(actionValue)
+		subjectResult := int(lua.LVAsNumber(resultValue))
 
-		result.FilterAction = &filterAction
-		result.FilterResult = &filterResult
+		result.SubjectRejected = &subjectRejected
+		result.SubjectResult = &subjectResult
 		result.Success = true
 	} else {
 		return result, fmt.Errorf(
-			"filter returned unexpected types: action=%s result=%s",
+			"subject source returned unexpected types: action=%s result=%s",
 			actionValue.Type(),
 			resultValue.Type(),
 		)
@@ -425,25 +425,25 @@ func (tr *TestRunner) executeFilter(L *lua.LState) (*TestResult, error) {
 	return result, nil
 }
 
-// executeFeature executes a feature callback.
-func (tr *TestRunner) executeFeature(L *lua.LState) (*TestResult, error) {
+// executeEnvironment executes an environment source callback.
+func (tr *TestRunner) executeEnvironment(L *lua.LState) (*TestResult, error) {
 	result := &TestResult{Success: false}
 
-	fn := resolveLuaFunction(L, definitions.LuaFnCallFeature)
+	fn := resolveLuaFunction(L, definitions.LuaFnCallEnvironment)
 	if fn.Type() != lua.LTFunction {
-		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnCallFeature)
+		return result, fmt.Errorf("%s function not found in script", definitions.LuaFnCallEnvironment)
 	}
 
 	// Create request table
 	requestTable := tr.createRequestTable(L)
 
-	// Call the feature with request table
+	// Call the environment source with request table
 	if err := L.CallByParam(lua.P{
 		Fn:      fn,
 		NRet:    3,
 		Protect: true,
 	}, requestTable); err != nil {
-		return result, fmt.Errorf("feature execution failed: %w", err)
+		return result, fmt.Errorf("environment source execution failed: %w", err)
 	}
 
 	triggerValue := L.Get(-3)
@@ -452,17 +452,17 @@ func (tr *TestRunner) executeFeature(L *lua.LState) (*TestResult, error) {
 	L.Pop(3)
 
 	if triggerValue.Type() == lua.LTBool && abortValue.Type() == lua.LTBool && statusValue.Type() == lua.LTNumber {
-		featureResult := lua.LVAsBool(triggerValue)
-		featureAbort := lua.LVAsBool(abortValue)
-		featureStatus := int(lua.LVAsNumber(statusValue))
+		environmentTriggered := lua.LVAsBool(triggerValue)
+		environmentAbort := lua.LVAsBool(abortValue)
+		environmentResult := int(lua.LVAsNumber(statusValue))
 
-		result.FeatureResult = &featureResult
-		result.FeatureAbort = &featureAbort
-		result.FeatureStatus = &featureStatus
+		result.EnvironmentTriggered = &environmentTriggered
+		result.EnvironmentAbort = &environmentAbort
+		result.EnvironmentResult = &environmentResult
 		result.Success = true
 	} else {
 		return result, fmt.Errorf(
-			"feature returned unexpected types: trigger=%s abort=%s result=%s",
+			"environment source returned unexpected types: trigger=%s abort=%s result=%s",
 			triggerValue.Type(),
 			abortValue.Type(),
 			statusValue.Type(),
@@ -744,50 +744,50 @@ func populateBackendResultFromUserData(result *TestResult, userData *lua.LUserDa
 func (tr *TestRunner) validateOutput(result *TestResult) {
 	expected := tr.mockData.ExpectedOutput
 
-	// Validate filter result
-	if expected.FilterResult != nil && result.FilterResult != nil {
-		if *expected.FilterResult != *result.FilterResult {
+	// Validate subject source result.
+	if expected.SubjectResult != nil && result.SubjectResult != nil {
+		if *expected.SubjectResult != *result.SubjectResult {
 			result.Success = false
 			result.Errors = append(result.Errors,
-				fmt.Errorf("filter result mismatch: expected %d, got %d",
-					*expected.FilterResult, *result.FilterResult))
+				fmt.Errorf("subject result mismatch: expected %d, got %d",
+					*expected.SubjectResult, *result.SubjectResult))
 		}
 	}
 
-	if expected.FilterAction != nil && result.FilterAction != nil {
-		if *expected.FilterAction != *result.FilterAction {
+	if expected.SubjectRejected != nil && result.SubjectRejected != nil {
+		if *expected.SubjectRejected != *result.SubjectRejected {
 			result.Success = false
 			result.Errors = append(result.Errors,
-				fmt.Errorf("filter action mismatch: expected %t, got %t",
-					*expected.FilterAction, *result.FilterAction))
+				fmt.Errorf("subject rejection mismatch: expected %t, got %t",
+					*expected.SubjectRejected, *result.SubjectRejected))
 		}
 	}
 
-	// Validate feature result
-	if expected.FeatureResult != nil && result.FeatureResult != nil {
-		if *expected.FeatureResult != *result.FeatureResult {
+	// Validate environment source result.
+	if expected.EnvironmentTriggered != nil && result.EnvironmentTriggered != nil {
+		if *expected.EnvironmentTriggered != *result.EnvironmentTriggered {
 			result.Success = false
 			result.Errors = append(result.Errors,
-				fmt.Errorf("feature result mismatch: expected %t, got %t",
-					*expected.FeatureResult, *result.FeatureResult))
+				fmt.Errorf("environment trigger mismatch: expected %t, got %t",
+					*expected.EnvironmentTriggered, *result.EnvironmentTriggered))
 		}
 	}
 
-	if expected.FeatureAbort != nil && result.FeatureAbort != nil {
-		if *expected.FeatureAbort != *result.FeatureAbort {
+	if expected.EnvironmentAbort != nil && result.EnvironmentAbort != nil {
+		if *expected.EnvironmentAbort != *result.EnvironmentAbort {
 			result.Success = false
 			result.Errors = append(result.Errors,
-				fmt.Errorf("feature abort mismatch: expected %t, got %t",
-					*expected.FeatureAbort, *result.FeatureAbort))
+				fmt.Errorf("environment abort mismatch: expected %t, got %t",
+					*expected.EnvironmentAbort, *result.EnvironmentAbort))
 		}
 	}
 
-	if expected.FeatureStatus != nil && result.FeatureStatus != nil {
-		if *expected.FeatureStatus != *result.FeatureStatus {
+	if expected.EnvironmentResult != nil && result.EnvironmentResult != nil {
+		if *expected.EnvironmentResult != *result.EnvironmentResult {
 			result.Success = false
 			result.Errors = append(result.Errors,
-				fmt.Errorf("feature status mismatch: expected %d, got %d",
-					*expected.FeatureStatus, *result.FeatureStatus))
+				fmt.Errorf("environment result mismatch: expected %d, got %d",
+					*expected.EnvironmentResult, *result.EnvironmentResult))
 		}
 	}
 
@@ -1032,20 +1032,20 @@ func (tr *TestRunner) PrintResult(result *TestResult) {
 	fmt.Printf("Callback Type: %s\n", tr.callbackType)
 	fmt.Printf("Success: %t\n\n", result.Success)
 
-	if result.FilterResult != nil {
-		fmt.Printf("Filter Result: %d\n", *result.FilterResult)
+	if result.SubjectResult != nil {
+		fmt.Printf("Subject Result: %d\n", *result.SubjectResult)
 	}
-	if result.FilterAction != nil {
-		fmt.Printf("Filter Action: %t\n", *result.FilterAction)
+	if result.SubjectRejected != nil {
+		fmt.Printf("Subject Rejected: %t\n", *result.SubjectRejected)
 	}
-	if result.FeatureResult != nil {
-		fmt.Printf("Feature Result: %t\n", *result.FeatureResult)
+	if result.EnvironmentTriggered != nil {
+		fmt.Printf("Environment Triggered: %t\n", *result.EnvironmentTriggered)
 	}
-	if result.FeatureAbort != nil {
-		fmt.Printf("Feature Abort: %t\n", *result.FeatureAbort)
+	if result.EnvironmentAbort != nil {
+		fmt.Printf("Environment Abort: %t\n", *result.EnvironmentAbort)
 	}
-	if result.FeatureStatus != nil {
-		fmt.Printf("Feature Status: %d\n", *result.FeatureStatus)
+	if result.EnvironmentResult != nil {
+		fmt.Printf("Environment Result: %d\n", *result.EnvironmentResult)
 	}
 	if result.ActionResult != nil {
 		fmt.Printf("Action Result: %t\n", *result.ActionResult)

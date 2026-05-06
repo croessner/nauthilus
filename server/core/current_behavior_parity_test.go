@@ -32,7 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	featurelib "github.com/croessner/nauthilus/server/lualib/feature"
+	featurelib "github.com/croessner/nauthilus/server/lualib/environment"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/policy"
@@ -52,7 +52,7 @@ type currentBehaviorBuiltInControlCase struct {
 	wantResult definitions.AuthResult
 }
 
-func TestCurrentBehaviorParityLuaControlTriggerAndAbort(t *testing.T) {
+func TestCurrentBehaviorParityLuaEnvironmentTriggerAndAbort(t *testing.T) {
 	cases := []struct {
 		name        string
 		script      string
@@ -60,11 +60,11 @@ func TestCurrentBehaviorParityLuaControlTriggerAndAbort(t *testing.T) {
 		wantMessage string
 	}{
 		{
-			name: "trigger returns Lua feature result",
+			name: "trigger returns Lua environment result",
 			script: `
-function nauthilus_call_feature(request)
-    nauthilus_builtin.status_message_set("Lua control denied")
-    return nauthilus_builtin.FEATURE_TRIGGER_YES, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
+function nauthilus_call_environment(request)
+    nauthilus_builtin.status_message_set("Lua environment denied")
+    return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `,
 			wantResult: definitions.AuthResultFeatureLua,
@@ -72,8 +72,8 @@ end
 		{
 			name: "abort allows remaining auth flow",
 			script: `
-function nauthilus_call_feature(request)
-    return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_YES, nauthilus_builtin.FEATURE_RESULT_OK
+function nauthilus_call_environment(request)
+    return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_YES, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `,
 			wantResult: definitions.AuthResultOK,
@@ -84,19 +84,19 @@ end
 		t.Run(testCase.name, func(t *testing.T) {
 			cfg := newCurrentBehaviorConfig(t, definitions.FeatureLua)
 			auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-			withCurrentBehaviorLuaFeature(t, testCase.script)
+			withCurrentBehaviorLuaEnvironment(t, testCase.script)
 
 			got := auth.HandleFeatures(ctx)
 			if got != testCase.wantResult {
-				t.Fatalf("feature result = %v, want %v", got, testCase.wantResult)
+				t.Fatalf("environment result = %v, want %v", got, testCase.wantResult)
 			}
 
 			if auth.Runtime.StatusMessage != testCase.wantMessage {
 				t.Fatalf("status message = %q, want %q", auth.Runtime.StatusMessage, testCase.wantMessage)
 			}
 
-			if testCase.wantResult == definitions.AuthResultFeatureLua && !ctx.GetBool(definitions.CtxFeatureRejectedKey) {
-				t.Fatal("expected feature rejection flag for triggered Lua control")
+			if testCase.wantResult == definitions.AuthResultFeatureLua && !ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
+				t.Fatal("expected environment rejection flag for triggered Lua environment source")
 			}
 		})
 	}
@@ -238,21 +238,21 @@ func TestCurrentBehaviorParityBruteForceDirectBlock(t *testing.T) {
 	}
 }
 
-func TestCurrentBehaviorParityLuaFilterStatusMessage(t *testing.T) {
+func TestCurrentBehaviorParityLuaSubjectStatusMessage(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	service, mock := newCurrentBehaviorApplicationService(t, cfg)
-	username := "filter-denied@example.test"
+	username := "subject-denied@example.test"
 	expectCurrentBehaviorAccountMapping(t, cfg, mock, username, definitions.ProtoIMAP)
 
 	previousVerifier := getPasswordVerifier()
-	previousFilter := getLuaFilter()
+	previousFilter := getLuaSubject()
 	previousPostAction := getPostAction()
 	RegisterPasswordVerifier(currentBehaviorPasswordVerifier{})
-	RegisterLuaFilter(currentBehaviorDenyingFilter{message: "Lua filter denied"})
+	RegisterLuaSubject(currentBehaviorDenyingFilter{message: "Lua subject denied"})
 	RegisterPostAction(currentBehaviorPostAction{})
 	t.Cleanup(func() {
 		RegisterPasswordVerifier(previousVerifier)
-		RegisterLuaFilter(previousFilter)
+		RegisterLuaSubject(previousFilter)
 		RegisterPostAction(previousPostAction)
 	})
 
@@ -271,8 +271,8 @@ func TestCurrentBehaviorParityLuaFilterStatusMessage(t *testing.T) {
 		t.Fatalf("decision = %q, want %q", outcome.Decision, AuthDecisionFail)
 	}
 
-	if outcome.StatusMessage != "Lua filter denied" {
-		t.Fatalf("status message = %q, want Lua filter denied", outcome.StatusMessage)
+	if outcome.StatusMessage != "Lua subject denied" {
+		t.Fatalf("status message = %q, want Lua subject denied", outcome.StatusMessage)
 	}
 
 	if outcome.TerminalState != string(authFSMStateAuthFail) {
@@ -360,30 +360,30 @@ func newCurrentBehaviorAuthState(t *testing.T, cfg *config.FileSettings) (*AuthS
 	return auth, ctx, mock
 }
 
-func withCurrentBehaviorLuaFeature(t *testing.T, script string) {
+func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) {
 	t.Helper()
 
-	scriptPath := filepath.Join(t.TempDir(), "control.lua")
+	scriptPath := filepath.Join(t.TempDir(), "environment.lua")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
-		t.Fatalf("failed to write Lua control: %v", err)
+		t.Fatalf("failed to write Lua environment source: %v", err)
 	}
 
-	luaFeature, err := featurelib.NewLuaFeature("current_behavior_control", scriptPath)
+	luaFeature, err := featurelib.NewLuaEnvironmentSource("current_behavior_environment", scriptPath)
 	if err != nil {
-		t.Fatalf("failed to compile Lua control: %v", err)
+		t.Fatalf("failed to compile Lua environment source: %v", err)
 	}
 
 	luaFeature.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
 
-	previous := featurelib.LuaFeatures
-	compiled := &featurelib.PreCompiledLuaFeatures{LuaScripts: []*featurelib.LuaFeature{luaFeature}}
+	previous := featurelib.LuaEnvironmentSources
+	compiled := &featurelib.PreCompiledLuaEnvironmentSources{LuaScripts: []*featurelib.LuaEnvironmentSource{luaFeature}}
 	if err := compiled.RebuildPlans(); err != nil {
-		t.Fatalf("failed to build Lua control plan: %v", err)
+		t.Fatalf("failed to build Lua environment plan: %v", err)
 	}
 
-	featurelib.LuaFeatures = compiled
+	featurelib.LuaEnvironmentSources = compiled
 	t.Cleanup(func() {
-		featurelib.LuaFeatures = previous
+		featurelib.LuaEnvironmentSources = previous
 	})
 }
 
@@ -459,7 +459,7 @@ type currentBehaviorDenyingFilter struct {
 	message string
 }
 
-func (f currentBehaviorDenyingFilter) Filter(_ *gin.Context, view *StateView, _ *PassDBResult) definitions.AuthResult {
+func (f currentBehaviorDenyingFilter) Analyze(_ *gin.Context, view *StateView, _ *PassDBResult) definitions.AuthResult {
 	view.Auth().Runtime.StatusMessage = f.message
 
 	return definitions.AuthResultFail

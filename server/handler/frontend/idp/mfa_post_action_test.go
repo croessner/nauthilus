@@ -130,8 +130,8 @@ func TestFinalizeMFALoginPreservesMFAMethodAndQueuesPostAction(t *testing.T) {
 	assert.True(t, act.MFACompleted)
 	assert.Equal(t, definitions.ProtoOIDC, act.Protocol)
 	assert.Equal(t, "test-client", act.OIDCCID)
-	assert.False(t, act.FeatureStageExpected)
-	assert.False(t, act.FilterStageExpected)
+	assert.False(t, act.EnvironmentStageExpected)
+	assert.False(t, act.SubjectStageExpected)
 	assert.Equal(t, "alice", act.Account)
 	assert.Equal(t, "uid-1", act.UniqueUserID)
 	act.FinishedChan <- action.Done{}
@@ -192,8 +192,8 @@ func TestQueueCompletedIdPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
 			assert.Equal(t, tt.flowType, act.Protocol)
 			assert.Equal(t, tt.oidcClientID, act.OIDCCID)
 			assert.Equal(t, tt.samlEntityID, act.SAMLEntityID)
-			assert.False(t, act.FeatureStageExpected)
-			assert.False(t, act.FilterStageExpected)
+			assert.False(t, act.EnvironmentStageExpected)
+			assert.False(t, act.SubjectStageExpected)
 			act.FinishedChan <- action.Done{}
 		})
 	}

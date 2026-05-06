@@ -30,10 +30,10 @@ const (
 	checkTypeTLSEncryption   = policy.CheckTypeTLSEncryption
 	checkTypeRelayDomains    = policy.CheckTypeRelayDomains
 	checkTypeRBL             = policy.CheckTypeRBL
-	checkTypeLuaControl      = policy.CheckTypeLuaControl
+	checkTypeLuaEnvironment  = policy.CheckTypeLuaEnvironment
 	checkTypeLDAPBackend     = policy.CheckTypeLDAPBackend
 	checkTypeLuaBackend      = policy.CheckTypeLuaBackend
-	checkTypeLuaFilter       = policy.CheckTypeLuaFilter
+	checkTypeLuaSubjectSource      = policy.CheckTypeLuaSubjectSource
 	checkTypeAccountProvider = policy.CheckTypeAccountProvider
 
 	runIfAny             = policy.RunIfAny
@@ -109,10 +109,10 @@ func preAuthCheckTypes() map[string]policyruntime.CheckTypeDefinition {
 			MinimumAttributes:  []string{"auth.rbl.threshold_reached", "auth.rbl.error"},
 			ObserveSafeDefault: false,
 		},
-		checkTypeLuaControl: {
+		checkTypeLuaEnvironment: {
 			Stage:                      policy.StagePreAuth,
 			Operations:                 []policy.Operation{policy.OperationAuthenticate},
-			ConfigRefPrefix:            "auth.controls.lua.controls.",
+			ConfigRefPrefix:            "auth.policy.attribute_sources.lua.environment.",
 			ObserveSafeDefault:         false,
 			AllowsObserveSafeAssertion: true,
 		},
@@ -136,10 +136,10 @@ func backendCheckTypes() map[string]policyruntime.CheckTypeDefinition {
 			ObserveSafeDefault:         false,
 			AllowsObserveSafeAssertion: true,
 		},
-		checkTypeLuaFilter: {
-			Stage:                      policy.StageAuthFilters,
+		checkTypeLuaSubjectSource: {
+			Stage:                      policy.StageSubjectAnalysis,
 			Operations:                 []policy.Operation{policy.OperationAuthenticate},
-			ConfigRefPrefix:            "auth.controls.lua.filters.",
+			ConfigRefPrefix:            "auth.policy.attribute_sources.lua.subject.",
 			ObserveSafeDefault:         false,
 			AllowsObserveSafeAssertion: true,
 		},
@@ -238,7 +238,7 @@ func stageValid(stage policy.Stage) bool {
 	switch stage {
 	case policy.StagePreAuth,
 		policy.StageAuthBackend,
-		policy.StageAuthFilters,
+		policy.StageSubjectAnalysis,
 		policy.StageAccountProvider,
 		policy.StageAuthDecision:
 		return true
@@ -264,7 +264,7 @@ func stageOrder(stage policy.Stage) int {
 		return 0
 	case policy.StageAuthBackend:
 		return 1
-	case policy.StageAuthFilters, policy.StageAccountProvider:
+	case policy.StageSubjectAnalysis, policy.StageAccountProvider:
 		return 2
 	case policy.StageAuthDecision:
 		return 3

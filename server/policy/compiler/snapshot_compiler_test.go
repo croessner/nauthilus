@@ -311,7 +311,7 @@ func validLuaRegistryScript() string {
 	return `
 nauthilus_policy.register_attribute({
   id = "lua.billing.account_locked",
-  stage = "auth_filters",
+  stage = "subject_analysis",
   operations = { "authenticate" },
   category = "subject",
   type = "bool",
@@ -455,7 +455,7 @@ func TestCompilerAcceptsLuaActionDispatchObligationArgs(t *testing.T) {
 			ID: policy.ObligationLuaActionDispatch,
 			Args: map[string]any{
 				policy.ObligationArgAction:  policy.LuaActionDispatchLua,
-				policy.ObligationArgFeature: "lua_control_named_script",
+				policy.ObligationArgFeature: "lua_environment_named_script",
 				policy.ObligationArgWait:    true,
 			},
 		},
@@ -578,19 +578,19 @@ func TestCompilerRejectsRunIfIncompatibleCheckDependency(t *testing.T) {
 	cfg.Auth.Policy.Policies = nil
 	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
 		{
-			Name:      "lua_control_auth_only",
-			Type:      policy.CheckTypeLuaControl,
+			Name:      "lua_environment_auth_only",
+			Type:      policy.CheckTypeLuaEnvironment,
 			Stage:     string(policy.StagePreAuth),
-			ConfigRef: "auth.controls.lua.controls.auth_only",
+			ConfigRef: "auth.policy.attribute_sources.lua.environment.auth_only",
 			RunIf:     config.PolicyRunIfConfig{AuthState: policy.RunIfAuthenticated},
 		},
 		{
-			Name:      "lua_control_unauth_only",
-			Type:      policy.CheckTypeLuaControl,
+			Name:      "lua_environment_unauth_only",
+			Type:      policy.CheckTypeLuaEnvironment,
 			Stage:     string(policy.StagePreAuth),
-			ConfigRef: "auth.controls.lua.controls.unauth_only",
+			ConfigRef: "auth.policy.attribute_sources.lua.environment.unauth_only",
 			RunIf:     config.PolicyRunIfConfig{AuthState: policy.RunIfUnauthenticated},
-			After:     []string{"lua_control_auth_only"},
+			After:     []string{"lua_environment_auth_only"},
 		},
 	}
 
@@ -599,7 +599,7 @@ func TestCompilerRejectsRunIfIncompatibleCheckDependency(t *testing.T) {
 		t.Fatal("Compile() error = nil, want scheduler compatibility error")
 	}
 
-	if !strings.Contains(err.Error(), "auth.policy.checks.lua_control_unauth_only.after[0]") {
+	if !strings.Contains(err.Error(), "auth.policy.checks.lua_environment_unauth_only.after[0]") {
 		t.Fatalf("Compile() error = %q, want dependency path", err)
 	}
 }

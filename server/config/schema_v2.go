@@ -338,12 +338,9 @@ type BruteForceControlSection struct {
 	LogHistoryForKnownAccounts bool             `mapstructure:"pw_history_for_known_accounts"`
 }
 
-// LuaControlSection configures Lua-based actions, controls, filters, and hooks.
+// LuaControlSection configures Lua-based hooks.
 type LuaControlSection struct {
-	Actions  []LuaAction  `mapstructure:"actions" validate:"omitempty,dive"`
-	Controls []LuaFeature `mapstructure:"controls" validate:"omitempty,dive"`
-	Filters  []LuaFilter  `mapstructure:"filters" validate:"omitempty,dive"`
-	Hooks    []LuaHooks   `mapstructure:"hooks" validate:"omitempty,dive"`
+	Hooks []LuaHooks `mapstructure:"hooks" validate:"omitempty,dive"`
 }
 
 // AuthServicesSection configures background services.
@@ -354,14 +351,16 @@ type AuthServicesSection struct {
 
 // AuthPolicySection configures the declarative auth decision compiler.
 type AuthPolicySection struct {
-	Sets             PolicySetsConfig              `mapstructure:"sets" validate:"omitempty"`
-	Report           PolicyReportConfig            `mapstructure:"report" validate:"omitempty"`
-	Mode             string                        `mapstructure:"mode" validate:"omitempty,oneof=enforce observe"`
-	DefaultPolicy    string                        `mapstructure:"default_policy" validate:"omitempty,printascii"`
-	RegistryScripts  []string                      `mapstructure:"registry_scripts" validate:"omitempty,dive,file"`
-	AttributeExports []PolicyAttributeExportConfig `mapstructure:"attribute_exports" validate:"omitempty,dive"`
-	Checks           []PolicyCheckConfig           `mapstructure:"checks" validate:"omitempty,dive"`
-	Policies         []PolicyRuleConfig            `mapstructure:"policies" validate:"omitempty,dive"`
+	Sets              PolicySetsConfig              `mapstructure:"sets" validate:"omitempty"`
+	Report            PolicyReportConfig            `mapstructure:"report" validate:"omitempty"`
+	AttributeSources  PolicyAttributeSourcesConfig  `mapstructure:"attribute_sources" validate:"omitempty"`
+	ObligationTargets PolicyObligationTargetsConfig `mapstructure:"obligation_targets" validate:"omitempty"`
+	Mode              string                        `mapstructure:"mode" validate:"omitempty,oneof=enforce observe"`
+	DefaultPolicy     string                        `mapstructure:"default_policy" validate:"omitempty,printascii"`
+	RegistryScripts   []string                      `mapstructure:"registry_scripts" validate:"omitempty,dive,file"`
+	AttributeExports  []PolicyAttributeExportConfig `mapstructure:"attribute_exports" validate:"omitempty,dive"`
+	Checks            []PolicyCheckConfig           `mapstructure:"checks" validate:"omitempty,dive"`
+	Policies          []PolicyRuleConfig            `mapstructure:"policies" validate:"omitempty,dive"`
 }
 
 func defaultAuthPolicySection() AuthPolicySection {
@@ -397,6 +396,27 @@ func applyAuthPolicyDefaults(policyConfig *AuthPolicySection) {
 			policyConfig.Report.IncludeChecks = true
 		}
 	}
+}
+
+// PolicyObligationTargetsConfig groups executable targets selected by policy obligations.
+type PolicyObligationTargetsConfig struct {
+	Lua PolicyLuaObligationTargetsConfig `mapstructure:"lua" validate:"omitempty"`
+}
+
+// PolicyLuaObligationTargetsConfig configures Lua obligation target scripts.
+type PolicyLuaObligationTargetsConfig struct {
+	Actions []LuaAction `mapstructure:"actions" validate:"omitempty,dive"`
+}
+
+// PolicyAttributeSourcesConfig groups request-time policy attribute producers.
+type PolicyAttributeSourcesConfig struct {
+	Lua PolicyLuaAttributeSourcesConfig `mapstructure:"lua" validate:"omitempty"`
+}
+
+// PolicyLuaAttributeSourcesConfig configures Lua attribute sources by XACML-aligned category.
+type PolicyLuaAttributeSourcesConfig struct {
+	Environment []LuaEnvironmentSource `mapstructure:"environment" validate:"omitempty,dive"`
+	Subject     []LuaSubjectSource     `mapstructure:"subject" validate:"omitempty,dive"`
 }
 
 // PolicySetsConfig groups reusable policy operands.
@@ -890,26 +910,25 @@ func (f *FileSettings) materializeLua() *LuaSection {
 
 	if f.Auth != nil {
 		luaSection.Actions = nil
-		luaSection.Controls = nil
-		luaSection.Filters = nil
+		luaSection.EnvironmentSources = nil
+		luaSection.SubjectSources = nil
 		luaSection.Hooks = nil
 
 		if f.Auth.Controls.Lua != nil {
-			luaSection.Actions = append([]LuaAction(nil), f.Auth.Controls.Lua.Actions...)
-			luaSection.Controls = append([]LuaFeature(nil), f.Auth.Controls.Lua.Controls...)
-			luaSection.Filters = append([]LuaFilter(nil), f.Auth.Controls.Lua.Filters...)
 			luaSection.Hooks = append([]LuaHooks(nil), f.Auth.Controls.Lua.Hooks...)
 		}
 
-		luaSection.normalizeConfiguredFeatures()
+		luaSection.Actions = append([]LuaAction(nil), f.Auth.Policy.ObligationTargets.Lua.Actions...)
+		luaSection.EnvironmentSources = append([]LuaEnvironmentSource(nil), f.Auth.Policy.AttributeSources.Lua.Environment...)
+		luaSection.SubjectSources = append([]LuaSubjectSource(nil), f.Auth.Policy.AttributeSources.Lua.Subject...)
 
 		luaSection.Config = f.Auth.Backends.Lua.Backend.Default
 		luaSection.OptionalLuaBackends = f.Auth.Backends.Lua.Backend.NamedBackends
 		luaSection.Search = append([]LuaSearchProtocol(nil), f.Auth.Backends.Lua.Backend.Search...)
 	}
 
-	if luaSection.Config == nil && len(luaSection.Actions) == 0 && len(luaSection.Controls) == 0 &&
-		len(luaSection.Filters) == 0 && len(luaSection.Hooks) == 0 && len(luaSection.Search) == 0 &&
+	if luaSection.Config == nil && len(luaSection.Actions) == 0 && len(luaSection.EnvironmentSources) == 0 &&
+		len(luaSection.SubjectSources) == 0 && len(luaSection.Hooks) == 0 && len(luaSection.Search) == 0 &&
 		len(luaSection.OptionalLuaBackends) == 0 {
 		return nil
 	}

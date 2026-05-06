@@ -49,8 +49,8 @@ auth:
           package_path: "server/lua-plugins.d/share/?.lua;server/lua-plugins.d/backend/?.lua;server/lua-plugins.d/init/?.lua"
           backend_number_of_workers: 32
           action_number_of_workers: 32
-          feature_vm_pool_size: 48
-          filter_vm_pool_size: 48
+          environment_vm_pool_size: 48
+          subject_vm_pool_size: 48
           hook_vm_pool_size: 48
           queue_length: 0
 

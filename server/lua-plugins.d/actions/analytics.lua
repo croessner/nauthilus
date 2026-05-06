@@ -47,8 +47,8 @@ function nauthilus_call_action(request)
             nauthilus_prometheus.increment_counter(N .. "_count", { feature = "brute_force" })
         end
 
-        -- feature_haproxy (not part of demo plugins)
-        if rt.feature_haproxy then
+        -- environment_haproxy (not part of demo plugins)
+        if rt.environment_haproxy then
             if request.feature and request.feature ~= "" then
                 nauthilus_prometheus.increment_counter(N .. "_count", { feature = request.feature })
             else
@@ -57,22 +57,22 @@ function nauthilus_call_action(request)
         end
     end
 
-    -- feature_blocklist
-    if (rt_has_data and rt.feature_blocklist) or fact(policy_facts, "blocklist", "matched") == true then
+    -- environment_blocklist
+    if (rt_has_data and rt.environment_blocklist) or fact(policy_facts, "blocklist", "matched") == true then
         nauthilus_prometheus.increment_counter(N .. "_count", { feature = "blocklist" })
     end
 
-    -- filter_geoippolicyd
-    if (rt_has_data and rt.filter_geoippolicyd) or fact(policy_facts, "geoip", "rejected") == true then
+    -- subject_geoippolicyd
+    if (rt_has_data and rt.subject_geoippolicyd) or fact(policy_facts, "geoip", "rejected") == true then
         nauthilus_prometheus.increment_counter(N .. "_count", { feature = "geoip" })
     end
 
-    -- feature_failed_login_hotspot
-    if (rt_has_data and rt.feature_failed_login_hotspot) or fact(policy_facts, "failed_login_hotspot", "triggered") == true then
+    -- environment_failed_login_hotspot
+    if (rt_has_data and rt.environment_failed_login_hotspot) or fact(policy_facts, "failed_login_hotspot", "triggered") == true then
         nauthilus_prometheus.increment_counter(N .. "_count", { feature = "failed_login_hotspot" })
     end
 
-    if (rt_has_data and rt.filter_account_protection_mode) or fact(policy_facts, "account_protection", "active") == true then
+    if (rt_has_data and rt.subject_account_protection_mode) or fact(policy_facts, "account_protection", "active") == true then
         nauthilus_prometheus.increment_counter(N .. "_count", { feature = "account_protection" })
     end
 

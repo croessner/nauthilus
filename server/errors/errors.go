@@ -211,20 +211,30 @@ var (
 	ErrUnknownDatabaseBackend = errors.New("unknown Database backend")
 )
 
-// Lua features.
+// Lua environment sources.
 
 var (
-	ErrFeatureLuaNameMissing     = errors.New("feature 'name' sttribute missing")
-	ErrFeatureLuaScriptPathEmpty = errors.New("feature 'script_path' attribute missing")
+	// ErrEnvironmentSourceLuaNameMissing indicates a Lua environment source without a name.
+	ErrEnvironmentSourceLuaNameMissing = errors.New("environment source 'name' attribute missing")
+
+	// ErrEnvironmentSourceLuaScriptPathEmpty indicates a Lua environment source without a script path.
+	ErrEnvironmentSourceLuaScriptPathEmpty = errors.New("environment source 'script_path' attribute missing")
 )
 
-// Lua filters.
+// Lua subject sources.
 
 var (
-	ErrNoFeatureDefined         = errors.New("no feature defined")
-	ErrNoFiltersDefined         = errors.New("no filters defined")
-	ErrFilterLuaNameMissing     = errors.New("filter 'name' sttribute missing")
-	ErrFilterLuaScriptPathEmpty = errors.New("filter 'script_path' attribute missing")
+	// ErrNoFeatureDefined indicates that a required server feature was not configured.
+	ErrNoFeatureDefined = errors.New("no feature defined")
+
+	// ErrNoSubjectSourcesDefined indicates that no Lua subject sources are configured.
+	ErrNoSubjectSourcesDefined = errors.New("no subject sources defined")
+
+	// ErrSubjectSourceLuaNameMissing indicates a Lua subject source without a name.
+	ErrSubjectSourceLuaNameMissing = errors.New("subject source 'name' attribute missing")
+
+	// ErrSubjectSourceLuaScriptPathEmpty indicates a Lua subject source without a script path.
+	ErrSubjectSourceLuaScriptPathEmpty = errors.New("subject source 'script_path' attribute missing")
 )
 
 // misc.

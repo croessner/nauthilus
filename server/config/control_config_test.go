@@ -1,3 +1,4 @@
+//nolint:goconst
 package config
 
 import (
@@ -187,7 +188,7 @@ func assertBackendHealthCheckTargetOverrides(t *testing.T, monitoring *BackendSe
 	}
 }
 
-func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
+func TestHandleFile_LuaEnvironmentSourcesPopulateInternalList(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
@@ -201,12 +202,14 @@ func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
 		},
 	})
 	viper.Set("auth", map[string]any{
-		"controls": map[string]any{
-			"lua": map[string]any{
-				"controls": []any{
-					map[string]any{
-						"name":        "test_context_chain",
-						"script_path": testLuaControlScriptPath(t),
+		"policy": map[string]any{
+			"attribute_sources": map[string]any{
+				"lua": map[string]any{
+					"environment": []any{
+						map[string]any{
+							"name":        "test_context_chain",
+							"script_path": testLuaEnvironmentScriptPath(t),
+						},
 					},
 				},
 			},
@@ -218,21 +221,21 @@ func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
 		t.Fatalf("handle file failed: %v", err)
 	}
 
-	if !cfg.HaveLuaFeatures() {
-		t.Fatal("expected lua.controls to populate Lua features")
+	if !cfg.HaveLuaEnvironmentSources() {
+		t.Fatal("expected Lua environment sources to populate the internal environment source list")
 	}
 
 	luaCfg := cfg.GetLua()
-	if len(luaCfg.GetFeatures()) != 1 {
-		t.Fatalf("expected one Lua control, got %d", len(luaCfg.GetFeatures()))
+	if len(luaCfg.GetEnvironmentSources()) != 1 {
+		t.Fatalf("expected one Lua environment source, got %d", len(luaCfg.GetEnvironmentSources()))
 	}
 
-	if luaCfg.GetFeatures()[0].Name != "test_context_chain" {
-		t.Fatalf("expected Lua control %q, got %q", "test_context_chain", luaCfg.GetFeatures()[0].Name)
+	if luaCfg.GetEnvironmentSources()[0].Name != "test_context_chain" {
+		t.Fatalf("expected Lua environment source %q, got %q", "test_context_chain", luaCfg.GetEnvironmentSources()[0].Name)
 	}
 }
 
-func TestHandleFile_LuaControlsRejectRemovedSchedulerKeys(t *testing.T) {
+func TestHandleFile_LuaAttributeSourcesRejectRemovedSchedulerKeys(t *testing.T) {
 	for _, testCase := range removedLuaSchedulerKeyCases() {
 		t.Run(testCase.name, func(t *testing.T) {
 			viper.Reset()
@@ -245,19 +248,19 @@ func TestHandleFile_LuaControlsRejectRemovedSchedulerKeys(t *testing.T) {
 }
 
 type removedLuaSchedulerKeyCase struct {
-	name  string
-	kind  string
-	key   string
-	value any
-	path  string
+	name     string
+	category string
+	key      string
+	value    any
+	path     string
 }
 
 func removedLuaSchedulerKeyCases() []removedLuaSchedulerKeyCase {
 	return []removedLuaSchedulerKeyCase{
-		{name: "control when_no_auth", kind: "controls", key: "when_no_auth", value: true, path: "auth.controls.lua.controls[0]"},
-		{name: "control depends_on", kind: "controls", key: "depends_on", value: []any{"context"}, path: "auth.controls.lua.controls[0]"},
-		{name: "filter when_authenticated", kind: "filters", key: "when_authenticated", value: true, path: "auth.controls.lua.filters[0]"},
-		{name: "filter depends_on", kind: "filters", key: "depends_on", value: []any{"context"}, path: "auth.controls.lua.filters[0]"},
+		{name: "environment when_no_auth", category: "environment", key: "when_no_auth", value: true, path: "auth.policy.attribute_sources.lua.environment[0]"},
+		{name: "environment depends_on", category: "environment", key: "depends_on", value: []any{"context"}, path: "auth.policy.attribute_sources.lua.environment[0]"},
+		{name: "subject when_authenticated", category: "subject", key: "when_authenticated", value: true, path: "auth.policy.attribute_sources.lua.subject[0]"},
+		{name: "subject depends_on", category: "subject", key: "depends_on", value: []any{"context"}, path: "auth.policy.attribute_sources.lua.subject[0]"},
 	}
 }
 
@@ -274,13 +277,15 @@ func setRemovedLuaSchedulerKeyConfig(t *testing.T, testCase removedLuaSchedulerK
 		},
 	})
 	viper.Set("auth", map[string]any{
-		"controls": map[string]any{
-			"lua": map[string]any{
-				testCase.kind: []any{
-					map[string]any{
-						"name":        "test_context_chain",
-						"script_path": testLuaControlScriptPath(t),
-						testCase.key:  testCase.value,
+		"policy": map[string]any{
+			"attribute_sources": map[string]any{
+				"lua": map[string]any{
+					testCase.category: []any{
+						map[string]any{
+							"name":        "test_context_chain",
+							"script_path": testLuaEnvironmentScriptPath(t),
+							testCase.key:  testCase.value,
+						},
 					},
 				},
 			},
@@ -485,7 +490,7 @@ func TestHandleFile_OptionalLDAPAndLuaBackendsInV2(t *testing.T) {
 	}
 }
 
-func testLuaControlScriptPath(t *testing.T) string {
+func testLuaEnvironmentScriptPath(t *testing.T) string {
 	t.Helper()
 
 	wd, err := os.Getwd()
@@ -493,7 +498,7 @@ func testLuaControlScriptPath(t *testing.T) string {
 		t.Fatalf("get working directory: %v", err)
 	}
 
-	return filepath.Join(wd, "..", "lua-plugins.d", "features", "test_context_chain.lua")
+	return filepath.Join(wd, "..", "lua-plugins.d", "environment", "test_context_chain.lua")
 }
 
 func testLuaBackendScriptPath(t *testing.T) string {

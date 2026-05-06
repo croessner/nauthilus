@@ -12,11 +12,11 @@ Action plugins are executed in response to authentication events and can perform
 ### [backend](./backend/)
 Backend plugins provide integration with external data sources for user authentication, account management, and credential verification.
 
-### [features](./features/)
-Feature plugins extend the core functionality of Nauthilus by adding new capabilities, integrations, or advanced security features.
+### [environment](./environment/)
+Lua environment source plugins collect pre-authentication signals and can trigger environment-derived decisions.
 
-### [filters](./filters/)
-Filter plugins are executed during the authentication process to analyze, validate, or modify authentication requests before they are processed.
+### [subject](./subject/)
+Lua subject source plugins run with subject context and can emit subject-derived policy attributes.
 
 ### [hooks](./hooks/)
 Hook plugins are executed at specific points in the system's lifecycle or in response to specific events, allowing for custom processing, administrative functions, and integration with external systems.
@@ -32,13 +32,13 @@ Shared utility modules provide common functions and utilities that can be used b
 
 ## Plugin Execution Flow
 
-The policy decision layer owns the effective execution plan for Lua controls and filters. A configured
-`auth.policy.checks` entry with type `lua.control` or `lua.filter` selects the script by `config_ref`, applies its
+The policy decision layer owns the effective execution plan for Lua environment and subject attribute sources. A configured
+`auth.policy.checks` entry with type `lua.environment` or `lua.subject` selects the script by `config_ref`, applies its
 `after` scheduling dependencies, and records the script result as policy attributes:
 
-- Lua controls: `auth.lua.control.<name>.triggered`, `auth.lua.control.<name>.abort`, and
-  `auth.lua.control.<name>.error`
-- Lua filters: `auth.lua.filter.<name>.rejected` and `auth.lua.filter.<name>.error`
+- Lua environment sources: `auth.lua.environment.<name>.triggered`, `auth.lua.environment.<name>.abort`, and
+  `auth.lua.environment.<name>.error`
+- Lua subject sources: `auth.lua.subject.<name>.rejected` and `auth.lua.subject.<name>.error`
 - Public status messages are attached as the `status_message` detail on triggered or rejected script attributes.
 
 The bundled policy-aware plugins use `share/nauthilus_policy_facts.lua` to emit custom Lua-owned attributes such as
@@ -57,10 +57,10 @@ The Nauthilus authentication system executes plugins in a specific order during 
 1. **Initialization**: When the system starts, all plugins in the `init` directory are executed to set up the environment.
 
 2. **Authentication Request**: When an authentication request is received:
-   - **Controls/Features**: Lua controls run in `pre_auth` when selected by policy.
+   - **Environment sources**: Lua environment sources run in `pre_auth` when selected by policy.
    - **Backend**: The appropriate backend plugin is used to verify credentials and retrieve user information.
-   - **Filters**: Lua filters run in `auth_filters` after backend facts are available.
-   - **Actions**: After authentication (success or failure), action plugins are executed to perform post-authentication tasks.
+   - **Subject sources**: Lua subject sources run in `subject_analysis` after backend facts are available.
+   - **Actions**: Lua actions are configured as `auth.policy.obligation_targets.lua.actions` and run only when selected by policy obligations.
 
 3. **Hooks**: Hook plugins can be executed at various points in the system's lifecycle, either on a schedule or in response to specific events.
 
@@ -68,7 +68,7 @@ The Nauthilus authentication system executes plugins in a specific order during 
 
 Each subdirectory contains a README.md file with detailed information about the plugins in that directory and how to create custom plugins of that type. In general, to create a custom plugin:
 
-1. Identify the appropriate plugin type (action, filter, feature, etc.) based on when and how you want your plugin to be executed.
+1. Identify the appropriate plugin type (action, subject source, environment source, etc.) based on when and how you want your plugin to be executed.
 2. Create a new Lua file in the corresponding subdirectory.
 3. Implement the required function for that plugin type (e.g., `nauthilus_call_action` for action plugins).
 4. Use the shared utility modules and Nauthilus API to implement your plugin's functionality.

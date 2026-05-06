@@ -24,13 +24,13 @@ import (
 
 func TestPolicyMockRecordsExpectedEmitAttributeCalls(t *testing.T) {
 	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "feature.lua")
+	scriptPath := filepath.Join(dir, "environment.lua")
 	mockPath := filepath.Join(dir, "mock.json")
 
 	writePolicyMockTestFile(t, scriptPath, `
 local policy = require("nauthilus_policy")
 
-function nauthilus_call_feature(request)
+function nauthilus_call_environment(request)
   policy.emit_attribute({
     id = "lua.test.risk",
     value = true,
@@ -53,7 +53,7 @@ end
   }
 }`)
 
-	runner, err := NewTestRunner(scriptPath, "feature", mockPath)
+	runner, err := NewTestRunner(scriptPath, "environment", mockPath)
 	if err != nil {
 		t.Fatalf("NewTestRunner failed: %v", err)
 	}
@@ -78,11 +78,11 @@ end
 
 func TestPolicyMockReportsMissingExpectedEmitAttributeCall(t *testing.T) {
 	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "feature.lua")
+	scriptPath := filepath.Join(dir, "environment.lua")
 	mockPath := filepath.Join(dir, "mock.json")
 
 	writePolicyMockTestFile(t, scriptPath, `
-function nauthilus_call_feature(request)
+function nauthilus_call_environment(request)
   return true, false, 0
 end
 `)
@@ -97,7 +97,7 @@ end
   }
 }`)
 
-	runner, err := NewTestRunner(scriptPath, "feature", mockPath)
+	runner, err := NewTestRunner(scriptPath, "environment", mockPath)
 	if err != nil {
 		t.Fatalf("NewTestRunner failed: %v", err)
 	}

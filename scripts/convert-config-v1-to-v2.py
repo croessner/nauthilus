@@ -151,10 +151,10 @@ PREFIX_RENAMES: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
     (("lua", "optional_lua_backends"), ("auth", "backends", "lua", "backend", "named_backends")),
     (("lua", "optional_backends"), ("auth", "backends", "lua", "backend", "named_backends")),
     (("lua", "search"), ("auth", "backends", "lua", "backend", "search")),
-    (("lua", "actions"), ("auth", "controls", "lua", "actions")),
-    (("lua", "controls"), ("auth", "controls", "lua", "controls")),
-    (("lua", "features"), ("auth", "controls", "lua", "controls")),
-    (("lua", "filters"), ("auth", "controls", "lua", "filters")),
+    (("lua", "actions"), ("auth", "policy", "obligation_targets", "lua", "actions")),
+    (("lua", "controls"), ("auth", "policy", "attribute_sources", "lua", "environment")),
+    (("lua", "features"), ("auth", "policy", "attribute_sources", "lua", "environment")),
+    (("lua", "filters"), ("auth", "policy", "attribute_sources", "lua", "subject")),
     (("lua", "custom_hooks"), ("auth", "controls", "lua", "hooks")),
     (("idp", "webauthn"), ("identity", "mfa", "webauthn")),
     (("idp", "oidc"), ("identity", "oidc")),
@@ -274,8 +274,8 @@ class PolicyConversionPlanner:
         self.report = report
         self.control_scheduler_hints = control_scheduler_hints or {}
         self.checks: list[PolicyCheckDescriptor] = []
-        self.lua_control_checks: list[PolicyCheckDescriptor] = []
-        self.lua_filter_checks: list[PolicyCheckDescriptor] = []
+        self.lua_environment_checks: list[PolicyCheckDescriptor] = []
+        self.lua_subject_checks: list[PolicyCheckDescriptor] = []
         self.backend_checks: list[PolicyCheckDescriptor] = []
         self.account_provider_check: PolicyCheckDescriptor | None = None
 
@@ -322,14 +322,14 @@ class PolicyConversionPlanner:
                 )
             )
 
-        self.lua_control_checks = self._lua_script_checks(
-            ("auth", "controls", "lua", "controls"),
-            "lua_control",
-            "lua.control",
+        self.lua_environment_checks = self._lua_script_checks(
+            ("auth", "policy", "attribute_sources", "lua", "environment"),
+            "lua_environment",
+            "lua.environment",
             "pre_auth",
-            "auth.controls.lua.controls",
+            "auth.policy.attribute_sources.lua.environment",
         )
-        checks.extend(self.lua_control_checks)
+        checks.extend(self.lua_environment_checks)
 
         if "tls_encryption" in controls:
             checks.append(
@@ -367,14 +367,14 @@ class PolicyConversionPlanner:
         self.backend_checks = self._backend_checks()
         checks.extend(self.backend_checks)
 
-        self.lua_filter_checks = self._lua_script_checks(
-            ("auth", "controls", "lua", "filters"),
-            "lua_filter",
-            "lua.filter",
-            "auth_filters",
-            "auth.controls.lua.filters",
+        self.lua_subject_checks = self._lua_script_checks(
+            ("auth", "policy", "attribute_sources", "lua", "subject"),
+            "lua_subject",
+            "lua.subject",
+            "subject_analysis",
+            "auth.policy.attribute_sources.lua.subject",
         )
-        checks.extend(self.lua_filter_checks)
+        checks.extend(self.lua_subject_checks)
 
         self.account_provider_check = self._account_provider_check()
         if self.account_provider_check is not None:
@@ -536,14 +536,14 @@ class PolicyConversionPlanner:
         if "rbl" in check_names:
             policies.extend(rbl_policies(check_names["rbl"].operations))
 
-        for check in self.lua_control_checks:
-            policies.extend(lua_control_policies(check))
+        for check in self.lua_environment_checks:
+            policies.extend(lua_environment_policies(check))
 
         if self.backend_checks:
             policies.extend(backend_decision_policies())
 
-        for check in self.lua_filter_checks:
-            policies.extend(lua_filter_policies(check))
+        for check in self.lua_subject_checks:
+            policies.extend(lua_subject_policies(check))
 
         if self.backend_checks:
             policies.extend(auth_result_policies())
@@ -598,8 +598,8 @@ class PolicyConversionPlanner:
             set_nested_value(self.document, ("auth", "controls", "enabled"), stripped_controls)
 
         for path in (
-            ("auth", "controls", "lua", "controls"),
-            ("auth", "controls", "lua", "filters"),
+            ("auth", "policy", "attribute_sources", "lua", "environment"),
+            ("auth", "policy", "attribute_sources", "lua", "subject"),
         ):
             self._strip_lua_script_fields(path)
 
@@ -731,9 +731,9 @@ class LegacyConfigConverter:
         self.handled_prefixes.add(("lua", "features"))
 
         for index, item in enumerate(features):
-            self._append_unique_value(("auth", "controls", "lua", "controls"), copy.deepcopy(item))
+            self._append_unique_value(("auth", "policy", "attribute_sources", "lua", "environment"), copy.deepcopy(item))
             self.report.migrated_paths.append(
-                f"{format_path(('lua', 'features', index))} -> auth.controls.lua.controls"
+                f"{format_path(('lua', 'features', index))} -> auth.policy.attribute_sources.lua.environment"
             )
 
     def _parse_named_feature_item(
@@ -849,6 +849,12 @@ class LegacyConfigConverter:
 
             elif segment == "roles":
                 updated[index] = "scopes"
+
+            elif segment == "feature_vm_pool_size":
+                updated[index] = "environment_vm_pool_size"
+
+            elif segment == "filter_vm_pool_size":
+                updated[index] = "subject_vm_pool_size"
 
         if updated and updated[-1] == "return_code":
             updated[-1] = "return_codes"
@@ -1288,18 +1294,18 @@ def rbl_policies(operations: list[str]) -> list[dict[str, Any]]:
     ]
 
 
-def lua_control_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
-    """Return generated standard-auth policies for one Lua control."""
-    prefix = f"auth.lua.control.{check.script_name}"
+def lua_environment_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
+    """Return generated standard-auth policies for one Lua environment source."""
+    prefix = f"auth.lua.environment.{check.script_name}"
 
     return [
         policy_rule(
-            f"standard_lua_control_{check.script_name}_error",
+            f"standard_lua_environment_{check.script_name}_error",
             "pre_auth",
             attr_condition(f"{prefix}.error", True),
             then_block(
                 "tempfail",
-                f"auth.outcome.lua_control.{check.script_name}.error",
+                f"auth.outcome.lua_environment.{check.script_name}.error",
                 "auth.fsm.event.pre_auth_tempfail",
                 "auth.response.tempfail",
             ),
@@ -1307,12 +1313,12 @@ def lua_control_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
             operations=check.operations,
         ),
         policy_rule(
-            f"standard_lua_control_{check.script_name}_trigger",
+            f"standard_lua_environment_{check.script_name}_trigger",
             "pre_auth",
             attr_condition(f"{prefix}.triggered", True),
             then_block(
                 "deny",
-                f"auth.outcome.lua_control.{check.script_name}.reject",
+                f"auth.outcome.lua_environment.{check.script_name}.reject",
                 "auth.fsm.event.pre_auth_deny",
                 "auth.response.fail",
                 response_message=response_message_from_attribute(f"{prefix}.triggered"),
@@ -1321,7 +1327,7 @@ def lua_control_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
             operations=check.operations,
         ),
         policy_rule(
-            f"standard_lua_control_{check.script_name}_abort",
+            f"standard_lua_environment_{check.script_name}_abort",
             "pre_auth",
             attr_condition(f"{prefix}.abort", True),
             then_block(
@@ -1377,18 +1383,18 @@ def backend_decision_policies() -> list[dict[str, Any]]:
     ]
 
 
-def lua_filter_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
-    """Return generated standard-auth policies for one Lua filter."""
-    prefix = f"auth.lua.filter.{check.script_name}"
+def lua_subject_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
+    """Return generated standard-auth policies for one Lua subject source."""
+    prefix = f"auth.lua.subject.{check.script_name}"
 
     return [
         policy_rule(
-            f"standard_lua_filter_{check.script_name}_error",
+            f"standard_lua_subject_{check.script_name}_error",
             "auth_decision",
             attr_condition(f"{prefix}.error", True),
             then_block(
                 "tempfail",
-                f"auth.outcome.lua_filter.{check.script_name}.error",
+                f"auth.outcome.lua_subject.{check.script_name}.error",
                 "auth.fsm.event.auth_tempfail",
                 "auth.response.tempfail",
             ),
@@ -1396,12 +1402,12 @@ def lua_filter_policies(check: PolicyCheckDescriptor) -> list[dict[str, Any]]:
             operations=check.operations,
         ),
         policy_rule(
-            f"standard_lua_filter_{check.script_name}_reject",
+            f"standard_lua_subject_{check.script_name}_reject",
             "auth_decision",
             attr_condition(f"{prefix}.rejected", True),
             then_block(
                 "deny",
-                f"auth.outcome.lua_filter.{check.script_name}.reject",
+                f"auth.outcome.lua_subject.{check.script_name}.reject",
                 "auth.fsm.event.auth_deny",
                 "auth.response.fail",
                 response_message=response_message_from_attribute(f"{prefix}.rejected"),

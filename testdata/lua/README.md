@@ -7,15 +7,15 @@ This directory contains example Lua scripts and mock data files for testing Naut
 ```
 testdata/lua/
 ├── README.md                    # This file
-├── example_filter.lua           # Example filter script
-├── example_feature.lua          # Example feature script
+├── example_subject.lua          # Example subject source script
+├── example_environment.lua      # Example environment source script
 ├── example_action.lua           # Example action script
 ├── example_backend.lua          # Example backend script
 ├── example_hook.lua             # Example hook script
 ├── example_backend_ldap.lua     # LDAP backend example
 ├── example_backend_db.lua       # DB backend example
-├── filter_test.json             # Mock data for filter tests
-├── feature_test.json            # Mock data for feature tests
+├── subject_test.json            # Mock data for subject source tests
+├── environment_test.json        # Mock data for environment source tests
 ├── action_test.json             # Mock data for action tests
 ├── backend_test.json            # Mock data for backend tests
 ├── hook_test.json               # Mock data for hook tests
@@ -30,7 +30,7 @@ testdata/lua/
 Test a Lua script without mock data:
 
 ```bash
-./nauthilus --test-lua testdata/lua/example_filter.lua --test-callback filter
+./nauthilus --test-lua testdata/lua/example_subject.lua --test-callback subject
 ```
 
 ### With Mock Data
@@ -38,9 +38,9 @@ Test a Lua script without mock data:
 Test a Lua script with mock data from JSON file:
 
 ```bash
-./nauthilus --test-lua testdata/lua/example_filter.lua \
-            --test-callback filter \
-            --test-mock testdata/lua/filter_test.json
+./nauthilus --test-lua testdata/lua/example_subject.lua \
+            --test-callback subject \
+            --test-mock testdata/lua/subject_test.json
 ```
 
 ### New LDAP and DB Examples
@@ -59,9 +59,9 @@ Test a Lua script with mock data from JSON file:
 
 The `--test-callback` flag accepts the following values:
 
-- **filter**: Tests filter scripts (returns `action, result`; typically `FILTER_ACCEPT|FILTER_REJECT`, `FILTER_RESULT_OK|FILTER_RESULT_FAIL`)
-- **feature**: Tests feature scripts (returns `triggered, abort, result`)
-- **action**: Tests action scripts (returns boolean or nil)
+- **subject**: Tests subject source scripts (returns `action, result`; typically `SUBJECT_ACCEPT|SUBJECT_REJECT`, `SUBJECT_RESULT_OK|SUBJECT_RESULT_FAIL`)
+- **environment**: Tests environment source scripts (returns `triggered, abort, result`)
+- **action**: Tests action scripts (returns boolean, integer result constant, or nil)
 - **backend**: Tests backend authentication scripts (returns `result, backend_result`)
 - **hook**: Tests HTTP hook scripts (returns nil or result table)
 - **cache_flush**: Tests cache flush scripts (returns `additional_keys` table and optional `account_name`)
@@ -254,8 +254,8 @@ run_test() {
   ./nauthilus/bin/nauthilus --test-lua "$script" --test-callback "$callback" --test-mock "$mock"
 }
 
-run_test testdata/lua/example_filter.lua filter testdata/lua/filter_test.json
-run_test testdata/lua/example_feature.lua feature testdata/lua/feature_test.json
+run_test testdata/lua/example_subject.lua subject testdata/lua/subject_test.json
+run_test testdata/lua/example_environment.lua environment testdata/lua/environment_test.json
 run_test testdata/lua/example_action.lua action testdata/lua/action_test.json
 run_test testdata/lua/example_backend.lua backend testdata/lua/backend_test.json
 run_test testdata/lua/example_hook.lua hook testdata/lua/hook_test.json

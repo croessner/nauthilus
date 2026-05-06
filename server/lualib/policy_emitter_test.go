@@ -111,7 +111,7 @@ func TestPolicyEmitterRejectsStageMismatch(t *testing.T) {
 	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
 		"lua.plugin.geoip.rejected": {
 			ID:         "lua.plugin.geoip.rejected",
-			Stage:      policy.StageAuthFilters,
+			Stage:      policy.StageSubjectAnalysis,
 			Operations: []policy.Operation{policy.OperationAuthenticate},
 			Type:       policyregistry.AttributeTypeBool,
 			Source:     policyregistry.SourceLua,

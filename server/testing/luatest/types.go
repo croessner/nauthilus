@@ -314,7 +314,7 @@ func (m *BackendMock) ValidateComplete() error {
 	return validateModuleCalls("backend", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
-// BackendServerMock represents one backend server entry exposed to Lua filters.
+// BackendServerMock represents one backend server entry exposed to Lua subject sources.
 type BackendServerMock struct {
 	Protocol      string `json:"protocol"`
 	Host          string `json:"host"`
@@ -842,11 +842,11 @@ func (m *HTTPClientMock) ValidateComplete() error {
 
 // ExpectedOutputMock defines expected test results.
 type ExpectedOutputMock struct {
-	FilterResult             *int     `json:"filter_result,omitempty"`
-	FilterAction             *bool    `json:"filter_action,omitempty"`
-	FeatureResult            *bool    `json:"feature_result,omitempty"`
-	FeatureAbort             *bool    `json:"feature_abort,omitempty"`
-	FeatureStatus            *int     `json:"feature_status,omitempty"`
+	SubjectResult            *int     `json:"subject_result,omitempty"`
+	SubjectRejected          *bool    `json:"subject_rejected,omitempty"`
+	EnvironmentTriggered     *bool    `json:"environment_triggered,omitempty"`
+	EnvironmentAbort         *bool    `json:"environment_abort,omitempty"`
+	EnvironmentResult        *int     `json:"environment_result,omitempty"`
 	ActionResult             *bool    `json:"action_result,omitempty"`
 	BackendResult            *bool    `json:"backend_result,omitempty"`
 	BackendReturnCode        *int     `json:"backend_return_code,omitempty"`
@@ -869,11 +869,11 @@ type ExpectedOutputMock struct {
 // TestResult contains the results of a Lua script test.
 type TestResult struct {
 	Success                  bool
-	FilterResult             *int
-	FilterAction             *bool
-	FeatureResult            *bool
-	FeatureAbort             *bool
-	FeatureStatus            *int
+	SubjectResult            *int
+	SubjectRejected          *bool
+	EnvironmentTriggered     *bool
+	EnvironmentAbort         *bool
+	EnvironmentResult        *int
 	ActionResult             *bool
 	BackendResult            *bool
 	BackendReturnCode        *int

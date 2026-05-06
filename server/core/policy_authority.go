@@ -343,7 +343,7 @@ func (a *AuthState) applyPolicyDecision(ctx *gin.Context, final *report.FinalDec
 	}
 
 	if final.Stage == policy.StagePreAuth && final.Effect == policy.DecisionDeny {
-		a.markFeatureRejected(ctx)
+		a.markEnvironmentRejected(ctx)
 	}
 
 	if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ctx), final)); err != nil {
@@ -450,7 +450,7 @@ func preAuthDenyResult(final *report.FinalDecision, current definitions.AuthResu
 		return definitions.AuthResultFeatureRelayDomain
 	case strings.Contains(name, "_rbl_"):
 		return definitions.AuthResultFeatureRBL
-	case strings.Contains(name, "_lua_control_"):
+	case strings.Contains(name, "_lua_environment_"):
 		return definitions.AuthResultFeatureLua
 	case strings.Contains(name, "_brute_force_"):
 		return definitions.AuthResultFail
