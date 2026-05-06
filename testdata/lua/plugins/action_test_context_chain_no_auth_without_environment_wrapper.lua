@@ -6,7 +6,7 @@ local original = nauthilus_call_action
 
 function nauthilus_call_action(request)
     request.no_auth = true
-    request.feature = ""
+    request.environment = ""
     request.environment_stage_expected = false
     request.subject_stage_expected = true
     request.status_message = "OK"

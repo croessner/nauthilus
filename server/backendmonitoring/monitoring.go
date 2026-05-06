@@ -159,8 +159,8 @@ type serversAlive struct {
 // configForMonitoring retrieves and validates the backend servers configuration for monitoring.
 // Returns a list of backend servers or an error if monitoring is disabled or no servers are configured.
 func configForMonitoring(cfg config.File) ([]*config.BackendServer, error) {
-	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
-		return nil, errorspkg.ErrFeatureBackendServersMonitoringDisabled
+	if !cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks) {
+		return nil, errorspkg.ErrBackendHealthChecksDisabled
 	}
 
 	backendServers := cfg.GetBackendServers()
@@ -171,11 +171,11 @@ func configForMonitoring(cfg config.File) ([]*config.BackendServer, error) {
 	return backendServers, nil
 }
 
-// handleError processes the given error, logging messages based on its type and feature availability.
+// handleError processes the given error, logging messages based on its type and service availability.
 func handleError(cfg config.File, logger *slog.Logger, err error) {
-	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
-		if stderrors.Is(err, errorspkg.ErrFeatureBackendServersMonitoringDisabled) {
-			level.Info(logger).Log(definitions.LogKeyMsg, "Monitoring feature is not enabled")
+	if !cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks) {
+		if stderrors.Is(err, errorspkg.ErrBackendHealthChecksDisabled) {
+			_ = level.Info(logger).Log(definitions.LogKeyMsg, "Backend health-check service is not enabled")
 		}
 
 		return

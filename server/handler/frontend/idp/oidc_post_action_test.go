@@ -28,8 +28,8 @@ func (m *mockOIDCPostActionCfg) HaveLuaActions() bool {
 	return true
 }
 
-func (m *mockOIDCPostActionCfg) HasFeature(feature string) bool {
-	return feature == definitions.FeatureBruteForce
+func (m *mockOIDCPostActionCfg) HasRuntimeModule(environmentName string) bool {
+	return environmentName == definitions.ControlBruteForce
 }
 
 func newOIDCTokenPostActionHandler() *OIDCHandler {

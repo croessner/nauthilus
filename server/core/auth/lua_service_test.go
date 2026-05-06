@@ -194,14 +194,14 @@ func TestDefaultLuaSubject_MergesGroupsFromBackendResult(t *testing.T) { //nolin
 }
 
 func newDefaultPostActionTestConfig(t *testing.T) *config.FileSettings {
-	bfFeature := &config.Feature{}
-	if err := bfFeature.Set(definitions.FeatureBruteForce); err != nil {
-		t.Fatalf("Set feature failed: %v", err)
+	bfControl := &config.RuntimeModule{}
+	if err := bfControl.Set(definitions.ControlBruteForce); err != nil {
+		t.Fatalf("Set runtime module failed: %v", err)
 	}
 
 	return &config.FileSettings{
 		Server: &config.ServerSection{
-			Features: []*config.Feature{bfFeature},
+			RuntimeModules: []*config.RuntimeModule{bfControl},
 		},
 		Lua: &config.LuaSection{
 			Actions: []config.LuaAction{
@@ -293,7 +293,7 @@ func TestDefaultPostAction_ForwardsEnvironmentRejectedToLuaRequest(t *testing.T)
 	ctx.Request = httptest.NewRequest("POST", "/auth", nil)
 	ctx.Set(definitions.CtxEnvironmentRejectedKey, true)
 
-	auth := newDefaultPostActionAuth(ctx, cfg, "guid-feature-rejected")
+	auth := newDefaultPostActionAuth(ctx, cfg, "guid-environment-rejected")
 
 	DefaultPostAction{}.Run(core.PostActionInput{
 		View: auth.View(),
@@ -361,7 +361,7 @@ func TestAuthStateSubjectLua_SkipsCanceledRequest(t *testing.T) {
 		Redis:  rediscli.GetClient(),
 	}).(*core.AuthState)
 
-	auth.Runtime.GUID = "guid-canceled-filter"
+	auth.Runtime.GUID = "guid-canceled-subject"
 	auth.Request.Protocol = config.NewProtocol("imap")
 	auth.Request.Service = definitions.ServNginx
 	auth.Request.Username = "user@example.com"

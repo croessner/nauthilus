@@ -241,7 +241,7 @@ const (
 	// ScopeAdmin grants full administrative access to the backchannel API.
 	ScopeAdmin = "nauthilus:admin"
 
-	// ScopeSecurity grants access to security-related features (metrics, brute force listing).
+	// ScopeSecurity grants access to security-related controls such as metrics and brute-force listings.
 	ScopeSecurity = "nauthilus:security"
 
 	// ScopeAuthenticate is the base scope required for all backchannel API access.
@@ -375,8 +375,8 @@ const (
 	// LogKeyBruteForceName represents the name of the bucket used for brute force detection.
 	LogKeyBruteForceName = "brute_force_bucket"
 
-	// LogKeyFeatureName represents the name of a feature for feature status logging.
-	LogKeyFeatureName = "feature"
+	// LogKeyEnvironmentName represents the environment control or source that produced the decision.
+	LogKeyEnvironmentName = "environment"
 
 	// LogKeyStatusMessage represents a status message for an operation.
 	LogKeyStatusMessage = "status_message"
@@ -655,25 +655,25 @@ const (
 	BackendLocalCacheName = "memory"
 )
 
-// Supported features.
+// Supported auth controls and runtime services.
 const (
-	// FeatureTLSEncryption is a constant for the string "tls_encryption"
-	FeatureTLSEncryption = "tls_encryption"
+	// ControlTLSEncryption is a constant for the string "tls_encryption"
+	ControlTLSEncryption = "tls_encryption"
 
-	// FeatureRBL is a constant for the string "rbl"
-	FeatureRBL = "rbl"
+	// ControlRBL is a constant for the string "rbl"
+	ControlRBL = "rbl"
 
-	// FeatureRelayDomains is a constant for the string "relay_domains"
-	FeatureRelayDomains = "relay_domains"
+	// ControlRelayDomains is a constant for the string "relay_domains"
+	ControlRelayDomains = "relay_domains"
 
-	// FeatureLua is a constant for the string "lua"
-	FeatureLua = "lua"
+	// ControlLua is a constant for the string "lua"
+	ControlLua = "lua"
 
-	// FeatureBackendServersMonitoring enables a custom backend list with fail-state monitoring
-	FeatureBackendServersMonitoring = "backend_health_checks"
+	// ServiceBackendHealthChecks enables a custom backend list with fail-state monitoring
+	ServiceBackendHealthChecks = "backend_health_checks"
 
-	// FeatureBruteForce enables the brute force protection system
-	FeatureBruteForce = "brute_force"
+	// ControlBruteForce enables the brute force protection system
+	ControlBruteForce = "brute_force"
 )
 
 // Statistics label for the loin counter.
@@ -801,17 +801,17 @@ const (
 	// AuthResultEmptyPassword denotes a failure due to an empty password.
 	AuthResultEmptyPassword
 
-	// AuthResultFeatureRBL represents a status linked with a Real-time Blackhole List feature.
-	AuthResultFeatureRBL
+	// AuthResultPreAuthRBL represents a status linked with a Real-time Blackhole List pre-auth control.
+	AuthResultPreAuthRBL
 
-	// AuthResultFeatureTLS represents a status linked with a Transport Layer Security feature.
-	AuthResultFeatureTLS
+	// AuthResultPreAuthTLS represents a status linked with a Transport Layer Security pre-auth control.
+	AuthResultPreAuthTLS
 
-	// AuthResultFeatureRelayDomain represents a status linked with a relay domain feature.
-	AuthResultFeatureRelayDomain
+	// AuthResultPreAuthRelayDomain represents a status linked with a relay-domain pre-auth control.
+	AuthResultPreAuthRelayDomain
 
-	// AuthResultFeatureLua denotes a status linked with a Lua scripting feature.
-	AuthResultFeatureLua
+	// AuthResultLuaEnvironment denotes a status linked with a Lua environment source.
+	AuthResultLuaEnvironment
 )
 
 const (
@@ -929,8 +929,8 @@ const (
 	// CtxExternalSessionKey stores an optional upstream session identifier for request correlation.
 	CtxExternalSessionKey = "external_session"
 
-	// CtxAdditionalFeaturesKey is the key used to store additional features in the lualib.Context
-	CtxAdditionalFeaturesKey = "additional_features"
+	// CtxAdditionalAttributesKey stores additional backend attributes in the lualib.Context.
+	CtxAdditionalAttributesKey = "additional_attributes"
 
 	// CtxLocalizedKey is used as a key to store the session's localization data in session.Store
 	CtxLocalizedKey = "localizer"
@@ -982,7 +982,7 @@ const (
 	// from CheckBruteForce for reuse in UpdateBruteForceBucketsCounter, avoiding redundant Redis calls.
 	CtxRWPResultKey = "rwp_result"
 
-	// CtxEnvironmentRejectedKey indicates that a security feature (RBL, TLS, relay domain, Lua)
+	// CtxEnvironmentRejectedKey indicates that an environment control or source (RBL, TLS, relay domain, Lua)
 	// rejected the request before password authentication could take place.
 	// When set to true, RWP must not record the password hash because the password was never verified.
 	CtxEnvironmentRejectedKey = "environment_rejected"
@@ -1122,8 +1122,8 @@ const (
 	// DbgAction is for debugging related to any actions performed in the system.
 	DbgAction
 
-	// DbgFeature is for debugging toggling or usage of features.
-	DbgFeature
+	// DbgEnvironment is for debugging environment controls and sources.
+	DbgEnvironment
 
 	// DbgLua is for Lua scripting related debugging.
 	DbgLua
@@ -1190,8 +1190,8 @@ const (
 	// DbgActionName is the debug identifier for action
 	DbgActionName = "action"
 
-	// DbgFeatureName is the debug identifier for feature
-	DbgFeatureName = "feature"
+	// DbgEnvironmentName is the debug identifier for environment controls and sources.
+	DbgEnvironmentName = "environment"
 
 	// DbgLuaName is the debug identifier for Lua
 	DbgLuaName = "lua"
@@ -1905,8 +1905,8 @@ const (
 	// LuaRequestBruteForceBucket is for the bucket of brute force attempts.
 	LuaRequestBruteForceBucket = "brute_force_bucket"
 
-	// LuaRequestFeature indicates the feature type of the request.
-	LuaRequestFeature = "feature"
+	// LuaRequestEnvironment indicates the environment control or source that triggered the request action.
+	LuaRequestEnvironment = "environment"
 
 	// LuaRequestEnvironmentRejected indicates that an environment source rejected the request before subject analysis.
 	LuaRequestEnvironmentRejected = "environment_rejected"
@@ -2266,8 +2266,8 @@ const (
 	// PromBruteForce is a constant representing the "brute_force" metric in a Prometheus monitoring system.
 	PromBruteForce = "brute_force"
 
-	// PromFeature is a constant representing the feature metric used in Prometheus monitoring.
-	PromFeature = "feature"
+	// PromEnvironment is a constant representing environment control and source metrics.
+	PromEnvironment = "environment"
 
 	// PromSubject is the Prometheus label for Lua subject source metrics.
 	PromSubject = "subject"
@@ -2314,7 +2314,7 @@ const (
 // DefaultBackendName specifies the default name used for the backend in channel and pool creation procedures.
 const DefaultBackendName = "__meta_default__"
 
-// LuaCtxBuiltin is a builtin map for static features that have been triggered
+// LuaCtxBuiltin is a builtin map for static environment controls that have been triggered.
 const LuaCtxBuiltin = "__lua_ctx_builtin__"
 
 // Cache module function names

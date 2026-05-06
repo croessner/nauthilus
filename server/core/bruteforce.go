@@ -147,9 +147,9 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	cfg := a.cfg()
 
-	if !cfg.HasFeature(definitions.FeatureBruteForce) {
-		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "feature_disabled"))
-		a.markPolicyUnavailable(ctx, "brute_force", "feature_disabled")
+	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
+		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "control_disabled"))
+		a.markPolicyUnavailable(ctx, "brute_force", "control_disabled")
 
 		return false
 	}
@@ -334,7 +334,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	stats.GetMetrics().GetBruteForceRulesMatchedTotal().Inc()
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
-		a.Runtime.FeatureName = bm.GetFeatureName()
+		a.Runtime.EnvironmentName = bm.GetEnvironmentName()
 		a.Security.BruteForceName = bm.GetBruteForceName()
 		a.Security.BruteForceCounter = bm.GetBruteForceCounter()
 		a.Runtime.BruteForceToleration = bm.GetTolerationPolicyFact()
@@ -377,7 +377,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	a.Runtime.BFRepeating = bfRepeating || bruteForceBucketFactsRepeat(a.Runtime.BruteForceBuckets)
 
 	if triggered || alreadyTriggered {
-		a.updateLuaContext(definitions.FeatureBruteForce)
+		a.updateLuaContext(definitions.ControlBruteForce)
 	}
 
 	// Always return triggered (block status) even if alreadyTriggered was true
@@ -509,14 +509,14 @@ func bruteForceBucketFactsRepeat(facts []bruteforce.BucketPolicyFact) bool {
 	return false
 }
 
-// commitRWPIfAllowed commits the RWP sliding window write unless a feature rejected the request
-// without learning being active for that feature. In that case, the password was never verified,
+// commitRWPIfAllowed commits the RWP sliding window write unless an environment control rejected the request
+// without learning being active for that environment control. In that case, the password was never verified,
 // so recording it in the RWP window would be incorrect.
 func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager) {
 	if ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
 		bfCfg := a.cfg().GetBruteForce()
 
-		if bfCfg == nil || !bfCfg.LearnFromFeature(a.Runtime.FeatureName) {
+		if bfCfg == nil || !bfCfg.LearnFromControl(a.Runtime.EnvironmentName) {
 			return
 		}
 	}
@@ -551,7 +551,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 	cfg := a.cfg()
 
-	if !cfg.HasFeature(definitions.FeatureBruteForce) {
+	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 
@@ -702,7 +702,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 enforceBuckets:
 
 	// Commit the RWP sliding window write only if the rejection is genuine
-	// (not caused by a feature like RBL that never verified the password).
+	// (not caused by an environment control like RBL that never verified the password).
 	a.commitRWPIfAllowed(ctx, bm)
 
 	proto := ""

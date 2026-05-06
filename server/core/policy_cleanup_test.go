@@ -27,7 +27,7 @@ import (
 const cleanupStandardTLSEnforcementPolicy = "standard_tls_enforcement"
 
 func TestAuthBoundaryDefaultSetDoesNotCreateMigrationObserveReportForTLSTempfail(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    91,

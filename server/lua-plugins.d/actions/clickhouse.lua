@@ -163,7 +163,7 @@ function nauthilus_call_action(request)
         add_decision_source("account_protection")
     end
 
-    local features = table.concat(decision_sources_from_ctx, ",")
+    local decision_sources = table.concat(decision_sources_from_ctx, ",")
 
     local hibp = nauthilus_context.context_get("haveibeenpwnd_hash_info")
     if hibp then pwnd_info = hibp else pwnd_info = "" end
@@ -284,7 +284,7 @@ function nauthilus_call_action(request)
             ts = normalize_ts_for_clickhouse(ts),
             session = request.session,
             service = request.service or "",
-            features = features,
+            decision_sources = decision_sources,
             client_ip = request.client_ip,
             client_port = request.client_port or "",
             client_net = request.client_net or "",

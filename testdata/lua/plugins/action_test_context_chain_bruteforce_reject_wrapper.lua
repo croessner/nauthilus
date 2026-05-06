@@ -5,7 +5,7 @@ dofile("server/lua-plugins.d/actions/test_context_chain.lua")
 local original = nauthilus_call_action
 
 function nauthilus_call_action(request)
-    request.feature = "brute_force"
+    request.environment = "brute_force"
     request.environment_rejected = true
     request.environment_stage_expected = false
     request.subject_stage_expected = false

@@ -19,7 +19,7 @@ This slice does not start custom policy observe or enforce mode, does not add a 
 
 - `server/core/rest.go`
   - Starts auth pipeline FSM tracking at `init` and applies `auth.fsm.event.parse_ok`.
-  - Maps feature outcomes to target `pre_auth_*` markers.
+  - Maps pre-auth outcomes to target `pre_auth_*` markers.
   - Maps backend/password outcomes to target final auth markers.
   - Records target FSM transition metrics on the production path.
 
@@ -44,7 +44,7 @@ Added or updated tests:
 
 - `server/core/auth_fsm_test.go`
   - Verifies target transitions through `pre_auth_checked`, `auth_checked`, and `account_provider_checked`.
-  - Verifies feature and password/backend results map to target marker IDs.
+  - Verifies pre-auth and backend results map to target marker IDs.
   - Verifies core event values are target marker IDs.
 
 - `server/policy/fsm/fsm_test.go`
@@ -57,7 +57,7 @@ Added or updated tests:
 Validation run:
 
 ```bash
-GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestNextAuthFSMState|TestMapAuthFeatureResultToFSMEvent|TestMapAuthPasswordResultToFSMEvent|TestAuthFSMEventValuesAreTargetMarkers|TestCompareDoesNotSynthesizeProductionPath|TestCompareReportsTerminalMismatchWithoutChangingProductionPath' ./server/core ./server/policy/fsm
+GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestNextAuthFSMState|TestMapPreAuthResultToFSMEvent|TestMapAuthPasswordResultToFSMEvent|TestAuthFSMEventValuesAreTargetMarkers|TestCompareDoesNotSynthesizeProductionPath|TestCompareReportsTerminalMismatchWithoutChangingProductionPath' ./server/core ./server/policy/fsm
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryDefaultSetAppliesTargetFSMForDirectPreAuthDecision|TestAuthBoundaryDefaultSetSelects|TestAuthBoundaryKeepsDirectOutcomeDiagnostic' ./server/core
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/core ./server/policy/fsm ./server/policy/evaluation ./server/policy/report ./server/policy/collection ./server/policy/compiler
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/idp
@@ -71,7 +71,7 @@ Result: passed.
 
 `make guardrails` first caught one unchecked log return and missing revive comments for exported FSM helpers. Those findings were fixed directly, and the final `make guardrails` run passed with `0 issues`. The command still prints the pre-existing warning about unknown `gomnd` entries in `//nolint` directives.
 
-The only remaining historical FSM string found by a repository scan is `features_ok` in `server/policy/compiler/snapshot_compiler_test.go`, where it is intentionally used to prove old current-event names are rejected by policy marker validation.
+The only remaining historical FSM string found by a repository scan is `pre_auth_ok` in `server/policy/compiler/snapshot_compiler_test.go`, where it is intentionally used to prove old current-event names are rejected by policy marker validation.
 
 ## Active Temporary Adapters
 
@@ -106,7 +106,7 @@ Second pass completed against the Phase 9 requirements, section 9.7 target FSM s
 - Tests first: focused core FSM and policy FSM tests were written before code changes. The first focused run failed on missing target core event names and adapter-synthesized production paths.
 - Target FSM authority: production auth orchestration now applies target marker IDs directly through the target transition table shared from `server/policy/fsm`.
 - Adapter removal: the private target-to-current FSM adapter and its old event mapping were removed. Policy FSM comparison no longer synthesizes production paths from old names.
-- Old event names: core auth decision mapping no longer emits `features_*` or `password_*` names. A Go scan finds only the compiler rejection test that intentionally uses `features_ok` as invalid input.
+- Old event names: core auth decision mapping no longer emits `pre_auth_*` or `password_*` names. A Go scan finds only the compiler rejection test that intentionally uses `pre_auth_ok` as invalid input.
 - Metrics and observability: production FSM application records `policy_fsm_transitions_total` through the policy recorder. Adapter-comparison FSM metric recording was removed from the comparison path.
 - Reports and logs: existing bounded FSM report fields remain, but production event paths now carry target marker IDs. No old event name is generated for report, log, trace, metric, registry, or config surfaces.
 - `standard_auth` mapping: pre-auth outcomes map to `pre_auth_*` markers, auth outcomes map to `auth_*` markers, and list-account decisions use `account_provider_evaluated` before final markers.

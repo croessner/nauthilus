@@ -476,7 +476,7 @@ func normalizeStructuredNamedDumpValue(value any) (string, bool) {
 		return typed.Get(), true
 	case Protocol:
 		return typed.Get(), true
-	case Feature:
+	case RuntimeModule:
 		return typed.Get(), true
 	case DbgModule:
 		return typed.Get(), true
@@ -756,7 +756,7 @@ func formatNamedDumpValue(value any) (string, bool) {
 		return strconv.Quote(typed.Get()), true
 	case Protocol:
 		return strconv.Quote(typed.Get()), true
-	case Feature:
+	case RuntimeModule:
 		return strconv.Quote(typed.Get()), true
 	case DbgModule:
 		return strconv.Quote(typed.Get()), true

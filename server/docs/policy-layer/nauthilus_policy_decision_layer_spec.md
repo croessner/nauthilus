@@ -26,8 +26,8 @@ The most important target constraints are:
 2. historical roots such as `brute_force`, `realtime_blackhole_lists`, `relay_domains`, `cleartext_networks`, `lua`, `ldap`, and `idp` are **not** the public configuration surface anymore;
 3. the policy block must therefore **not** introduce a new top-level root such as `policy_engine`;
 4. `brute_force.learning` is still part of the current public model as `auth.controls.brute_force.learning`;
-5. brute-force enforcement currently does **not** have a dedicated `AuthResultFeatureBruteForce` or dedicated auth-FSM event, so the target model must add a first-class pre-auth policy/FSM path instead of keeping brute force as an exception;
-6. synchronous Lua actions currently execute as mechanism-owned side effects after feature or brute-force triggers, but the target model must make such decision-dependent side effects policy-owned obligations;
+5. brute-force enforcement currently does **not** have a dedicated brute-force-specific `AuthResult` or dedicated auth-FSM event, so the target model must add a first-class pre-auth policy/FSM path instead of keeping brute force as an exception;
+6. synchronous Lua actions currently execute as mechanism-owned side effects after environment-control or brute-force triggers, but the target model must make such decision-dependent side effects policy-owned obligations;
 7. new configuration in Nauthilus must now integrate with the canonical `mapstructure` schema, structured `ConfigProblem` reporting, and `-d` / `-n` / `-P` config dump behavior.
 
 The central architectural rule of this specification is:
@@ -130,7 +130,7 @@ auth:
 
 Important consequences:
 
-1. `auth.controls.rbl` is the public home of the RBL feature.
+1. `auth.controls.rbl` is the public home of the RBL control.
 2. `auth.controls.relay_domains` is the public home of relay-domain checks.
 3. `auth.controls.brute_force` is the public home of brute-force configuration.
 4. `auth.policy.attribute_sources.lua.environment`, `auth.policy.attribute_sources.lua.subject`, and `auth.policy.obligation_targets.lua.actions` are the public homes of Lua-based auth-time decision logic.
@@ -187,14 +187,14 @@ Therefore target policy configuration must:
 
 The current auth decision flow is not one monolithic pipeline with one single control abstraction. There are at least two relevant execution surfaces:
 
-1. the classic protection path, where brute force is evaluated early and can directly reject before later feature checks;
-2. the auth-backchannel FSM path, where feature results and password results are mapped into auth-FSM events and terminal states.
+1. the classic protection path, where brute force is evaluated early and can directly reject before later pre-auth controls;
+2. the auth-backchannel FSM path, where pre-auth results and password results are mapped into auth-FSM events and terminal states.
 
 This distinction matters because all target pre-auth checks must eventually map cleanly into the auth-FSM even though they do not all do that today.
 
-### 2.5 Current Feature Flow
+### 2.5 Current Environment Flow
 
-`HandleFeatures` currently evaluates, in order:
+`HandleEnvironment` currently evaluates, in order:
 
 1. Lua environment sources
 2. TLS enforcement
@@ -207,36 +207,36 @@ It returns current `AuthResult` values such as:
 AuthResultOK
 AuthResultTempFail
 AuthResultUnset
-AuthResultFeatureLua
-AuthResultFeatureTLS
-AuthResultFeatureRelayDomain
-AuthResultFeatureRBL
+AuthResultLuaEnvironment
+AuthResultPreAuthTLS
+AuthResultPreAuthRelayDomain
+AuthResultPreAuthRBL
 ```
 
-`processFeatureAction` currently:
+`processEnvironmentAction` currently:
 
-1. sets `Runtime.FeatureName`;
+1. sets `Runtime.EnvironmentName`;
 2. checks `auth.controls.brute_force.learning`;
-3. calls `UpdateBruteForceBucketsCounter` when learning is enabled for the triggered feature;
+3. calls `UpdateBruteForceBucketsCounter` when learning is enabled for the triggered environment control;
 4. dispatches the matching Lua action.
 
-This is a current-state fact, not a target ownership rule. In the target model, feature checks must emit facts first. Any synchronous Lua action and related learning update that depends on the selected outcome must be requested by the winning policy decision through registered obligations.
+This is a current-state fact, not a target ownership rule. In the target model, pre-auth controls must emit facts first. Any synchronous Lua action and related learning update that depends on the selected outcome must be requested by the winning policy decision through registered obligations.
 
 ### 2.6 Current Brute-Force Path
 
-Brute force is already a first-class runtime control, but its execution shape is different from the feature-result model above.
+Brute force is already a first-class runtime control, but its execution shape is different from the pre-auth result model above.
 
 Current properties:
 
 1. the current public config is `auth.controls.brute_force`;
 2. `auth.controls.brute_force.learning` is part of the public schema;
-3. learning names use current feature/control names such as:
+3. learning names use current environment/control names such as:
    - `lua`
    - `relay_domains`
    - `rbl`
    - `brute_force`
-4. the current runtime has `CheckBruteForce(ctx) bool`, not a dedicated `AuthResultFeatureBruteForce`;
-5. in the classic path, brute force can directly trigger `AuthFail` without first becoming a feature-stage `AuthResult`;
+4. the current runtime has `CheckBruteForce(ctx) bool`, not a dedicated brute-force-specific `AuthResult`;
+5. in the classic path, brute force can directly trigger `AuthFail` without first becoming a pre-auth `AuthResult`;
 6. brute force updates also happen after failed backend/password evaluation.
 
 This is one of the most important reality constraints for the target policy-layer design.
@@ -256,8 +256,8 @@ The current auth-FSM defines these states:
 ```text
 init
 input_parsed
-features_checked
-password_checked
+pre_auth_checked
+auth_checked
 auth_ok
 auth_fail
 auth_tempfail
@@ -269,16 +269,16 @@ It defines these events:
 ```text
 parse_ok
 parse_fail
-features_ok
-features_fail
-features_tempfail
-features_unset
-password_evaluated
-password_ok
-password_fail
-password_tempfail
-password_empty_user
-password_empty_pass
+pre_auth_ok
+pre_auth_deny
+pre_auth_tempfail
+pre_auth_abort
+auth_evaluated
+auth_permit
+auth_deny
+auth_tempfail
+auth_empty_user
+auth_empty_pass
 basic_auth_ok
 basic_auth_fail
 abort
@@ -286,21 +286,21 @@ abort
 
 Current mapping in the auth-backchannel path:
 
-- `AuthResultFeatureTLS` -> `features_tempfail`
-- `AuthResultFeatureRelayDomain` -> `features_fail`
-- `AuthResultFeatureRBL` -> `features_fail`
-- `AuthResultFeatureLua` -> `features_fail`
-- `AuthResultUnset` -> `features_unset`
-- `AuthResultOK` -> `features_ok`
-- `AuthResultTempFail` -> `features_tempfail`
+- `AuthResultPreAuthTLS` -> `pre_auth_tempfail`
+- `AuthResultPreAuthRelayDomain` -> `pre_auth_deny`
+- `AuthResultPreAuthRBL` -> `pre_auth_deny`
+- `AuthResultLuaEnvironment` -> `pre_auth_deny`
+- `AuthResultUnset` -> `pre_auth_abort`
+- `AuthResultOK` -> `pre_auth_ok`
+- `AuthResultTempFail` -> `pre_auth_tempfail`
 
 And later:
 
-- `AuthResultOK` -> `password_ok`
-- `AuthResultFail` -> `password_fail`
-- `AuthResultTempFail` -> `password_tempfail`
-- `AuthResultEmptyUsername` -> `password_empty_user`
-- `AuthResultEmptyPassword` -> `password_empty_pass`
+- `AuthResultOK` -> `auth_permit`
+- `AuthResultFail` -> `auth_deny`
+- `AuthResultTempFail` -> `auth_tempfail`
+- `AuthResultEmptyUsername` -> `auth_empty_user`
+- `AuthResultEmptyPassword` -> `auth_empty_pass`
 
 The current FSM is therefore already a real orchestration boundary for at least one auth flow, and the target decision layer must integrate with it instead of bypassing it.
 
@@ -352,15 +352,15 @@ as the target placement.
 
 ### 3.3 Brute Force Must Not Be Oversimplified
 
-The target model must not treat brute force as if it already fit the same `feature -> AuthResultFeatureX -> features_* event` path as TLS, relay domains, RBL, and Lua environment sources.
+The target model must not treat brute force as if it already fit the same `environment control/source -> pre-auth AuthResult -> pre_auth_* event` path as TLS, relay domains, RBL, and Lua environment sources.
 
 That is not true today.
 
 Current reality:
 
-1. brute force has no `AuthResultFeatureBruteForce`;
+1. brute force has no brute-force-specific `AuthResult`;
 2. brute force has no dedicated auth-FSM event;
-3. brute force is partly a direct early gate, not only a feature-stage result.
+3. brute force is partly a direct early gate, not only a pre-auth result.
 
 So the target policy layer must explicitly introduce a first-class pre-auth decision path for brute force instead of keeping brute force outside the policy/FSM orchestration.
 
@@ -370,7 +370,7 @@ Names that must not appear in the target public policy surface:
 
 1. `realtime_blackhole_lists` as the public config reference name
 2. `relay_domains.static_domains` as the public path
-3. `lua.features` as the public path
+3. the removed Lua environment-source root as the public path
 4. `soft_whitelist` as a public allowlist name
 
 Current public names are:
@@ -508,7 +508,7 @@ The target policy layer must normalize the current execution paths into one poli
 The current implementation has:
 
 1. the existing auth-backchannel FSM path;
-2. the older direct gating flow where brute force can fail before a feature-stage `AuthResult` exists.
+2. the older direct gating flow where brute force can fail before a pre-auth `AuthResult` exists.
 
 The target implementation must not keep that split as a permanent architectural property. The policy layer must become the common decision boundary. Current direct gates, including brute force, must become check evaluators that feed policy decisions and FSM events.
 
@@ -518,7 +518,7 @@ Target public config must use current names:
 
 1. `rbl`, not `realtime_blackhole_lists`
 2. `allowlist`, not `soft_whitelist`
-3. `auth.policy.attribute_sources.lua.environment`, not `lua.features`
+3. `auth.policy.attribute_sources.lua.environment`, not the removed Lua environment-source root
 4. `auth.backends.lua.backend`, not `lua.config`
 
 Historical names may still appear internally during migration, but not as the target public spec surface.
@@ -1980,7 +1980,7 @@ Synchronous Lua action dispatch is a request-time obligation, not a policy condi
 The registered synchronous action obligation must accept bounded typed arguments:
 
 1. `action`: one of `brute_force`, `lua`, `tls_encryption`, `relay_domains`, or `rbl`;
-2. `feature`: optional stable feature or check name used for feature-specific learning and reports;
+2. `environment`: optional stable environment control/source or check name used for environment-specific learning and reports;
 3. `wait`: optional boolean, default `true`, preserving the current synchronous behavior.
 
 The obligation executor must preserve current action failure, timeout, and learning semantics for the selected action type. It must report the planned and executed obligation using the registered obligation ID and bounded argument values, not arbitrary Lua-provided labels.
@@ -2192,11 +2192,11 @@ Allowed target transitions:
 
 There must be no outgoing transitions from terminal states.
 
-`pre_auth_checked` replaces the old feature-stage checkpoint in the target model. The current implementation can temporarily translate pre-auth policy markers to current `features_*` events during migration, but the target FSM vocabulary must be `pre_auth_*`.
+`pre_auth_checked` is the checkpoint after pre-auth controls have emitted a neutral marker. The FSM vocabulary for this stage is `pre_auth_*`.
 
 An operation still reaches the `pre_auth_checked` checkpoint when it has no configured pre-auth checks. In that case the policy engine emits the neutral `auth.fsm.event.pre_auth_ok` marker unless parsing, preprocessing, or a configured pre-auth policy produced a terminal outcome.
 
-`auth_checked` represents that backend and subject-source processing have produced the attributes needed by `auth_decision`. It replaces the current password-oriented checkpoint in the target vocabulary. The current implementation can temporarily translate final auth policy markers to current `password_*` events during migration.
+`auth_checked` represents that backend and subject-source processing have produced the attributes needed by `auth_decision`. The FSM vocabulary for final authentication outcomes is `auth_*`.
 
 `account_provider_checked` represents that account-provider processing has produced the attributes needed by `auth_decision` for `list_accounts`. It is not a password-authentication checkpoint.
 
@@ -2207,11 +2207,11 @@ Policy YAML must reference FSM event markers, not terminal states. Enforcement a
 FSM migration rules:
 
 1. the target FSM vocabulary is the desired public and internal target;
-2. the current `features_*` and `password_*` events may exist only behind a temporary migration adapter;
-3. the adapter maps target policy FSM event markers to the current FSM events while current external behavior is still being verified;
-4. the adapter must not become a stable extension point, public contract, or compatibility mode;
-5. after target-FSM parity is proven, the target FSM becomes authoritative;
-6. once the target FSM is authoritative, old `features_*` and `password_*` event names and direct call sites must be removed.
+2. the target `pre_auth_*` and final auth events are the authoritative FSM vocabulary;
+3. policy FSM event markers are applied directly by the target FSM;
+4. adapter-style mappings must not remain as a stable extension point, public contract, or compatibility mode;
+5. target-FSM parity must remain covered by tests;
+6. removed event names and direct adapter call sites must not reappear.
 
 ### 9.8 Brute Force Is First-Class
 
@@ -2237,9 +2237,9 @@ Only the brute-force evaluator remains specialized. Its orchestration must not b
 |---|---|---|---|
 | `brute_force` | `auth.controls.brute_force` | `CheckBruteForce`, bucket update logic | first-class pre-auth check |
 | `lua_environment.<name>` | `auth.policy.attribute_sources.lua.environment.<name>` | named Lua environment source execution | one target pre-auth check per Lua environment source script |
-| `tls_encryption` | `auth.controls.tls_encryption` | `checkTLSEncryptionFeature` | target pre-auth tempfail decision |
-| `relay_domains` | `auth.controls.relay_domains` | `checkRelayDomainsFeature` | target pre-auth deny decision |
-| `rbl` | `auth.controls.rbl` | `checkRBLFeature` | internal threshold model, policy sees typed attributes |
+| `tls_encryption` | `auth.controls.tls_encryption` | `checkTLSEncryptionEnvironment` | target pre-auth tempfail decision |
+| `relay_domains` | `auth.controls.relay_domains` | `checkRelayDomainsEnvironment` | target pre-auth deny decision |
+| `rbl` | `auth.controls.rbl` | `checkRBLEnvironment` | internal threshold model, policy sees typed attributes |
 | `ldap_backend` | `auth.backends.ldap` | backend evaluation path | auth-backend stage |
 | `lua_backend` | `auth.backends.lua.backend` | backend evaluation path | auth-backend stage |
 | `lua_subject.<name>` | `auth.policy.attribute_sources.lua.subject.<name>` | named Lua subject source execution | one subject-analysis check per Lua subject source script |
@@ -2257,7 +2257,7 @@ These belong to the broader auth runtime but must not be modeled as primary deci
 
 Lua hooks may populate Redis, caches, or external systems that are later read by request-time checks. That does not make the hook itself a policy check. The request-time check remains the fact-producing boundary that emits registered policy attributes.
 
-Lua actions are also not `require_checks` dependencies. A feature or brute-force check may emit registered facts such as `auth.rbl.threshold_reached` or `auth.brute_force.triggered`. The policy may then select `auth.obligation.lua_action.dispatch` for the matching action type. This keeps decision ownership in the policy while preserving the current synchronous action behavior through an explicit enforcement effect.
+Lua actions are also not `require_checks` dependencies. An environment or brute-force check may emit registered facts such as `auth.rbl.threshold_reached` or `auth.brute_force.triggered`. The policy may then select `auth.obligation.lua_action.dispatch` for the matching action type. This keeps decision ownership in the policy while preserving the current synchronous action behavior through an explicit enforcement effect.
 
 Remote request-time enrichment, if needed later, must be a dedicated check type such as `remote_attribute` or `http_attribute`, not a hook callback. Such a check type would need explicit timeout, error, observe-safety, stage, operation, and report semantics before it enters the catalog.
 
@@ -2353,26 +2353,26 @@ Current behavior is represented by a built-in default policy set named `standard
 
 Current, externally visible behavior that must be reproduced by the built-in default policy:
 
-| Current outcome | Default effect | Target FSM event marker | Current internal mapping during migration |
+| Current outcome | Default effect | Target FSM event marker | Current internal mapping |
 |---|---|---|---|
 | brute force triggered | `deny` | `auth.fsm.event.pre_auth_deny` | current direct `AuthFail` behavior |
-| Lua environment source triggered | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultFeatureLua` / `features_fail` |
-| TLS enforcement triggered | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `AuthResultFeatureTLS` / `features_tempfail` |
-| relay domain rejected | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultFeatureRelayDomain` / `features_fail` |
-| RBL threshold exceeded | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultFeatureRBL` / `features_fail` |
-| no pre-auth control rejected | `neutral` | `auth.fsm.event.pre_auth_ok` | `AuthResultOK` / `features_ok` |
-| pre-auth path aborts | `neutral` plus stop control | `auth.fsm.event.pre_auth_abort` | `AuthResultUnset` / `features_unset` |
-| pre-auth temporary error | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `AuthResultTempFail` / `features_tempfail` |
+| Lua environment source triggered | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultLuaEnvironment` / `pre_auth_deny` |
+| TLS enforcement triggered | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `AuthResultPreAuthTLS` / `pre_auth_tempfail` |
+| relay domain rejected | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultPreAuthRelayDomain` / `pre_auth_deny` |
+| RBL threshold exceeded | `deny` | `auth.fsm.event.pre_auth_deny` | `AuthResultPreAuthRBL` / `pre_auth_deny` |
+| no pre-auth control rejected | `neutral` | `auth.fsm.event.pre_auth_ok` | `AuthResultOK` / `pre_auth_ok` |
+| pre-auth path aborts | `neutral` plus stop control | `auth.fsm.event.pre_auth_abort` | `AuthResultUnset` / `pre_auth_abort` |
+| pre-auth temporary error | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `AuthResultTempFail` / `pre_auth_tempfail` |
 
 ### 12.2 Password/Auth Mapping Represented by `standard_auth`
 
-| Current outcome | Default effect | Target FSM event marker | Current internal mapping during migration |
+| Current outcome | Default effect | Target FSM event marker | Current internal mapping |
 |---|---|---|---|
-| auth success | `permit` | `auth.fsm.event.auth_permit` | `AuthResultOK` / `password_ok` |
-| auth reject | `deny` | `auth.fsm.event.auth_deny` | `AuthResultFail` / `password_fail` |
-| auth tempfail | `tempfail` | `auth.fsm.event.auth_tempfail` | `AuthResultTempFail` / `password_tempfail` |
-| empty username | `tempfail` | `auth.fsm.event.auth_empty_user` | `AuthResultEmptyUsername` / `password_empty_user` |
-| empty password | `deny` | `auth.fsm.event.auth_empty_pass` | `AuthResultEmptyPassword` / `password_empty_pass` |
+| auth success | `permit` | `auth.fsm.event.auth_permit` | `AuthResultOK` / `auth_permit` |
+| auth reject | `deny` | `auth.fsm.event.auth_deny` | `AuthResultFail` / `auth_deny` |
+| auth tempfail | `tempfail` | `auth.fsm.event.auth_tempfail` | `AuthResultTempFail` / `auth_tempfail` |
+| empty username | `tempfail` | `auth.fsm.event.auth_empty_user` | `AuthResultEmptyUsername` / `auth_empty_user` |
+| empty password | `deny` | `auth.fsm.event.auth_empty_pass` | `AuthResultEmptyPassword` / `auth_empty_pass` |
 | no final auth decision applies | `deny` | `auth.fsm.event.auth_deny` | default deny |
 
 ### 12.3 Operation-Specific Default Mapping
@@ -2403,8 +2403,8 @@ Caller authentication and transport authorization remain prerequisites for opera
 
 Current reality:
 
-1. brute force does not return `AuthResultFeatureBruteForce`;
-2. brute force does not map through `mapAuthFeatureResultToFSMEvent`;
+1. brute force does not return brute-force-specific `AuthResult`;
+2. brute force does not map through `mapPreAuthResultToFSMEvent`;
 3. brute force often performs a direct early failure.
 
 Those implementation facts describe the migration starting point only. They are not the target architecture.
@@ -2536,8 +2536,8 @@ auth:
 
 Current semantics:
 
-1. a triggered Lua environment source currently maps to `AuthResultFeatureLua`;
-2. `abort_features` semantics already exist and must remain expressible;
+1. a triggered Lua environment source currently maps to `AuthResultLuaEnvironment`;
+2. `abort_environment_sources` semantics already exist and must remain expressible;
 3. current learning/action side effects must remain compatible.
 
 ### 13.6 Lua Subject Sources
@@ -3249,7 +3249,7 @@ The implementation must add one debug module for policy internals:
 policy
 ```
 
-In Go this must be represented as a new `DbgPolicy` value and a `DbgPolicyName = "policy"` mapping, consistent with existing modules such as `auth`, `lua`, `filter`, `rbl`, and `idp`.
+In Go this must be represented as a new `DbgPolicy` value and a `DbgPolicyName = "policy"` mapping, consistent with existing modules such as `auth`, `lua`, `subject`, `environment`, `rbl`, and `idp`.
 
 `DBGModule policy` logs are for technical diagnosis and may include:
 
@@ -3736,7 +3736,7 @@ auth:
             - id: auth.obligation.lua_action.dispatch
               args:
                 action: lua
-                feature: lua_environment_geo_block
+                environment: lua_environment_geo_block
 
       - name: standard_lua_environment_geo_block_abort
         stage: pre_auth
@@ -4070,7 +4070,7 @@ For `authenticate`/`pre_auth`, rows 10 and 20 are evaluated at the built-in chec
 | 60 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_rbl_error_tempfail` | `rbl` | `auth.rbl.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
 | 70 | `authenticate`, `lookup_identity` | `pre_auth` | `standard_rbl_reject` | `rbl` | `auth.rbl.threshold_reached is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | `auth.obligation.lua_action.dispatch(action=rbl)` if configured |
 | 80 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_error` | named Lua environment source | `auth.lua.environment.<name>.error is true` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | `auth.response.tempfail` | none |
-| 90 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_trigger` | named Lua environment source | `auth.lua.environment.<name>.triggered is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | select public `status_message` detail if present; `auth.obligation.lua_action.dispatch(action=lua, feature=<check_name>)` if configured |
+| 90 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_trigger` | named Lua environment source | `auth.lua.environment.<name>.triggered is true` | `deny` | `auth.fsm.event.pre_auth_deny` | `auth.response.fail` | select public `status_message` detail if present; `auth.obligation.lua_action.dispatch(action=lua, environment=<check_name>)` if configured |
 | 100 | `authenticate` | `pre_auth` | `standard_lua_environment_<name>_abort` | named Lua environment source | `auth.lua.environment.<name>.abort is true` | `neutral` | `auth.fsm.event.pre_auth_ok` | none | `skip_remaining_stage_checks` |
 | 110 | all | `pre_auth` | implicit pre-auth pass | active pre-auth plan | no prior first-match terminal result | `neutral` | `auth.fsm.event.pre_auth_ok` | none | continue to the operation-specific next stage |
 | 200 | `authenticate`, `lookup_identity` | `auth_decision` | `standard_backend_tempfail` | backend plan | `auth.backend.tempfail is true` | `tempfail` | `auth.fsm.event.auth_tempfail` | `auth.response.tempfail` | none |
@@ -4123,7 +4123,7 @@ Add or keep regression tests for:
 7. RBL reject;
 8. backend success, failure, and tempfail;
 9. Lua subject source reject and Lua-provided status message;
-10. auth-FSM feature and password transitions;
+10. auth-FSM pre-auth and auth-decision transitions;
 11. lookup-identity / no-auth success, failure, and tempfail parity;
 12. list-accounts success, scope/caller-auth rejection, and response-media parity;
 13. response rendering parity for HTTP JSON, HTTP CBOR, Nginx auth-request, header-style HTTP, plain HTTP, HTTP list-accounts, gRPC AuthService, gRPC ListAccounts, and IdP auth flows.
@@ -4227,11 +4227,11 @@ Introduce target FSM event markers and compare target FSM behavior while current
 Step 1: introduce target event markers and a temporary adapter.
 
 1. policy decisions emit target FSM event markers from section 9.7;
-2. the adapter maps target `pre_auth_*` markers to current `features_*` events;
-3. the adapter maps target final auth markers to current `password_*` events;
+2. target `pre_auth_*` markers are applied directly;
+3. target final auth markers are applied directly;
 4. `account_provider_checked` and operation-specific terminal semantics are represented in the target marker model even if the current FSM still needs adapter mapping;
 5. event-marker validation validates target markers, not current internal event names;
-6. the adapter is private implementation code and must not be exposed in YAML, reports as a stable name, registry scripts, or config conversion output.
+6. no adapter names are exposed in YAML, reports, registry scripts, or config conversion output.
 
 Step 2: run target FSM comparison.
 
@@ -4283,7 +4283,7 @@ Make the target FSM from section 9.7 authoritative and remove the temporary FSM 
 Implementation requirements:
 
 1. production enforcement applies target event markers directly to the target FSM;
-2. old `features_*` and `password_*` event names are removed from the auth decision path;
+2. removed pre-auth and password-oriented event names do not reappear in the auth decision path;
 3. tests assert that policy decisions no longer depend on adapter mappings;
 4. no target config, registry, metric, trace, log, or report surface relies on old event names;
 5. target-FSM transition metrics replace adapter comparison metrics for production state tracking.

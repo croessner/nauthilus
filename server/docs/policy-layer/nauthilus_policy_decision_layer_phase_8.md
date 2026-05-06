@@ -31,8 +31,8 @@ This slice keeps custom policies non-authoritative, keeps the current auth FSM a
   - Merges the request-local direct-outcome diagnostic into the existing policy comparison path.
   - Keeps current response surface and current FSM path details from the response-time comparison when the diagnostic did not know them yet.
 
-- `server/core/features.go`
-  - Routes terminal pre-auth feature results through built-in policy authority when the active snapshot is the default-only set.
+- `server/core/environment.go`
+  - Routes terminal pre-auth pre-auth results through built-in policy authority when the active snapshot is the default-only set.
   - Preserves current external `AuthResult` mappings while selecting the built-in policy decision first.
 
 - `server/core/auth.go`
@@ -62,7 +62,7 @@ Added tests:
   - Verifies the built-in default set is authoritative only when no configured policy rules exist.
 
 - `server/core/policy_authority_test.go`
-  - Verifies pre-auth feature handling selects `standard_tls_enforcement` as the authoritative decision under a default-only snapshot.
+  - Verifies pre-auth control handling selects `standard_tls_enforcement` as the authoritative decision under a default-only snapshot.
   - Verifies password/final handling selects `standard_auth_failure` as the authoritative decision under a default-only snapshot.
   - Verifies the old direct outcome remains available as a comparison diagnostic when the authoritative default decision overrides the old direct result.
 

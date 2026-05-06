@@ -284,14 +284,14 @@ func TestCommonRequestSetupRequestStageExpectedFlags(t *testing.T) {
 
 	cr.SetupRequest(L, nil, request)
 
-	featureVal := request.RawGet(lua.LString(definitions.LuaRequestEnvironmentStageExpected))
-	if featureVal != lua.LTrue {
-		t.Fatalf("expected environment_stage_expected to be true, got %v", featureVal)
+	environmentVal := request.RawGet(lua.LString(definitions.LuaRequestEnvironmentStageExpected))
+	if environmentVal != lua.LTrue {
+		t.Fatalf("expected environment_stage_expected to be true, got %v", environmentVal)
 	}
 
-	filterVal := request.RawGet(lua.LString(definitions.LuaRequestSubjectStageExpected))
-	if filterVal != lua.LFalse {
-		t.Fatalf("expected subject_stage_expected to be false, got %v", filterVal)
+	subjectVal := request.RawGet(lua.LString(definitions.LuaRequestSubjectStageExpected))
+	if subjectVal != lua.LFalse {
+		t.Fatalf("expected subject_stage_expected to be false, got %v", subjectVal)
 	}
 }
 

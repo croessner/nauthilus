@@ -322,7 +322,7 @@ func TestUnaryServerInterceptorThrottlesInvalidCallerAuthByPeerIP(t *testing.T) 
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
 	}, config.OIDCAuth{})
-	enableBruteForceFeature(t, cfg)
+	enableBruteForceControl(t, cfg)
 
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg:    cfg,
@@ -929,15 +929,15 @@ func writeGRPCTestTLSKeyPair(t *testing.T) (string, string) {
 	return certFile, keyFile
 }
 
-func enableBruteForceFeature(t *testing.T, cfg *config.FileSettings) {
+func enableBruteForceControl(t *testing.T, cfg *config.FileSettings) {
 	t.Helper()
 
-	var feature config.Feature
-	if err := feature.Set(definitions.FeatureBruteForce); err != nil {
-		t.Fatalf("set brute-force feature: %v", err)
+	var runtimeModule config.RuntimeModule
+	if err := runtimeModule.Set(definitions.ControlBruteForce); err != nil {
+		t.Fatalf("set brute-force control: %v", err)
 	}
 
-	cfg.Server.Features = []*config.Feature{&feature}
+	cfg.Server.RuntimeModules = []*config.RuntimeModule{&runtimeModule}
 }
 
 func grpcAuthDebugLogConfig(t *testing.T, debugModuleName string) *config.FileSettings {

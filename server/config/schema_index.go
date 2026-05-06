@@ -441,7 +441,7 @@ func isConfigScalarType(typ reflect.Type) bool {
 		reflect.TypeFor[ContentSecurityPolicyValue](),
 		reflect.TypeFor[Control](),
 		reflect.TypeFor[DbgModule](),
-		reflect.TypeFor[Feature](),
+		reflect.TypeFor[RuntimeModule](),
 		reflect.TypeFor[LDAPScope](),
 		reflect.TypeFor[PermissionsPolicyValue](),
 		reflect.TypeFor[Protocol](),

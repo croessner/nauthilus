@@ -70,7 +70,7 @@ func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBR
 	}
 
 	backendServers := core.ListBackendServers()
-	util.DebugModuleWithCfg(auth.Ctx(), auth.Cfg(), auth.Logger(), definitions.DbgFeature, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
+	util.DebugModuleWithCfg(auth.Ctx(), auth.Cfg(), auth.Logger(), definitions.DbgEnvironment, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
@@ -90,20 +90,20 @@ func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBR
 
 	policyCtx := auth.PolicyDecisionContext(ctx)
 	subjectRequest := &subject.Request{
-		Session:            auth.Runtime.GUID,
-		Username:           auth.Request.Username,
-		Password:           auth.PasswordBytes(),
-		ClientIP:           auth.Request.ClientIP,
-		AccountName:        auth.GetAccount(),
-		AdditionalFeatures: auth.Runtime.AdditionalFeatures,
-		BackendServers:     backendServers,
-		UsedBackendAddr:    &auth.Runtime.UsedBackendIP,
-		UsedBackendPort:    &auth.Runtime.UsedBackendPort,
-		Logs:               nil,
-		Context:            auth.Runtime.Context,
-		CommonRequest:      commonRequest,
-		ScriptRecorder:     auth.PolicyScriptRecorder(ctx),
-		PolicyContext:      policyCtx,
+		Session:              auth.Runtime.GUID,
+		Username:             auth.Request.Username,
+		Password:             auth.PasswordBytes(),
+		ClientIP:             auth.Request.ClientIP,
+		AccountName:          auth.GetAccount(),
+		AdditionalAttributes: auth.Runtime.AdditionalAttributes,
+		BackendServers:       backendServers,
+		UsedBackendAddr:      &auth.Runtime.UsedBackendIP,
+		UsedBackendPort:      &auth.Runtime.UsedBackendPort,
+		Logs:                 nil,
+		Context:              auth.Runtime.Context,
+		CommonRequest:        commonRequest,
+		ScriptRecorder:       auth.PolicyScriptRecorder(ctx),
+		PolicyContext:        policyCtx,
 	}
 
 	subjectResult, luaBackendResult, removeAttributes, err := subjectRequest.CallSubjectLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())

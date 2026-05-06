@@ -53,7 +53,7 @@ local function log_info(request, message, extra)
 end
 
 -- Skip localhost requests: the environment source stage is not executed for local/empty
--- IPs (see isLocalOrEmptyIP in features.go), so the context keys it would set
+-- IPs (see isLocalOrEmptyIP in environment.go), so the context keys it would set
 -- are absent. Return early with ACCEPT to avoid nil-context assertions.
 local function is_localhost(request)
     local ip = request.client_ip or ""

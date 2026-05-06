@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   ts                   DateTime64(3, 'UTC'),
   session              String,
   service              LowCardinality(String) CODEC(ZSTD(3)),
+  decision_sources     String,
   client_ip            String,
   client_port          String,
   client_net           LowCardinality(String),

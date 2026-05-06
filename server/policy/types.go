@@ -274,8 +274,8 @@ const (
 	// ObligationArgAction names the bounded action argument for Lua action dispatch.
 	ObligationArgAction = "action"
 
-	// ObligationArgFeature names the optional feature argument for Lua action dispatch.
-	ObligationArgFeature = "feature"
+	// ObligationArgEnvironment names the optional environment source or control argument for Lua action dispatch.
+	ObligationArgEnvironment = "environment"
 
 	// ObligationArgWait names the optional wait argument for Lua action dispatch.
 	ObligationArgWait = "wait"

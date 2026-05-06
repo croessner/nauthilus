@@ -419,13 +419,13 @@ func TestCompilerRejectsInvalidPolicyWithCanonicalPath(t *testing.T) {
 	}
 }
 
-func TestCompilerRejectsCurrentFSMEventNames(t *testing.T) {
+func TestCompilerRejectsUnknownFSMEventNames(t *testing.T) {
 	cfg := policyCompilerTestConfig()
-	cfg.Auth.Policy.Policies[0].Then.FSMEventMarker = "features_ok"
+	cfg.Auth.Policy.Policies[0].Then.FSMEventMarker = "unknown_pre_auth_marker"
 
 	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
 	if err == nil {
-		t.Fatal("Compile() error = nil, want current event name rejection")
+		t.Fatal("Compile() error = nil, want unknown event name rejection")
 	}
 
 	if !strings.Contains(err.Error(), "auth.policy.policies[0].then.fsm_event_marker") {
@@ -454,9 +454,9 @@ func TestCompilerAcceptsLuaActionDispatchObligationArgs(t *testing.T) {
 		{
 			ID: policy.ObligationLuaActionDispatch,
 			Args: map[string]any{
-				policy.ObligationArgAction:  policy.LuaActionDispatchLua,
-				policy.ObligationArgFeature: "lua_environment_named_script",
-				policy.ObligationArgWait:    true,
+				policy.ObligationArgAction:      policy.LuaActionDispatchLua,
+				policy.ObligationArgEnvironment: "lua_environment_named_script",
+				policy.ObligationArgWait:        true,
 			},
 		},
 	}
@@ -493,8 +493,8 @@ func TestCompilerRejectsLuaActionDispatchInvalidArgs(t *testing.T) {
 			wantErr: "must be a string",
 		},
 		{
-			name:    "non-string feature",
-			args:    map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchLua, policy.ObligationArgFeature: true},
+			name:    "non-string environment",
+			args:    map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchLua, policy.ObligationArgEnvironment: true},
 			wantErr: "must be a string",
 		},
 		{

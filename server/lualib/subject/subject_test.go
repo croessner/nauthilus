@@ -205,7 +205,7 @@ func TestSelectBackendServerUpdatesExistingPointers(t *testing.T) {
 	}
 }
 
-func writeFilterScript(t *testing.T, dir, name, content string) string {
+func writeSubjectScript(t *testing.T, dir, name, content string) string {
 	t.Helper()
 
 	scriptPath := filepath.Join(dir, name)
@@ -270,7 +270,7 @@ func TestPreCompiledLuaSubjectSourcesCachesPlansForModes(t *testing.T) {
 	}
 }
 
-func newFilterTestContext() *gin.Context {
+func newSubjectTestContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -280,13 +280,13 @@ func newFilterTestContext() *gin.Context {
 	return ctx
 }
 
-func newFilterTestConfig() config.File {
+func newSubjectTestConfig() config.File {
 	return &config.FileSettings{
 		Server: &config.ServerSection{},
 	}
 }
 
-func newFilterTestRequest(addr *string, port *int) *Request {
+func newSubjectTestRequest(addr *string, port *int) *Request {
 	return &Request{
 		Session:         "guid-test",
 		UsedBackendAddr: addr,
@@ -296,7 +296,7 @@ func newFilterTestRequest(addr *string, port *int) *Request {
 	}
 }
 
-func selectBackendFilterScript(address string, port int) string {
+func selectBackendSubjectScript(address string, port int) string {
 	return `
 local nauthilus_backend = require("nauthilus_backend")
 
@@ -312,7 +312,7 @@ func runCallSubjectLua(t *testing.T, request *Request) bool {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	action, _, _, err := request.CallSubjectLua(newFilterTestContext(), newFilterTestConfig(), logger, nil)
+	action, _, _, err := request.CallSubjectLua(newSubjectTestContext(), newSubjectTestConfig(), logger, nil)
 	if err != nil {
 		t.Fatalf("CallSubjectLua returned error: %v", err)
 	}
@@ -338,13 +338,13 @@ func assertSelectedBackend(t *testing.T, request *Request, expectedAddr string, 
 
 func TestCallSubjectLuaSelectBackendServerDelegatesSingleScript(t *testing.T) {
 	scriptDir := t.TempDir()
-	scriptPath := writeFilterScript(t, scriptDir, "single.lua", selectBackendFilterScript("single.backend.local", 1143))
+	scriptPath := writeSubjectScript(t, scriptDir, "single.lua", selectBackendSubjectScript("single.backend.local", 1143))
 
 	withTestLuaSubjectSources(t, mustNewLuaSubjectSource(t, "single-select", scriptPath))
 
 	initialAddr := "initial.backend.local"
 	initialPort := 25
-	request := newFilterTestRequest(&initialAddr, &initialPort)
+	request := newSubjectTestRequest(&initialAddr, &initialPort)
 	action := runCallSubjectLua(t, request)
 
 	if action {
@@ -356,8 +356,8 @@ func TestCallSubjectLuaSelectBackendServerDelegatesSingleScript(t *testing.T) {
 
 func TestCallSubjectLuaSelectBackendServerDelegatesTwoScriptsDeterministic(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", selectBackendFilterScript("first.backend.local", 2001))
-	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", selectBackendFilterScript("second.backend.local", 2002))
+	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", selectBackendSubjectScript("first.backend.local", 2001))
+	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", selectBackendSubjectScript("second.backend.local", 2002))
 
 	withTestLuaSubjectSources(t,
 		mustNewLuaSubjectSource(t, "first-select", firstScriptPath),
@@ -366,7 +366,7 @@ func TestCallSubjectLuaSelectBackendServerDelegatesTwoScriptsDeterministic(t *te
 
 	initialAddr := "initial.backend.local"
 	initialPort := 25
-	request := newFilterTestRequest(&initialAddr, &initialPort)
+	request := newSubjectTestRequest(&initialAddr, &initialPort)
 	action := runCallSubjectLua(t, request)
 
 	if action {
@@ -378,7 +378,7 @@ func TestCallSubjectLuaSelectBackendServerDelegatesTwoScriptsDeterministic(t *te
 
 func TestCallSubjectLuaDependencyContextPropagation(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
@@ -386,7 +386,7 @@ function nauthilus_call_subject(request)
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
 `)
-	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
@@ -404,7 +404,7 @@ end
 
 	withTestLuaSubjectSources(t, first, second)
 
-	request := newFilterTestRequest(nil, nil)
+	request := newSubjectTestRequest(nil, nil)
 	action := runCallSubjectLua(t, request)
 
 	if action {
@@ -418,7 +418,7 @@ end
 
 func TestCallSubjectLuaUsesPolicyScheduleDependencies(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
@@ -426,7 +426,7 @@ function nauthilus_call_subject(request)
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
 `)
-	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
@@ -443,8 +443,8 @@ end
 
 	withTestLuaSubjectSources(t, first, second)
 
-	request := newFilterTestRequest(nil, nil)
-	request.ScriptRecorder = &policyFilterScheduleRecorder{
+	request := newSubjectTestRequest(nil, nil)
+	request.ScriptRecorder = &policySubjectScheduleRecorder{
 		plan: policycollection.ScriptSchedulePlan{
 			Configured: true,
 			Schedules: []policycollection.ScriptSchedule{
@@ -464,16 +464,16 @@ end
 	}
 }
 
-type policyFilterScheduleRecorder struct {
+type policySubjectScheduleRecorder struct {
 	plan    policycollection.ScriptSchedulePlan
 	results []policycollection.ScriptResult
 }
 
-func (r *policyFilterScheduleRecorder) RecordScriptResult(_ context.Context, result policycollection.ScriptResult) {
+func (r *policySubjectScheduleRecorder) RecordScriptResult(_ context.Context, result policycollection.ScriptResult) {
 	r.results = append(r.results, result)
 }
 
-func (r *policyFilterScheduleRecorder) ScriptScheduled(kind policycollection.ScriptKind, name string, _ policycollection.AuthState) bool {
+func (r *policySubjectScheduleRecorder) ScriptScheduled(kind policycollection.ScriptKind, name string, _ policycollection.AuthState) bool {
 	if kind != policycollection.ScriptKindSubject {
 		return false
 	}
@@ -487,7 +487,7 @@ func (r *policyFilterScheduleRecorder) ScriptScheduled(kind policycollection.Scr
 	return false
 }
 
-func (r *policyFilterScheduleRecorder) ScriptPlan(kind policycollection.ScriptKind, _ policycollection.AuthState) policycollection.ScriptSchedulePlan {
+func (r *policySubjectScheduleRecorder) ScriptPlan(kind policycollection.ScriptKind, _ policycollection.AuthState) policycollection.ScriptSchedulePlan {
 	if kind != policycollection.ScriptKindSubject {
 		return policycollection.ScriptSchedulePlan{}
 	}
@@ -497,22 +497,22 @@ func (r *policyFilterScheduleRecorder) ScriptPlan(kind policycollection.ScriptKi
 
 func TestCallSubjectLuaIndependentScriptsMergeSharedContextTable(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
     local rt = nauthilus_context.context_get("rt") or {}
-    rt.first_filter = true
+    rt.first_subject = true
     nauthilus_context.context_set("rt", rt)
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
 `)
-	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_subject(request)
     local rt = nauthilus_context.context_get("rt") or {}
-    rt.second_filter = true
+    rt.second_subject = true
     nauthilus_context.context_set("rt", rt)
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
@@ -522,7 +522,7 @@ end
 
 	withTestLuaSubjectSources(t, first, second)
 
-	request := newFilterTestRequest(nil, nil)
+	request := newSubjectTestRequest(nil, nil)
 	action := runCallSubjectLua(t, request)
 
 	if action {
@@ -534,19 +534,19 @@ end
 		t.Fatalf("expected rt context map, got %T", request.Get("rt"))
 	}
 
-	if got := rt["first_filter"]; got != true {
-		t.Fatalf("expected first_filter=true, got %v", got)
+	if got := rt["first_subject"]; got != true {
+		t.Fatalf("expected first_subject=true, got %v", got)
 	}
 
-	if got := rt["second_filter"]; got != true {
-		t.Fatalf("expected second_filter=true, got %v", got)
+	if got := rt["second_subject"]; got != true {
+		t.Fatalf("expected second_subject=true, got %v", got)
 	}
 }
 
 func TestCallSubjectLuaRejectsDependencyCycle(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", selectBackendFilterScript("first.backend.local", 2001))
-	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", selectBackendFilterScript("second.backend.local", 2002))
+	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", selectBackendSubjectScript("first.backend.local", 2001))
+	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", selectBackendSubjectScript("second.backend.local", 2002))
 	first := mustNewLuaSubjectSource(t, "first", firstScriptPath)
 	second := mustNewLuaSubjectSource(t, "second", secondScriptPath)
 	first.Dependencies = []string{"second"}
@@ -555,8 +555,8 @@ func TestCallSubjectLuaRejectsDependencyCycle(t *testing.T) {
 	withTestLuaSubjectSources(t, first, second)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	request := newFilterTestRequest(nil, nil)
-	_, _, _, err := request.CallSubjectLua(newFilterTestContext(), newFilterTestConfig(), logger, nil)
+	request := newSubjectTestRequest(nil, nil)
+	_, _, _, err := request.CallSubjectLua(newSubjectTestContext(), newSubjectTestConfig(), logger, nil)
 	if err == nil {
 		t.Fatal("expected dependency cycle error")
 	}
@@ -564,7 +564,7 @@ func TestCallSubjectLuaRejectsDependencyCycle(t *testing.T) {
 
 func TestCallSubjectLuaDependencyBackendSnapshotPropagation(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFilterScript(t, scriptDir, "first.lua", `
+	firstScriptPath := writeSubjectScript(t, scriptDir, "first.lua", `
 local nauthilus_backend = require("nauthilus_backend")
 local nauthilus_backend_result = require("nauthilus_backend_result")
 
@@ -578,7 +578,7 @@ function nauthilus_call_subject(request)
     return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
 end
 `)
-	secondScriptPath := writeFilterScript(t, scriptDir, "second.lua", `
+	secondScriptPath := writeSubjectScript(t, scriptDir, "second.lua", `
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_backend = require("nauthilus_backend")
 
@@ -602,7 +602,7 @@ end
 
 	withTestLuaSubjectSources(t, first, second)
 
-	request := newFilterTestRequest(nil, nil)
+	request := newSubjectTestRequest(nil, nil)
 	action := runCallSubjectLua(t, request)
 
 	if action {

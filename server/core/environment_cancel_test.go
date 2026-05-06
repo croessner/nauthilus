@@ -26,7 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestHandleFeatures_SkipsCanceledRequest(t *testing.T) {
+func TestHandleEnvironment_SkipsCanceledRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	reqCtx, cancel := context.WithCancel(context.Background())
@@ -40,12 +40,12 @@ func TestHandleFeatures_SkipsCanceledRequest(t *testing.T) {
 		Logger: log.GetLogger(),
 	}).(*AuthState)
 
-	auth.Runtime.GUID = "guid-canceled-features"
+	auth.Runtime.GUID = "guid-canceled-environment"
 	auth.Request.Protocol = config.NewProtocol("imap")
 	auth.Request.Service = definitions.ServNginx
 	auth.Request.Username = "user@example.com"
 
-	result := auth.HandleFeatures(ctx)
+	result := auth.HandleEnvironment(ctx)
 	if result != definitions.AuthResultTempFail {
 		t.Fatalf("expected AuthResultTempFail, got %v", result)
 	}

@@ -30,8 +30,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringFeatureHandling(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringEnvironmentHandling(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    101,
@@ -40,9 +40,9 @@ func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringFeatureHandling(t *te
 	})
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	got := auth.HandleFeatures(ctx)
-	if got != definitions.AuthResultFeatureTLS {
-		t.Fatalf("feature result = %v, want %v", got, definitions.AuthResultFeatureTLS)
+	got := auth.HandleEnvironment(ctx)
+	if got != definitions.AuthResultPreAuthTLS {
+		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
 	}
 
 	policyCtx, ok := policyDecisionContext(ctx)
@@ -96,7 +96,7 @@ func TestAuthBoundaryDefaultSetSelectsFinalDecisionDuringPasswordHandling(t *tes
 }
 
 func TestAuthBoundaryDefaultSetAppliesTargetFSMForDirectPreAuthDecision(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    104,
 		Mode:          "enforce",
@@ -158,14 +158,14 @@ func TestAuthBoundaryDefaultSetAuthDecisionDoesNotEmitObserveReportInEnforceMode
 }
 
 func TestAuthBoundaryDefaultPreAuthAppliesWhenConfiguredFinalRulesExist(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, customEnforceAuthSnapshotForTest())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	got := auth.HandleFeatures(ctx)
-	if got != definitions.AuthResultFeatureTLS {
-		t.Fatalf("feature result = %v, want %v", got, definitions.AuthResultFeatureTLS)
+	got := auth.HandleEnvironment(ctx)
+	if got != definitions.AuthResultPreAuthTLS {
+		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
 	}
 
 	policyCtx, ok := policyDecisionContext(ctx)
@@ -283,7 +283,7 @@ func TestAuthBoundaryConfiguredFinalDecisionRunsPostActionObligation(t *testing.
 }
 
 func TestAuthBoundaryConfiguredPreAuthDecisionWithoutLuaActionObligationSkipsSynchronousAction(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	cfg.Lua = policyActionTestLuaConfig(definitions.LuaActionTLSName)
 	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(false)))
@@ -296,7 +296,7 @@ func TestAuthBoundaryConfiguredPreAuthDecisionWithoutLuaActionObligationSkipsSyn
 	})
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	auth.HandleFeatures(ctx)
+	auth.HandleEnvironment(ctx)
 
 	if got := dispatcher.Count(); got != 0 {
 		t.Fatalf("lua actions = %d, want no synchronous action without selected obligation", got)
@@ -304,7 +304,7 @@ func TestAuthBoundaryConfiguredPreAuthDecisionWithoutLuaActionObligationSkipsSyn
 }
 
 func TestAuthBoundaryConfiguredPreAuthDecisionRunsSelectedLuaActionObligationOnce(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	cfg.Lua = policyActionTestLuaConfig(definitions.LuaActionTLSName)
 
@@ -313,8 +313,8 @@ func TestAuthBoundaryConfiguredPreAuthDecisionRunsSelectedLuaActionObligationOnc
 		{
 			ID: policy.ObligationLuaActionDispatch,
 			Args: map[string]any{
-				policy.ObligationArgAction:  definitions.LuaActionTLSName,
-				policy.ObligationArgFeature: "selected_tls_action",
+				policy.ObligationArgAction:      definitions.LuaActionTLSName,
+				policy.ObligationArgEnvironment: "selected_tls_action",
 			},
 		},
 	}
@@ -328,7 +328,7 @@ func TestAuthBoundaryConfiguredPreAuthDecisionRunsSelectedLuaActionObligationOnc
 	})
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	auth.HandleFeatures(ctx)
+	auth.HandleEnvironment(ctx)
 
 	if got := dispatcher.Count(); got != 1 {
 		t.Fatalf("lua actions = %d, want one selected obligation dispatch", got)
@@ -339,8 +339,8 @@ func TestAuthBoundaryConfiguredPreAuthDecisionRunsSelectedLuaActionObligationOnc
 		t.Fatalf("lua action = %v, want TLS action", call.action)
 	}
 
-	if call.feature != "selected_tls_action" {
-		t.Fatalf("feature = %q, want selected obligation feature", call.feature)
+	if call.environment != "selected_tls_action" {
+		t.Fatalf("environment = %q, want selected obligation environment", call.environment)
 	}
 }
 
@@ -412,7 +412,7 @@ func TestPolicyBruteForceLuaActionPreservesCommonRequestShape(t *testing.T) {
 	auth.Security.BruteForceCounter = map[string]uint{ruleName: 3}
 	auth.Runtime.BFClientNet = "203.0.113.0/24"
 	auth.Runtime.BFRepeating = true
-	auth.Runtime.FeatureName = definitions.FeatureBruteForce
+	auth.Runtime.EnvironmentName = definitions.ControlBruteForce
 
 	newPolicyObligationExecutor(auth).Execute(ctx, bruteForceActionFinalDecision())
 
@@ -437,8 +437,8 @@ func TestPolicyBruteForceLuaActionPreservesCommonRequestShape(t *testing.T) {
 		t.Fatal("repeating = false, want true")
 	}
 
-	if call.common.featureName != definitions.FeatureBruteForce {
-		t.Fatalf("feature name = %q, want brute_force", call.common.featureName)
+	if call.common.environmentName != definitions.ControlBruteForce {
+		t.Fatalf("environment name = %q, want brute_force", call.common.environmentName)
 	}
 }
 
@@ -536,13 +536,13 @@ func policyActionTestLuaConfig(actionName string) *config.LuaSection {
 }
 
 type recordedActionDispatch struct {
-	common  recordedCommonRequest
-	feature string
-	action  definitions.LuaAction
+	common      recordedCommonRequest
+	environment string
+	action      definitions.LuaAction
 }
 
 type recordedCommonRequest struct {
-	featureName       string
+	environmentName   string
 	clientNet         string
 	bruteForceName    string
 	bruteForceCounter uint
@@ -557,11 +557,11 @@ type recordingActionDispatcher struct {
 	calls []recordedActionDispatch
 }
 
-func (d *recordingActionDispatcher) Dispatch(view *StateView, featureName string, luaAction definitions.LuaAction) {
+func (d *recordingActionDispatcher) Dispatch(view *StateView, environmentName string, luaAction definitions.LuaAction) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	call := recordedActionDispatch{feature: featureName, action: luaAction}
+	call := recordedActionDispatch{environment: environmentName, action: luaAction}
 	if view != nil {
 		auth := view.Auth()
 		commonRequest := lualib.GetCommonRequest()
@@ -569,9 +569,9 @@ func (d *recordingActionDispatcher) Dispatch(view *StateView, featureName string
 
 		auth.FillCommonRequest(commonRequest)
 		commonRequest.UserFound = auth.GetAccount() != ""
-		commonRequest.FeatureName = featureName
+		commonRequest.EnvironmentName = environmentName
 		call.common = recordedCommonRequest{
-			featureName:       commonRequest.FeatureName,
+			environmentName:   commonRequest.EnvironmentName,
 			clientNet:         commonRequest.ClientNet,
 			bruteForceName:    commonRequest.BruteForceName,
 			bruteForceCounter: commonRequest.BruteForceCounter,

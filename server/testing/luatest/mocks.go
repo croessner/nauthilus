@@ -1838,13 +1838,13 @@ func LoaderModSoftWhitelistMock(mockData *SoftWhitelistMock) lua.LGFunction {
 		L.SetField(mod, definitions.LuaFnSoftWhitelistSet, L.NewFunction(func(L *lua.LState) int {
 			username := L.CheckString(1)
 			network := L.CheckString(2)
-			feature := L.CheckString(3)
-			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistSet, username+":"+feature); err != nil {
+			environmentName := L.CheckString(3)
+			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistSet, username+":"+environmentName); err != nil {
 				L.Push(lua.LString(""))
 				L.Push(lua.LString(err.Error()))
 				return 2
 			}
-			key := feature + ":" + username
+			key := environmentName + ":" + username
 			entries[key] = append(entries[key], network)
 			L.Push(lua.LString("OK"))
 			L.Push(lua.LNil)
@@ -1853,13 +1853,13 @@ func LoaderModSoftWhitelistMock(mockData *SoftWhitelistMock) lua.LGFunction {
 
 		L.SetField(mod, definitions.LuaFnSoftWhitelistGet, L.NewFunction(func(L *lua.LState) int {
 			username := L.CheckString(1)
-			feature := L.CheckString(2)
-			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistGet, username+":"+feature); err != nil {
+			environmentName := L.CheckString(2)
+			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistGet, username+":"+environmentName); err != nil {
 				L.Push(L.NewTable())
 				L.Push(lua.LString(err.Error()))
 				return 2
 			}
-			key := feature + ":" + username
+			key := environmentName + ":" + username
 			result := L.NewTable()
 			for i, network := range entries[key] {
 				result.RawSetInt(i+1, lua.LString(network))
@@ -1872,13 +1872,13 @@ func LoaderModSoftWhitelistMock(mockData *SoftWhitelistMock) lua.LGFunction {
 		L.SetField(mod, definitions.LuaFnSoftWhitelistDelete, L.NewFunction(func(L *lua.LState) int {
 			username := L.CheckString(1)
 			network := L.CheckString(2)
-			feature := L.CheckString(3)
-			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistDelete, username+":"+feature); err != nil {
+			environmentName := L.CheckString(3)
+			if err := mockData.RecordCall(definitions.LuaFnSoftWhitelistDelete, username+":"+environmentName); err != nil {
 				L.Push(lua.LString(""))
 				L.Push(lua.LString(err.Error()))
 				return 2
 			}
-			key := feature + ":" + username
+			key := environmentName + ":" + username
 			current := entries[key]
 			next := make([]string, 0, len(current))
 			for _, item := range current {

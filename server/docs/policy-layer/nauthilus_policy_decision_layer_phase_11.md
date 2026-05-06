@@ -31,7 +31,7 @@ This slice does not start custom enforcement for backend results, Lua subject so
   - Applies configured response messages before the existing response surfaces render.
   - Emits policy debug-module logs for selected configured decisions.
 
-- `server/core/features.go`
+- `server/core/environment.go`
   - Allows configured `pre_auth` policy rules to override current Lua-control, TLS, relay-domain, RBL, and technical-error outcomes.
   - Continues later current pre-auth controls when configured policy authority is active and no terminal configured decision was selected.
 
@@ -106,7 +106,7 @@ Result:
   - Purpose: reuse current brute-force, Lua environment source, TLS, relay-domain, and RBL mechanism execution as fact producers.
   - Removal plan: replace with native policy check executors before final cleanup.
 
-- Current feature side effects still run through current mechanism code for Lua environment sources, TLS, relay-domain, and RBL triggers.
+- Current environment side effects still run through current mechanism code for Lua environment sources, TLS, relay-domain, and RBL triggers.
   - Purpose: preserve current behavior while configured `pre_auth` decisions become authoritative.
   - Removal plan: move remaining side effects behind registered policy obligations when native check executors and response enforcement are completed.
 
@@ -126,13 +126,13 @@ Result:
 
 - Remove old direct-result comparison scaffolding that is not part of supported observe mode.
 - Replace current response-result translation with direct policy response rendering.
-- Replace mechanism-local feature side effects with registered policy obligations.
+- Replace mechanism-local environment side effects with registered policy obligations.
 - Remove remaining old direct-gate call-site assumptions after native pre-auth check scheduling is complete.
 
 ## Open Risks and Deliberately Deferred Points
 
 - Custom backend, Lua subject source, status-message, lookup-identity, and list-account enforcement remain deliberately out of scope.
-- Existing current mechanism code may still perform current feature side effects before a configured policy decision is selected. This is documented as a temporary adapter and must be removed by later native check-executor and obligation work.
+- Existing current mechanism code may still perform current environment side effects before a configured policy decision is selected. This is documented as a temporary adapter and must be removed by later native check-executor and obligation work.
 - The configured `pre_auth` evaluator uses collected facts from current adapters. Custom-only check execution beyond current fact producers remains deferred.
 - Atomic reload semantics were not changed; the evaluator reads the immutable snapshot captured for the request.
 - No new public config paths were added; existing `auth.policy` schema, `mapstructure`, dump, redaction, and `ConfigProblem` behavior remain in force.
@@ -144,7 +144,7 @@ The second review re-read the Phase 11 requirements, the general completion rule
 Result:
 
 - Phase scope stayed limited to custom `pre_auth` enforcement for brute force, Lua environment sources, TLS, relay domains, and RBL. Backend, Lua subject source, lookup-identity, list-account, response-authority, compiler-surface, and FSM-vocabulary changes were not started.
-- The first added tests covered the missing configured evaluator and auth-boundary behavior before implementation. A second review test then exposed and fixed one gap: brute-force `skip_remaining_stage_checks` controls now skip later pre-auth checks instead of merely continuing to the current feature path. The same test also guards against duplicate report entries from repeated request-local evaluation calls.
+- The first added tests covered the missing configured evaluator and auth-boundary behavior before implementation. A second review test then exposed and fixed one gap: brute-force `skip_remaining_stage_checks` controls now skip later pre-auth checks instead of merely continuing to the current environment path. The same test also guards against duplicate report entries from repeated request-local evaluation calls.
 - `permit` remains rejected for `pre_auth` by the compiler test.
 - No configured `pre_auth` fallback default-deny was introduced. Unmatched configured `pre_auth` rules remain neutral and final auth default-deny semantics stay unchanged.
 - Brute force is handled as first-class policy input through the collected `builtin.brute_force` facts and no separate legacy decision pipeline was added.

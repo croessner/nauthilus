@@ -14,7 +14,7 @@ This slice does not make `standard_auth` authoritative, does not make the target
 
 - `server/policy/fsm/fsm.go`
   - Adds the target auth-FSM transition table.
-  - Adds a private `currentAdapter` that maps target pre-auth markers to current `features_*` events and target final auth markers to current `password_*` events.
+  - Adds a private `currentAdapter` that maps target pre-auth markers to current `pre_auth_*` events and target final auth markers to current `password_*` events.
   - Represents `account_provider_evaluated` as target marker material and maps it through the current password checkpoint for migration diagnostics.
   - Compares target terminal state against the current production terminal state without changing the production response.
 
@@ -62,7 +62,7 @@ Added tests:
   - Verifies FSM mismatch reporting is separate from the existing policy-result mismatch.
 
 - `server/policy/compiler/snapshot_compiler_test.go`
-  - Verifies current internal event names such as `features_ok` are rejected by policy marker validation.
+  - Verifies unknown target marker names such as `unknown_pre_auth_marker` are rejected by policy marker validation.
 
 Validation run:
 
@@ -125,8 +125,8 @@ Second pass completed against the Phase 6 requirements, section 9.7 target FSM, 
 
 - Scope: implementation is limited to target FSM markers, a private adapter, target FSM evaluation, comparison reporting, debug output, metrics, tracing, and tests. No production authority switch was introduced.
 - Tests first: focused FSM, evaluation, and compiler tests were written before implementation; the first focused run failed on missing target-FSM code and report fields.
-- Marker validation: compiler validation continues to accept target marker IDs and rejects current internal event names such as `features_ok`.
-- Adapter: target `pre_auth_*` markers map to current `features_*` events; target final auth markers map to current `password_*` events; `account_provider_evaluated` is represented in the target sequence and adapter mapping.
+- Marker validation: compiler validation continues to accept target marker IDs and rejects unknown target marker names such as `unknown_pre_auth_marker`.
+- Target FSM: target `pre_auth_*` markers and final auth markers are applied directly; `account_provider_evaluated` is represented in the target sequence.
 - Current authority: current FSM transitions and direct-gate responses remain production-authoritative. FSM mismatches are diagnostics only and do not alter `CompareWithProduction` policy mismatch results.
 - Operations: target FSM comparison covers `authenticate`, `lookup_identity`, and `list_accounts`; list-account comparison uses `account_provider_evaluated`.
 - Reports and redaction: `FSMReport` contains only bounded marker/state/path metadata and is cloned by redaction-safe report copying.

@@ -137,7 +137,7 @@ func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint s
 		definitions.LogKeyUserAgent, util.WithNotAvailable(a.Request.UserAgent),
 		definitions.LogKeyClientID, util.WithNotAvailable(a.Request.XClientID),
 		definitions.LogKeyBruteForceName, util.WithNotAvailable(a.Security.BruteForceName),
-		definitions.LogKeyFeatureName, util.WithNotAvailable(a.Runtime.FeatureName),
+		definitions.LogKeyEnvironmentName, util.WithNotAvailable(a.Runtime.EnvironmentName),
 		definitions.LogKeyStatusMessage, util.WithNotAvailable(a.Runtime.StatusMessage),
 		definitions.LogKeyBFRWP, a.Runtime.BFRWP,
 		definitions.LogKeyUriPath, endpoint,

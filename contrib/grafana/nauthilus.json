@@ -1540,14 +1540,14 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (feature) (rate(analytics_count{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
+          "expr": "sum by (environment) (rate(analytics_count{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
           "instant": false,
-          "legendFormat": "{{feature}}",
+          "legendFormat": "{{environment}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Feature efficiency",
+      "title": "Environment efficiency",
       "type": "timeseries"
     },
     {
@@ -4101,7 +4101,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"feature\",task=\"Check blocklist.de\"}[$__rate_interval])) by (le)) > 0)",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"environment\",task=\"Check blocklist.de\"}[$__rate_interval])) by (le)) > 0)",
           "instant": false,
           "legendFormat": "blocklist",
           "range": true,
@@ -4113,7 +4113,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"filter\",task=\"Check GeoIP policy\"}[$__rate_interval])) by (le)) > 0)",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"subject\",task=\"Check GeoIP policy\"}[$__rate_interval])) by (le)) > 0)",
           "hide": false,
           "instant": false,
           "legendFormat": "geoip-policyd",

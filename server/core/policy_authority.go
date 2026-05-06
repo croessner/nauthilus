@@ -432,7 +432,7 @@ func preAuthResultFromPolicy(final *report.FinalDecision, current definitions.Au
 		return preAuthDenyResult(final, current)
 	case policy.FSMEventMarkerPreAuthTempFail:
 		if final.ResponseMarker == policy.ResponseMarkerTempFailNoTLS {
-			return definitions.AuthResultFeatureTLS
+			return definitions.AuthResultPreAuthTLS
 		}
 
 		return definitions.AuthResultTempFail
@@ -447,15 +447,15 @@ func preAuthDenyResult(final *report.FinalDecision, current definitions.AuthResu
 	name := final.PolicyName
 	switch {
 	case strings.Contains(name, "_relay_domain_"):
-		return definitions.AuthResultFeatureRelayDomain
+		return definitions.AuthResultPreAuthRelayDomain
 	case strings.Contains(name, "_rbl_"):
-		return definitions.AuthResultFeatureRBL
+		return definitions.AuthResultPreAuthRBL
 	case strings.Contains(name, "_lua_environment_"):
-		return definitions.AuthResultFeatureLua
+		return definitions.AuthResultLuaEnvironment
 	case strings.Contains(name, "_brute_force_"):
 		return definitions.AuthResultFail
 	default:
-		return definitions.AuthResultFeatureLua
+		return definitions.AuthResultLuaEnvironment
 	}
 }
 

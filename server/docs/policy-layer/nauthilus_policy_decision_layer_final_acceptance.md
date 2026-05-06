@@ -7,7 +7,7 @@ This acceptance pass closes the implemented Policy Decision Layer rollout agains
 documents `server/docs/policy-layer/nauthilus_policy_decision_layer_phase_0.md` through
 `server/docs/policy-layer/nauthilus_policy_decision_layer_phase_14.md`, and the current code paths.
 
-The pass did not introduce a new feature stage, a new public authority model, or
+The pass did not introduce a new pre-auth stage, a new public authority model, or
 a new public config root. Fixes were limited to consistency gaps inside the
 implemented target model.
 
@@ -21,7 +21,7 @@ The old Phase 7 through Phase 13 documents have been renumbered to Phase 8
 through Phase 14. The inserted Phase 7 has now been implemented as a retrofit:
 synchronous Lua actions are selected through
 `auth.obligation.lua_action.dispatch` and no longer run directly from
-policy-authoritative feature or brute-force mechanisms.
+policy-authoritative environment or brute-force mechanisms.
 
 Current acceptance is no longer blocked by Phase 7. The historical validation
 results below remain useful evidence for the already-completed renumbered
@@ -84,7 +84,7 @@ Reproducer tests added first:
 
 Fix:
 
-- Removed `depends_on` and `when_*` from `LuaFeature` and `LuaFilter` config
+- Removed `depends_on` and `when_*` from `LuaEnvironmentSource` and `LuaSubjectSource` config
   structs.
 - Removed the migration-only `when_no_auth` decode hook for enabled
   control declarations.
@@ -190,7 +190,7 @@ Fix:
   subject sources.
 - Added a stateless placeholder that fails when emission is attempted outside a
   request-local policy context.
-- Bound the real emitter in feature execution at `pre_auth` and filter
+- Bound the real emitter in environment execution at `pre_auth` and subject-source
   execution at `subject_analysis`.
 - Validated runtime emissions against the active snapshot registry, attribute
   source, stage, operation, value type, registered details, and detail length.
@@ -208,8 +208,8 @@ Gap:
 The current target-model end state registered and executed
 `auth.obligation.brute_force.update` and
 `auth.obligation.lua_post_action.enqueue`, but did not yet register or execute
-`auth.obligation.lua_action.dispatch`. Feature-triggered actions still ran from
-`processFeatureAction` / `performAction`, and brute-force-triggered actions
+`auth.obligation.lua_action.dispatch`. Environment-triggered actions still ran from
+`processEnvironmentAction` / `performAction`, and brute-force-triggered actions
 still ran from `handleBruteForceLuaAction`, even when the request already had a
 policy-authoritative pre-auth decision.
 
@@ -230,15 +230,15 @@ Reproducer tests added first:
 Fix:
 
 - Registered `auth.obligation.lua_action.dispatch`.
-- Added bounded typed compiler validation for `action`, `feature`, and `wait`.
+- Added bounded typed compiler validation for `action`, `environment`, and `wait`.
 - Added a central runtime obligation executor behind `applyPolicyObligations`.
 - Planned Lua action obligations in `standard_auth` for `brute_force`, `lua`,
   `tls_encryption`, `relay_domains`, and `rbl`.
-- Removed direct feature and brute-force synchronous Lua action dispatch from
+- Removed direct environment and brute-force synchronous Lua action dispatch from
   mechanism paths.
 - Removed the old direct brute-force action dispatcher.
 - Preserved existing action dispatcher behavior, request context objects,
-  cancellation checks, action metrics, and feature-learning semantics.
+  cancellation checks, action metrics, and environment-learning semantics.
 - Preserved brute-force Lua action `CommonRequest` parity by exposing the
   matched rule name during dispatch instead of the internal repeating/guessed
   security marker.
@@ -274,7 +274,7 @@ Fix:
 Passed:
 
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestAuthBoundaryDefault(PreAuthAppliesWhenConfiguredFinalRulesExist|FinalDecisionAppliesWhenConfiguredPreAuthRulesExist)|TestDecisionContextDefaultSetAuthorityIsStageScoped' ./server/core ./server/policy/collection`
-- `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestHandleFile_LuaAttributeSourcesRejectRemovedSchedulerKeys|TestHandleFile_ServerControlsRejectRemovedWhenNoAuthShape|TestHandleFile_LuaEnvironmentSourcesPopulateInternalList|TestHandleFile_ServerControlsAndServicesEnableRuntimeFeatures|TestKnownConfigSyntaxKeys_IncludeNestedListAndMappingKeys' ./server/config`
+- `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestHandleFile_LuaAttributeSourcesRejectRemovedSchedulerKeys|TestHandleFile_ServerControlsRejectRemovedWhenNoAuthShape|TestHandleFile_LuaEnvironmentSourcesPopulateInternalList|TestHandleFile_ServerControlsAndServicesEnableRuntimeModules|TestKnownConfigSyntaxKeys_IncludeNestedListAndMappingKeys' ./server/config`
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/config ./server/lualib/environment ./server/lualib/subject ./server/policy/collection`
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test -run 'TestCallEnvironmentLuaUsesPolicyScheduleForNoAuthControl|TestCallSubjectLuaUsesPolicyScheduleDependencies|TestScriptSinkBuildsPolicyScriptSchedule|TestCompilerRejectsRunIfIncompatibleCheckDependency|TestStandardAuthMapsLuaScriptsForLookupIdentity|TestStandardAuthMapsLuaScriptsFromEmittedAttributes|TestScriptSinkResolvesLuaResultByConfigRef' ./server/lualib/environment ./server/lualib/subject ./server/policy/collection ./server/policy/compiler ./server/policy/evaluation`
 - `python3 scripts/test_generate_vim_syntax.py`
@@ -282,7 +282,7 @@ Passed:
   - Result: no matches.
 - Historical target-surface scan:
   - `policy_engine` appears only in converter negative assertions and temp/spec text.
-  - `features_ok` appears only in the compiler rejection test that proves old FSM names are invalid.
+  - `unknown_pre_auth_marker` appears in the compiler rejection test that proves unknown FSM marker names are invalid.
   - `when_*` and Lua `depends_on` appear only in converter/test/spec text, not in target config structs or generated syntax.
   - Removed comparison APIs such as `CompareWithProduction` and `ProductionOutcome` have no code hits.
 - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/... ./server/core ./server/lualib/environment ./server/lualib/subject ./server/lualib/pipeline ./server/lualib/policyschedule`
@@ -335,7 +335,7 @@ Second-pass result:
 - The inserted Phase 7 is now satisfied: synchronous Lua action dispatch is a
   registered policy obligation with bounded typed arguments, selected
   `standard_auth` and custom decisions execute it centrally, and observe mode
-  executes no central mutable obligations. No direct feature or brute-force
+  executes no central mutable obligations. No direct environment or brute-force
   synchronous Lua action mechanism fallback remains; the executor also refuses
   mutable execution without a request-local policy context. The CommonRequest
   follow-up review fixed the brute-force rule-name parity gap in the Lua action

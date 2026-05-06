@@ -251,14 +251,14 @@ type File interface {
 	GetBackendServerMonitoring() *BackendServerMonitoring
 
 	/*
-		Features and options
+		RuntimeModules and options
 	*/
 
-	// HasFeature checks whether a specific feature is available.
-	HasFeature(feature string) bool
+	// HasRuntimeModule checks whether a specific runtimeModule is available.
+	HasRuntimeModule(runtimeModule string) bool
 
-	// ShouldRunFeature checks if a given feature is enabled and should be executed in the current auth context (noAuth).
-	ShouldRunFeature(feature string, noAuth bool) bool
+	// ShouldRunControl checks if a given runtimeModule is enabled and should be executed in the current auth context (noAuth).
+	ShouldRunControl(runtimeModule string, noAuth bool) bool
 
 	/*
 		Authentication and security methods
@@ -1364,8 +1364,8 @@ func (f *FileSettings) GetServer() *ServerSection {
 		f.materializeLegacySections()
 	}
 
-	if f.Server != nil && f.Server.Features == nil {
-		f.Server.normalizeConfiguredFeatures()
+	if f.Server != nil && f.Server.RuntimeModules == nil {
+		f.Server.normalizeConfiguredRuntimeModules()
 	}
 
 	if f.Server == nil {
@@ -3115,14 +3115,14 @@ func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 	}
 }
 
-// HasFeature checks if the given feature exists in the LoadableConfig's Features list
-func (f *FileSettings) HasFeature(feature string) bool {
+// HasRuntimeModule checks if the given runtimeModule exists in the LoadableConfig's RuntimeModules list
+func (f *FileSettings) HasRuntimeModule(runtimeModule string) bool {
 	if f == nil {
 		return false
 	}
 
-	for _, item := range f.GetServer().Features {
-		if item.Get() == feature {
+	for _, item := range f.GetServer().RuntimeModules {
+		if item.Get() == runtimeModule {
 			return true
 		}
 	}
@@ -3130,14 +3130,14 @@ func (f *FileSettings) HasFeature(feature string) bool {
 	return false
 }
 
-// ShouldRunFeature checks if a given feature is enabled and should be executed in the current auth context (noAuth).
-func (f *FileSettings) ShouldRunFeature(feature string, noAuth bool) bool {
+// ShouldRunControl checks if a given runtimeModule is enabled and should be executed in the current auth context (noAuth).
+func (f *FileSettings) ShouldRunControl(runtimeModule string, noAuth bool) bool {
 	if f == nil {
 		return false
 	}
 
-	for _, item := range f.GetServer().Features {
-		if item.Get() == feature {
+	for _, item := range f.GetServer().RuntimeModules {
+		if item.Get() == runtimeModule {
 			if noAuth {
 				return false
 			}
@@ -3217,9 +3217,9 @@ func processControls(input any) (any, error) {
 	return processStringSettableSlice(input, func() *Control { return &Control{} })
 }
 
-// processFeatures converts input values into a slice of Feature pointers or returns an error for invalid input types or values.
-func processFeatures(input any) (any, error) {
-	return processStringSettableSlice(input, func() *Feature { return &Feature{} })
+// processRuntimeModules converts input values into a slice of RuntimeModule pointers or returns an error for invalid input types or values.
+func processRuntimeModules(input any) (any, error) {
+	return processStringSettableSlice(input, func() *RuntimeModule { return &RuntimeModule{} })
 }
 
 // processServices converts input values into a slice of Service pointers or returns an error for invalid input types or values.
@@ -3273,7 +3273,7 @@ func processBackends(input any) (any, error) {
 func createDecoderOption() viper.DecoderConfigOption {
 	verbosityType := reflect.TypeFor[Verbosity]()
 	debugModulesType := reflect.TypeFor[[]*DbgModule]()
-	featuresType := reflect.TypeFor[[]*Feature]()
+	runtimeModulesType := reflect.TypeFor[[]*RuntimeModule]()
 	controlsType := reflect.TypeFor[[]*Control]()
 	servicesType := reflect.TypeFor[[]*Service]()
 	protocolsType := reflect.TypeFor[[]*Protocol]()
@@ -3292,8 +3292,8 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processVerboseLevel(data)
 				case to == debugModulesType:
 					return processDebugModules(data)
-				case to == featuresType:
-					return processFeatures(data)
+				case to == runtimeModulesType:
+					return processRuntimeModules(data)
 				case to == controlsType:
 					return processControls(data)
 				case to == servicesType:
@@ -3436,7 +3436,7 @@ func (f *FileSettings) normalizeConfigAliases() {
 	}
 
 	if f.Server != nil {
-		f.Server.normalizeConfiguredFeatures()
+		f.Server.normalizeConfiguredRuntimeModules()
 	}
 
 }

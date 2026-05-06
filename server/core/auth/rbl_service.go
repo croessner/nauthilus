@@ -28,7 +28,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// DefaultRBLService implements the parallel RBL checks analogous to the previous logic in features.go.
+// DefaultRBLService implements the parallel RBL checks analogous to the previous logic in environment.go.
 //
 //goland:nointerface
 type DefaultRBLService struct{}

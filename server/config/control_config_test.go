@@ -17,7 +17,7 @@ const (
 	testRedisEncryptionSecret = "redis-secret-1234"
 )
 
-func TestHandleFile_ServerControlsAndServicesEnableRuntimeFeatures(t *testing.T) {
+func TestHandleFile_ServerControlsAndServicesEnableRuntimeModules(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
@@ -44,15 +44,15 @@ func TestHandleFile_ServerControlsAndServicesEnableRuntimeFeatures(t *testing.T)
 		t.Fatalf("handle file failed: %v", err)
 	}
 
-	if !cfg.HasFeature(definitions.FeatureRBL) {
+	if !cfg.HasRuntimeModule(definitions.ControlRBL) {
 		t.Fatal("expected auth.controls to enable rbl")
 	}
 
-	if !cfg.HasFeature(definitions.FeatureBruteForce) {
+	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
 		t.Fatal("expected auth.controls to enable brute_force")
 	}
 
-	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
+	if !cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks) {
 		t.Fatal("expected auth.services to enable backend_health_checks")
 	}
 }
@@ -387,7 +387,7 @@ func TestHandleFile_ServerServicesRejectControls(t *testing.T) {
 	}
 }
 
-func TestHandleFile_BruteForceLearningAcceptsFeatureNames(t *testing.T) {
+func TestHandleFile_BruteForceLearningAcceptsControlNames(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
@@ -422,9 +422,9 @@ func TestHandleFile_BruteForceLearningAcceptsFeatureNames(t *testing.T) {
 		t.Fatalf("handle file failed: %v", err)
 	}
 
-	for _, feature := range []string{"lua", "relay_domains", "rbl", "brute_force"} {
-		if !cfg.GetBruteForce().LearnFromFeature(feature) {
-			t.Fatalf("expected brute force learning to include %q", feature)
+	for _, runtimeModule := range []string{"lua", "relay_domains", "rbl", "brute_force"} {
+		if !cfg.GetBruteForce().LearnFromControl(runtimeModule) {
+			t.Fatalf("expected brute force learning to include %q", runtimeModule)
 		}
 	}
 }

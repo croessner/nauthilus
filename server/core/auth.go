@@ -487,8 +487,8 @@ type AuthRuntime struct {
 	// AccountName is the name of the account being authenticated.
 	AccountName string
 
-	// FeatureName is the name of the feature being accessed.
-	FeatureName string
+	// EnvironmentName is the name of the environment control or source being accessed.
+	EnvironmentName string
 
 	// BackendName is the name of the backend used for authentication.
 	BackendName string
@@ -514,8 +514,8 @@ type AuthRuntime struct {
 	// BFClientNet is the network address used for brute-force detection.
 	BFClientNet string
 
-	// AdditionalFeatures contains additional feature-specific data.
-	AdditionalFeatures map[string]any
+	// AdditionalAttributes contains additional attribute-specific data.
+	AdditionalAttributes map[string]any
 
 	// AuthFSMEventPath contains current auth FSM events seen by this request.
 	AuthFSMEventPath []string
@@ -894,8 +894,8 @@ type PassDBResult struct {
 	// GroupDNs contains resolved group distinguished names.
 	GroupDNs []string
 
-	// AdditionalFeatures contains additional features for machine learning
-	AdditionalFeatures map[string]any
+	// AdditionalAttributes contains additional backend attributes
+	AdditionalAttributes map[string]any
 
 	// Authenticated is a flag that is set if a user was not only found, but also succeeded authentication.
 	Authenticated bool
@@ -929,7 +929,7 @@ func (p *PassDBResult) Reset() {
 
 	// Reset map fields to nil
 	p.Attributes = nil
-	p.AdditionalFeatures = nil
+	p.AdditionalAttributes = nil
 	p.Groups = nil
 	p.GroupDNs = nil
 }
@@ -962,9 +962,9 @@ func (p *PassDBResult) Clone() *PassDBResult {
 	res.Groups = slices.Clone(p.Groups)
 	res.GroupDNs = slices.Clone(p.GroupDNs)
 
-	if p.AdditionalFeatures != nil {
-		res.AdditionalFeatures = make(map[string]any, len(p.AdditionalFeatures))
-		maps.Copy(res.AdditionalFeatures, p.AdditionalFeatures)
+	if p.AdditionalAttributes != nil {
+		res.AdditionalAttributes = make(map[string]any, len(p.AdditionalAttributes))
+		maps.Copy(res.AdditionalAttributes, p.AdditionalAttributes)
 	}
 
 	return res
@@ -1092,7 +1092,7 @@ func (a *AuthState) collectFields() []authStateField {
 		{"StatusMessage", a.Runtime.StatusMessage},
 		{"AccountField", a.Runtime.AccountField},
 		{"AccountName", a.Runtime.AccountName},
-		{"FeatureName", a.Runtime.FeatureName},
+		{"EnvironmentName", a.Runtime.EnvironmentName},
 		{"BackendName", a.Runtime.BackendName},
 		{"UsedBackendIP", a.Runtime.UsedBackendIP},
 		{"TOTPSecret", a.Runtime.TOTPSecret},
@@ -2101,10 +2101,10 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		auth.SetResolvedGroups(passDBResult.Groups, passDBResult.GroupDNs)
 	}
 
-	// Handle AdditionalFeatures if they exist in the PassDBResult
-	if len(passDBResult.AdditionalFeatures) > 0 {
-		// Set AdditionalFeatures in the gin.Context
-		ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+	// Handle AdditionalAttributes if they exist in the PassDBResult
+	if len(passDBResult.AdditionalAttributes) > 0 {
+		// Set AdditionalAttributes in the gin.Context
+		ctx.Set(definitions.CtxAdditionalAttributesKey, passDBResult.AdditionalAttributes)
 	}
 
 	// After attributes were applied, derive the authoritative account directly from attributes
@@ -2307,7 +2307,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.UserFound = a.Runtime.UserFound
 	cr.Authenticated = a.Runtime.Authenticated
 	cr.BruteForceName = a.Security.BruteForceName
-	cr.FeatureName = a.Runtime.FeatureName
+	cr.EnvironmentName = a.Runtime.EnvironmentName
 	cr.StatusMessage = &a.Runtime.StatusMessage
 	cr.RedisPrefix = a.Cfg().GetServer().GetRedis().GetPrefix()
 
@@ -2493,9 +2493,9 @@ func (a *AuthState) GetSlidingWindowKeys(rule *config.BruteForceRule, network *n
 	return bm.GetSlidingWindowKeys(rule, network)
 }
 
-// GetFeatureName returns the feature name from the AuthState.
-func (a *AuthState) GetFeatureName() string {
-	return a.Runtime.FeatureName
+// GetEnvironmentName returns the environment name from the AuthState.
+func (a *AuthState) GetEnvironmentName() string {
+	return a.Runtime.EnvironmentName
 }
 
 // WithUsername sets the username in the AuthState.
@@ -2556,7 +2556,7 @@ func (a *AuthState) GetBruteForceName() string {
 
 // LoadAllPasswordHistories loads all password histories for the current AuthState.
 func (a *AuthState) LoadAllPasswordHistories() {
-	if !a.deps.Cfg.HasFeature(definitions.FeatureBruteForce) {
+	if !a.deps.Cfg.HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 
@@ -2674,19 +2674,19 @@ func (a *AuthState) GetAccountField() string {
 
 // PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
 func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
-	featureRejected := false
-	featureStageExpected := true
-	filterStageExpected := true
+	environmentRejected := false
+	environmentStageExpected := true
+	subjectStageExpected := true
 
 	if ctx != nil {
-		featureRejected = ctx.GetBool(definitions.CtxEnvironmentRejectedKey)
+		environmentRejected = ctx.GetBool(definitions.CtxEnvironmentRejectedKey)
 	}
 
-	if featureRejected {
-		filterStageExpected = false
+	if environmentRejected {
+		subjectStageExpected = false
 
-		if a.Runtime.FeatureName == definitions.FeatureBruteForce {
-			featureStageExpected = false
+		if a.Runtime.EnvironmentName == definitions.ControlBruteForce {
+			environmentStageExpected = false
 		}
 	}
 
@@ -2694,9 +2694,9 @@ func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) 
 		disp.Run(PostActionInput{
 			View:                     a.View(),
 			Result:                   passDBResult,
-			EnvironmentRejected:      featureRejected,
-			EnvironmentStageExpected: featureStageExpected,
-			SubjectStageExpected:     filterStageExpected,
+			EnvironmentRejected:      environmentRejected,
+			EnvironmentStageExpected: environmentStageExpected,
+			SubjectStageExpected:     subjectStageExpected,
 		})
 	}
 }
@@ -3417,7 +3417,7 @@ func (p *PassDBResult) String() string {
 		{"UniqueUserIDField", p.UniqueUserIDField},
 		{"DisplayNameField", p.DisplayNameField},
 		{"Attributes", attributes},
-		{"AdditionalFeatures", p.AdditionalFeatures},
+		{"AdditionalAttributes", p.AdditionalAttributes},
 		{"Authenticated", p.Authenticated},
 		{"UserFound", p.UserFound},
 		{"Backend", p.Backend},
@@ -4305,9 +4305,9 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 			fn:      nil,
 		})
 
-		// Set AdditionalFeatures in the gin.Context if they exist in the cached result
-		if len(passDBResult.AdditionalFeatures) > 0 {
-			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+		// Set AdditionalAttributes in the gin.Context if they exist in the cached result
+		if len(passDBResult.AdditionalAttributes) > 0 {
+			ctx.Set(definitions.CtxAdditionalAttributesKey, passDBResult.AdditionalAttributes)
 		}
 
 		ctx.Set(definitions.CtxLocalCacheAuthKey, true)
@@ -4332,7 +4332,7 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 // If a brute force attack is rejected, it returns true. Configured policy controls may let processing continue.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	tr := monittrace.New("nauthilus/auth")
-	pctx, pspan := tr.Start(ctx.Request.Context(), "auth.features",
+	pctx, pspan := tr.Start(ctx.Request.Context(), "auth.environment",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
 	)

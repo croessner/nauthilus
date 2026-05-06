@@ -50,10 +50,10 @@ func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 	}
 }
 
-// setNginxHeaders sets the appropriate headers for the given gin.Context and AuthState based on the configuration and feature flags.
-// If the definitions.FeatureBackendServersMonitoring feature is enabled, it checks if the AuthState's UsedBackendAddress and UsedBackendPort are set.
+// setNginxHeaders sets the appropriate headers for the given gin.Context and AuthState based on the configuration and runtime module flags.
+// If the definitions.ServiceBackendHealthChecks service is enabled, it checks if the AuthState's UsedBackendAddress and UsedBackendPort are set.
 // If they are, it sets the "Auth-Server" header to the UsedBackendAddress and the "Auth-Port" header to the UsedBackendPort.
-// If the definitions.FeatureBackendServersMonitoring feature is disabled, it checks the AuthState's Protocol.
+// If the definitions.ServiceBackendHealthChecks service is disabled, it checks the AuthState's Protocol.
 // If the Protocol is definitions.ProtoSMTP, it sets the "Auth-Server" header to the SMTPBackendAddress and the "Auth-Port" header to the SMTPBackendPort.
 // If the Protocol is definitions.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is definitions.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
@@ -62,7 +62,7 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 }
 
 func setNginxHeadersWithDeps(cfg config.File, logger *slog.Logger, ctx *gin.Context, auth *AuthState) {
-	if cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
+	if cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks) {
 		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
 			level.Error(logger).Log(

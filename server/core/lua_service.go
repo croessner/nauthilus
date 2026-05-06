@@ -57,7 +57,7 @@ type EnvironmentEngine interface {
 //
 //goland:nointerface
 type ActionDispatcher interface {
-	Dispatch(view *StateView, featureName string, luaAction definitions.LuaAction)
+	Dispatch(view *StateView, environmentName string, luaAction definitions.LuaAction)
 }
 
 // RBLService encapsulates RBL checking and aggregation.
@@ -67,7 +67,7 @@ type RBLService interface {
 	// Score computes the aggregated RBL score for the request.
 	Score(ctx *gin.Context, view *StateView) (int, error)
 
-	// Threshold returns the configured threshold at which a feature is triggered.
+	// Threshold returns the configured threshold at which an environment control is triggered.
 	Threshold() int
 }
 

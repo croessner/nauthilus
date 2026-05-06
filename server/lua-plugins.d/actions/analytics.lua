@@ -44,36 +44,36 @@ function nauthilus_call_action(request)
     if rt_has_data then
         -- brute_force_haproxy
         if rt.brute_force_haproxy then
-            nauthilus_prometheus.increment_counter(N .. "_count", { feature = "brute_force" })
+            nauthilus_prometheus.increment_counter(N .. "_count", { environment = "brute_force" })
         end
 
         -- environment_haproxy (not part of demo plugins)
         if rt.environment_haproxy then
-            if request.feature and request.feature ~= "" then
-                nauthilus_prometheus.increment_counter(N .. "_count", { feature = request.feature })
+            if request.environment and request.environment ~= "" then
+                nauthilus_prometheus.increment_counter(N .. "_count", { environment = request.environment })
             else
-                nauthilus_prometheus.increment_counter(N .. "_count", { feature = "unspec" })
+                nauthilus_prometheus.increment_counter(N .. "_count", { environment = "unspec" })
             end
         end
     end
 
     -- environment_blocklist
     if (rt_has_data and rt.environment_blocklist) or fact(policy_facts, "blocklist", "matched") == true then
-        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "blocklist" })
+        nauthilus_prometheus.increment_counter(N .. "_count", { environment = "blocklist" })
     end
 
     -- subject_geoippolicyd
     if (rt_has_data and rt.subject_geoippolicyd) or fact(policy_facts, "geoip", "rejected") == true then
-        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "geoip" })
+        nauthilus_prometheus.increment_counter(N .. "_count", { environment = "geoip" })
     end
 
     -- environment_failed_login_hotspot
     if (rt_has_data and rt.environment_failed_login_hotspot) or fact(policy_facts, "failed_login_hotspot", "triggered") == true then
-        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "failed_login_hotspot" })
+        nauthilus_prometheus.increment_counter(N .. "_count", { environment = "failed_login_hotspot" })
     end
 
     if (rt_has_data and rt.subject_account_protection_mode) or fact(policy_facts, "account_protection", "active") == true then
-        nauthilus_prometheus.increment_counter(N .. "_count", { feature = "account_protection" })
+        nauthilus_prometheus.increment_counter(N .. "_count", { environment = "account_protection" })
     end
 
     rt.post_analytics = true

@@ -189,19 +189,19 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		t.Fatal("selected Lua response detail was not marked for redaction")
 	}
 
-	filterReport := standardReport(
+	subjectReport := standardReport(
 		policy.OperationAuthenticate,
 		check("lua_subject_billing", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK),
 		boolAttr("auth.lua.subject.billing.rejected", policy.StageSubjectAnalysis, policy.OperationAuthenticate, true, map[string]report.DetailValue{
 			"status_message": {
-				Value:       "Filtered by Lua",
+				Value:       "Rejected by Lua subject",
 				Sensitivity: report.SensitivityPublic,
 				Purpose:     report.PurposeResponseMessage,
 			},
 		}),
 	)
 
-	got = EvaluateStandardAuth(filterReport)
+	got = EvaluateStandardAuth(subjectReport)
 	if got.Final == nil {
 		t.Fatal("final decision is nil")
 	}
@@ -210,11 +210,11 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		t.Fatalf("policy = %q, want standard_lua_subject_billing_reject", got.Final.PolicyName)
 	}
 
-	if got.Final.ResponseMessage == nil || got.Final.ResponseMessage.Message != "Filtered by Lua" {
-		t.Fatalf("filter response message = %#v, want Lua detail", got.Final.ResponseMessage)
+	if got.Final.ResponseMessage == nil || got.Final.ResponseMessage.Message != "Rejected by Lua subject" {
+		t.Fatalf("subject response message = %#v, want Lua detail", got.Final.ResponseMessage)
 	}
 
-	if !filterReport.Attributes["auth.lua.subject.billing.rejected"].Details["status_message"].Selected {
+	if !subjectReport.Attributes["auth.lua.subject.billing.rejected"].Details["status_message"].Selected {
 		t.Fatal("selected Lua subject response detail was not marked")
 	}
 
@@ -268,15 +268,15 @@ func TestStandardAuthMapsLuaScriptsForLookupIdentity(t *testing.T) {
 		t.Fatalf("policy = %q, want standard_lua_environment_risk_trigger", got.Final.PolicyName)
 	}
 
-	filterCheck := check("lua_subject_billing", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK)
-	filterCheck.Operation = policy.OperationLookupIdentity
-	filterReport := standardReport(
+	subjectCheck := check("lua_subject_billing", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK)
+	subjectCheck.Operation = policy.OperationLookupIdentity
+	subjectReport := standardReport(
 		policy.OperationLookupIdentity,
-		filterCheck,
+		subjectCheck,
 		boolAttr("auth.lua.subject.billing.rejected", policy.StageSubjectAnalysis, policy.OperationLookupIdentity, true, nil),
 	)
 
-	got = EvaluateStandardAuth(filterReport)
+	got = EvaluateStandardAuth(subjectReport)
 	if got.Final == nil {
 		t.Fatal("final decision is nil")
 	}
@@ -304,15 +304,15 @@ func TestStandardAuthMapsLuaScriptsFromEmittedAttributes(t *testing.T) {
 		t.Fatalf("policy = %q, want standard_lua_environment_geoip_trigger", got.Final.PolicyName)
 	}
 
-	filterCheck := check("billing_policy_gate", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK)
-	filterCheck.Attributes = []string{"auth.lua.subject.billing.rejected"}
-	filterReport := standardReport(
+	subjectCheck := check("billing_policy_gate", policy.CheckTypeLuaSubjectSource, policy.StageSubjectAnalysis, policy.CheckStatusOK)
+	subjectCheck.Attributes = []string{"auth.lua.subject.billing.rejected"}
+	subjectReport := standardReport(
 		policy.OperationAuthenticate,
-		filterCheck,
+		subjectCheck,
 		boolAttr("auth.lua.subject.billing.rejected", policy.StageSubjectAnalysis, policy.OperationAuthenticate, true, nil),
 	)
 
-	got = EvaluateStandardAuth(filterReport)
+	got = EvaluateStandardAuth(subjectReport)
 	if got.Final == nil {
 		t.Fatal("final decision is nil")
 	}
@@ -734,7 +734,7 @@ func customAuthDecisionPolicy(
 
 func customLuaSubjectSourcePolicy() policyruntime.CompiledPolicy {
 	return policyruntime.CompiledPolicy{
-		Name:          "custom_billing_filter_deny",
+		Name:          "custom_billing_subject_deny",
 		Stage:         policy.StageAuthDecision,
 		Operations:    []policy.Operation{policy.OperationAuthenticate},
 		RequireChecks: []string{"lua_subject_billing"},

@@ -711,11 +711,11 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 		}
 	}
 
-	if res := auth.HandleFeatures(ctx); res != definitions.AuthResultOK && res != definitions.AuthResultUnset {
+	if res := auth.HandleEnvironment(ctx); res != definitions.AuthResultOK && res != definitions.AuthResultUnset {
 		auth.AuthFail(ctx)
 		auth.FinishLogging(ctx, res)
 
-		err := fmt.Errorf("authentication failed with feature result: %d", res)
+		err := fmt.Errorf("authentication failed with pre-auth result: %d", res)
 		sp.RecordError(err)
 
 		return nil, err

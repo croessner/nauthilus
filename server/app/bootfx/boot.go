@@ -331,10 +331,10 @@ func DebugLoadableConfig(cfg config.File, logger *slog.Logger) {
 
 	file := cfg
 
-	debugIfNotNil(definitions.FeatureRBL, file.GetRBLs())
-	debugIfNotNil(definitions.FeatureTLSEncryption, file.GetClearTextList())
-	debugIfNotNil(definitions.FeatureRelayDomains, file.GetRelayDomains())
-	debugIfNotNil(definitions.FeatureBackendServersMonitoring, file.GetBackendServerMonitoring())
+	debugIfNotNil(definitions.ControlRBL, file.GetRBLs())
+	debugIfNotNil(definitions.ControlTLSEncryption, file.GetClearTextList())
+	debugIfNotNil(definitions.ControlRelayDomains, file.GetRelayDomains())
+	debugIfNotNil(definitions.ServiceBackendHealthChecks, file.GetBackendServerMonitoring())
 	debugIfNotNil(definitions.LogKeyBruteForce, file.GetBruteForce())
 	debugIfNotNil("idp", file.GetIdP())
 

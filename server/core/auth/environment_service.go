@@ -39,16 +39,16 @@ func (DefaultEnvironmentEngine) Evaluate(ctx *gin.Context, view *core.StateView)
 	auth.FillCommonRequest(commonRequest)
 
 	environmentRequest := environment.Request{
-		Logs:               nil,
-		Context:            auth.Runtime.Context,
-		HTTPClientContext:  auth.Request.HTTPClientContext,
-		HTTPClientRequest:  auth.Request.HTTPClientRequest,
-		Authenticated:      auth.Runtime.Authenticated,
-		NoAuth:             auth.Request.NoAuth,
-		BruteForceCounter:  0,
-		MasterUserMode:     auth.Runtime.MasterUserMode,
-		AdditionalFeatures: auth.Runtime.AdditionalFeatures,
-		CommonRequest:      commonRequest,
+		Logs:                 nil,
+		Context:              auth.Runtime.Context,
+		HTTPClientContext:    auth.Request.HTTPClientContext,
+		HTTPClientRequest:    auth.Request.HTTPClientRequest,
+		Authenticated:        auth.Runtime.Authenticated,
+		NoAuth:               auth.Request.NoAuth,
+		BruteForceCounter:    0,
+		MasterUserMode:       auth.Runtime.MasterUserMode,
+		AdditionalAttributes: auth.Runtime.AdditionalAttributes,
+		CommonRequest:        commonRequest,
 	}
 
 	triggered, abort, err := environmentRequest.CallEnvironmentLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())

@@ -149,8 +149,8 @@ type CommonRequest struct {
 	// BruteForceName stores the name of the brute force protection mechanism.
 	BruteForceName string
 
-	// FeatureName is a feature that triggered the action.
-	FeatureName string
+	// EnvironmentName is the environment control or source that triggered the action.
+	EnvironmentName string
 
 	// XSSL contains SSL information.
 	XSSL string
@@ -294,7 +294,7 @@ func (c *CommonRequest) Reset() {
 	c.RedirectURI = ""
 	c.MFAMethod = ""
 	c.BruteForceName = ""
-	c.FeatureName = ""
+	c.EnvironmentName = ""
 	c.XSSL = ""
 	c.XSSLSessionID = ""
 	c.XSSLClientVerify = ""
@@ -410,7 +410,7 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	c.setStringSliceField(L, request, definitions.LuaRequestAllowedClientGrantTypes, c.AllowedClientGrantTypes)
 
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
-	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
+	request.RawSetString(definitions.LuaRequestEnvironment, lua.LString(c.EnvironmentName))
 	if c.StatusMessage != nil {
 		request.RawSetString(definitions.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
 	}

@@ -36,8 +36,8 @@ const (
 	testProtocolSMTP    = "smtp"
 )
 
-func TestAuthPathCollectsTLSCheckWithoutChangingFeatureDecision(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+func TestAuthPathCollectsTLSCheckWithoutChangingPreAuthDecision(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    73,
@@ -62,9 +62,9 @@ func TestAuthPathCollectsTLSCheckWithoutChangingFeatureDecision(t *testing.T) {
 	})
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
-	got := auth.HandleFeatures(ctx)
-	if got != definitions.AuthResultFeatureTLS {
-		t.Fatalf("feature result = %v, want %v", got, definitions.AuthResultFeatureTLS)
+	got := auth.HandleEnvironment(ctx)
+	if got != definitions.AuthResultPreAuthTLS {
+		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
 	}
 
 	policyCtx, ok := policyDecisionContext(ctx)
@@ -83,7 +83,7 @@ func TestAuthPathCollectsTLSCheckWithoutChangingFeatureDecision(t *testing.T) {
 }
 
 func TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, customObserveTLSSnapshot())
 
@@ -117,7 +117,7 @@ func TestAuthBoundaryCustomObserveDoesNotChangeDefaultDecision(t *testing.T) {
 }
 
 func TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(false)))
 
@@ -147,15 +147,15 @@ func TestAuthBoundaryConfiguredPreAuthEnforceOverridesCurrentTLSResult(t *testin
 }
 
 func TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, customEnforceTLSSnapshot(customEnforceTLSDenyPolicy(true)))
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 
-	got := auth.HandleFeatures(ctx)
+	got := auth.HandleEnvironment(ctx)
 	if got != definitions.AuthResultOK {
-		t.Fatalf("feature result = %v, want OK", got)
+		t.Fatalf("pre-auth result = %v, want OK", got)
 	}
 
 	policyCtx, ok := policyDecisionContext(ctx)
@@ -169,7 +169,7 @@ func TestAuthBoundaryConfiguredPreAuthEnforceLetsUnmatchedTLSContinue(t *testing
 }
 
 func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
 	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
 
@@ -184,9 +184,9 @@ func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 		t.Fatal("configured brute-force control was not applied")
 	}
 
-	got := auth.HandleFeatures(ctx)
+	got := auth.HandleEnvironment(ctx)
 	if got != definitions.AuthResultOK {
-		t.Fatalf("feature result = %v, want OK", got)
+		t.Fatalf("pre-auth result = %v, want OK", got)
 	}
 
 	policyCtx, ok := policyDecisionContext(ctx)
@@ -204,7 +204,7 @@ func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 }
 
 func TestRecordPolicyBruteForceEmitsBucketFacts(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureBruteForce)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
 	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
@@ -253,7 +253,7 @@ func TestRecordPolicyBruteForceEmitsBucketFacts(t *testing.T) {
 }
 
 func TestRecordPolicyBruteForceEmitsTolerationFacts(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureBruteForce)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
 	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
@@ -295,7 +295,7 @@ func TestRecordPolicyBruteForceEmitsTolerationFacts(t *testing.T) {
 }
 
 func TestRecordPolicyRBLEmitsAggregateAndListFacts(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureRBL)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlRBL)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    77,
 		Mode:          "enforce",
@@ -358,7 +358,7 @@ func TestRecordPolicyRBLEmitsAggregateAndListFacts(t *testing.T) {
 }
 
 func TestRecordPolicyRelayDomainsEmitsPolicyFacts(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureRelayDomains)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlRelayDomains)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
 		Generation:    78,
 		Mode:          "enforce",

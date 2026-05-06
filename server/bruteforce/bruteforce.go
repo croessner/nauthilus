@@ -99,8 +99,8 @@ type BucketManager interface {
 	// GetPasswordsTotalSeen retrieves the total number of unique passwords encountered across all accounts.
 	GetPasswordsTotalSeen() uint
 
-	// GetFeatureName returns the name "brute_force" if the system triggered.
-	GetFeatureName() string
+	// GetEnvironmentName returns the name "brute_force" if the system triggered.
+	GetEnvironmentName() string
 
 	// GetBruteForceName retrieves the name associated with the specific brute force bucket that triggered.
 	GetBruteForceName() string
@@ -188,7 +188,7 @@ type BucketManager interface {
 
 	// CommitRWPSlidingWindow writes the current password hash into the RWP sliding window in Redis.
 	// This must only be called after confirming that the rejection was due to a genuine authentication
-	// failure, not a feature-based rejection (e.g., RBL) where the password was never verified.
+	// failure, not a environment-based rejection (e.g., RBL) where the password was never verified.
 	CommitRWPSlidingWindow()
 }
 
@@ -221,7 +221,7 @@ type bucketManagerImpl struct {
 	clientIP             string
 	accountName          string
 	bruteForceName       string
-	featureName          string
+	environmentName      string
 	protocol             string
 	oidcCID              string
 	bruteForceCounter    map[string]uint
@@ -272,9 +272,9 @@ func (bm *bucketManagerImpl) GetPasswordsTotalSeen() uint {
 	return bm.passwordsTotalSeen
 }
 
-// GetFeatureName returns the name of the feature managed by the bucketManagerImpl.
-func (bm *bucketManagerImpl) GetFeatureName() string {
-	return bm.featureName
+// GetEnvironmentName returns the name of the environment control managed by the bucketManagerImpl.
+func (bm *bucketManagerImpl) GetEnvironmentName() string {
+	return bm.environmentName
 }
 
 // GetBruteForceName retrieves the BruteForceName associated with the bucketManagerImpl instance.
@@ -517,7 +517,7 @@ func (bm *bucketManagerImpl) WithOIDCCID(oidcCID string) BucketManager {
 
 // LoadAllPasswordHistories loads and processes password history metrics (counts) and checks for current password presence.
 func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 
@@ -1364,7 +1364,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		logBucketMatchingRule(bm, network, rule, message)
 
-		bm.featureName = definitions.FeatureBruteForce
+		bm.environmentName = definitions.ControlBruteForce
 
 		// Store L1 decision for a very short time to absorb bursts (read-path only)
 		l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: true, Rule: bm.bruteForceName}, 0)
@@ -1511,7 +1511,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 
 // SaveFailedPasswordCounterInRedis adds the failed password hash to a Redis set for brute force protection.
 func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 
@@ -1870,7 +1870,7 @@ func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
 }
 
 // CommitRWPSlidingWindow writes the current password hash into the RWP sliding window.
-// It must only be called when the password was genuinely wrong (not rejected by a feature).
+// It must only be called when the password was genuinely wrong (not rejected by an environment control).
 func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
 	args := bm.buildRWPScriptArgs()
 	if args == nil {
@@ -2279,7 +2279,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 	return
 }
 
-// loadBruteForceBucketCounter loads a brute force bucket counter for the specified rule if the feature is enabled.
+// loadBruteForceBucketCounter loads a brute force bucket counter for the specified rule if the control is enabled.
 // It retrieves the bucket counter from Redis, logs the operation, and updates the in-memory counter mapping for the rule.
 func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
 	tr := monittrace.New("nauthilus/bruteforce")
@@ -2581,7 +2581,7 @@ func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptive
 }
 
 func (bm *bucketManagerImpl) prepareSlidingWindow(rule *config.BruteForceRule) (currentKey, prevKey string, weight float64, ok bool) {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 

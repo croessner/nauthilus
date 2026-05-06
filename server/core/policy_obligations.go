@@ -47,10 +47,10 @@ type policyObligationExecutor struct {
 }
 
 type luaActionObligation struct {
-	featureName string
-	actionName  string
-	luaAction   definitions.LuaAction
-	wait        bool
+	environmentName string
+	actionName      string
+	luaAction       definitions.LuaAction
+	wait            bool
 }
 
 func newPolicyObligationExecutor(auth *AuthState) policyObligationExecutor {
@@ -161,9 +161,9 @@ func luaActionObligationFromEffect(effect report.EffectRequest) (luaActionObliga
 		return luaActionObligation{}, false
 	}
 
-	featureName, _ := effect.Args[policy.ObligationArgFeature].(string)
-	if featureName == "" {
-		featureName = actionName
+	environmentName, _ := effect.Args[policy.ObligationArgEnvironment].(string)
+	if environmentName == "" {
+		environmentName = actionName
 	}
 
 	wait := true
@@ -175,10 +175,10 @@ func luaActionObligationFromEffect(effect report.EffectRequest) (luaActionObliga
 	}
 
 	return luaActionObligation{
-		featureName: featureName,
-		actionName:  actionName,
-		luaAction:   luaAction,
-		wait:        wait,
+		environmentName: environmentName,
+		actionName:      actionName,
+		luaAction:       luaAction,
+		wait:            wait,
 	}, true
 }
 
@@ -208,7 +208,7 @@ func (a *AuthState) executeLuaActionObligation(ctx *gin.Context, request luaActi
 		return false
 	}
 
-	a.Runtime.FeatureName = request.featureName
+	a.Runtime.EnvironmentName = request.environmentName
 
 	if request.luaAction == definitions.LuaActionBruteForce {
 		a.dispatchBruteForceLuaAction(ctx, request)
@@ -228,7 +228,7 @@ func (a *AuthState) learnFromLuaActionObligation(ctx *gin.Context, request luaAc
 		return
 	}
 
-	if !bruteForce.LearnFromFeature(request.featureName) && !bruteForce.LearnFromFeature(request.actionName) {
+	if !bruteForce.LearnFromControl(request.environmentName) && !bruteForce.LearnFromControl(request.actionName) {
 		return
 	}
 
@@ -248,7 +248,7 @@ func (a *AuthState) dispatchBruteForceLuaAction(ctx *gin.Context, request luaAct
 	}
 
 	if dispatcher := GetActionDispatcher(); dispatcher != nil {
-		dispatcher.Dispatch(a.View(), request.featureName, request.luaAction)
+		dispatcher.Dispatch(a.View(), request.environmentName, request.luaAction)
 	}
 }
 

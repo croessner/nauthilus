@@ -340,7 +340,7 @@ func NewHAProxyListenerProvider(deps HTTPDeps) HAProxyListenerProvider {
 	return HAProxyListenerProvider{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
 
-// Get returns a PROXY v2 aware listener if the feature is enabled in the
+// Get returns a PROXY v2 aware listener if the support is enabled in the
 // configuration, otherwise it returns nil.
 func (p HAProxyListenerProvider) Get() *proxyproto.Listener {
 	if !p.cfg.GetServer().IsHAproxyProtocolEnabled() {

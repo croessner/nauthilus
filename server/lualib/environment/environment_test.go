@@ -31,7 +31,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func writeFeatureScript(t *testing.T, dir, name, content string) string {
+func writeEnvironmentScript(t *testing.T, dir, name, content string) string {
 	t.Helper()
 
 	scriptPath := filepath.Join(dir, name)
@@ -96,7 +96,7 @@ func TestPreCompiledLuaEnvironmentSourcesCachesPlansForModes(t *testing.T) {
 	}
 }
 
-func newFeatureTestContext() *gin.Context {
+func newEnvironmentTestContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -106,13 +106,13 @@ func newFeatureTestContext() *gin.Context {
 	return ctx
 }
 
-func newFeatureTestConfig() config.File {
+func newEnvironmentTestConfig() config.File {
 	return &config.FileSettings{
 		Server: &config.ServerSection{},
 	}
 }
 
-func newFeatureTestRequest() *Request {
+func newEnvironmentTestRequest() *Request {
 	return &Request{
 		Session:       "guid-test",
 		Context:       lualib.NewContext(),
@@ -122,23 +122,23 @@ func newFeatureTestRequest() *Request {
 
 func TestCallEnvironmentLuaDependencyContextPropagation(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFeatureScript(t, scriptDir, "first.lua", `
+	firstScriptPath := writeEnvironmentScript(t, scriptDir, "first.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_environment(request)
-    nauthilus_context.context_set("feature_dependency_value", "ready")
+    nauthilus_context.context_set("environment_dependency_value", "ready")
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `)
-	secondScriptPath := writeFeatureScript(t, scriptDir, "second.lua", `
+	secondScriptPath := writeEnvironmentScript(t, scriptDir, "second.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_environment(request)
-    if nauthilus_context.context_get("feature_dependency_value") ~= "ready" then
+    if nauthilus_context.context_get("environment_dependency_value") ~= "ready" then
         return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_FAIL
     end
 
-    nauthilus_context.context_set("feature_dependent_value", "seen")
+    nauthilus_context.context_set("environment_dependent_value", "seen")
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `)
@@ -148,8 +148,8 @@ end
 
 	withTestLuaEnvironmentSources(t, first, second)
 
-	request := newFeatureTestRequest()
-	triggered, abortFeatures, err := request.CallEnvironmentLua(newFeatureTestContext(), newFeatureTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	request := newEnvironmentTestRequest()
+	triggered, skipRemainingEnvironment, err := request.CallEnvironmentLua(newEnvironmentTestContext(), newEnvironmentTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("CallEnvironmentLua returned error: %v", err)
 	}
@@ -158,33 +158,33 @@ end
 		t.Fatal("expected triggered=false")
 	}
 
-	if abortFeatures {
-		t.Fatal("expected abortFeatures=false")
+	if skipRemainingEnvironment {
+		t.Fatal("expected skipRemainingEnvironment=false")
 	}
 
-	if got := request.Get("feature_dependent_value"); got != "seen" {
+	if got := request.Get("environment_dependent_value"); got != "seen" {
 		t.Fatalf("expected dependent context value %q, got %v", "seen", got)
 	}
 }
 
 func TestCallEnvironmentLuaIndependentScriptsMergeSharedContextTable(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFeatureScript(t, scriptDir, "first.lua", `
+	firstScriptPath := writeEnvironmentScript(t, scriptDir, "first.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_environment(request)
     local rt = nauthilus_context.context_get("rt") or {}
-    rt.first_feature = true
+    rt.first_environment = true
     nauthilus_context.context_set("rt", rt)
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `)
-	secondScriptPath := writeFeatureScript(t, scriptDir, "second.lua", `
+	secondScriptPath := writeEnvironmentScript(t, scriptDir, "second.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_environment(request)
     local rt = nauthilus_context.context_get("rt") or {}
-    rt.second_feature = true
+    rt.second_environment = true
     nauthilus_context.context_set("rt", rt)
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
@@ -194,8 +194,8 @@ end
 
 	withTestLuaEnvironmentSources(t, first, second)
 
-	request := newFeatureTestRequest()
-	triggered, abortFeatures, err := request.CallEnvironmentLua(newFeatureTestContext(), newFeatureTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	request := newEnvironmentTestRequest()
+	triggered, skipRemainingEnvironment, err := request.CallEnvironmentLua(newEnvironmentTestContext(), newEnvironmentTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("CallEnvironmentLua returned error: %v", err)
 	}
@@ -204,8 +204,8 @@ end
 		t.Fatal("expected triggered=false")
 	}
 
-	if abortFeatures {
-		t.Fatal("expected abortFeatures=false")
+	if skipRemainingEnvironment {
+		t.Fatal("expected skipRemainingEnvironment=false")
 	}
 
 	rt, ok := request.Get("rt").(map[any]any)
@@ -213,23 +213,23 @@ end
 		t.Fatalf("expected rt context map, got %T", request.Get("rt"))
 	}
 
-	if got := rt["first_feature"]; got != true {
-		t.Fatalf("expected first_feature=true, got %v", got)
+	if got := rt["first_environment"]; got != true {
+		t.Fatalf("expected first_environment=true, got %v", got)
 	}
 
-	if got := rt["second_feature"]; got != true {
-		t.Fatalf("expected second_feature=true, got %v", got)
+	if got := rt["second_environment"]; got != true {
+		t.Fatalf("expected second_environment=true, got %v", got)
 	}
 }
 
 func TestCallEnvironmentLuaRejectsDependencyCycle(t *testing.T) {
 	scriptDir := t.TempDir()
-	firstScriptPath := writeFeatureScript(t, scriptDir, "first.lua", `
+	firstScriptPath := writeEnvironmentScript(t, scriptDir, "first.lua", `
 function nauthilus_call_environment(request)
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `)
-	secondScriptPath := writeFeatureScript(t, scriptDir, "second.lua", `
+	secondScriptPath := writeEnvironmentScript(t, scriptDir, "second.lua", `
 function nauthilus_call_environment(request)
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
@@ -241,8 +241,8 @@ end
 
 	withTestLuaEnvironmentSources(t, first, second)
 
-	request := newFeatureTestRequest()
-	_, _, err := request.CallEnvironmentLua(newFeatureTestContext(), newFeatureTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	request := newEnvironmentTestRequest()
+	_, _, err := request.CallEnvironmentLua(newEnvironmentTestContext(), newEnvironmentTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err == nil {
 		t.Fatal("expected dependency cycle error")
 	}
@@ -250,23 +250,23 @@ end
 
 func TestCallEnvironmentLuaUsesPolicyScheduleForNoAuthControl(t *testing.T) {
 	scriptDir := t.TempDir()
-	scriptPath := writeFeatureScript(t, scriptDir, "policy_only.lua", `
+	scriptPath := writeEnvironmentScript(t, scriptDir, "policy_only.lua", `
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_environment(request)
-    nauthilus_context.context_set("policy_only_feature", "ran")
+    nauthilus_context.context_set("policy_only_environment", "ran")
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `)
 
-	luaFeature, err := NewLuaEnvironmentSource("policy_only", scriptPath)
+	luaEnvironment, err := NewLuaEnvironmentSource("policy_only", scriptPath)
 	if err != nil {
 		t.Fatalf("failed to compile Lua environment source: %v", err)
 	}
 
-	withTestLuaEnvironmentSources(t, luaFeature)
+	withTestLuaEnvironmentSources(t, luaEnvironment)
 
-	recorder := &policyFeatureScheduleRecorder{
+	recorder := &policyEnvironmentScheduleRecorder{
 		plan: policycollection.ScriptSchedulePlan{
 			Configured: true,
 			Schedules: []policycollection.ScriptSchedule{
@@ -274,11 +274,11 @@ end
 			},
 		},
 	}
-	request := newFeatureTestRequest()
+	request := newEnvironmentTestRequest()
 	request.NoAuth = true
 	request.ScriptRecorder = recorder
 
-	triggered, abortFeatures, err := request.CallEnvironmentLua(newFeatureTestContext(), newFeatureTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	triggered, skipRemainingEnvironment, err := request.CallEnvironmentLua(newEnvironmentTestContext(), newEnvironmentTestConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatalf("CallEnvironmentLua returned error: %v", err)
 	}
@@ -287,11 +287,11 @@ end
 		t.Fatal("expected triggered=false")
 	}
 
-	if abortFeatures {
-		t.Fatal("expected abortFeatures=false")
+	if skipRemainingEnvironment {
+		t.Fatal("expected skipRemainingEnvironment=false")
 	}
 
-	if got := request.Get("policy_only_feature"); got != "ran" {
+	if got := request.Get("policy_only_environment"); got != "ran" {
 		t.Fatalf("policy scheduled environment source result = %v, want ran", got)
 	}
 
@@ -300,16 +300,16 @@ end
 	}
 }
 
-type policyFeatureScheduleRecorder struct {
+type policyEnvironmentScheduleRecorder struct {
 	plan    policycollection.ScriptSchedulePlan
 	results []policycollection.ScriptResult
 }
 
-func (r *policyFeatureScheduleRecorder) RecordScriptResult(_ context.Context, result policycollection.ScriptResult) {
+func (r *policyEnvironmentScheduleRecorder) RecordScriptResult(_ context.Context, result policycollection.ScriptResult) {
 	r.results = append(r.results, result)
 }
 
-func (r *policyFeatureScheduleRecorder) ScriptScheduled(kind policycollection.ScriptKind, name string, _ policycollection.AuthState) bool {
+func (r *policyEnvironmentScheduleRecorder) ScriptScheduled(kind policycollection.ScriptKind, name string, _ policycollection.AuthState) bool {
 	if kind != policycollection.ScriptKindEnvironment {
 		return false
 	}
@@ -323,7 +323,7 @@ func (r *policyFeatureScheduleRecorder) ScriptScheduled(kind policycollection.Sc
 	return false
 }
 
-func (r *policyFeatureScheduleRecorder) ScriptPlan(kind policycollection.ScriptKind, _ policycollection.AuthState) policycollection.ScriptSchedulePlan {
+func (r *policyEnvironmentScheduleRecorder) ScriptPlan(kind policycollection.ScriptKind, _ policycollection.AuthState) policycollection.ScriptSchedulePlan {
 	if kind != policycollection.ScriptKindEnvironment {
 		return policycollection.ScriptSchedulePlan{}
 	}

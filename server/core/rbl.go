@@ -79,7 +79,7 @@ func (a *AuthState) rblPolicyLookup(ctx *gin.Context, rbl *config.RBL) (RBLListP
 		AllowFailure: rbl.IsAllowFailure(),
 	}
 
-	if stats.HavePrometheusLabelEnabled(a.Cfg(), definitions.PromFeature) {
+	if stats.HavePrometheusLabelEnabled(a.Cfg(), definitions.PromEnvironment) {
 		timer := prometheus.NewTimer(stats.GetMetrics().GetRblDuration().WithLabelValues(rbl.Name))
 
 		defer timer.ObserveDuration()

@@ -336,12 +336,12 @@ func cloneLuaBackendResult(source *lualib.LuaBackendResult) *lualib.LuaBackendRe
 
 // Request represents a structure used for handling and processing requests within the system.
 type Request struct {
-	Session            string
-	Username           string
-	Password           []byte
-	ClientIP           string
-	AccountName        string
-	AdditionalFeatures map[string]any
+	Session              string
+	Username             string
+	Password             []byte
+	ClientIP             string
+	AccountName          string
+	AdditionalAttributes map[string]any
 
 	// BackendServers holds a list of backend server configurations that are used for handling requests.
 	BackendServers []*config.BackendServer

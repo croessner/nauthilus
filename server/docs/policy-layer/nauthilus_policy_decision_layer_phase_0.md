@@ -11,7 +11,7 @@ No policy compiler, policy runtime snapshot, `auth.policy` config surface, `stan
 | File | Purpose |
 |---|---|
 | `server/core/current_behavior_parity_test.go` | Adds focused current-behavior parity tests for Lua environment source trigger/abort, TLS tempfail, relay-domain reject, RBL reject, direct brute-force block, and Lua subject source status-message denial at the auth boundary. |
-| `server/core/auth_fsm_test.go` | Extends the current auth-FSM parity coverage for feature fail/tempfail/unset transitions, password fail/tempfail/empty-password transitions, and feature-result-to-FSM mappings for Lua, RBL, and tempfail. |
+| `server/core/auth_fsm_test.go` | Extends the current auth-FSM parity coverage for pre-auth deny/tempfail/abort transitions, auth-decision deny/tempfail/empty-password transitions, and pre-auth-result-to-FSM mappings for Lua, RBL, and tempfail. |
 | `server/docs/policy-layer/nauthilus_policy_decision_layer_phase_0.md` | Documents the implemented Phase 0 scope, validation, temporary adapter status, risks, and review comparison. |
 
 ## Tests and Validation
@@ -59,13 +59,13 @@ New focused coverage:
 | Requirement | Coverage |
 |---|---|
 | Brute-force direct block | `TestCurrentBehaviorParityBruteForceDirectBlock` drives the current `CheckBruteForce` direct gate and asserts the current block result and brute-force runtime fields. |
-| Lua environment source trigger | `TestCurrentBehaviorParityLuaEnvironmentTriggerAndAbort/trigger returns Lua environment result` asserts `AuthResultFeatureLua` and the environment rejection flag. |
+| Lua environment source trigger | `TestCurrentBehaviorParityLuaEnvironmentTriggerAndAbort/trigger returns Lua environment result` asserts `AuthResultLuaEnvironment` and the environment rejection flag. |
 | Lua environment source abort | `TestCurrentBehaviorParityLuaEnvironmentTriggerAndAbort/abort allows remaining auth flow` asserts current abort behavior returns `AuthResultOK`. |
-| TLS tempfail | `TestCurrentBehaviorParityBuiltInPreAuthControls/tls without accepted transport is temporary failure feature` asserts `AuthResultFeatureTLS`. |
-| Relay-domain reject | `TestCurrentBehaviorParityBuiltInPreAuthControls/unknown relay domain is deny feature` asserts `AuthResultFeatureRelayDomain`. |
-| RBL reject | `TestCurrentBehaviorParityBuiltInPreAuthControls/rbl threshold match is deny feature` asserts `AuthResultFeatureRBL`. |
+| TLS tempfail | `TestCurrentBehaviorParityBuiltInPreAuthControls/tls without accepted transport is temporary failure control` asserts `AuthResultPreAuthTLS`. |
+| Relay-domain reject | `TestCurrentBehaviorParityBuiltInPreAuthControls/unknown relay domain is deny control` asserts `AuthResultPreAuthRelayDomain`. |
+| RBL reject | `TestCurrentBehaviorParityBuiltInPreAuthControls/rbl threshold match is deny control` asserts `AuthResultPreAuthRBL`. |
 | Lua subject source reject and status message | `TestCurrentBehaviorParityLuaSubjectStatusMessage` asserts auth denial, `auth_fail` terminal state, and the Lua-provided status message. |
-| Auth-FSM feature/password transitions | `TestNextAuthFSMState_AllowedTransitions`, `TestMapAuthFeatureResultToFSMEvent`, and `TestMapAuthPasswordResultToFSMEvent`. |
+| Auth-FSM pre-auth/auth-decision transitions | `TestNextAuthFSMState_AllowedTransitions`, `TestMapPreAuthResultToFSMEvent`, and `TestMapAuthPasswordResultToFSMEvent`. |
 
 Existing coverage kept as Phase 0 corpus material:
 
@@ -90,7 +90,7 @@ Current pre-policy behavior remains active as baseline material only:
 | Current baseline path | Planned later replacement/removal |
 |---|---|
 | Direct brute-force gate in `PreproccessAuthRequest` / `CheckBruteForce` | Wrapped into `CheckResult` collection in Phase 3, shadow-compared by `standard_auth` in Phase 4, routed through policy-owned obligations in Phase 7 and authoritative default policy in Phase 8, then removed as a direct bypass in Phase 14. |
-| Current `AuthResultFeature*` to `features_*` FSM mapping | Compared against target markers in Phase 6, then removed when target FSM becomes authoritative in Phase 9 and final cleanup lands in Phase 14. |
+| Current `AuthResultPreAuth*` to `pre_auth_*` FSM mapping | Compared against target markers in Phase 6, then removed when target FSM becomes authoritative in Phase 9 and final cleanup lands in Phase 14. |
 | Current password-result to `password_*` FSM mapping | Compared through the target-FSM adapter in Phase 6 and removed from the policy decision path in Phase 9/14. |
 
 ## Deliberately Not Implemented
@@ -118,7 +118,7 @@ Current pre-policy behavior remains active as baseline material only:
 | New runtime paths have observability | Not applicable. No new runtime path was introduced. |
 | New config paths have schema, errors, and dump support | Not applicable. No new config path was introduced. |
 | Reports/logs follow redaction rules | Not applicable. No new report or policy log surface was introduced. |
-| New policy code has unit and auth-boundary parity tests | No policy code was introduced. Core parity tests were added at feature/auth-boundary level. |
+| New policy code has unit and auth-boundary parity tests | No policy code was introduced. Core parity tests were added at pre-auth/auth-boundary level. |
 | Reload behavior is atomic | Not applicable. No snapshot or reload behavior was introduced. |
 | Phase note lists adapters and planned removal | Satisfied in the "Active Temporary Adapters" section. |
 
@@ -132,7 +132,7 @@ Current pre-policy behavior remains active as baseline material only:
 | Freeze TLS tempfail, relay-domain reject, RBL reject | Satisfied by new built-in pre-auth control parity test. |
 | Freeze backend success/failure/tempfail | Covered by existing auth application service tests. |
 | Freeze Lua subject source reject and Lua status message | Satisfied by new auth-boundary subject-source status-message parity test. |
-| Freeze auth-FSM feature/password transitions | Satisfied by extended FSM tests. |
+| Freeze auth-FSM pre-auth/auth-decision transitions | Satisfied by extended FSM tests. |
 | Freeze lookup-identity / no-auth parity | Covered by existing application service and gRPC tests. |
 | Freeze list-accounts parity | Covered by existing application service, gRPC, and HTTP CBOR/list-accounts tests. |
 | Freeze response rendering surfaces | Covered by existing response, content negotiation, gRPC, and IdP tests; later phases should centralize these into an explicit policy parity suite. |
@@ -152,7 +152,7 @@ No config surface, observability surface, report surface, or runtime snapshot wa
 
 ### Gaps Found and Fixed During Review
 
-- Added missing current FSM allowed-transition coverage for feature fail/tempfail/unset and password fail/tempfail/empty-password outcomes.
-- Added missing feature-result mapping coverage for Lua, RBL, and generic tempfail.
+- Added missing current FSM allowed-transition coverage for pre-auth deny/tempfail/abort and auth-decision deny/tempfail/empty-password outcomes.
+- Added missing pre-auth-result mapping coverage for Lua, RBL, and generic tempfail.
 - Added an auth-boundary Lua subject source status-message denial test instead of relying only on lower-level Lua tests.
 - Split the new built-in control parity test setup after guardrails reported the function above the local size limit.

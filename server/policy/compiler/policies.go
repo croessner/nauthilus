@@ -1031,13 +1031,13 @@ func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string
 			}
 
 			args[key] = actionName
-		case policy.ObligationArgFeature:
-			featureName, ok := value.(string)
+		case policy.ObligationArgEnvironment:
+			environmentName, ok := value.(string)
 			if !ok {
 				return nil, configPathError(childPath(path, key), "must be a string")
 			}
 
-			args[key] = featureName
+			args[key] = environmentName
 		case policy.ObligationArgWait:
 			wait, ok := value.(bool)
 			if !ok {

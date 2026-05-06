@@ -15,12 +15,12 @@ import (
 func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	f := &config.Feature{}
-	_ = f.Set(definitions.FeatureBruteForce)
+	f := &config.RuntimeModule{}
+	_ = f.Set(definitions.ControlBruteForce)
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
-			Features: []*config.Feature{f},
+			RuntimeModules: []*config.RuntimeModule{f},
 			BasicAuth: config.BasicAuth{
 				Enabled:  true,
 				Username: "admin",

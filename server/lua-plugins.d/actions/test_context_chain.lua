@@ -36,7 +36,7 @@ local function log_info(request, message, extra)
         client_ip = tostring(request.client_ip or ""),
         authenticated = request.authenticated == true,
         no_auth = request.no_auth == true,
-        feature = tostring(request.feature or ""),
+        environment = tostring(request.environment or ""),
         environment_rejected = request.environment_rejected == true,
         environment_stage_expected = request.environment_stage_expected ~= false,
         subject_stage_expected = request.subject_stage_expected ~= false,
@@ -58,7 +58,7 @@ local function log_info(request, message, extra)
 end
 
 -- Skip localhost requests: the environment source stage is not executed for local/empty
--- IPs (see isLocalOrEmptyIP in features.go), so the context keys it would set
+-- IPs (see isLocalOrEmptyIP in environment.go), so the context keys it would set
 -- are absent. Return early with OK to avoid nil-context assertions.
 local function is_localhost(request)
     local ip = request.client_ip or ""

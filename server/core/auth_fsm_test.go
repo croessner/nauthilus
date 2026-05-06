@@ -197,51 +197,53 @@ func TestNextAuthFSMState_InvalidTransitions(t *testing.T) {
 	}
 }
 
-func TestMapAuthFeatureResultToFSMEvent(t *testing.T) {
-	tests := []struct {
-		name    string
-		result  definitions.AuthResult
-		wantEvt authFSMEvent
-		wantOK  bool
-	}{
+type authFSMResultMappingCase struct {
+	name    string
+	result  definitions.AuthResult
+	wantEvt authFSMEvent
+	wantOK  bool
+}
+
+func preAuthFSMEventMappingCases() []authFSMResultMappingCase {
+	return []authFSMResultMappingCase{
 		{
-			name:    "FeatureTLS",
-			result:  definitions.AuthResultFeatureTLS,
+			name:    "PreAuthTLS",
+			result:  definitions.AuthResultPreAuthTLS,
 			wantEvt: authFSMEventPreAuthTempFail,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureRelayDomain",
-			result:  definitions.AuthResultFeatureRelayDomain,
+			name:    "PreAuthRelayDomain",
+			result:  definitions.AuthResultPreAuthRelayDomain,
 			wantEvt: authFSMEventPreAuthDeny,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureRBL",
-			result:  definitions.AuthResultFeatureRBL,
+			name:    "ControlRBL",
+			result:  definitions.AuthResultPreAuthRBL,
 			wantEvt: authFSMEventPreAuthDeny,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureLua",
-			result:  definitions.AuthResultFeatureLua,
+			name:    "ControlLua",
+			result:  definitions.AuthResultLuaEnvironment,
 			wantEvt: authFSMEventPreAuthDeny,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureTempFail",
+			name:    "PreAuthTempFail",
 			result:  definitions.AuthResultTempFail,
 			wantEvt: authFSMEventPreAuthTempFail,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureOK",
+			name:    "PreAuthOK",
 			result:  definitions.AuthResultOK,
 			wantEvt: authFSMEventPreAuthOK,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureUnset",
+			name:    "PreAuthUnset",
 			result:  definitions.AuthResultUnset,
 			wantEvt: authFSMEventPreAuthAbort,
 			wantOK:  true,
@@ -252,10 +254,12 @@ func TestMapAuthFeatureResultToFSMEvent(t *testing.T) {
 			wantOK: false,
 		},
 	}
+}
 
-	for _, tc := range tests {
+func TestMapPreAuthResultToFSMEvent(t *testing.T) {
+	for _, tc := range preAuthFSMEventMappingCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			gotEvt, gotOK := mapAuthFeatureResultToFSMEvent(tc.result)
+			gotEvt, gotOK := mapPreAuthResultToFSMEvent(tc.result)
 			if gotOK != tc.wantOK {
 				t.Fatalf("expected ok=%t, got %t", tc.wantOK, gotOK)
 			}
@@ -306,7 +310,7 @@ func TestMapAuthPasswordResultToFSMEvent(t *testing.T) {
 		},
 		{
 			name:   "Unsupported",
-			result: definitions.AuthResultFeatureTLS,
+			result: definitions.AuthResultPreAuthTLS,
 			wantOK: false,
 		},
 	}

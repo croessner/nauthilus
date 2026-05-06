@@ -159,11 +159,11 @@ func TestScriptSinkUsesRunIfForLuaSubjectSourceScheduling(t *testing.T) {
 	sink := NewScriptSink(ctx)
 
 	if sink.ScriptScheduled(ScriptKindSubject, "billing", AuthStateUnauthenticated) {
-		t.Fatal("filter should not be scheduled for unauthenticated auth state")
+		t.Fatal("subject source should not be scheduled for unauthenticated auth state")
 	}
 
 	if !sink.ScriptScheduled(ScriptKindSubject, "billing", AuthStateAuthenticated) {
-		t.Fatal("filter should be scheduled for authenticated auth state")
+		t.Fatal("subject source should be scheduled for authenticated auth state")
 	}
 }
 

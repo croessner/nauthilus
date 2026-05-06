@@ -323,7 +323,7 @@ type BruteForceControlSection struct {
 	Protocols                  []*Protocol      `mapstructure:"protocols" validate:"omitempty,dive"`
 	IPAllowlist                []string         `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
 	Buckets                    []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
-	Learning                   []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	Learning                   []*RuntimeModule `mapstructure:"learning" validate:"omitempty,dive"`
 	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
 	Allowlist                  SoftWhitelist    `mapstructure:"allowlist"`
@@ -885,7 +885,7 @@ func (f *FileSettings) materializeBruteForce() *BruteForceSection {
 	return &BruteForceSection{
 		IPWhitelist:                append([]string(nil), wire.IPAllowlist...),
 		Buckets:                    append([]BruteForceRule(nil), wire.Buckets...),
-		Learning:                   append([]*Feature(nil), wire.Learning...),
+		Learning:                   append([]*RuntimeModule(nil), wire.Learning...),
 		CustomTolerations:          append([]Tolerate(nil), wire.CustomTolerations...),
 		IPScoping:                  wire.IPScoping,
 		SoftWhitelist:              wire.Allowlist,

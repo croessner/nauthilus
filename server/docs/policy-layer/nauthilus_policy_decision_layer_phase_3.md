@@ -12,13 +12,13 @@ Phase 3 adds request-local `CheckResult` collection and explicit adapters for th
 - `server/policy/observability/metrics.go`: added a process-wide safe policy metrics recorder for request-time check measurements.
 - `server/policy/compiler/definitions.go` and `server/policy/registry/builtin.go`: reused the shared policy constants instead of duplicating registry strings.
 - `server/core/policy_collection.go`: added request-local policy collection wiring for request attributes, built-in adapters, backend/account-provider adapters, stage completion, and the Lua script-recorder handoff.
-- `server/core/bruteforce.go`, `server/core/features.go`, `server/core/auth.go`, and `server/core/auth/lua_service.go`: attached collection to brute force, Lua environment sources, TLS, relay domains, RBL, backend authentication, Lua subject sources, and account-provider paths without changing returned `AuthResult` values.
+- `server/core/bruteforce.go`, `server/core/environment.go`, `server/core/auth.go`, and `server/core/auth/lua_service.go`: attached collection to brute force, Lua environment sources, TLS, relay domains, RBL, backend authentication, Lua subject sources, and account-provider paths without changing returned `AuthResult` values.
 - `server/lualib/environment/environment.go` and `server/lualib/subject/subject.go`: attached one per-script collection event to the existing dependency-plan execution path after each named Lua environment or subject source finishes or errors.
 
 ## Tests and Validation
 
 - Added package-local collection tests in `server/policy/collection/collection_test.go` for check result storage, attribute storage, default OK metric status, skipped/missing/unavailable facts, and per-script Lua sink output.
-- Added auth-boundary parity coverage in `server/core/policy_collection_test.go` proving TLS collection does not change the current TLS feature decision.
+- Added auth-boundary parity coverage in `server/core/policy_collection_test.go` proving TLS collection does not change the current TLS pre-auth decision.
 - Validated focused packages with:
   - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/policy/collection ./server/core -run 'TestDecisionContext|TestScriptSink|TestAuthPathCollectsTLSCheck'`
   - `GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache go test ./server/lualib/environment ./server/lualib/subject ./server/policy/compiler ./server/policy/report ./server/policy/observability`

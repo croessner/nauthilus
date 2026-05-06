@@ -37,7 +37,7 @@ This slice does not start lookup-identity or list-account custom enforcement. It
 - `server/lualib/subject/subject.go`
   - Applies the policy script scheduler before building the Lua subject source execution plan.
   - Keeps the current Lua subject source mode selection as a temporary candidate adapter, then narrows it through the policy check plan.
-  - Keeps policy-filtered plans request-local instead of reusing the old mode-only cache.
+  - Keeps policy-selected plans request-local instead of reusing the old mode-only cache.
 
 - `server/core/auth.go`
   - Routes password/backend results through configured final auth policy authority before the built-in default-policy bridge.

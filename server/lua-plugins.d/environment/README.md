@@ -85,7 +85,7 @@ auth:
 ```
 
 **Downstream integration:**
-- actions/analytics.lua increments `analytics_count{feature="failed_login_hotspot"}` when the environment flag is present in rt.
+- actions/analytics.lua increments `analytics_count{environment="failed_login_hotspot"}` when the environment flag is present in rt.
 - actions/telegram.lua sends a compact alert when `rt.environment_failed_login_hotspot` is set. It includes `failed_login_count` and `failed_login_rank` (if known) alongside the usual session/account context.
 
 Note: This environment source relies on the post-action `failed_login_tracker.lua` to maintain `ntc:top_failed_logins`. Ensure that action is enabled so the ZSET is populated.

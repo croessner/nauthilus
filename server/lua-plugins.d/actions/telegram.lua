@@ -72,9 +72,9 @@ function nauthilus_call_action(request)
         -- environment_haproxy (not part of demo plugins)
         if rt.environment_haproxy then
             send_message = true
-            if request.feature and request.feature ~= "" then
-                headline = "Environment " .. request.feature .. " triggered"
-                log_prefix = request.feature .. "_"
+            if request.environment and request.environment ~= "" then
+                headline = "Environment " .. request.environment .. " triggered"
+                log_prefix = request.environment .. "_"
             else
                 headline = "Environment triggered"
                 log_prefix = "environment_"
@@ -84,8 +84,8 @@ function nauthilus_call_action(request)
         -- environment_blocklist
         if rt.environment_blocklist then
             send_message = true
-            headline = "Environment " .. request.feature .. " (blocklist) triggered"
-            log_prefix = request.feature .. "_"
+            headline = "Environment " .. request.environment .. " (blocklist) triggered"
+            log_prefix = request.environment .. "_"
         end
 
         -- environment_failed_login_hotspot

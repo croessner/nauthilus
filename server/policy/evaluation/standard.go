@@ -606,8 +606,8 @@ func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.O
 				{
 					ID: obligationLuaActionDispatch,
 					Args: map[string]any{
-						policy.ObligationArgAction:  policy.LuaActionDispatchLua,
-						policy.ObligationArgFeature: checkResult.Name,
+						policy.ObligationArgAction:      policy.LuaActionDispatchLua,
+						policy.ObligationArgEnvironment: checkResult.Name,
 					},
 				},
 			},

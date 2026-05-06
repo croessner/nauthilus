@@ -6,8 +6,8 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 )
 
-func TestFeatureSet_BackendMonitoringAliasIsRejected(t *testing.T) {
-	f := &Feature{}
+func TestRuntimeModuleSet_BackendMonitoringAliasIsRejected(t *testing.T) {
+	f := &RuntimeModule{}
 	if err := f.Set("backend_monitoring"); err == nil {
 		t.Fatalf("expected alias to be rejected, got nil error")
 	}

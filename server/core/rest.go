@@ -258,13 +258,13 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 
 	if ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
 		// Local-cache hit represents a previously authenticated identity.
-		// Ensure feature predicates based on Authenticated evaluate consistently.
+		// Ensure subject-source predicates based on Authenticated evaluate consistently.
 		a.Runtime.Authenticated = true
 	}
 
-	featureResult := a.HandleFeatures(ctx)
+	preAuthResult := a.HandleEnvironment(ctx)
 
-	event, ok := mapAuthFeatureResultToFSMEvent(featureResult)
+	event, ok := mapPreAuthResultToFSMEvent(preAuthResult)
 	if !ok {
 		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
 
@@ -281,7 +281,7 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 	a.auditAuthFSMTransition(current, event, nextState)
 
 	if nextState != authFSMStatePreAuthChecked {
-		a.applyFeatureFSMOutcome(ctx, nextState, featureResult)
+		a.applyPreAuthFSMOutcome(ctx, nextState, preAuthResult)
 
 		return
 	}
@@ -395,11 +395,11 @@ func authFSMMetricStage(event authFSMEvent) policy.Stage {
 	}
 }
 
-func mapAuthFeatureResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
+func mapPreAuthResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
 	switch result {
-	case definitions.AuthResultFeatureTLS:
+	case definitions.AuthResultPreAuthTLS:
 		return authFSMEventPreAuthTempFail, true
-	case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
+	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
 		return authFSMEventPreAuthDeny, true
 	case definitions.AuthResultUnset:
 		return authFSMEventPreAuthAbort, true
@@ -412,7 +412,7 @@ func mapAuthFeatureResultToFSMEvent(result definitions.AuthResult) (authFSMEvent
 	}
 }
 
-func (a *AuthState) applyFeatureFSMOutcome(ctx *gin.Context, nextState authFSMState, featureResult definitions.AuthResult) bool {
+func (a *AuthState) applyPreAuthFSMOutcome(ctx *gin.Context, nextState authFSMState, preAuthResult definitions.AuthResult) bool {
 	if nextState == authFSMStatePreAuthChecked {
 		return false
 	}
@@ -426,7 +426,7 @@ func (a *AuthState) applyFeatureFSMOutcome(ctx *gin.Context, nextState authFSMSt
 			ctx.Abort()
 		},
 		onAuthTempFail: func() {
-			if featureResult == definitions.AuthResultFeatureTLS {
+			if preAuthResult == definitions.AuthResultPreAuthTLS {
 				result := GetPassDBResultFromPool()
 				a.PostLuaAction(ctx, result)
 				PutPassDBResultToPool(result)

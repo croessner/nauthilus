@@ -227,13 +227,13 @@ func requestEnvironmentAuthState(r *Request) policycollection.AuthState {
 
 // Request represents a request data structure with all the necessary information about a connection and SSL usage.
 type Request struct {
-	Session            string
-	Username           string
-	Password           []byte
-	ClientIP           string
-	AccountName        string
-	UsedBackendPort    *int
-	AdditionalFeatures map[string]any
+	Session              string
+	Username             string
+	Password             []byte
+	ClientIP             string
+	AccountName          string
+	UsedBackendPort      *int
+	AdditionalAttributes map[string]any
 
 	// Logs holds the custom log key-value pairs.
 	Logs *lualib.CustomLogKeyValue
@@ -255,7 +255,7 @@ type Request struct {
 
 // CallEnvironmentLua executes Lua environment source scripts within the context of a request.
 // It returns whether an environment source was triggered, whether later sources should be aborted, and any execution error.
-func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) (triggered bool, abortFeatures bool, err error) {
+func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) (triggered bool, skipRemainingEnvironment bool, err error) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
@@ -279,7 +279,7 @@ func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *
 		Config: cfg,
 	})
 
-	triggered, abortFeatures, err = r.executeScripts(ctx, cfg, logger, redisClient, pool)
+	triggered, skipRemainingEnvironment, err = r.executeScripts(ctx, cfg, logger, redisClient, pool)
 
 	return
 }
@@ -288,7 +288,7 @@ func (r *Request) CallEnvironmentLua(ctx *gin.Context, cfg config.File, logger *
 // then aggregates their results considering error, abort, and triggered semantics.
 //
 //nolint:gocyclo,funlen
-func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, pool *vmpool.Pool) (triggered bool, abortFeatures bool, err error) {
+func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, pool *vmpool.Pool) (triggered bool, skipRemainingEnvironment bool, err error) {
 	type environmentResult struct {
 		name         string
 		scriptIdx    int
@@ -344,7 +344,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 			g.Go(func() error {
 				scriptStarted := time.Now()
-				util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature,
+				util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgEnvironment,
 					definitions.LogKeyGUID, r.Session,
 					definitions.LogKeyMsg, "Executing environment source script",
 					"name", source.Name,
@@ -409,7 +409,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					request.RawSetString(definitions.LuaRequestAccount, lua.LString(r.AccountName))
 				}
 
-				stopTimer := stats.PrometheusTimer(cfg, definitions.PromFeature, source.Name, ctx.FullPath())
+				stopTimer := stats.PrometheusTimer(cfg, definitions.PromEnvironment, source.Name, ctx.FullPath())
 
 				luaCtx, luaCancel := context.WithTimeout(egCtx, cfg.GetServer().GetTimeouts().GetLuaScript())
 				defer luaCancel()
@@ -503,7 +503,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					}
 				}
 
-				util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature, logs...)
+				util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgEnvironment, logs...)
 
 				if stopTimer != nil {
 					stopTimer()
@@ -533,7 +533,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			}
 
 			if fr.abort {
-				abortFeatures = true
+				skipRemainingEnvironment = true
 			}
 
 			if fr.triggered {
@@ -545,7 +545,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 		}
 	}
 
-	return triggered, abortFeatures, nil
+	return triggered, skipRemainingEnvironment, nil
 }
 
 func (r *Request) recordEnvironmentScriptResult(ctx context.Context, name string, triggered bool, abort bool, message string, duration time.Duration, err error) {

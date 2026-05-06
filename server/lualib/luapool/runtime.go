@@ -248,7 +248,7 @@ func ensureDynamicLoaderStub(L *lua.LState) {
 }
 
 // BindModuleIntoReq exposes the module-binding helper for subsystems that need
-// to bind request-scoped modules (e.g., backend/action/filter/feature) without
+// to bind request-scoped modules (e.g., backend/action/subject/environment) without
 // directly mutating globals. It ensures the module is visible both via direct
 // access from the reqEnv and via require() through package.loaded.
 func BindModuleIntoReq(L *lua.LState, name string, mod *lua.LTable) {

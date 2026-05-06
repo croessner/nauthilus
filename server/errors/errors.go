@@ -94,26 +94,41 @@ func NewDetailedError(err string) *DetailedError {
 // auth.
 
 var (
-	ErrAllBackendConfigError                   = NewDetailedError("configuration errors in all Database sections")
-	ErrUnsupportedMediaType                    = errors.New("unsupported media type")
-	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_health_checks not enabled")
-	ErrMonitoringBackendServersEmpty           = errors.New("no monitoring backend servers configured")
-	ErrInvalidUsername                         = errors.New("invalid username")
-	ErrEmptyUsername                           = errors.New("empty_username")
-	ErrEmptyPassword                           = errors.New("empty_password")
-	ErrPasswordEncoding                        = errors.New("password encoding error")
-	ErrIncorrectCache                          = errors.New("incorrect cache")
-	ErrUnregisteredComponent                   = errors.New("unregistered component")
+	// ErrAllBackendConfigError reports that every configured backend section failed validation.
+	ErrAllBackendConfigError = NewDetailedError("configuration errors in all Database sections")
+	// ErrUnsupportedMediaType reports an unsupported request content type.
+	ErrUnsupportedMediaType = errors.New("unsupported media type")
+	// ErrBackendHealthChecksDisabled reports that backend health checks are not enabled.
+	ErrBackendHealthChecksDisabled = errors.New("backend_health_checks not enabled")
+	// ErrMonitoringBackendServersEmpty reports that backend monitoring has no configured targets.
+	ErrMonitoringBackendServersEmpty = errors.New("no monitoring backend servers configured")
+	// ErrInvalidUsername reports a syntactically invalid username.
+	ErrInvalidUsername = errors.New("invalid username")
+	// ErrEmptyUsername reports an empty username.
+	ErrEmptyUsername = errors.New("empty_username")
+	// ErrEmptyPassword reports an empty password.
+	ErrEmptyPassword = errors.New("empty_password")
+	// ErrPasswordEncoding reports a password encoding failure.
+	ErrPasswordEncoding = errors.New("password encoding error")
+	// ErrIncorrectCache reports an unexpected cache backend state.
+	ErrIncorrectCache = errors.New("incorrect cache")
+	// ErrUnregisteredComponent reports an unknown application component.
+	ErrUnregisteredComponent = errors.New("unregistered component")
 )
 
 // env.
 
 var (
+	// ErrWrongVerboseLevel reports an invalid verbosity configuration value.
 	ErrWrongVerboseLevel = errors.New("wrong verbose level: <%s>")
-	ErrWrongLDAPScope    = errors.New("wrong LDAP scope: <%s>")
-	ErrWrongPassDB       = errors.New("wrong passdb backend: <%s>")
-	ErrWrongFeature      = errors.New("wrong feature: <%s>")
-	ErrWrongDebugModule  = errors.New("wrong debug module: <%s>")
+	// ErrWrongLDAPScope reports an invalid LDAP scope configuration value.
+	ErrWrongLDAPScope = errors.New("wrong LDAP scope: <%s>")
+	// ErrWrongPassDB reports an invalid passdb backend configuration value.
+	ErrWrongPassDB = errors.New("wrong passdb backend: <%s>")
+	// ErrWrongRuntimeModule reports an invalid runtime module configuration value.
+	ErrWrongRuntimeModule = errors.New("wrong runtime module: <%s>")
+	// ErrWrongDebugModule reports an invalid debug module configuration value.
+	ErrWrongDebugModule = errors.New("wrong debug module: <%s>")
 )
 
 // file.
@@ -183,7 +198,7 @@ var (
 	ErrBruteForceAttack = errors.New("please contact the support")
 )
 
-// features.
+// DNS and runtime controls.
 
 var (
 	ErrDNSResolver = errors.New("resolver failed")
@@ -224,8 +239,8 @@ var (
 // Lua subject sources.
 
 var (
-	// ErrNoFeatureDefined indicates that a required server feature was not configured.
-	ErrNoFeatureDefined = errors.New("no feature defined")
+	// ErrNoRuntimeModuleDefined indicates that a required runtime module was not configured.
+	ErrNoRuntimeModuleDefined = errors.New("no runtime module defined")
 
 	// ErrNoSubjectSourcesDefined indicates that no Lua subject sources are configured.
 	ErrNoSubjectSourcesDefined = errors.New("no subject sources defined")

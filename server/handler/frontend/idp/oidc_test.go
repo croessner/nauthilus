@@ -329,10 +329,10 @@ func (m *mockOIDCCfg) GetBruteForceRules() []config.BruteForceRule {
 	return nil
 }
 func (m *mockOIDCCfg) GetAllProtocols() []string { return nil }
-func (m *mockOIDCCfg) HasFeature(string) bool {
+func (m *mockOIDCCfg) HasRuntimeModule(string) bool {
 	return false
 }
-func (m *mockOIDCCfg) ShouldRunFeature(string, bool) bool {
+func (m *mockOIDCCfg) ShouldRunControl(string, bool) bool {
 	return false
 }
 func (m *mockOIDCCfg) GetPasswordEncoded() string { return "" }

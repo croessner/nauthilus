@@ -7,7 +7,7 @@ registered policy obligations in the already-renumbered target-model codebase.
 
 The retrofit closes the gap left after the later authority, observe, enforce,
 and cleanup work had already landed: synchronous Lua actions are no longer run
-directly by policy-authoritative feature or brute-force mechanisms. They are
+directly by policy-authoritative environment or brute-force mechanisms. They are
 selected and executed through `auth.obligation.lua_action.dispatch`.
 
 ## Implemented Files and Modules
@@ -25,7 +25,7 @@ selected and executed through `auth.obligation.lua_action.dispatch`.
 - `server/policy/compiler/policies.go`
   - Added typed argument validation for
     `auth.obligation.lua_action.dispatch`.
-  - Validates required `action`, optional string `feature`, optional boolean
+  - Validates required `action`, optional string `environment`, optional boolean
     `wait`, and rejects unsupported argument keys.
 
 - `server/policy/evaluation/standard.go`
@@ -44,7 +44,7 @@ selected and executed through `auth.obligation.lua_action.dispatch`.
   - Records obligation metrics and policy debug-module entries.
   - Dispatches synchronous Lua actions through the existing action dispatcher,
     preserving request context, cancellation checks, action latency metrics, and
-    feature-learning semantics.
+    environment-learning semantics.
   - Preserves the historical brute-force Lua action `CommonRequest` shape by
     exposing the matched rule name during dispatch while keeping the internal
     repeating/guessed security marker after dispatch.
@@ -55,10 +55,10 @@ selected and executed through `auth.obligation.lua_action.dispatch`.
     current `AuthResult` carriers.
   - Keeps final auth Lua POST-Action enqueueing on the same central executor.
 
-- `server/core/features.go`
+- `server/core/environment.go`
   - Keeps current mechanism execution as a fact producer.
   - Removes mechanism-owned synchronous Lua action dispatch.
-  - Moves feature-learning updates behind the selected Lua action obligation.
+  - Moves environment-learning updates behind the selected Lua action obligation.
 
 - `server/core/bruteforce.go`
   - Keeps brute-force trigger detection and policy fact production.
@@ -147,9 +147,9 @@ Result:
   typed arguments.
 - Only `brute_force`, `lua`, `tls_encryption`, `relay_domains`, and `rbl` are
   accepted action names.
-- Optional `feature` is preserved for policy-selected action context and
-  feature-learning semantics.
-- Feature-triggered and brute-force-triggered synchronous Lua actions no longer
+- Optional `environment` is preserved for policy-selected action context and
+  environment-learning semantics.
+- Environment-triggered and brute-force-triggered synchronous Lua actions no longer
   dispatch from mechanism paths; the direct brute-force action helper was
   removed.
 - `standard_auth` now plans Lua action obligations for the required

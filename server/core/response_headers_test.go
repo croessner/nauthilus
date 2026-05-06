@@ -44,11 +44,11 @@ func setupMinimalConfig(t *testing.T) {
 func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	setupMinimalConfig(t)
 
-	// Enable backend server monitoring feature
-	feat := &config.Feature{}
-	_ = feat.Set(definitions.FeatureBackendServersMonitoring)
+	// Enable backend health-check service
+	feat := &config.RuntimeModule{}
+	_ = feat.Set(definitions.ServiceBackendHealthChecks)
 	cfg := config.GetFile().(*config.FileSettings)
-	cfg.Server.Features = []*config.Feature{feat}
+	cfg.Server.RuntimeModules = []*config.RuntimeModule{feat}
 
 	// Ensure BackendServers reports >0 servers
 	corepkg.BackendServers.Update([]*config.BackendServer{{Host: "127.0.0.1", Port: 993, Protocol: "imap"}})

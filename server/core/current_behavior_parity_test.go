@@ -32,7 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	featurelib "github.com/croessner/nauthilus/server/lualib/environment"
+	environmentlib "github.com/croessner/nauthilus/server/lualib/environment"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/policy"
@@ -46,7 +46,7 @@ import (
 
 type currentBehaviorBuiltInControlCase struct {
 	name       string
-	feature    string
+	control    string
 	configure  func(*config.FileSettings)
 	beforeRun  func(t *testing.T)
 	wantResult definitions.AuthResult
@@ -67,7 +67,7 @@ function nauthilus_call_environment(request)
     return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
 `,
-			wantResult: definitions.AuthResultFeatureLua,
+			wantResult: definitions.AuthResultLuaEnvironment,
 		},
 		{
 			name: "abort allows remaining auth flow",
@@ -82,11 +82,11 @@ end
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg := newCurrentBehaviorConfig(t, definitions.FeatureLua)
+			cfg := newCurrentBehaviorConfig(t, definitions.ControlLua)
 			auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 			withCurrentBehaviorLuaEnvironment(t, testCase.script)
 
-			got := auth.HandleFeatures(ctx)
+			got := auth.HandleEnvironment(ctx)
 			if got != testCase.wantResult {
 				t.Fatalf("environment result = %v, want %v", got, testCase.wantResult)
 			}
@@ -95,7 +95,7 @@ end
 				t.Fatalf("status message = %q, want %q", auth.Runtime.StatusMessage, testCase.wantMessage)
 			}
 
-			if testCase.wantResult == definitions.AuthResultFeatureLua && !ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
+			if testCase.wantResult == definitions.AuthResultLuaEnvironment && !ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
 				t.Fatal("expected environment rejection flag for triggered Lua environment source")
 			}
 		})
@@ -105,7 +105,7 @@ end
 func TestCurrentBehaviorParityBuiltInPreAuthControls(t *testing.T) {
 	for _, testCase := range currentBehaviorBuiltInControlCases() {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg := newCurrentBehaviorConfig(t, testCase.feature)
+			cfg := newCurrentBehaviorConfig(t, testCase.control)
 			if testCase.configure != nil {
 				testCase.configure(cfg)
 			}
@@ -117,16 +117,16 @@ func TestCurrentBehaviorParityBuiltInPreAuthControls(t *testing.T) {
 			auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 			auth.Request.Username = "user@foreign.test"
 
-			got := auth.HandleFeatures(ctx)
+			got := auth.HandleEnvironment(ctx)
 			if got != testCase.wantResult {
-				t.Fatalf("feature result = %v, want %v", got, testCase.wantResult)
+				t.Fatalf("pre-auth result = %v, want %v", got, testCase.wantResult)
 			}
 		})
 	}
 }
 
 func TestCurrentBehaviorParityPolicyConfigDoesNotChangePreAuthControls(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureTLSEncryption)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.Auth = &config.AuthSection{
 		Policy: config.AuthPolicySection{
 			Mode:          "enforce",
@@ -136,35 +136,35 @@ func TestCurrentBehaviorParityPolicyConfigDoesNotChangePreAuthControls(t *testin
 
 	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
 
-	got := auth.HandleFeatures(ctx)
-	if got != definitions.AuthResultFeatureTLS {
-		t.Fatalf("feature result = %v, want %v", got, definitions.AuthResultFeatureTLS)
+	got := auth.HandleEnvironment(ctx)
+	if got != definitions.AuthResultPreAuthTLS {
+		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
 	}
 }
 
 func currentBehaviorBuiltInControlCases() []currentBehaviorBuiltInControlCase {
 	return []currentBehaviorBuiltInControlCase{
 		{
-			name:    "tls without accepted transport is temporary failure feature",
-			feature: definitions.FeatureTLSEncryption,
+			name:    "tls without accepted transport is temporary failure control",
+			control: definitions.ControlTLSEncryption,
 			configure: func(cfg *config.FileSettings) {
 				cfg.ClearTextList = nil
 			},
-			wantResult: definitions.AuthResultFeatureTLS,
+			wantResult: definitions.AuthResultPreAuthTLS,
 		},
 		{
-			name:    "unknown relay domain is deny feature",
-			feature: definitions.FeatureRelayDomains,
+			name:    "unknown relay domain is deny control",
+			control: definitions.ControlRelayDomains,
 			configure: func(cfg *config.FileSettings) {
 				cfg.RelayDomains = &config.RelayDomainsSection{
 					StaticDomains: []string{"example.test"},
 				}
 			},
-			wantResult: definitions.AuthResultFeatureRelayDomain,
+			wantResult: definitions.AuthResultPreAuthRelayDomain,
 		},
 		{
-			name:    "rbl threshold match is deny feature",
-			feature: definitions.FeatureRBL,
+			name:    "rbl threshold match is deny control",
+			control: definitions.ControlRBL,
 			configure: func(cfg *config.FileSettings) {
 				cfg.RBLs = &config.RBLSection{Threshold: 5}
 			},
@@ -177,13 +177,13 @@ func currentBehaviorBuiltInControlCases() []currentBehaviorBuiltInControlCase {
 					RegisterRBLService(previous)
 				})
 			},
-			wantResult: definitions.AuthResultFeatureRBL,
+			wantResult: definitions.AuthResultPreAuthRBL,
 		},
 	}
 }
 
 func TestCurrentBehaviorParityBruteForceDirectBlock(t *testing.T) {
-	cfg := newCurrentBehaviorConfig(t, definitions.FeatureBruteForce)
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlBruteForce)
 	cfg.BruteForce = &config.BruteForceSection{
 		Buckets: []config.BruteForceRule{
 			{
@@ -225,8 +225,8 @@ func TestCurrentBehaviorParityBruteForceDirectBlock(t *testing.T) {
 		t.Fatal("expected current direct brute-force block to reject the request")
 	}
 
-	if auth.Runtime.FeatureName != definitions.FeatureBruteForce {
-		t.Fatalf("feature name = %q, want %q", auth.Runtime.FeatureName, definitions.FeatureBruteForce)
+	if auth.Runtime.EnvironmentName != definitions.ControlBruteForce {
+		t.Fatalf("environment name = %q, want %q", auth.Runtime.EnvironmentName, definitions.ControlBruteForce)
 	}
 
 	if auth.Security.BruteForceName != "existing_block" {
@@ -245,14 +245,14 @@ func TestCurrentBehaviorParityLuaSubjectStatusMessage(t *testing.T) {
 	expectCurrentBehaviorAccountMapping(t, cfg, mock, username, definitions.ProtoIMAP)
 
 	previousVerifier := getPasswordVerifier()
-	previousFilter := getLuaSubject()
+	previousSubject := getLuaSubject()
 	previousPostAction := getPostAction()
 	RegisterPasswordVerifier(currentBehaviorPasswordVerifier{})
-	RegisterLuaSubject(currentBehaviorDenyingFilter{message: "Lua subject denied"})
+	RegisterLuaSubject(currentBehaviorDenyingSubject{message: "Lua subject denied"})
 	RegisterPostAction(currentBehaviorPostAction{})
 	t.Cleanup(func() {
 		RegisterPasswordVerifier(previousVerifier)
-		RegisterLuaSubject(previousFilter)
+		RegisterLuaSubject(previousSubject)
 		RegisterPostAction(previousPostAction)
 	})
 
@@ -284,7 +284,7 @@ func TestCurrentBehaviorParityLuaSubjectStatusMessage(t *testing.T) {
 	}
 }
 
-func newCurrentBehaviorConfig(t *testing.T, enabledFeatures ...string) *config.FileSettings {
+func newCurrentBehaviorConfig(t *testing.T, enabledRuntimeModules ...string) *config.FileSettings {
 	t.Helper()
 
 	env := config.NewTestEnvironmentConfig()
@@ -293,7 +293,7 @@ func newCurrentBehaviorConfig(t *testing.T, enabledFeatures ...string) *config.F
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
-			Features:                  make([]*config.Feature, 0, len(enabledFeatures)),
+			RuntimeModules:            make([]*config.RuntimeModule, 0, len(enabledRuntimeModules)),
 			MaxLoginAttempts:          5,
 			MaxPasswordHistoryEntries: 10,
 			LocalCacheAuthTTL:         time.Minute,
@@ -304,8 +304,8 @@ func newCurrentBehaviorConfig(t *testing.T, enabledFeatures ...string) *config.F
 		},
 	}
 
-	for _, featureName := range enabledFeatures {
-		cfg.Server.Features = append(cfg.Server.Features, mustCurrentBehaviorFeature(t, featureName))
+	for _, environmentName := range enabledRuntimeModules {
+		cfg.Server.RuntimeModules = append(cfg.Server.RuntimeModules, mustCurrentBehaviorModule(t, environmentName))
 	}
 
 	config.SetTestFile(cfg)
@@ -318,15 +318,15 @@ func newCurrentBehaviorConfig(t *testing.T, enabledFeatures ...string) *config.F
 	return cfg
 }
 
-func mustCurrentBehaviorFeature(t *testing.T, name string) *config.Feature {
+func mustCurrentBehaviorModule(t *testing.T, name string) *config.RuntimeModule {
 	t.Helper()
 
-	feature := &config.Feature{}
-	if err := feature.Set(name); err != nil {
-		t.Fatalf("feature.Set(%q) failed: %v", name, err)
+	runtimeModule := &config.RuntimeModule{}
+	if err := runtimeModule.Set(name); err != nil {
+		t.Fatalf("runtimeModule.Set(%q) failed: %v", name, err)
 	}
 
-	return feature
+	return runtimeModule
 }
 
 func newCurrentBehaviorAuthState(t *testing.T, cfg *config.FileSettings) (*AuthState, *gin.Context, redismock.ClientMock) {
@@ -368,22 +368,22 @@ func withCurrentBehaviorLuaEnvironment(t *testing.T, script string) {
 		t.Fatalf("failed to write Lua environment source: %v", err)
 	}
 
-	luaFeature, err := featurelib.NewLuaEnvironmentSource("current_behavior_environment", scriptPath)
+	luaEnvironment, err := environmentlib.NewLuaEnvironmentSource("current_behavior_environment", scriptPath)
 	if err != nil {
 		t.Fatalf("failed to compile Lua environment source: %v", err)
 	}
 
-	luaFeature.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
+	luaEnvironment.Modes = pipeline.ModeAuthenticated | pipeline.ModeUnauthenticated | pipeline.ModeNoAuth
 
-	previous := featurelib.LuaEnvironmentSources
-	compiled := &featurelib.PreCompiledLuaEnvironmentSources{LuaScripts: []*featurelib.LuaEnvironmentSource{luaFeature}}
+	previous := environmentlib.LuaEnvironmentSources
+	compiled := &environmentlib.PreCompiledLuaEnvironmentSources{LuaScripts: []*environmentlib.LuaEnvironmentSource{luaEnvironment}}
 	if err := compiled.RebuildPlans(); err != nil {
 		t.Fatalf("failed to build Lua environment plan: %v", err)
 	}
 
-	featurelib.LuaEnvironmentSources = compiled
+	environmentlib.LuaEnvironmentSources = compiled
 	t.Cleanup(func() {
-		featurelib.LuaEnvironmentSources = previous
+		environmentlib.LuaEnvironmentSources = previous
 	})
 }
 
@@ -455,12 +455,12 @@ func (currentBehaviorPasswordVerifier) Verify(
 	return result, nil
 }
 
-type currentBehaviorDenyingFilter struct {
+type currentBehaviorDenyingSubject struct {
 	message string
 }
 
-func (f currentBehaviorDenyingFilter) Analyze(_ *gin.Context, view *StateView, _ *PassDBResult) definitions.AuthResult {
-	view.Auth().Runtime.StatusMessage = f.message
+func (s currentBehaviorDenyingSubject) Analyze(_ *gin.Context, view *StateView, _ *PassDBResult) definitions.AuthResult {
+	view.Auth().Runtime.StatusMessage = s.message
 
 	return definitions.AuthResultFail
 }

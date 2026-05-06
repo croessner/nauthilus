@@ -21,7 +21,7 @@ This phase is limited to the conversion tool and converter documentation. It doe
 - `scripts/test_convert_config_v1_to_v2.py`
   - Updates converter regression coverage so the old scheduler keys are rejected from generated output.
   - Adds focused coverage for Lua scheduler conversion, per-script checks, `after` dependencies, no aggregate Lua checks, and generated `standard_auth` policy rows.
-  - Adds coverage that `server.features[].when_no_auth` survives later `server.controls` migration as target policy operation scope.
+  - Adds coverage that the old Lua environment-source scheduler hint survives later `server.controls` migration as target policy operation scope.
 
 - `server/docs/config_v2_converter.md`
   - Documents that the converter now emits target `auth.policy` config.
@@ -85,7 +85,7 @@ Second pass completed against the Phase 5 requirements, the general completion r
 - Scope: implementation is limited to the conversion tool, converter tests, converter docs, and this implementation note. No compiler authority, decision authority, FSM authority, or runtime enforcement switch was started.
 - Tests first: focused converter tests were added before implementation. The first run failed because the old converter still emitted `when_no_auth` and did not generate `auth.policy`.
 - Config placement: generated policy config lives under `auth.policy`; no `policy_engine` or historical public root was introduced.
-- `when_no_auth`: converted into policy `operations`, including `lookup_identity` where legacy no-auth scheduling was enabled. Review gap fixed: `server.features[].when_no_auth` is now preserved as an internal scheduler hint even if later `server.controls` migration overwrites `auth.controls.enabled`.
+- `when_no_auth`: converted into policy `operations`, including `lookup_identity` where legacy no-auth scheduling was enabled. Review gap fixed: the old Lua environment-source scheduler hint is now preserved internally even if later `server.controls` migration overwrites `auth.controls.enabled`.
 - `when_authenticated` and `when_unauthenticated`: converted into `run_if.auth_state`.
 - Lua checks: the converter generates one `lua.environment` check per Lua environment source script and one `lua.subject` check per Lua subject source script. It does not generate aggregate `lua_environments` or `lua_subjects` checks.
 - Lua dependencies: `depends_on` is converted to `after` with generated check names. Review gap fixed: unknown dependency names are now carried into `after` so policy validation can report the broken dependency instead of silently dropping it.
