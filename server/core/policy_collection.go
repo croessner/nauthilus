@@ -57,8 +57,13 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 		return nil
 	}
 
+	operation := a.policyOperation()
 	if policyCtx := existingPolicyContext(ctx); policyCtx != nil {
-		return policyCtx
+		if policyCtx.Report().Operation == operation {
+			return policyCtx
+		}
+
+		clearPolicyContext(ctx)
 	}
 
 	snapshot := policyruntime.DefaultStore().Active()
@@ -66,7 +71,6 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 		return nil
 	}
 
-	operation := a.policyOperation()
 	policyCtx := policycollection.NewDecisionContext(snapshot, operation, observability.DefaultRecorder())
 	policyCtx.Report().SessionID = a.Runtime.GUID
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestOperation, policy.StagePreAuth, operation, string(operation)))
@@ -76,6 +80,18 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 	ctx.Set(policyCollectionContextKey, policyCtx)
 
 	return policyCtx
+}
+
+func clearPolicyContext(ctx *gin.Context) {
+	if ctx == nil || ctx.Keys == nil {
+		return
+	}
+
+	delete(ctx.Keys, policyCollectionContextKey)
+	delete(ctx.Keys, policyConfiguredPreAuthDecisionContextKey)
+	delete(ctx.Keys, policyConfiguredAuthDecisionContextKey)
+	delete(ctx.Keys, policyPostActionResultContextKey)
+	delete(ctx.Keys, policySkipPreAuthChecksContextKey)
 }
 
 func (a *AuthState) policyOperation() policy.Operation {

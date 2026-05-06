@@ -722,8 +722,8 @@ func (h *FrontendHandler) shouldDenyDeviceCodeAfterMFA(ctx *gin.Context, mgr coo
 	}
 
 	if h != nil && h.deps != nil {
-		if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()); ok {
-			return outcome == flowdomain.AuthOutcomeFailLatched
+		if flowAuthFailureLatched(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()) {
+			return true
 		}
 	}
 

@@ -992,6 +992,18 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	}
 
 	// User approved consent
+	if h.flowAuthFailureLatched(ctx, mgr) {
+		request.Status = idp.DeviceCodeStatusDenied
+		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+
+		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
+
+		h.abortFlow(ctx, mgr)
+		h.renderDeviceVerifyFailed(ctx, "Invalid login or password")
+
+		return
+	}
+
 	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "allow").Inc()
 
 	client, ok := h.idp.FindClient(request.ClientID)

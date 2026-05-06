@@ -24,7 +24,15 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/policy"
+	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+
+	"github.com/gin-gonic/gin"
+)
+
+const (
+	standardAuthFailurePolicyName           = "standard_auth_failure"
+	standardLookupIdentitySuccessPolicyName = "standard_lookup_identity_success"
 )
 
 func TestAuthBoundaryConfiguredLookupDecisionOverridesFoundIdentity(t *testing.T) {
@@ -100,6 +108,135 @@ func TestAuthBoundaryConfiguredIDPLookupUsesLookupOperationAndSurface(t *testing
 
 	if policyCtx.Report().Operation != policy.OperationLookupIdentity {
 		t.Fatalf("operation = %q, want %q", policyCtx.Report().Operation, policy.OperationLookupIdentity)
+	}
+}
+
+func TestIDPLookupRefreshesPolicyContextAfterFailedAuthenticateAttempt(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    123,
+		Mode:          policyModeEnforce,
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	initialPolicyCtx := recordFailedIDPAuthenticatePolicyForTest(t, auth, ctx)
+
+	lookupAuth := newIDPLookupAuthStateForTest(ctx, auth)
+	lookupPolicyCtx := recordSuccessfulIDPLookupPolicyForTest(t, lookupAuth, ctx)
+
+	assertLookupPolicyContextRefreshedForTest(t, initialPolicyCtx, lookupPolicyCtx)
+}
+
+func recordFailedIDPAuthenticatePolicyForTest(
+	t *testing.T,
+	auth *AuthState,
+	ctx *gin.Context,
+) *policycollection.DecisionContext {
+	t.Helper()
+
+	auth.Request.Service = definitions.ServIdP
+	auth.Request.Protocol = config.NewProtocol(definitions.ProtoOIDC)
+
+	failedPassDBResult := GetPassDBResultFromPool()
+	failedPassDBResult.UserFound = true
+	failedPassDBResult.Authenticated = false
+	failedPassDBResult.Backend = definitions.BackendTest
+	t.Cleanup(func() {
+		PutPassDBResultToPool(failedPassDBResult)
+	})
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultFail, failedPassDBResult, nil)
+
+	got := auth.defaultPolicyAuthResult(ctx, definitions.AuthResultOK)
+	if got != definitions.AuthResultFail {
+		t.Fatalf("failed auth result = %v, want %v", got, definitions.AuthResultFail)
+	}
+
+	initialPolicyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing initial policy decision context")
+	}
+
+	if initialPolicyCtx.Report().Operation != policy.OperationAuthenticate {
+		t.Fatalf("initial operation = %q, want %q", initialPolicyCtx.Report().Operation, policy.OperationAuthenticate)
+	}
+
+	if initialPolicyCtx.Report().Final == nil || initialPolicyCtx.Report().Final.PolicyName != standardAuthFailurePolicyName {
+		t.Fatalf("initial final = %#v, want standard auth failure", initialPolicyCtx.Report().Final)
+	}
+
+	return initialPolicyCtx
+}
+
+func newIDPLookupAuthStateForTest(ctx *gin.Context, auth *AuthState) *AuthState {
+	lookupAuth := NewAuthStateFromContextWithDeps(ctx, auth.deps).(*AuthState)
+	lookupAuth.Runtime.GUID = "guid-current-behavior-lookup"
+	lookupAuth.Request.Service = definitions.ServIdP
+	lookupAuth.Request.Protocol = config.NewProtocol(definitions.ProtoOIDC)
+	lookupAuth.Request.ClientIP = auth.Request.ClientIP
+	lookupAuth.Request.Username = auth.Request.Username
+	lookupAuth.Request.NoAuth = true
+	lookupAuth.SetStatusCodes(lookupAuth.Request.Service)
+
+	return lookupAuth
+}
+
+func recordSuccessfulIDPLookupPolicyForTest(
+	t *testing.T,
+	auth *AuthState,
+	ctx *gin.Context,
+) *policycollection.DecisionContext {
+	t.Helper()
+
+	foundPassDBResult := GetPassDBResultFromPool()
+	foundPassDBResult.UserFound = true
+	foundPassDBResult.Authenticated = true
+	foundPassDBResult.Backend = definitions.BackendTest
+	t.Cleanup(func() {
+		PutPassDBResultToPool(foundPassDBResult)
+	})
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultOK, foundPassDBResult, nil)
+
+	got := auth.defaultPolicyAuthResult(ctx, definitions.AuthResultOK)
+	if got != definitions.AuthResultOK {
+		t.Fatalf("lookup auth result = %v, want %v", got, definitions.AuthResultOK)
+	}
+
+	lookupPolicyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing lookup policy decision context")
+	}
+
+	if lookupPolicyCtx.Report().Operation != policy.OperationLookupIdentity {
+		t.Fatalf("lookup operation = %q, want %q", lookupPolicyCtx.Report().Operation, policy.OperationLookupIdentity)
+	}
+
+	if lookupPolicyCtx.Report().Final == nil || lookupPolicyCtx.Report().Final.PolicyName != standardLookupIdentitySuccessPolicyName {
+		t.Fatalf("lookup final = %#v, want standard lookup identity success", lookupPolicyCtx.Report().Final)
+	}
+
+	return lookupPolicyCtx
+}
+
+func assertLookupPolicyContextRefreshedForTest(
+	t *testing.T,
+	initialPolicyCtx *policycollection.DecisionContext,
+	lookupPolicyCtx *policycollection.DecisionContext,
+) {
+	t.Helper()
+
+	if lookupPolicyCtx == initialPolicyCtx {
+		t.Fatal("lookup reused the authenticate policy decision context")
+	}
+
+	if _, exists := lookupPolicyCtx.Report().Attributes[policy.AttributeAuthenticated]; exists {
+		t.Fatal("lookup policy context leaked authenticate attributes")
+	}
+
+	if _, exists := lookupPolicyCtx.Report().Attributes[policy.AttributeIdentityFound]; !exists {
+		t.Fatal("lookup policy context did not collect identity lookup facts")
 	}
 }
 

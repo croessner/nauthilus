@@ -139,6 +139,12 @@ func getFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient red
 	return state.AuthOutcome, true
 }
 
+func flowAuthFailureLatched(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string) bool {
+	outcome, ok := getFlowAuthOutcome(ctx, mgr, redisClient, redisPrefix)
+
+	return ok && outcome == flowdomain.AuthOutcomeFailLatched
+}
+
 func setFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string, outcome flowdomain.AuthOutcome) bool {
 	if mgr == nil {
 		return false

@@ -226,6 +226,13 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
+	if h.flowAuthFailureLatched(ctx, mgr) {
+		h.abortFlow(ctx, mgr)
+		ctx.String(http.StatusForbidden, "Authorization denied")
+
+		return
+	}
+
 	// User is logged in.
 	user, err := h.idp.GetUserByUsername(ctx, account, clientID, "")
 	if err != nil {
@@ -423,6 +430,15 @@ func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 		return
 	}
 
+	mgr := cookie.GetManager(ctx)
+	if h.flowAuthFailureLatched(ctx, mgr) {
+		_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+consentChallenge)
+		h.abortFlow(ctx, mgr)
+		ctx.String(http.StatusForbidden, "Consent denied")
+
+		return
+	}
+
 	data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Consent")
 	data["Application"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Application")
@@ -502,6 +518,16 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		return
 	}
 
+	mgr := cookie.GetManager(ctx)
+	if h.flowAuthFailureLatched(ctx, mgr) {
+		_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+consentChallenge)
+		h.abortFlow(ctx, mgr)
+		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "deny").Inc()
+		ctx.String(http.StatusForbidden, "Consent denied")
+
+		return
+	}
+
 	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(session.ClientID, "allow").Inc()
 
 	client, ok := h.idp.FindClient(session.ClientID)
@@ -569,6 +595,30 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	}
 
 	ctx.Redirect(http.StatusFound, target)
+}
+
+func (h *OIDCHandler) flowAuthFailureLatched(ctx *gin.Context, mgr cookie.Manager) bool {
+	if h == nil || h.deps == nil || ctx == nil {
+		return false
+	}
+
+	return flowAuthFailureLatched(ctx.Request.Context(), mgr, h.deps.Redis, h.flowRedisPrefix())
+}
+
+func (h *OIDCHandler) abortFlow(ctx *gin.Context, mgr cookie.Manager) {
+	if h == nil || h.deps == nil || ctx == nil {
+		return
+	}
+
+	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.flowRedisPrefix())
+}
+
+func (h *OIDCHandler) flowRedisPrefix() string {
+	if h == nil || h.deps == nil || h.deps.Cfg == nil || h.deps.Cfg.GetServer() == nil {
+		return ""
+	}
+
+	return h.deps.Cfg.GetServer().GetRedis().GetPrefix()
 }
 
 func normalizeCodeChallengeMethod(codeChallenge, codeChallengeMethod string) (string, error) {
