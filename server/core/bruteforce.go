@@ -478,6 +478,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 	}
 
+	a.storeBruteForceBucketPolicyFacts(bm, rules, alreadyTriggered, ruleTriggered, ruleNumber, network)
+
 	// If neither path matched any rule/network, do not proceed further.
 	if !alreadyTriggered && !ruleTriggered {
 		return false
@@ -490,6 +492,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		a.Runtime.FeatureName = bm.GetFeatureName()
 		a.Security.BruteForceName = bm.GetBruteForceName()
 		a.Security.BruteForceCounter = bm.GetBruteForceCounter()
+		a.Runtime.BruteForceToleration = bm.GetTolerationPolicyFact()
 		// Synchronize login attempts from bucket manager into centralized LAM (bucket has authority)
 		if lam := a.ensureLAM(); lam != nil {
 			lam.InitFromBucket(bm.GetLoginAttempts())
@@ -526,7 +529,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// Store hints on AuthState for consumption by Post-Action
 	a.Runtime.BFClientNet = bfClientNet
-	a.Runtime.BFRepeating = bfRepeating
+	a.Runtime.BFRepeating = bfRepeating || bruteForceBucketFactsRepeat(a.Runtime.BruteForceBuckets)
 
 	if triggered || alreadyTriggered {
 		a.updateLuaContext(definitions.FeatureBruteForce)
@@ -545,6 +548,131 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// Always return triggered (block status) even if alreadyTriggered was true
 	return triggered || alreadyTriggered
+}
+
+func (a *AuthState) storeBruteForceBucketPolicyFacts(
+	bm bruteforce.BucketManager,
+	rules []config.BruteForceRule,
+	alreadyTriggered bool,
+	ruleTriggered bool,
+	ruleNumber int,
+	network *net.IPNet,
+) {
+	facts := bm.GetBucketPolicyFacts()
+	if len(facts) == 0 {
+		collected, err := bm.CollectBucketPolicyFacts(rules)
+		if err != nil {
+			_ = level.Warn(a.logger()).Log(
+				definitions.LogKeyGUID, a.Runtime.GUID,
+				definitions.LogKeyMsg, "Failed to collect brute-force bucket policy facts",
+				definitions.LogKeyError, err,
+			)
+		}
+
+		facts = collected
+	}
+
+	a.Runtime.BruteForceBuckets = markBruteForceBucketPolicyFacts(facts, rules, alreadyTriggered, ruleTriggered, ruleNumber, network)
+	if bruteForceBucketFactsRepeat(a.Runtime.BruteForceBuckets) {
+		a.Runtime.BFRepeating = true
+	}
+}
+
+func markBruteForceBucketPolicyFacts(
+	facts []bruteforce.BucketPolicyFact,
+	rules []config.BruteForceRule,
+	alreadyTriggered bool,
+	ruleTriggered bool,
+	ruleNumber int,
+	network *net.IPNet,
+) []bruteforce.BucketPolicyFact {
+	marked := append([]bruteforce.BucketPolicyFact(nil), facts...)
+	if ruleNumber < 0 || ruleNumber >= len(rules) {
+		return marked
+	}
+
+	rule := rules[ruleNumber]
+	if len(marked) == 0 {
+		marked = append(marked, bruteForceBucketFactFromRule(rule, network))
+	}
+
+	updated := false
+	for i := range marked {
+		if marked[i].Name != rule.Name {
+			continue
+		}
+
+		markBruteForceBucketPolicyFact(&marked[i], alreadyTriggered, ruleTriggered, network)
+		updated = true
+	}
+
+	if !updated {
+		fact := bruteForceBucketFactFromRule(rule, network)
+		markBruteForceBucketPolicyFact(&fact, alreadyTriggered, ruleTriggered, network)
+		marked = append(marked, fact)
+	}
+
+	return marked
+}
+
+func bruteForceBucketFactFromRule(rule config.BruteForceRule, network *net.IPNet) bruteforce.BucketPolicyFact {
+	effectiveLimit := float64(rule.GetFailedRequests()) - 1
+	if effectiveLimit < 0 {
+		effectiveLimit = 0
+	}
+
+	fact := bruteforce.BucketPolicyFact{
+		Name:           rule.Name,
+		Limit:          float64(rule.GetFailedRequests()),
+		EffectiveLimit: effectiveLimit,
+		Remaining:      effectiveLimit,
+		Period:         rule.GetPeriod(),
+		BanTime:        rule.GetBanTime(),
+		CIDR:           rule.GetCIDR(),
+		Matched:        true,
+	}
+
+	if network != nil {
+		fact.ClientNet = network.String()
+	}
+
+	return fact
+}
+
+func markBruteForceBucketPolicyFact(
+	fact *bruteforce.BucketPolicyFact,
+	alreadyTriggered bool,
+	ruleTriggered bool,
+	network *net.IPNet,
+) {
+	if fact == nil {
+		return
+	}
+
+	fact.Matched = true
+	if network != nil && fact.ClientNet == "" {
+		fact.ClientNet = network.String()
+	}
+
+	if alreadyTriggered {
+		fact.AlreadyBanned = true
+	}
+
+	if ruleTriggered {
+		fact.OverLimit = true
+	}
+
+	fact.Repeating = fact.Repeating || alreadyTriggered || ruleTriggered
+}
+
+func bruteForceBucketFactsRepeat(facts []bruteforce.BucketPolicyFact) bool {
+	for i := range facts {
+		if facts[i].Repeating {
+			return true
+		}
+	}
+
+	return false
 }
 
 // commitRWPIfAllowed commits the RWP sliding window write unless a feature rejected the request

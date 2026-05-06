@@ -93,6 +93,7 @@ func validateModuleCalls(moduleName string, expectedCalls []ModuleExpectedCall, 
 type MockData struct {
 	Context        *ContextMock        `json:"context"`
 	Redis          *RedisMock          `json:"redis"`
+	Policy         *PolicyMock         `json:"policy"`
 	LDAP           *LDAPMock           `json:"ldap"`
 	Backend        *BackendMock        `json:"backend"`
 	Misc           *MiscMock           `json:"misc"`
@@ -112,6 +113,50 @@ type MockData struct {
 	HTTPResponse   *HTTPResponseMock   `json:"http_response"`
 	HTTPClient     *HTTPClientMock     `json:"http_client"`
 	ExpectedOutput *ExpectedOutputMock `json:"expected_output"`
+}
+
+// PolicyEmission captures one nauthilus_policy.emit_attribute call.
+type PolicyEmission struct {
+	Details map[string]string `json:"details,omitempty"`
+	ID      string            `json:"id"`
+	Value   string            `json:"value"`
+}
+
+// PolicyMock contains expected calls for the nauthilus_policy module.
+type PolicyMock struct {
+	ExpectedCalls []ModuleExpectedCall `json:"expected_calls"`
+	Emitted       []PolicyEmission     `json:"-"`
+
+	callIndex  int    `json:"-"`
+	runtimeErr string `json:"-"`
+}
+
+// ResetRuntimeState clears call tracking and captured policy emissions.
+func (m *PolicyMock) ResetRuntimeState() {
+	if m == nil {
+		return
+	}
+
+	resetCallState(&m.callIndex, &m.runtimeErr)
+	m.Emitted = nil
+}
+
+// RecordCall validates one policy mock call against expected_calls.
+func (m *PolicyMock) RecordCall(method, args string) error {
+	if m == nil {
+		return nil
+	}
+
+	return recordModuleCall("policy", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
+}
+
+// ValidateComplete verifies that every expected policy call was observed.
+func (m *PolicyMock) ValidateComplete() error {
+	if m == nil {
+		return nil
+	}
+
+	return validateModuleCalls("policy", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
 // ContextMock contains mock data for nauthilus_context module.

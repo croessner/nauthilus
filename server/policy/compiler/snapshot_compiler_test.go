@@ -21,12 +21,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/policy"
 	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 )
+
+const testRBLReturnCodeListed = "127.0.0.2"
 
 func TestCompilerBuildsSnapshotFromConfiguredPolicy(t *testing.T) {
 	cfg := policyCompilerTestConfig()
@@ -92,8 +95,192 @@ func TestCompilerRunsLuaRegistryScript(t *testing.T) {
 		t.Fatalf("detail type = %q, want string", detail.Type)
 	}
 
-	if detail.Sensitivity != "public" || detail.Purpose != "response_message" {
+	if detail.Sensitivity != policyregistry.DetailSensitivityPublic ||
+		detail.Purpose != policyregistry.DetailPurposeResponseMessage {
 		t.Fatalf("detail metadata = %#v, want public response_message", detail)
+	}
+}
+
+func TestCompilerGeneratesBruteForceBucketAttributes(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.BruteForce = &config.BruteForceSection{
+		Buckets: []config.BruteForceRule{
+			{
+				Name:           "IMAP Short",
+				Period:         time.Minute,
+				BanTime:        time.Hour,
+				CIDR:           32,
+				FailedRequests: 5,
+				IPv4:           true,
+			},
+		},
+	}
+	cfg.Auth.Policy.Policies = append(cfg.Auth.Policy.Policies, config.PolicyRuleConfig{
+		Name:          "imap_short_near_limit",
+		Stage:         string(policy.StagePreAuth),
+		RequireChecks: []string{"brute_force"},
+		If: config.PolicyConditionConfig{
+			Attribute: "auth.brute_force.bucket.imap_short.ratio",
+			GTE:       0.8,
+		},
+		Then: config.PolicyThenConfig{
+			Decision:       string(policy.DecisionDeny),
+			ResponseMarker: policy.ResponseMarkerFail,
+		},
+	})
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	for _, attributeID := range []string{
+		"auth.brute_force.bucket.imap_short.matched",
+		"auth.brute_force.bucket.imap_short.count",
+		"auth.brute_force.bucket.imap_short.effective_limit",
+		"auth.brute_force.bucket.imap_short.ratio",
+		"auth.brute_force.bucket.imap_short.repeating",
+	} {
+		if _, ok := snapshot.AttributeRegistry[attributeID]; !ok {
+			t.Fatalf("generated brute-force bucket attribute %q missing", attributeID)
+		}
+	}
+}
+
+func TestCompilerRejectsBruteForceBucketIdentifierCollision(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.BruteForce = &config.BruteForceSection{
+		Buckets: []config.BruteForceRule{
+			{Name: "imap-short", Period: time.Minute, CIDR: 32, FailedRequests: 5, IPv4: true},
+			{Name: "imap_short", Period: time.Minute, CIDR: 32, FailedRequests: 5, IPv4: true},
+		},
+	}
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatal("Compile() error = nil, want identifier collision")
+	}
+
+	if !strings.Contains(err.Error(), `normalizes to policy identifier "imap_short"`) {
+		t.Fatalf("Compile() error = %q, want normalized identifier collision", err)
+	}
+}
+
+func TestCompilerGeneratesRBLListAttributes(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.RBLs = &config.RBLSection{
+		Lists: []config.RBL{
+			{
+				Name:        "Zen Spamhaus",
+				RBL:         "zen.spamhaus.org",
+				ReturnCodes: []string{testRBLReturnCodeListed},
+				IPv4:        true,
+				Weight:      5,
+			},
+		},
+		Threshold: 5,
+	}
+	cfg.Auth.Policy.Checks = append(cfg.Auth.Policy.Checks, config.PolicyCheckConfig{
+		Name:      "rbl",
+		Type:      policy.CheckTypeRBL,
+		Stage:     string(policy.StagePreAuth),
+		ConfigRef: "auth.controls.rbl",
+	})
+	cfg.Auth.Policy.Policies = append(cfg.Auth.Policy.Policies, config.PolicyRuleConfig{
+		Name:          "zen_matched",
+		Stage:         string(policy.StagePreAuth),
+		RequireChecks: []string{"rbl"},
+		If: config.PolicyConditionConfig{
+			Attribute: "auth.rbl.list.zen_spamhaus.listed",
+			Is:        true,
+		},
+		Then: config.PolicyThenConfig{
+			Decision:       string(policy.DecisionDeny),
+			ResponseMarker: policy.ResponseMarkerFail,
+		},
+	})
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	for _, attributeID := range []string{
+		"auth.rbl.list.zen_spamhaus.listed",
+		"auth.rbl.list.zen_spamhaus.weight",
+		"auth.rbl.list.zen_spamhaus.error",
+		"auth.rbl.list.zen_spamhaus.allow_failure",
+	} {
+		if _, ok := snapshot.AttributeRegistry[attributeID]; !ok {
+			t.Fatalf("generated RBL list attribute %q missing", attributeID)
+		}
+	}
+}
+
+func TestCompilerRejectsRBLListIdentifierCollision(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.RBLs = &config.RBLSection{
+		Lists: []config.RBL{
+			{Name: "zen-spamhaus", RBL: "zen.spamhaus.org", ReturnCodes: []string{testRBLReturnCodeListed}, IPv4: true},
+			{Name: "zen_spamhaus", RBL: "zen2.spamhaus.org", ReturnCodes: []string{testRBLReturnCodeListed}, IPv4: true},
+		},
+	}
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatal("Compile() error = nil, want identifier collision")
+	}
+
+	if !strings.Contains(err.Error(), `normalizes to policy identifier "zen_spamhaus"`) {
+		t.Fatalf("Compile() error = %q, want normalized identifier collision", err)
+	}
+}
+
+func TestCompilerGeneratesSubjectAttributeExports(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.AttributeExports = []config.PolicyAttributeExportConfig{
+		{Name: "Account Status", Attribute: "accountStatus", Type: "string"},
+	}
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      "ldap_backend",
+			Type:      policy.CheckTypeLDAPBackend,
+			Stage:     string(policy.StageAuthBackend),
+			ConfigRef: "auth.backends.ldap",
+		},
+	}
+	cfg.Auth.Policy.Policies = []config.PolicyRuleConfig{
+		{
+			Name:  "deny_locked_subject",
+			Stage: string(policy.StageAuthDecision),
+			If: config.PolicyConditionConfig{
+				Attribute: "auth.subject.attribute.account_status",
+				Detail:    "value",
+				Eq:        "locked",
+			},
+			Then: config.PolicyThenConfig{
+				Decision:       string(policy.DecisionDeny),
+				ResponseMarker: policy.ResponseMarkerFail,
+			},
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	definition, ok := snapshot.AttributeRegistry["auth.subject.attribute.account_status"]
+	if !ok {
+		t.Fatal("generated subject attribute missing")
+	}
+
+	if definition.Type != policyregistry.AttributeTypeBool {
+		t.Fatalf("subject attribute type = %q, want bool", definition.Type)
+	}
+
+	if definition.Details["value"].Type != policyregistry.AttributeTypeString {
+		t.Fatalf("value detail type = %q, want string", definition.Details["value"].Type)
 	}
 }
 

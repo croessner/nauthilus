@@ -253,7 +253,7 @@ func luaDetailDefinition(value lua.LValue) (policyregistry.DetailDefinition, err
 			return policyregistry.DetailDefinition{}, fmt.Errorf("unknown type %q", valueType)
 		}
 
-		return policyregistry.DetailDefinition{Type: valueType, Sensitivity: "internal"}, nil
+		return policyregistry.DetailDefinition{Type: valueType, Sensitivity: policyregistry.DetailSensitivityInternal}, nil
 	}
 
 	table, ok := value.(*lua.LTable)
@@ -268,7 +268,7 @@ func luaDetailDefinition(value lua.LValue) (policyregistry.DetailDefinition, err
 
 	return policyregistry.DetailDefinition{
 		Type:        valueType,
-		Sensitivity: defaultedLuaStringField(table, "sensitivity", "internal"),
+		Sensitivity: defaultedLuaStringField(table, "sensitivity", policyregistry.DetailSensitivityInternal),
 		Purpose:     luaStringField(table, "purpose"),
 		MaxLength:   luaIntField(table, "max_length"),
 	}, nil

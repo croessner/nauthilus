@@ -962,7 +962,9 @@ func compileAttributeResponseMessage(
 		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, "detail"), "references unknown detail")
 	}
 
-	if detail.Type != policyregistry.AttributeTypeString || detail.Sensitivity != "public" || detail.Purpose != "response_message" {
+	if detail.Type != policyregistry.AttributeTypeString ||
+		detail.Sensitivity != policyregistry.DetailSensitivityPublic ||
+		detail.Purpose != policyregistry.DetailPurposeResponseMessage {
 		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, "detail"), "must be a public response_message string detail")
 	}
 

@@ -369,8 +369,8 @@ func generatedLuaAttribute(
 		definition.Details = map[string]policyregistry.DetailDefinition{
 			"status_message": {
 				Type:        policyregistry.AttributeTypeString,
-				Sensitivity: "public",
-				Purpose:     "response_message",
+				Sensitivity: policyregistry.DetailSensitivityPublic,
+				Purpose:     policyregistry.DetailPurposeResponseMessage,
 				MaxLength:   256,
 			},
 		}
@@ -394,7 +394,7 @@ func generatedLuaErrorAttribute(
 		Type:          policyregistry.AttributeTypeBool,
 		Source:        policyregistry.SourceBuiltin,
 		Details: map[string]policyregistry.DetailDefinition{
-			"reason_code": {Type: policyregistry.AttributeTypeString, Sensitivity: "internal"},
+			"reason_code": {Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityInternal},
 		},
 	}
 }

@@ -460,6 +460,18 @@ type AuthRuntime struct {
 	// MonitoringFlags holds flags related to request monitoring.
 	MonitoringFlags []definitions.Monitoring
 
+	// BruteForceBuckets contains read-only bucket facts collected for policy evaluation.
+	BruteForceBuckets []bruteforce.BucketPolicyFact
+
+	// BruteForceToleration contains the request-local toleration fact collected for policy evaluation.
+	BruteForceToleration tolerate.PolicyFact
+
+	// RelayDomainPolicy contains the request-local relay-domain facts collected for policy evaluation.
+	RelayDomainPolicy RelayDomainPolicyFact
+
+	// RBLPolicy contains the request-local RBL facts collected for policy evaluation.
+	RBLPolicy RBLPolicyFact
+
 	// GUID is a unique identifier for the authentication request.
 	GUID string
 
@@ -2528,6 +2540,15 @@ func (a *AuthState) WithRWPDecision(enforce bool) bruteforce.BucketManager {
 	return a
 }
 
+// GetTolerationPolicyFact returns the last collected toleration policy fact.
+func (a *AuthState) GetTolerationPolicyFact() tolerate.PolicyFact {
+	if a == nil {
+		return tolerate.PolicyFact{}
+	}
+
+	return a.Runtime.BruteForceToleration
+}
+
 // GetBruteForceName returns the brute force name from the AuthState.
 func (a *AuthState) GetBruteForceName() string {
 	return a.Security.BruteForceName
@@ -2555,6 +2576,24 @@ func (a *AuthState) CheckBucketOverLimit(rules []config.BruteForceRule, message 
 	bm := a.createBucketManager(a.Ctx())
 
 	return bm.CheckBucketOverLimit(rules, message)
+}
+
+// GetBucketPolicyFacts returns the last collected brute-force bucket policy facts.
+func (a *AuthState) GetBucketPolicyFacts() []bruteforce.BucketPolicyFact {
+	if a == nil || len(a.Runtime.BruteForceBuckets) == 0 {
+		return nil
+	}
+
+	return append([]bruteforce.BucketPolicyFact(nil), a.Runtime.BruteForceBuckets...)
+}
+
+// CollectBucketPolicyFacts reads current brute-force bucket policy facts.
+func (a *AuthState) CollectBucketPolicyFacts(rules []config.BruteForceRule) ([]bruteforce.BucketPolicyFact, error) {
+	bm := a.createBucketManager(a.Ctx())
+	facts, err := bm.CollectBucketPolicyFacts(rules)
+	a.Runtime.BruteForceBuckets = facts
+
+	return facts, err
 }
 
 // ProcessBruteForce evaluates and handles a brute force trigger based on the given rule and network.

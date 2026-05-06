@@ -354,13 +354,14 @@ type AuthServicesSection struct {
 
 // AuthPolicySection configures the declarative auth decision compiler.
 type AuthPolicySection struct {
-	Sets            PolicySetsConfig    `mapstructure:"sets" validate:"omitempty"`
-	Report          PolicyReportConfig  `mapstructure:"report" validate:"omitempty"`
-	Mode            string              `mapstructure:"mode" validate:"omitempty,oneof=enforce observe"`
-	DefaultPolicy   string              `mapstructure:"default_policy" validate:"omitempty,printascii"`
-	RegistryScripts []string            `mapstructure:"registry_scripts" validate:"omitempty,dive,file"`
-	Checks          []PolicyCheckConfig `mapstructure:"checks" validate:"omitempty,dive"`
-	Policies        []PolicyRuleConfig  `mapstructure:"policies" validate:"omitempty,dive"`
+	Sets             PolicySetsConfig              `mapstructure:"sets" validate:"omitempty"`
+	Report           PolicyReportConfig            `mapstructure:"report" validate:"omitempty"`
+	Mode             string                        `mapstructure:"mode" validate:"omitempty,oneof=enforce observe"`
+	DefaultPolicy    string                        `mapstructure:"default_policy" validate:"omitempty,printascii"`
+	RegistryScripts  []string                      `mapstructure:"registry_scripts" validate:"omitempty,dive,file"`
+	AttributeExports []PolicyAttributeExportConfig `mapstructure:"attribute_exports" validate:"omitempty,dive"`
+	Checks           []PolicyCheckConfig           `mapstructure:"checks" validate:"omitempty,dive"`
+	Policies         []PolicyRuleConfig            `mapstructure:"policies" validate:"omitempty,dive"`
 }
 
 func defaultAuthPolicySection() AuthPolicySection {
@@ -423,6 +424,14 @@ type PolicyReportConfig struct {
 	IncludeFSM        bool `mapstructure:"include_fsm"`
 	IncludeChecks     bool `mapstructure:"include_checks"`
 	IncludeAttributes bool `mapstructure:"include_attributes"`
+}
+
+// PolicyAttributeExportConfig exposes one backend AuthState attribute as an opt-in policy subject fact.
+type PolicyAttributeExportConfig struct {
+	Name        string `mapstructure:"name" validate:"required,printascii"`
+	Attribute   string `mapstructure:"attribute" validate:"required,printascii"`
+	Type        string `mapstructure:"type" validate:"required,oneof=bool string string_list number"`
+	Sensitivity string `mapstructure:"sensitivity" validate:"omitempty,oneof=public internal secret"`
 }
 
 // PolicyCheckConfig configures one fact-producing policy check.

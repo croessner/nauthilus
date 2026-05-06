@@ -18,11 +18,22 @@ package core
 import (
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/policy"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+)
+
+const (
+	testRBLNameSpamhaus = "Zen Spamhaus"
+	testProtocolIMAP    = "imap"
+	testProtocolSMTP    = "smtp"
 )
 
 func TestAuthPathCollectsTLSCheckWithoutChangingFeatureDecision(t *testing.T) {
@@ -189,6 +200,254 @@ func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 
 	if got := len(policyCtx.Report().Policies); got != 1 {
 		t.Fatalf("selected policies = %d, want one configured control decision", got)
+	}
+}
+
+func TestRecordPolicyBruteForceEmitsBucketFacts(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureBruteForce)
+	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Runtime.BFRWP = true
+	auth.Runtime.BruteForceBuckets = []bruteforce.BucketPolicyFact{
+		{
+			Name:           "IMAP Short",
+			ClientNet:      "192.0.2.0/24",
+			Count:          4,
+			Limit:          5,
+			EffectiveLimit: 4,
+			Remaining:      0,
+			Ratio:          1,
+			Period:         time.Minute,
+			BanTime:        time.Hour,
+			CIDR:           24,
+			Matched:        true,
+			OverLimit:      true,
+			Repeating:      true,
+		},
+	}
+
+	auth.recordPolicyBruteForce(ctx, true)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	if got := report.Attributes["auth.brute_force.bucket.imap_short.count"].Value; got != float64(4) {
+		t.Fatalf("bucket count = %#v, want 4", got)
+	}
+
+	if got := report.Attributes["auth.brute_force.bucket.imap_short.over_limit"].Value; got != true {
+		t.Fatalf("bucket over_limit = %#v, want true", got)
+	}
+
+	if got := report.Attributes[policy.AttributeBruteForceRWPActive].Value; got != true {
+		t.Fatalf("rwp active = %#v, want true", got)
+	}
+
+	if got := report.Attributes[policy.AttributeBruteForceBucketTriggeredCount].Value; got != float64(1) {
+		t.Fatalf("triggered bucket count = %#v, want 1", got)
+	}
+}
+
+func TestRecordPolicyBruteForceEmitsTolerationFacts(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureBruteForce)
+	activatePolicySnapshotForTest(t, customEnforcePreAuthControlSnapshot())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Runtime.BruteForceToleration = tolerate.PolicyFact{
+		TTL:             15 * time.Minute,
+		Mode:            "adaptive",
+		Positive:        20,
+		Negative:        2,
+		MaxNegative:     5,
+		Percent:         25,
+		Active:          true,
+		Custom:          true,
+		SuppressedBlock: true,
+	}
+
+	auth.recordPolicyBruteForce(ctx, false)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	if got := report.Attributes[policy.AttributeBruteForceTolerationActive].Value; got != true {
+		t.Fatalf("toleration active = %#v, want true", got)
+	}
+
+	if got := report.Attributes[policy.AttributeBruteForceTolerationMode].Value; got != "adaptive" {
+		t.Fatalf("toleration mode = %#v, want adaptive", got)
+	}
+
+	if got := report.Attributes[policy.AttributeBruteForceTolerationSuppressedBlock].Value; got != true {
+		t.Fatalf("suppressed block = %#v, want true", got)
+	}
+
+	if got := report.Attributes[policy.AttributeBruteForceTolerationTTLSeconds].Value; got != float64(900) {
+		t.Fatalf("ttl seconds = %#v, want 900", got)
+	}
+}
+
+func TestRecordPolicyRBLEmitsAggregateAndListFacts(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureRBL)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    77,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Runtime.RBLPolicy = RBLPolicyFact{
+		Score:                  7,
+		Threshold:              5,
+		MatchedCount:           1,
+		ListCount:              2,
+		AllowFailureErrorCount: 1,
+		MatchedLists:           []string{testRBLNameSpamhaus},
+		Lists: []RBLListPolicyFact{
+			{
+				Name:         testRBLNameSpamhaus,
+				Host:         "zen.spamhaus.org",
+				Query:        "10.113.0.203.zen.spamhaus.org",
+				ReturnCode:   "127.0.0.2",
+				IPFamily:     "ipv4",
+				Weight:       7,
+				Listed:       true,
+				AllowFailure: false,
+			},
+			{
+				Name:         "Timeout List",
+				Host:         "timeout.example.test",
+				ReasonCode:   "dns_error",
+				Weight:       3,
+				Error:        true,
+				AllowFailure: true,
+			},
+		},
+	}
+
+	auth.recordPolicyRBL(ctx, true, nil)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	if got := report.Attributes[policy.AttributeRBLScore].Value; got != float64(7) {
+		t.Fatalf("rbl score = %#v, want 7", got)
+	}
+
+	if got := report.Attributes[policy.AttributeRBLMatchedLists].Value; len(got.([]string)) != 1 || got.([]string)[0] != testRBLNameSpamhaus {
+		t.Fatalf("matched lists = %#v, want Zen Spamhaus", got)
+	}
+
+	if got := report.Attributes["auth.rbl.list.zen_spamhaus.listed"].Value; got != true {
+		t.Fatalf("zen listed = %#v, want true", got)
+	}
+
+	if got := report.Attributes["auth.rbl.list.timeout_list.allow_failure"].Value; got != true {
+		t.Fatalf("timeout allow_failure = %#v, want true", got)
+	}
+}
+
+func TestRecordPolicyRelayDomainsEmitsPolicyFacts(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.FeatureRelayDomains)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    78,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Runtime.RelayDomainPolicy = RelayDomainPolicyFact{
+		Value:           "external.example",
+		ConfiguredCount: 2,
+		Present:         true,
+		Rejected:        true,
+	}
+
+	auth.recordPolicyRelayDomains(ctx, true)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	if got := report.Attributes[policy.AttributeRelayDomainValue].Value; got != "external.example" {
+		t.Fatalf("relay domain value = %#v, want external.example", got)
+	}
+
+	if got := report.Attributes[policy.AttributeRelayDomainRejected].Value; got != true {
+		t.Fatalf("relay rejected = %#v, want true", got)
+	}
+
+	if got := report.Attributes[policy.AttributeRelayDomainConfiguredCount].Value; got != float64(2) {
+		t.Fatalf("configured count = %#v, want 2", got)
+	}
+}
+
+func TestRecordPolicyBackendResultExportsConfiguredSubjectAttributes(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Auth = &config.AuthSection{
+		Policy: config.AuthPolicySection{
+			Mode:          "enforce",
+			DefaultPolicy: policy.BuiltinDefaultSet,
+			AttributeExports: []config.PolicyAttributeExportConfig{
+				{Name: "Account Status", Attribute: "accountStatus", Type: "string"},
+				{Name: "Risk Score", Attribute: "riskScore", Type: "number"},
+				{Name: "Entitlements", Attribute: "entitlements", Type: "string_list"},
+			},
+		},
+	}
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    79,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	passDBResult := &PassDBResult{
+		Authenticated: true,
+		Backend:       definitions.BackendLDAP,
+		Attributes: bktype.AttributeMapping{
+			"accountStatus": {"locked"},
+			"riskScore":     {"42.5"},
+			"entitlements":  {testProtocolIMAP, testProtocolSMTP},
+		},
+	}
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	status := report.Attributes["auth.subject.attribute.account_status"]
+	if got := status.Value; got != true {
+		t.Fatalf("account status present = %#v, want true", got)
+	}
+
+	if got := status.Details["value"].Value; got != "locked" {
+		t.Fatalf("account status value = %#v, want locked", got)
+	}
+
+	if got := report.Attributes["auth.subject.attribute.risk_score"].Details["value"].Value; got != float64(42.5) {
+		t.Fatalf("risk score = %#v, want 42.5", got)
+	}
+
+	values := report.Attributes["auth.subject.attribute.entitlements"].Details["values"].Value.([]string)
+	if len(values) != 2 || values[0] != testProtocolIMAP || values[1] != testProtocolSMTP {
+		t.Fatalf("entitlements = %#v, want imap/smtp", values)
 	}
 }
 

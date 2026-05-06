@@ -592,6 +592,34 @@ func BoolAttribute(
 	}
 }
 
+// NumberAttribute creates a numeric policy attribute value.
+func NumberAttribute(id string, stage policy.Stage, operation policy.Operation, value float64, details map[string]DetailValue) AttributeValue {
+	return AttributeValue{
+		ID:        id,
+		Stage:     stage,
+		Operation: operation,
+		Value:     value,
+		Details:   details,
+	}
+}
+
+// StringListAttribute creates a string-list policy attribute value.
+func StringListAttribute(
+	id string,
+	stage policy.Stage,
+	operation policy.Operation,
+	value []string,
+	details map[string]DetailValue,
+) AttributeValue {
+	return AttributeValue{
+		ID:        id,
+		Stage:     stage,
+		Operation: operation,
+		Value:     append([]string(nil), value...),
+		Details:   details,
+	}
+}
+
 // StringAttribute creates a string policy attribute value.
 func StringAttribute(id string, stage policy.Stage, operation policy.Operation, value string) AttributeValue {
 	return AttributeValue{
@@ -599,6 +627,23 @@ func StringAttribute(id string, stage policy.Stage, operation policy.Operation, 
 		Stage:     stage,
 		Operation: operation,
 		Value:     value,
+	}
+}
+
+// StringAttributeWithDetails creates a string policy attribute value with details.
+func StringAttributeWithDetails(
+	id string,
+	stage policy.Stage,
+	operation policy.Operation,
+	value string,
+	details map[string]DetailValue,
+) AttributeValue {
+	return AttributeValue{
+		ID:        id,
+		Stage:     stage,
+		Operation: operation,
+		Value:     value,
+		Details:   details,
 	}
 }
 

@@ -138,11 +138,37 @@ type Tolerate interface {
 	// IsTolerated checks if an IP address is within the allowed tolerance based on past interactions.
 	IsTolerated(ctx context.Context, ipAddress string) bool
 
+	// PolicyFact returns the policy-visible toleration state for the IP address.
+	PolicyFact(ctx context.Context, ipAddress string) PolicyFact
+
 	// GetTolerateMap retrieves a map containing toleration data as key-value pairs for a specific IP address.
 	GetTolerateMap(ctx context.Context, ipAddress string) map[string]int64
 
 	// GetReputationKey returns the Redis key used for reputation data for the given IP address.
 	GetReputationKey(ipAddress string) string
+}
+
+// PolicyFact is the request-local policy view of one toleration calculation.
+type PolicyFact struct {
+	TTL             time.Duration
+	Mode            string
+	Positive        int64
+	Negative        int64
+	MaxNegative     int64
+	Percent         uint8
+	Active          bool
+	Custom          bool
+	SuppressedBlock bool
+}
+
+type policySettings struct {
+	ttl        time.Duration
+	scale      float64
+	percent    uint8
+	minPercent uint8
+	maxPercent uint8
+	adaptive   bool
+	custom     bool
 }
 
 type tolerateDeps struct {
@@ -361,174 +387,207 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 
 // IsTolerated checks if the specified IP address is tolerated based on positive and negative interaction thresholds.
 func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
+	return t.PolicyFact(ctx, ipAddress).Active
+}
+
+// PolicyFact returns the policy-visible toleration state for the specified IP address.
+func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) PolicyFact {
 	tr := monittrace.New("nauthilus/tolerate")
 	tctx, tsp := tr.Start(ctx, "tolerate.is_tolerated",
 		attribute.String("ip_address", ipAddress),
 	)
 	defer tsp.End()
 
-	var (
-		okay     bool
-		positive int64
-		negative int64
-	)
+	settings := t.policySettingsForIP(ipAddress)
+	fact := PolicyFact{
+		TTL:     settings.ttl,
+		Mode:    "disabled",
+		Percent: settings.percent,
+		Custom:  settings.custom,
+	}
 
-	tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
-	pctTolerated := t.pctTolerated
-	adaptiveToleration := t.deps.cfg.GetBruteForce().GetAdaptiveToleration()
-	minToleratePercent := t.deps.cfg.GetBruteForce().GetMinToleratePercent()
-	maxToleratePercent := t.deps.cfg.GetBruteForce().GetMaxToleratePercent()
-	scaleFactor := t.deps.cfg.GetBruteForce().GetScaleFactor()
+	if settings.ttl == 0 {
+		return fact
+	}
 
-	// Check for custom tolerations for this IP
+	if settings.adaptive {
+		if adaptiveFact, ok := t.adaptivePolicyFact(tctx, ipAddress, settings); ok {
+			return adaptiveFact
+		}
+	}
+
+	return t.staticPolicyFact(tctx, ipAddress, settings)
+}
+
+func (t *tolerateImpl) policySettingsForIP(ipAddress string) policySettings {
+	bruteForce := t.deps.cfg.GetBruteForce()
+	settings := policySettings{
+		ttl:        bruteForce.GetTolerateTTL(),
+		scale:      bruteForce.GetScaleFactor(),
+		percent:    t.pctTolerated,
+		minPercent: bruteForce.GetMinToleratePercent(),
+		maxPercent: bruteForce.GetMaxToleratePercent(),
+		adaptive:   bruteForce.GetAdaptiveToleration(),
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	for _, customTolerate := range t.customTolerates {
 		if !t.findIP(customTolerate.IPAddress, ipAddress) {
 			continue
 		}
 
-		tolerateTTL = customTolerate.TolerateTTL
-		pctTolerated = customTolerate.ToleratePercent
+		settings.ttl = customTolerate.TolerateTTL
+		settings.percent = customTolerate.ToleratePercent
+		settings.custom = true
+		settings.adaptive = customTolerate.AdaptiveToleration
 
-		// If custom toleration has adaptive settings, use them
 		if customTolerate.AdaptiveToleration {
-			adaptiveToleration = true
-
-			if customTolerate.MinToleratePercent > 0 {
-				minToleratePercent = customTolerate.MinToleratePercent
-			}
-
-			if customTolerate.MaxToleratePercent > 0 {
-				maxToleratePercent = customTolerate.MaxToleratePercent
-			}
-
-			if customTolerate.ScaleFactor > 0 {
-				scaleFactor = customTolerate.ScaleFactor
-			}
-		} else {
-			// If custom toleration explicitly disables adaptive, respect that
-			adaptiveToleration = false
+			settings.minPercent = customTolerate.GetMinToleratePercent()
+			settings.maxPercent = customTolerate.GetMaxToleratePercent()
+			settings.scale = customTolerate.GetScaleFactor()
 		}
 
 		break
 	}
 
-	if tolerateTTL == 0 {
-		return false
+	return settings
+}
+
+func (t *tolerateImpl) adaptivePolicyFact(
+	ctx context.Context,
+	ipAddress string,
+	settings policySettings,
+) (PolicyFact, bool) {
+	resultArray, ok := t.adaptiveTolerationResult(ctx, ipAddress, settings)
+	if !ok {
+		return PolicyFact{}, false
 	}
 
-	redisKey := t.getRedisKey(ipAddress)
+	return t.adaptivePolicyFactFromResult(ctx, ipAddress, settings, resultArray), true
+}
 
-	// If adaptive toleration is enabled, use the Lua script to calculate
-	if adaptiveToleration {
-		adaptiveEnabled := 1
-
-		// Execute the adaptive toleration calculation script
-		stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, t.deps.cfg)
-		resultAny, err, _ := t.sg.Do("tol:"+redisKey, func() (any, error) {
-			defer cancel()
-
-			return rediscli.ExecuteScript(
-				dCtx,
-				t.effectiveRedis(),
-				"CalculateAdaptiveToleration",
-				rediscli.LuaScripts["CalculateAdaptiveToleration"],
-				[]string{redisKey},
-				minToleratePercent,
-				maxToleratePercent,
-				scaleFactor,
-				pctTolerated,
-				adaptiveEnabled,
-			)
-		})
-
-		result := resultAny
-
-		if err != nil {
-			t.logRedisError(t.deps.logger, ipAddress, err)
-			// Fall back to standard calculation if script fails
-		} else {
-			if arr, ok := result.([]any); ok {
-				resultArray := make([]int64, len(arr))
-
-				for i, v := range arr {
-					if n, ok := v.(int64); ok {
-						resultArray[i] = n
-					} else {
-						resultArray[i] = 0
-					}
-				}
-
-				if len(resultArray) == 5 {
-					calculatedPct := resultArray[0]
-					maxNegative := resultArray[1]
-					positive = resultArray[2]
-					negative = resultArray[3]
-					adaptiveUsed := resultArray[4]
-
-					adaptiveStr := "static"
-					if adaptiveUsed == 1 {
-						adaptiveStr = "adaptive"
-					}
-
-					// If there are no positives, do not tolerate
-					if positive == 0 {
-						t.logDbgTolerate(ctx, ipAddress, positive, negative, 0, uint8(calculatedPct), adaptiveStr)
-
-						return false
-					}
-
-					// Store in L1 cache
-					l1.GetEngine().SetReputation(ctx, l1.KeyReputation(ipAddress), l1.L1Reputation{
-						Positive: positive,
-						Negative: negative,
-					}, 0)
-
-					t.logDbgTolerate(
-						ctx,
-						ipAddress,
-						positive,
-						negative,
-						maxNegative,
-						uint8(calculatedPct),
-						adaptiveStr,
-					)
-
-					return negative <= maxNegative
-				}
-			}
-		}
+func (t *tolerateImpl) adaptivePolicyFactFromResult(
+	ctx context.Context,
+	ipAddress string,
+	settings policySettings,
+	resultArray []int64,
+) PolicyFact {
+	calculatedPct := uint8(resultArray[0])
+	maxNegative := resultArray[1]
+	positive := resultArray[2]
+	negative := resultArray[3]
+	mode := "static"
+	if resultArray[4] == 1 {
+		mode = "adaptive"
 	}
 
-	// Fall back to standard calculation if adaptive is disabled or script failed
-	ipMap := t.GetTolerateMap(tctx, ipAddress)
-
-	if positive, okay = ipMap["positive"]; !okay {
-		positive = 0
+	fact := PolicyFact{
+		TTL:         settings.ttl,
+		Mode:        mode,
+		Positive:    positive,
+		Negative:    negative,
+		MaxNegative: maxNegative,
+		Percent:     calculatedPct,
+		Custom:      settings.custom,
 	}
 
 	if positive == 0 {
-		return false
+		t.logDbgTolerate(ctx, ipAddress, positive, negative, 0, calculatedPct, mode)
+
+		return fact
 	}
 
-	if negative, okay = ipMap["negative"]; !okay {
-		negative = 0
+	l1.GetEngine().SetReputation(ctx, l1.KeyReputation(ipAddress), l1.L1Reputation{
+		Positive: positive,
+		Negative: negative,
+	}, 0)
+
+	fact.Active = negative <= maxNegative
+	t.logDbgTolerate(ctx, ipAddress, positive, negative, maxNegative, calculatedPct, mode)
+
+	return fact
+}
+
+func (t *tolerateImpl) adaptiveTolerationResult(
+	ctx context.Context,
+	ipAddress string,
+	settings policySettings,
+) ([]int64, bool) {
+	redisKey := t.getRedisKey(ipAddress)
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, t.deps.cfg)
+	resultAny, err, _ := t.sg.Do("tol:"+redisKey, func() (any, error) {
+		return rediscli.ExecuteScript(
+			dCtx,
+			t.effectiveRedis(),
+			"CalculateAdaptiveToleration",
+			rediscli.LuaScripts["CalculateAdaptiveToleration"],
+			[]string{redisKey},
+			settings.minPercent,
+			settings.maxPercent,
+			settings.scale,
+			settings.percent,
+			1,
+		)
+	})
+	cancel()
+
+	if err != nil {
+		t.logRedisError(t.deps.logger, ipAddress, err)
+
+		return nil, false
 	}
 
-	maxNegative := (int64(pctTolerated) * positive) / 100
+	return tolerateResultArray(resultAny)
+}
 
-	t.logDbgTolerate(
-		ctx,
-		ipAddress,
-		positive,
-		negative,
-		maxNegative,
-		pctTolerated,
-		"static",
-	)
+func tolerateResultArray(result any) ([]int64, bool) {
+	arr, ok := result.([]any)
+	if !ok || len(arr) != 5 {
+		return nil, false
+	}
 
-	return negative <= maxNegative
+	resultArray := make([]int64, len(arr))
+	for i, v := range arr {
+		if n, ok := v.(int64); ok {
+			resultArray[i] = n
+		}
+	}
+
+	return resultArray, true
+}
+
+func (t *tolerateImpl) staticPolicyFact(
+	ctx context.Context,
+	ipAddress string,
+	settings policySettings,
+) PolicyFact {
+	ipMap := t.GetTolerateMap(ctx, ipAddress)
+	positive := ipMap["positive"]
+	negative := ipMap["negative"]
+	maxNegative := (int64(settings.percent) * positive) / 100
+
+	fact := PolicyFact{
+		TTL:         settings.ttl,
+		Mode:        "static",
+		Positive:    positive,
+		Negative:    negative,
+		MaxNegative: maxNegative,
+		Percent:     settings.percent,
+		Custom:      settings.custom,
+	}
+
+	if positive == 0 {
+		return fact
+	}
+
+	fact.Active = negative <= maxNegative
+	t.logDbgTolerate(ctx, ipAddress, positive, negative, maxNegative, settings.percent, "static")
+
+	return fact
 }
 
 // StartHouseKeeping initiates a periodic cleanup process to remove expired tolerance data for IP addresses from Redis.

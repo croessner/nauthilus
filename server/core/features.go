@@ -202,26 +202,54 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 	}
 
 	username := a.handleMasterUserMode()
+	fact := a.relayDomainPolicyFact(username, relayDomains, false)
+	a.Runtime.RelayDomainPolicy = fact
 
-	if strings.Contains(username, "@") {
-		split := strings.Split(username, "@")
-		if len(split) != 2 {
-			return
-		}
-
-		for _, domain := range relayDomains.StaticDomains {
-			if strings.EqualFold(domain, split[1]) {
-				return
-			}
-		}
-
-		a.logAddMessage(fmt.Sprintf("%s not our domain", split[1]), definitions.FeatureRelayDomains)
+	if fact.Rejected {
+		a.logAddMessage(fmt.Sprintf("%s not our domain", fact.Value), definitions.FeatureRelayDomains)
 		a.updateLuaContext(definitions.FeatureRelayDomains)
 
 		triggered = true
 	}
 
 	return
+}
+
+func (a *AuthState) relayDomainPolicyFact(
+	username string,
+	relayDomains *config.RelayDomainsSection,
+	softAllowlisted bool,
+) RelayDomainPolicyFact {
+	fact := RelayDomainPolicyFact{SoftAllowlisted: softAllowlisted}
+	if relayDomains == nil {
+		return fact
+	}
+
+	staticDomains := relayDomains.GetStaticDomains()
+	fact.ConfiguredCount = len(staticDomains)
+
+	domain, present := usernameDomain(username)
+	fact.Value = domain
+	fact.Present = present
+	if !present {
+		return fact
+	}
+
+	for _, configuredDomain := range staticDomains {
+		if !strings.EqualFold(configuredDomain, domain) {
+			continue
+		}
+
+		fact.Known = true
+		fact.StaticMatch = true
+		fact.MatchedDomain = configuredDomain
+
+		return fact
+	}
+
+	fact.Rejected = !softAllowlisted
+
+	return fact
 }
 
 // FeatureRBLs is a method that checks if the client IP address is whitelisted, and then performs an RBL check
@@ -233,6 +261,11 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
+	a.Runtime.RBLPolicy = RBLPolicyFact{
+		Threshold: rbls.GetThreshold(),
+		ListCount: len(rbls.GetLists()),
+	}
+
 	if isLocalOrEmptyIP(a.Request.ClientIP) {
 		a.logAddLocalhost(definitions.FeatureRBL)
 
@@ -241,6 +274,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 
 	if util.IsInNetworkWithCfg(ctx.Request.Context(), a.Cfg(), a.Logger(), rbls.GetIPWhiteList(), a.Runtime.GUID, a.Request.ClientIP) {
 		a.logAddMessage(definitions.Whitelisted, definitions.FeatureRBL)
+		a.Runtime.RBLPolicy.IPAllowlisted = true
 
 		return
 	}
@@ -274,7 +308,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	}
 
 	if svc := GetRBLService(); svc != nil {
-		score, e := svc.Score(ctx, a.View())
+		score, e := a.scoreRBLService(ctx, svc)
 		if e != nil {
 			rsp.RecordError(e)
 			rsp.End()
@@ -298,6 +332,21 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	rsp.End()
 
 	return false, nil
+}
+
+func (a *AuthState) scoreRBLService(ctx *gin.Context, svc RBLService) (int, error) {
+	if factService, ok := svc.(RBLFactService); ok {
+		fact, err := factService.ScoreWithFacts(ctx, a.View())
+		a.Runtime.RBLPolicy = fact
+
+		return fact.Score, err
+	}
+
+	score, err := svc.Score(ctx, a.View())
+	a.Runtime.RBLPolicy.Score = score
+	a.Runtime.RBLPolicy.Threshold = svc.Threshold()
+
+	return score, err
 }
 
 // logFeatureWhitelisting appends the given feature name and a soft whitelisted message to the additional logs of AuthState.
@@ -419,7 +468,14 @@ func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) 
 		}
 	}
 
-	a.checkFeatureWithWhitelist(definitions.FeatureRelayDomains, isWhitelisted, checkFunc)
+	if a.cfg().ShouldRunFeature(definitions.FeatureRelayDomains, a.Request.NoAuth) {
+		if isWhitelisted() {
+			a.logFeatureWhitelisting(definitions.FeatureRelayDomains)
+			a.Runtime.RelayDomainPolicy = a.relayDomainPolicyFact(a.handleMasterUserMode(), a.cfg().GetRelayDomains(), true)
+		} else {
+			checkFunc()
+		}
+	}
 
 	return
 }
@@ -461,7 +517,21 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 		a.processFeatureAction(ctx, definitions.FeatureRBL, definitions.LuaActionRBL, definitions.LuaActionRBLName)
 	}
 
-	a.checkFeatureWithWhitelist(definitions.FeatureRBL, isWhitelisted, checkFunc)
+	if a.cfg().ShouldRunFeature(definitions.FeatureRBL, a.Request.NoAuth) {
+		if isWhitelisted() {
+			a.logFeatureWhitelisting(definitions.FeatureRBL)
+			rbls := a.cfg().GetRBLs()
+			if rbls != nil {
+				a.Runtime.RBLPolicy = RBLPolicyFact{
+					Threshold:       rbls.GetThreshold(),
+					ListCount:       len(rbls.GetLists()),
+					SoftAllowlisted: true,
+				}
+			}
+		} else {
+			checkFunc()
+		}
+	}
 
 	return
 }

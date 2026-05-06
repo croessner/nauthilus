@@ -370,6 +370,15 @@ func TestBruteForceLogic(t *testing.T) {
 
 		assert.False(t, withError)
 		assert.True(t, ruleTriggered)
+		facts := bm.GetBucketPolicyFacts()
+		if assert.Len(t, facts, 1) {
+			assert.True(t, facts[0].Matched)
+			assert.Equal(t, "testbucket", facts[0].Name)
+			assert.Equal(t, float64(15), facts[0].Count)
+			assert.Equal(t, float64(4), facts[0].EffectiveLimit)
+			assert.True(t, facts[0].OverLimit)
+			assert.True(t, facts[0].Repeating)
+		}
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

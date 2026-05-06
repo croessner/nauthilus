@@ -78,6 +78,54 @@ const (
 	// AttributeBruteForceTriggered stores whether brute-force matched.
 	AttributeBruteForceTriggered = "auth.brute_force.triggered"
 
+	// AttributeBruteForceRepeating stores whether brute-force matched a repeating state.
+	AttributeBruteForceRepeating = "auth.brute_force.repeating"
+
+	// AttributeBruteForceRWPActive stores whether repeating-wrong-password protection is active.
+	AttributeBruteForceRWPActive = "auth.brute_force.rwp.active"
+
+	// AttributeBruteForceRWPEnforceBucketUpdate stores whether the request should update bucket counters.
+	AttributeBruteForceRWPEnforceBucketUpdate = "auth.brute_force.rwp.enforce_bucket_update"
+
+	// AttributeBruteForceTolerationActive stores whether brute-force toleration currently applies.
+	AttributeBruteForceTolerationActive = "auth.brute_force.toleration.active"
+
+	// AttributeBruteForceTolerationMode stores the toleration calculation mode.
+	AttributeBruteForceTolerationMode = "auth.brute_force.toleration.mode"
+
+	// AttributeBruteForceTolerationCustom stores whether a custom toleration matched the request IP.
+	AttributeBruteForceTolerationCustom = "auth.brute_force.toleration.custom"
+
+	// AttributeBruteForceTolerationPositive stores the positive reputation counter.
+	AttributeBruteForceTolerationPositive = "auth.brute_force.toleration.positive"
+
+	// AttributeBruteForceTolerationNegative stores the negative reputation counter.
+	AttributeBruteForceTolerationNegative = "auth.brute_force.toleration.negative"
+
+	// AttributeBruteForceTolerationMaxNegative stores the tolerated negative counter limit.
+	AttributeBruteForceTolerationMaxNegative = "auth.brute_force.toleration.max_negative"
+
+	// AttributeBruteForceTolerationPercent stores the effective tolerated percentage.
+	AttributeBruteForceTolerationPercent = "auth.brute_force.toleration.percent"
+
+	// AttributeBruteForceTolerationTTLSeconds stores the effective toleration TTL in seconds.
+	AttributeBruteForceTolerationTTLSeconds = "auth.brute_force.toleration.ttl_seconds"
+
+	// AttributeBruteForceTolerationSuppressedBlock stores whether toleration suppressed a brute-force block.
+	AttributeBruteForceTolerationSuppressedBlock = "auth.brute_force.toleration.suppressed_block"
+
+	// AttributeBruteForceBucketMatchedCount stores the number of buckets matching the request context.
+	AttributeBruteForceBucketMatchedCount = "auth.brute_force.bucket.matched_count"
+
+	// AttributeBruteForceBucketTriggeredCount stores the number of buckets in a triggered state.
+	AttributeBruteForceBucketTriggeredCount = "auth.brute_force.bucket.triggered_count"
+
+	// AttributeBruteForceBucketMaxCount stores the highest observed bucket counter.
+	AttributeBruteForceBucketMaxCount = "auth.brute_force.bucket.max_count"
+
+	// AttributeBruteForceBucketMaxRatio stores the highest observed bucket fill ratio.
+	AttributeBruteForceBucketMaxRatio = "auth.brute_force.bucket.max_ratio"
+
 	// AttributeBruteForceError stores a modeled brute-force error.
 	AttributeBruteForceError = "auth.brute_force.error"
 
@@ -90,11 +138,53 @@ const (
 	// AttributeRelayDomainKnown stores whether a relay domain is configured.
 	AttributeRelayDomainKnown = "auth.relay_domain.known"
 
+	// AttributeRelayDomainValue stores the parsed relay-domain value.
+	AttributeRelayDomainValue = "auth.relay_domain.value"
+
+	// AttributeRelayDomainRejected stores whether relay-domain evaluation rejected the request.
+	AttributeRelayDomainRejected = "auth.relay_domain.rejected"
+
+	// AttributeRelayDomainStaticMatch stores whether a configured static relay domain matched.
+	AttributeRelayDomainStaticMatch = "auth.relay_domain.static_match"
+
+	// AttributeRelayDomainSoftAllowlisted stores whether relay-domain evaluation was soft-allowlisted.
+	AttributeRelayDomainSoftAllowlisted = "auth.relay_domain.soft_allowlisted"
+
+	// AttributeRelayDomainConfiguredCount stores the number of configured static relay domains.
+	AttributeRelayDomainConfiguredCount = "auth.relay_domain.configured_count"
+
 	// AttributeRelayDomainError stores a modeled relay-domain error.
 	AttributeRelayDomainError = "auth.relay_domain.error"
 
 	// AttributeRBLThresholdReached stores whether RBL threshold matched.
 	AttributeRBLThresholdReached = "auth.rbl.threshold_reached"
+
+	// AttributeRBLScore stores the aggregate RBL score.
+	AttributeRBLScore = "auth.rbl.score"
+
+	// AttributeRBLThreshold stores the configured RBL threshold.
+	AttributeRBLThreshold = "auth.rbl.threshold"
+
+	// AttributeRBLMatchedCount stores the number of RBL lists that matched.
+	AttributeRBLMatchedCount = "auth.rbl.matched_count"
+
+	// AttributeRBLMatchedLists stores the names of matched RBL lists.
+	AttributeRBLMatchedLists = "auth.rbl.matched_lists"
+
+	// AttributeRBLListCount stores the number of configured RBL lists.
+	AttributeRBLListCount = "auth.rbl.list_count"
+
+	// AttributeRBLAllowFailureErrorCount stores allowed RBL lookup error count.
+	AttributeRBLAllowFailureErrorCount = "auth.rbl.allow_failure_error_count"
+
+	// AttributeRBLEffectiveError stores whether an RBL error affects the decision.
+	AttributeRBLEffectiveError = "auth.rbl.effective_error"
+
+	// AttributeRBLSoftAllowlisted stores whether RBL evaluation was soft-allowlisted.
+	AttributeRBLSoftAllowlisted = "auth.rbl.soft_allowlisted"
+
+	// AttributeRBLIPAllowlisted stores whether the client IP was RBL-allowlisted.
+	AttributeRBLIPAllowlisted = "auth.rbl.ip_allowlisted"
 
 	// AttributeRBLError stores a modeled RBL error.
 	AttributeRBLError = "auth.rbl.error"

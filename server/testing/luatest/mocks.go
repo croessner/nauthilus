@@ -20,6 +20,7 @@ import (
 	"fmt"
 	stdhttp "net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -72,12 +73,31 @@ func LoaderModContextMock(mockData *ContextMock) lua.LGFunction {
 	}
 }
 
-// LoaderModPolicyMock creates a no-op nauthilus_policy module for fixture tests.
-func LoaderModPolicyMock() lua.LGFunction {
+// LoaderModPolicyMock creates a fixture-aware nauthilus_policy module.
+func LoaderModPolicyMock(mockData *PolicyMock) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.NewTable()
 		L.SetFuncs(mod, map[string]lua.LGFunction{
-			definitions.LuaFnPolicyEmitAttribute: func(_ *lua.LState) int {
+			definitions.LuaFnPolicyEmitAttribute: func(L *lua.LState) int {
+				table := L.CheckTable(1)
+				emission := policyEmissionFromTable(table)
+				if emission.ID == "" {
+					L.ArgError(1, "id must be a non-empty string")
+
+					return 0
+				}
+
+				args := policyEmissionArgs(emission)
+				if err := mockData.RecordCall(definitions.LuaFnPolicyEmitAttribute, args); err != nil {
+					L.RaiseError("%s", err.Error())
+
+					return 0
+				}
+
+				if mockData != nil {
+					mockData.Emitted = append(mockData.Emitted, emission)
+				}
+
 				return 0
 			},
 		})
@@ -85,6 +105,73 @@ func LoaderModPolicyMock() lua.LGFunction {
 
 		return 1
 	}
+}
+
+func policyEmissionFromTable(table *lua.LTable) PolicyEmission {
+	emission := PolicyEmission{
+		ID:      strings.TrimSpace(luaValueString(table.RawGetString("id"))),
+		Value:   luaValueString(table.RawGetString("value")),
+		Details: map[string]string{},
+	}
+
+	if detailsTable, ok := table.RawGetString("details").(*lua.LTable); ok {
+		detailsTable.ForEach(func(key lua.LValue, value lua.LValue) {
+			emission.Details[key.String()] = luaValueString(value)
+		})
+	}
+
+	if len(emission.Details) == 0 {
+		emission.Details = nil
+	}
+
+	return emission
+}
+
+func policyEmissionArgs(emission PolicyEmission) string {
+	parts := []string{
+		"id=" + emission.ID,
+		"value=" + emission.Value,
+	}
+
+	keys := make([]string, 0, len(emission.Details))
+	for key := range emission.Details {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		parts = append(parts, "details."+key+"="+emission.Details[key])
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func luaValueString(value lua.LValue) string {
+	switch typed := value.(type) {
+	case lua.LBool:
+		return strconv.FormatBool(bool(typed))
+	case lua.LNumber:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 64)
+	case lua.LString:
+		return string(typed)
+	case *lua.LTable:
+		return luaTableString(typed)
+	default:
+		if value == nil || value == lua.LNil {
+			return ""
+		}
+
+		return value.String()
+	}
+}
+
+func luaTableString(table *lua.LTable) string {
+	values := make([]string, 0, table.Len())
+	table.ForEach(func(_ lua.LValue, value lua.LValue) {
+		values = append(values, luaValueString(value))
+	})
+
+	return strings.Join(values, ",")
 }
 
 // LoaderModLDAPMock creates a mock nauthilus_ldap module.
@@ -2269,6 +2356,13 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	}
 	cleanupFns = append(cleanupFns, redisRuntime.Close)
 
+	policyMock := mockData.Policy
+	if policyMock == nil {
+		policyMock = &PolicyMock{}
+	}
+	mockData.Policy = policyMock
+	policyMock.ResetRuntimeState()
+
 	ldapMock := mockData.LDAP
 	if ldapMock == nil {
 		ldapMock = &LDAPMock{}
@@ -2430,7 +2524,7 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	L.PreloadModule(definitions.LuaBackendResultTypeName, LoaderModBackendResultMock(backendResultMock))
 	L.PreloadModule(definitions.LuaModHTTPRequest, LoaderModHTTPRequestMock(httpRequestMock))
 	L.PreloadModule(definitions.LuaModHTTPResponse, LoaderModHTTPResponseMock(httpResponseMock))
-	L.PreloadModule(definitions.LuaModPolicy, LoaderModPolicyMock())
+	L.PreloadModule(definitions.LuaModPolicy, LoaderModPolicyMock(policyMock))
 	L.PreloadModule(definitions.LuaModLDAP, LoaderModLDAPMock(ldapMock))
 	L.PreloadModule(definitions.LuaModDNS, LoaderModDNSMock(dnsMock))
 	L.PreloadModule(definitions.LuaModPrometheus, LoaderModPrometheusMock(prometheusMock))

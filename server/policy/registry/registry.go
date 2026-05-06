@@ -83,6 +83,22 @@ const (
 	SourceLua AttributeSource = "lua"
 )
 
+const (
+	// DetailSensitivityPublic marks detail values safe for selected public output.
+	DetailSensitivityPublic = "public"
+
+	// DetailSensitivityInternal marks detail values for internal diagnostics.
+	DetailSensitivityInternal = "internal"
+
+	// DetailSensitivitySecret marks detail values that must never be exposed.
+	DetailSensitivitySecret = "secret"
+)
+
+const (
+	// DetailPurposeResponseMessage marks details suitable as response-message sources.
+	DetailPurposeResponseMessage = "response_message"
+)
+
 // DetailDefinition describes a typed attribute detail.
 type DetailDefinition struct {
 	Type        AttributeType

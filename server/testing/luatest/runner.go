@@ -140,6 +140,12 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 				return nil
 			},
 			func() error {
+				if tr.mockData.Policy != nil {
+					return tr.mockData.Policy.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
 				if tr.mockData.LDAP != nil {
 					return tr.mockData.LDAP.ValidateComplete()
 				}

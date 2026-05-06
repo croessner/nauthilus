@@ -70,3 +70,9 @@ type RBLService interface {
 	// Threshold returns the configured threshold at which a feature is triggered.
 	Threshold() int
 }
+
+// RBLFactService computes the aggregated RBL score together with policy-visible facts.
+type RBLFactService interface {
+	// ScoreWithFacts computes the aggregated RBL score and returns the request-local policy facts.
+	ScoreWithFacts(ctx *gin.Context, view *StateView) (RBLPolicyFact, error)
+}
