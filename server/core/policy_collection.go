@@ -111,9 +111,13 @@ func (a *AuthState) policyAuthState() policycollection.AuthState {
 }
 
 func (a *AuthState) completePolicyStage(ctx *gin.Context, stage policy.Stage) {
-	if policyCtx := a.requestPolicyContext(ctx); policyCtx != nil {
-		policyCtx.CompleteStage(stage, a.policyAuthState())
+	policyCtx := a.requestPolicyContext(ctx)
+	if policyCtx == nil {
+		return
 	}
+
+	policyCtx.CompleteStage(stage, a.policyAuthState())
+	a.emitPolicyReport(ctx, policyCtx, stage)
 }
 
 func (a *AuthState) beginPolicyCheck(ctx *gin.Context, selector policycollection.CheckSelector) *policycollection.ActiveCheck {
