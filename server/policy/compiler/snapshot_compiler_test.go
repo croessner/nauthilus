@@ -32,9 +32,13 @@ import (
 const testRBLReturnCodeListed = "127.0.0.2"
 
 const (
-	testPolicyI18NKey          = "auth.policy.company.account_blocked"
-	testPolicyI18NFallback     = "Login failed because the account is locked."
-	testPolicyResponseLanguage = "de"
+	testPolicyI18NKey            = "auth.policy.company.account_blocked"
+	testPolicyI18NFallback       = "Login failed because the account is locked."
+	testPolicyResponseLanguage   = "de"
+	testRequestHeaderName        = "X-Company-Domain"
+	testRequestMetadataKey       = "x-company-domain"
+	testRequestHeaderAttribute   = "request.header.company_domain"
+	testRequestMetadataAttribute = "request.metadata.company_domain"
 )
 
 func TestCompilerBuildsSnapshotFromConfiguredPolicy(t *testing.T) {
@@ -139,6 +143,21 @@ func TestCompilerAcceptsI18NResponseMessageAndResponseLanguage(t *testing.T) {
 	}
 }
 
+func TestCompilerRegistersRequestHeaderAndMetadataAttributes(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	addRequestAttributeConfigs(cfg)
+	addRequestAttributeLanguagePolicies(cfg)
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	assertRequestAttributeDefinition(t, snapshot, testRequestHeaderAttribute)
+	assertRequestAttributeDefinition(t, snapshot, testRequestMetadataAttribute)
+	assertRequestAttributePlans(t, snapshot)
+}
+
 func TestCompilerRejectsInvalidI18NResponseMessage(t *testing.T) {
 	testCases := map[string]invalidPolicyOutputTestCase{
 		"i18n without key": {
@@ -201,6 +220,40 @@ func TestCompilerRejectsInvalidResponseLanguage(t *testing.T) {
 				}
 			},
 			wantErr: "auth.policy.policies[0].then.response_language.attribute",
+		},
+	}
+
+	runInvalidPolicyOutputTestCases(t, testCases)
+}
+
+func TestCompilerRejectsInvalidRequestAttributeAllowlists(t *testing.T) {
+	testCases := map[string]invalidPolicyOutputTestCase{
+		"duplicate request attribute id": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.RequestHeaders = []config.PolicyRequestHeaderAttributeConfig{
+					{Header: testRequestHeaderName, Attribute: testRequestHeaderAttribute, Visibility: requestAttributeVisibility},
+				}
+				cfg.Auth.Policy.RequestMetadata = []config.PolicyRequestMetadataAttributeConfig{
+					{Key: testRequestMetadataKey, Attribute: testRequestHeaderAttribute, Visibility: requestAttributeVisibility},
+				}
+			},
+			wantErr: "auth.policy.request_metadata[0].attribute",
+		},
+		"unsafe header attribute id": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.RequestHeaders = []config.PolicyRequestHeaderAttributeConfig{
+					{Header: testRequestHeaderName, Attribute: policy.AttributeBackendTempFail, Visibility: requestAttributeVisibility},
+				}
+			},
+			wantErr: "auth.policy.request_headers[0].attribute",
+		},
+		"unsafe metadata key": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.RequestMetadata = []config.PolicyRequestMetadataAttributeConfig{
+					{Key: "Authorization", Attribute: testRequestMetadataAttribute, Visibility: requestAttributeVisibility},
+				}
+			},
+			wantErr: "auth.policy.request_metadata[0].key",
 		},
 	}
 
@@ -754,6 +807,99 @@ func TestCompilerLeavesStoreUnchangedWhenCandidateFails(t *testing.T) {
 
 	if active.Generation != 7 {
 		t.Fatalf("active generation = %d, want 7", active.Generation)
+	}
+}
+
+func addRequestAttributeConfigs(cfg *config.FileSettings) {
+	cfg.Auth.Policy.RequestHeaders = []config.PolicyRequestHeaderAttributeConfig{
+		{
+			Header:     testRequestHeaderName,
+			Attribute:  testRequestHeaderAttribute,
+			Visibility: requestAttributeVisibility,
+			Normalize:  requestAttributeNormalizeConfig(),
+		},
+	}
+	cfg.Auth.Policy.RequestMetadata = []config.PolicyRequestMetadataAttributeConfig{
+		{
+			Key:        testRequestMetadataKey,
+			Attribute:  testRequestMetadataAttribute,
+			Visibility: requestAttributeVisibility,
+			Normalize:  requestAttributeNormalizeConfig(),
+		},
+	}
+}
+
+func requestAttributeNormalizeConfig() config.PolicyRequestAttributeNormalizeConfig {
+	return config.PolicyRequestAttributeNormalizeConfig{
+		Trim:      true,
+		Case:      requestAttributeCaseLower,
+		MaxLength: 64,
+	}
+}
+
+func addRequestAttributeLanguagePolicies(cfg *config.FileSettings) {
+	cfg.Auth.Policy.Policies = append(
+		cfg.Auth.Policy.Policies,
+		requestAttributeLanguagePolicy("company_header_language", testRequestHeaderAttribute, "companyde", "de"),
+		requestAttributeLanguagePolicy("company_metadata_language", testRequestMetadataAttribute, "companyfr", "fr"),
+	)
+}
+
+func requestAttributeLanguagePolicy(name string, attribute string, value string, language string) config.PolicyRuleConfig {
+	return config.PolicyRuleConfig{
+		Name:  name,
+		Stage: string(policy.StageAuthDecision),
+		If:    config.PolicyConditionConfig{Attribute: attribute, Eq: value},
+		Then: config.PolicyThenConfig{
+			Decision:        string(policy.DecisionDeny),
+			ResponseMarker:  policy.ResponseMarkerFail,
+			ResponseMessage: requestAttributeI18NResponseMessage(),
+			ResponseLanguage: config.PolicyResponseLanguageConfig{
+				From:     policy.ResponseSourceLiteral,
+				Language: language,
+			},
+		},
+	}
+}
+
+func requestAttributeI18NResponseMessage() config.PolicyResponseMessageConfig {
+	return config.PolicyResponseMessageConfig{
+		From:     policy.ResponseSourceI18N,
+		I18NKey:  testPolicyI18NKey,
+		Fallback: testPolicyI18NFallback,
+	}
+}
+
+func assertRequestAttributeDefinition(t *testing.T, snapshot *policyruntime.Snapshot, attributeID string) {
+	t.Helper()
+
+	definition, ok := snapshot.AttributeRegistry[attributeID]
+	if !ok {
+		t.Fatalf("request attribute %q missing", attributeID)
+	}
+
+	if definition.Type != policyregistry.AttributeTypeString {
+		t.Fatalf("request attribute type = %q, want string", definition.Type)
+	}
+
+	if definition.Stage != policy.StagePreAuth {
+		t.Fatalf("request attribute stage = %q, want pre_auth", definition.Stage)
+	}
+
+	if definition.Category != policyregistry.AttributeCategoryEnvironment {
+		t.Fatalf("request attribute category = %q, want environment", definition.Category)
+	}
+}
+
+func assertRequestAttributePlans(t *testing.T, snapshot *policyruntime.Snapshot) {
+	t.Helper()
+
+	if len(snapshot.RequestAttributes.Headers) != 1 {
+		t.Fatalf("header request attributes = %d, want 1", len(snapshot.RequestAttributes.Headers))
+	}
+
+	if len(snapshot.RequestAttributes.Metadata) != 1 {
+		t.Fatalf("metadata request attributes = %d, want 1", len(snapshot.RequestAttributes.Metadata))
 	}
 }
 

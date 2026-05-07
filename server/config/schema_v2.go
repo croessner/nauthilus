@@ -351,16 +351,18 @@ type AuthServicesSection struct {
 
 // AuthPolicySection configures the declarative auth decision compiler.
 type AuthPolicySection struct {
-	Sets              PolicySetsConfig              `mapstructure:"sets" validate:"omitempty"`
-	Report            PolicyReportConfig            `mapstructure:"report" validate:"omitempty"`
-	AttributeSources  PolicyAttributeSourcesConfig  `mapstructure:"attribute_sources" validate:"omitempty"`
-	ObligationTargets PolicyObligationTargetsConfig `mapstructure:"obligation_targets" validate:"omitempty"`
-	Mode              string                        `mapstructure:"mode" validate:"omitempty,oneof=enforce observe"`
-	DefaultPolicy     string                        `mapstructure:"default_policy" validate:"omitempty,printascii"`
-	RegistryScripts   []string                      `mapstructure:"registry_scripts" validate:"omitempty,dive,file"`
-	AttributeExports  []PolicyAttributeExportConfig `mapstructure:"attribute_exports" validate:"omitempty,dive"`
-	Checks            []PolicyCheckConfig           `mapstructure:"checks" validate:"omitempty,dive"`
-	Policies          []PolicyRuleConfig            `mapstructure:"policies" validate:"omitempty,dive"`
+	Sets              PolicySetsConfig                       `mapstructure:"sets" validate:"omitempty"`
+	Report            PolicyReportConfig                     `mapstructure:"report" validate:"omitempty"`
+	AttributeSources  PolicyAttributeSourcesConfig           `mapstructure:"attribute_sources" validate:"omitempty"`
+	ObligationTargets PolicyObligationTargetsConfig          `mapstructure:"obligation_targets" validate:"omitempty"`
+	Mode              string                                 `mapstructure:"mode" validate:"omitempty,oneof=enforce observe"`
+	DefaultPolicy     string                                 `mapstructure:"default_policy" validate:"omitempty,printascii"`
+	RegistryScripts   []string                               `mapstructure:"registry_scripts" validate:"omitempty,dive,file"`
+	RequestHeaders    []PolicyRequestHeaderAttributeConfig   `mapstructure:"request_headers" validate:"omitempty,dive"`
+	RequestMetadata   []PolicyRequestMetadataAttributeConfig `mapstructure:"request_metadata" validate:"omitempty,dive"`
+	AttributeExports  []PolicyAttributeExportConfig          `mapstructure:"attribute_exports" validate:"omitempty,dive"`
+	Checks            []PolicyCheckConfig                    `mapstructure:"checks" validate:"omitempty,dive"`
+	Policies          []PolicyRuleConfig                     `mapstructure:"policies" validate:"omitempty,dive"`
 }
 
 func defaultAuthPolicySection() AuthPolicySection {
@@ -444,6 +446,29 @@ type PolicyReportConfig struct {
 	IncludeFSM        bool `mapstructure:"include_fsm"`
 	IncludeChecks     bool `mapstructure:"include_checks"`
 	IncludeAttributes bool `mapstructure:"include_attributes"`
+}
+
+// PolicyRequestHeaderAttributeConfig exposes one allowlisted HTTP request header as a policy fact.
+type PolicyRequestHeaderAttributeConfig struct {
+	Normalize  PolicyRequestAttributeNormalizeConfig `mapstructure:"normalize" validate:"omitempty"`
+	Header     string                                `mapstructure:"header" validate:"required,printascii"`
+	Attribute  string                                `mapstructure:"attribute" validate:"required,printascii"`
+	Visibility string                                `mapstructure:"visibility" validate:"omitempty,printascii"`
+}
+
+// PolicyRequestMetadataAttributeConfig exposes one allowlisted gRPC metadata key as a policy fact.
+type PolicyRequestMetadataAttributeConfig struct {
+	Normalize  PolicyRequestAttributeNormalizeConfig `mapstructure:"normalize" validate:"omitempty"`
+	Key        string                                `mapstructure:"key" validate:"required,printascii"`
+	Attribute  string                                `mapstructure:"attribute" validate:"required,printascii"`
+	Visibility string                                `mapstructure:"visibility" validate:"omitempty,printascii"`
+}
+
+// PolicyRequestAttributeNormalizeConfig configures deterministic request-attribute value normalization.
+type PolicyRequestAttributeNormalizeConfig struct {
+	Trim      bool   `mapstructure:"trim"`
+	Case      string `mapstructure:"case" validate:"omitempty,printascii"`
+	MaxLength int    `mapstructure:"max_length" validate:"omitempty,gte=0"`
 }
 
 // PolicyAttributeExportConfig exposes one backend AuthState attribute as an opt-in policy subject fact.

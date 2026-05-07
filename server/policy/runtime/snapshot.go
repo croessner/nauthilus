@@ -40,6 +40,7 @@ type Snapshot struct {
 	FSMEventRegistry   map[string]FSMEventDefinition
 	StagePlans         map[policy.Operation]map[policy.Stage]CompiledStagePlan
 	Sets               CompiledSets
+	RequestAttributes  RequestAttributeSettings
 	Report             ReportSettings
 	Mode               string
 	DefaultPolicy      string
@@ -61,6 +62,7 @@ func (s *Snapshot) Clone() *Snapshot {
 	cloned.FSMEventRegistry = cloneMap(s.FSMEventRegistry, cloneFSMEventDefinition)
 	cloned.StagePlans = cloneStagePlans(s.StagePlans)
 	cloned.Sets = s.Sets.Clone()
+	cloned.RequestAttributes = s.RequestAttributes.Clone()
 
 	return &cloned
 }
@@ -101,6 +103,41 @@ type ReportSettings struct {
 	IncludeFSM        bool
 	IncludeChecks     bool
 	IncludeAttributes bool
+}
+
+// RequestAttributeSettings contains allowlisted request inputs exposed as policy facts.
+type RequestAttributeSettings struct {
+	Headers  []RequestHeaderAttribute
+	Metadata []RequestMetadataAttribute
+}
+
+// Clone returns a detached copy of request attribute settings.
+func (s RequestAttributeSettings) Clone() RequestAttributeSettings {
+	return RequestAttributeSettings{
+		Headers:  cloneRequestAttributePlans(s.Headers),
+		Metadata: cloneRequestAttributePlans(s.Metadata),
+	}
+}
+
+// RequestHeaderAttribute contains one HTTP header-to-policy-attribute plan.
+type RequestHeaderAttribute struct {
+	Normalize RequestAttributeNormalization
+	Header    string
+	Attribute string
+}
+
+// RequestMetadataAttribute contains one gRPC metadata-to-policy-attribute plan.
+type RequestMetadataAttribute struct {
+	Normalize RequestAttributeNormalization
+	Key       string
+	Attribute string
+}
+
+// RequestAttributeNormalization describes deterministic request value normalization.
+type RequestAttributeNormalization struct {
+	Trim      bool
+	Case      string
+	MaxLength int
 }
 
 // CompiledSets contains reusable typed policy operands.
@@ -303,6 +340,10 @@ func cloneSliceMap[T any](input map[string][]T) map[string][]T {
 	}
 
 	return output
+}
+
+func cloneRequestAttributePlans[T RequestHeaderAttribute | RequestMetadataAttribute](input []T) []T {
+	return append([]T(nil), input...)
 }
 
 func cloneCheckTypeDefinition(definition CheckTypeDefinition) CheckTypeDefinition {

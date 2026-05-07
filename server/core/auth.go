@@ -349,6 +349,9 @@ type AuthRequest struct {
 	// HTTPClientRequest is the HTTP request being processed.
 	HTTPClientRequest *http.Request
 
+	// RequestMetadata contains incoming transport metadata such as gRPC metadata.
+	RequestMetadata map[string][]string
+
 	// Method is the authentication method.
 	Method string
 
@@ -4435,6 +4438,10 @@ func (a *AuthState) ApplyCredentials(c Credentials) {
 func (a *AuthState) ApplyContextData(x AuthContext) {
 	if a == nil {
 		return
+	}
+
+	if x.RequestMetadata != nil {
+		a.Request.RequestMetadata = cloneRequestMetadata(x.RequestMetadata)
 	}
 
 	// Field mappings for simple string assignments

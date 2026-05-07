@@ -77,6 +77,7 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 	policyCtx.RecordAttribute(policycollection.TimeAttribute(policy.AttributeRequestTime, policy.StagePreAuth, operation, time.Now()))
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestClientIP, policy.StagePreAuth, operation, a.Request.ClientIP))
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestProtocol, policy.StagePreAuth, operation, a.requestProtocol()))
+	a.recordRequestPolicyAttributes(policyCtx, ctx, operation, snapshot.RequestAttributes)
 	ctx.Set(policyCollectionContextKey, policyCtx)
 
 	return policyCtx

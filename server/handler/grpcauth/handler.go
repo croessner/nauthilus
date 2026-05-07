@@ -52,6 +52,7 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 
 	dto := authv1.AuthRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeAuthenticate, dto)
+	input = authInputWithIncomingMetadata(ctx, input)
 	dto.Password = ""
 
 	if request != nil {
@@ -81,6 +82,7 @@ func (h *Handler) LookupIdentity(
 
 	dto := authv1.LookupIdentityRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeLookupIdentity, dto)
+	input = authInputWithIncomingMetadata(ctx, input)
 
 	outcome, err := h.service.LookupIdentity(ctx, input)
 	if err != nil {
@@ -105,6 +107,7 @@ func (h *Handler) ListAccounts(
 
 	dto := authv1.ListAccountsRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeListAccounts, dto)
+	input = authInputWithIncomingMetadata(ctx, input)
 
 	outcome, err := h.service.ListAccounts(ctx, input)
 	if err != nil {
@@ -154,6 +157,26 @@ func setListAccountsHeaders(ctx context.Context, outcome *core.ListAccountsOutco
 	}
 
 	_ = grpc.SetHeader(ctx, metadata.Pairs(pairs...))
+}
+
+func authInputWithIncomingMetadata(ctx context.Context, input core.AuthInput) core.AuthInput {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok || len(md) == 0 {
+		return input
+	}
+
+	input.Context.RequestMetadata = cloneIncomingMetadata(md)
+
+	return input
+}
+
+func cloneIncomingMetadata(md metadata.MD) map[string][]string {
+	values := make(map[string][]string, len(md))
+	for key, entries := range md {
+		values[key] = append([]string(nil), entries...)
+	}
+
+	return values
 }
 
 func authOutcomeToProto(outcome *core.AuthOutcome) *authv1.AuthResponse {

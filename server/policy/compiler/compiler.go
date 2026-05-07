@@ -61,6 +61,7 @@ type compiledSnapshotParts struct {
 	obligations  map[string]policyruntime.EffectDefinition
 	advice       map[string]policyruntime.EffectDefinition
 	fsmEvents    map[string]policyruntime.FSMEventDefinition
+	requestAttrs policyruntime.RequestAttributeSettings
 }
 
 // NewCompiler returns the default policy snapshot compiler.
@@ -96,7 +97,7 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 	}
 
 	checkTypes := builtinCheckTypeRegistry()
-	attributes, checks, err := compileAttributeRegistry(ctx, file, policyConfig, checkTypes)
+	attributes, checks, requestAttrs, err := compileAttributeRegistry(ctx, file, policyConfig, checkTypes)
 	if err != nil {
 		return compiledSnapshotParts{}, err
 	}
@@ -135,6 +136,7 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 		obligations:  obligations,
 		advice:       advice,
 		fsmEvents:    fsmEvents,
+		requestAttrs: requestAttrs,
 	}, nil
 }
 
@@ -143,34 +145,39 @@ func compileAttributeRegistry(
 	file config.File,
 	policyConfig config.AuthPolicySection,
 	checkTypes map[string]policyruntime.CheckTypeDefinition,
-) (map[string]policyregistry.AttributeDefinition, []policyruntime.CompiledCheck, error) {
+) (map[string]policyregistry.AttributeDefinition, []policyruntime.CompiledCheck, policyruntime.RequestAttributeSettings, error) {
 	attributeRegistry, err := policyregistry.NewBuiltinAttributeRegistry()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
 	checks, err := compileChecks(policyConfig.Checks, checkTypes, attributeRegistry)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
 	if err := registerGeneratedBruteForceBucketAttributes(file, attributeRegistry); err != nil {
-		return nil, nil, err
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
 	if err := registerGeneratedRBLListAttributes(file, attributeRegistry); err != nil {
-		return nil, nil, err
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
 	if err := registerGeneratedSubjectAttributes(policyConfig.AttributeExports, attributeRegistry); err != nil {
-		return nil, nil, err
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
 	if err := runLuaRegistryScripts(ctx, policyConfig.RegistryScripts, attributeRegistry); err != nil {
-		return nil, nil, err
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
-	return attributeRegistry.Snapshot(), checks, nil
+	requestAttrs, err := registerRequestAttributes(policyConfig, attributeRegistry)
+	if err != nil {
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
+	}
+
+	return attributeRegistry.Snapshot(), checks, requestAttrs, nil
 }
 
 func (c *SnapshotCompiler) newSnapshot(generation uint64, parts compiledSnapshotParts) *policyruntime.Snapshot {
@@ -188,6 +195,7 @@ func (c *SnapshotCompiler) newSnapshot(generation uint64, parts compiledSnapshot
 		FSMEventRegistry:   parts.fsmEvents,
 		StagePlans:         parts.stagePlans,
 		Sets:               parts.sets,
+		RequestAttributes:  parts.requestAttrs,
 	}
 }
 

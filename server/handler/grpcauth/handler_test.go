@@ -25,6 +25,7 @@ import (
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -76,6 +77,33 @@ func TestHandlerAuthenticateConsumesApplicationService(t *testing.T) {
 
 	if response.GetAttributes()["ids"].GetValues()[1] != "2" {
 		t.Fatalf("ids attribute = %#v, want stringified values", response.GetAttributes()["ids"].GetValues())
+	}
+}
+
+func TestHandlerAuthenticatePassesIncomingMetadataToApplicationInput(t *testing.T) {
+	service := &recordingService{
+		authOutcome: &core.AuthOutcome{
+			Decision:   core.AuthDecisionOK,
+			Session:    "session-metadata",
+			HTTPStatus: 200,
+		},
+	}
+	handler := New(service)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-company-domain", " CompanyDE "))
+
+	_, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+		Username: "metadata-user@example.test",
+		Password: "secret",
+		ClientIp: "203.0.113.20",
+		Protocol: "imap",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	values := service.authInput.Context.RequestMetadata["x-company-domain"]
+	if len(values) != 1 || values[0] != " CompanyDE " {
+		t.Fatalf("request metadata = %#v, want x-company-domain value", service.authInput.Context.RequestMetadata)
 	}
 }
 
