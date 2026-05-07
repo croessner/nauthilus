@@ -687,7 +687,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 			err := fmt.Errorf("authentication failed due to brute force protection")
 			sp.RecordError(err)
 
-			return nil, err
+			return nil, n.authFailureError(ctx, auth, err)
 		}
 
 		if !auth.ApplyConfiguredPreAuthControl(ctx) && !auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
@@ -697,7 +697,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 				err := fmt.Errorf("authentication failed due to brute force protection")
 				sp.RecordError(err)
 
-				return nil, err
+				return nil, n.authFailureError(ctx, auth, err)
 			}
 
 			auth.UpdateBruteForceBucketsCounter(ctx)
@@ -707,7 +707,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 			err := fmt.Errorf("authentication failed due to brute force protection")
 			sp.RecordError(err)
 
-			return nil, err
+			return nil, n.authFailureError(ctx, auth, err)
 		}
 	}
 
@@ -718,7 +718,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 		err := fmt.Errorf("authentication failed with pre-auth result: %d", res)
 		sp.RecordError(err)
 
-		return nil, err
+		return nil, n.authFailureError(ctx, auth, err)
 	}
 
 	result := auth.HandlePassword(ctx)
@@ -729,7 +729,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 		err := fmt.Errorf("authentication failed with result: %d", result)
 		sp.RecordError(err)
 
-		return nil, err
+		return nil, n.authFailureError(ctx, auth, err)
 	}
 
 	if mgr := cookie.GetManager(ctx); mgr != nil {
@@ -811,6 +811,24 @@ func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, e
 	user.TOTPRecoveryField = auth.GetTOTPRecoveryField()
 
 	return user, nil
+}
+
+func (n *NauthilusIdP) authFailureError(ctx *gin.Context, auth *core.AuthState, err error) error {
+	if auth == nil {
+		return err
+	}
+
+	status := AuthFailureStatus{
+		StatusMessage:    auth.Runtime.StatusMessage,
+		I18NKey:          auth.Runtime.StatusMessageI18NKey,
+		ResponseLanguage: auth.Runtime.ResponseLanguage,
+	}
+
+	if _, ok := auth.ConfiguredPolicyTerminalDecision(ctx); ok || status.HasI18NStatus() {
+		status.PolicyTerminal = true
+	}
+
+	return NewAuthFailureError(err, status)
 }
 
 // GetClaims retrieves user attributes and maps them to OIDC/SAML claims for a specific client.

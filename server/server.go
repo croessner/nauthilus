@@ -520,12 +520,13 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 
 func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {
 	deps := &handlerdeps.Deps{
-		Cfg:          runtime.cfg,
-		CfgProvider:  runtime.store.cfgProvider,
-		Logger:       runtime.logger,
-		Channel:      runtime.store.channel,
-		AccountCache: runtime.store.accountCache,
-		LangManager:  runtime.store.langManager,
+		Cfg:             runtime.cfg,
+		CfgProvider:     runtime.store.cfgProvider,
+		Logger:          runtime.logger,
+		Channel:         runtime.store.channel,
+		AccountCache:    runtime.store.accountCache,
+		LangManager:     runtime.store.langManager,
+		MessageResolver: newDefaultPolicyMessageResolver(runtime.cfg),
 	}
 	deps.Svc = handlerdeps.NewDefaultServices(deps)
 

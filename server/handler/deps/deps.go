@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/language"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -76,4 +77,6 @@ type Deps struct {
 	Svc          Services
 	LangManager  language.Manager
 	TokenFlusher core.TokenFlusher
+	// MessageResolver resolves policy-selected status messages for IdP UI rendering.
+	MessageResolver localization.MessageResolver
 }

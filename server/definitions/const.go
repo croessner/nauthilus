@@ -77,6 +77,15 @@ const (
 	// Used when redirecting back to /login after MFA verification fails due to wrong initial credentials.
 	SessionKeyLoginError = "login_error"
 
+	// SessionKeyIDPAuthStatusMessage stores the fallback text for a policy-selected IdP auth failure.
+	SessionKeyIDPAuthStatusMessage = "idp_auth_status_message"
+
+	// SessionKeyIDPAuthStatusI18NKey stores the i18n key for a policy-selected IdP auth failure.
+	SessionKeyIDPAuthStatusI18NKey = "idp_auth_status_i18n_key"
+
+	// SessionKeyIDPAuthStatusLanguage stores the policy-selected response language for a policy-selected IdP auth failure.
+	SessionKeyIDPAuthStatusLanguage = "idp_auth_status_language"
+
 	// SessionKeySubject stores the OIDC subject if computed in-session.
 	SessionKeySubject = "subject"
 

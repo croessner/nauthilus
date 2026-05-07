@@ -141,6 +141,27 @@ func (a *AuthState) HasConfiguredAuthPolicyAuthority(ctx *gin.Context) bool {
 	return policyCtx != nil && policyCtx.ConfiguredAuthDecisionAuthoritative()
 }
 
+// ConfiguredPolicyTerminalDecision returns the configured terminal decision selected for the current request.
+func (a *AuthState) ConfiguredPolicyTerminalDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
+	if final, ok := configuredAuthDecisionFromContext(ctx); ok && configuredAuthTerminal(final) {
+		return final, true
+	}
+
+	if final, ok := configuredPreAuthDecisionFromContext(ctx); ok && configuredPreAuthTerminal(final) {
+		return final, true
+	}
+
+	return nil, false
+}
+
+func configuredAuthTerminal(final *report.FinalDecision) bool {
+	if final == nil || final.Stage != policy.StageAuthDecision {
+		return false
+	}
+
+	return final.Effect == policy.DecisionDeny || final.Effect == policy.DecisionTempFail
+}
+
 func (a *AuthState) applyConfiguredPreAuthDecision(ctx *gin.Context) bool {
 	final, ok := a.configuredPolicyPreAuthDecision(ctx)
 	if !ok || final == nil || !configuredPreAuthTerminal(final) {
