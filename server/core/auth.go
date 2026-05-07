@@ -1834,20 +1834,24 @@ func (a *AuthState) ResetLoginAttemptsOnSuccess() {
 }
 
 // setFailureHeaders sets the failure headers for the given authentication context.
-// It sets the "Auth-Status" header to the value of definitions.PasswordFail constant.
-// It sets the "X-Nauthilus-Session" header to the value of the authentication's GUID field.
-// It updates the StatusMessage of the authentication to definitions.PasswordFail.
+// It sets Auth-Status to the selected response-boundary status message.
+// It sets X-Nauthilus-Session to the authentication GUID.
+// It falls back to the default password-failure message when no status message was selected.
 //
 // If the Service field of the authentication is equal to global.ServUserInfo, it also sets the following headers:
 //   - "X-User-Found" header to the string representation of the UserFound field of the authentication
 //   - If the PasswordHistory field is not nil, it responds with a JSON representation of the PasswordHistory.
 //     If the PasswordHistory field is nil, it responds with an empty JSON object.
 //
-// If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
-func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
+// If the Service field is not equal to global.ServUserInfo, it responds with the selected status message as plain text.
+func (a *AuthState) setFailureHeaders(ctx *gin.Context, render responseMessageRenderer) {
 	a.prepareAuthFailure()
+	statusMessage := a.Runtime.StatusMessage
+	if render != nil {
+		statusMessage = render(ctx, a)
+	}
 
-	ctx.Header("Auth-Status", a.Runtime.StatusMessage)
+	ctx.Header("Auth-Status", statusMessage)
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 
 	switch a.Request.Service {
@@ -1862,7 +1866,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 		// Do not include password history in responses; always return JSON null on failure
 		ctx.JSON(a.Runtime.StatusCodeFail, nil)
 	default:
-		ctx.String(a.Runtime.StatusCodeFail, a.Runtime.StatusMessage)
+		ctx.String(a.Runtime.StatusCodeFail, statusMessage)
 	}
 }
 

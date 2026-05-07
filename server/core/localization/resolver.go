@@ -62,6 +62,12 @@ type Resolver struct {
 	defaultLanguage string
 }
 
+// RegistryResolver resolves against the currently active immutable catalog.
+type RegistryResolver struct {
+	registry        *CatalogRegistry
+	defaultLanguage string
+}
+
 // NewResolver returns a resolver backed by the supplied effective catalog.
 func NewResolver(catalog Catalog, defaultLanguage string) *Resolver {
 	if strings.TrimSpace(defaultLanguage) == "" {
@@ -76,6 +82,32 @@ func NewResolver(catalog Catalog, defaultLanguage string) *Resolver {
 		supported:       supported,
 		defaultLanguage: strings.TrimSpace(defaultLanguage),
 	}
+}
+
+// NewRegistryResolver returns a resolver that reads the active catalog per call.
+func NewRegistryResolver(registry *CatalogRegistry, defaultLanguage string) *RegistryResolver {
+	return &RegistryResolver{
+		registry:        registry,
+		defaultLanguage: strings.TrimSpace(defaultLanguage),
+	}
+}
+
+// ResolveStatusMessage resolves through the registry's currently active catalog.
+func (r *RegistryResolver) ResolveStatusMessage(
+	ctx context.Context,
+	selection StatusMessage,
+	preference LanguagePreference,
+) ResolvedStatusMessage {
+	defaultLanguage := ""
+	if r != nil {
+		defaultLanguage = r.defaultLanguage
+	}
+
+	if r == nil || r.registry == nil {
+		return NewResolver(nil, defaultLanguage).ResolveStatusMessage(ctx, selection, preference)
+	}
+
+	return NewResolver(r.registry.Active(), defaultLanguage).ResolveStatusMessage(ctx, selection, preference)
 }
 
 // ResolveStatusMessage resolves an i18n key or returns the bounded fallback text.

@@ -20,9 +20,11 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 
@@ -36,12 +38,18 @@ import (
 type Handler struct {
 	authv1.UnimplementedAuthServiceServer
 
-	service core.AuthApplicationService
+	service  core.AuthApplicationService
+	resolver localization.MessageResolver
 }
 
 // New constructs the gRPC auth handler around the application service.
 func New(service core.AuthApplicationService) *Handler {
-	return &Handler{service: service}
+	return NewWithResolver(service, nil)
+}
+
+// NewWithResolver constructs the gRPC auth handler with response localization.
+func NewWithResolver(service core.AuthApplicationService, resolver localization.MessageResolver) *Handler {
+	return &Handler{service: service, resolver: resolver}
 }
 
 // Authenticate maps the gRPC request into the auth application service.
@@ -68,6 +76,8 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 		return nil, status.Error(codes.Internal, "auth application service returned no outcome")
 	}
 
+	outcome = h.localizedAuthOutcome(ctx, outcome)
+
 	return authOutcomeToProto(outcome), nil
 }
 
@@ -93,6 +103,8 @@ func (h *Handler) LookupIdentity(
 		return nil, status.Error(codes.Internal, "auth application service returned no lookup-identity outcome")
 	}
 
+	outcome = h.localizedAuthOutcome(ctx, outcome)
+
 	return authOutcomeToProto(outcome), nil
 }
 
@@ -117,6 +129,8 @@ func (h *Handler) ListAccounts(
 	if outcome == nil {
 		return nil, status.Error(codes.Internal, "auth application service returned no list-accounts outcome")
 	}
+
+	outcome = h.localizedListAccountsOutcome(ctx, outcome)
 
 	if listAccountsDenied(outcome) {
 		setListAccountsHeaders(ctx, outcome)
@@ -157,6 +171,106 @@ func setListAccountsHeaders(ctx context.Context, outcome *core.ListAccountsOutco
 	}
 
 	_ = grpc.SetHeader(ctx, metadata.Pairs(pairs...))
+}
+
+func (h *Handler) localizedAuthOutcome(ctx context.Context, outcome *core.AuthOutcome) *core.AuthOutcome {
+	if outcome == nil {
+		return outcome
+	}
+
+	statusMessage, ok := h.resolvePolicyStatusMessage(ctx, grpcStatusMessageFields{
+		text:     outcome.StatusMessage,
+		i18nKey:  outcome.StatusMessageI18NKey,
+		language: outcome.ResponseLanguage,
+	})
+	if !ok {
+		return outcome
+	}
+
+	localized := *outcome
+	localized.StatusMessage = statusMessage
+
+	return &localized
+}
+
+func (h *Handler) localizedListAccountsOutcome(
+	ctx context.Context,
+	outcome *core.ListAccountsOutcome,
+) *core.ListAccountsOutcome {
+	if outcome == nil {
+		return outcome
+	}
+
+	statusMessage, ok := h.resolvePolicyStatusMessage(ctx, grpcStatusMessageFields{
+		text:     outcome.StatusMessage,
+		i18nKey:  outcome.StatusMessageI18NKey,
+		language: outcome.ResponseLanguage,
+	})
+	if !ok {
+		return outcome
+	}
+
+	localized := *outcome
+	localized.StatusMessage = statusMessage
+
+	return &localized
+}
+
+type grpcStatusMessageFields struct {
+	text     string
+	i18nKey  string
+	language string
+}
+
+func (h *Handler) resolvePolicyStatusMessage(ctx context.Context, fields grpcStatusMessageFields) (string, bool) {
+	key := strings.TrimSpace(fields.i18nKey)
+	if key == "" || h.resolver == nil {
+		return fields.text, false
+	}
+
+	resolved := h.resolver.ResolveStatusMessage(
+		ctx,
+		localization.StatusMessage{
+			Text:    fields.text,
+			I18NKey: key,
+		},
+		localization.LanguagePreference{
+			Policy: fields.language,
+			Header: acceptLanguageMetadata(ctx),
+		},
+	)
+	setContentLanguageMetadata(ctx, resolved)
+
+	return resolvedStatusText(resolved, fields.text), true
+}
+
+func resolvedStatusText(resolved localization.ResolvedStatusMessage, fallback string) string {
+	if resolved.Text == "" {
+		return fallback
+	}
+
+	return resolved.Text
+}
+
+func setContentLanguageMetadata(ctx context.Context, resolved localization.ResolvedStatusMessage) {
+	if strings.TrimSpace(resolved.Language) == "" {
+		return
+	}
+
+	_ = grpc.SetHeader(ctx, metadata.Pairs("content-language", resolved.Language))
+}
+
+func acceptLanguageMetadata(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
+	values := metadata.ValueFromIncomingContext(ctx, "accept-language")
+	if len(values) == 0 {
+		return ""
+	}
+
+	return strings.Join(values, ",")
 }
 
 func authInputWithIncomingMetadata(ctx context.Context, input core.AuthInput) core.AuthInput {
