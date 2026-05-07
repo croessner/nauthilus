@@ -950,7 +950,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
 		// Check for Delayed Response
-		if !idpAuthFailurePolicyTerminal(err) && idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
+		if idpAuthFailureAllowsDelayedResponse(err) && idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
 			if user, _ := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID); user != nil {
 				if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
 					if mgr != nil {

@@ -48,12 +48,25 @@ func renderIDPAuthFailureMessage(ctx *gin.Context, d *deps.Deps, err error, gene
 }
 
 func idpAuthFailurePolicyTerminal(err error) bool {
-	var failure *idpservice.AuthFailureError
-	if !stderrors.As(err, &failure) || failure == nil {
+	failure, ok := stderrors.AsType[*idpservice.AuthFailureError](err)
+	if !ok || failure == nil {
 		return false
 	}
 
 	return failure.Status.PolicyTerminal
+}
+
+func idpAuthFailureAllowsDelayedResponse(err error) bool {
+	failure, ok := stderrors.AsType[*idpservice.AuthFailureError](err)
+	if !ok || failure == nil {
+		return true
+	}
+
+	if !failure.Status.PolicyTerminal {
+		return true
+	}
+
+	return failure.Status.DelayedResponseEligible
 }
 
 func storeIDPAuthStatusBridgeFromError(mgr cookie.Manager, err error) bool {
@@ -70,8 +83,8 @@ func storeIDPAuthStatusBridgeFromError(mgr cookie.Manager, err error) bool {
 }
 
 func idpAuthStatusBridgeFromError(err error) (idpAuthStatusBridge, bool) {
-	var failure *idpservice.AuthFailureError
-	if !stderrors.As(err, &failure) || failure == nil || !failure.Status.HasI18NStatus() {
+	failure, ok := stderrors.AsType[*idpservice.AuthFailureError](err)
+	if !ok || failure == nil || !failure.Status.HasI18NStatus() {
 		return idpAuthStatusBridge{}, false
 	}
 

@@ -219,9 +219,9 @@ func isSLOPayloadTooLargeError(err error) bool {
 		return true
 	}
 
-	var maxBytesError *http.MaxBytesError
+	_, ok := errors.AsType[*http.MaxBytesError](err)
 
-	return errors.As(err, &maxBytesError)
+	return ok
 }
 
 func (h *SAMLHandler) sloSessionRegistry() *slodomain.SessionRegistry {

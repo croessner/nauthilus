@@ -154,6 +154,26 @@ func (a *AuthState) ConfiguredPolicyTerminalDecision(ctx *gin.Context) (*report.
 	return nil, false
 }
 
+// ConfiguredPolicyAllowsIDPDelayedResponse reports whether the selected
+// configured terminal decision is the ordinary password-failure fallback.
+// IdP delayed_response must still defer that case until after MFA.
+func (a *AuthState) ConfiguredPolicyAllowsIDPDelayedResponse(ctx *gin.Context) bool {
+	final, ok := a.ConfiguredPolicyTerminalDecision(ctx)
+	if !ok {
+		return false
+	}
+
+	return configuredPolicyAllowsIDPDelayedResponse(final)
+}
+
+func configuredPolicyAllowsIDPDelayedResponse(final *report.FinalDecision) bool {
+	return final != nil &&
+		final.Stage == policy.StageAuthDecision &&
+		final.Effect == policy.DecisionDeny &&
+		final.OutcomeMarker == policy.OutcomeMarkerAuthFailure &&
+		final.ResponseMarker == policy.ResponseMarkerFail
+}
+
 func configuredAuthTerminal(final *report.FinalDecision) bool {
 	if final == nil || final.Stage != policy.StageAuthDecision {
 		return false

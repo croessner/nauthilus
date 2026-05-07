@@ -507,7 +507,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		authResult = definitions.AuthResultFail
 		user = nil
 
-		if !idpAuthFailurePolicyTerminal(err) && h.idp.IsDelayedResponse(request.ClientID, "") {
+		if idpAuthFailureAllowsDelayedResponse(err) && h.idp.IsDelayedResponse(request.ClientID, "") {
 			if delayedUser, userErr := h.idp.GetUserByUsername(ctx, username, request.ClientID, ""); userErr == nil && delayedUser != nil {
 				protocol := definitions.ProtoOIDC
 				availability := h.frontend.getMFAAvailability(ctx, delayedUser, protocol, cookie.GetManager(ctx))

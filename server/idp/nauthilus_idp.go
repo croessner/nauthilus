@@ -824,7 +824,10 @@ func (n *NauthilusIdP) authFailureError(ctx *gin.Context, auth *core.AuthState, 
 		ResponseLanguage: auth.Runtime.ResponseLanguage,
 	}
 
-	if _, ok := auth.ConfiguredPolicyTerminalDecision(ctx); ok || status.HasI18NStatus() {
+	if _, ok := auth.ConfiguredPolicyTerminalDecision(ctx); ok {
+		status.PolicyTerminal = true
+		status.DelayedResponseEligible = auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx)
+	} else if status.HasI18NStatus() {
 		status.PolicyTerminal = true
 	}
 

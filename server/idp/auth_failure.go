@@ -30,6 +30,10 @@ type AuthFailureStatus struct {
 
 	// PolicyTerminal reports that a configured policy selected a terminal deny or tempfail.
 	PolicyTerminal bool
+
+	// DelayedResponseEligible reports that the failure is a normal password
+	// failure that an IdP client may defer until after MFA.
+	DelayedResponseEligible bool
 }
 
 // HasI18NStatus reports whether the failure carries a stable localization key.

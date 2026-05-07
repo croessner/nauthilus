@@ -100,6 +100,23 @@ func TestAuthBoundaryDefaultSetSelectsFinalDecisionDuringPasswordHandling(t *tes
 	}
 }
 
+func TestAuthBoundaryStandardAuthFailureAllowsIDPDelayedResponse(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	storeConfiguredAuthDecision(ctx, &report.FinalDecision{
+		PolicyName:     "standard_auth_failure",
+		Stage:          policy.StageAuthDecision,
+		Effect:         policy.DecisionDeny,
+		OutcomeMarker:  policy.OutcomeMarkerAuthFailure,
+		FSMEventMarker: policy.FSMEventMarkerAuthDeny,
+		ResponseMarker: policy.ResponseMarkerFail,
+	})
+
+	if !auth.ConfiguredPolicyAllowsIDPDelayedResponse(ctx) {
+		t.Fatal("standard password failures must stay eligible for IdP delayed_response")
+	}
+}
+
 func TestAuthBoundaryDefaultSetAppliesTargetFSMForDirectPreAuthDecision(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{

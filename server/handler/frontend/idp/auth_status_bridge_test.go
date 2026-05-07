@@ -124,6 +124,31 @@ func TestIDPAuthFailurePolicyTerminalFlag(t *testing.T) {
 	}
 }
 
+func TestIDPAuthFailureAllowsDelayedResponseForEligiblePolicyFailure(t *testing.T) {
+	err := idpservice.NewAuthFailureError(
+		stderrors.New("standard password failure"),
+		idpservice.AuthFailureStatus{
+			PolicyTerminal:          true,
+			DelayedResponseEligible: true,
+		},
+	)
+
+	if !idpAuthFailureAllowsDelayedResponse(err) {
+		t.Fatal("standard password failures must be deferred when delayed_response is enabled")
+	}
+
+	blocked := idpservice.NewAuthFailureError(
+		stderrors.New("policy rejected login"),
+		idpservice.AuthFailureStatus{
+			PolicyTerminal: true,
+		},
+	)
+
+	if idpAuthFailureAllowsDelayedResponse(blocked) {
+		t.Fatal("policy-terminal failures must bypass delayed_response")
+	}
+}
+
 func TestIDPAuthStatusBridgePersistsDelayedResponseMetadata(t *testing.T) {
 	mgr := &mockCookieManager{data: map[string]any{}}
 	status := idpAuthStatusBridge{

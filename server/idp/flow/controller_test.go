@@ -106,8 +106,7 @@ func TestControllerAdvanceRejectsInvalidTransition(t *testing.T) {
 		t.Fatal("expected transition error")
 	}
 
-	var transitionErr TransitionError
-	if !errors.As(err, &transitionErr) {
+	if _, ok := errors.AsType[TransitionError](err); !ok {
 		t.Fatalf("expected transition error, got: %v", err)
 	}
 }
@@ -234,8 +233,7 @@ func TestControllerAdvanceRejectsSuccessPathWhenFailLatched(t *testing.T) {
 		t.Fatal("expected transition error")
 	}
 
-	var transitionErr TransitionError
-	if !errors.As(err, &transitionErr) {
+	if _, ok := errors.AsType[TransitionError](err); !ok {
 		t.Fatalf("expected transition error, got: %v", err)
 	}
 }

@@ -293,6 +293,14 @@ const (
 )
 
 const (
+	// OutcomeMarkerAuthSuccess identifies the normal password-authentication success outcome.
+	OutcomeMarkerAuthSuccess = "auth.outcome.auth_success"
+
+	// OutcomeMarkerAuthFailure identifies the normal password-authentication failure outcome.
+	OutcomeMarkerAuthFailure = "auth.outcome.auth_failure"
+)
+
+const (
 	// ResponseMarkerOK identifies a successful response class.
 	ResponseMarkerOK = "auth.response.ok"
 
