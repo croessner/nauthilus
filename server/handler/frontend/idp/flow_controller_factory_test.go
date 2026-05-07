@@ -63,3 +63,44 @@ func TestResetFlowAuthOutcomeForRetryClearsFailLatchedCookieFlow(t *testing.T) {
 		t.Fatalf("auth outcome = %q, want %q", outcome, flowdomain.AuthOutcomeUnknown)
 	}
 }
+
+func TestResetFlowAuthOutcomeForLoginAttemptAllowsCorrectRetryAfterFailLatched(t *testing.T) {
+	const flowID = "flow-correct-retry"
+
+	mgr := &mockCookieManager{data: map[string]any{}}
+	controller := newFlowController(mgr, nil, "")
+	_, err := controller.Start(t.Context(), &flowdomain.State{
+		FlowID:      flowID,
+		FlowType:    flowdomain.FlowTypeOIDCAuthorization,
+		Protocol:    flowdomain.FlowProtocolOIDC,
+		CurrentStep: flowdomain.FlowStepStart,
+		GrantType:   definitions.OIDCFlowAuthorizationCode,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("start flow: %v", err)
+	}
+
+	advanceFlow(t.Context(), mgr, nil, "", flowdomain.FlowStepLogin)
+	advanceFlow(t.Context(), mgr, nil, "", flowdomain.FlowStepMFA)
+
+	if !setFlowAuthOutcome(t.Context(), mgr, nil, "", flowdomain.AuthOutcomeFailLatched) {
+		t.Fatal("failed to latch auth outcome")
+	}
+
+	if !resetFlowAuthOutcomeForLoginAttempt(t.Context(), mgr, nil, "") {
+		t.Fatal("failed to reset auth outcome for retry login attempt")
+	}
+
+	if !setFlowAuthOutcome(t.Context(), mgr, nil, "", flowdomain.AuthOutcomeOK) {
+		t.Fatal("failed to store successful retry outcome")
+	}
+
+	outcome, ok := getFlowAuthOutcome(t.Context(), mgr, nil, "")
+	if !ok {
+		t.Fatal("missing flow auth outcome after successful retry")
+	}
+
+	if outcome != flowdomain.AuthOutcomeOK {
+		t.Fatalf("auth outcome = %q, want %q", outcome, flowdomain.AuthOutcomeOK)
+	}
+}

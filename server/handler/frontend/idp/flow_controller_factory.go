@@ -160,6 +160,14 @@ func resetFlowAuthOutcomeForRetry(ctx context.Context, mgr cookie.Manager, redis
 	return controller.ResetAuthOutcomeForRetry(ctx, flowID, time.Now()) == nil
 }
 
+func resetFlowAuthOutcomeForLoginAttempt(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string) bool {
+	if resetFlowAuthOutcomeForRetry(ctx, mgr, redisClient, redisPrefix) {
+		return true
+	}
+
+	return setFlowAuthOutcome(ctx, mgr, redisClient, redisPrefix, flowdomain.AuthOutcomeUnknown)
+}
+
 func setFlowAuthOutcome(ctx context.Context, mgr cookie.Manager, redisClient rediscli.Client, redisPrefix string, outcome flowdomain.AuthOutcome) bool {
 	if mgr == nil {
 		return false

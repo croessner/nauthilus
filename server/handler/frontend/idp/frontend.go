@@ -918,7 +918,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
-	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeUnknown)
+	_ = resetFlowAuthOutcomeForLoginAttempt(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
 	clearIDPAuthStatusBridge(mgr)
 
 	var rememberMeTTL int
