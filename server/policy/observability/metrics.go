@@ -206,6 +206,7 @@ type PrometheusRecorder struct {
 	reloadFailuresTotal       *prometheus.CounterVec
 	checkDurationSeconds      *prometheus.HistogramVec
 	checkResultsTotal         *prometheus.CounterVec
+	checkSkipsTotal           *prometheus.CounterVec
 	checkTechnicalErrorsTotal *prometheus.CounterVec
 	stageEvaluationSeconds    *prometheus.HistogramVec
 	decisionsTotal            *prometheus.CounterVec
@@ -231,6 +232,7 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 		reloadFailuresTotal:       newPolicyCounterVec("policy_snapshot_reload_failures_total", "Total number of policy snapshot reload failures where the active snapshot stayed unchanged.", "reason_code"),
 		checkDurationSeconds:      newPolicyHistogramVec("policy_check_duration_seconds", "Duration of policy check execution.", "operation", "stage", "check", "check_type", "status"),
 		checkResultsTotal:         newPolicyCounterVec("policy_check_results_total", "Total number of policy check results.", "operation", "stage", "check", "check_type", "status"),
+		checkSkipsTotal:           newPolicyCounterVec("policy_check_skips_total", "Total number of policy check scheduler skips.", "operation", "stage", "check", "check_type", "reason_code"),
 		checkTechnicalErrorsTotal: newPolicyCounterVec("policy_check_technical_errors_total", "Total number of modeled policy check technical errors.", "operation", "stage", "check", "check_type", "reason_code"),
 		stageEvaluationSeconds:    newPolicyHistogramVec("policy_stage_evaluation_seconds", "Duration of policy stage evaluation.", "mode", "operation", "stage"),
 		decisionsTotal:            newPolicyCounterVec("policy_decisions_total", "Total number of policy decisions.", "mode", "operation", "stage", "decision", "policy_name", "response_marker", "fsm_event_marker"),
@@ -258,6 +260,7 @@ func (r *PrometheusRecorder) collectors() []prometheus.Collector {
 		r.reloadFailuresTotal,
 		r.checkDurationSeconds,
 		r.checkResultsTotal,
+		r.checkSkipsTotal,
 		r.checkTechnicalErrorsTotal,
 		r.stageEvaluationSeconds,
 		r.decisionsTotal,
@@ -348,6 +351,16 @@ func (r *PrometheusRecorder) RecordCheck(_ context.Context, measurement CheckMea
 
 	r.checkDurationSeconds.WithLabelValues(labels...).Observe(measurement.Duration.Seconds())
 	r.checkResultsTotal.WithLabelValues(labels...).Inc()
+
+	if measurement.Status == policy.CheckStatusSkipped && measurement.ReasonCode != "" {
+		r.checkSkipsTotal.WithLabelValues(
+			string(measurement.Operation),
+			string(measurement.Stage),
+			measurement.Check,
+			measurement.CheckType,
+			measurement.ReasonCode,
+		).Inc()
+	}
 
 	if measurement.Status == policy.CheckStatusError && measurement.ReasonCode != "" {
 		r.checkTechnicalErrorsTotal.WithLabelValues(

@@ -532,6 +532,11 @@ func attributeDetailMessage(
 	return defaultResponseMessage(responseMarker)
 }
 
+// ExprMatches evaluates a compiled policy expression against collected request facts.
+func ExprMatches(expr policyruntime.CompiledExpr, policyReport *report.DecisionReport) bool {
+	return exprMatches(expr, policyReport)
+}
+
 func exprMatches(expr policyruntime.CompiledExpr, policyReport *report.DecisionReport) bool {
 	switch expr.Kind {
 	case policyruntime.ExprKindAlways:

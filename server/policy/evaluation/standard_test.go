@@ -484,6 +484,68 @@ func TestConfiguredPreAuthEnforceDoesNotSelectFinalDefaultDeny(t *testing.T) {
 	}
 }
 
+func TestConfiguredPreAuthSkippedRequiredCheckIsNonApplicable(t *testing.T) {
+	recorder := &recordingRecorder{}
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("tls_encryption", policy.CheckTypeTLSEncryption, policy.StagePreAuth, policy.CheckStatusSkipped),
+		boolAttr(policy.AttributeTLSSecure, policy.StagePreAuth, policy.OperationAuthenticate, false, nil),
+	)
+	policyReport.Checks["tls_encryption"] = report.CheckResult{
+		Name:      "tls_encryption",
+		Type:      policy.CheckTypeTLSEncryption,
+		Stage:     policy.StagePreAuth,
+		Operation: policy.OperationAuthenticate,
+		Status:    policy.CheckStatusSkipped,
+		Reason:    "scheduler_guard:insecure_connection",
+	}
+
+	first := customPreAuthPolicy(
+		"custom_requires_skipped_tls",
+		policy.DecisionDeny,
+		policy.FSMEventMarkerPreAuthDeny,
+		policy.ResponseMarkerFail,
+	)
+	later := customPreAuthPolicy(
+		"custom_later_tls_rule",
+		policy.DecisionDeny,
+		policy.FSMEventMarkerPreAuthDeny,
+		policy.ResponseMarkerFail,
+	)
+	later.RequireChecks = nil
+
+	snapshot := enforceSnapshotWithCustomPreAuth(first)
+	stagePlan := snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth]
+	stagePlan.Policies = []policyruntime.CompiledPolicy{first, later}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth] = stagePlan
+
+	got := EvaluateConfiguredPreAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 23,
+		Recorder:   recorder,
+	})
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.PolicyName != "custom_later_tls_rule" {
+		t.Fatalf("policy = %q, want custom_later_tls_rule", got.Final.PolicyName)
+	}
+
+	if len(policyReport.Policies) != 1 || policyReport.Policies[0].Name != "custom_later_tls_rule" {
+		t.Fatalf("selected policies = %#v, want only later policy", policyReport.Policies)
+	}
+
+	if len(recorder.requireChecks) != 1 {
+		t.Fatalf("require-check metrics = %d, want 1", len(recorder.requireChecks))
+	}
+
+	if got := recorder.requireChecks[0].Result; got != "skipped" {
+		t.Fatalf("require-check result = %q, want skipped", got)
+	}
+}
+
 func TestConfiguredAuthEnforceSelectsBackendDecision(t *testing.T) {
 	recorder := &recordingRecorder{}
 	policyReport := standardReport(
@@ -923,9 +985,10 @@ func customI18NAuthPolicy() policyruntime.CompiledPolicy {
 }
 
 type recordingRecorder struct {
-	decisions   []observability.DecisionMeasurement
-	comparisons []observability.ObserveMeasurement
-	unavailable []observability.ObserveUnavailableMeasurement
+	decisions     []observability.DecisionMeasurement
+	comparisons   []observability.ObserveMeasurement
+	requireChecks []observability.RequireCheckMeasurement
+	unavailable   []observability.ObserveUnavailableMeasurement
 }
 
 func (r *recordingRecorder) RecordSnapshotBuild(context.Context, observability.SnapshotBuildMeasurement) {
@@ -934,9 +997,7 @@ func (r *recordingRecorder) RecordReloadFailure(context.Context, observability.R
 }
 func (r *recordingRecorder) RecordCheck(context.Context, observability.CheckMeasurement)           {}
 func (r *recordingRecorder) RecordStageEvaluation(context.Context, observability.StageMeasurement) {}
-func (r *recordingRecorder) RecordRequireCheck(context.Context, observability.RequireCheckMeasurement) {
-}
-func (r *recordingRecorder) RecordFSMTransition(context.Context, observability.FSMMeasurement) {}
+func (r *recordingRecorder) RecordFSMTransition(context.Context, observability.FSMMeasurement)     {}
 func (r *recordingRecorder) RecordResponseRender(context.Context, observability.RendererMeasurement) {
 }
 func (r *recordingRecorder) RecordObligation(context.Context, observability.ObligationMeasurement) {}
@@ -944,6 +1005,10 @@ func (r *recordingRecorder) RecordAdvice(context.Context, observability.AdviceMe
 
 func (r *recordingRecorder) RecordDecision(_ context.Context, measurement observability.DecisionMeasurement) {
 	r.decisions = append(r.decisions, measurement)
+}
+
+func (r *recordingRecorder) RecordRequireCheck(_ context.Context, measurement observability.RequireCheckMeasurement) {
+	r.requireChecks = append(r.requireChecks, measurement)
 }
 
 func (r *recordingRecorder) RecordObserveComparison(_ context.Context, measurement observability.ObserveMeasurement) {

@@ -154,6 +154,12 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
+	if !a.policyCheckScheduled(ctx, bruteForcePolicySelector()) {
+		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "scheduler_guard"))
+
+		return false
+	}
+
 	defer func() {
 		a.recordPolicyBruteForce(ctx, blockClientIP)
 	}()

@@ -40,7 +40,12 @@ import (
 const (
 	policyCollectionContextKey = "policy_collection"
 	policyAttributeSuffixError = "error"
+	policyConfigRefBruteForce  = "auth.controls.brute_force"
+	policyConfigRefRBL         = "auth.controls.rbl"
+	policyConfigRefRelay       = "auth.controls.relay_domains"
+	policyConfigRefTLS         = "auth.controls.tls_encryption"
 	policyDetailError          = "error"
+	policyModeObserve          = "observe"
 )
 
 type policyCheckResult struct {
@@ -146,6 +151,20 @@ func (a *AuthState) beginPolicyCheck(ctx *gin.Context, selector policycollection
 	return policyCtx.BeginCheck(contextFromGin(ctx), selector)
 }
 
+func (a *AuthState) policyCheckScheduled(ctx *gin.Context, selector policycollection.CheckSelector) bool {
+	policyCtx := a.requestPolicyContext(ctx)
+	if policyCtx == nil {
+		return true
+	}
+
+	mode, _, _ := policyCtx.SnapshotMetadata()
+	if mode == policyModeObserve {
+		return true
+	}
+
+	return policyCtx.CheckScheduled(contextFromGin(ctx), selector, a.policyAuthState())
+}
+
 func (a *AuthState) finishPolicyCheck(check *policycollection.ActiveCheck, result policyCheckResult) {
 	if check == nil {
 		return
@@ -164,6 +183,42 @@ func (a *AuthState) finishPolicyCheck(check *policycollection.ActiveCheck, resul
 func (a *AuthState) markPolicyUnavailable(ctx *gin.Context, name string, reason string) {
 	if policyCtx := a.requestPolicyContext(ctx); policyCtx != nil {
 		policyCtx.MarkUnavailable(name, reason)
+	}
+}
+
+func bruteForcePolicySelector() policycollection.CheckSelector {
+	return policycollection.CheckSelector{
+		CheckType: policy.CheckTypeBruteForce,
+		Stage:     policy.StagePreAuth,
+		Name:      definitions.ControlBruteForce,
+		ConfigRef: policyConfigRefBruteForce,
+	}
+}
+
+func tlsPolicySelector() policycollection.CheckSelector {
+	return policycollection.CheckSelector{
+		CheckType: policy.CheckTypeTLSEncryption,
+		Stage:     policy.StagePreAuth,
+		Name:      definitions.ControlTLSEncryption,
+		ConfigRef: policyConfigRefTLS,
+	}
+}
+
+func relayDomainsPolicySelector() policycollection.CheckSelector {
+	return policycollection.CheckSelector{
+		CheckType: policy.CheckTypeRelayDomains,
+		Stage:     policy.StagePreAuth,
+		Name:      definitions.ControlRelayDomains,
+		ConfigRef: policyConfigRefRelay,
+	}
+}
+
+func rblPolicySelector() policycollection.CheckSelector {
+	return policycollection.CheckSelector{
+		CheckType: policy.CheckTypeRBL,
+		Stage:     policy.StagePreAuth,
+		Name:      definitions.ControlRBL,
+		ConfigRef: policyConfigRefRBL,
 	}
 }
 
@@ -277,12 +332,7 @@ func (a *AuthState) PolicyScriptRecorder(ctx *gin.Context) policycollection.Scri
 }
 
 func (a *AuthState) recordPolicyTLS(ctx *gin.Context, triggered bool) {
-	check := a.beginPolicyCheck(ctx, policycollection.CheckSelector{
-		CheckType: policy.CheckTypeTLSEncryption,
-		Stage:     policy.StagePreAuth,
-		Name:      "tls_encryption",
-		ConfigRef: "auth.controls.tls_encryption",
-	})
+	check := a.beginPolicyCheck(ctx, tlsPolicySelector())
 	a.finishPolicyCheck(check, policyCheckResult{
 		Matched:      triggered,
 		DecisionHint: policyDecision(triggered, policy.DecisionTempFail),
@@ -302,12 +352,7 @@ func (a *AuthState) recordPolicyRelayDomains(ctx *gin.Context, triggered bool) {
 	details := relayDomainPolicyDetails(fact)
 	known := fact.Known || (fact.Present && !triggered && !fact.SoftAllowlisted)
 
-	check := a.beginPolicyCheck(ctx, policycollection.CheckSelector{
-		CheckType: policy.CheckTypeRelayDomains,
-		Stage:     policy.StagePreAuth,
-		Name:      "relay_domains",
-		ConfigRef: "auth.controls.relay_domains",
-	})
+	check := a.beginPolicyCheck(ctx, relayDomainsPolicySelector())
 	a.finishPolicyCheck(check, policyCheckResult{
 		Matched:      triggered,
 		DecisionHint: policyDecision(triggered, policy.DecisionDeny),
@@ -383,12 +428,7 @@ func (a *AuthState) recordPolicyRBL(ctx *gin.Context, triggered bool, err error)
 
 	attributes = append(attributes, rblListPolicyAttributes(fact.Lists, a.policyOperation())...)
 
-	check := a.beginPolicyCheck(ctx, policycollection.CheckSelector{
-		CheckType: policy.CheckTypeRBL,
-		Stage:     policy.StagePreAuth,
-		Name:      "rbl",
-		ConfigRef: "auth.controls.rbl",
-	})
+	check := a.beginPolicyCheck(ctx, rblPolicySelector())
 	a.finishPolicyCheck(check, policyCheckResult{
 		Err:          err,
 		Status:       status,
@@ -515,12 +555,7 @@ func (a *AuthState) recordPolicyBruteForce(ctx *gin.Context, triggered bool) {
 
 	attributes = append(attributes, bruteForceBucketPolicyAttributes(a.Runtime.BruteForceBuckets, operation)...)
 
-	check := a.beginPolicyCheck(ctx, policycollection.CheckSelector{
-		CheckType: policy.CheckTypeBruteForce,
-		Stage:     policy.StagePreAuth,
-		Name:      "brute_force",
-		ConfigRef: "auth.controls.brute_force",
-	})
+	check := a.beginPolicyCheck(ctx, bruteForcePolicySelector())
 	a.finishPolicyCheck(check, policyCheckResult{
 		Matched:      triggered,
 		DecisionHint: policyDecision(triggered, policy.DecisionDeny),

@@ -429,6 +429,10 @@ func (a *AuthState) checkTLSEncryptionEnvironment(ctx *gin.Context) (triggered b
 	defer fspan.End()
 
 	checkFunc := func() {
+		if !a.policyCheckScheduled(ctx, tlsPolicySelector()) {
+			return
+		}
+
 		if triggered = a.ControlTLSEncryption(ctx); triggered {
 			a.processEnvironmentAction(ctx, definitions.ControlTLSEncryption)
 		}
@@ -472,6 +476,10 @@ func (a *AuthState) checkRelayDomainsEnvironment(ctx *gin.Context) (triggered bo
 	}
 
 	if a.cfg().ShouldRunControl(definitions.ControlRelayDomains, a.Request.NoAuth) {
+		if !a.policyCheckScheduled(ctx, relayDomainsPolicySelector()) {
+			return
+		}
+
 		if isWhitelisted() {
 			a.logEnvironmentControlAllowlisting(definitions.ControlRelayDomains)
 			a.Runtime.RelayDomainPolicy = a.relayDomainPolicyFact(a.handleMasterUserMode(), a.cfg().GetRelayDomains(), true)
@@ -521,6 +529,10 @@ func (a *AuthState) checkRBLEnvironment(ctx *gin.Context) (triggered bool, err e
 	}
 
 	if a.cfg().ShouldRunControl(definitions.ControlRBL, a.Request.NoAuth) {
+		if !a.policyCheckScheduled(ctx, rblPolicySelector()) {
+			return
+		}
+
 		if isWhitelisted() {
 			a.logEnvironmentControlAllowlisting(definitions.ControlRBL)
 			rbls := a.cfg().GetRBLs()

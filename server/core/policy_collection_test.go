@@ -31,9 +31,11 @@ import (
 )
 
 const (
-	testRBLNameSpamhaus = "Zen Spamhaus"
-	testProtocolIMAP    = "imap"
-	testProtocolSMTP    = "smtp"
+	testRBLNameSpamhaus              = "Zen Spamhaus"
+	testProtocolIMAP                 = "imap"
+	testProtocolSMTP                 = "smtp"
+	testSchedulerGuardInsecure       = "insecure_connection"
+	testSchedulerGuardInsecureReason = "scheduler_guard:insecure_connection"
 )
 
 func TestAuthPathCollectsTLSCheckWithoutChangingPreAuthDecision(t *testing.T) {
@@ -49,8 +51,9 @@ func TestAuthPathCollectsTLSCheckWithoutChangingPreAuthDecision(t *testing.T) {
 					Stage: policy.StagePreAuth,
 					Checks: []policyruntime.CompiledCheck{
 						{
-							Name:       "tls_encryption",
+							Name:       definitions.ControlTLSEncryption,
 							Type:       policy.CheckTypeTLSEncryption,
+							ConfigRef:  policyConfigRefTLS,
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
 							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
@@ -73,12 +76,70 @@ func TestAuthPathCollectsTLSCheckWithoutChangingPreAuthDecision(t *testing.T) {
 	}
 
 	report := policyCtx.Report()
-	if got := report.Checks["tls_encryption"].Status; got != policy.CheckStatusOK {
+	if got := report.Checks[definitions.ControlTLSEncryption].Status; got != policy.CheckStatusOK {
 		t.Fatalf("tls check status = %q, want %q", got, policy.CheckStatusOK)
 	}
 
 	if got := report.Attributes["auth.tls.secure"].Value; got != false {
 		t.Fatalf("tls secure attribute = %v, want false", got)
+	}
+}
+
+func TestAuthPathSchedulerGuardSkipsTLSAdapter(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
+	cfg.ClearTextList = nil
+	activatePolicySnapshotForTest(t, schedulerGuardTLSSnapshot("enforce"))
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	got := auth.HandleEnvironment(ctx)
+	if got != definitions.AuthResultOK {
+		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultOK)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	check := report.Checks[definitions.ControlTLSEncryption]
+	if check.Status != policy.CheckStatusSkipped {
+		t.Fatalf("tls check status = %q, want %q", check.Status, policy.CheckStatusSkipped)
+	}
+
+	if check.Reason != testSchedulerGuardInsecureReason {
+		t.Fatalf("tls skip reason = %q, want %s", check.Reason, testSchedulerGuardInsecureReason)
+	}
+
+	if _, exists := report.Attributes[policy.AttributeTLSSecure]; exists {
+		t.Fatal("tls adapter emitted attributes although scheduler guard skipped the check")
+	}
+}
+
+func TestAuthPathObserveSchedulerGuardDoesNotSkipTLSAdapter(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
+	cfg.ClearTextList = nil
+	activatePolicySnapshotForTest(t, schedulerGuardTLSSnapshot("observe"))
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	got := auth.HandleEnvironment(ctx)
+	if got != definitions.AuthResultPreAuthTLS {
+		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultPreAuthTLS)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	report := policyCtx.Report()
+	check := report.Checks[definitions.ControlTLSEncryption]
+	if check.Status != policy.CheckStatusOK {
+		t.Fatalf("tls check status = %q, want %q", check.Status, policy.CheckStatusOK)
+	}
+
+	if _, exists := report.Attributes[policy.AttributeTLSSecure]; !exists {
+		t.Fatal("tls adapter did not emit attributes in observe mode")
 	}
 }
 
@@ -194,7 +255,7 @@ func TestConfiguredPreAuthControlAtBruteForceSkipsLaterChecks(t *testing.T) {
 		t.Fatal("missing policy decision context")
 	}
 
-	if _, exists := policyCtx.Report().Checks["tls_encryption"]; exists {
+	if _, exists := policyCtx.Report().Checks[definitions.ControlTLSEncryption]; exists {
 		t.Fatal("tls check was collected after pre-auth control skipped remaining checks")
 	}
 
@@ -464,6 +525,43 @@ func customObserveTLSSnapshot() *policyruntime.Snapshot {
 	}
 }
 
+func schedulerGuardTLSSnapshot(mode string) *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    80,
+		Mode:          mode,
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		SchedulerGuards: map[string]policyruntime.CompiledSchedulerGuard{
+			testSchedulerGuardInsecure: {
+				Root: policyruntime.CompiledExpr{
+					Kind:        policyruntime.ExprKindAttribute,
+					AttributeID: policy.AttributeRequestConnectionTLS,
+					Operator:    "is",
+					Expected:    policyruntime.TypedValue{Value: false},
+				},
+				OnMissingAttribute: "run",
+			},
+		},
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage: policy.StagePreAuth,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							Name:       definitions.ControlTLSEncryption,
+							Type:       policy.CheckTypeTLSEncryption,
+							ConfigRef:  policyConfigRefTLS,
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+							SkipIf:     []string{testSchedulerGuardInsecure},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func customEnforcePreAuthControlSnapshot() *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    76,
@@ -475,7 +573,7 @@ func customEnforcePreAuthControlSnapshot() *policyruntime.Snapshot {
 					Stage: policy.StagePreAuth,
 					Checks: []policyruntime.CompiledCheck{
 						{
-							Name:       "brute_force",
+							Name:       definitions.ControlBruteForce,
 							Type:       policy.CheckTypeBruteForce,
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
@@ -517,7 +615,7 @@ func customObserveTLSStagePlan() policyruntime.CompiledStagePlan {
 
 func customObserveTLSCheck() policyruntime.CompiledCheck {
 	return policyruntime.CompiledCheck{
-		Name:        "tls_encryption",
+		Name:        definitions.ControlTLSEncryption,
 		Type:        policy.CheckTypeTLSEncryption,
 		Stage:       policy.StagePreAuth,
 		Operations:  []policy.Operation{policy.OperationAuthenticate},
@@ -531,7 +629,7 @@ func customObserveTLSDenyPolicy() policyruntime.CompiledPolicy {
 		Name:          "custom_deny_tls",
 		Stage:         policy.StagePreAuth,
 		Operations:    []policy.Operation{policy.OperationAuthenticate},
-		RequireChecks: []string{"tls_encryption"},
+		RequireChecks: []string{definitions.ControlTLSEncryption},
 		Root: policyruntime.CompiledExpr{
 			Kind:        policyruntime.ExprKindAttribute,
 			AttributeID: policy.AttributeTLSSecure,
@@ -563,7 +661,7 @@ func customBruteForceSkipPolicy() policyruntime.CompiledPolicy {
 		Name:          "custom_brute_force_skip",
 		Stage:         policy.StagePreAuth,
 		Operations:    []policy.Operation{policy.OperationAuthenticate},
-		RequireChecks: []string{"brute_force"},
+		RequireChecks: []string{definitions.ControlBruteForce},
 		Root: policyruntime.CompiledExpr{
 			Kind:        policyruntime.ExprKindAttribute,
 			AttributeID: policy.AttributeBruteForceTriggered,

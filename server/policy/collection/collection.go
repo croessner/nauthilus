@@ -25,6 +25,7 @@ import (
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/server/policy/evaluation"
 	"github.com/croessner/nauthilus/server/policy/observability"
 	"github.com/croessner/nauthilus/server/policy/report"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
@@ -34,8 +35,11 @@ import (
 )
 
 const (
-	modeEnforce = "enforce"
-	modeObserve = "observe"
+	modeEnforce                = "enforce"
+	modeObserve                = "observe"
+	runIfSkipReason            = "run_if"
+	schedulerGuardMissingRun   = "run"
+	schedulerGuardReasonPrefix = "scheduler_guard:"
 )
 
 // AuthState describes the scheduler-visible authentication state.
@@ -237,10 +241,145 @@ func (c *DecisionContext) ScriptScheduled(selector CheckSelector, authState Auth
 			continue
 		}
 
-		return runIfMatches(check.RunIf.AuthState, authState)
+		return c.compiledCheckSelected(check, authState)
 	}
 
 	return false
+}
+
+// CheckScheduled reports whether a configured check should run for the current request.
+func (c *DecisionContext) CheckScheduled(ctx context.Context, selector CheckSelector, authState AuthState) bool {
+	if c == nil || c.snapshot == nil || c.report == nil {
+		return true
+	}
+
+	check := c.resolveCheck(selector)
+	if check.Name == "" {
+		return true
+	}
+
+	return c.compiledCheckScheduled(ctx, check, authState)
+}
+
+func (c *DecisionContext) compiledCheckScheduled(ctx context.Context, check policyruntime.CompiledCheck, authState AuthState) bool {
+	if c == nil || c.snapshot == nil || c.report == nil || check.Name == "" {
+		return true
+	}
+
+	c.mu.Lock()
+	if existing, exists := c.report.Checks[check.Name]; exists {
+		c.mu.Unlock()
+
+		return existing.Status != policy.CheckStatusSkipped
+	}
+
+	reason, scheduled := c.checkScheduleLocked(check, authState)
+	if scheduled {
+		c.mu.Unlock()
+
+		return true
+	}
+
+	c.recordSkippedLocked(ctx, check, reason)
+	c.mu.Unlock()
+
+	return false
+}
+
+func (c *DecisionContext) compiledCheckSelected(check policyruntime.CompiledCheck, authState AuthState) bool {
+	if c == nil || c.snapshot == nil || c.report == nil || check.Name == "" {
+		return true
+	}
+
+	c.mu.Lock()
+	_, scheduled := c.checkScheduleLocked(check, authState)
+	c.mu.Unlock()
+
+	return scheduled
+}
+
+func (c *DecisionContext) checkScheduleLocked(check policyruntime.CompiledCheck, authState AuthState) (string, bool) {
+	if !runIfMatches(check.RunIf.AuthState, authState) {
+		return runIfSkipReason, false
+	}
+
+	if reason, matched := c.schedulerGuardSkipReasonLocked(check); matched {
+		return reason, false
+	}
+
+	return "", true
+}
+
+func (c *DecisionContext) schedulerGuardSkipReasonLocked(check policyruntime.CompiledCheck) (string, bool) {
+	if len(check.SkipIf) == 0 || c.snapshot == nil {
+		return "", false
+	}
+
+	for _, guardName := range check.SkipIf {
+		guard, exists := c.snapshot.SchedulerGuards[guardName]
+		if !exists {
+			continue
+		}
+
+		if schedulerGuardRunsOnMissing(guard) && c.guardHasMissingAttributeLocked(guard.Root) {
+			continue
+		}
+
+		if evaluation.ExprMatches(guard.Root, c.report) {
+			return schedulerGuardReasonPrefix + guardName, true
+		}
+	}
+
+	return "", false
+}
+
+func schedulerGuardRunsOnMissing(guard policyruntime.CompiledSchedulerGuard) bool {
+	return guard.OnMissingAttribute == "" || guard.OnMissingAttribute == schedulerGuardMissingRun
+}
+
+func (c *DecisionContext) guardHasMissingAttributeLocked(expr policyruntime.CompiledExpr) bool {
+	switch expr.Kind {
+	case policyruntime.ExprKindAttribute:
+		if expr.AttributeID == "" {
+			return false
+		}
+
+		value, exists := c.report.Attributes[expr.AttributeID]
+		if !exists {
+			return true
+		}
+
+		if expr.Detail == "" {
+			return false
+		}
+
+		_, exists = value.Details[expr.Detail]
+
+		return !exists
+	case policyruntime.ExprKindAll, policyruntime.ExprKindAny, policyruntime.ExprKindNot:
+		for _, child := range expr.Children {
+			if c.guardHasMissingAttributeLocked(child) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (c *DecisionContext) recordSkippedLocked(ctx context.Context, check policyruntime.CompiledCheck, reason string) {
+	c.recordLocked(CheckResult{
+		Status: policy.CheckStatusSkipped,
+		Reason: reason,
+	}, check)
+	c.recorder.RecordCheck(ctx, observability.CheckMeasurement{
+		Operation:  c.report.Operation,
+		Stage:      check.Stage,
+		Check:      check.Name,
+		CheckType:  check.Type,
+		Status:     policy.CheckStatusSkipped,
+		ReasonCode: reason,
+	})
 }
 
 // BeginCheck opens metric and tracing collection for one check adapter.
@@ -253,6 +392,14 @@ func (c *DecisionContext) BeginCheck(ctx context.Context, selector CheckSelector
 	if check.Name == "" {
 		check = fallbackCheck(selector, c.report.Operation)
 	}
+
+	c.mu.Lock()
+	if existing, exists := c.report.Checks[check.Name]; exists && existing.Status == policy.CheckStatusSkipped {
+		c.mu.Unlock()
+
+		return &ActiveCheck{finished: true}
+	}
+	c.mu.Unlock()
 
 	spanCtx, span := c.tracer.Start(ctx, "policy.check",
 		attribute.String("policy.operation", string(c.report.Operation)),
@@ -286,10 +433,13 @@ func (c *DecisionContext) CompleteStage(stage policy.Stage, authState AuthState)
 		}
 
 		if !runIfMatches(check.RunIf.AuthState, authState) {
-			c.recordLocked(CheckResult{
-				Status: policy.CheckStatusSkipped,
-				Reason: "run_if",
-			}, check)
+			c.recordSkippedLocked(context.Background(), check, runIfSkipReason)
+
+			continue
+		}
+
+		if reason, matched := c.schedulerGuardSkipReasonLocked(check); matched {
+			c.recordSkippedLocked(context.Background(), check, reason)
 
 			continue
 		}

@@ -93,7 +93,7 @@ func (s *ScriptSink) ScriptScheduled(kind ScriptKind, name string, authState Aut
 		return true
 	}
 
-	plan := s.ScriptPlan(kind, authState)
+	plan := s.ctx.scriptPlan(kind, authState, false)
 	if !plan.Configured {
 		return true
 	}
@@ -118,6 +118,10 @@ func (s *ScriptSink) ScriptPlan(kind ScriptKind, authState AuthState) ScriptSche
 
 // ScriptPlan returns the active Lua script plan for one script family.
 func (c *DecisionContext) ScriptPlan(kind ScriptKind, authState AuthState) ScriptSchedulePlan {
+	return c.scriptPlan(kind, authState, true)
+}
+
+func (c *DecisionContext) scriptPlan(kind ScriptKind, authState AuthState, recordSkips bool) ScriptSchedulePlan {
 	if c == nil || c.snapshot == nil || c.report == nil {
 		return ScriptSchedulePlan{}
 	}
@@ -138,7 +142,7 @@ func (c *DecisionContext) ScriptPlan(kind ScriptKind, authState AuthState) Scrip
 
 		configured = true
 		name := scriptNameFromCheck(kind, check)
-		if name == "" || !runIfMatches(check.RunIf.AuthState, authState) {
+		if name == "" || !c.scriptCheckScheduled(check, authState, recordSkips) {
 			continue
 		}
 
@@ -157,6 +161,18 @@ func (c *DecisionContext) ScriptPlan(kind ScriptKind, authState AuthState) Scrip
 		Schedules:  scriptSchedules(selected),
 		Configured: true,
 	}
+}
+
+func (c *DecisionContext) scriptCheckScheduled(
+	check policyruntime.CompiledCheck,
+	authState AuthState,
+	recordSkips bool,
+) bool {
+	if recordSkips {
+		return c.compiledCheckScheduled(context.Background(), check, authState)
+	}
+
+	return c.compiledCheckSelected(check, authState)
 }
 
 func (r ScriptResult) selector() CheckSelector {

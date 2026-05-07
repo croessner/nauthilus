@@ -24,13 +24,20 @@ import (
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 )
 
+const (
+	testMissingNotRecorded           = "not_recorded"
+	testSchedulerGuardInsecureReason = "scheduler_guard:insecure_connection"
+	testTLSCheckConfigRef            = "auth.controls.tls_encryption"
+	testTLSCheckName                 = "tls_encryption"
+)
+
 func TestDecisionContextRecordsCheckResultAndAttributes(t *testing.T) {
 	recorder := &recordingRecorder{}
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, recorder)
 	check := ctx.BeginCheck(context.Background(), CheckSelector{
 		CheckType: policy.CheckTypeTLSEncryption,
 		Stage:     policy.StagePreAuth,
-		Name:      "tls_encryption",
+		Name:      testTLSCheckName,
 	})
 
 	check.Finish(CheckResult{
@@ -42,7 +49,7 @@ func TestDecisionContextRecordsCheckResultAndAttributes(t *testing.T) {
 	})
 
 	report := ctx.Report()
-	if got := report.Checks["tls_encryption"].Status; got != policy.CheckStatusOK {
+	if got := report.Checks[testTLSCheckName].Status; got != policy.CheckStatusOK {
 		t.Fatalf("check status = %q, want %q", got, policy.CheckStatusOK)
 	}
 
@@ -73,8 +80,8 @@ func TestDecisionContextReportsSkippedMissingAndUnavailableFacts(t *testing.T) {
 		t.Fatalf("skipped status = %q, want %q", got, policy.CheckStatusSkipped)
 	}
 
-	if got := report.MissingChecks["tls_encryption"]; got != "not_recorded" {
-		t.Fatalf("missing tls reason = %q, want not_recorded", got)
+	if got := report.MissingChecks[testTLSCheckName]; got != testMissingNotRecorded {
+		t.Fatalf("missing tls reason = %q, want %s", got, testMissingNotRecorded)
 	}
 
 	if got := report.Unavailable["lua_environment_risk"].Reason; got != "not_observe_safe" {
@@ -95,8 +102,8 @@ func TestDecisionContextReportsUnsafeObserveChecksUnavailable(t *testing.T) {
 		t.Fatal("unsafe observe check was also recorded as missing")
 	}
 
-	if got := report.MissingChecks["tls_encryption"]; got != "not_recorded" {
-		t.Fatalf("safe missing reason = %q, want not_recorded", got)
+	if got := report.MissingChecks[testTLSCheckName]; got != testMissingNotRecorded {
+		t.Fatalf("safe missing reason = %q, want %s", got, testMissingNotRecorded)
 	}
 }
 
@@ -197,6 +204,118 @@ func TestScriptSinkBuildsPolicyScriptSchedule(t *testing.T) {
 	}
 }
 
+func TestDecisionContextSchedulerGuardSkipsCheckBeforeAdapter(t *testing.T) {
+	recorder := &recordingRecorder{}
+	ctx := NewDecisionContext(testSchedulerGuardSnapshot(modeEnforce, testSchedulerGuardCheck(
+		policy.RunIfAny,
+		"insecure_connection",
+	)), policy.OperationAuthenticate, recorder)
+	ctx.RecordAttribute(BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, policy.OperationAuthenticate, false, nil))
+
+	adapterCalled := false
+	if ctx.CheckScheduled(context.Background(), testTLSSchedulerSelector(), AuthStateUnauthenticated) {
+		adapterCalled = true
+		check := ctx.BeginCheck(context.Background(), testTLSSchedulerSelector())
+		check.Finish(CheckResult{Matched: true})
+	}
+
+	if adapterCalled {
+		t.Fatal("adapter was called although scheduler guard matched")
+	}
+
+	report := ctx.Report()
+	checkResult := report.Checks[testTLSCheckName]
+	if checkResult.Status != policy.CheckStatusSkipped {
+		t.Fatalf("check status = %q, want %q", checkResult.Status, policy.CheckStatusSkipped)
+	}
+
+	if checkResult.Reason != testSchedulerGuardInsecureReason {
+		t.Fatalf("check reason = %q, want %s", checkResult.Reason, testSchedulerGuardInsecureReason)
+	}
+
+	if len(recorder.checks) != 1 {
+		t.Fatalf("recorded checks = %d, want 1", len(recorder.checks))
+	}
+
+	if got := recorder.checks[0].ReasonCode; got != testSchedulerGuardInsecureReason {
+		t.Fatalf("metric reason = %q, want %s", got, testSchedulerGuardInsecureReason)
+	}
+}
+
+func TestDecisionContextSchedulerGuardRunsCheckWhenGuardDoesNotMatch(t *testing.T) {
+	ctx := NewDecisionContext(testSchedulerGuardSnapshot(modeEnforce, testSchedulerGuardCheck(
+		policy.RunIfAny,
+		"insecure_connection",
+	)), policy.OperationAuthenticate, nil)
+	ctx.RecordAttribute(BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, policy.OperationAuthenticate, true, nil))
+
+	if !ctx.CheckScheduled(context.Background(), testTLSSchedulerSelector(), AuthStateUnauthenticated) {
+		t.Fatal("check should be scheduled when scheduler guard does not match")
+	}
+
+	check := ctx.BeginCheck(context.Background(), testTLSSchedulerSelector())
+	check.Finish(CheckResult{Matched: false})
+
+	if got := ctx.Report().Checks[testTLSCheckName].Status; got != policy.CheckStatusOK {
+		t.Fatalf("check status = %q, want %q", got, policy.CheckStatusOK)
+	}
+}
+
+func TestDecisionContextSchedulerGuardsAreORCombined(t *testing.T) {
+	ctx := NewDecisionContext(testSchedulerGuardSnapshot(modeEnforce, testSchedulerGuardCheck(
+		policy.RunIfAny,
+		"internal_listener",
+		"insecure_connection",
+	)), policy.OperationAuthenticate, nil)
+	ctx.RecordAttribute(StringAttribute(policy.AttributeRequestListenerName, policy.StagePreAuth, policy.OperationAuthenticate, "external"))
+	ctx.RecordAttribute(BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, policy.OperationAuthenticate, false, nil))
+
+	if ctx.CheckScheduled(context.Background(), testTLSSchedulerSelector(), AuthStateUnauthenticated) {
+		t.Fatal("check should be skipped when any scheduler guard matches")
+	}
+
+	if got := ctx.Report().Checks[testTLSCheckName].Reason; got != testSchedulerGuardInsecureReason {
+		t.Fatalf("skip reason = %q, want %s", got, testSchedulerGuardInsecureReason)
+	}
+}
+
+func TestDecisionContextRunIfSkipRemainsDistinctFromSchedulerGuardSkip(t *testing.T) {
+	ctx := NewDecisionContext(testSchedulerGuardSnapshot(modeEnforce, testSchedulerGuardCheck(
+		policy.RunIfAuthenticated,
+		"insecure_connection",
+	)), policy.OperationAuthenticate, nil)
+	ctx.RecordAttribute(BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, policy.OperationAuthenticate, false, nil))
+
+	if ctx.CheckScheduled(context.Background(), testTLSSchedulerSelector(), AuthStateUnauthenticated) {
+		t.Fatal("auth-state run_if should skip the check")
+	}
+
+	if got := ctx.Report().Checks[testTLSCheckName].Reason; got != "run_if" {
+		t.Fatalf("skip reason = %q, want run_if", got)
+	}
+}
+
+func TestDecisionContextObserveModeRecordsSchedulerGuardSkip(t *testing.T) {
+	ctx := NewDecisionContext(testSchedulerGuardSnapshot(modeObserve, testSchedulerGuardCheck(
+		policy.RunIfAny,
+		"insecure_connection",
+	)), policy.OperationAuthenticate, nil)
+	ctx.RecordAttribute(BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, policy.OperationAuthenticate, false, nil))
+
+	if ctx.CheckScheduled(context.Background(), testTLSSchedulerSelector(), AuthStateUnauthenticated) {
+		t.Fatal("check should be skipped in the observe report when scheduler guard matches")
+	}
+
+	report := ctx.Report()
+	if report.Final != nil {
+		t.Fatalf("scheduler guard set final decision = %#v, want nil", report.Final)
+	}
+
+	if got := report.Checks[testTLSCheckName].Reason; got != testSchedulerGuardInsecureReason {
+		t.Fatalf("skip reason = %q, want %s", got, testSchedulerGuardInsecureReason)
+	}
+}
+
 func TestDecisionContextDefaultSetAuthorityRequiresNoConfiguredRules(t *testing.T) {
 	ctx := NewDecisionContext(testSnapshot(), policy.OperationAuthenticate, nil)
 	if !ctx.BuiltinDefaultAuthoritative() {
@@ -287,7 +406,7 @@ func testSnapshot() *policyruntime.Snapshot {
 					Stage: policy.StagePreAuth,
 					Checks: []policyruntime.CompiledCheck{
 						{
-							Name:       "tls_encryption",
+							Name:       testTLSCheckName,
 							Type:       policy.CheckTypeTLSEncryption,
 							Stage:      policy.StagePreAuth,
 							Operations: []policy.Operation{policy.OperationAuthenticate},
@@ -335,7 +454,7 @@ func testObserveSnapshot() *policyruntime.Snapshot {
 				ObserveSafe: false,
 			},
 			{
-				Name:        "tls_encryption",
+				Name:        testTLSCheckName,
 				Type:        policy.CheckTypeTLSEncryption,
 				Stage:       policy.StagePreAuth,
 				Operations:  []policy.Operation{policy.OperationAuthenticate},
@@ -420,6 +539,63 @@ func testCustomLuaNameSnapshot() *policyruntime.Snapshot {
 				},
 			},
 		},
+	}
+}
+
+func testSchedulerGuardSnapshot(mode string, checks ...policyruntime.CompiledCheck) *policyruntime.Snapshot {
+	return &policyruntime.Snapshot{
+		Generation:    45,
+		Mode:          mode,
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		SchedulerGuards: map[string]policyruntime.CompiledSchedulerGuard{
+			"insecure_connection": {
+				Root: policyruntime.CompiledExpr{
+					Kind:        policyruntime.ExprKindAttribute,
+					AttributeID: policy.AttributeRequestConnectionTLS,
+					Operator:    "is",
+					Expected:    policyruntime.TypedValue{Value: false},
+				},
+				OnMissingAttribute: "run",
+			},
+			"internal_listener": {
+				Root: policyruntime.CompiledExpr{
+					Kind:        policyruntime.ExprKindAttribute,
+					AttributeID: policy.AttributeRequestListenerName,
+					Operator:    "is",
+					Expected:    policyruntime.TypedValue{Value: "internal"},
+				},
+				OnMissingAttribute: "run",
+			},
+		},
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage:  policy.StagePreAuth,
+					Checks: checks,
+				},
+			},
+		},
+	}
+}
+
+func testSchedulerGuardCheck(runIf string, skipIf ...string) policyruntime.CompiledCheck {
+	return policyruntime.CompiledCheck{
+		Name:       testTLSCheckName,
+		Type:       policy.CheckTypeTLSEncryption,
+		ConfigRef:  testTLSCheckConfigRef,
+		Stage:      policy.StagePreAuth,
+		Operations: []policy.Operation{policy.OperationAuthenticate},
+		RunIf:      policyruntime.RunIfPlan{AuthState: runIf},
+		SkipIf:     append([]string(nil), skipIf...),
+	}
+}
+
+func testTLSSchedulerSelector() CheckSelector {
+	return CheckSelector{
+		CheckType: policy.CheckTypeTLSEncryption,
+		Stage:     policy.StagePreAuth,
+		Name:      testTLSCheckName,
+		ConfigRef: testTLSCheckConfigRef,
 	}
 }
 
