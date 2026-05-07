@@ -109,6 +109,7 @@ bin/*
 /node_modules/
 temp/*
 .cache/
+scripts/__pycache__/
 .venv-grpc-smoke/
 sbom/
 client/logins.local.csv
