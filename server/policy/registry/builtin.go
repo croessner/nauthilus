@@ -74,7 +74,18 @@ func requestAttributes(allOperations []policy.Operation) []AttributeDefinition {
 		requestAttribute(policy.AttributeRequestOperation, AttributeTypeString, allOperations),
 		requestAttribute(policy.AttributeRequestTime, AttributeTypeDateTime, allOperations),
 		requestAttribute(policy.AttributeRequestClientIP, AttributeTypeIP, allOperations),
+		requestAttribute(policy.AttributeRequestClientIPPresent, AttributeTypeBool, allOperations),
+		requestAttribute(policy.AttributeRequestClientIPTrusted, AttributeTypeBool, allOperations),
+		requestAttribute(policy.AttributeRequestClientIPSource, AttributeTypeString, allOperations),
 		requestAttribute(policy.AttributeRequestProtocol, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestTransportKind, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestListenerName, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestConnectionTLS, AttributeTypeBool, allOperations),
+		requestAttribute(policy.AttributeRequestInitiatorKind, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestHTTPRoute, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestGRPCMethod, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestIDPClientID, AttributeTypeString, allOperations),
+		requestAttribute(policy.AttributeRequestSAMLServiceProviderID, AttributeTypeString, allOperations),
 	}
 }
 

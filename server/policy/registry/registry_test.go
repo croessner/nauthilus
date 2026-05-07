@@ -66,3 +66,38 @@ func TestRegistrySnapshotIsImmutableCopy(t *testing.T) {
 		t.Fatalf("registry attribute ID = %q, want request.operation", got.ID)
 	}
 }
+
+func TestBuiltinRequestContextAttributesAreTyped(t *testing.T) {
+	registry, err := NewBuiltinAttributeRegistry()
+	if err != nil {
+		t.Fatalf("NewBuiltinAttributeRegistry() error = %v", err)
+	}
+
+	tests := map[string]AttributeType{
+		"request.client.ip":         AttributeTypeIP,
+		"request.client.ip.present": AttributeTypeBool,
+		"request.client.ip.trusted": AttributeTypeBool,
+		"request.client.ip.source":  AttributeTypeString,
+		"request.transport.kind":    AttributeTypeString,
+		"request.listener.name":     AttributeTypeString,
+		"request.connection.tls":    AttributeTypeBool,
+		"request.initiator.kind":    AttributeTypeString,
+		"request.http.route":        AttributeTypeString,
+		"request.grpc.method":       AttributeTypeString,
+		"request.idp.client_id":     AttributeTypeString,
+		"request.saml.sp_entity_id": AttributeTypeString,
+	}
+
+	for attribute, want := range tests {
+		t.Run(attribute, func(t *testing.T) {
+			definition, ok := registry.Lookup(attribute)
+			if !ok {
+				t.Fatalf("missing builtin attribute %s", attribute)
+			}
+
+			if definition.Type != want {
+				t.Fatalf("attribute type = %q, want %q", definition.Type, want)
+			}
+		})
+	}
+}

@@ -61,6 +61,7 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 	dto := authv1.AuthRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeAuthenticate, dto)
 	input = authInputWithIncomingMetadata(ctx, input)
+	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_Authenticate_FullMethodName)
 	dto.Password = ""
 
 	if request != nil {
@@ -93,6 +94,7 @@ func (h *Handler) LookupIdentity(
 	dto := authv1.LookupIdentityRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeLookupIdentity, dto)
 	input = authInputWithIncomingMetadata(ctx, input)
+	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_LookupIdentity_FullMethodName)
 
 	outcome, err := h.service.LookupIdentity(ctx, input)
 	if err != nil {
@@ -120,6 +122,7 @@ func (h *Handler) ListAccounts(
 	dto := authv1.ListAccountsRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeListAccounts, dto)
 	input = authInputWithIncomingMetadata(ctx, input)
+	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_ListAccounts_FullMethodName)
 
 	outcome, err := h.service.ListAccounts(ctx, input)
 	if err != nil {

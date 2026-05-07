@@ -89,8 +89,41 @@ const (
 	// AttributeRequestClientIP stores the request client IP.
 	AttributeRequestClientIP = "request.client.ip"
 
+	// AttributeRequestClientIPPresent stores whether the request client IP parsed successfully.
+	AttributeRequestClientIPPresent = "request.client.ip.present"
+
+	// AttributeRequestClientIPTrusted stores whether the selected client IP source is trusted.
+	AttributeRequestClientIPTrusted = "request.client.ip.trusted"
+
+	// AttributeRequestClientIPSource stores the selected client IP source.
+	AttributeRequestClientIPSource = "request.client.ip.source"
+
 	// AttributeRequestProtocol stores the request protocol.
 	AttributeRequestProtocol = "request.protocol"
+
+	// AttributeRequestTransportKind stores the server-derived transport kind.
+	AttributeRequestTransportKind = "request.transport.kind"
+
+	// AttributeRequestListenerName stores the configured listener identity when available.
+	AttributeRequestListenerName = "request.listener.name"
+
+	// AttributeRequestConnectionTLS stores whether the transport connection used TLS.
+	AttributeRequestConnectionTLS = "request.connection.tls"
+
+	// AttributeRequestInitiatorKind stores the server-derived request initiator kind.
+	AttributeRequestInitiatorKind = "request.initiator.kind"
+
+	// AttributeRequestHTTPRoute stores the normalized server route when available.
+	AttributeRequestHTTPRoute = "request.http.route"
+
+	// AttributeRequestGRPCMethod stores the normalized gRPC method when available.
+	AttributeRequestGRPCMethod = "request.grpc.method"
+
+	// AttributeRequestIDPClientID stores the IdP/OIDC client identifier when available before scheduling.
+	AttributeRequestIDPClientID = "request.idp.client_id"
+
+	// AttributeRequestSAMLServiceProviderID stores the SAML service-provider entity ID when available before scheduling.
+	AttributeRequestSAMLServiceProviderID = "request.saml.sp_entity_id"
 
 	// AttributeBruteForceTriggered stores whether brute-force matched.
 	AttributeBruteForceTriggered = "auth.brute_force.triggered"

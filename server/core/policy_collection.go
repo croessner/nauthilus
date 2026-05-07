@@ -75,8 +75,8 @@ func (a *AuthState) requestPolicyContext(ctx *gin.Context) *policycollection.Dec
 	policyCtx.Report().SessionID = a.Runtime.GUID
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestOperation, policy.StagePreAuth, operation, string(operation)))
 	policyCtx.RecordAttribute(policycollection.TimeAttribute(policy.AttributeRequestTime, policy.StagePreAuth, operation, time.Now()))
-	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestClientIP, policy.StagePreAuth, operation, a.Request.ClientIP))
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestProtocol, policy.StagePreAuth, operation, a.requestProtocol()))
+	a.recordRequestContextFacts(policyCtx, ctx, operation)
 	a.recordRequestPolicyAttributes(policyCtx, ctx, operation, snapshot.RequestAttributes)
 	ctx.Set(policyCollectionContextKey, policyCtx)
 
