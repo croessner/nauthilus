@@ -32,6 +32,7 @@ import (
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 
 	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/text/language"
 )
 
 const (
@@ -355,18 +356,21 @@ func reportDecisionFromCompiled(
 	compiled policyruntime.CompiledPolicy,
 	policyReport *report.DecisionReport,
 ) report.PolicyDecision {
+	responseMessage := responseMessageFromPlan(compiled.Then.ResponseMessage, compiled.Then.ResponseMarker, policyReport)
+
 	return report.PolicyDecision{
-		Name:            compiled.Name,
-		Stage:           compiled.Stage,
-		Effect:          compiled.Then.Decision,
-		Reason:          compiled.Then.Reason,
-		OutcomeMarker:   compiled.Then.OutcomeMarker,
-		FSMEventMarker:  compiled.Then.FSMEventMarker,
-		ResponseMarker:  compiled.Then.ResponseMarker,
-		ResponseMessage: responseMessageFromPlan(compiled.Then.ResponseMessage, compiled.Then.ResponseMarker, policyReport),
-		Control:         decisionControlFromPlan(compiled.Then.Control),
-		Obligations:     effectRequestsFromPlan(compiled.Then.Obligations),
-		Advice:          effectRequestsFromPlan(compiled.Then.Advice),
+		Name:             compiled.Name,
+		Stage:            compiled.Stage,
+		Effect:           compiled.Then.Decision,
+		Reason:           compiled.Then.Reason,
+		OutcomeMarker:    compiled.Then.OutcomeMarker,
+		FSMEventMarker:   compiled.Then.FSMEventMarker,
+		ResponseMarker:   compiled.Then.ResponseMarker,
+		ResponseMessage:  responseMessage,
+		ResponseLanguage: responseLanguageFromPlan(compiled.Then.ResponseLanguage, responseMessage, policyReport),
+		Control:          decisionControlFromPlan(compiled.Then.Control),
+		Obligations:      effectRequestsFromPlan(compiled.Then.Obligations),
+		Advice:           effectRequestsFromPlan(compiled.Then.Advice),
 	}
 }
 
@@ -398,16 +402,93 @@ func responseMessageFromPlan(
 	policyReport *report.DecisionReport,
 ) *report.ResponseMessageSelection {
 	switch plan.Source {
-	case "literal":
+	case policy.ResponseSourceLiteral:
 		return &report.ResponseMessageSelection{
-			Source:  "literal",
+			Source:  policy.ResponseSourceLiteral,
 			Message: sanitizeResponseMessage(plan.Literal, plan.MaxLength),
 		}
-	case "attribute_detail":
+	case policy.ResponseSourceI18N:
+		message, truncated := sanitizeResponseMessageWithState(plan.Fallback, plan.MaxLength)
+
+		return &report.ResponseMessageSelection{
+			Source:    policy.ResponseSourceI18N,
+			Message:   message,
+			I18NKey:   plan.I18NKey,
+			Fallback:  plan.Fallback,
+			Truncated: truncated,
+		}
+	case policy.ResponseSourceAttributeDetail:
 		return attributeDetailMessage(plan, policyReport, responseMarker)
 	default:
 		return defaultResponseMessage(responseMarker)
 	}
+}
+
+func responseLanguageFromPlan(
+	plan policyruntime.ResponseLanguagePlan,
+	responseMessage *report.ResponseMessageSelection,
+	policyReport *report.DecisionReport,
+) *report.ResponseLanguageSelection {
+	if responseMessage == nil || responseMessage.I18NKey == "" {
+		return nil
+	}
+
+	switch plan.Source {
+	case policy.ResponseSourceLiteral:
+		if plan.Language == "" {
+			return nil
+		}
+
+		return &report.ResponseLanguageSelection{
+			Source:   policy.ResponseSourceLiteral,
+			Language: plan.Language,
+		}
+	case policy.ResponseSourceAttribute:
+		return attributeResponseLanguage(plan, policyReport)
+	default:
+		return nil
+	}
+}
+
+func attributeResponseLanguage(
+	plan policyruntime.ResponseLanguagePlan,
+	policyReport *report.DecisionReport,
+) *report.ResponseLanguageSelection {
+	if policyReport != nil {
+		if attributeValue, ok := policyReport.Attributes[plan.AttributeID]; ok {
+			if value, stringOK := attributeValue.Value.(string); stringOK {
+				if tag, valid := normalizeRuntimeLanguage(value); valid {
+					return &report.ResponseLanguageSelection{
+						Source:      policy.ResponseSourceAttribute,
+						Language:    tag,
+						AttributeID: plan.AttributeID,
+						Fallback:    plan.Fallback,
+					}
+				}
+			}
+		}
+	}
+
+	if plan.Fallback == "" {
+		return nil
+	}
+
+	return &report.ResponseLanguageSelection{
+		Source:       policy.ResponseSourceAttribute,
+		Language:     plan.Fallback,
+		AttributeID:  plan.AttributeID,
+		Fallback:     plan.Fallback,
+		FallbackUsed: true,
+	}
+}
+
+func normalizeRuntimeLanguage(value string) (string, bool) {
+	tag, err := language.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+
+	return tag.String(), true
 }
 
 func attributeDetailMessage(
@@ -424,7 +505,7 @@ func attributeDetailMessage(
 					policyReport.Attributes[plan.AttributeID] = attributeValue
 
 					return &report.ResponseMessageSelection{
-						Source:      "attribute_detail",
+						Source:      policy.ResponseSourceAttributeDetail,
 						Message:     sanitizeResponseMessage(value, plan.MaxLength),
 						AttributeID: plan.AttributeID,
 						Detail:      plan.Detail,
@@ -435,12 +516,15 @@ func attributeDetailMessage(
 	}
 
 	if plan.Fallback != "" {
+		message, truncated := sanitizeResponseMessageWithState(plan.Fallback, plan.MaxLength)
+
 		return &report.ResponseMessageSelection{
-			Source:       "attribute_detail",
-			Message:      sanitizeResponseMessage(plan.Fallback, plan.MaxLength),
+			Source:       policy.ResponseSourceAttributeDetail,
+			Message:      message,
 			AttributeID:  plan.AttributeID,
 			Detail:       plan.Detail,
 			Fallback:     plan.Fallback,
+			Truncated:    truncated,
 			FallbackUsed: true,
 		}
 	}

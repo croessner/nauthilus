@@ -351,7 +351,7 @@ func customLookupDenySnapshotForTest() *policyruntime.Snapshot {
 								FSMEventMarker: policy.FSMEventMarkerAuthDeny,
 								ResponseMarker: policy.ResponseMarkerFail,
 								ResponseMessage: policyruntime.ResponseMessagePlan{
-									Source:  "literal",
+									Source:  policy.ResponseSourceLiteral,
 									Literal: "Custom lookup deny",
 								},
 							},
@@ -403,7 +403,7 @@ func customListAccountsDenySnapshotForTest() *policyruntime.Snapshot {
 								FSMEventMarker: policy.FSMEventMarkerAuthDeny,
 								ResponseMarker: policy.ResponseMarkerFail,
 								ResponseMessage: policyruntime.ResponseMessagePlan{
-									Source:  "literal",
+									Source:  policy.ResponseSourceLiteral,
 									Literal: "Custom account listing deny",
 								},
 							},

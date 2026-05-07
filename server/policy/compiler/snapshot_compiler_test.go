@@ -31,6 +31,12 @@ import (
 
 const testRBLReturnCodeListed = "127.0.0.2"
 
+const (
+	testPolicyI18NKey          = "auth.policy.company.account_blocked"
+	testPolicyI18NFallback     = "Login failed because the account is locked."
+	testPolicyResponseLanguage = "de"
+)
+
 func TestCompilerBuildsSnapshotFromConfiguredPolicy(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 
@@ -98,6 +104,131 @@ func TestCompilerRunsLuaRegistryScript(t *testing.T) {
 	if detail.Sensitivity != policyregistry.DetailSensitivityPublic ||
 		detail.Purpose != policyregistry.DetailPurposeResponseMessage {
 		t.Fatalf("detail metadata = %#v, want public response_message", detail)
+	}
+}
+
+func TestCompilerAcceptsI18NResponseMessageAndResponseLanguage(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies[0].Then.ResponseMessage = config.PolicyResponseMessageConfig{
+		From:     policy.ResponseSourceI18N,
+		I18NKey:  testPolicyI18NKey,
+		Fallback: testPolicyI18NFallback,
+	}
+	cfg.Auth.Policy.Policies[0].Then.ResponseLanguage = config.PolicyResponseLanguageConfig{
+		From:     policy.ResponseSourceLiteral,
+		Language: testPolicyResponseLanguage,
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	compiled := snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth].Policies[0]
+	if compiled.Then.ResponseMessage.Source != policy.ResponseSourceI18N {
+		t.Fatalf("response message source = %q, want i18n", compiled.Then.ResponseMessage.Source)
+	}
+
+	if compiled.Then.ResponseMessage.I18NKey != testPolicyI18NKey {
+		t.Fatalf("i18n key = %q, want configured key", compiled.Then.ResponseMessage.I18NKey)
+	}
+
+	if compiled.Then.ResponseLanguage.Source != policy.ResponseSourceLiteral ||
+		compiled.Then.ResponseLanguage.Language != testPolicyResponseLanguage {
+		t.Fatalf("response language = %#v, want literal de", compiled.Then.ResponseLanguage)
+	}
+}
+
+func TestCompilerRejectsInvalidI18NResponseMessage(t *testing.T) {
+	testCases := map[string]invalidPolicyOutputTestCase{
+		"i18n without key": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.Policies[0].Then.ResponseMessage = config.PolicyResponseMessageConfig{
+					From:     policy.ResponseSourceI18N,
+					Fallback: testPolicyI18NFallback,
+				}
+			},
+			wantErr: "auth.policy.policies[0].then.response_message.i18n_key",
+		},
+		"i18n without fallback": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.Policies[0].Then.ResponseMessage = config.PolicyResponseMessageConfig{
+					From:    policy.ResponseSourceI18N,
+					I18NKey: testPolicyI18NKey,
+				}
+			},
+			wantErr: "auth.policy.policies[0].then.response_message.fallback",
+		},
+		"i18n with attribute": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.Policies[0].Then.ResponseMessage = config.PolicyResponseMessageConfig{
+					From:      policy.ResponseSourceI18N,
+					I18NKey:   testPolicyI18NKey,
+					Attribute: policy.AttributeBruteForceTriggered,
+					Fallback:  testPolicyI18NFallback,
+				}
+			},
+			wantErr: "auth.policy.policies[0].then.response_message",
+		},
+	}
+
+	runInvalidPolicyOutputTestCases(t, testCases)
+}
+
+func TestCompilerRejectsInvalidResponseLanguage(t *testing.T) {
+	testCases := map[string]invalidPolicyOutputTestCase{
+		"literal language without tag": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.Policies[0].Then.ResponseLanguage = config.PolicyResponseLanguageConfig{
+					From: policy.ResponseSourceLiteral,
+				}
+			},
+			wantErr: "auth.policy.policies[0].then.response_language.language",
+		},
+		"literal language with invalid tag": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.Policies[0].Then.ResponseLanguage = config.PolicyResponseLanguageConfig{
+					From:     policy.ResponseSourceLiteral,
+					Language: "not a language",
+				}
+			},
+			wantErr: "auth.policy.policies[0].then.response_language.language",
+		},
+		"attribute language without attribute": {
+			configure: func(cfg *config.FileSettings) {
+				cfg.Auth.Policy.Policies[0].Then.ResponseLanguage = config.PolicyResponseLanguageConfig{
+					From: policy.ResponseSourceAttribute,
+				}
+			},
+			wantErr: "auth.policy.policies[0].then.response_language.attribute",
+		},
+	}
+
+	runInvalidPolicyOutputTestCases(t, testCases)
+}
+
+type invalidPolicyOutputTestCase struct {
+	configure func(*config.FileSettings)
+	wantErr   string
+}
+
+func runInvalidPolicyOutputTestCases(t *testing.T, testCases map[string]invalidPolicyOutputTestCase) {
+	t.Helper()
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			cfg := policyCompilerTestConfig()
+			testCase.configure(cfg)
+
+			_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+			if err == nil {
+				t.Fatal("Compile() error = nil, want validation error")
+			}
+
+			if !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Compile() error = %q, want path %q", err, testCase.wantErr)
+			}
+		})
 	}
 }
 
@@ -364,7 +495,7 @@ func billingLockPolicy() config.PolicyRuleConfig {
 			Decision:       string(policy.DecisionDeny),
 			ResponseMarker: "auth.response.fail",
 			ResponseMessage: config.PolicyResponseMessageConfig{
-				From:      "attribute_detail",
+				From:      policy.ResponseSourceAttributeDetail,
 				Attribute: "lua.billing.account_locked",
 				Detail:    "status_message",
 				Fallback:  "Account locked",

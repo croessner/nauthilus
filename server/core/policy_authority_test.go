@@ -30,6 +30,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	policyAuthorityTestI18NKey      = "auth.policy.company.account_blocked"
+	policyAuthorityTestI18NFallback = "Login failed because the account is locked."
+)
+
 func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringEnvironmentHandling(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t, definitions.ControlTLSEncryption)
 	cfg.ClearTextList = nil
@@ -239,6 +244,49 @@ func TestAuthBoundaryConfiguredFinalDecisionOverridesBackendSuccess(t *testing.T
 
 	if policyCtx.Report().Final == nil || policyCtx.Report().Final.PolicyName != "custom_deny_backend_success" {
 		t.Fatalf("final = %#v, want custom_deny_backend_success", policyCtx.Report().Final)
+	}
+}
+
+func TestAuthBoundaryConfiguredFinalDecisionAppliesResponseMetadata(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	snapshot := customEnforceAuthSnapshotForTest()
+	compiled := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision]
+	compiled.Policies[0].Then.ResponseMessage = policyruntime.ResponseMessagePlan{
+		Source:    policy.ResponseSourceI18N,
+		I18NKey:   policyAuthorityTestI18NKey,
+		Fallback:  policyAuthorityTestI18NFallback,
+		MaxLength: 256,
+	}
+	compiled.Policies[0].Then.ResponseLanguage = policyruntime.ResponseLanguagePlan{
+		Source:   policy.ResponseSourceLiteral,
+		Language: "de",
+	}
+	snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision] = compiled
+	activatePolicySnapshotForTest(t, snapshot)
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	passDBResult := GetPassDBResultFromPool()
+	passDBResult.Authenticated = true
+	passDBResult.UserFound = true
+	passDBResult.Backend = definitions.BackendTest
+	defer PutPassDBResultToPool(passDBResult)
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+
+	if _, ok := auth.configuredPolicyAuthResult(ctx, definitions.AuthResultOK); !ok {
+		t.Fatal("configured auth decision was not evaluated")
+	}
+
+	if got := auth.Runtime.StatusMessage; got != policyAuthorityTestI18NFallback {
+		t.Fatalf("status message = %q, want configured fallback", got)
+	}
+
+	if got := auth.Runtime.StatusMessageI18NKey; got != policyAuthorityTestI18NKey {
+		t.Fatalf("i18n key = %q, want configured key", got)
+	}
+
+	if got := auth.Runtime.ResponseLanguage; got != "de" {
+		t.Fatalf("response language = %q, want de", got)
 	}
 }
 
@@ -511,7 +559,7 @@ func customEnforceAuthSnapshotForTest() *policyruntime.Snapshot {
 								FSMEventMarker: policy.FSMEventMarkerAuthDeny,
 								ResponseMarker: policy.ResponseMarkerFail,
 								ResponseMessage: policyruntime.ResponseMessagePlan{
-									Source:  "literal",
+									Source:  policy.ResponseSourceLiteral,
 									Literal: "Custom backend deny",
 								},
 							},

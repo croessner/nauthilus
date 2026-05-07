@@ -511,24 +511,34 @@ type PolicyConditionConfig struct {
 
 // PolicyThenConfig configures the selected policy decision and enforcement markers.
 type PolicyThenConfig struct {
-	ResponseMessage PolicyResponseMessageConfig `mapstructure:"response_message" validate:"omitempty"`
-	Control         PolicyDecisionControlConfig `mapstructure:"control" validate:"omitempty"`
-	Decision        string                      `mapstructure:"decision" validate:"omitempty,printascii"`
-	Reason          string                      `mapstructure:"reason" validate:"omitempty,printascii"`
-	OutcomeMarker   string                      `mapstructure:"outcome_marker" validate:"omitempty,printascii"`
-	FSMEventMarker  string                      `mapstructure:"fsm_event_marker" validate:"omitempty,printascii"`
-	ResponseMarker  string                      `mapstructure:"response_marker" validate:"omitempty,printascii"`
-	Obligations     []PolicyEffectConfig        `mapstructure:"obligations" validate:"omitempty,dive"`
-	Advice          []PolicyEffectConfig        `mapstructure:"advice" validate:"omitempty,dive"`
+	ResponseMessage  PolicyResponseMessageConfig  `mapstructure:"response_message" validate:"omitempty"`
+	ResponseLanguage PolicyResponseLanguageConfig `mapstructure:"response_language" validate:"omitempty"`
+	Control          PolicyDecisionControlConfig  `mapstructure:"control" validate:"omitempty"`
+	Decision         string                       `mapstructure:"decision" validate:"omitempty,printascii"`
+	Reason           string                       `mapstructure:"reason" validate:"omitempty,printascii"`
+	OutcomeMarker    string                       `mapstructure:"outcome_marker" validate:"omitempty,printascii"`
+	FSMEventMarker   string                       `mapstructure:"fsm_event_marker" validate:"omitempty,printascii"`
+	ResponseMarker   string                       `mapstructure:"response_marker" validate:"omitempty,printascii"`
+	Obligations      []PolicyEffectConfig         `mapstructure:"obligations" validate:"omitempty,dive"`
+	Advice           []PolicyEffectConfig         `mapstructure:"advice" validate:"omitempty,dive"`
 }
 
 // PolicyResponseMessageConfig configures an optional client-visible message source.
 type PolicyResponseMessageConfig struct {
 	From      string `mapstructure:"from" validate:"omitempty,printascii"`
 	Text      string `mapstructure:"text" validate:"omitempty"`
+	I18NKey   string `mapstructure:"i18n_key" validate:"omitempty,printascii"`
 	Attribute string `mapstructure:"attribute" validate:"omitempty,printascii"`
 	Detail    string `mapstructure:"detail" validate:"omitempty,printascii"`
 	Fallback  string `mapstructure:"fallback" validate:"omitempty"`
+}
+
+// PolicyResponseLanguageConfig configures optional response-rendering language metadata.
+type PolicyResponseLanguageConfig struct {
+	From      string `mapstructure:"from" validate:"omitempty,printascii"`
+	Language  string `mapstructure:"language" validate:"omitempty,printascii"`
+	Attribute string `mapstructure:"attribute" validate:"omitempty,printascii"`
+	Fallback  string `mapstructure:"fallback" validate:"omitempty,printascii"`
 }
 
 // PolicyEffectConfig references a registered obligation or advice.

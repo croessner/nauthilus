@@ -26,6 +26,13 @@ import (
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 )
 
+const (
+	testI18NResponseKey      = "auth.policy.company.account_blocked"
+	testI18NResponseFallback = "Login failed because the account is locked."
+	testPreferredLanguage    = "lua.company.preferred_language"
+	testFallbackLanguage     = "en"
+)
+
 type standardDecisionCase struct {
 	report             *report.DecisionReport
 	name               string
@@ -551,6 +558,116 @@ func TestConfiguredAuthEnforceSelectsLuaSubjectSourceStatusMessage(t *testing.T)
 	}
 }
 
+func TestConfiguredAuthEnforceSelectsI18NMessageAndLiteralLanguage(t *testing.T) {
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("ldap_backend", policy.CheckTypeLDAPBackend, policy.StageAuthBackend, policy.CheckStatusOK),
+		boolAttr(policy.AttributeAuthenticated, policy.StageAuthBackend, policy.OperationAuthenticate, false, nil),
+	)
+	snapshot := enforceSnapshotWithCustomAuth(customI18NAuthPolicy())
+
+	got := EvaluateConfiguredAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 32,
+	})
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.ResponseMessage == nil {
+		t.Fatal("response message is nil")
+	}
+
+	if got.Final.ResponseMessage.I18NKey != testI18NResponseKey {
+		t.Fatalf("i18n key = %q, want configured key", got.Final.ResponseMessage.I18NKey)
+	}
+
+	if got.Final.ResponseMessage.Message != testI18NResponseFallback {
+		t.Fatalf("fallback message = %q, want configured fallback", got.Final.ResponseMessage.Message)
+	}
+
+	if got.Final.ResponseLanguage == nil || got.Final.ResponseLanguage.Language != "de" {
+		t.Fatalf("response language = %#v, want literal de", got.Final.ResponseLanguage)
+	}
+}
+
+func TestConfiguredAuthEnforceSelectsAttributeResponseLanguage(t *testing.T) {
+	testCases := map[string]responseLanguageCase{
+		"valid attribute": {
+			attributeValue: stringPtr("fr"),
+			wantLanguage:   "fr",
+		},
+		"invalid attribute": {
+			attributeValue: stringPtr("not a language"),
+			wantLanguage:   testFallbackLanguage,
+			wantFallback:   true,
+		},
+		"missing attribute": {
+			wantLanguage: testFallbackLanguage,
+			wantFallback: true,
+		},
+	}
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			responseLanguage := evaluateAttributeResponseLanguage(t, testCase.attributeValue)
+
+			if responseLanguage.Source != policy.ResponseSourceAttribute ||
+				responseLanguage.AttributeID != testPreferredLanguage ||
+				responseLanguage.Language != testCase.wantLanguage ||
+				responseLanguage.FallbackUsed != testCase.wantFallback {
+				t.Fatalf("response language = %#v, want attribute language %q fallback=%v", responseLanguage, testCase.wantLanguage, testCase.wantFallback)
+			}
+		})
+	}
+}
+
+type responseLanguageCase struct {
+	attributeValue *string
+	wantLanguage   string
+	wantFallback   bool
+}
+
+func evaluateAttributeResponseLanguage(t *testing.T, attributeValue *string) *report.ResponseLanguageSelection {
+	t.Helper()
+
+	attributes := []report.AttributeValue{
+		boolAttr(policy.AttributeAuthenticated, policy.StageAuthBackend, policy.OperationAuthenticate, false, nil),
+	}
+	if attributeValue != nil {
+		attributes = append(attributes, stringAttr(testPreferredLanguage, policy.StageAuthBackend, policy.OperationAuthenticate, *attributeValue))
+	}
+
+	policyReport := standardReport(
+		policy.OperationAuthenticate,
+		check("ldap_backend", policy.CheckTypeLDAPBackend, policy.StageAuthBackend, policy.CheckStatusOK),
+		attributes...,
+	)
+	compiled := customI18NAuthPolicy()
+	compiled.Then.ResponseLanguage = policyruntime.ResponseLanguagePlan{
+		Source:      policy.ResponseSourceAttribute,
+		AttributeID: testPreferredLanguage,
+		Fallback:    testFallbackLanguage,
+	}
+	snapshot := enforceSnapshotWithCustomAuth(compiled)
+
+	got := EvaluateConfiguredAuth(context.Background(), snapshot, policyReport, CompareInput{
+		Mode:       "enforce",
+		Set:        policy.BuiltinDefaultSet,
+		Generation: 32,
+	})
+	if got.Final == nil {
+		t.Fatal("final decision is nil")
+	}
+
+	if got.Final.ResponseLanguage == nil {
+		t.Fatal("response language is nil")
+	}
+
+	return got.Final.ResponseLanguage
+}
+
 func standardReport(
 	operation policy.Operation,
 	checkResult report.CheckResult,
@@ -593,6 +710,24 @@ func boolAttr(
 		Value:     value,
 		Details:   details,
 	}
+}
+
+func stringAttr(
+	id string,
+	stage policy.Stage,
+	operation policy.Operation,
+	value string,
+) report.AttributeValue {
+	return report.AttributeValue{
+		ID:        id,
+		Stage:     stage,
+		Operation: operation,
+		Value:     value,
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func observeSnapshotWithCustomDecision(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {
@@ -696,7 +831,7 @@ func customPreAuthPolicy(
 			FSMEventMarker: fsmMarker,
 			ResponseMarker: responseMarker,
 			ResponseMessage: policyruntime.ResponseMessagePlan{
-				Source:  "literal",
+				Source:  policy.ResponseSourceLiteral,
 				Literal: "Custom TLS deny",
 			},
 		},
@@ -725,7 +860,7 @@ func customAuthDecisionPolicy(
 			FSMEventMarker: fsmMarker,
 			ResponseMarker: responseMarker,
 			ResponseMessage: policyruntime.ResponseMessagePlan{
-				Source:  "literal",
+				Source:  policy.ResponseSourceLiteral,
 				Literal: "Custom deny",
 			},
 		},
@@ -750,7 +885,7 @@ func customLuaSubjectSourcePolicy() policyruntime.CompiledPolicy {
 			FSMEventMarker: policy.FSMEventMarkerAuthDeny,
 			ResponseMarker: policy.ResponseMarkerFail,
 			ResponseMessage: policyruntime.ResponseMessagePlan{
-				Source:      "attribute_detail",
+				Source:      policy.ResponseSourceAttributeDetail,
 				AttributeID: "auth.lua.subject.billing.rejected",
 				Detail:      "status_message",
 				Fallback:    "Invalid login or password",
@@ -758,6 +893,33 @@ func customLuaSubjectSourcePolicy() policyruntime.CompiledPolicy {
 			},
 		},
 	}
+}
+
+func customI18NAuthPolicy() policyruntime.CompiledPolicy {
+	compiled := customAuthDecisionPolicy(
+		"custom_i18n_backend_deny",
+		policy.DecisionDeny,
+		policy.FSMEventMarkerAuthDeny,
+		policy.ResponseMarkerFail,
+	)
+	compiled.Root = policyruntime.CompiledExpr{
+		Kind:        policyruntime.ExprKindAttribute,
+		AttributeID: policy.AttributeAuthenticated,
+		Operator:    "is",
+		Expected:    policyruntime.TypedValue{Value: false},
+	}
+	compiled.Then.ResponseMessage = policyruntime.ResponseMessagePlan{
+		Source:    policy.ResponseSourceI18N,
+		I18NKey:   testI18NResponseKey,
+		Fallback:  testI18NResponseFallback,
+		MaxLength: 256,
+	}
+	compiled.Then.ResponseLanguage = policyruntime.ResponseLanguagePlan{
+		Source:   policy.ResponseSourceLiteral,
+		Language: "de",
+	}
+
+	return compiled
 }
 
 type recordingRecorder struct {

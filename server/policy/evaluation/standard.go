@@ -754,17 +754,18 @@ func (r standardRule) selectDecision(policyReport *report.DecisionReport) report
 
 func finalDecisionFromPolicy(d report.PolicyDecision) *report.FinalDecision {
 	return &report.FinalDecision{
-		PolicyName:      d.Name,
-		Stage:           d.Stage,
-		Effect:          d.Effect,
-		Reason:          d.Reason,
-		OutcomeMarker:   d.OutcomeMarker,
-		FSMEventMarker:  d.FSMEventMarker,
-		ResponseMarker:  d.ResponseMarker,
-		ResponseMessage: cloneResponseMessage(d.ResponseMessage),
-		Control:         cloneDecisionControl(d.Control),
-		Obligations:     cloneEffectRequests(d.Obligations),
-		Advice:          cloneEffectRequests(d.Advice),
+		PolicyName:       d.Name,
+		Stage:            d.Stage,
+		Effect:           d.Effect,
+		Reason:           d.Reason,
+		OutcomeMarker:    d.OutcomeMarker,
+		FSMEventMarker:   d.FSMEventMarker,
+		ResponseMarker:   d.ResponseMarker,
+		ResponseMessage:  cloneResponseMessage(d.ResponseMessage),
+		ResponseLanguage: cloneResponseLanguage(d.ResponseLanguage),
+		Control:          cloneDecisionControl(d.Control),
+		Obligations:      cloneEffectRequests(d.Obligations),
+		Advice:           cloneEffectRequests(d.Advice),
 	}
 }
 
@@ -868,7 +869,7 @@ func attributeMessage(attributeID string, fallback string) func(*report.Decision
 						policyReport.Attributes[attributeID] = attributeValue
 
 						return &report.ResponseMessageSelection{
-							Source:      "attribute_detail",
+							Source:      policy.ResponseSourceAttributeDetail,
 							Message:     sanitizeResponseMessage(value, maxSelectedResponseMessageLength),
 							AttributeID: attributeID,
 							Detail:      "status_message",
@@ -880,7 +881,7 @@ func attributeMessage(attributeID string, fallback string) func(*report.Decision
 
 		if fallback != "" {
 			return &report.ResponseMessageSelection{
-				Source:       "attribute_detail",
+				Source:       policy.ResponseSourceAttributeDetail,
 				Message:      sanitizeResponseMessage(fallback, maxSelectedResponseMessageLength),
 				AttributeID:  attributeID,
 				Detail:       "status_message",
@@ -915,11 +916,18 @@ func defaultResponseMessage(responseMarker string) *report.ResponseMessageSelect
 }
 
 func sanitizeResponseMessage(message string, maxLength int) string {
+	sanitized, _ := sanitizeResponseMessageWithState(message, maxLength)
+
+	return sanitized
+}
+
+func sanitizeResponseMessageWithState(message string, maxLength int) (string, bool) {
 	if maxLength <= 0 {
 		maxLength = maxSelectedResponseMessageLength
 	}
 
 	builder := strings.Builder{}
+	truncated := false
 	for _, r := range message {
 		if r == '\n' || r == '\r' || r == 0 {
 			continue
@@ -931,11 +939,13 @@ func sanitizeResponseMessage(message string, maxLength int) string {
 
 		builder.WriteRune(r)
 		if builder.Len() >= maxLength {
+			truncated = len(message) > builder.Len()
+
 			break
 		}
 	}
 
-	return builder.String()
+	return builder.String(), truncated
 }
 
 func obligationsMatch(left []report.EffectRequest, right []report.EffectRequest) bool {
@@ -957,6 +967,7 @@ func cloneFinal(decision *report.FinalDecision) *report.FinalDecision {
 
 	cloned := *decision
 	cloned.ResponseMessage = cloneResponseMessage(decision.ResponseMessage)
+	cloned.ResponseLanguage = cloneResponseLanguage(decision.ResponseLanguage)
 	cloned.Control = cloneDecisionControl(decision.Control)
 	cloned.Obligations = cloneEffectRequests(decision.Obligations)
 	cloned.Advice = cloneEffectRequests(decision.Advice)
@@ -970,6 +981,16 @@ func cloneResponseMessage(message *report.ResponseMessageSelection) *report.Resp
 	}
 
 	cloned := *message
+
+	return &cloned
+}
+
+func cloneResponseLanguage(language *report.ResponseLanguageSelection) *report.ResponseLanguageSelection {
+	if language == nil {
+		return nil
+	}
+
+	cloned := *language
 
 	return &cloned
 }

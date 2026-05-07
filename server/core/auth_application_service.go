@@ -74,26 +74,30 @@ type AuthInput struct {
 
 // AuthOutcome contains the captured terminal authentication result.
 type AuthOutcome struct {
-	Attributes      bktype.AttributeMapping
-	Decision        AuthDecision
-	TerminalState   string
-	Session         string
-	AccountField    string
-	TOTPSecretField string
-	StatusMessage   string
-	Error           string
-	Backend         definitions.Backend
-	HTTPStatus      int
+	Attributes           bktype.AttributeMapping
+	Decision             AuthDecision
+	TerminalState        string
+	Session              string
+	AccountField         string
+	TOTPSecretField      string
+	StatusMessage        string
+	StatusMessageI18NKey string
+	ResponseLanguage     string
+	Error                string
+	Backend              definitions.Backend
+	HTTPStatus           int
 }
 
 // ListAccountsOutcome contains the account-provider response.
 type ListAccountsOutcome struct {
-	Accounts      AccountList
-	Decision      AuthDecision
-	Session       string
-	StatusMessage string
-	Error         string
-	HTTPStatus    int
+	Accounts             AccountList
+	Decision             AuthDecision
+	Session              string
+	StatusMessage        string
+	StatusMessageI18NKey string
+	ResponseLanguage     string
+	Error                string
+	HTTPStatus           int
 }
 
 // AuthApplicationService runs auth use cases behind transport adapters.
@@ -417,26 +421,30 @@ func newApplicationGinContext(parent context.Context, input AuthInput) *gin.Cont
 
 func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
 	return &AuthOutcome{
-		Attributes:      captured.Attributes,
-		Decision:        authDecisionFromCaptured(captured.Decision),
-		TerminalState:   captured.TerminalState,
-		Session:         captured.Session,
-		AccountField:    captured.AccountField,
-		TOTPSecretField: captured.TOTPSecretField,
-		StatusMessage:   captured.StatusMessage,
-		Error:           captured.Error,
-		Backend:         captured.Backend,
-		HTTPStatus:      captured.HTTPStatus,
+		Attributes:           captured.Attributes,
+		Decision:             authDecisionFromCaptured(captured.Decision),
+		TerminalState:        captured.TerminalState,
+		Session:              captured.Session,
+		AccountField:         captured.AccountField,
+		TOTPSecretField:      captured.TOTPSecretField,
+		StatusMessage:        captured.StatusMessage,
+		StatusMessageI18NKey: captured.StatusMessageI18NKey,
+		ResponseLanguage:     captured.ResponseLanguage,
+		Error:                captured.Error,
+		Backend:              captured.Backend,
+		HTTPStatus:           captured.HTTPStatus,
 	}
 }
 
 func listAccountsOutcomeFromCaptured(captured CapturedAuthOutcome) *ListAccountsOutcome {
 	return &ListAccountsOutcome{
-		Decision:      authDecisionFromCaptured(captured.Decision),
-		Session:       captured.Session,
-		StatusMessage: captured.StatusMessage,
-		Error:         captured.Error,
-		HTTPStatus:    captured.HTTPStatus,
+		Decision:             authDecisionFromCaptured(captured.Decision),
+		Session:              captured.Session,
+		StatusMessage:        captured.StatusMessage,
+		StatusMessageI18NKey: captured.StatusMessageI18NKey,
+		ResponseLanguage:     captured.ResponseLanguage,
+		Error:                captured.Error,
+		HTTPStatus:           captured.HTTPStatus,
 	}
 }
 

@@ -550,7 +550,7 @@ func customObserveTLSDenyPolicy() policyruntime.CompiledPolicy {
 func customEnforceTLSDenyPolicy(expected bool) policyruntime.CompiledPolicy {
 	compiled := customObserveTLSDenyPolicy()
 	compiled.Then.ResponseMessage = policyruntime.ResponseMessagePlan{
-		Source:  "literal",
+		Source:  policy.ResponseSourceLiteral,
 		Literal: "Custom TLS deny",
 	}
 	compiled.Root.Expected = policyruntime.TypedValue{Value: expected}

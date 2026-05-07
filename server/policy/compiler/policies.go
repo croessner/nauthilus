@@ -26,6 +26,8 @@ import (
 	"github.com/croessner/nauthilus/server/policy"
 	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+
+	"golang.org/x/text/language"
 )
 
 type compilePolicyInput struct {
@@ -38,6 +40,13 @@ type compilePolicyInput struct {
 	obligations map[string]policyruntime.EffectDefinition
 	advice      map[string]policyruntime.EffectDefinition
 }
+
+const (
+	policyFieldAttribute = "attribute"
+	policyFieldFallback  = "fallback"
+	policyFieldI18NKey   = "i18n_key"
+	policyFieldLanguage  = "language"
+)
 
 func compilePolicies(input compilePolicyInput) ([]policyruntime.CompiledPolicy, error) {
 	policies := make([]policyruntime.CompiledPolicy, 0, len(input.configs))
@@ -258,7 +267,7 @@ func compileAttributeCondition(
 ) (policyruntime.CompiledExpr, error) {
 	definition, ok := ctx.attributes[condition.Attribute]
 	if !ok {
-		return policyruntime.CompiledExpr{}, configPathError(childPath(path, "attribute"), "references unknown attribute")
+		return policyruntime.CompiledExpr{}, configPathError(childPath(path, policyFieldAttribute), "references unknown attribute")
 	}
 
 	valueType := definition.Type
@@ -272,14 +281,14 @@ func compileAttributeCondition(
 	}
 
 	if stageOrder(definition.Stage) > stageOrder(ctx.stage) {
-		return policyruntime.CompiledExpr{}, configPathError(childPath(path, "attribute"), "references a future-stage attribute")
+		return policyruntime.CompiledExpr{}, configPathError(childPath(path, policyFieldAttribute), "references a future-stage attribute")
 	}
 
 	if !operationsIntersect(ctx.operations, definition.Operations) {
-		return policyruntime.CompiledExpr{}, configPathError(childPath(path, "attribute"), "cannot be emitted for this policy operation")
+		return policyruntime.CompiledExpr{}, configPathError(childPath(path, policyFieldAttribute), "cannot be emitted for this policy operation")
 	}
 
-	if err := validateProducerPlan(definition, ctx, childPath(path, "attribute")); err != nil {
+	if err := validateProducerPlan(definition, ctx, childPath(path, policyFieldAttribute)); err != nil {
 		return policyruntime.CompiledExpr{}, err
 	}
 
@@ -782,6 +791,11 @@ func compileDecision(
 		return policyruntime.DecisionPlan{}, err
 	}
 
+	responseLanguage, err := compileResponseLanguage(then.ResponseLanguage, input.attributes, childPath(path, "response_language"))
+	if err != nil {
+		return policyruntime.DecisionPlan{}, err
+	}
+
 	obligations, err := compileEffectRequests(then.Obligations, input.obligations, childPath(path, "obligations"))
 	if err != nil {
 		return policyruntime.DecisionPlan{}, err
@@ -793,14 +807,15 @@ func compileDecision(
 	}
 
 	return policyruntime.DecisionPlan{
-		Decision:        decision,
-		Reason:          then.Reason,
-		OutcomeMarker:   then.OutcomeMarker,
-		FSMEventMarker:  fsmEventMarker,
-		ResponseMarker:  responseMarker,
-		ResponseMessage: responseMessage,
-		Obligations:     obligations,
-		Advice:          advice,
+		Decision:         decision,
+		Reason:           then.Reason,
+		OutcomeMarker:    then.OutcomeMarker,
+		FSMEventMarker:   fsmEventMarker,
+		ResponseMarker:   responseMarker,
+		ResponseMessage:  responseMessage,
+		ResponseLanguage: responseLanguage,
+		Obligations:      obligations,
+		Advice:           advice,
 		Control: policyruntime.DecisionControl{
 			SkipRemainingStageChecks: then.Control.SkipRemainingStageChecks,
 		},
@@ -916,31 +931,67 @@ func compileResponseMessage(
 ) (policyruntime.ResponseMessagePlan, error) {
 	source := strings.TrimSpace(responseMessage.From)
 	if source == "" {
-		if responseMessage.Text == "" && responseMessage.Attribute == "" && responseMessage.Detail == "" && responseMessage.Fallback == "" {
-			return policyruntime.ResponseMessagePlan{Source: "default"}, nil
+		if responseMessage.Text == "" &&
+			responseMessage.I18NKey == "" &&
+			responseMessage.Attribute == "" &&
+			responseMessage.Detail == "" &&
+			responseMessage.Fallback == "" {
+			return policyruntime.ResponseMessagePlan{Source: policy.ResponseSourceDefault}, nil
 		}
 
 		return policyruntime.ResponseMessagePlan{}, configPathError(path, "must set from when message fields are configured")
 	}
 
 	switch source {
-	case "default":
-		if responseMessage.Text != "" || responseMessage.Attribute != "" || responseMessage.Detail != "" || responseMessage.Fallback != "" {
+	case policy.ResponseSourceDefault:
+		if responseMessage.Text != "" ||
+			responseMessage.I18NKey != "" ||
+			responseMessage.Attribute != "" ||
+			responseMessage.Detail != "" ||
+			responseMessage.Fallback != "" {
 			return policyruntime.ResponseMessagePlan{}, configPathError(path, "must not combine default with message fields")
 		}
 
 		return policyruntime.ResponseMessagePlan{Source: source}, nil
-	case "literal":
-		if responseMessage.Text == "" || responseMessage.Attribute != "" || responseMessage.Detail != "" {
+	case policy.ResponseSourceLiteral:
+		if responseMessage.Text == "" ||
+			responseMessage.I18NKey != "" ||
+			responseMessage.Attribute != "" ||
+			responseMessage.Detail != "" {
 			return policyruntime.ResponseMessagePlan{}, configPathError(path, "must contain only text for literal")
 		}
 
 		return policyruntime.ResponseMessagePlan{Source: source, Literal: responseMessage.Text}, nil
-	case "attribute_detail":
+	case policy.ResponseSourceAttributeDetail:
 		return compileAttributeResponseMessage(responseMessage, attributes, path)
+	case policy.ResponseSourceI18N:
+		return compileI18NResponseMessage(responseMessage, path)
 	default:
 		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, "from"), "is invalid")
 	}
+}
+
+func compileI18NResponseMessage(
+	responseMessage config.PolicyResponseMessageConfig,
+	path string,
+) (policyruntime.ResponseMessagePlan, error) {
+	if strings.TrimSpace(responseMessage.I18NKey) == "" {
+		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, policyFieldI18NKey), "must not be empty")
+	}
+
+	if strings.TrimSpace(responseMessage.Fallback) == "" {
+		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, policyFieldFallback), "must not be empty")
+	}
+
+	if responseMessage.Text != "" || responseMessage.Attribute != "" || responseMessage.Detail != "" {
+		return policyruntime.ResponseMessagePlan{}, configPathError(path, "must contain only i18n_key and fallback for i18n")
+	}
+
+	return policyruntime.ResponseMessagePlan{
+		Source:   policy.ResponseSourceI18N,
+		I18NKey:  strings.TrimSpace(responseMessage.I18NKey),
+		Fallback: responseMessage.Fallback,
+	}, nil
 }
 
 func compileAttributeResponseMessage(
@@ -948,13 +999,16 @@ func compileAttributeResponseMessage(
 	attributes map[string]policyregistry.AttributeDefinition,
 	path string,
 ) (policyruntime.ResponseMessagePlan, error) {
-	if responseMessage.Attribute == "" || responseMessage.Detail == "" || responseMessage.Text != "" {
+	if responseMessage.Attribute == "" ||
+		responseMessage.Detail == "" ||
+		responseMessage.Text != "" ||
+		responseMessage.I18NKey != "" {
 		return policyruntime.ResponseMessagePlan{}, configPathError(path, "must contain attribute, detail, and optional fallback")
 	}
 
 	definition, ok := attributes[responseMessage.Attribute]
 	if !ok {
-		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, "attribute"), "references unknown attribute")
+		return policyruntime.ResponseMessagePlan{}, configPathError(childPath(path, policyFieldAttribute), "references unknown attribute")
 	}
 
 	detail, ok := definition.Details[responseMessage.Detail]
@@ -969,12 +1023,89 @@ func compileAttributeResponseMessage(
 	}
 
 	return policyruntime.ResponseMessagePlan{
-		Source:      "attribute_detail",
+		Source:      policy.ResponseSourceAttributeDetail,
 		AttributeID: responseMessage.Attribute,
 		Detail:      responseMessage.Detail,
 		Fallback:    responseMessage.Fallback,
 		MaxLength:   detail.MaxLength,
 	}, nil
+}
+
+func compileResponseLanguage(
+	responseLanguage config.PolicyResponseLanguageConfig,
+	attributes map[string]policyregistry.AttributeDefinition,
+	path string,
+) (policyruntime.ResponseLanguagePlan, error) {
+	source := strings.TrimSpace(responseLanguage.From)
+	if source == "" {
+		if responseLanguage.Language == "" && responseLanguage.Attribute == "" && responseLanguage.Fallback == "" {
+			return policyruntime.ResponseLanguagePlan{}, nil
+		}
+
+		return policyruntime.ResponseLanguagePlan{}, configPathError(path, "must set from when language fields are configured")
+	}
+
+	switch source {
+	case policy.ResponseSourceLiteral:
+		if responseLanguage.Language == "" || responseLanguage.Attribute != "" || responseLanguage.Fallback != "" {
+			return policyruntime.ResponseLanguagePlan{}, configPathError(childPath(path, policyFieldLanguage), "must contain only language for literal")
+		}
+
+		tag, err := parsePolicyLanguageTag(responseLanguage.Language)
+		if err != nil {
+			return policyruntime.ResponseLanguagePlan{}, configPathError(childPath(path, policyFieldLanguage), "must be a valid BCP 47 language tag")
+		}
+
+		return policyruntime.ResponseLanguagePlan{Source: source, Language: tag}, nil
+	case policy.ResponseSourceAttribute:
+		return compileAttributeResponseLanguage(responseLanguage, attributes, path)
+	default:
+		return policyruntime.ResponseLanguagePlan{}, configPathError(childPath(path, "from"), "is invalid")
+	}
+}
+
+func compileAttributeResponseLanguage(
+	responseLanguage config.PolicyResponseLanguageConfig,
+	attributes map[string]policyregistry.AttributeDefinition,
+	path string,
+) (policyruntime.ResponseLanguagePlan, error) {
+	if responseLanguage.Attribute == "" || responseLanguage.Language != "" {
+		return policyruntime.ResponseLanguagePlan{}, configPathError(childPath(path, policyFieldAttribute), "must contain attribute and optional fallback")
+	}
+
+	definition, ok := attributes[responseLanguage.Attribute]
+	if !ok {
+		return policyruntime.ResponseLanguagePlan{}, configPathError(childPath(path, policyFieldAttribute), "references unknown attribute")
+	}
+
+	if definition.Type != policyregistry.AttributeTypeString {
+		return policyruntime.ResponseLanguagePlan{}, configPathError(childPath(path, policyFieldAttribute), "must reference a string attribute")
+	}
+
+	fallback := ""
+	if strings.TrimSpace(responseLanguage.Fallback) != "" {
+		tag, err := parsePolicyLanguageTag(responseLanguage.Fallback)
+		if err != nil {
+			return policyruntime.ResponseLanguagePlan{}, configPathError(childPath(path, policyFieldFallback), "must be a valid BCP 47 language tag")
+		}
+
+		fallback = tag
+	}
+
+	return policyruntime.ResponseLanguagePlan{
+		Source:      policy.ResponseSourceAttribute,
+		AttributeID: responseLanguage.Attribute,
+		Fallback:    fallback,
+	}, nil
+}
+
+func parsePolicyLanguageTag(value string) (string, error) {
+	tag, err := language.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", err
+	}
+
+	return tag.String(), nil
 }
 
 func compileEffectRequests(

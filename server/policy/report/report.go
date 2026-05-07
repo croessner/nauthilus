@@ -79,40 +79,53 @@ type UnavailableFact struct {
 
 // PolicyDecision is the report-facing shape for one selected policy rule.
 type PolicyDecision struct {
-	ResponseMessage *ResponseMessageSelection `json:"response_message,omitempty"`
-	Control         *DecisionControl          `json:"control,omitempty"`
-	Name            string                    `json:"policy_name"`
-	Reason          string                    `json:"reason,omitempty"`
-	OutcomeMarker   string                    `json:"outcome_marker,omitempty"`
-	ResponseMarker  string                    `json:"response_marker,omitempty"`
-	FSMEventMarker  string                    `json:"fsm_event_marker,omitempty"`
-	Stage           policy.Stage              `json:"stage"`
-	Effect          policy.Decision           `json:"effect"`
-	Obligations     []EffectRequest           `json:"obligations,omitempty"`
-	Advice          []EffectRequest           `json:"advice,omitempty"`
+	ResponseMessage  *ResponseMessageSelection  `json:"response_message,omitempty"`
+	ResponseLanguage *ResponseLanguageSelection `json:"response_language,omitempty"`
+	Control          *DecisionControl           `json:"control,omitempty"`
+	Name             string                     `json:"policy_name"`
+	Reason           string                     `json:"reason,omitempty"`
+	OutcomeMarker    string                     `json:"outcome_marker,omitempty"`
+	ResponseMarker   string                     `json:"response_marker,omitempty"`
+	FSMEventMarker   string                     `json:"fsm_event_marker,omitempty"`
+	Stage            policy.Stage               `json:"stage"`
+	Effect           policy.Decision            `json:"effect"`
+	Obligations      []EffectRequest            `json:"obligations,omitempty"`
+	Advice           []EffectRequest            `json:"advice,omitempty"`
 }
 
 // FinalDecision is the report-facing final policy decision.
 type FinalDecision struct {
-	ResponseMessage *ResponseMessageSelection `json:"response_message,omitempty"`
-	Control         *DecisionControl          `json:"control,omitempty"`
-	PolicyName      string                    `json:"policy_name,omitempty"`
-	Reason          string                    `json:"reason,omitempty"`
-	OutcomeMarker   string                    `json:"outcome_marker,omitempty"`
-	ResponseMarker  string                    `json:"response_marker,omitempty"`
-	FSMEventMarker  string                    `json:"fsm_event_marker,omitempty"`
-	Stage           policy.Stage              `json:"stage,omitempty"`
-	Effect          policy.Decision           `json:"effect"`
-	Obligations     []EffectRequest           `json:"obligations,omitempty"`
-	Advice          []EffectRequest           `json:"advice,omitempty"`
+	ResponseMessage  *ResponseMessageSelection  `json:"response_message,omitempty"`
+	ResponseLanguage *ResponseLanguageSelection `json:"response_language,omitempty"`
+	Control          *DecisionControl           `json:"control,omitempty"`
+	PolicyName       string                     `json:"policy_name,omitempty"`
+	Reason           string                     `json:"reason,omitempty"`
+	OutcomeMarker    string                     `json:"outcome_marker,omitempty"`
+	ResponseMarker   string                     `json:"response_marker,omitempty"`
+	FSMEventMarker   string                     `json:"fsm_event_marker,omitempty"`
+	Stage            policy.Stage               `json:"stage,omitempty"`
+	Effect           policy.Decision            `json:"effect"`
+	Obligations      []EffectRequest            `json:"obligations,omitempty"`
+	Advice           []EffectRequest            `json:"advice,omitempty"`
 }
 
 // ResponseMessageSelection describes the selected client-visible message.
 type ResponseMessageSelection struct {
 	Source       string `json:"source,omitempty"`
 	Message      string `json:"message,omitempty"`
+	I18NKey      string `json:"i18n_key,omitempty"`
 	AttributeID  string `json:"attribute,omitempty"`
 	Detail       string `json:"detail,omitempty"`
+	Fallback     string `json:"fallback,omitempty"`
+	Truncated    bool   `json:"truncated,omitempty"`
+	FallbackUsed bool   `json:"fallback_used,omitempty"`
+}
+
+// ResponseLanguageSelection describes policy-selected response language metadata.
+type ResponseLanguageSelection struct {
+	Source       string `json:"source,omitempty"`
+	Language     string `json:"language,omitempty"`
+	AttributeID  string `json:"attribute,omitempty"`
 	Fallback     string `json:"fallback,omitempty"`
 	FallbackUsed bool   `json:"fallback_used,omitempty"`
 }
@@ -208,6 +221,7 @@ func clonePolicyDecisions(decisions []PolicyDecision) []PolicyDecision {
 	cloned := append([]PolicyDecision(nil), decisions...)
 	for index := range cloned {
 		cloned[index].ResponseMessage = cloneResponseMessage(cloned[index].ResponseMessage)
+		cloned[index].ResponseLanguage = cloneResponseLanguage(cloned[index].ResponseLanguage)
 		cloned[index].Control = cloneDecisionControl(cloned[index].Control)
 		cloned[index].Obligations = cloneEffectRequests(cloned[index].Obligations)
 		cloned[index].Advice = cloneEffectRequests(cloned[index].Advice)
@@ -223,6 +237,7 @@ func cloneFinalDecision(decision *FinalDecision) *FinalDecision {
 
 	cloned := *decision
 	cloned.ResponseMessage = cloneResponseMessage(decision.ResponseMessage)
+	cloned.ResponseLanguage = cloneResponseLanguage(decision.ResponseLanguage)
 	cloned.Control = cloneDecisionControl(decision.Control)
 	cloned.Obligations = cloneEffectRequests(decision.Obligations)
 	cloned.Advice = cloneEffectRequests(decision.Advice)
@@ -248,6 +263,16 @@ func cloneResponseMessage(message *ResponseMessageSelection) *ResponseMessageSel
 	}
 
 	cloned := *message
+
+	return &cloned
+}
+
+func cloneResponseLanguage(language *ResponseLanguageSelection) *ResponseLanguageSelection {
+	if language == nil {
+		return nil
+	}
+
+	cloned := *language
 
 	return &cloned
 }

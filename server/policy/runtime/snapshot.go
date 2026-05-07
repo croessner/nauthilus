@@ -206,25 +206,35 @@ type TypedValue struct {
 
 // DecisionPlan contains validated decision output.
 type DecisionPlan struct {
-	ResponseMessage ResponseMessagePlan
-	Control         DecisionControl
-	Decision        policy.Decision
-	Reason          string
-	OutcomeMarker   string
-	FSMEventMarker  string
-	ResponseMarker  string
-	Obligations     []EffectRequest
-	Advice          []EffectRequest
+	ResponseMessage  ResponseMessagePlan
+	ResponseLanguage ResponseLanguagePlan
+	Control          DecisionControl
+	Decision         policy.Decision
+	Reason           string
+	OutcomeMarker    string
+	FSMEventMarker   string
+	ResponseMarker   string
+	Obligations      []EffectRequest
+	Advice           []EffectRequest
 }
 
 // ResponseMessagePlan contains a validated response-message source.
 type ResponseMessagePlan struct {
 	Source      string
 	Literal     string
+	I18NKey     string
 	AttributeID string
 	Detail      string
 	Fallback    string
 	MaxLength   int
+}
+
+// ResponseLanguagePlan contains validated response-language metadata.
+type ResponseLanguagePlan struct {
+	Source      string
+	Language    string
+	AttributeID string
+	Fallback    string
 }
 
 // EffectRequest contains one compiled obligation or advice reference.

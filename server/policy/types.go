@@ -19,6 +19,23 @@ package policy
 // BuiltinDefaultSet is the built-in policy set that preserves current auth behavior.
 const BuiltinDefaultSet = "standard_auth"
 
+const (
+	// ResponseSourceDefault selects the response marker's default message.
+	ResponseSourceDefault = "default"
+
+	// ResponseSourceLiteral selects a configured literal response value.
+	ResponseSourceLiteral = "literal"
+
+	// ResponseSourceAttribute selects a configured attribute response value.
+	ResponseSourceAttribute = "attribute"
+
+	// ResponseSourceAttributeDetail selects a configured attribute detail response value.
+	ResponseSourceAttributeDetail = "attribute_detail"
+
+	// ResponseSourceI18N selects a configured localization key plus fallback.
+	ResponseSourceI18N = "i18n"
+)
+
 // Stage identifies a policy evaluation checkpoint.
 type Stage string
 

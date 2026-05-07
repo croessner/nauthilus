@@ -478,6 +478,12 @@ type AuthRuntime struct {
 	// StatusMessage is a message describing the status of the request.
 	StatusMessage string
 
+	// StatusMessageI18NKey is the policy-selected localization key for StatusMessage.
+	StatusMessageI18NKey string
+
+	// ResponseLanguage is the policy-selected response-rendering language.
+	ResponseLanguage string
+
 	// AuthFSMTerminalState contains the current auth FSM terminal state when known.
 	AuthFSMTerminalState string
 

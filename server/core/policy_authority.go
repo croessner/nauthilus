@@ -382,6 +382,10 @@ func (a *AuthState) applyPolicyResponseMessage(final *report.FinalDecision) {
 	}
 
 	a.Runtime.StatusMessage = final.ResponseMessage.Message
+	a.Runtime.StatusMessageI18NKey = final.ResponseMessage.I18NKey
+	if final.ResponseMessage.I18NKey != "" && final.ResponseLanguage != nil {
+		a.Runtime.ResponseLanguage = final.ResponseLanguage.Language
+	}
 }
 
 func (a *AuthState) applyPolicyObligations(ctx *gin.Context, final *report.FinalDecision) {
