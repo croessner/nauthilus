@@ -164,15 +164,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		a.recordPolicyBruteForce(ctx, blockClientIP)
 	}()
 
-	if isLocalOrEmptyIP(a.Request.ClientIP) {
-		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "local_or_empty_ip"))
-
-		a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.LogKeyBruteForce)
-		a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Localhost)
-
-		return false
-	}
-
 	bfCfg := cfg.GetBruteForce()
 	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
 		engine := l1.GetEngine()
@@ -561,10 +552,6 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		return
 	}
 
-	if isLocalOrEmptyIP(a.Request.ClientIP) {
-		return
-	}
-
 	bfCfg := cfg.GetBruteForce()
 	if bfCfg == nil {
 		return
@@ -590,10 +577,6 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	)
 
 	if a.Request.NoAuth || a.Request.ListAccounts {
-		return
-	}
-
-	if a.Request.ClientIP == definitions.Localhost4 || a.Request.ClientIP == definitions.Localhost6 || a.Request.ClientIP == definitions.NotAvailable {
 		return
 	}
 

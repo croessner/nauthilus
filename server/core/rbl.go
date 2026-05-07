@@ -86,11 +86,6 @@ func (a *AuthState) rblPolicyLookup(ctx *gin.Context, rbl *config.RBL) (RBLListP
 	}
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
-	ipAddress := net.ParseIP(a.Request.ClientIP)
-	if ipAddress.IsLoopback() {
-		return fact, nil
-	}
-
 	reverseIPAddr, ipFamily, active, err := reverseRBLClientIP(a.Request.ClientIP, rbl)
 	fact.IPFamily = ipFamily
 	if err != nil {

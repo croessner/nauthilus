@@ -55,21 +55,10 @@ type preAuthEnvironmentOutcome struct {
 	markPolicyContinue      bool
 }
 
-// isLocalOrEmptyIP checks whether the provided IP is empty, an IPv4 localhost, or an IPv6 localhost.
-func isLocalOrEmptyIP(ip string) bool {
-	return ip == definitions.Localhost4 || ip == definitions.Localhost6 || ip == ""
-}
-
 // logAddMessage appends a environment name and message to the AdditionalLogs slice.
 func (a *AuthState) logAddMessage(message, environmentName string) {
 	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, environmentName)
 	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, message)
-}
-
-// logAddLocalhost appends environment-specific logs and the "localhost" indicator to the auth state.
-func (a *AuthState) logAddLocalhost(environmentName string) {
-	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, fmt.Sprintf("%s_%s", definitions.LogKeyEnvironmentName, environmentName))
-	a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, definitions.Localhost)
 }
 
 // updateLuaContext updates the Lua context with a new environment control in the Gin context, ensuring unique entries.
@@ -90,12 +79,6 @@ func (a *AuthState) updateLuaContext(environmentName string) {
 
 // EnvironmentLua runs Lua environment source scripts and returns a trigger result.
 func (a *AuthState) EnvironmentLua(ctx *gin.Context) (triggered bool, skipRemainingEnvironment bool, err error) {
-	if isLocalOrEmptyIP(a.Request.ClientIP) {
-		a.logAddLocalhost(definitions.ControlLua)
-
-		return
-	}
-
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromEnvironment, definitions.ControlLua, ctx.FullPath())
 
 	if stopTimer != nil {
@@ -146,12 +129,6 @@ func (a *AuthState) ControlTLSEncryption(ctx *gin.Context) (triggered bool) {
 		return
 	}
 
-	if isLocalOrEmptyIP(a.Request.ClientIP) {
-		a.logAddLocalhost(definitions.ControlTLSEncryption)
-
-		return
-	}
-
 	if a.Request.XSSL != "" {
 		return
 	}
@@ -185,12 +162,6 @@ func (a *AuthState) ControlRelayDomains() (triggered bool) {
 	}
 
 	if len(relayDomains.StaticDomains) == 0 {
-		return
-	}
-
-	if isLocalOrEmptyIP(a.Request.ClientIP) {
-		a.logAddLocalhost(definitions.ControlRelayDomains)
-
 		return
 	}
 
@@ -262,12 +233,6 @@ func (a *AuthState) ControlRBL(ctx *gin.Context) (triggered bool, err error) {
 	a.Runtime.RBLPolicy = RBLPolicyFact{
 		Threshold: rbls.GetThreshold(),
 		ListCount: len(rbls.GetLists()),
-	}
-
-	if isLocalOrEmptyIP(a.Request.ClientIP) {
-		a.logAddLocalhost(definitions.ControlRBL)
-
-		return
 	}
 
 	if util.IsInNetworkWithCfg(ctx.Request.Context(), a.Cfg(), a.Logger(), rbls.GetIPWhiteList(), a.Runtime.GUID, a.Request.ClientIP) {
