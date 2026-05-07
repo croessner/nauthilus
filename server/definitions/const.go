@@ -77,6 +77,15 @@ const (
 	// Used when redirecting back to /login after MFA verification fails due to wrong initial credentials.
 	SessionKeyLoginError = "login_error"
 
+	// SessionKeyIDPAuthStatusMessage stores the fallback text for a policy-selected IdP auth failure.
+	SessionKeyIDPAuthStatusMessage = "idp_auth_status_message"
+
+	// SessionKeyIDPAuthStatusI18NKey stores the i18n key for a policy-selected IdP auth failure.
+	SessionKeyIDPAuthStatusI18NKey = "idp_auth_status_i18n_key"
+
+	// SessionKeyIDPAuthStatusLanguage stores the policy-selected response language for a policy-selected IdP auth failure.
+	SessionKeyIDPAuthStatusLanguage = "idp_auth_status_language"
+
 	// SessionKeySubject stores the OIDC subject if computed in-session.
 	SessionKeySubject = "subject"
 
@@ -220,7 +229,7 @@ const BackendMonitoringReloadTimeout = 2 * time.Second
 
 // LuaLDAPReplyTimeout caps the time a Lua-initiated LDAP call may wait for an LDAP reply.
 //
-// This prevents HTTP requests from hanging indefinitely when Lua filters perform LDAP calls
+// This prevents HTTP requests from hanging indefinitely when Lua subject sources perform LDAP calls
 // and the underlying LDAP workers are unavailable or stuck.
 const LuaLDAPReplyTimeout = 5 * time.Second
 
@@ -241,7 +250,7 @@ const (
 	// ScopeAdmin grants full administrative access to the backchannel API.
 	ScopeAdmin = "nauthilus:admin"
 
-	// ScopeSecurity grants access to security-related features (metrics, brute force listing).
+	// ScopeSecurity grants access to security-related controls such as metrics and brute-force listings.
 	ScopeSecurity = "nauthilus:security"
 
 	// ScopeAuthenticate is the base scope required for all backchannel API access.
@@ -375,8 +384,8 @@ const (
 	// LogKeyBruteForceName represents the name of the bucket used for brute force detection.
 	LogKeyBruteForceName = "brute_force_bucket"
 
-	// LogKeyFeatureName represents the name of a feature for feature status logging.
-	LogKeyFeatureName = "feature"
+	// LogKeyEnvironmentName represents the environment control or source that produced the decision.
+	LogKeyEnvironmentName = "environment"
 
 	// LogKeyStatusMessage represents a status message for an operation.
 	LogKeyStatusMessage = "status_message"
@@ -390,7 +399,7 @@ const (
 	// LogKeyStatus represents the general status (like authentication) for logging.
 	LogKeyStatus = "authenticated"
 
-	// LogKeyAuthorized represents whether the request was authorized by filters (authz).
+	// LogKeyAuthorized represents whether the request was authorized by subject analysis (authz).
 	LogKeyAuthorized = "authz"
 
 	// LogKeyAuthenticatedBool is a boolean that reflects the backend authentication decision (authn).
@@ -418,17 +427,17 @@ const (
 	// LogKeyLatency represents the latency of a network operation for performance logging.
 	LogKeyLatency = "latency"
 
-	// LogKeyFilterLatency represents the latency of filter operations for performance logging.
-	LogKeyFilterLatency = "filter_latency"
+	// LogKeySubjectLatency represents the latency of subject source operations for performance logging.
+	LogKeySubjectLatency = "subject_latency"
 
-	// LogKeyRejectedFilters contains a comma-separated list of filters that rejected the request (action=true).
-	LogKeyRejectedFilters = "filter_rejected_filters"
+	// LogKeyRejectedSubjectSources contains a comma-separated list of subject sources that rejected the request.
+	LogKeyRejectedSubjectSources = "subject_rejected_sources"
 
-	// LogKeyFilterResults contains a compact mapping of filter name to result status: ok, fail, or unknown(n).
-	LogKeyFilterResults = "filter_results"
+	// LogKeySubjectResults contains a compact mapping of subject source name to result status: ok, fail, or unknown(n).
+	LogKeySubjectResults = "subject_results"
 
-	// LogKeyFeatureLatency represents the latency of feature operations for performance logging.
-	LogKeyFeatureLatency = "feature_latency"
+	// LogKeyEnvironmentLatency represents the latency of environment source operations for performance logging.
+	LogKeyEnvironmentLatency = "environment_latency"
 
 	// LogKeyStatsAlloc represents the stats for allocations logged.
 	LogKeyStatsAlloc = "stats_alloc"
@@ -655,25 +664,25 @@ const (
 	BackendLocalCacheName = "memory"
 )
 
-// Supported features.
+// Supported auth controls and runtime services.
 const (
-	// FeatureTLSEncryption is a constant for the string "tls_encryption"
-	FeatureTLSEncryption = "tls_encryption"
+	// ControlTLSEncryption is a constant for the string "tls_encryption"
+	ControlTLSEncryption = "tls_encryption"
 
-	// FeatureRBL is a constant for the string "rbl"
-	FeatureRBL = "rbl"
+	// ControlRBL is a constant for the string "rbl"
+	ControlRBL = "rbl"
 
-	// FeatureRelayDomains is a constant for the string "relay_domains"
-	FeatureRelayDomains = "relay_domains"
+	// ControlRelayDomains is a constant for the string "relay_domains"
+	ControlRelayDomains = "relay_domains"
 
-	// FeatureLua is a constant for the string "lua"
-	FeatureLua = "lua"
+	// ControlLua is a constant for the string "lua"
+	ControlLua = "lua"
 
-	// FeatureBackendServersMonitoring enables a custom backend list with fail-state monitoring
-	FeatureBackendServersMonitoring = "backend_health_checks"
+	// ServiceBackendHealthChecks enables a custom backend list with fail-state monitoring
+	ServiceBackendHealthChecks = "backend_health_checks"
 
-	// FeatureBruteForce enables the brute force protection system
-	FeatureBruteForce = "brute_force"
+	// ControlBruteForce enables the brute force protection system
+	ControlBruteForce = "brute_force"
 )
 
 // Statistics label for the loin counter.
@@ -801,17 +810,17 @@ const (
 	// AuthResultEmptyPassword denotes a failure due to an empty password.
 	AuthResultEmptyPassword
 
-	// AuthResultFeatureRBL represents a status linked with a Real-time Blackhole List feature.
-	AuthResultFeatureRBL
+	// AuthResultPreAuthRBL represents a status linked with a Real-time Blackhole List pre-auth control.
+	AuthResultPreAuthRBL
 
-	// AuthResultFeatureTLS represents a status linked with a Transport Layer Security feature.
-	AuthResultFeatureTLS
+	// AuthResultPreAuthTLS represents a status linked with a Transport Layer Security pre-auth control.
+	AuthResultPreAuthTLS
 
-	// AuthResultFeatureRelayDomain represents a status linked with a relay domain feature.
-	AuthResultFeatureRelayDomain
+	// AuthResultPreAuthRelayDomain represents a status linked with a relay-domain pre-auth control.
+	AuthResultPreAuthRelayDomain
 
-	// AuthResultFeatureLua denotes a status linked with a Lua scripting feature.
-	AuthResultFeatureLua
+	// AuthResultLuaEnvironment denotes a status linked with a Lua environment source.
+	AuthResultLuaEnvironment
 )
 
 const (
@@ -929,8 +938,8 @@ const (
 	// CtxExternalSessionKey stores an optional upstream session identifier for request correlation.
 	CtxExternalSessionKey = "external_session"
 
-	// CtxAdditionalFeaturesKey is the key used to store additional features in the lualib.Context
-	CtxAdditionalFeaturesKey = "additional_features"
+	// CtxAdditionalAttributesKey stores additional backend attributes in the lualib.Context.
+	CtxAdditionalAttributesKey = "additional_attributes"
 
 	// CtxLocalizedKey is used as a key to store the session's localization data in session.Store
 	CtxLocalizedKey = "localizer"
@@ -982,10 +991,10 @@ const (
 	// from CheckBruteForce for reuse in UpdateBruteForceBucketsCounter, avoiding redundant Redis calls.
 	CtxRWPResultKey = "rwp_result"
 
-	// CtxFeatureRejectedKey indicates that a security feature (RBL, TLS, relay domain, Lua)
+	// CtxEnvironmentRejectedKey indicates that an environment control or source (RBL, TLS, relay domain, Lua)
 	// rejected the request before password authentication could take place.
 	// When set to true, RWP must not record the password hash because the password was never verified.
-	CtxFeatureRejectedKey = "feature_rejected"
+	CtxEnvironmentRejectedKey = "environment_rejected"
 
 	// CtxAuthMethodKey stores a request-scoped authentication method override for access logs.
 	CtxAuthMethodKey = "auth_method"
@@ -1122,14 +1131,14 @@ const (
 	// DbgAction is for debugging related to any actions performed in the system.
 	DbgAction
 
-	// DbgFeature is for debugging toggling or usage of features.
-	DbgFeature
+	// DbgEnvironment is for debugging environment controls and sources.
+	DbgEnvironment
 
 	// DbgLua is for Lua scripting related debugging.
 	DbgLua
 
-	// DbgFilter is used for debugging issues related to filter operations.
-	DbgFilter
+	// DbgSubject is used for debugging Lua subject source operations.
+	DbgSubject
 
 	// DbgTolerate represents the debug module for operations related to tolerance or error allowances.
 	DbgTolerate
@@ -1148,6 +1157,9 @@ const (
 
 	// DbgCookie represents the debug module for cookie-related operations.
 	DbgCookie
+
+	// DbgPolicy represents the debug module for internal policy diagnostics.
+	DbgPolicy
 )
 
 const (
@@ -1187,14 +1199,14 @@ const (
 	// DbgActionName is the debug identifier for action
 	DbgActionName = "action"
 
-	// DbgFeatureName is the debug identifier for feature
-	DbgFeatureName = "feature"
+	// DbgEnvironmentName is the debug identifier for environment controls and sources.
+	DbgEnvironmentName = "environment"
 
 	// DbgLuaName is the debug identifier for Lua
 	DbgLuaName = "lua"
 
-	// DbgFilterName is the debug identifier for filter
-	DbgFilterName = "filter"
+	// DbgSubjectName is the debug identifier for Lua subject sources.
+	DbgSubjectName = "subject"
 
 	// DbgTolerateName represents the debug mode for tolerating certain conditions or operations during execution.
 	DbgTolerateName = "tolerate"
@@ -1213,6 +1225,9 @@ const (
 
 	// DbgCookieName is the debug identifier for cookie
 	DbgCookieName = "cookie"
+
+	// DbgPolicyName is the debug identifier for internal policy diagnostics.
+	DbgPolicyName = "policy"
 )
 
 const (
@@ -1402,20 +1417,26 @@ const (
 	// LuaModOpenTelemetry is the module name exposed to Lua for OpenTelemetry helpers.
 	LuaModOpenTelemetry = "nauthilus_opentelemetry"
 
+	// LuaModPolicy is the module name exposed to Lua for request-local policy emission.
+	LuaModPolicy = "nauthilus_policy"
+
+	// LuaModI18N is the module name exposed to Lua for localization helpers.
+	LuaModI18N = "nauthilus_i18n"
+
 	// LuaUDTracer is the userdata type name for an OpenTelemetry Tracer in Lua.
 	LuaUDTracer = "nauthilus_otel_tracer_ud"
 
 	// LuaUDSpan is the userdata type name for an OpenTelemetry Span in Lua.
 	LuaUDSpan = "nauthilus_otel_span_ud"
 
-	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
-	LuaFnCallFeature = "nauthilus_call_feature"
+	// LuaFnCallEnvironment represents the function name for "nauthilus_call_environment" in Lua
+	LuaFnCallEnvironment = "nauthilus_call_environment"
 
 	// LuaFnCallAction represents the function name for "nauthilus_call_action" in Lua
 	LuaFnCallAction = "nauthilus_call_action"
 
-	// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
-	LuaFnCallFilter = "nauthilus_call_filter"
+	// LuaFnCallSubject represents the function name for "nauthilus_call_subject" in Lua
+	LuaFnCallSubject = "nauthilus_call_subject"
 
 	// LuaFnRunHook represents the constant string "nauthilus_run_callback".
 	LuaFnRunHook = "nauthilus_run_hook"
@@ -1429,10 +1450,10 @@ const (
 	// LuaFnSelectBackendServer represents the constant used as the key for the Lua function "select_backend_server".
 	LuaFnSelectBackendServer = "select_backend_server"
 
-	// LuaFnGetCurrentBackendResult returns the cumulative backend result visible to the current Lua filter.
+	// LuaFnGetCurrentBackendResult returns the cumulative backend result visible to the current Lua subject source.
 	LuaFnGetCurrentBackendResult = "get_current_backend_result"
 
-	// LuaFnGetSelectedBackendServer returns the cumulative selected backend visible to the current Lua filter.
+	// LuaFnGetSelectedBackendServer returns the cumulative selected backend visible to the current Lua subject source.
 	LuaFnGetSelectedBackendServer = "get_selected_backend_server"
 
 	// LuaFnSetStatusMessage represents the Lua function name for setting the status message of a Lua request.
@@ -1782,6 +1803,15 @@ const (
 
 	// LuaFnBfIsIPAddressBlocked determines if a given IP address is blocked due to brute force or other security rules.
 	LuaFnBfIsIPAddressBlocked = "is_ip_address_blocked"
+
+	// LuaFnPolicyEmitAttribute records a Lua-owned custom policy attribute.
+	LuaFnPolicyEmitAttribute = "emit_attribute"
+
+	// LuaFnI18NGetLocalized resolves a localized response message candidate.
+	LuaFnI18NGetLocalized = "get_localized"
+
+	// LuaFnI18NRegisterCatalog registers a startup-owned deployment catalog overlay.
+	LuaFnI18NRegisterCatalog = "register_catalog"
 )
 
 const (
@@ -1794,23 +1824,23 @@ const (
 	// LuaFail represents the fail status in Lua
 	LuaFail = "fail"
 
-	// LuaFeatureTriggerNo represents the feature trigger no option in Lua
-	LuaFeatureTriggerNo = "FEATURE_TRIGGER_NO"
+	// LuaEnvironmentTriggerNo represents the environment trigger no option in Lua.
+	LuaEnvironmentTriggerNo = "ENVIRONMENT_TRIGGER_NO"
 
-	// LuaFeatureTriggerYes represents the feature trigger yes option in Lua
-	LuaFeatureTriggerYes = "FEATURE_TRIGGER_YES"
+	// LuaEnvironmentTriggerYes represents the environment trigger yes option in Lua.
+	LuaEnvironmentTriggerYes = "ENVIRONMENT_TRIGGER_YES"
 
-	// LuaFeatureAbortNo represents the features abort no option in Lua
-	LuaFeatureAbortNo = "FEATURES_ABORT_NO"
+	// LuaEnvironmentAbortNo represents the environment abort no option in Lua.
+	LuaEnvironmentAbortNo = "ENVIRONMENT_ABORT_NO"
 
-	// LuaFeatureAbortYes represents the features abort yes option in Lua
-	LuaFeatureAbortYes = "FEATURES_ABORT_YES"
+	// LuaEnvironmentAbortYes represents the environment abort yes option in Lua.
+	LuaEnvironmentAbortYes = "ENVIRONMENT_ABORT_YES"
 
-	// LuaFeatureResultOk represents the feature result ok status in Lua
-	LuaFeatureResultOk = "FEATURE_RESULT_OK"
+	// LuaEnvironmentResultOk represents the environment result ok status in Lua.
+	LuaEnvironmentResultOk = "ENVIRONMENT_RESULT_OK"
 
-	// LuaFeatureResultFail represents the feature result fail status in Lua
-	LuaFeatureResultFail = "FEATURE_RESULT_FAIL"
+	// LuaEnvironmentResultFail represents the environment result fail status in Lua.
+	LuaEnvironmentResultFail = "ENVIRONMENT_RESULT_FAIL"
 
 	// LuaActionResultOk represents the action result ok status in Lua
 	LuaActionResultOk = "ACTION_RESULT_OK"
@@ -1824,17 +1854,17 @@ const (
 	// LuaBackendResultFail represents the backend result fail status in Lua
 	LuaBackendResultFail = "BACKEND_RESULT_FAIL"
 
-	// LuaFilterAccept represents the filter accept option in Lua
-	LuaFilterAccept = "FILTER_ACCEPT"
+	// LuaSubjectAccept represents the subject accept option in Lua.
+	LuaSubjectAccept = "SUBJECT_ACCEPT"
 
-	// LuaFilterREJECT represents the filter reject option in Lua
-	LuaFilterREJECT = "FILTER_REJECT"
+	// LuaSubjectReject represents the subject reject option in Lua.
+	LuaSubjectReject = "SUBJECT_REJECT"
 
-	// LuaFilterResultOk represents the filter result ok status in Lua
-	LuaFilterResultOk = "FILTER_RESULT_OK"
+	// LuaSubjectResultOk represents the subject result ok status in Lua.
+	LuaSubjectResultOk = "SUBJECT_RESULT_OK"
 
-	// LuaFilterResultFail represents the filter result fail status in Lua
-	LuaFilterResultFail = "FILTER_RESULT_FAIL"
+	// LuaSubjectResultFail represents the subject result fail status in Lua.
+	LuaSubjectResultFail = "SUBJECT_RESULT_FAIL"
 )
 
 const (
@@ -1893,17 +1923,17 @@ const (
 	// LuaRequestBruteForceBucket is for the bucket of brute force attempts.
 	LuaRequestBruteForceBucket = "brute_force_bucket"
 
-	// LuaRequestFeature indicates the feature type of the request.
-	LuaRequestFeature = "feature"
+	// LuaRequestEnvironment indicates the environment control or source that triggered the request action.
+	LuaRequestEnvironment = "environment"
 
-	// LuaRequestFeatureRejected indicates that a security feature rejected the request before the filter stage.
-	LuaRequestFeatureRejected = "feature_rejected"
+	// LuaRequestEnvironmentRejected indicates that an environment source rejected the request before subject analysis.
+	LuaRequestEnvironmentRejected = "environment_rejected"
 
-	// LuaRequestFeatureStageExpected indicates whether the request path includes the Lua feature stage.
-	LuaRequestFeatureStageExpected = "feature_stage_expected"
+	// LuaRequestEnvironmentStageExpected indicates whether the request path includes Lua environment sources.
+	LuaRequestEnvironmentStageExpected = "environment_stage_expected"
 
-	// LuaRequestFilterStageExpected indicates whether the request path includes the Lua filter stage.
-	LuaRequestFilterStageExpected = "filter_stage_expected"
+	// LuaRequestSubjectStageExpected indicates whether the request path includes Lua subject sources.
+	LuaRequestSubjectStageExpected = "subject_stage_expected"
 
 	// LuaRequestSession indicates the session of the request.
 	LuaRequestSession = "session"
@@ -2254,11 +2284,11 @@ const (
 	// PromBruteForce is a constant representing the "brute_force" metric in a Prometheus monitoring system.
 	PromBruteForce = "brute_force"
 
-	// PromFeature is a constant representing the feature metric used in Prometheus monitoring.
-	PromFeature = "feature"
+	// PromEnvironment is a constant representing environment control and source metrics.
+	PromEnvironment = "environment"
 
-	// PromFilter is a constant string representing the label used for Prometheus metrics related to filtering.
-	PromFilter = "filter"
+	// PromSubject is the Prometheus label for Lua subject source metrics.
+	PromSubject = "subject"
 
 	// PromRequest is a constant string that represents the label for Prometheus metrics related to HTTP requests.
 	PromRequest = "request"
@@ -2302,7 +2332,7 @@ const (
 // DefaultBackendName specifies the default name used for the backend in channel and pool creation procedures.
 const DefaultBackendName = "__meta_default__"
 
-// LuaCtxBuiltin is a builtin map for static features that have been triggered
+// LuaCtxBuiltin is a builtin map for static environment controls that have been triggered.
 const LuaCtxBuiltin = "__lua_ctx_builtin__"
 
 // Cache module function names

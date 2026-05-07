@@ -27,19 +27,19 @@ import (
 type BruteForceSection struct {
 	IPWhitelist                []string         `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
 	Buckets                    []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
-	Learning                   []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	Learning                   []*RuntimeModule `mapstructure:"learning" validate:"omitempty,dive"`
 	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
 	SoftWhitelist              SoftWhitelist    `mapstructure:"allowlist"`
-	TolerateTTL                time.Duration `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
-	RWPWindow                  time.Duration `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
-	ScaleFactor                float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
-	AllowedUniqueWrongPWHashes uint          `mapstructure:"rwp_allowed_unique_hashes" validate:"omitempty,min=1,max=100"`
-	ToleratePercent            uint8         `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
-	MinToleratePercent         uint8         `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
-	MaxToleratePercent         uint8         `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
-	AdaptiveToleration         bool          `mapstructure:"adaptive_toleration"`
-	LogHistoryForKnownAccounts bool          `mapstructure:"pw_history_for_known_accounts"`
+	TolerateTTL                time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
+	RWPWindow                  time.Duration    `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
+	ScaleFactor                float64          `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
+	AllowedUniqueWrongPWHashes uint             `mapstructure:"rwp_allowed_unique_hashes" validate:"omitempty,min=1,max=100"`
+	ToleratePercent            uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
+	MinToleratePercent         uint8            `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	MaxToleratePercent         uint8            `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	AdaptiveToleration         bool             `mapstructure:"adaptive_toleration"`
+	LogHistoryForKnownAccounts bool             `mapstructure:"pw_history_for_known_accounts"`
 }
 
 // IPScoping configures how client IPs are normalized/scoped for different contexts.
@@ -61,9 +61,9 @@ func (b *BruteForceSection) String() string {
 	return fmt.Sprintf("Buckets: %+v, IP-Whitelist: %+v", b.Buckets, b.IPWhitelist)
 }
 
-// LearnFromFeature checks if the given feature is present in the Learning slice of the BruteForceSection.
-// It returns true if the feature is found, otherwise false.
-func (b *BruteForceSection) LearnFromFeature(input string) bool {
+// LearnFromControl checks if the given runtimeModule is present in the Learning slice of the BruteForceSection.
+// It returns true if the runtimeModule is found, otherwise false.
+func (b *BruteForceSection) LearnFromControl(input string) bool {
 	if b == nil {
 		return false
 	}
@@ -76,8 +76,8 @@ func (b *BruteForceSection) LearnFromFeature(input string) bool {
 		return false
 	}
 
-	for _, feature := range b.Learning {
-		if input == feature.Get() {
+	for _, runtimeModule := range b.Learning {
+		if input == runtimeModule.Get() {
 			return true
 		}
 	}

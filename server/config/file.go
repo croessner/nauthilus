@@ -119,11 +119,11 @@ type File interface {
 		Lua-related methods
 	*/
 
-	// HaveLuaFeatures checks if Lua features are available.
-	HaveLuaFeatures() bool
+	// HaveLuaEnvironmentSources checks if Lua environment sources are available.
+	HaveLuaEnvironmentSources() bool
 
-	// HaveLuaFilters checks if Lua filters are active.
-	HaveLuaFilters() bool
+	// HaveLuaSubjectSources checks if Lua subject sources are active.
+	HaveLuaSubjectSources() bool
 
 	// HaveLuaActions checks if Lua actions are enabled.
 	HaveLuaActions() bool
@@ -155,11 +155,11 @@ type File interface {
 	// GetLuaActionNumberOfWorkers returns the number of Lua Action workers.
 	GetLuaActionNumberOfWorkers() int
 
-	// GetLuaFeatureVMPoolSize returns the VM pool size for Lua features.
-	GetLuaFeatureVMPoolSize() int
+	// GetLuaEnvironmentSourceVMPoolSize returns the VM pool size for Lua environment sources.
+	GetLuaEnvironmentSourceVMPoolSize() int
 
-	// GetLuaFilterVMPoolSize returns the VM pool size for Lua filters.
-	GetLuaFilterVMPoolSize() int
+	// GetLuaSubjectSourceVMPoolSize returns the VM pool size for Lua subject sources.
+	GetLuaSubjectSourceVMPoolSize() int
 
 	// GetLuaHookVMPoolSize returns the VM pool size for Lua hooks.
 	GetLuaHookVMPoolSize() int
@@ -251,14 +251,14 @@ type File interface {
 	GetBackendServerMonitoring() *BackendServerMonitoring
 
 	/*
-		Features and options
+		RuntimeModules and options
 	*/
 
-	// HasFeature checks whether a specific feature is available.
-	HasFeature(feature string) bool
+	// HasRuntimeModule checks whether a specific runtimeModule is available.
+	HasRuntimeModule(runtimeModule string) bool
 
-	// ShouldRunFeature checks if a given feature is enabled and should be executed in the current auth context (noAuth).
-	ShouldRunFeature(feature string, noAuth bool) bool
+	// ShouldRunControl checks if a given runtimeModule is enabled and should be executed in the current auth context (noAuth).
+	ShouldRunControl(runtimeModule string, noAuth bool) bool
 
 	/*
 		Authentication and security methods
@@ -339,7 +339,7 @@ type File interface {
 	// GetBruteForce retrieves the BruteForceSection configuration, containing brute force protection rules and settings.
 	GetBruteForce() *BruteForceSection
 
-	// GetLua retrieves the LuaSection from the configuration, containing actions, features, filters, hooks, and related config.
+	// GetLua retrieves the LuaSection from the configuration, containing actions, environment sources, subject sources, hooks, and related config.
 	GetLua() *LuaSection
 
 	// GetLDAP returns the LDAPSection object containing configuration and search definitions for LDAP operations.
@@ -448,10 +448,6 @@ func (f *FileSettings) GetLua() *LuaSection {
 
 	if f.Lua == nil {
 		f.materializeLegacySections()
-	}
-
-	if f.Lua != nil && f.Lua.Features == nil {
-		f.Lua.normalizeConfiguredFeatures()
 	}
 
 	return f.Lua
@@ -975,8 +971,8 @@ func (f *FileSettings) GetLuaActionNumberOfWorkers() int {
 	return definitions.MaxActionWorkers
 }
 
-// GetLuaFeatureVMPoolSize returns the VM pool size for Lua features.
-func (f *FileSettings) GetLuaFeatureVMPoolSize() int {
+// GetLuaEnvironmentSourceVMPoolSize returns the VM pool size for Lua environment sources.
+func (f *FileSettings) GetLuaEnvironmentSourceVMPoolSize() int {
 	if f == nil {
 		return definitions.DefaultNumberOfWorkers
 	}
@@ -987,14 +983,14 @@ func (f *FileSettings) GetLuaFeatureVMPoolSize() int {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
-		return luaConf.GetFeatureVMPoolSize()
+		return luaConf.GetEnvironmentVMPoolSize()
 	}
 
 	return definitions.DefaultNumberOfWorkers
 }
 
-// GetLuaFilterVMPoolSize returns the VM pool size for Lua filters.
-func (f *FileSettings) GetLuaFilterVMPoolSize() int {
+// GetLuaSubjectSourceVMPoolSize returns the VM pool size for Lua subject sources.
+func (f *FileSettings) GetLuaSubjectSourceVMPoolSize() int {
 	if f == nil {
 		return definitions.DefaultNumberOfWorkers
 	}
@@ -1005,7 +1001,7 @@ func (f *FileSettings) GetLuaFilterVMPoolSize() int {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
-		return luaConf.GetFilterVMPoolSize()
+		return luaConf.GetSubjectVMPoolSize()
 	}
 
 	return definitions.DefaultNumberOfWorkers
@@ -1219,31 +1215,31 @@ func (f *FileSettings) GetLuaOptionalBackends() map[string]*LuaConf {
 	return backends
 }
 
-// HaveLuaFilters is a method on the FileSettings struct.
-// It checks if the FileSettings struct has Lua filters.
-// It returns true if there are Lua filters, and false otherwise.
-func (f *FileSettings) HaveLuaFilters() bool {
+// HaveLuaSubjectSources is a method on the FileSettings struct.
+// It checks if the FileSettings struct has Lua subject sources.
+// It returns true if there are Lua subject sources, and false otherwise.
+func (f *FileSettings) HaveLuaSubjectSources() bool {
 	if f == nil {
 		return false
 	}
 
 	if f.HaveLua() {
-		return len(f.GetLua().GetFilters()) > 0
+		return len(f.GetLua().GetSubjectSources()) > 0
 	}
 
 	return false
 }
 
-// HaveLuaFeatures is a method on the FileSettings struct.
-// It checks if the FileSettings struct has Lua features.
-// It returns true if there are Lua features, and false otherwise.
-func (f *FileSettings) HaveLuaFeatures() bool {
+// HaveLuaEnvironmentSources is a method on the FileSettings struct.
+// It checks if the FileSettings struct has Lua environment sources.
+// It returns true if there are Lua environment sources, and false otherwise.
+func (f *FileSettings) HaveLuaEnvironmentSources() bool {
 	if f == nil {
 		return false
 	}
 
 	if f.HaveLua() {
-		return len(f.GetLua().GetFeatures()) > 0
+		return len(f.GetLua().GetEnvironmentSources()) > 0
 	}
 
 	return false
@@ -1368,8 +1364,8 @@ func (f *FileSettings) GetServer() *ServerSection {
 		f.materializeLegacySections()
 	}
 
-	if f.Server != nil && f.Server.Features == nil {
-		f.Server.normalizeConfiguredFeatures()
+	if f.Server != nil && f.Server.RuntimeModules == nil {
+		f.Server.normalizeConfiguredRuntimeModules()
 	}
 
 	if f.Server == nil {
@@ -3119,14 +3115,14 @@ func warnDeprecatedIdPRememberMe(idpCfg *IdPSection) {
 	}
 }
 
-// HasFeature checks if the given feature exists in the LoadableConfig's Features list
-func (f *FileSettings) HasFeature(feature string) bool {
+// HasRuntimeModule checks if the given runtimeModule exists in the LoadableConfig's RuntimeModules list
+func (f *FileSettings) HasRuntimeModule(runtimeModule string) bool {
 	if f == nil {
 		return false
 	}
 
-	for _, item := range f.GetServer().Features {
-		if item.Get() == feature {
+	for _, item := range f.GetServer().RuntimeModules {
+		if item.Get() == runtimeModule {
 			return true
 		}
 	}
@@ -3134,16 +3130,16 @@ func (f *FileSettings) HasFeature(feature string) bool {
 	return false
 }
 
-// ShouldRunFeature checks if a given feature is enabled and should be executed in the current auth context (noAuth).
-func (f *FileSettings) ShouldRunFeature(feature string, noAuth bool) bool {
+// ShouldRunControl checks if a given runtimeModule is enabled and should be executed in the current auth context (noAuth).
+func (f *FileSettings) ShouldRunControl(runtimeModule string, noAuth bool) bool {
 	if f == nil {
 		return false
 	}
 
-	for _, item := range f.GetServer().Features {
-		if item.Get() == feature {
+	for _, item := range f.GetServer().RuntimeModules {
+		if item.Get() == runtimeModule {
 			if noAuth {
-				return item.GetWhenNoAuth()
+				return false
 			}
 
 			return true
@@ -3216,88 +3212,14 @@ func processDebugModules(input any) (any, error) {
 	return processStringSettableSlice(input, func() *DbgModule { return &DbgModule{} })
 }
 
-type whenNoAuthSettable interface {
-	stringSettable
-	SetWhenNoAuth(bool)
-}
-
-func configureWhenNoAuthItem[T whenNoAuthSettable](item T, data any) error {
-	switch v := data.(type) {
-	case string:
-		return item.Set(v)
-	case map[string]any:
-		return configureWhenNoAuthItemFromMap(item, v["name"], v["when_no_auth"])
-	case map[any]any:
-		return configureWhenNoAuthItemFromMap(item, v["name"], v["when_no_auth"])
-	default:
-		return fmt.Errorf("invalid feature type %T", data)
-	}
-}
-
-func configureWhenNoAuthItemFromMap[T whenNoAuthSettable](item T, nameValue any, whenNoAuthValue any) error {
-	name, ok := nameValue.(string)
-	if !ok {
-		return fmt.Errorf("feature name missing or not a string")
-	}
-
-	if err := item.Set(name); err != nil {
-		return err
-	}
-
-	if whenNoAuth, ok := whenNoAuthValue.(bool); ok {
-		item.SetWhenNoAuth(whenNoAuth)
-	}
-
-	return nil
-}
-
-func processWhenNoAuthStringSettableSlice[T whenNoAuthSettable](input any, newFn func() T) (any, error) {
-	var items []T
-
-	addItem := func(data any) error {
-		item := newFn()
-
-		if err := configureWhenNoAuthItem(item, data); err != nil {
-			return err
-		}
-
-		items = append(items, item)
-
-		return nil
-	}
-
-	switch data := input.(type) {
-	case string:
-		if err := addItem(data); err != nil {
-			return nil, err
-		}
-	case []string:
-		for _, item := range data {
-			if err := addItem(item); err != nil {
-				return nil, err
-			}
-		}
-	case []any:
-		for _, item := range data {
-			if err := addItem(item); err != nil {
-				return nil, err
-			}
-		}
-	default:
-		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
-	}
-
-	return items, nil
-}
-
 // processControls converts input values into a slice of Control pointers or returns an error for invalid input types or values.
 func processControls(input any) (any, error) {
-	return processWhenNoAuthStringSettableSlice(input, func() *Control { return &Control{} })
+	return processStringSettableSlice(input, func() *Control { return &Control{} })
 }
 
-// processFeatures converts input values into a slice of Feature pointers or returns an error for invalid input types or values.
-func processFeatures(input any) (any, error) {
-	return processWhenNoAuthStringSettableSlice(input, func() *Feature { return &Feature{} })
+// processRuntimeModules converts input values into a slice of RuntimeModule pointers or returns an error for invalid input types or values.
+func processRuntimeModules(input any) (any, error) {
+	return processStringSettableSlice(input, func() *RuntimeModule { return &RuntimeModule{} })
 }
 
 // processServices converts input values into a slice of Service pointers or returns an error for invalid input types or values.
@@ -3351,7 +3273,7 @@ func processBackends(input any) (any, error) {
 func createDecoderOption() viper.DecoderConfigOption {
 	verbosityType := reflect.TypeFor[Verbosity]()
 	debugModulesType := reflect.TypeFor[[]*DbgModule]()
-	featuresType := reflect.TypeFor[[]*Feature]()
+	runtimeModulesType := reflect.TypeFor[[]*RuntimeModule]()
 	controlsType := reflect.TypeFor[[]*Control]()
 	servicesType := reflect.TypeFor[[]*Service]()
 	protocolsType := reflect.TypeFor[[]*Protocol]()
@@ -3370,8 +3292,8 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processVerboseLevel(data)
 				case to == debugModulesType:
 					return processDebugModules(data)
-				case to == featuresType:
-					return processFeatures(data)
+				case to == runtimeModulesType:
+					return processRuntimeModules(data)
 				case to == controlsType:
 					return processControls(data)
 				case to == servicesType:
@@ -3514,12 +3436,9 @@ func (f *FileSettings) normalizeConfigAliases() {
 	}
 
 	if f.Server != nil {
-		f.Server.normalizeConfiguredFeatures()
+		f.Server.normalizeConfiguredRuntimeModules()
 	}
 
-	if f.Lua != nil {
-		f.Lua.normalizeConfiguredFeatures()
-	}
 }
 
 // bindEnvs recursively binds struct fields to environment variables using Viper, constructing keys from struct tags or field names.

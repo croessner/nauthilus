@@ -19,7 +19,7 @@ func TestGetProtocol(t *testing.T) {
 			want:     2,
 		},
 		{
-			name:     "default config (no features)",
+			name:     "default config (no RESP3-only capabilities)",
 			redisCfg: &config.Redis{},
 			want:     2,
 		},

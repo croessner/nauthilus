@@ -40,16 +40,18 @@ const (
 
 // CapturedAuthOutcome stores the transport-neutral terminal auth outcome.
 type CapturedAuthOutcome struct {
-	Attributes      bktype.AttributeMapping
-	Decision        CapturedAuthDecision
-	TerminalState   string
-	Session         string
-	AccountField    string
-	TOTPSecretField string
-	StatusMessage   string
-	Error           string
-	Backend         definitions.Backend
-	HTTPStatus      int
+	Attributes           bktype.AttributeMapping
+	Decision             CapturedAuthDecision
+	TerminalState        string
+	Session              string
+	AccountField         string
+	TOTPSecretField      string
+	StatusMessage        string
+	StatusMessageI18NKey string
+	ResponseLanguage     string
+	Error                string
+	Backend              definitions.Backend
+	HTTPStatus           int
 }
 
 // CaptureResponseWriter captures auth terminal outcomes without rendering HTTP.
@@ -134,16 +136,18 @@ func (w *CaptureResponseWriter) captureOutcome(
 	}
 
 	w.outcome = CapturedAuthOutcome{
-		Attributes:      auth.GetAttributesCopy(),
-		Decision:        decision,
-		TerminalState:   string(terminalState),
-		Session:         auth.Runtime.GUID,
-		AccountField:    auth.Runtime.AccountField,
-		TOTPSecretField: auth.Runtime.TOTPSecretField,
-		StatusMessage:   auth.Runtime.StatusMessage,
-		Error:           reason,
-		Backend:         auth.Runtime.SourcePassDBBackend,
-		HTTPStatus:      status,
+		Attributes:           auth.GetAttributesCopy(),
+		Decision:             decision,
+		TerminalState:        string(terminalState),
+		Session:              auth.Runtime.GUID,
+		AccountField:         auth.Runtime.AccountField,
+		TOTPSecretField:      auth.Runtime.TOTPSecretField,
+		StatusMessage:        auth.Runtime.StatusMessage,
+		StatusMessageI18NKey: auth.Runtime.StatusMessageI18NKey,
+		ResponseLanguage:     auth.Runtime.ResponseLanguage,
+		Error:                reason,
+		Backend:              auth.Runtime.SourcePassDBBackend,
+		HTTPStatus:           status,
 	}
 }
 

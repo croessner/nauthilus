@@ -497,7 +497,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 // runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
 // Returns an error if the script is not found or if execution fails.
-func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
+func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string, i18nRuntime *lualib.I18NRuntime) error {
 	tr := monittrace.New("nauthilus/hooks")
 	cctx, csp := tr.Start(ctx, "hooks.execute_common",
 		attribute.String("hook", hook),
@@ -514,13 +514,9 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 		csp.End()
 	}()
 
-	var (
-		found  bool
-		script *PrecompiledLuaScript
-	)
-
-	if script, found = LuaScripts[hook]; !found || script == nil {
-		return fmt.Errorf("lua script for hook %s not found", hook)
+	script, err := commonLuaScript(hook)
+	if err != nil {
+		return err
 	}
 
 	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
@@ -551,28 +547,59 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	L.SetContext(luaCtx)
 
+	bindCommonLuaModules(luaCtx, cfg, logger, redis, L, i18nRuntime)
+
+	requestTable, cr := prepareCommonLuaRequest(L, cfg)
+	defer lualib.PutCommonRequest(cr)
+
+	_, err = executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
+	if err != nil {
+		csp.RecordError(err)
+
+		return err
+	}
+
+	return nil
+}
+
+func bindCommonLuaModules(
+	luaCtx context.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	redis rediscli.Client,
+	L *lua.LState,
+	i18nRuntime *lualib.I18NRuntime,
+) {
 	// Prepare per-request environment so that request-local globals and module bindings are visible
 	luapool.PrepareRequestEnv(L)
 
-	modManager := luamod.NewModuleManager(ctx, cfg, logger, redis)
+	modManager := luamod.NewModuleManager(luaCtx, cfg, logger, redis)
+	if i18nRuntime == nil {
+		i18nRuntime = lualib.DefaultI18NRuntime().NewCatalogSession()
+	}
 
 	modManager.BindAllDefault(L, lualib.NewContext(), luaCtx, tolerate.GetTolerate())
+	modManager.BindI18NRuntime(L, i18nRuntime, lualib.I18NModeStartup)
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
+}
 
+func commonLuaScript(hook string) (*PrecompiledLuaScript, error) {
+	script, found := LuaScripts[hook]
+	if !found || script == nil {
+		return nil, fmt.Errorf("lua script for hook %s not found", hook)
+	}
+
+	return script, nil
+}
+
+func prepareCommonLuaRequest(L *lua.LState, cfg config.File) (*lua.LTable, *lualib.CommonRequest) {
 	requestTable := L.NewTable()
 	cr := lualib.GetCommonRequest()
-
-	defer lualib.PutCommonRequest(cr)
 
 	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
 	cr.SetupRequest(L, cfg, requestTable)
 
-	_, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
-	if err != nil {
-		csp.RecordError(err)
-	}
-
-	return err
+	return requestTable, cr
 }
 
 // runLuaCustomWrapper executes a precompiled Lua script and returns its result or any occurring error.
@@ -716,7 +743,17 @@ func RunLuaHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis re
 }
 
 func RunLuaInit(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
-	return runLuaCommonWrapper(ctx, cfg, logger, redis, hook)
+	i18nRuntime := lualib.DefaultI18NRuntime().NewCatalogSession()
+	if err := runLuaCommonWrapper(ctx, cfg, logger, redis, hook, i18nRuntime); err != nil {
+		return err
+	}
+
+	return i18nRuntime.CommitCatalogSession()
+}
+
+// RunLuaInitWithI18NRuntime executes one Lua init script with a shared i18n startup session.
+func RunLuaInitWithI18NRuntime(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string, i18nRuntime *lualib.I18NRuntime) error {
+	return runLuaCommonWrapper(ctx, cfg, logger, redis, hook, i18nRuntime)
 }
 
 // executeAndHandleError executes a Lua script, invoking a predefined hook and processing its results or errors.

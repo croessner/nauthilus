@@ -23,15 +23,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestAuthStateMarkFeatureRejected_SetsGinContext(t *testing.T) {
+func TestAuthStateMarkEnvironmentRejected_SetsGinContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 
 	auth := &AuthState{}
-	auth.markFeatureRejected(ctx)
+	auth.markEnvironmentRejected(ctx)
 
-	if !ctx.GetBool(definitions.CtxFeatureRejectedKey) {
-		t.Fatal("expected feature_rejected context flag to be set")
+	if !ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
+		t.Fatal("expected environment_rejected context flag to be set")
 	}
 }

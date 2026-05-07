@@ -51,3 +51,21 @@ func TestSetupMockModulesDoesNotExposeNauthilusLog(t *testing.T) {
 		t.Fatalf("%s should be a table", definitions.LuaDefaultTable)
 	}
 }
+
+func TestSetupMockModulesPublishesBackendResultGlobal(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	mockData := &MockData{}
+	logger := &MockLogger{}
+	cleanup, err := SetupMockModules(L, mockData, logger)
+	if err != nil {
+		t.Fatalf("SetupMockModules failed: %v", err)
+	}
+	defer cleanup()
+
+	err = L.DoString(`local backend_result = nauthilus_backend_result.new()`)
+	if err != nil {
+		t.Fatalf("nauthilus_backend_result global should be available in test mode: %v", err)
+	}
+}

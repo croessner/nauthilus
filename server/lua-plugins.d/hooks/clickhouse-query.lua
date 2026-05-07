@@ -166,7 +166,7 @@ end
 
 -- Whitelisted columns by type
 local TEXT_COLS = {
-    "session","service","features","client_ip","client_net","client_id",
+    "session","service","decision_sources","client_ip","client_net","client_id",
     "hostname", "proto", "method", "user_agent", "local_ip",
     "display_name","account","username","password_hash",
     "pwnd_info", "brute_force_bucket", "oidc_cid", "saml_entity_id", "grant_type", "mfa_method",
@@ -604,11 +604,11 @@ function nauthilus_run_hook(request)
 
         local fields = table.concat({
             -- core identifiers and network
-            "ts","session","service","features","client_ip","client_port","client_net","client_id",
+            "ts","session","service","decision_sources","client_ip","client_port","client_net","client_id",
             "hostname", "proto", "method", "user_agent", "local_ip", "local_port",
             -- user/account info
             "display_name","account","username","password_hash",
-            -- security and feature info
+            -- security and decision-source info
             "pwnd_info", "brute_force_bucket", "brute_force_counter", "oidc_cid", "saml_entity_id", "grant_type", "mfa_method",
             -- hotspot / geoip / pattern
             "failed_login_count","failed_login_rank","failed_login_recognized",

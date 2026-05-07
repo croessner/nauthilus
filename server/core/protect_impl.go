@@ -27,7 +27,7 @@ import (
 )
 
 // ProtectEndpointMiddleware is a Gin middleware that performs authentication and security checks for HTTP requests.
-// It handles client IP extraction, brute force detection, protocol handling, and various authentication features.
+// It handles client IP extraction, brute force detection, protocol handling, and various authentication environment controls.
 func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
@@ -79,20 +79,30 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 		ctx.Set(definitions.CtxClientIPKey, clientIP)
 
 		if auth.CheckBruteForce(ctx) {
-			auth.markFeatureRejected(ctx)
-			auth.UpdateBruteForceBucketsCounter(ctx)
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(ctx, result)
-			PutPassDBResultToPool(result)
-			auth.AuthFail(ctx)
-			ctx.Abort()
+			if auth.applyConfiguredPreAuthDecision(ctx) {
+				return
+			}
 
-			return
+			if !auth.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) && !auth.HasConfiguredPreAuthPolicyAuthority(ctx) {
+				if auth.applyDefaultPreAuthDecision(ctx) {
+					return
+				}
+
+				auth.markEnvironmentRejected(ctx)
+				auth.UpdateBruteForceBucketsCounter(ctx)
+				result := GetPassDBResultFromPool()
+				auth.PostLuaAction(ctx, result)
+				PutPassDBResultToPool(result)
+				auth.AuthFail(ctx)
+				ctx.Abort()
+
+				return
+			}
 		}
 
 		//nolint:exhaustive // Ignore some results
-		switch auth.HandleFeatures(ctx) {
-		case definitions.AuthResultFeatureTLS:
+		switch auth.HandleEnvironment(ctx) {
+		case definitions.AuthResultPreAuthTLS:
 			result := GetPassDBResultFromPool()
 			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)
@@ -100,7 +110,7 @@ func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.Handler
 			ctx.Abort()
 
 			return
-		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
+		case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
 			result := GetPassDBResultFromPool()
 			auth.PostLuaAction(ctx, result)
 			PutPassDBResultToPool(result)

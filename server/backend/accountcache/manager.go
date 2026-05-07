@@ -87,7 +87,7 @@ func (m *Manager) Set(cfg config.File, username, protocol, oidcClientID, account
 		return
 	}
 
-	// Only set when feature is enabled
+	// Only set when the local cache is enabled
 	if !cfg.GetServer().GetRedis().GetAccountLocalCache().IsEnabled() {
 		return
 	}

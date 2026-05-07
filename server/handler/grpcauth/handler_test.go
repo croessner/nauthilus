@@ -21,11 +21,21 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	grpcI18NLockedKey     = "auth.policy.company.account_locked"
+	grpcI18NLockedText    = "Login failed because the account is locked."
+	grpcI18NLockedGerman  = "Anmeldung abgelehnt."
+	grpcI18NLockedEnglish = "Login denied."
 )
 
 func TestHandlerAuthenticateConsumesApplicationService(t *testing.T) {
@@ -76,6 +86,176 @@ func TestHandlerAuthenticateConsumesApplicationService(t *testing.T) {
 
 	if response.GetAttributes()["ids"].GetValues()[1] != "2" {
 		t.Fatalf("ids attribute = %#v, want stringified values", response.GetAttributes()["ids"].GetValues())
+	}
+}
+
+func TestHandlerAuthenticatePassesIncomingMetadataToApplicationInput(t *testing.T) {
+	service := &recordingService{
+		authOutcome: &core.AuthOutcome{
+			Decision:   core.AuthDecisionOK,
+			Session:    "session-metadata",
+			HTTPStatus: 200,
+		},
+	}
+	handler := New(service)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-company-domain", " CompanyDE "))
+
+	_, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+		Username: "metadata-user@example.test",
+		Password: "secret",
+		ClientIp: "203.0.113.20",
+		Protocol: "imap",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	values := service.authInput.Context.RequestMetadata["x-company-domain"]
+	if len(values) != 1 || values[0] != " CompanyDE " {
+		t.Fatalf("request metadata = %#v, want x-company-domain value", service.authInput.Context.RequestMetadata)
+	}
+}
+
+func TestHandlerAuthenticateLocalizesPolicyI18NStatusFromIncomingMetadata(t *testing.T) {
+	service := &recordingService{
+		authOutcome: &core.AuthOutcome{
+			Decision:             core.AuthDecisionFail,
+			Session:              "session-i18n-grpc",
+			StatusMessage:        grpcI18NLockedText,
+			StatusMessageI18NKey: grpcI18NLockedKey,
+			HTTPStatus:           403,
+		},
+	}
+	resolver := &recordingGRPCStatusResolver{
+		t: t,
+		wantSelection: localization.StatusMessage{
+			Text:    grpcI18NLockedText,
+			I18NKey: grpcI18NLockedKey,
+		},
+		wantPreference: localization.LanguagePreference{
+			Header: "de-DE,de;q=0.9,en;q=0.8",
+		},
+		resolved: localization.ResolvedStatusMessage{
+			Text:      grpcI18NLockedGerman,
+			Language:  "de",
+			Key:       grpcI18NLockedKey,
+			Localized: true,
+		},
+	}
+	handler := NewWithResolver(service, resolver)
+	stream := &recordingServerTransportStream{}
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs("accept-language", "de-DE,de;q=0.9,en;q=0.8"),
+	)
+	ctx = grpc.NewContextWithServerTransportStream(ctx, stream)
+
+	response, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+		Username: "localized-user@example.test",
+		Password: "secret",
+		ClientIp: "203.0.113.20",
+		Protocol: "imap",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	if resolver.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", resolver.calls)
+	}
+
+	if got := response.GetStatusMessage(); got != grpcI18NLockedGerman {
+		t.Fatalf("status message = %q, want localized message", got)
+	}
+
+	if got := stream.header.Get("content-language"); len(got) != 1 || got[0] != "de" {
+		t.Fatalf("content-language metadata = %#v, want de", got)
+	}
+}
+
+func TestHandlerAuthenticatePolicyLanguageOverridesIncomingMetadata(t *testing.T) {
+	service := &recordingService{
+		authOutcome: &core.AuthOutcome{
+			Decision:             core.AuthDecisionFail,
+			Session:              "session-i18n-grpc-policy-language",
+			StatusMessage:        grpcI18NLockedText,
+			StatusMessageI18NKey: grpcI18NLockedKey,
+			ResponseLanguage:     "en",
+			HTTPStatus:           403,
+		},
+	}
+	resolver := &recordingGRPCStatusResolver{
+		t: t,
+		wantSelection: localization.StatusMessage{
+			Text:    grpcI18NLockedText,
+			I18NKey: grpcI18NLockedKey,
+		},
+		wantPreference: localization.LanguagePreference{
+			Policy: "en",
+			Header: "de",
+		},
+		resolved: localization.ResolvedStatusMessage{
+			Text:      grpcI18NLockedEnglish,
+			Language:  "en",
+			Key:       grpcI18NLockedKey,
+			Localized: true,
+		},
+	}
+	handler := NewWithResolver(service, resolver)
+	stream := &recordingServerTransportStream{}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "de"))
+	ctx = grpc.NewContextWithServerTransportStream(ctx, stream)
+
+	response, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+		Username: "policy-language-user@example.test",
+		Password: "secret",
+		ClientIp: "203.0.113.20",
+		Protocol: "imap",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	if got := response.GetStatusMessage(); got != grpcI18NLockedEnglish {
+		t.Fatalf("status message = %q, want policy-selected language message", got)
+	}
+
+	if got := stream.header.Get("content-language"); len(got) != 1 || got[0] != "en" {
+		t.Fatalf("content-language metadata = %#v, want en", got)
+	}
+}
+
+func TestHandlerAuthenticateKeepsPlainStatusMessageWithoutI18NKey(t *testing.T) {
+	service := &recordingService{
+		authOutcome: &core.AuthOutcome{
+			Decision:      core.AuthDecisionFail,
+			Session:       "session-plain-grpc",
+			StatusMessage: "Plain policy denial",
+			HTTPStatus:    403,
+		},
+	}
+	resolver := &recordingGRPCStatusResolver{t: t, failOnCall: true}
+	handler := NewWithResolver(service, resolver)
+	stream := &recordingServerTransportStream{}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "de"))
+	ctx = grpc.NewContextWithServerTransportStream(ctx, stream)
+
+	response, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+		Username: "plain-user@example.test",
+		Password: "secret",
+		ClientIp: "203.0.113.20",
+		Protocol: "imap",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	if got := response.GetStatusMessage(); got != "Plain policy denial" {
+		t.Fatalf("status message = %q, want plain status message", got)
+	}
+
+	if got := stream.header.Get("content-language"); len(got) != 0 {
+		t.Fatalf("content-language metadata = %#v, want empty metadata", got)
 	}
 }
 
@@ -191,4 +371,62 @@ func (s *recordingService) ListAccounts(ctx context.Context, input core.AuthInpu
 	s.listInput = input
 
 	return s.listOutcome, s.listErr
+}
+
+type recordingGRPCStatusResolver struct {
+	t              *testing.T
+	wantSelection  localization.StatusMessage
+	wantPreference localization.LanguagePreference
+	resolved       localization.ResolvedStatusMessage
+	calls          int
+	failOnCall     bool
+}
+
+func (r *recordingGRPCStatusResolver) ResolveStatusMessage(
+	_ context.Context,
+	selection localization.StatusMessage,
+	preference localization.LanguagePreference,
+) localization.ResolvedStatusMessage {
+	r.calls++
+
+	if r.failOnCall {
+		r.t.Fatal("resolver should not be called for plain status messages")
+	}
+
+	if selection != r.wantSelection {
+		r.t.Fatalf("selection = %#v, want %#v", selection, r.wantSelection)
+	}
+
+	if preference.Policy != r.wantPreference.Policy ||
+		preference.Header != r.wantPreference.Header ||
+		preference.Default != r.wantPreference.Default {
+		r.t.Fatalf("preference = %#v, want %#v", preference, r.wantPreference)
+	}
+
+	return r.resolved
+}
+
+type recordingServerTransportStream struct {
+	header  metadata.MD
+	trailer metadata.MD
+}
+
+func (s *recordingServerTransportStream) Method() string {
+	return "/nauthilus.auth.v1.AuthService/Authenticate"
+}
+
+func (s *recordingServerTransportStream) SetHeader(md metadata.MD) error {
+	s.header = metadata.Join(s.header, md)
+
+	return nil
+}
+
+func (s *recordingServerTransportStream) SendHeader(md metadata.MD) error {
+	return s.SetHeader(md)
+}
+
+func (s *recordingServerTransportStream) SetTrailer(md metadata.MD) error {
+	s.trailer = metadata.Join(s.trailer, md)
+
+	return nil
 }

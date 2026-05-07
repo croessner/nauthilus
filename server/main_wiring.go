@@ -36,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/language"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -208,6 +209,14 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			bootfx.EnableBlockProfile(snap.File)
 			bootfx.InitializeBruteForceTolerate(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
+			if err := lualib.ConfigureDefaultI18NRuntime(
+				localization.NewManagerCatalog(p.LangManager),
+				snap.File.GetServer().Frontend.GetDefaultLanguage(),
+				p.Store.logger,
+			); err != nil {
+				return fmt.Errorf("configure Lua i18n runtime: %w", err)
+			}
+
 			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 			core.InitPassDBResultPool()
 

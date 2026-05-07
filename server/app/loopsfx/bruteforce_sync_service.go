@@ -63,7 +63,7 @@ func (s *BruteForceSyncService) Start(parent context.Context) error {
 	}
 
 	snap := s.cfgProvider.Current()
-	if snap.File == nil || !snap.File.HasFeature(definitions.FeatureBruteForce) {
+	if snap.File == nil || !snap.File.HasRuntimeModule(definitions.ControlBruteForce) {
 		return nil
 	}
 

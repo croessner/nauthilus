@@ -99,14 +99,23 @@ type BucketManager interface {
 	// GetPasswordsTotalSeen retrieves the total number of unique passwords encountered across all accounts.
 	GetPasswordsTotalSeen() uint
 
-	// GetFeatureName returns the name "brute_force" if the system triggered.
-	GetFeatureName() string
+	// GetEnvironmentName returns the name "brute_force" if the system triggered.
+	GetEnvironmentName() string
 
 	// GetBruteForceName retrieves the name associated with the specific brute force bucket that triggered.
 	GetBruteForceName() string
 
 	// GetBruteForceCounter returns a map containing brute force detection counters associated with specific criteria or keys.
 	GetBruteForceCounter() map[string]uint
+
+	// GetBucketPolicyFacts returns the last collected policy facts for configured brute-force buckets.
+	GetBucketPolicyFacts() []BucketPolicyFact
+
+	// GetTolerationPolicyFact returns the last collected toleration policy fact.
+	GetTolerationPolicyFact() tolerate.PolicyFact
+
+	// CollectBucketPolicyFacts reads current bucket state for policy evaluation without modifying counters.
+	CollectBucketPolicyFacts(rules []config.BruteForceRule) ([]BucketPolicyFact, error)
 
 	// GetBruteForceBucketRedisKey generates and returns the Redis key for tracking the brute force bucket associated with the given rule.
 	GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string)
@@ -179,8 +188,26 @@ type BucketManager interface {
 
 	// CommitRWPSlidingWindow writes the current password hash into the RWP sliding window in Redis.
 	// This must only be called after confirming that the rejection was due to a genuine authentication
-	// failure, not a feature-based rejection (e.g., RBL) where the password was never verified.
+	// failure, not a environment-based rejection (e.g., RBL) where the password was never verified.
 	CommitRWPSlidingWindow()
+}
+
+// BucketPolicyFact is the read-only policy view of one configured brute-force bucket.
+type BucketPolicyFact struct {
+	Name           string
+	ClientNet      string
+	Count          float64
+	Limit          float64
+	EffectiveLimit float64
+	Remaining      float64
+	Ratio          float64
+	Period         time.Duration
+	BanTime        time.Duration
+	CIDR           uint
+	Matched        bool
+	OverLimit      bool
+	AlreadyBanned  bool
+	Repeating      bool
 }
 
 type bucketManagerImpl struct {
@@ -194,10 +221,12 @@ type bucketManagerImpl struct {
 	clientIP             string
 	accountName          string
 	bruteForceName       string
-	featureName          string
+	environmentName      string
 	protocol             string
 	oidcCID              string
 	bruteForceCounter    map[string]uint
+	bucketPolicyFacts    []BucketPolicyFact
+	tolerationPolicyFact tolerate.PolicyFact
 	netByCIDR            map[uint]*net.IPNet
 	loginAttempts        uint
 	passwordsAccountSeen uint
@@ -243,9 +272,9 @@ func (bm *bucketManagerImpl) GetPasswordsTotalSeen() uint {
 	return bm.passwordsTotalSeen
 }
 
-// GetFeatureName returns the name of the feature managed by the bucketManagerImpl.
-func (bm *bucketManagerImpl) GetFeatureName() string {
-	return bm.featureName
+// GetEnvironmentName returns the name of the environment control managed by the bucketManagerImpl.
+func (bm *bucketManagerImpl) GetEnvironmentName() string {
+	return bm.environmentName
 }
 
 // GetBruteForceName retrieves the BruteForceName associated with the bucketManagerImpl instance.
@@ -263,6 +292,24 @@ func (bm *bucketManagerImpl) WithRWPDecision(enforce bool) BucketManager {
 // GetBruteForceCounter retrieves the brute force counter map, tracking attempts by their respective identifiers.
 func (bm *bucketManagerImpl) GetBruteForceCounter() map[string]uint {
 	return bm.bruteForceCounter
+}
+
+// GetBucketPolicyFacts returns a copy of the last collected brute-force bucket policy facts.
+func (bm *bucketManagerImpl) GetBucketPolicyFacts() []BucketPolicyFact {
+	if bm == nil || len(bm.bucketPolicyFacts) == 0 {
+		return nil
+	}
+
+	return append([]BucketPolicyFact(nil), bm.bucketPolicyFacts...)
+}
+
+// GetTolerationPolicyFact returns the last collected toleration policy fact.
+func (bm *bucketManagerImpl) GetTolerationPolicyFact() tolerate.PolicyFact {
+	if bm == nil {
+		return tolerate.PolicyFact{}
+	}
+
+	return bm.tolerationPolicyFact
 }
 
 // GetBruteForceBucketRedisKey generates a Redis base key for a brute force rule.
@@ -470,7 +517,7 @@ func (bm *bucketManagerImpl) WithOIDCCID(oidcCID string) BucketManager {
 
 // LoadAllPasswordHistories loads and processes password history metrics (counts) and checks for current password presence.
 func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 
@@ -550,6 +597,10 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 	defer func() {
 		bm.ctx = prevCtx
 	}()
+
+	if bm.parsedIP == nil || bm.netByCIDR == nil {
+		bm.PrepareNetcalc(rules)
+	}
 
 	ipFamily := "unknown"
 	switch {
@@ -726,6 +777,65 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 	return withError, alreadyTriggered, ruleNumber
 }
 
+// CollectBucketPolicyFacts reads the current state for all configured brute-force buckets.
+func (bm *bucketManagerImpl) CollectBucketPolicyFacts(rules []config.BruteForceRule) ([]BucketPolicyFact, error) {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.bucket_policy_facts",
+		attribute.String("protocol", bm.protocol),
+		attribute.String("oidc_cid", bm.oidcCID),
+		attribute.Int("rules.total", len(rules)),
+	)
+	defer sp.End()
+
+	// Propagate span context to all downstream operations inside this method.
+	prevCtx := bm.ctx
+	bm.ctx = ctx
+	defer func() {
+		bm.ctx = prevCtx
+	}()
+
+	facts, err := bm.collectBucketPolicyFacts(ctx, rules, true)
+	sp.SetAttributes(
+		attribute.Int("facts.total", len(facts)),
+		attribute.Bool("error", err != nil),
+	)
+
+	return facts, err
+}
+
+func (bm *bucketManagerImpl) collectBucketPolicyFacts(
+	ctx context.Context,
+	rules []config.BruteForceRule,
+	includeBanState bool,
+) ([]BucketPolicyFact, error) {
+	facts := newBucketPolicyFacts(rules)
+
+	if bm.parsedIP == nil || bm.netByCIDR == nil {
+		bm.PrepareNetcalc(rules)
+	}
+
+	cands, err := bm.gatherBucketPolicyCandidates(rules, facts)
+	if err != nil {
+		bm.bucketPolicyFacts = facts
+
+		return facts, err
+	}
+
+	if includeBanState {
+		bm.markBucketPolicyBanState(ctx, rules, cands, facts)
+	}
+
+	if err := bm.readBucketPolicyCounters(cands, rules, facts); err != nil {
+		bm.bucketPolicyFacts = facts
+
+		return facts, err
+	}
+
+	bm.bucketPolicyFacts = facts
+
+	return facts, nil
+}
+
 // CheckBucketOverLimit evaluates brute force rules for a given network to detect potential brute force attacks.
 // Returns flags indicating errors, if a rule was triggered, and the index of the rule that triggered the detection.
 func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
@@ -744,11 +854,6 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		bm.ctx = prevCtx
 	}()
 
-	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
-	if bm.parsedIP == nil || bm.netByCIDR == nil {
-		bm.PrepareNetcalc(rules)
-	}
-
 	ipFamily := "unknown"
 	switch {
 	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
@@ -759,13 +864,109 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 
 	sp.SetAttributes(attribute.String("ip_family", ipFamily))
 
-	matchedAnyRule := false
+	facts, err := bm.collectBucketPolicyFacts(ctx, rules, false)
+	if err != nil {
+		_ = level.Error(bm.logger()).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Failed to collect brute-force bucket policy facts",
+			definitions.LogKeyError, err,
+		)
 
-	// Phase 2: batch load all candidate counters with one MGET
+		return true, false, -1
+	}
+
+	result := bm.bucketOverLimitResult(facts, message)
+	if !result.matchedAnyRule {
+		bm.logNoMatchingBruteForceBuckets()
+	}
+
+	if result.ruleTriggered {
+		sp.SetAttributes(
+			attribute.Bool("triggered", true),
+			attribute.String("rule", bm.bruteForceName),
+			attribute.Int("rule.index", result.ruleNumber),
+			attribute.Float64("count", result.count),
+			attribute.Float64("effective_limit", result.effectiveLimit),
+		)
+	}
+
+	sp.SetAttributes(
+		attribute.Bool("triggered", result.ruleTriggered),
+		attribute.Bool("rules.matched_any", result.matchedAnyRule),
+		attribute.Int("candidates.total", result.candidateCount),
+	)
+
+	return withError, result.ruleTriggered, result.ruleNumber
+}
+
+type bucketOverLimitResult struct {
+	candidateCount int
+	ruleNumber     int
+	count          float64
+	effectiveLimit float64
+	matchedAnyRule bool
+	ruleTriggered  bool
+}
+
+func (bm *bucketManagerImpl) bucketOverLimitResult(facts []BucketPolicyFact, message *string) bucketOverLimitResult {
+	result := bucketOverLimitResult{ruleNumber: -1}
+
+	for i := range facts {
+		if !facts[i].Matched {
+			continue
+		}
+
+		result.matchedAnyRule = true
+		result.candidateCount++
+
+		if facts[i].OverLimit && !result.ruleTriggered {
+			result.ruleTriggered = true
+			result.ruleNumber = i
+			result.count = facts[i].Count
+			result.effectiveLimit = facts[i].EffectiveLimit
+			bm.bruteForceName = facts[i].Name
+			*message = "Brute force attack detected"
+
+			stats.GetMetrics().GetBruteForceRejected().WithLabelValues(bm.bruteForceName).Inc()
+		}
+	}
+
+	return result
+}
+
+func (bm *bucketManagerImpl) logNoMatchingBruteForceBuckets() {
+	_ = level.Warn(bm.logger()).Log(
+		definitions.LogKeyGUID, bm.guid,
+		definitions.LogKeyBruteForce, "No matching brute force buckets found",
+		"protocol", bm.protocol,
+		"client_ip", bm.clientIP)
+}
+
+func newBucketPolicyFacts(rules []config.BruteForceRule) []BucketPolicyFact {
+	facts := make([]BucketPolicyFact, len(rules))
+
+	for i := range rules {
+		effectiveLimit := math.Max(0, float64(rules[i].FailedRequests)-1)
+
+		facts[i] = BucketPolicyFact{
+			Name:           rules[i].Name,
+			Limit:          float64(rules[i].FailedRequests),
+			EffectiveLimit: effectiveLimit,
+			Remaining:      effectiveLimit,
+			Period:         rules[i].GetPeriod(),
+			BanTime:        rules[i].GetBanTime(),
+			CIDR:           rules[i].GetCIDR(),
+		}
+	}
+
+	return facts
+}
+
+func (bm *bucketManagerImpl) gatherBucketPolicyCandidates(
+	rules []config.BruteForceRule,
+	facts []BucketPolicyFact,
+) ([]bkcand, error) {
 	cands := make([]bkcand, 0, len(rules))
-
-	_, gatherSpan := tr.Start(ctx, "auth.bruteforce.bucket_over_limit.gather_candidates")
-
 	logger := bm.logger()
 
 	for i := range rules {
@@ -773,139 +974,178 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			continue
 		}
 
-		// Skip, where the current IP address does not match the current rule
-		n, nErr := bm.getNetwork(&rules[i])
-		if nErr != nil {
-			gatherSpan.End()
-
-			level.Error(logger).Log(
+		network, err := bm.getNetwork(&rules[i])
+		if err != nil {
+			_ = level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to get network for brute force rule",
-				definitions.LogKeyError, nErr,
+				definitions.LogKeyError, err,
 			)
 
-			return true, false, i
+			return cands, err
 		}
 
-		// Only consider this rule matched if it yields a valid network for the client IP
-		if n == nil {
+		if network == nil {
 			continue
 		}
 
-		matchedAnyRule = true
-		cands = append(cands, bkcand{idx: i, network: n})
+		facts[i].Matched = true
+		facts[i].ClientNet = network.String()
+		cands = append(cands, bkcand{idx: i, network: network})
 	}
 
-	gatherSpan.SetAttributes(
-		attribute.Bool("rules.matched_any", matchedAnyRule),
-		attribute.Int("candidates.total", len(cands)),
-	)
-	gatherSpan.End()
+	return cands, nil
+}
 
-	if len(cands) > 0 {
-		scriptSHA, errUpload := rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
-		if errUpload != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Failed to upload SlidingWindowCounter script",
-				definitions.LogKeyError, errUpload,
-			)
-
-			return true, false, -1
-		}
-
-		// Reputation key for the client IP and adaptive scaling configuration
-		_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
-
-		// Redis Cluster: we use a pipeline to execute the script for each candidate.
-		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_eval_bucket_counter").Inc()
-
-		cmds, errP := bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
-
-		// NOSCRIPT retry: if a read-handle replica lost the script (e.g. Redis restart),
-		// force a re-upload to all handles and retry the pipeline once.
-		if errP != nil && strings.Contains(errP.Error(), "NOSCRIPT") {
-			level.Warn(logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Pipeline NOSCRIPT on read handle, re-uploading script to all nodes",
-			)
-
-			rediscli.InvalidateScript("SlidingWindowCounter")
-
-			scriptSHA, errUpload = rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
-			if errUpload == nil {
-				cmds, errP = bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
-			}
-		}
-
-		if errP != nil && !errors2.Is(errP, redis.Nil) {
-			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EVAL bucket counters failed: %v", errP))
-		}
-
-		if bm.bruteForceCounter == nil {
-			bm.bruteForceCounter = make(map[string]uint)
-		}
-
-		for i, cmd := range cmds {
-			res, err := cmd.Result()
-			if err != nil {
-				continue
-			}
-
-			if resParts, ok := res.([]any); ok && len(resParts) >= 2 {
-				totalStr, _ := resParts[0].(string)
-				exceeded, _ := resParts[1].(int64)
-
-				totalFloat, _ := strconv.ParseFloat(totalStr, 64)
-				total := uint(math.Round(totalFloat))
-
-				name := rules[cands[i].idx].Name
-				bm.bruteForceCounter[name] = total
-
-				if exceeded == 1 {
-					ruleTriggered = true
-					ruleNumber = cands[i].idx
-					bm.bruteForceName = name
-					*message = "Brute force attack detected"
-
-					stats.GetMetrics().GetBruteForceRejected().WithLabelValues(bm.bruteForceName).Inc()
-
-					effectiveLimit := ""
-					if len(resParts) >= 3 {
-						effectiveLimit, _ = resParts[2].(string)
-					}
-
-					sp.SetAttributes(
-						attribute.Bool("triggered", true),
-						attribute.String("rule", bm.bruteForceName),
-						attribute.Int("rule.index", ruleNumber),
-						attribute.Int64("count", int64(total)),
-						attribute.String("effective_limit", effectiveLimit),
-					)
-
-					return false, true, ruleNumber
-				}
-			}
-		}
+func (bm *bucketManagerImpl) markBucketPolicyBanState(
+	ctx context.Context,
+	rules []config.BruteForceRule,
+	cands []bkcand,
+	facts []BucketPolicyFact,
+) {
+	if len(cands) == 0 {
+		return
 	}
 
-	// Log a warning if no rules matched
-	if !matchedAnyRule {
-		level.Warn(logger).Log(
+	networks := make([]string, len(cands))
+	for i := range cands {
+		networks[i] = cands[i].network.String()
+	}
+
+	cmds, err := bm.pipelineExistsBanKeys(ctx, networks, "pipeline_exists_ban_policy_facts")
+	if err != nil && !errors2.Is(err, redis.Nil) {
+		_ = level.Warn(bm.logger()).Log(
 			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyBruteForce, "No matching brute force buckets found",
-			"protocol", bm.protocol,
-			"client_ip", bm.clientIP)
+			definitions.LogKeyMsg, fmt.Sprintf("Pipeline EXISTS ban-key for policy facts failed: %v", err),
+		)
+
+		return
 	}
 
-	sp.SetAttributes(
-		attribute.Bool("triggered", ruleTriggered),
-		attribute.Bool("rules.matched_any", matchedAnyRule),
-		attribute.Int("candidates.total", len(cands)),
-	)
+	for i, cmd := range cmds {
+		exists, err := cmd.Result()
+		if err != nil || exists == 0 {
+			continue
+		}
 
-	return withError, ruleTriggered, ruleNumber
+		idx := cands[i].idx
+		facts[idx].AlreadyBanned = true
+		facts[idx].Repeating = true
+
+		if bm.bruteForceName == "" {
+			bm.bruteForceName = rules[idx].Name
+		}
+	}
+}
+
+func (bm *bucketManagerImpl) readBucketPolicyCounters(
+	cands []bkcand,
+	rules []config.BruteForceRule,
+	facts []BucketPolicyFact,
+) error {
+	if len(cands) == 0 {
+		return nil
+	}
+
+	logger := bm.logger()
+	scriptSHA, errUpload := rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
+	if errUpload != nil {
+		_ = level.Error(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Failed to upload SlidingWindowCounter script",
+			definitions.LogKeyError, errUpload,
+		)
+
+		return errUpload
+	}
+
+	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_eval_bucket_counter").Inc()
+
+	cmds, errP := bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
+	if errP != nil && strings.Contains(errP.Error(), "NOSCRIPT") {
+		_ = level.Warn(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Pipeline NOSCRIPT on read handle, re-uploading script to all nodes",
+		)
+
+		rediscli.InvalidateScript("SlidingWindowCounter")
+
+		scriptSHA, errUpload = rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
+		if errUpload == nil {
+			cmds, errP = bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
+		}
+	}
+
+	if errP != nil && !errors2.Is(errP, redis.Nil) {
+		_ = level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EVAL bucket counters failed: %v", errP))
+	}
+
+	if bm.bruteForceCounter == nil {
+		bm.bruteForceCounter = make(map[string]uint)
+	}
+
+	for i, cmd := range cmds {
+		res, err := cmd.Result()
+		if err != nil {
+			continue
+		}
+
+		bm.applyBucketPolicyCounterResult(cands[i].idx, res, rules, facts)
+	}
+
+	return nil
+}
+
+func (bm *bucketManagerImpl) applyBucketPolicyCounterResult(
+	index int,
+	result any,
+	rules []config.BruteForceRule,
+	facts []BucketPolicyFact,
+) {
+	resParts, ok := result.([]any)
+	if !ok || len(resParts) < 2 {
+		return
+	}
+
+	totalStr, _ := resParts[0].(string)
+	exceeded, _ := resParts[1].(int64)
+
+	total, err := strconv.ParseFloat(totalStr, 64)
+	if err != nil {
+		return
+	}
+
+	effectiveLimit := math.Max(0, float64(rules[index].FailedRequests)-1)
+	if len(resParts) >= 3 {
+		if effectiveLimitStr, ok := resParts[2].(string); ok {
+			if parsed, parseErr := strconv.ParseFloat(effectiveLimitStr, 64); parseErr == nil {
+				effectiveLimit = parsed
+			}
+		}
+	}
+
+	facts[index].Count = total
+	facts[index].EffectiveLimit = effectiveLimit
+	facts[index].Remaining = math.Max(0, effectiveLimit-total)
+	facts[index].Ratio = bucketPolicyRatio(total, effectiveLimit)
+	facts[index].OverLimit = exceeded == 1
+	facts[index].Repeating = facts[index].Repeating || facts[index].OverLimit
+	bm.bruteForceCounter[rules[index].Name] = uint(math.Round(total))
+}
+
+func bucketPolicyRatio(count float64, effectiveLimit float64) float64 {
+	if effectiveLimit <= 0 {
+		if count > 0 {
+			return 1
+		}
+
+		return 0
+	}
+
+	return count / effectiveLimit
 }
 
 // bkcand pairs a rule index with its resolved client network for brute-force bucket evaluation.
@@ -1073,10 +1313,18 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		// we always enforce here to ensure ban keys and indices are written consistently.
 
 		if !alreadyTriggered {
-			if tol := bm.tolerate(); tol != nil && tol.IsTolerated(bm.ctx, bm.clientIP) {
-				level.Info(bm.logger()).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, "IP address is tolerated")
+			if tol := bm.tolerate(); tol != nil {
+				fact := tol.PolicyFact(bm.ctx, bm.clientIP)
+				if fact.Active {
+					fact.SuppressedBlock = true
+					bm.tolerationPolicyFact = fact
 
-				return false
+					_ = level.Info(bm.logger()).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, "IP address is tolerated")
+
+					return false
+				}
+
+				bm.tolerationPolicyFact = fact
 			}
 		}
 
@@ -1116,7 +1364,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		logBucketMatchingRule(bm, network, rule, message)
 
-		bm.featureName = definitions.FeatureBruteForce
+		bm.environmentName = definitions.ControlBruteForce
 
 		// Store L1 decision for a very short time to absorb bursts (read-path only)
 		l1.GetEngine().Set(bm.ctx, l1.KeyBurst(bm.bfBurstKey()), l1.L1Decision{Blocked: true, Rule: bm.bruteForceName}, 0)
@@ -1263,7 +1511,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 
 // SaveFailedPasswordCounterInRedis adds the failed password hash to a Redis set for brute force protection.
 func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 
@@ -1622,7 +1870,7 @@ func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
 }
 
 // CommitRWPSlidingWindow writes the current password hash into the RWP sliding window.
-// It must only be called when the password was genuinely wrong (not rejected by a feature).
+// It must only be called when the password was genuinely wrong (not rejected by an environment control).
 func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
 	args := bm.buildRWPScriptArgs()
 	if args == nil {
@@ -2031,7 +2279,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 	return
 }
 
-// loadBruteForceBucketCounter loads a brute force bucket counter for the specified rule if the feature is enabled.
+// loadBruteForceBucketCounter loads a brute force bucket counter for the specified rule if the control is enabled.
 // It retrieves the bucket counter from Redis, logs the operation, and updates the in-memory counter mapping for the rule.
 func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
 	tr := monittrace.New("nauthilus/bruteforce")
@@ -2333,7 +2581,7 @@ func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptive
 }
 
 func (bm *bucketManagerImpl) prepareSlidingWindow(rule *config.BruteForceRule) (currentKey, prevKey string, weight float64, ok bool) {
-	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 

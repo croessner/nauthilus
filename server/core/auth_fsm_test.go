@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/policy"
 )
 
 func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
@@ -53,40 +54,88 @@ func TestNextAuthFSMState_AllowedTransitions(t *testing.T) {
 			next:    authFSMStateAuthFail,
 		},
 		{
-			name:    "InputFeaturesOK",
+			name:    "InputPreAuthOK",
 			current: authFSMStateInputParsed,
-			event:   authFSMEventFeaturesOK,
-			next:    authFSMStateFeaturesChecked,
+			event:   authFSMEventPreAuthOK,
+			next:    authFSMStatePreAuthChecked,
 		},
 		{
-			name:    "FeaturesPasswordEvaluated",
-			current: authFSMStateFeaturesChecked,
-			event:   authFSMEventPasswordEvaluated,
-			next:    authFSMStatePasswordChecked,
+			name:    "PreAuthAuthEvaluated",
+			current: authFSMStatePreAuthChecked,
+			event:   authFSMEventAuthEvaluated,
+			next:    authFSMStateAuthChecked,
 		},
 		{
-			name:    "FeaturesBasicAuthOK",
-			current: authFSMStateFeaturesChecked,
+			name:    "PreAuthDeny",
+			current: authFSMStateInputParsed,
+			event:   authFSMEventPreAuthDeny,
+			next:    authFSMStateAuthFail,
+		},
+		{
+			name:    "PreAuthTempFail",
+			current: authFSMStateInputParsed,
+			event:   authFSMEventPreAuthTempFail,
+			next:    authFSMStateAuthTempFail,
+		},
+		{
+			name:    "PreAuthAbort",
+			current: authFSMStateInputParsed,
+			event:   authFSMEventPreAuthAbort,
+			next:    authFSMStateAborted,
+		},
+		{
+			name:    "PreAuthBasicAuthOK",
+			current: authFSMStatePreAuthChecked,
 			event:   authFSMEventBasicAuthOK,
 			next:    authFSMStateAuthOK,
 		},
 		{
-			name:    "FeaturesBasicAuthFail",
-			current: authFSMStateFeaturesChecked,
+			name:    "PreAuthBasicAuthFail",
+			current: authFSMStatePreAuthChecked,
 			event:   authFSMEventBasicAuthFail,
 			next:    authFSMStateAuthFail,
 		},
 		{
-			name:    "PasswordCheckedPasswordOK",
-			current: authFSMStatePasswordChecked,
-			event:   authFSMEventPasswordOK,
+			name:    "AuthCheckedPermit",
+			current: authFSMStateAuthChecked,
+			event:   authFSMEventAuthPermit,
 			next:    authFSMStateAuthOK,
 		},
 		{
-			name:    "PasswordCheckedPasswordEmptyUser",
-			current: authFSMStatePasswordChecked,
-			event:   authFSMEventPasswordEmptyUser,
+			name:    "AuthCheckedDeny",
+			current: authFSMStateAuthChecked,
+			event:   authFSMEventAuthDeny,
+			next:    authFSMStateAuthFail,
+		},
+		{
+			name:    "AuthCheckedTempFail",
+			current: authFSMStateAuthChecked,
+			event:   authFSMEventAuthTempFail,
 			next:    authFSMStateAuthTempFail,
+		},
+		{
+			name:    "AuthCheckedEmptyUser",
+			current: authFSMStateAuthChecked,
+			event:   authFSMEventAuthEmptyUser,
+			next:    authFSMStateAuthTempFail,
+		},
+		{
+			name:    "AuthCheckedEmptyPass",
+			current: authFSMStateAuthChecked,
+			event:   authFSMEventAuthEmptyPass,
+			next:    authFSMStateAuthFail,
+		},
+		{
+			name:    "PreAuthAccountProviderEvaluated",
+			current: authFSMStatePreAuthChecked,
+			event:   authFSMEventAccountProviderEvaluated,
+			next:    authFSMStateAccountProviderChecked,
+		},
+		{
+			name:    "AccountProviderPermit",
+			current: authFSMStateAccountProviderChecked,
+			event:   authFSMEventAuthPermit,
+			next:    authFSMStateAuthOK,
 		},
 		{
 			name:    "AbortFromInput",
@@ -119,17 +168,17 @@ func TestNextAuthFSMState_InvalidTransitions(t *testing.T) {
 		{
 			name:    "InvalidEventFromInit",
 			current: authFSMStateInit,
-			event:   authFSMEventPasswordOK,
+			event:   authFSMEventAuthPermit,
 		},
 		{
-			name:    "InvalidPasswordEventFromInputParsed",
+			name:    "InvalidAuthEventFromInputParsed",
 			current: authFSMStateInputParsed,
-			event:   authFSMEventPasswordFail,
+			event:   authFSMEventAuthDeny,
 		},
 		{
-			name:    "InvalidDirectPasswordEventFromFeaturesChecked",
-			current: authFSMStateFeaturesChecked,
-			event:   authFSMEventPasswordOK,
+			name:    "InvalidDirectAuthEventFromPreAuthChecked",
+			current: authFSMStatePreAuthChecked,
+			event:   authFSMEventAuthPermit,
 		},
 		{
 			name:    "NoTransitionsFromTerminal",
@@ -148,35 +197,55 @@ func TestNextAuthFSMState_InvalidTransitions(t *testing.T) {
 	}
 }
 
-func TestMapAuthFeatureResultToFSMEvent(t *testing.T) {
-	tests := []struct {
-		name    string
-		result  definitions.AuthResult
-		wantEvt authFSMEvent
-		wantOK  bool
-	}{
+type authFSMResultMappingCase struct {
+	name    string
+	result  definitions.AuthResult
+	wantEvt authFSMEvent
+	wantOK  bool
+}
+
+func preAuthFSMEventMappingCases() []authFSMResultMappingCase {
+	return []authFSMResultMappingCase{
 		{
-			name:    "FeatureTLS",
-			result:  definitions.AuthResultFeatureTLS,
-			wantEvt: authFSMEventFeaturesTempFail,
+			name:    "PreAuthTLS",
+			result:  definitions.AuthResultPreAuthTLS,
+			wantEvt: authFSMEventPreAuthTempFail,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureRelayDomain",
-			result:  definitions.AuthResultFeatureRelayDomain,
-			wantEvt: authFSMEventFeaturesFail,
+			name:    "PreAuthRelayDomain",
+			result:  definitions.AuthResultPreAuthRelayDomain,
+			wantEvt: authFSMEventPreAuthDeny,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureOK",
+			name:    "ControlRBL",
+			result:  definitions.AuthResultPreAuthRBL,
+			wantEvt: authFSMEventPreAuthDeny,
+			wantOK:  true,
+		},
+		{
+			name:    "ControlLua",
+			result:  definitions.AuthResultLuaEnvironment,
+			wantEvt: authFSMEventPreAuthDeny,
+			wantOK:  true,
+		},
+		{
+			name:    "PreAuthTempFail",
+			result:  definitions.AuthResultTempFail,
+			wantEvt: authFSMEventPreAuthTempFail,
+			wantOK:  true,
+		},
+		{
+			name:    "PreAuthOK",
 			result:  definitions.AuthResultOK,
-			wantEvt: authFSMEventFeaturesOK,
+			wantEvt: authFSMEventPreAuthOK,
 			wantOK:  true,
 		},
 		{
-			name:    "FeatureUnset",
+			name:    "PreAuthUnset",
 			result:  definitions.AuthResultUnset,
-			wantEvt: authFSMEventFeaturesUnset,
+			wantEvt: authFSMEventPreAuthAbort,
 			wantOK:  true,
 		},
 		{
@@ -185,10 +254,12 @@ func TestMapAuthFeatureResultToFSMEvent(t *testing.T) {
 			wantOK: false,
 		},
 	}
+}
 
-	for _, tc := range tests {
+func TestMapPreAuthResultToFSMEvent(t *testing.T) {
+	for _, tc := range preAuthFSMEventMappingCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			gotEvt, gotOK := mapAuthFeatureResultToFSMEvent(tc.result)
+			gotEvt, gotOK := mapPreAuthResultToFSMEvent(tc.result)
 			if gotOK != tc.wantOK {
 				t.Fatalf("expected ok=%t, got %t", tc.wantOK, gotOK)
 			}
@@ -210,36 +281,36 @@ func TestMapAuthPasswordResultToFSMEvent(t *testing.T) {
 		{
 			name:    "PasswordOK",
 			result:  definitions.AuthResultOK,
-			wantEvt: authFSMEventPasswordOK,
+			wantEvt: authFSMEventAuthPermit,
 			wantOK:  true,
 		},
 		{
 			name:    "PasswordFail",
 			result:  definitions.AuthResultFail,
-			wantEvt: authFSMEventPasswordFail,
+			wantEvt: authFSMEventAuthDeny,
 			wantOK:  true,
 		},
 		{
 			name:    "PasswordTempFail",
 			result:  definitions.AuthResultTempFail,
-			wantEvt: authFSMEventPasswordTempFail,
+			wantEvt: authFSMEventAuthTempFail,
 			wantOK:  true,
 		},
 		{
 			name:    "PasswordEmptyUsername",
 			result:  definitions.AuthResultEmptyUsername,
-			wantEvt: authFSMEventPasswordEmptyUser,
+			wantEvt: authFSMEventAuthEmptyUser,
 			wantOK:  true,
 		},
 		{
 			name:    "PasswordEmptyPassword",
 			result:  definitions.AuthResultEmptyPassword,
-			wantEvt: authFSMEventPasswordEmptyPass,
+			wantEvt: authFSMEventAuthEmptyPass,
 			wantOK:  true,
 		},
 		{
 			name:   "Unsupported",
-			result: definitions.AuthResultFeatureTLS,
+			result: definitions.AuthResultPreAuthTLS,
 			wantOK: false,
 		},
 	}
@@ -253,6 +324,29 @@ func TestMapAuthPasswordResultToFSMEvent(t *testing.T) {
 
 			if tc.wantOK && gotEvt != tc.wantEvt {
 				t.Fatalf("expected event=%s, got %s", tc.wantEvt, gotEvt)
+			}
+		})
+	}
+}
+
+func TestAuthFSMEventValuesAreTargetMarkers(t *testing.T) {
+	tests := []struct {
+		name  string
+		event authFSMEvent
+		want  string
+	}{
+		{name: "parse ok", event: authFSMEventParseOK, want: policy.FSMEventMarkerParseOK},
+		{name: "pre auth ok", event: authFSMEventPreAuthOK, want: policy.FSMEventMarkerPreAuthOK},
+		{name: "pre auth deny", event: authFSMEventPreAuthDeny, want: policy.FSMEventMarkerPreAuthDeny},
+		{name: "auth evaluated", event: authFSMEventAuthEvaluated, want: policy.FSMEventMarkerAuthEvaluated},
+		{name: "auth permit", event: authFSMEventAuthPermit, want: policy.FSMEventMarkerAuthPermit},
+		{name: "account provider evaluated", event: authFSMEventAccountProviderEvaluated, want: policy.FSMEventMarkerAccountProviderEvaluated},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if string(testCase.event) != testCase.want {
+				t.Fatalf("event = %q, want %q", testCase.event, testCase.want)
 			}
 		})
 	}

@@ -79,7 +79,7 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 
 	// Important: Keep the request path stable during reload.
 	// Stopping/restarting LDAP/Lua workers and rebuilding Redis can stall in-flight requests
-	// (Lua filters waiting for LDAP replies) and make the server appear hung.
+	// (Lua subject sources waiting for LDAP replies) and make the server appear hung.
 	// A full in-process rebuild belongs to the explicit restart path.
 	//
 	// We still reload the config snapshot (handled by reloadfx.Manager) and apply best-effort

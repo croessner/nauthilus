@@ -28,8 +28,8 @@ func (m *mockOIDCPostActionCfg) HaveLuaActions() bool {
 	return true
 }
 
-func (m *mockOIDCPostActionCfg) HasFeature(feature string) bool {
-	return feature == definitions.FeatureBruteForce
+func (m *mockOIDCPostActionCfg) HasRuntimeModule(environmentName string) bool {
+	return environmentName == definitions.ControlBruteForce
 }
 
 func newOIDCTokenPostActionHandler() *OIDCHandler {
@@ -157,8 +157,8 @@ func TestRunOIDCTokenPostActionCopiesMFASessionState(t *testing.T) {
 
 		assert.Equal(t, "webauthn", act.MFAMethod)
 		assert.True(t, act.MFACompleted)
-		assert.False(t, act.FeatureStageExpected)
-		assert.False(t, act.FilterStageExpected)
+		assert.False(t, act.EnvironmentStageExpected)
+		assert.False(t, act.SubjectStageExpected)
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")
@@ -198,8 +198,8 @@ func TestRunOIDCTokenPostActionUsesRequestScopedMFAOverrides(t *testing.T) {
 
 		assert.Equal(t, "totp", act.MFAMethod)
 		assert.True(t, act.MFACompleted)
-		assert.False(t, act.FeatureStageExpected)
-		assert.False(t, act.FilterStageExpected)
+		assert.False(t, act.EnvironmentStageExpected)
+		assert.False(t, act.SubjectStageExpected)
 		act.FinishedChan <- action.Done{}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected post action to be queued")

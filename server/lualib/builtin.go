@@ -34,25 +34,25 @@ var (
 		{key: definitions.LuaBackendResultOk, value: lua.LNumber(0)},
 		{key: definitions.LuaBackendResultFail, value: lua.LNumber(1)},
 	}
-	filterBuiltinConstants = []builtinConstant{
-		{key: definitions.LuaFilterAccept, value: lua.LBool(false)},
-		{key: definitions.LuaFilterREJECT, value: lua.LBool(true)},
-		{key: definitions.LuaFilterResultOk, value: lua.LNumber(0)},
-		{key: definitions.LuaFilterResultFail, value: lua.LNumber(1)},
+	subjectBuiltinConstants = []builtinConstant{
+		{key: definitions.LuaSubjectAccept, value: lua.LBool(false)},
+		{key: definitions.LuaSubjectReject, value: lua.LBool(true)},
+		{key: definitions.LuaSubjectResultOk, value: lua.LNumber(0)},
+		{key: definitions.LuaSubjectResultFail, value: lua.LNumber(1)},
 	}
-	featureBuiltinConstants = []builtinConstant{
-		{key: definitions.LuaFeatureTriggerNo, value: lua.LBool(false)},
-		{key: definitions.LuaFeatureTriggerYes, value: lua.LBool(true)},
-		{key: definitions.LuaFeatureAbortNo, value: lua.LBool(false)},
-		{key: definitions.LuaFeatureAbortYes, value: lua.LBool(true)},
-		{key: definitions.LuaFeatureResultOk, value: lua.LNumber(0)},
-		{key: definitions.LuaFeatureResultFail, value: lua.LNumber(1)},
+	environmentBuiltinConstants = []builtinConstant{
+		{key: definitions.LuaEnvironmentTriggerNo, value: lua.LBool(false)},
+		{key: definitions.LuaEnvironmentTriggerYes, value: lua.LBool(true)},
+		{key: definitions.LuaEnvironmentAbortNo, value: lua.LBool(false)},
+		{key: definitions.LuaEnvironmentAbortYes, value: lua.LBool(true)},
+		{key: definitions.LuaEnvironmentResultOk, value: lua.LNumber(0)},
+		{key: definitions.LuaEnvironmentResultFail, value: lua.LNumber(1)},
 	}
 	allBuiltinConstants = mergeBuiltinConstants(
 		actionBuiltinConstants,
 		backendBuiltinConstants,
-		filterBuiltinConstants,
-		featureBuiltinConstants,
+		subjectBuiltinConstants,
+		environmentBuiltinConstants,
 	)
 )
 
@@ -66,14 +66,14 @@ func SetBuiltinTableForBackend(L *lua.LState, addCustomLog lua.LGFunction, statu
 	setBuiltinTable(L, backendBuiltinConstants, addCustomLog, status)
 }
 
-// SetBuiltinTableForFilter configures the nauthilus_builtin table for filter scripts.
-func SetBuiltinTableForFilter(L *lua.LState, addCustomLog lua.LGFunction, status **string) {
-	setBuiltinTable(L, filterBuiltinConstants, addCustomLog, status)
+// SetBuiltinTableForSubject configures the nauthilus_builtin table for subject source scripts.
+func SetBuiltinTableForSubject(L *lua.LState, addCustomLog lua.LGFunction, status **string) {
+	setBuiltinTable(L, subjectBuiltinConstants, addCustomLog, status)
 }
 
-// SetBuiltinTableForFeature configures the nauthilus_builtin table for feature scripts.
-func SetBuiltinTableForFeature(L *lua.LState, addCustomLog lua.LGFunction, status **string) {
-	setBuiltinTable(L, featureBuiltinConstants, addCustomLog, status)
+// SetBuiltinTableForEnvironment configures the nauthilus_builtin table for environment source scripts.
+func SetBuiltinTableForEnvironment(L *lua.LState, addCustomLog lua.LGFunction, status **string) {
+	setBuiltinTable(L, environmentBuiltinConstants, addCustomLog, status)
 }
 
 // SetBuiltinTableForCacheFlush configures the nauthilus_builtin table for cache flush scripts.

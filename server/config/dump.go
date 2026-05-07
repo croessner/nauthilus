@@ -476,7 +476,7 @@ func normalizeStructuredNamedDumpValue(value any) (string, bool) {
 		return typed.Get(), true
 	case Protocol:
 		return typed.Get(), true
-	case Feature:
+	case RuntimeModule:
 		return typed.Get(), true
 	case DbgModule:
 		return typed.Get(), true
@@ -756,7 +756,7 @@ func formatNamedDumpValue(value any) (string, bool) {
 		return strconv.Quote(typed.Get()), true
 	case Protocol:
 		return strconv.Quote(typed.Get()), true
-	case Feature:
+	case RuntimeModule:
 		return strconv.Quote(typed.Get()), true
 	case DbgModule:
 		return strconv.Quote(typed.Get()), true
@@ -928,6 +928,7 @@ func configDumpDefaultProviders() map[string]configDumpValueProvider {
 	addConfigDumpDefaultProviders(providers, configDumpBruteForceDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBackendHealthCheckDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpLDAPDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpAuthPolicyDefaults())
 
 	return providers
 }
@@ -962,6 +963,23 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 		"runtime.timeouts.ldap_modify":                           func() any { return 5 * time.Second },
 		"runtime.timeouts.lua_backend":                           func() any { return 5 * time.Second },
 		"runtime.timeouts.lua_script":                            func() any { return 30 * time.Second },
+	}
+}
+
+func configDumpAuthPolicyDefaults() map[string]configDumpValueProvider {
+	return map[string]configDumpValueProvider{
+		"auth.policy.mode":                      func() any { return "enforce" },
+		"auth.policy.default_policy":            func() any { return defaultAuthPolicyName },
+		"auth.policy.registry_scripts":          func() any { return []any{} },
+		"auth.policy.sets.networks":             func() any { return map[string]any{} },
+		"auth.policy.sets.time_windows":         func() any { return map[string]any{} },
+		"auth.policy.scheduler_guards":          func() any { return map[string]any{} },
+		"auth.policy.report.enabled":            func() any { return false },
+		"auth.policy.report.include_fsm":        func() any { return true },
+		"auth.policy.report.include_checks":     func() any { return true },
+		"auth.policy.report.include_attributes": func() any { return false },
+		"auth.policy.checks":                    func() any { return []any{} },
+		"auth.policy.policies":                  func() any { return []any{} },
 	}
 }
 

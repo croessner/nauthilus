@@ -58,7 +58,7 @@ type Authenticator struct {
 	Verifier PasswordVerifier
 	Cache    CacheService
 	BF       BruteForceService
-	Lua      LuaFilter
+	Lua      LuaSubject
 	Post     PostAction
 	Resp     ResponseWriter
 }
@@ -67,7 +67,7 @@ var defaultAuthenticator = Authenticator{
 	Verifier: getPasswordVerifier(),
 	Cache:    getCacheService(),
 	BF:       getBruteForceService(),
-	Lua:      getLuaFilter(),
+	Lua:      getLuaSubject(),
 	Post:     getPostAction(),
 	Resp:     getDefaultResponseWriter(),
 }

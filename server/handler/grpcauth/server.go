@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
@@ -57,15 +58,16 @@ const authorizationMetadataKey = "authorization"
 
 // ServerDeps contains the dependencies required by the gRPC AuthService server.
 type ServerDeps struct {
-	Cfg           config.File
-	Env           config.Environment
-	Logger        *slog.Logger
-	Redis         rediscli.Client
-	AccountCache  *accountcache.Manager
-	Channel       backend.Channel
-	AuthService   core.AuthApplicationService
-	OIDCValidator oidcbearer.TokenValidator
-	Listener      net.Listener
+	Cfg             config.File
+	Env             config.Environment
+	Logger          *slog.Logger
+	Redis           rediscli.Client
+	AccountCache    *accountcache.Manager
+	Channel         backend.Channel
+	AuthService     core.AuthApplicationService
+	MessageResolver localization.MessageResolver
+	OIDCValidator   oidcbearer.TokenValidator
+	Listener        net.Listener
 }
 
 type grpcAuthServerConfigProvider interface {
@@ -138,7 +140,7 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 	}
 
 	server := grpc.NewServer(options...)
-	authv1.RegisterAuthServiceServer(server, New(deps.authApplicationService()))
+	authv1.RegisterAuthServiceServer(server, NewWithResolver(deps.authApplicationService(), deps.MessageResolver))
 
 	return server, nil
 }

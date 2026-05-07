@@ -487,7 +487,10 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 		abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
 
-		h.renderDeviceVerifyFailed(ctx, "Invalid login or password")
+		h.renderDeviceVerifyFailed(
+			ctx,
+			renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
+		)
 
 		return
 	}
@@ -497,12 +500,14 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 	// if password auth fails but MFA is available, continue with MFA and defer
 	// the final decision until flow completion.
 	authResult := definitions.AuthResultOK
+	var authErr error
 	user, err := h.idp.Authenticate(ctx, username, password, request.ClientID, "")
 	if err != nil {
+		authErr = err
 		authResult = definitions.AuthResultFail
 		user = nil
 
-		if h.idp.IsDelayedResponse(request.ClientID, "") {
+		if idpAuthFailureAllowsDelayedResponse(err) && h.idp.IsDelayedResponse(request.ClientID, "") {
 			if delayedUser, userErr := h.idp.GetUserByUsername(ctx, username, request.ClientID, ""); userErr == nil && delayedUser != nil {
 				protocol := definitions.ProtoOIDC
 				availability := h.frontend.getMFAAvailability(ctx, delayedUser, protocol, cookie.GetManager(ctx))
@@ -517,7 +522,10 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
 			abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
 
-			h.renderDeviceVerifyFailed(ctx, "Invalid login or password")
+			h.renderDeviceVerifyFailed(
+				ctx,
+				renderIDPAuthFailureMessage(ctx, h.deps, err, idpGenericInvalidLoginMessage),
+			)
 
 			return
 		}
@@ -562,8 +570,10 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 		if authResult == definitions.AuthResultFail {
 			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
+			storeIDPAuthStatusBridgeFromError(mgr, authErr)
 		} else {
 			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
+			clearIDPAuthStatusBridge(mgr)
 		}
 
 		request.VerificationLocked = true
@@ -992,6 +1002,21 @@ func (h *OIDCHandler) DeviceConsentPOST(ctx *gin.Context) {
 	}
 
 	// User approved consent
+	if h.flowAuthFailureLatched(ctx, mgr) {
+		request.Status = idp.DeviceCodeStatusDenied
+		_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+
+		stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "deny").Inc()
+
+		h.abortFlow(ctx, mgr)
+		h.renderDeviceVerifyFailed(
+			ctx,
+			renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
+		)
+
+		return
+	}
+
 	stats.GetMetrics().GetIdpConsentTotal().WithLabelValues(request.ClientID, "allow").Inc()
 
 	client, ok := h.idp.FindClient(request.ClientID)

@@ -25,9 +25,9 @@ import (
 
 func init() {
 	// Register default implementations provided by subpackage.
-	core.RegisterLuaFilter(DefaultLuaFilter{})
+	core.RegisterLuaSubject(DefaultLuaSubject{})
 	core.RegisterPostAction(DefaultPostAction{})
-	core.RegisterFeatureEngine(DefaultFeatureEngine{})
+	core.RegisterEnvironmentEngine(DefaultEnvironmentEngine{})
 	core.RegisterActionDispatcher(DefaultActionDispatcher{})
 	core.RegisterRBLService(DefaultRBLService{})
 	core.RegisterBruteForceService(DefaultBruteForceService{})

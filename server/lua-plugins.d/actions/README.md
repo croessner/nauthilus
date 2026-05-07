@@ -2,12 +2,19 @@
 
 This directory contains Lua action plugins for the Nauthilus authentication system. Action plugins are executed in response to authentication events and can perform various tasks such as tracking failed logins, implementing dynamic security responses, and sending notifications.
 
+## Policy Integration
+
+Action plugins run after the decision-relevant checks. They must not create a second authority path; use them for
+obligations, notifications, metrics, and response follow-up. When a preceding environment or subject source stored
+`policy_facts`, actions can read them with `nauthilus_context.context_get("policy_facts")` and include selected
+public facts in notifications or reports.
+
 ## Available Plugins
 
 ### analytics.lua
 A plugin that collects and analyzes authentication data for reporting and visualization purposes. It tracks successful and failed login attempts, user behavior patterns, and system usage statistics.
 
-**Features:**
+**Capabilities:**
 - Tracks authentication metrics by user, IP, and time
 - Stores data in Redis for later analysis
 - Supports data aggregation for reporting dashboards
@@ -19,7 +26,7 @@ The plugin runs automatically on each authentication attempt. No manual configur
 ### bruteforce.lua
 Detects and mitigates brute force attacks by monitoring failed login attempts and implementing countermeasures when suspicious activity is detected.
 
-**Features:**
+**Capabilities:**
 - Tracks failed login attempts by IP address and username
 - Implements progressive delays for repeated failed attempts
 - Can temporarily block IPs with excessive failed attempts
@@ -34,7 +41,7 @@ Configure the plugin through environment variables:
 ### dynamic_response.lua
 Implements a sophisticated security response system that dynamically adjusts security measures based on detected threat levels.
 
-**Features:**
+**Capabilities:**
 - Calculates threat levels based on login patterns, geographic distribution, and other metrics
 - Implements different security measures based on the threat level (severe, high, moderate, normal)
 - Notifies administrators via email about security threats
@@ -52,7 +59,7 @@ The plugin automatically calculates threat levels and applies appropriate securi
 ### failed_login_tracker.lua
 Tracks failed login attempts for unrecognized accounts, maintaining a top-100 list of usernames with the most failed attempts.
 
-**Features:**
+**Capabilities:**
 - Tracks failed login attempts in a Redis sorted set
 - Only tracks logins for unrecognized accounts (to avoid penalizing legitimate users who mistype passwords)
 - Maintains a top-100 list of failed logins
@@ -64,7 +71,7 @@ The plugin runs automatically on each authentication attempt. You can optionally
 ### haveibeenpwnd.lua
 Checks user credentials against the "Have I Been Pwned" database to identify compromised passwords.
 
-**Features:**
+**Capabilities:**
 - Securely checks passwords against known data breaches
 - Uses k-anonymity to protect user privacy during checks
 - Alerts users and administrators about compromised credentials
@@ -79,7 +86,7 @@ Configure the plugin through environment variables:
 ### telegram.lua
 Sends security notifications and alerts to a Telegram channel or group.
 
-**Features:**
+**Capabilities:**
 - Sends real-time security alerts to Telegram
 - Configurable notification levels (critical, warning, info)
 - Supports rich text formatting for better readability
@@ -106,7 +113,7 @@ Configure the plugin through environment variables:
 ### clickhouse.lua
 Exports metrics about non-authenticated requests (including those without an existing account) to ClickHouse using batched inserts.
 
-Features:
+Capabilities:
 - Mirrors metrics/fields collected by telegram.lua, but does not require an existing account (account can be "n/a").
 - Batches rows with the in-process nauthilus_cache to reduce HTTP insert overhead.
 - Uses glua_http (cjoudrey/gluahttp) for HTTP POST to ClickHouse.
@@ -117,6 +124,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   ts                   DateTime64(3, 'UTC'),
   session              String,
   service              LowCardinality(String) CODEC(ZSTD(3)),
+  decision_sources     String,
   client_ip            String,
   client_port          String,
   client_net           LowCardinality(String),

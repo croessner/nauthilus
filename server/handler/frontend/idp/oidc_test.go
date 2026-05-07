@@ -43,6 +43,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	slodomain "github.com/croessner/nauthilus/server/idp/slo"
 	mdcors "github.com/croessner/nauthilus/server/middleware/cors"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -270,13 +271,13 @@ func (m *mockOIDCCfg) HandleFile() error     { return nil }
 func (m *mockOIDCCfg) GetConfigFileAsJSON() ([]byte, error) {
 	return []byte("{}"), nil
 }
-func (m *mockOIDCCfg) HaveLuaFeatures() bool { return false }
-func (m *mockOIDCCfg) HaveLuaFilters() bool  { return false }
-func (m *mockOIDCCfg) HaveLuaHooks() bool    { return false }
-func (m *mockOIDCCfg) HaveLuaActions() bool  { return false }
-func (m *mockOIDCCfg) HaveLua() bool         { return false }
-func (m *mockOIDCCfg) HaveLuaBackend() bool  { return false }
-func (m *mockOIDCCfg) HaveLDAPBackend() bool { return false }
+func (m *mockOIDCCfg) HaveLuaEnvironmentSources() bool { return false }
+func (m *mockOIDCCfg) HaveLuaSubjectSources() bool     { return false }
+func (m *mockOIDCCfg) HaveLuaHooks() bool              { return false }
+func (m *mockOIDCCfg) HaveLuaActions() bool            { return false }
+func (m *mockOIDCCfg) HaveLua() bool                   { return false }
+func (m *mockOIDCCfg) HaveLuaBackend() bool            { return false }
+func (m *mockOIDCCfg) HaveLDAPBackend() bool           { return false }
 func (m *mockOIDCCfg) GetLDAP() *config.LDAPSection {
 	return &config.LDAPSection{}
 }
@@ -329,10 +330,10 @@ func (m *mockOIDCCfg) GetBruteForceRules() []config.BruteForceRule {
 	return nil
 }
 func (m *mockOIDCCfg) GetAllProtocols() []string { return nil }
-func (m *mockOIDCCfg) HasFeature(string) bool {
+func (m *mockOIDCCfg) HasRuntimeModule(string) bool {
 	return false
 }
-func (m *mockOIDCCfg) ShouldRunFeature(string, bool) bool {
+func (m *mockOIDCCfg) ShouldRunControl(string, bool) bool {
 	return false
 }
 func (m *mockOIDCCfg) GetPasswordEncoded() string { return "" }
@@ -354,16 +355,16 @@ func (m *mockOIDCCfg) GetSSLIssuerDN() string       { return "" }
 func (m *mockOIDCCfg) GetSSLClientSubjectDN() string {
 	return ""
 }
-func (m *mockOIDCCfg) GetSSLClientIssuerDN() string     { return "" }
-func (m *mockOIDCCfg) GetSSLCipher() string             { return "" }
-func (m *mockOIDCCfg) GetSSLProtocol() string           { return "" }
-func (m *mockOIDCCfg) GetSSLSerial() string             { return "" }
-func (m *mockOIDCCfg) GetSSLFingerprint() string        { return "" }
-func (m *mockOIDCCfg) GetLuaNumberOfWorkers() int       { return 0 }
-func (m *mockOIDCCfg) GetLuaActionNumberOfWorkers() int { return 0 }
-func (m *mockOIDCCfg) GetLuaFeatureVMPoolSize() int     { return 0 }
-func (m *mockOIDCCfg) GetLuaFilterVMPoolSize() int      { return 0 }
-func (m *mockOIDCCfg) GetLuaHookVMPoolSize() int        { return 0 }
+func (m *mockOIDCCfg) GetSSLClientIssuerDN() string           { return "" }
+func (m *mockOIDCCfg) GetSSLCipher() string                   { return "" }
+func (m *mockOIDCCfg) GetSSLProtocol() string                 { return "" }
+func (m *mockOIDCCfg) GetSSLSerial() string                   { return "" }
+func (m *mockOIDCCfg) GetSSLFingerprint() string              { return "" }
+func (m *mockOIDCCfg) GetLuaNumberOfWorkers() int             { return 0 }
+func (m *mockOIDCCfg) GetLuaActionNumberOfWorkers() int       { return 0 }
+func (m *mockOIDCCfg) GetLuaEnvironmentSourceVMPoolSize() int { return 0 }
+func (m *mockOIDCCfg) GetLuaSubjectSourceVMPoolSize() int     { return 0 }
+func (m *mockOIDCCfg) GetLuaHookVMPoolSize() int              { return 0 }
 func (m *mockOIDCCfg) GetLuaSearchProtocol(string, string) (*config.LuaSearchProtocol, error) {
 	return nil, nil
 }
@@ -1198,6 +1199,109 @@ func TestOIDCHandler_Consent(t *testing.T) {
 	t.Run("ConsentPOST with state in query", func(t *testing.T) {
 		t.Skip("Skipping integration test due to complex IdP dependencies. addClientToSession is covered by unit tests.")
 	})
+}
+
+func TestOIDCConsentPOSTRejectsAllowWhenFlowAuthFailureLatched(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler, mock := newLatchedConsentPostHandler(t)
+	ctx, recorder := newLatchedConsentPostContext()
+
+	handler.ConsentPOST(ctx)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "Consent denied")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+const (
+	latchedConsentChallenge = "consent-challenge"
+	latchedConsentFlowID    = "flow-consent-latched"
+	latchedConsentClientID  = "test-client"
+	latchedConsentUserID    = "user-123"
+	latchedConsentUsername  = "alice"
+	consentSubmitAllow      = "allow"
+)
+
+func newLatchedConsentPostHandler(t *testing.T) (*OIDCHandler, redismock.ClientMock) {
+	t.Helper()
+
+	client := latchedConsentOIDCClient()
+	db, mock := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+	cfg := &mockOIDCCfg{
+		issuer:     "https://auth.example.com",
+		signingKey: secret.New(generateTestKey()),
+		clients:    []config.OIDCClient{client},
+	}
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	handler := NewOIDCHandler(d, idp.NewNauthilusIdP(d), nil)
+
+	expectLatchedConsentPostRedis(t, mock, client)
+
+	return handler, mock
+}
+
+func latchedConsentOIDCClient() config.OIDCClient {
+	return config.OIDCClient{
+		ClientID:     latchedConsentClientID,
+		ClientSecret: secret.New("test-secret"),
+		RedirectURIs: []string{"https://app.example.com/callback"},
+		Scopes:       []string{definitions.ScopeOpenId, "profile"},
+	}
+}
+
+func expectLatchedConsentPostRedis(t *testing.T, mock redismock.ClientMock, client config.OIDCClient) {
+	t.Helper()
+
+	oidcSession := &idp.OIDCSession{
+		ClientID:    client.ClientID,
+		UserID:      latchedConsentUserID,
+		Username:    latchedConsentUsername,
+		Scopes:      []string{definitions.ScopeOpenId, "profile"},
+		RedirectURI: "https://app.example.com/callback",
+	}
+	sessionData, err := json.Marshal(oidcSession)
+	assert.NoError(t, err)
+
+	flowState := &flowdomain.State{
+		FlowID:      latchedConsentFlowID,
+		FlowType:    flowdomain.FlowTypeOIDCAuthorization,
+		Protocol:    flowdomain.FlowProtocolOIDC,
+		CurrentStep: flowdomain.FlowStepConsent,
+		GrantType:   definitions.OIDCFlowAuthorizationCode,
+		AuthOutcome: flowdomain.AuthOutcomeFailLatched,
+	}
+	flowData, err := json.Marshal(flowState)
+	assert.NoError(t, err)
+
+	mock.ExpectGet("test:oidc:code:consent:" + latchedConsentChallenge).SetVal(string(sessionData))
+	mock.ExpectGet("test:idp:flow:" + latchedConsentFlowID).SetVal(string(flowData))
+	mock.ExpectDel("test:oidc:code:consent:" + latchedConsentChallenge).SetVal(1)
+	mock.ExpectDel("test:idp:flow:" + latchedConsentFlowID).SetVal(1)
+}
+
+func newLatchedConsentPostContext() (*gin.Context, *httptest.ResponseRecorder) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyIdPFlowID:     latchedConsentFlowID,
+		definitions.SessionKeyIdPFlowType:   definitions.ProtoOIDC,
+		definitions.SessionKeyOIDCGrantType: definitions.OIDCFlowAuthorizationCode,
+		definitions.SessionKeyIdPClientID:   latchedConsentClientID,
+	}}
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/consent", strings.NewReader(url.Values{
+		"consent_challenge": {latchedConsentChallenge},
+		"submit":            {consentSubmitAllow},
+	}.Encode()))
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	return ctx, recorder
 }
 
 func TestOIDCHandler_Introspect(t *testing.T) {

@@ -25,7 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/lualib/subject"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -36,23 +36,25 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// DefaultLuaFilter mirrors the previous AuthState.FilterLua behavior.
-// Implemented in subpackage to avoid import cycles; registered via core.RegisterLuaFilter.
+// DefaultLuaSubject mirrors the previous AuthState.SubjectLua behavior.
+// Implemented in subpackage to avoid import cycles; registered via core.RegisterLuaSubject.
 //
 //goland:nointerface
-type DefaultLuaFilter struct{}
+type DefaultLuaSubject struct{}
 
 // DefaultPostAction mirrors the previous AuthState.PostLuaAction behavior.
 //
 //goland:nointerface
 type DefaultPostAction struct{}
 
-// Filter implements the Lua filter logic with identical behavior to the legacy inline method.
-func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBResult *core.PassDBResult) definitions.AuthResult {
+// Analyze implements the Lua subject source logic with identical behavior to the legacy inline method.
+//
+//nolint:funlen
+func (DefaultLuaSubject) Analyze(ctx *gin.Context, view *core.StateView, passDBResult *core.PassDBResult) definitions.AuthResult {
 	auth := view.Auth()
 
-	if !auth.Cfg().HaveLuaFilters() {
-		// No filters configured → treat as authorized
+	if !auth.Cfg().HaveLuaSubjectSources() {
+		// No subject sources configured, so the backend result stands.
 		auth.Runtime.Authorized = true
 
 		if passDBResult.Authenticated {
@@ -62,13 +64,13 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		return definitions.AuthResultFail
 	}
 
-	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromFilter, "lua_filter_request_total", ctx.FullPath())
+	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromSubject, "lua_subject_request_total", ctx.FullPath())
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
 	backendServers := core.ListBackendServers()
-	util.DebugModuleWithCfg(auth.Ctx(), auth.Cfg(), auth.Logger(), definitions.DbgFeature, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
+	util.DebugModuleWithCfg(auth.Ctx(), auth.Cfg(), auth.Logger(), definitions.DbgEnvironment, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
@@ -86,56 +88,59 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	commonRequest.UserFound = passDBResult.UserFound
 	commonRequest.Authenticated = passDBResult.Authenticated
 
-	filterRequest := &filter.Request{
-		Session:            auth.Runtime.GUID,
-		Username:           auth.Request.Username,
-		Password:           auth.PasswordBytes(),
-		ClientIP:           auth.Request.ClientIP,
-		AccountName:        auth.GetAccount(),
-		AdditionalFeatures: auth.Runtime.AdditionalFeatures,
-		BackendServers:     backendServers,
-		UsedBackendAddr:    &auth.Runtime.UsedBackendIP,
-		UsedBackendPort:    &auth.Runtime.UsedBackendPort,
-		Logs:               nil,
-		Context:            auth.Runtime.Context,
-		CommonRequest:      commonRequest,
+	policyCtx := auth.PolicyDecisionContext(ctx)
+	subjectRequest := &subject.Request{
+		Session:              auth.Runtime.GUID,
+		Username:             auth.Request.Username,
+		Password:             auth.PasswordBytes(),
+		ClientIP:             auth.Request.ClientIP,
+		AccountName:          auth.GetAccount(),
+		AdditionalAttributes: auth.Runtime.AdditionalAttributes,
+		BackendServers:       backendServers,
+		UsedBackendAddr:      &auth.Runtime.UsedBackendIP,
+		UsedBackendPort:      &auth.Runtime.UsedBackendPort,
+		Logs:                 nil,
+		Context:              auth.Runtime.Context,
+		CommonRequest:        commonRequest,
+		ScriptRecorder:       auth.PolicyScriptRecorder(ctx),
+		PolicyContext:        policyCtx,
 	}
 
-	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
+	subjectResult, luaBackendResult, removeAttributes, err := subjectRequest.CallSubjectLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
 	if err != nil {
-		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
+		if !stderrors.Is(err, errors.ErrNoSubjectSourcesDefined) {
 			// Include Lua stacktrace when available
 			if ae, ok := stderrors.AsType[*lua.ApiError](err); ok && ae != nil {
 				level.Error(auth.Logger()).Log(
 					definitions.LogKeyGUID, auth.Runtime.GUID,
-					definitions.LogKeyMsg, "Error calling Lua filter",
+					definitions.LogKeyMsg, "Error calling Lua subject source",
 					definitions.LogKeyError, ae.Error(),
 					"stacktrace", ae.StackTrace,
 				)
 			}
 
-			// error during filter execution → not authorized
+			// Errors during subject analysis are not authorized.
 			auth.Runtime.Authorized = false
 
 			return definitions.AuthResultTempFail
 		}
 
-		// Explicitly authorized when no filters are defined
+		// Explicitly authorized when no subject sources are defined.
 		auth.Runtime.Authorized = true
 	} else {
-		if filterRequest.Logs != nil && len(*filterRequest.Logs) > 0 {
+		if subjectRequest.Logs != nil && len(*subjectRequest.Logs) > 0 {
 			// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
 			additionalLogsLen := len(auth.Runtime.AdditionalLogs)
-			newAdditionalLogs := make([]any, additionalLogsLen+len(*filterRequest.Logs))
+			newAdditionalLogs := make([]any, additionalLogsLen+len(*subjectRequest.Logs))
 			copy(newAdditionalLogs, auth.Runtime.AdditionalLogs)
 			auth.Runtime.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
 
-			for index := range *filterRequest.Logs {
-				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, (*filterRequest.Logs)[index])
+			for index := range *subjectRequest.Logs {
+				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, (*subjectRequest.Logs)[index])
 			}
 		}
 
-		if statusMessage := filterRequest.StatusMessage; *statusMessage != auth.Runtime.StatusMessage {
+		if statusMessage := subjectRequest.StatusMessage; *statusMessage != auth.Runtime.StatusMessage {
 			auth.Runtime.StatusMessage = *statusMessage
 		}
 
@@ -161,17 +166,17 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 			}
 		}
 
-		if filterResult {
+		if subjectResult {
 			auth.Runtime.Authorized = false
 
 			return definitions.AuthResultFail
 		}
 
-		// filters accepted → authorized
+		// Subject analysis accepted the request.
 		auth.Runtime.Authorized = true
 
-		auth.Runtime.UsedBackendIP = *filterRequest.UsedBackendAddr
-		auth.Runtime.UsedBackendPort = *filterRequest.UsedBackendPort
+		auth.Runtime.UsedBackendIP = *subjectRequest.UsedBackendAddr
+		auth.Runtime.UsedBackendPort = *subjectRequest.UsedBackendPort
 	}
 
 	if passDBResult.Authenticated {
@@ -234,9 +239,9 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	// updated by the passDB result after FillCommonRequest was called.
 	cr.UserFound = passDBResult.UserFound || auth.GetAccount() != ""
 	cr.Authenticated = passDBResult.Authenticated
-	cr.FeatureRejected = input.FeatureRejected
-	cr.FeatureStageExpected = input.FeatureStageExpected
-	cr.FilterStageExpected = input.FilterStageExpected
+	cr.EnvironmentRejected = input.EnvironmentRejected
+	cr.EnvironmentStageExpected = input.EnvironmentStageExpected
+	cr.SubjectStageExpected = input.SubjectStageExpected
 
 	if auth.Runtime.StatusMessage == "" {
 		if cr.Authenticated {

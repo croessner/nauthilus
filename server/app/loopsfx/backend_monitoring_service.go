@@ -44,7 +44,7 @@ type BackendMonitoringService struct {
 }
 
 func (s *BackendMonitoringService) enabled(cfg config.File) bool {
-	return cfg.HasFeature(definitions.FeatureBackendServersMonitoring)
+	return cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks)
 }
 
 // NewDefaultBackendMonitoringService creates a BackendMonitoringService with a default delay for backend monitoring.

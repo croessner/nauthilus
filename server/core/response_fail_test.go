@@ -16,16 +16,28 @@
 package core_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
 	corepkg "github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	httpI18NLockedKey      = "auth.policy.company.account_locked"
+	httpI18NLockedText     = "Login failed because the account is locked."
+	httpI18NLockedGerman   = "Anmeldung abgelehnt."
+	httpI18NTempFailKey    = "auth.policy.company.account_tempfail"
+	httpI18NTempFailText   = "Temporary company account check failed."
+	httpI18NTempFailGerman = "Pruefung voruebergehend fehlgeschlagen."
+	jsonErrorField         = "error"
 )
 
 func setupConfigForResponseTests(t *testing.T) {
@@ -36,6 +48,27 @@ func setupConfigForResponseTests(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 }
 
+func newJSONResponseAuthState(
+	ctx *gin.Context,
+	cfg config.File,
+	resolver localization.MessageResolver,
+) *corepkg.AuthState {
+	deps := corepkg.AuthDeps{Cfg: cfg}
+	if resolver != nil {
+		deps.Resp = corepkg.NewDefaultResponseWriter(corepkg.ResponseDeps{
+			Cfg:      cfg,
+			Resolver: resolver,
+		})
+	}
+
+	auth := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	auth.Request.Service = definitions.ServJSON
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.SetStatusCodes(auth.Request.Service)
+
+	return auth
+}
+
 func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
@@ -44,12 +77,8 @@ func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
-	deps := corepkg.AuthDeps{Cfg: cfg}
-	a := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
-	a.Request.Service = definitions.ServJSON
-	a.Request.Protocol = config.NewProtocol("imap")
+	a := newJSONResponseAuthState(ctx, cfg, nil)
 	a.Runtime.GUID = "guid-fail-json"
-	a.SetStatusCodes(a.Request.Service)
 
 	// Trigger failure path
 	a.AuthFail(ctx)
@@ -76,6 +105,115 @@ func TestResponseWriter_Fail_JSONBodyNullAndHeaders(t *testing.T) {
 	}
 }
 
+func TestResponseWriter_Fail_LocalizesPolicyI18NStatusFromAcceptLanguage(t *testing.T) {
+	setupConfigForResponseTests(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+	ctx.Request.Header.Set("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	resolver := &recordingHTTPStatusResolver{
+		t: t,
+		wantSelection: localization.StatusMessage{
+			Text:    httpI18NLockedText,
+			I18NKey: httpI18NLockedKey,
+		},
+		wantPreference: localization.LanguagePreference{
+			Header: "de-DE,de;q=0.9,en;q=0.8",
+		},
+		resolved: localization.ResolvedStatusMessage{
+			Text:      httpI18NLockedGerman,
+			Language:  "de",
+			Key:       httpI18NLockedKey,
+			Localized: true,
+		},
+	}
+	auth := newJSONResponseAuthState(ctx, cfg, resolver)
+	auth.Runtime.GUID = "guid-fail-i18n-http"
+	auth.Runtime.StatusMessage = httpI18NLockedText
+	auth.Runtime.StatusMessageI18NKey = httpI18NLockedKey
+
+	auth.AuthFail(ctx)
+
+	if resolver.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", resolver.calls)
+	}
+
+	if got := w.Header().Get("Auth-Status"); got != httpI18NLockedGerman {
+		t.Fatalf("Auth-Status header = %q, want localized message", got)
+	}
+
+	if got := w.Header().Get("Content-Language"); got != "de" {
+		t.Fatalf("Content-Language = %q, want de", got)
+	}
+}
+
+func TestResponseWriter_Fail_KeepsPlainStatusMessageWithoutI18NKey(t *testing.T) {
+	setupConfigForResponseTests(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+	ctx.Request.Header.Set("Accept-Language", "de")
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	resolver := &recordingHTTPStatusResolver{t: t, failOnCall: true}
+	auth := newJSONResponseAuthState(ctx, cfg, resolver)
+	auth.Runtime.GUID = "guid-fail-plain-http"
+	auth.Runtime.StatusMessage = "Plain policy denial"
+
+	auth.AuthFail(ctx)
+
+	if got := w.Header().Get("Auth-Status"); got != "Plain policy denial" {
+		t.Fatalf("Auth-Status header = %q, want plain status message", got)
+	}
+
+	if got := w.Header().Get("Content-Language"); got != "" {
+		t.Fatalf("Content-Language = %q, want empty header", got)
+	}
+}
+
+func TestResponseWriter_Fail_UsesPolicyI18NFallbackWhenTranslationIsMissing(t *testing.T) {
+	setupConfigForResponseTests(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+	ctx.Request.Header.Set("Accept-Language", "de")
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	resolver := &recordingHTTPStatusResolver{
+		t: t,
+		wantSelection: localization.StatusMessage{
+			Text:    httpI18NLockedText,
+			I18NKey: httpI18NLockedKey,
+		},
+		wantPreference: localization.LanguagePreference{Header: "de"},
+		resolved: localization.ResolvedStatusMessage{
+			Text:         httpI18NLockedText,
+			Language:     "de",
+			Key:          httpI18NLockedKey,
+			FallbackUsed: true,
+		},
+	}
+	auth := newJSONResponseAuthState(ctx, cfg, resolver)
+	auth.Runtime.GUID = "guid-fail-i18n-fallback-http"
+	auth.Runtime.StatusMessage = httpI18NLockedText
+	auth.Runtime.StatusMessageI18NKey = httpI18NLockedKey
+
+	auth.AuthFail(ctx)
+
+	if got := w.Header().Get("Auth-Status"); got != httpI18NLockedText {
+		t.Fatalf("Auth-Status header = %q, want fallback message", got)
+	}
+
+	if got := w.Header().Get("Content-Language"); got != "de" {
+		t.Fatalf("Content-Language = %q, want de", got)
+	}
+}
+
 func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 	setupConfigForResponseTests(t)
 	gin.SetMode(gin.TestMode)
@@ -85,12 +223,8 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 
 	reason := "Temporary server problem"
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
-	deps := corepkg.AuthDeps{Cfg: cfg}
-	a := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
-	a.Request.Service = definitions.ServJSON
-	a.Request.Protocol = config.NewProtocol("imap")
+	a := newJSONResponseAuthState(ctx, cfg, nil)
 	a.Runtime.GUID = "guid-tempfail-json"
-	a.SetStatusCodes(a.Request.Service)
 
 	a.AuthTempFail(ctx, reason)
 
@@ -109,7 +243,95 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON body: %v", err)
 	}
-	if msg, ok := body["error"].(string); !ok || msg != reason {
-		t.Fatalf("expected error field %q, got %v (present=%v)", reason, body["error"], ok)
+	if msg, ok := body[jsonErrorField].(string); !ok || msg != reason {
+		t.Fatalf("expected error field %q, got %v (present=%v)", reason, body[jsonErrorField], ok)
 	}
+}
+
+func TestResponseWriter_TempFail_LocalizesPolicyI18NStatusWithPolicyLanguage(t *testing.T) {
+	setupConfigForResponseTests(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+	ctx.Request.Header.Set("Accept-Language", "en")
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	resolver := &recordingHTTPStatusResolver{
+		t: t,
+		wantSelection: localization.StatusMessage{
+			Text:    httpI18NTempFailText,
+			I18NKey: httpI18NTempFailKey,
+		},
+		wantPreference: localization.LanguagePreference{
+			Policy: "de",
+			Header: "en",
+		},
+		resolved: localization.ResolvedStatusMessage{
+			Text:      httpI18NTempFailGerman,
+			Language:  "de",
+			Key:       httpI18NTempFailKey,
+			Localized: true,
+		},
+	}
+	auth := newJSONResponseAuthState(ctx, cfg, resolver)
+	auth.Runtime.GUID = "guid-tempfail-i18n-http"
+	auth.Runtime.StatusMessageI18NKey = httpI18NTempFailKey
+	auth.Runtime.ResponseLanguage = "de"
+
+	auth.AuthTempFail(ctx, httpI18NTempFailText)
+
+	if resolver.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", resolver.calls)
+	}
+
+	if got := w.Header().Get("Auth-Status"); got != httpI18NTempFailGerman {
+		t.Fatalf("Auth-Status header = %q, want localized message", got)
+	}
+
+	if got := w.Header().Get("Content-Language"); got != "de" {
+		t.Fatalf("Content-Language = %q, want de", got)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON body: %v", err)
+	}
+
+	if got, ok := body[jsonErrorField].(string); !ok || got != httpI18NTempFailGerman {
+		t.Fatalf("error body = %v (present=%v), want localized message", body[jsonErrorField], ok)
+	}
+}
+
+type recordingHTTPStatusResolver struct {
+	t              *testing.T
+	wantSelection  localization.StatusMessage
+	wantPreference localization.LanguagePreference
+	resolved       localization.ResolvedStatusMessage
+	calls          int
+	failOnCall     bool
+}
+
+func (r *recordingHTTPStatusResolver) ResolveStatusMessage(
+	_ context.Context,
+	selection localization.StatusMessage,
+	preference localization.LanguagePreference,
+) localization.ResolvedStatusMessage {
+	r.calls++
+
+	if r.failOnCall {
+		r.t.Fatal("resolver should not be called for plain status messages")
+	}
+
+	if selection != r.wantSelection {
+		r.t.Fatalf("selection = %#v, want %#v", selection, r.wantSelection)
+	}
+
+	if preference.Policy != r.wantPreference.Policy ||
+		preference.Header != r.wantPreference.Header ||
+		preference.Default != r.wantPreference.Default {
+		r.t.Fatalf("preference = %#v, want %#v", preference, r.wantPreference)
+	}
+
+	return r.resolved
 }

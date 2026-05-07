@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/language"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerapiv1 "github.com/croessner/nauthilus/server/handler/api/v1"
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
@@ -42,6 +43,7 @@ import (
 	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -420,7 +422,12 @@ func validateHTTPServerStartStore(store *contextStore) (config.File, config.Envi
 }
 
 func configureHTTPServerDefaults(store *contextStore, cfg config.File, env config.Environment, logger *slog.Logger) {
-	core.SetDefaultResponseWriter(core.NewDefaultResponseWriter(core.ResponseDeps{Cfg: cfg, Env: env, Logger: logger}))
+	core.SetDefaultResponseWriter(core.NewDefaultResponseWriter(core.ResponseDeps{
+		Cfg:      cfg,
+		Env:      env,
+		Logger:   logger,
+		Resolver: newDefaultPolicyMessageResolver(cfg),
+	}))
 	core.SetDefaultEnvironment(env)
 	core.SetDefaultConfigFile(cfg)
 	core.SetDefaultLogger(logger)
@@ -434,6 +441,23 @@ func configureHTTPServerDefaults(store *contextStore, cfg config.File, env confi
 	bruteforce.SetDefaultRedisClient(store.redisClient)
 	core.SetDefaultRedisClient(store.redisClient)
 	tolerate.SetDefaultClient(store.redisClient)
+}
+
+func newDefaultPolicyMessageResolver(cfg config.File) localization.MessageResolver {
+	runtime := lualib.DefaultI18NRuntime()
+	if runtime == nil || runtime.Registry == nil {
+		return nil
+	}
+
+	return localization.NewRegistryResolver(runtime.Registry, defaultPolicyMessageLanguage(cfg))
+}
+
+func defaultPolicyMessageLanguage(cfg config.File) string {
+	if cfg == nil || cfg.GetServer() == nil {
+		return ""
+	}
+
+	return cfg.GetServer().Frontend.GetDefaultLanguage()
 }
 
 func logHTTPServerStart(logger *slog.Logger) {
@@ -496,12 +520,13 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 
 func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {
 	deps := &handlerdeps.Deps{
-		Cfg:          runtime.cfg,
-		CfgProvider:  runtime.store.cfgProvider,
-		Logger:       runtime.logger,
-		Channel:      runtime.store.channel,
-		AccountCache: runtime.store.accountCache,
-		LangManager:  runtime.store.langManager,
+		Cfg:             runtime.cfg,
+		CfgProvider:     runtime.store.cfgProvider,
+		Logger:          runtime.logger,
+		Channel:         runtime.store.channel,
+		AccountCache:    runtime.store.accountCache,
+		LangManager:     runtime.store.langManager,
+		MessageResolver: newDefaultPolicyMessageResolver(runtime.cfg),
 	}
 	deps.Svc = handlerdeps.NewDefaultServices(deps)
 
@@ -575,12 +600,13 @@ func startGRPCAuthForHTTP(
 	options httpServerStartOptions,
 ) error {
 	grpcAuthDone, err := options.effectiveGRPCAuthStarter()(ctx, handlergrpcauth.ServerDeps{
-		Cfg:          cfg,
-		Env:          env,
-		Logger:       logger,
-		Redis:        store.redisClient,
-		AccountCache: store.accountCache,
-		Channel:      store.channel,
+		Cfg:             cfg,
+		Env:             env,
+		Logger:          logger,
+		Redis:           store.redisClient,
+		AccountCache:    store.accountCache,
+		Channel:         store.channel,
+		MessageResolver: newDefaultPolicyMessageResolver(cfg),
 	})
 	if err != nil {
 		store.grpcAuthDone = nil

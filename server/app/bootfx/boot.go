@@ -31,9 +31,12 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/lualib/feature"
-	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/environment"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/lualib/subject"
+	"github.com/croessner/nauthilus/server/policy/compiler"
+	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util/keygen"
@@ -83,7 +86,7 @@ func ParseFlagsAndPrintVersion(version string) {
 
 	// Lua testing flags
 	testLuaScript := flag.String("test-lua", "", "path to Lua script to test")
-	testCallback := flag.String("test-callback", "", "callback type: filter, feature, action, backend, hook, cache_flush")
+	testCallback := flag.String("test-callback", "", "callback type: subject, environment, action, backend, hook, cache_flush")
 	testMockData := flag.String("test-mock", "", "path to JSON file with mock data")
 
 	flagutil.ApplyGroupedDoubleDashUsage(flag.CommandLine, "nauthilus", []flagutil.UsageGroup{
@@ -224,6 +227,13 @@ func SetupConfiguration() error {
 		return fmt.Errorf("unable to load config file: %w", err)
 	}
 
+	if err := compiler.CompileAndActivate(context.Background(), policyruntime.DefaultStore(), compiler.NewCompiler(), compiler.Input{
+		Config:     file,
+		Generation: 1,
+	}); err != nil {
+		return fmt.Errorf("unable to build policy snapshot: %w", err)
+	}
+
 	log.SetupLogging(
 		file.GetServer().GetLog().GetLogLevel(),
 		file.GetServer().GetLog().IsLogFormatJSON(),
@@ -240,13 +250,13 @@ func SetupConfiguration() error {
 	return nil
 }
 
-// SetupLuaScripts pre-compiles Lua scripts for features, filters, init scripts, and hooks.
+// SetupLuaScripts pre-compiles Lua scripts for environment sources, subject sources, init scripts, and hooks.
 func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
-	if err := PreCompileFeatures(cfg, logger); err != nil {
+	if err := PreCompileEnvironmentSources(cfg, logger); err != nil {
 		return err
 	}
 
-	if err := PreCompileFilters(cfg, logger); err != nil {
+	if err := PreCompileSubjectSources(cfg, logger); err != nil {
 		return err
 	}
 
@@ -257,10 +267,10 @@ func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
 	return PreCompileHooks(cfg)
 }
 
-// PreCompileFeatures pre-compiles Lua features if enabled.
-func PreCompileFeatures(cfg config.File, logger *slog.Logger) error {
-	if cfg.HaveLuaFeatures() {
-		if err := feature.PreCompileLuaFeatures(cfg, logger); err != nil {
+// PreCompileEnvironmentSources pre-compiles Lua environment sources if enabled.
+func PreCompileEnvironmentSources(cfg config.File, logger *slog.Logger) error {
+	if cfg.HaveLuaEnvironmentSources() {
+		if err := environment.PreCompileLuaEnvironmentSources(cfg, logger); err != nil {
 			return err
 		}
 	}
@@ -268,10 +278,10 @@ func PreCompileFeatures(cfg config.File, logger *slog.Logger) error {
 	return nil
 }
 
-// PreCompileFilters pre-compiles Lua filters if enabled.
-func PreCompileFilters(cfg config.File, logger *slog.Logger) error {
-	if cfg.HaveLuaFilters() {
-		if err := filter.PreCompileLuaFilters(cfg); err != nil {
+// PreCompileSubjectSources pre-compiles Lua subject sources if enabled.
+func PreCompileSubjectSources(cfg config.File, _ *slog.Logger) error {
+	if cfg.HaveLuaSubjectSources() {
+		if err := subject.PreCompileLuaSubjectSources(cfg); err != nil {
 			return err
 		}
 	}
@@ -322,10 +332,10 @@ func DebugLoadableConfig(cfg config.File, logger *slog.Logger) {
 
 	file := cfg
 
-	debugIfNotNil(definitions.FeatureRBL, file.GetRBLs())
-	debugIfNotNil(definitions.FeatureTLSEncryption, file.GetClearTextList())
-	debugIfNotNil(definitions.FeatureRelayDomains, file.GetRelayDomains())
-	debugIfNotNil(definitions.FeatureBackendServersMonitoring, file.GetBackendServerMonitoring())
+	debugIfNotNil(definitions.ControlRBL, file.GetRBLs())
+	debugIfNotNil(definitions.ControlTLSEncryption, file.GetClearTextList())
+	debugIfNotNil(definitions.ControlRelayDomains, file.GetRelayDomains())
+	debugIfNotNil(definitions.ServiceBackendHealthChecks, file.GetBackendServerMonitoring())
 	debugIfNotNil(definitions.LogKeyBruteForce, file.GetBruteForce())
 	debugIfNotNil("idp", file.GetIdP())
 
@@ -347,11 +357,25 @@ func InitializeInstanceInfo(cfg config.File, version string) {
 
 // RunLuaInitScript executes Lua init scripts (if configured).
 func RunLuaInitScript(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) {
-	if cfg.HaveLuaInit() {
-		for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
-			_ = hook.RunLuaInit(ctx, cfg, logger, redis, scriptPath)
+	if err := RunLuaInitScripts(ctx, cfg, logger, redis); err != nil {
+		_ = level.Error(logger).Log(definitions.LogKeyMsg, "Unable to run Lua init scripts", definitions.LogKeyError, err)
+	}
+}
+
+// RunLuaInitScripts executes configured Lua init scripts with one atomic i18n catalog session.
+func RunLuaInitScripts(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) error {
+	if !cfg.HaveLuaInit() {
+		return nil
+	}
+
+	i18nRuntime := lualib.DefaultI18NRuntime().NewCatalogSession()
+	for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
+		if err := hook.RunLuaInitWithI18NRuntime(ctx, cfg, logger, redis, scriptPath, i18nRuntime); err != nil {
+			return err
 		}
 	}
+
+	return i18nRuntime.CommitCatalogSession()
 }
 
 // InitializeBruteForceTolerate starts the brute force tolerate housekeeping.

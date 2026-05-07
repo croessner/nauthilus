@@ -247,28 +247,28 @@ func TestCommonRequestPoolIdPFields(t *testing.T) {
 	PutCommonRequest(cr2)
 }
 
-func TestCommonRequestSetupRequestFeatureRejected(t *testing.T) {
+func TestCommonRequestSetupRequestEnvironmentRejected(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	cr := &CommonRequest{FeatureRejected: true}
+	cr := &CommonRequest{EnvironmentRejected: true}
 	request := L.NewTable()
 
 	cr.SetupRequest(L, nil, request)
 
-	val := request.RawGet(lua.LString(definitions.LuaRequestFeatureRejected))
+	val := request.RawGet(lua.LString(definitions.LuaRequestEnvironmentRejected))
 	if val != lua.LTrue {
-		t.Fatalf("expected feature_rejected to be true, got %v", val)
+		t.Fatalf("expected environment_rejected to be true, got %v", val)
 	}
 }
 
-func TestCommonRequestResetFeatureRejected(t *testing.T) {
-	cr := &CommonRequest{FeatureRejected: true}
+func TestCommonRequestResetEnvironmentRejected(t *testing.T) {
+	cr := &CommonRequest{EnvironmentRejected: true}
 
 	cr.Reset()
 
-	if cr.FeatureRejected {
-		t.Fatal("expected FeatureRejected to be false after reset")
+	if cr.EnvironmentRejected {
+		t.Fatal("expected EnvironmentRejected to be false after reset")
 	}
 }
 
@@ -277,37 +277,37 @@ func TestCommonRequestSetupRequestStageExpectedFlags(t *testing.T) {
 	defer L.Close()
 
 	cr := &CommonRequest{
-		FeatureStageExpected: true,
-		FilterStageExpected:  false,
+		EnvironmentStageExpected: true,
+		SubjectStageExpected:     false,
 	}
 	request := L.NewTable()
 
 	cr.SetupRequest(L, nil, request)
 
-	featureVal := request.RawGet(lua.LString(definitions.LuaRequestFeatureStageExpected))
-	if featureVal != lua.LTrue {
-		t.Fatalf("expected feature_stage_expected to be true, got %v", featureVal)
+	environmentVal := request.RawGet(lua.LString(definitions.LuaRequestEnvironmentStageExpected))
+	if environmentVal != lua.LTrue {
+		t.Fatalf("expected environment_stage_expected to be true, got %v", environmentVal)
 	}
 
-	filterVal := request.RawGet(lua.LString(definitions.LuaRequestFilterStageExpected))
-	if filterVal != lua.LFalse {
-		t.Fatalf("expected filter_stage_expected to be false, got %v", filterVal)
+	subjectVal := request.RawGet(lua.LString(definitions.LuaRequestSubjectStageExpected))
+	if subjectVal != lua.LFalse {
+		t.Fatalf("expected subject_stage_expected to be false, got %v", subjectVal)
 	}
 }
 
 func TestCommonRequestResetStageExpectedFlags(t *testing.T) {
 	cr := &CommonRequest{
-		FeatureStageExpected: true,
-		FilterStageExpected:  true,
+		EnvironmentStageExpected: true,
+		SubjectStageExpected:     true,
 	}
 
 	cr.Reset()
 
-	if cr.FeatureStageExpected {
-		t.Fatal("expected FeatureStageExpected to be false after reset")
+	if cr.EnvironmentStageExpected {
+		t.Fatal("expected EnvironmentStageExpected to be false after reset")
 	}
 
-	if cr.FilterStageExpected {
-		t.Fatal("expected FilterStageExpected to be false after reset")
+	if cr.SubjectStageExpected {
+		t.Fatal("expected SubjectStageExpected to be false after reset")
 	}
 }

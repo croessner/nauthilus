@@ -43,11 +43,20 @@ function nauthilus_call_action(request)
     local password_hash = "n/a"
     local ts
 
+    local function fact(facts, namespace, key)
+        if type(facts) ~= "table" or type(facts[namespace]) ~= "table" then
+            return nil
+        end
+
+        return facts[namespace][key]
+    end
+
     -- Get result table
     local rt = nauthilus_context.context_get("rt")
     if rt == nil then
         rt = {}
     end
+    local policy_facts = nauthilus_context.context_get("policy_facts") or {}
 
     if nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0 then
         -- brute_force_haproxy
@@ -60,34 +69,34 @@ function nauthilus_call_action(request)
             end
         end
 
-        -- feature_haproxy (not part of demo plugins)
-        if rt.feature_haproxy then
+        -- environment_haproxy (not part of demo plugins)
+        if rt.environment_haproxy then
             send_message = true
-            if request.feature and request.feature ~= "" then
-                headline = "Feature " .. request.feature .. " triggered"
-                log_prefix = request.feature .. "_"
+            if request.environment and request.environment ~= "" then
+                headline = "Environment " .. request.environment .. " triggered"
+                log_prefix = request.environment .. "_"
             else
-                headline = "Feature triggered"
-                log_prefix = "feature_"
+                headline = "Environment triggered"
+                log_prefix = "environment_"
             end
         end
 
-        -- feature_blocklist
-        if rt.feature_blocklist then
+        -- environment_blocklist
+        if rt.environment_blocklist then
             send_message = true
-            headline = "Feature " .. request.feature .. " (blocklist) triggered"
-            log_prefix = request.feature .. "_"
+            headline = "Environment " .. request.environment .. " (blocklist) triggered"
+            log_prefix = request.environment .. "_"
         end
 
-        -- feature_failed_login_hotspot
-        if rt.feature_failed_login_hotspot and rt.failed_login_info then
+        -- environment_failed_login_hotspot
+        if rt.environment_failed_login_hotspot and rt.failed_login_info then
             send_message = true
             headline = "Failed-Login Hotspot"
             log_prefix = "failed_login_"
         end
 
-        -- filter_geoippolicyd
-        if rt.filter_geoippolicyd then
+        -- subject_geoippolicyd
+        if rt.subject_geoippolicyd then
             send_message = true
             headline = "GeoIP-Policyd"
             log_prefix = "geoippolicyd_"
@@ -100,15 +109,15 @@ function nauthilus_call_action(request)
             log_preifx = "haveibeenpwnd_"
         end
 
-        -- feature_global_pattern
-        if rt.feature_global_pattern then
+        -- environment_global_pattern
+        if rt.environment_global_pattern then
             send_message = true
             headline = "Global Pattern Update"
             log_prefix = "global_pattern_"
         end
 
         -- account protection mode
-        if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
+        if rt.subject_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
             send_message = true
             headline = "Account Protection"
             log_prefix = "acct_protection_"
@@ -120,6 +129,30 @@ function nauthilus_call_action(request)
             headline = "Dynamic Response"
             log_prefix = "dynamic_response_"
         end
+    end
+
+    if fact(policy_facts, "blocklist", "matched") == true then
+        send_message = true
+        headline = "Blocklist"
+        log_prefix = "blocklist_"
+    end
+
+    if fact(policy_facts, "geoip", "rejected") == true then
+        send_message = true
+        headline = "GeoIP-Policyd"
+        log_prefix = "geoippolicyd_"
+    end
+
+    if fact(policy_facts, "failed_login_hotspot", "triggered") == true then
+        send_message = true
+        headline = "Failed-Login Hotspot"
+        log_prefix = "failed_login_"
+    end
+
+    if fact(policy_facts, "account_protection", "active") == true then
+        send_message = true
+        headline = "Account Protection"
+        log_prefix = "acct_protection_"
     end
 
     local pwnd = nauthilus_context.context_get("haveibeenpwnd_hash_info")

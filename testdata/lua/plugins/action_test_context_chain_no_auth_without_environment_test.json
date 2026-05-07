@@ -1,0 +1,129 @@
+{
+  "context": {
+    "username": "chain@example.com",
+    "client_ip": "198.51.100.55",
+    "protocol": "lmtp",
+    "session": "context-chain-session",
+    "no_auth": true,
+    "authenticated": true,
+    "status_message": "OK",
+    "expected_calls": [
+      {
+        "method": "context_set",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      }
+    ]
+  },
+  "expected_output": {
+    "action_result": true,
+    "error_expected": false
+  }
+}

@@ -2,7 +2,7 @@
 -- Creates database and table used by server/lua-plugins.d/actions/clickhouse.lua
 -- ts uses DateTime64(3, 'UTC') for precise timestamps.
 -- Most textual columns with repeating values are LowCardinality(String) to deduplicate values efficiently.
--- For existing installations (legacy), see the ALTER TABLE block at the end of this file.
+-- For existing installations, see the ALTER TABLE block at the end of this file.
 
 CREATE DATABASE IF NOT EXISTS nauthilus;
 
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   ts                   DateTime64(3, 'UTC'),
   session              String, -- high cardinality; keep as plain String
   service              LowCardinality(String) CODEC(ZSTD(3)),
-  features             LowCardinality(String) CODEC(ZSTD(3)),
+  decision_sources     LowCardinality(String) CODEC(ZSTD(3)),
   client_ip            String, -- could be IPv4/IPv6; left as String for compatibility
   client_port          String,
   client_net           LowCardinality(String),
@@ -71,7 +71,7 @@ SETTINGS index_granularity = 8192;
 Legacy upgrade guide (run online, one by one). Safe to repeat.
 
 ALTER TABLE nauthilus.logins MODIFY COLUMN service            LowCardinality(String) CODEC(ZSTD(3));
-ALTER TABLE nauthilus.logins MODIFY COLUMN features           LowCardinality(String) CODEC(ZSTD(3));
+ALTER TABLE nauthilus.logins MODIFY COLUMN decision_sources   LowCardinality(String) CODEC(ZSTD(3));
 ALTER TABLE nauthilus.logins MODIFY COLUMN client_net         LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN client_id          LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN hostname           LowCardinality(String) CODEC(ZSTD(3));

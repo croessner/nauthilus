@@ -1,0 +1,105 @@
+{
+  "context": {
+    "username": "chain@example.com",
+    "client_ip": "198.51.100.55",
+    "protocol": "lmtp",
+    "session": "context-chain-session",
+    "no_auth": true,
+    "debug": false,
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_environment"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_stage_subject"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "test_marker_subject"
+      }
+    ]
+  },
+  "expected_output": {
+    "subject_rejected": false,
+    "subject_result": 0,
+    "error_expected": false
+  }
+}

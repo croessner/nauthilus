@@ -7,6 +7,7 @@ import (
 )
 
 const defaultGRPCAuthAddress = "127.0.0.1:9444"
+const defaultAuthPolicyName = "standard_auth"
 
 // RuntimeSection groups process, server, and client runtime behavior.
 type RuntimeSection struct {
@@ -158,6 +159,18 @@ func (f *FileSettings) GetRuntimeGRPCAuthServer() *RuntimeGRPCAuthServerSection 
 	return &f.Runtime.Servers.GRPC.Auth
 }
 
+// GetAuthPolicy returns the configured auth policy block with target defaults.
+func (f *FileSettings) GetAuthPolicy() AuthPolicySection {
+	if f == nil || f.Auth == nil {
+		return defaultAuthPolicySection()
+	}
+
+	policyConfig := f.Auth.Policy
+	applyAuthPolicyDefaults(&policyConfig)
+
+	return policyConfig
+}
+
 // HTTPRateLimit configures the global HTTP rate limiter.
 type HTTPRateLimit struct {
 	PerSecond float64 `mapstructure:"per_second" validate:"omitempty,min=0"`
@@ -209,6 +222,7 @@ type AuthSection struct {
 	Backends    AuthBackendsSection    `mapstructure:"backends" validate:"omitempty"`
 	Controls    AuthControlsSection    `mapstructure:"controls" validate:"omitempty"`
 	Services    AuthServicesSection    `mapstructure:"services" validate:"omitempty"`
+	Policy      AuthPolicySection      `mapstructure:"policy" validate:"omitempty"`
 }
 
 // AuthRequestSection configures inbound request metadata handling.
@@ -309,7 +323,7 @@ type BruteForceControlSection struct {
 	Protocols                  []*Protocol      `mapstructure:"protocols" validate:"omitempty,dive"`
 	IPAllowlist                []string         `mapstructure:"ip_allowlist" validate:"omitempty,dive,ip_addr|cidr"`
 	Buckets                    []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
-	Learning                   []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	Learning                   []*RuntimeModule `mapstructure:"learning" validate:"omitempty,dive"`
 	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
 	Allowlist                  SoftWhitelist    `mapstructure:"allowlist"`
@@ -324,18 +338,251 @@ type BruteForceControlSection struct {
 	LogHistoryForKnownAccounts bool             `mapstructure:"pw_history_for_known_accounts"`
 }
 
-// LuaControlSection configures Lua-based actions, controls, filters, and hooks.
+// LuaControlSection configures Lua-based hooks.
 type LuaControlSection struct {
-	Actions  []LuaAction  `mapstructure:"actions" validate:"omitempty,dive"`
-	Controls []LuaFeature `mapstructure:"controls" validate:"omitempty,dive"`
-	Filters  []LuaFilter  `mapstructure:"filters" validate:"omitempty,dive"`
-	Hooks    []LuaHooks   `mapstructure:"hooks" validate:"omitempty,dive"`
+	Hooks []LuaHooks `mapstructure:"hooks" validate:"omitempty,dive"`
 }
 
 // AuthServicesSection configures background services.
 type AuthServicesSection struct {
 	Enabled             []*Service                  `mapstructure:"enabled" validate:"omitempty,dive"`
 	BackendHealthChecks *BackendHealthChecksSection `mapstructure:"backend_health_checks" validate:"omitempty"`
+}
+
+// AuthPolicySection configures the declarative auth decision compiler.
+type AuthPolicySection struct {
+	Sets              PolicySetsConfig                       `mapstructure:"sets" validate:"omitempty"`
+	SchedulerGuards   map[string]PolicySchedulerGuardConfig  `mapstructure:"scheduler_guards" validate:"omitempty"`
+	Report            PolicyReportConfig                     `mapstructure:"report" validate:"omitempty"`
+	AttributeSources  PolicyAttributeSourcesConfig           `mapstructure:"attribute_sources" validate:"omitempty"`
+	ObligationTargets PolicyObligationTargetsConfig          `mapstructure:"obligation_targets" validate:"omitempty"`
+	Mode              string                                 `mapstructure:"mode" validate:"omitempty,oneof=enforce observe"`
+	DefaultPolicy     string                                 `mapstructure:"default_policy" validate:"omitempty,printascii"`
+	RegistryScripts   []string                               `mapstructure:"registry_scripts" validate:"omitempty,dive,file"`
+	RequestHeaders    []PolicyRequestHeaderAttributeConfig   `mapstructure:"request_headers" validate:"omitempty,dive"`
+	RequestMetadata   []PolicyRequestMetadataAttributeConfig `mapstructure:"request_metadata" validate:"omitempty,dive"`
+	AttributeExports  []PolicyAttributeExportConfig          `mapstructure:"attribute_exports" validate:"omitempty,dive"`
+	Checks            []PolicyCheckConfig                    `mapstructure:"checks" validate:"omitempty,dive"`
+	Policies          []PolicyRuleConfig                     `mapstructure:"policies" validate:"omitempty,dive"`
+}
+
+func defaultAuthPolicySection() AuthPolicySection {
+	return AuthPolicySection{
+		Mode:          "enforce",
+		DefaultPolicy: defaultAuthPolicyName,
+		Report: PolicyReportConfig{
+			IncludeFSM:    true,
+			IncludeChecks: true,
+		},
+	}
+}
+
+func applyAuthPolicyDefaults(policyConfig *AuthPolicySection) {
+	if policyConfig == nil {
+		return
+	}
+
+	if policyConfig.Mode == "" {
+		policyConfig.Mode = "enforce"
+	}
+
+	if policyConfig.DefaultPolicy == "" {
+		policyConfig.DefaultPolicy = defaultAuthPolicyName
+	}
+
+	if !policyConfig.Report.Enabled {
+		if !policyConfig.Report.IncludeFSM {
+			policyConfig.Report.IncludeFSM = true
+		}
+
+		if !policyConfig.Report.IncludeChecks {
+			policyConfig.Report.IncludeChecks = true
+		}
+	}
+}
+
+// PolicyObligationTargetsConfig groups executable targets selected by policy obligations.
+type PolicyObligationTargetsConfig struct {
+	Lua PolicyLuaObligationTargetsConfig `mapstructure:"lua" validate:"omitempty"`
+}
+
+// PolicyLuaObligationTargetsConfig configures Lua obligation target scripts.
+type PolicyLuaObligationTargetsConfig struct {
+	Actions []LuaAction `mapstructure:"actions" validate:"omitempty,dive"`
+}
+
+// PolicyAttributeSourcesConfig groups request-time policy attribute producers.
+type PolicyAttributeSourcesConfig struct {
+	Lua PolicyLuaAttributeSourcesConfig `mapstructure:"lua" validate:"omitempty"`
+}
+
+// PolicyLuaAttributeSourcesConfig configures Lua attribute sources by XACML-aligned category.
+type PolicyLuaAttributeSourcesConfig struct {
+	Environment []LuaEnvironmentSource `mapstructure:"environment" validate:"omitempty,dive"`
+	Subject     []LuaSubjectSource     `mapstructure:"subject" validate:"omitempty,dive"`
+}
+
+// PolicySetsConfig groups reusable policy operands.
+type PolicySetsConfig struct {
+	Networks    map[string][]string               `mapstructure:"networks" validate:"omitempty"`
+	TimeWindows map[string]PolicyTimeWindowConfig `mapstructure:"time_windows" validate:"omitempty"`
+}
+
+// PolicySchedulerGuardConfig configures one compile-time scheduler skip guard.
+type PolicySchedulerGuardConfig struct {
+	If                 PolicyConditionConfig `mapstructure:"if" validate:"omitempty"`
+	OnMissingAttribute string                `mapstructure:"on_missing_attribute" validate:"omitempty,printascii"`
+}
+
+// PolicyTimeWindowConfig configures a named local-time window set.
+type PolicyTimeWindowConfig struct {
+	Timezone  string                     `mapstructure:"timezone" validate:"omitempty,printascii"`
+	Days      []string                   `mapstructure:"days" validate:"omitempty,dive,printascii"`
+	Intervals []PolicyTimeIntervalConfig `mapstructure:"intervals" validate:"omitempty,dive"`
+}
+
+// PolicyTimeIntervalConfig configures one local-time interval.
+type PolicyTimeIntervalConfig struct {
+	Start string `mapstructure:"start" validate:"omitempty,printascii"`
+	End   string `mapstructure:"end" validate:"omitempty,printascii"`
+}
+
+// PolicyReportConfig controls optional policy diagnostic reports.
+type PolicyReportConfig struct {
+	Enabled           bool `mapstructure:"enabled"`
+	IncludeFSM        bool `mapstructure:"include_fsm"`
+	IncludeChecks     bool `mapstructure:"include_checks"`
+	IncludeAttributes bool `mapstructure:"include_attributes"`
+}
+
+// PolicyRequestHeaderAttributeConfig exposes one allowlisted HTTP request header as a policy fact.
+type PolicyRequestHeaderAttributeConfig struct {
+	Normalize  PolicyRequestAttributeNormalizeConfig `mapstructure:"normalize" validate:"omitempty"`
+	Header     string                                `mapstructure:"header" validate:"required,printascii"`
+	Attribute  string                                `mapstructure:"attribute" validate:"required,printascii"`
+	Visibility string                                `mapstructure:"visibility" validate:"omitempty,printascii"`
+}
+
+// PolicyRequestMetadataAttributeConfig exposes one allowlisted gRPC metadata key as a policy fact.
+type PolicyRequestMetadataAttributeConfig struct {
+	Normalize  PolicyRequestAttributeNormalizeConfig `mapstructure:"normalize" validate:"omitempty"`
+	Key        string                                `mapstructure:"key" validate:"required,printascii"`
+	Attribute  string                                `mapstructure:"attribute" validate:"required,printascii"`
+	Visibility string                                `mapstructure:"visibility" validate:"omitempty,printascii"`
+}
+
+// PolicyRequestAttributeNormalizeConfig configures deterministic request-attribute value normalization.
+type PolicyRequestAttributeNormalizeConfig struct {
+	Trim      bool   `mapstructure:"trim"`
+	Case      string `mapstructure:"case" validate:"omitempty,printascii"`
+	MaxLength int    `mapstructure:"max_length" validate:"omitempty,gte=0"`
+}
+
+// PolicyAttributeExportConfig exposes one backend AuthState attribute as an opt-in policy subject fact.
+type PolicyAttributeExportConfig struct {
+	Name        string `mapstructure:"name" validate:"required,printascii"`
+	Attribute   string `mapstructure:"attribute" validate:"required,printascii"`
+	Type        string `mapstructure:"type" validate:"required,oneof=bool string string_list number"`
+	Sensitivity string `mapstructure:"sensitivity" validate:"omitempty,oneof=public internal secret"`
+}
+
+// PolicyCheckConfig configures one fact-producing policy check.
+type PolicyCheckConfig struct {
+	RunIf       PolicyRunIfConfig `mapstructure:"run_if" validate:"omitempty"`
+	ObserveSafe *bool             `mapstructure:"observe_safe" validate:"omitempty"`
+	Operations  []string          `mapstructure:"operations" validate:"omitempty,dive,printascii"`
+	After       []string          `mapstructure:"after" validate:"omitempty,dive,printascii"`
+	SkipIf      []string          `mapstructure:"skip_if" validate:"omitempty,dive,printascii"`
+	Name        string            `mapstructure:"name" validate:"omitempty,printascii"`
+	Type        string            `mapstructure:"type" validate:"omitempty,printascii"`
+	Stage       string            `mapstructure:"stage" validate:"omitempty,printascii"`
+	ConfigRef   string            `mapstructure:"config_ref" validate:"omitempty,printascii"`
+	Output      string            `mapstructure:"output" validate:"omitempty,printascii"`
+}
+
+// PolicyRunIfConfig configures the small structural check scheduler guard.
+type PolicyRunIfConfig struct {
+	AuthState string `mapstructure:"auth_state" validate:"omitempty,oneof=authenticated unauthenticated any"`
+}
+
+// PolicyRuleConfig configures one ordered policy rule.
+type PolicyRuleConfig struct {
+	If            PolicyConditionConfig `mapstructure:"if" validate:"omitempty"`
+	Then          PolicyThenConfig      `mapstructure:"then" validate:"omitempty"`
+	Name          string                `mapstructure:"name" validate:"omitempty,printascii"`
+	Stage         string                `mapstructure:"stage" validate:"omitempty,printascii"`
+	Operations    []string              `mapstructure:"operations" validate:"omitempty,dive,printascii"`
+	RequireChecks []string              `mapstructure:"require_checks" validate:"omitempty,dive,printascii"`
+}
+
+// PolicyConditionConfig is the decoded YAML shape for a policy condition tree.
+type PolicyConditionConfig struct {
+	Not              *PolicyConditionConfig  `mapstructure:"not" validate:"omitempty"`
+	Always           *bool                   `mapstructure:"always" validate:"omitempty"`
+	Attribute        string                  `mapstructure:"attribute" validate:"omitempty,printascii"`
+	Detail           string                  `mapstructure:"detail" validate:"omitempty,printascii"`
+	Matches          string                  `mapstructure:"matches" validate:"omitempty"`
+	CIDRContains     string                  `mapstructure:"cidr_contains" validate:"omitempty,printascii"`
+	WithinTimeWindow string                  `mapstructure:"within_time_window" validate:"omitempty,printascii"`
+	Is               any                     `mapstructure:"is" validate:"omitempty"`
+	Eq               any                     `mapstructure:"eq" validate:"omitempty"`
+	Ne               any                     `mapstructure:"ne" validate:"omitempty"`
+	In               []any                   `mapstructure:"in" validate:"omitempty"`
+	NotIn            []any                   `mapstructure:"not_in" validate:"omitempty"`
+	Exists           *bool                   `mapstructure:"exists" validate:"omitempty"`
+	Contains         any                     `mapstructure:"contains" validate:"omitempty"`
+	ContainsAny      []any                   `mapstructure:"contains_any" validate:"omitempty"`
+	ContainsAll      []any                   `mapstructure:"contains_all" validate:"omitempty"`
+	ContainsNone     []any                   `mapstructure:"contains_none" validate:"omitempty"`
+	GT               any                     `mapstructure:"gt" validate:"omitempty"`
+	GTE              any                     `mapstructure:"gte" validate:"omitempty"`
+	LT               any                     `mapstructure:"lt" validate:"omitempty"`
+	LTE              any                     `mapstructure:"lte" validate:"omitempty"`
+	All              []PolicyConditionConfig `mapstructure:"all" validate:"omitempty,dive"`
+	Any              []PolicyConditionConfig `mapstructure:"any" validate:"omitempty,dive"`
+}
+
+// PolicyThenConfig configures the selected policy decision and enforcement markers.
+type PolicyThenConfig struct {
+	ResponseMessage  PolicyResponseMessageConfig  `mapstructure:"response_message" validate:"omitempty"`
+	ResponseLanguage PolicyResponseLanguageConfig `mapstructure:"response_language" validate:"omitempty"`
+	Control          PolicyDecisionControlConfig  `mapstructure:"control" validate:"omitempty"`
+	Decision         string                       `mapstructure:"decision" validate:"omitempty,printascii"`
+	Reason           string                       `mapstructure:"reason" validate:"omitempty,printascii"`
+	OutcomeMarker    string                       `mapstructure:"outcome_marker" validate:"omitempty,printascii"`
+	FSMEventMarker   string                       `mapstructure:"fsm_event_marker" validate:"omitempty,printascii"`
+	ResponseMarker   string                       `mapstructure:"response_marker" validate:"omitempty,printascii"`
+	Obligations      []PolicyEffectConfig         `mapstructure:"obligations" validate:"omitempty,dive"`
+	Advice           []PolicyEffectConfig         `mapstructure:"advice" validate:"omitempty,dive"`
+}
+
+// PolicyResponseMessageConfig configures an optional client-visible message source.
+type PolicyResponseMessageConfig struct {
+	From      string `mapstructure:"from" validate:"omitempty,printascii"`
+	Text      string `mapstructure:"text" validate:"omitempty"`
+	I18NKey   string `mapstructure:"i18n_key" validate:"omitempty,printascii"`
+	Attribute string `mapstructure:"attribute" validate:"omitempty,printascii"`
+	Detail    string `mapstructure:"detail" validate:"omitempty,printascii"`
+	Fallback  string `mapstructure:"fallback" validate:"omitempty"`
+}
+
+// PolicyResponseLanguageConfig configures optional response-rendering language metadata.
+type PolicyResponseLanguageConfig struct {
+	From      string `mapstructure:"from" validate:"omitempty,printascii"`
+	Language  string `mapstructure:"language" validate:"omitempty,printascii"`
+	Attribute string `mapstructure:"attribute" validate:"omitempty,printascii"`
+	Fallback  string `mapstructure:"fallback" validate:"omitempty,printascii"`
+}
+
+// PolicyEffectConfig references a registered obligation or advice.
+type PolicyEffectConfig struct {
+	ID   string         `mapstructure:"id" validate:"omitempty,printascii"`
+	Args map[string]any `mapstructure:"args" validate:"omitempty"`
+}
+
+// PolicyDecisionControlConfig configures stage-local policy control output.
+type PolicyDecisionControlConfig struct {
+	SkipRemainingStageChecks bool `mapstructure:"skip_remaining_stage_checks"`
 }
 
 // BackendHealthChecksSection configures backend reachability checks.
@@ -681,7 +928,7 @@ func (f *FileSettings) materializeBruteForce() *BruteForceSection {
 	return &BruteForceSection{
 		IPWhitelist:                append([]string(nil), wire.IPAllowlist...),
 		Buckets:                    append([]BruteForceRule(nil), wire.Buckets...),
-		Learning:                   append([]*Feature(nil), wire.Learning...),
+		Learning:                   append([]*RuntimeModule(nil), wire.Learning...),
 		CustomTolerations:          append([]Tolerate(nil), wire.CustomTolerations...),
 		IPScoping:                  wire.IPScoping,
 		SoftWhitelist:              wire.Allowlist,
@@ -706,26 +953,25 @@ func (f *FileSettings) materializeLua() *LuaSection {
 
 	if f.Auth != nil {
 		luaSection.Actions = nil
-		luaSection.Controls = nil
-		luaSection.Filters = nil
+		luaSection.EnvironmentSources = nil
+		luaSection.SubjectSources = nil
 		luaSection.Hooks = nil
 
 		if f.Auth.Controls.Lua != nil {
-			luaSection.Actions = append([]LuaAction(nil), f.Auth.Controls.Lua.Actions...)
-			luaSection.Controls = append([]LuaFeature(nil), f.Auth.Controls.Lua.Controls...)
-			luaSection.Filters = append([]LuaFilter(nil), f.Auth.Controls.Lua.Filters...)
 			luaSection.Hooks = append([]LuaHooks(nil), f.Auth.Controls.Lua.Hooks...)
 		}
 
-		luaSection.normalizeConfiguredFeatures()
+		luaSection.Actions = append([]LuaAction(nil), f.Auth.Policy.ObligationTargets.Lua.Actions...)
+		luaSection.EnvironmentSources = append([]LuaEnvironmentSource(nil), f.Auth.Policy.AttributeSources.Lua.Environment...)
+		luaSection.SubjectSources = append([]LuaSubjectSource(nil), f.Auth.Policy.AttributeSources.Lua.Subject...)
 
 		luaSection.Config = f.Auth.Backends.Lua.Backend.Default
 		luaSection.OptionalLuaBackends = f.Auth.Backends.Lua.Backend.NamedBackends
 		luaSection.Search = append([]LuaSearchProtocol(nil), f.Auth.Backends.Lua.Backend.Search...)
 	}
 
-	if luaSection.Config == nil && len(luaSection.Actions) == 0 && len(luaSection.Controls) == 0 &&
-		len(luaSection.Filters) == 0 && len(luaSection.Hooks) == 0 && len(luaSection.Search) == 0 &&
+	if luaSection.Config == nil && len(luaSection.Actions) == 0 && len(luaSection.EnvironmentSources) == 0 &&
+		len(luaSection.SubjectSources) == 0 && len(luaSection.Hooks) == 0 && len(luaSection.Search) == 0 &&
 		len(luaSection.OptionalLuaBackends) == 0 {
 		return nil
 	}

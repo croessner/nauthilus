@@ -57,6 +57,8 @@ func WithPassword(p secret.Value) CredentialOption { return func(c *Credentials)
 //
 // Only non-empty fields are applied to avoid altering existing precedence.
 type AuthContext struct {
+	RequestMetadata map[string][]string
+
 	Method    string
 	UserAgent string
 
@@ -215,6 +217,11 @@ func WithOIDCCID(v string) AuthContextOption {
 	return func(c *AuthContext) { c.OIDCCID = v }
 }
 
+// WithRequestMetadata stores allowlisted transport metadata candidates for policy facts.
+func WithRequestMetadata(values map[string][]string) AuthContextOption {
+	return func(c *AuthContext) { c.RequestMetadata = cloneRequestMetadata(values) }
+}
+
 // FieldMapping groups configurable field names to reduce scattered getters.
 // Currently unused to avoid behavior changes; reserved for next steps.
 type FieldMapping struct {
@@ -226,4 +233,22 @@ type FieldMapping struct {
 
 func normalizeExternalSessionID(id string) string {
 	return strings.TrimSpace(id)
+}
+
+func cloneRequestMetadata(input map[string][]string) map[string][]string {
+	if input == nil {
+		return nil
+	}
+
+	output := make(map[string][]string, len(input))
+	for key, values := range input {
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		if normalizedKey == "" {
+			continue
+		}
+
+		output[normalizedKey] = append([]string(nil), values...)
+	}
+
+	return output
 }

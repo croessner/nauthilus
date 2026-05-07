@@ -161,7 +161,7 @@ return 0
 
 	// RWPSlidingWindowCommit writes the password hash into the RWP sliding window.
 	// This must only be called after confirming that the password was actually wrong
-	// (i.e., not rejected by a feature before authentication).
+	// (i.e., not rejected by an environment control before authentication).
 	// KEYS[1] - The sorted set key
 	// ARGV[1] - The password hash
 	// ARGV[2] - Current timestamp (seconds)

@@ -33,15 +33,15 @@ func setupMinimalConfigForBF(t *testing.T) {
 	t.Helper()
 
 	// Minimal environment and file config enabling brute_force and protocol "imap"
-	feature := config.Feature{}
-	_ = feature.Set(definitions.FeatureBruteForce)
+	runtimeModule := config.RuntimeModule{}
+	_ = runtimeModule.Set(definitions.ControlBruteForce)
 
 	proto := &config.Protocol{}
 	proto.Set("imap")
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
-			Features:            []*config.Feature{&feature},
+			RuntimeModules:      []*config.RuntimeModule{&runtimeModule},
 			BruteForceProtocols: []*config.Protocol{proto},
 			Redis:               config.Redis{Prefix: "nt:"},
 		},
@@ -62,8 +62,8 @@ func setupMinimalConfigForBF(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 }
 
-func TestComputeBruteForceHints_InvalidIPOrFeatureOff(t *testing.T) {
-	// Feature off by default (no test file set)
+func TestComputeBruteForceHints_InvalidIPOrControlOff(t *testing.T) {
+	// RuntimeModule off by default (no test file set)
 	cn, rep := corepkg.ComputeBruteForceHints(context.Background(), config.GetFile(), rediscli.GetClient(), "", "imap", "")
 	if cn != "" || rep {
 		t.Fatalf("expected no hints for empty IP")

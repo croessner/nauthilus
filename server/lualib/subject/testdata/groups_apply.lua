@@ -1,0 +1,8 @@
+function nauthilus_call_subject(request)
+    local backend_result = nauthilus_backend_result.new()
+    backend_result:groups({"Developer", "Ops"})
+    backend_result:group_dns({"cn=Developer,ou=groups,dc=example,dc=org"})
+    nauthilus_backend.apply_backend_result(backend_result)
+
+    return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
+end

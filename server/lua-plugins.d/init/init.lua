@@ -502,7 +502,7 @@ function nauthilus_run_hook(request)
     end
 
     -- analytics.lua
-    nauthilus_prometheus.create_counter_vec("analytics_count", "Count the criteria which caused rejection", {"feature"})
+    nauthilus_prometheus.create_counter_vec("analytics_count", "Count the criteria which caused rejection", {"environment"})
 
     -- haveibeenpwnd.lua
     nauthilus_prometheus.create_histogram_vec("haveibeenpwnd_duration_seconds", "HTTP request to the haveibeenpwnd network", { "http" })

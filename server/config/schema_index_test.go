@@ -40,7 +40,7 @@ func TestKnownConfigSyntaxKeys_IncludeNestedListAndMappingKeys(t *testing.T) {
 		t.Fatalf("KnownConfigSyntaxKeys() error = %v", err)
 	}
 
-	for _, key := range []string{"script_path", "when_no_auth", "name", "mappings"} {
+	for _, key := range []string{"script_path", "name", "mappings"} {
 		if !slices.Contains(level3, key) {
 			t.Fatalf("KnownConfigSyntaxKeys() missing %q", key)
 		}

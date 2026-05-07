@@ -36,17 +36,33 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func initTestConfig() config.File {
-	feature := config.Feature{}
-	feature.Set("brute_force")
+func mustRuntimeModule(value string) *config.RuntimeModule {
+	runtimeModule := config.RuntimeModule{}
+	if err := runtimeModule.Set(value); err != nil {
+		panic(err)
+	}
+
+	return &runtimeModule
+}
+
+func mustBackend(value string) *config.Backend {
 	backend := config.Backend{}
-	backend.Set("cache")
+	if err := backend.Set(value); err != nil {
+		panic(err)
+	}
+
+	return &backend
+}
+
+func initTestConfig() config.File {
+	runtimeModule := mustRuntimeModule(definitions.ControlBruteForce)
+	backend := mustBackend(definitions.BackendCacheName)
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
 	testFile := &config.FileSettings{
 		Server: &config.ServerSection{
-			Features: []*config.Feature{&feature},
-			Backends: []*config.Backend{&backend},
+			RuntimeModules: []*config.RuntimeModule{runtimeModule},
+			Backends:       []*config.Backend{backend},
 			Redis: config.Redis{
 				Prefix: "nt_",
 			}},
@@ -370,18 +386,26 @@ func TestBruteForceLogic(t *testing.T) {
 
 		assert.False(t, withError)
 		assert.True(t, ruleTriggered)
+		facts := bm.GetBucketPolicyFacts()
+		if assert.Len(t, facts, 1) {
+			assert.True(t, facts[0].Matched)
+			assert.Equal(t, "testbucket", facts[0].Name)
+			assert.Equal(t, float64(15), facts[0].Count)
+			assert.Equal(t, float64(4), facts[0].EffectiveLimit)
+			assert.True(t, facts[0].OverLimit)
+			assert.True(t, facts[0].Repeating)
+		}
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
 
 func TestBruteForceFilters(t *testing.T) {
 	t.Run("Bucket key includes protocol and OIDC when filters configured", func(t *testing.T) {
-		feature := config.Feature{}
-		feature.Set("brute_force")
+		runtimeModule := mustRuntimeModule(definitions.ControlBruteForce)
 		testFileFilters := &config.FileSettings{
 			Server: &config.ServerSection{
-				Features: []*config.Feature{&feature},
-				Redis:    config.Redis{Prefix: "nt_"},
+				RuntimeModules: []*config.RuntimeModule{runtimeModule},
+				Redis:          config.Redis{Prefix: "nt_"},
 			},
 			BruteForce: &config.BruteForceSection{
 				Buckets: []config.BruteForceRule{
