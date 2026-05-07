@@ -148,6 +148,16 @@ func (mm *ModuleManager) BindCBOR(L *lua.LState) {
 	mm.BindModule(L, definitions.LuaModCBOR, lualib.LoaderModCBOR())
 }
 
+// BindI18N binds the nauthilus_i18n module.
+func (mm *ModuleManager) BindI18N(L *lua.LState, mode lualib.I18NMode) {
+	mm.BindI18NRuntime(L, nil, mode)
+}
+
+// BindI18NRuntime binds the nauthilus_i18n module with an explicit runtime.
+func (mm *ModuleManager) BindI18NRuntime(L *lua.LState, runtime *lualib.I18NRuntime, mode lualib.I18NMode) {
+	mm.BindModule(L, definitions.LuaModI18N, lualib.LoaderModI18N(runtime, mode))
+}
+
 // BindAllDefault binds all default modules into the Lua state.
 func (mm *ModuleManager) BindAllDefault(L *lua.LState, requestCtx *lualib.Context, redisCtx context.Context, tolerate tolerate.Tolerate) {
 	mm.BindContext(L, requestCtx)
@@ -157,4 +167,5 @@ func (mm *ModuleManager) BindAllDefault(L *lua.LState, requestCtx *lualib.Contex
 	mm.BindDNS(L)
 	mm.BindOTEL(L)
 	mm.BindBruteForce(L, tolerate)
+	mm.BindI18N(L, lualib.I18NModeRequest)
 }

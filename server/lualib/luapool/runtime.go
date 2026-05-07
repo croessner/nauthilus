@@ -92,6 +92,7 @@ func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	L.PreloadModule(definitions.LuaModDNS, lualib.LoaderDNSStateless())
 	L.PreloadModule(definitions.LuaModBruteForce, bflib.LoaderBruteForceStateless())
 	L.PreloadModule(definitions.LuaModPolicy, lualib.LoaderPolicyStateless())
+	L.PreloadModule(definitions.LuaModI18N, lualib.LoaderI18NStateless())
 
 	return L
 }

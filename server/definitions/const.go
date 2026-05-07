@@ -1411,6 +1411,9 @@ const (
 	// LuaModPolicy is the module name exposed to Lua for request-local policy emission.
 	LuaModPolicy = "nauthilus_policy"
 
+	// LuaModI18N is the module name exposed to Lua for localization helpers.
+	LuaModI18N = "nauthilus_i18n"
+
 	// LuaUDTracer is the userdata type name for an OpenTelemetry Tracer in Lua.
 	LuaUDTracer = "nauthilus_otel_tracer_ud"
 
@@ -1794,6 +1797,12 @@ const (
 
 	// LuaFnPolicyEmitAttribute records a Lua-owned custom policy attribute.
 	LuaFnPolicyEmitAttribute = "emit_attribute"
+
+	// LuaFnI18NGetLocalized resolves a localized response message candidate.
+	LuaFnI18NGetLocalized = "get_localized"
+
+	// LuaFnI18NRegisterCatalog registers a startup-owned deployment catalog overlay.
+	LuaFnI18NRegisterCatalog = "register_catalog"
 )
 
 const (

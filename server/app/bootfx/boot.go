@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/environment"
 	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/lualib/subject"
@@ -356,11 +357,25 @@ func InitializeInstanceInfo(cfg config.File, version string) {
 
 // RunLuaInitScript executes Lua init scripts (if configured).
 func RunLuaInitScript(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) {
-	if cfg.HaveLuaInit() {
-		for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
-			_ = hook.RunLuaInit(ctx, cfg, logger, redis, scriptPath)
+	if err := RunLuaInitScripts(ctx, cfg, logger, redis); err != nil {
+		_ = level.Error(logger).Log(definitions.LogKeyMsg, "Unable to run Lua init scripts", definitions.LogKeyError, err)
+	}
+}
+
+// RunLuaInitScripts executes configured Lua init scripts with one atomic i18n catalog session.
+func RunLuaInitScripts(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) error {
+	if !cfg.HaveLuaInit() {
+		return nil
+	}
+
+	i18nRuntime := lualib.DefaultI18NRuntime().NewCatalogSession()
+	for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
+		if err := hook.RunLuaInitWithI18NRuntime(ctx, cfg, logger, redis, scriptPath, i18nRuntime); err != nil {
+			return err
 		}
 	}
+
+	return i18nRuntime.CommitCatalogSession()
 }
 
 // InitializeBruteForceTolerate starts the brute force tolerate housekeeping.
