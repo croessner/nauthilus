@@ -105,6 +105,11 @@ func compileCheck(
 		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "run_if.auth_state"), "is invalid")
 	}
 
+	skipIf, err := compileSkipIfReferences(checkConfig.SkipIf, childPath(path, "skip_if"))
+	if err != nil {
+		return policyruntime.CompiledCheck{}, err
+	}
+
 	if checkConfig.ObserveSafe != nil && *checkConfig.ObserveSafe && !definition.ObserveSafeDefault && !definition.AllowsObserveSafeAssertion {
 		return policyruntime.CompiledCheck{}, configPathError(childPath(path, "observe_safe"), "cannot be asserted for this check type")
 	}
@@ -122,6 +127,7 @@ func compileCheck(
 		Operations: operations,
 		RunIf:      policyruntime.RunIfPlan{AuthState: runIfAuthState},
 		After:      append([]string(nil), checkConfig.After...),
+		SkipIf:     skipIf,
 		ConfigRef:  checkConfig.ConfigRef,
 		Output:     checkConfig.Output,
 		ObserveSafe: definition.ObserveSafeDefault ||
@@ -159,6 +165,38 @@ func compileOperations(
 	}
 
 	return operations, nil
+}
+
+func compileSkipIfReferences(configured []string, path string) ([]string, error) {
+	if configured == nil {
+		return nil, nil
+	}
+
+	if len(configured) == 0 {
+		return nil, configPathError(path, "must not be empty")
+	}
+
+	references := make([]string, 0, len(configured))
+	seen := make(map[string]struct{}, len(configured))
+	for index, value := range configured {
+		reference := strings.TrimSpace(value)
+		if reference == "" {
+			return nil, configPathError(indexedPath(path, index), "must not be empty")
+		}
+
+		if !simpleIdentifierPattern.MatchString(reference) {
+			return nil, configPathError(indexedPath(path, index), "must be a scheduler guard name")
+		}
+
+		if _, exists := seen[reference]; exists {
+			return nil, configPathError(indexedPath(path, index), "must be unique")
+		}
+
+		seen[reference] = struct{}{}
+		references = append(references, reference)
+	}
+
+	return references, nil
 }
 
 func runIfAuthStateValid(value string) bool {

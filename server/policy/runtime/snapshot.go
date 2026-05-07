@@ -39,6 +39,7 @@ type Snapshot struct {
 	AdviceRegistry     map[string]EffectDefinition
 	FSMEventRegistry   map[string]FSMEventDefinition
 	StagePlans         map[policy.Operation]map[policy.Stage]CompiledStagePlan
+	SchedulerGuards    map[string]CompiledSchedulerGuard
 	Sets               CompiledSets
 	RequestAttributes  RequestAttributeSettings
 	Report             ReportSettings
@@ -61,6 +62,7 @@ func (s *Snapshot) Clone() *Snapshot {
 	cloned.AdviceRegistry = cloneMap(s.AdviceRegistry, cloneEffectDefinition)
 	cloned.FSMEventRegistry = cloneMap(s.FSMEventRegistry, cloneFSMEventDefinition)
 	cloned.StagePlans = cloneStagePlans(s.StagePlans)
+	cloned.SchedulerGuards = cloneMap(s.SchedulerGuards, cloneSchedulerGuard)
 	cloned.Sets = s.Sets.Clone()
 	cloned.RequestAttributes = s.RequestAttributes.Clone()
 
@@ -184,12 +186,19 @@ type CompiledCheck struct {
 	Stage       policy.Stage
 	Operations  []policy.Operation
 	After       []string
+	SkipIf      []string
 	ObserveSafe bool
 }
 
 // RunIfPlan contains the compiled structural scheduler guard.
 type RunIfPlan struct {
 	AuthState string
+}
+
+// CompiledSchedulerGuard contains one typed request-only scheduler guard.
+type CompiledSchedulerGuard struct {
+	Root               CompiledExpr
+	OnMissingAttribute string
 }
 
 // CompiledPolicy contains a validated policy rule.
@@ -367,6 +376,12 @@ func cloneFSMEventDefinition(definition FSMEventDefinition) FSMEventDefinition {
 	return definition
 }
 
+func cloneSchedulerGuard(guard CompiledSchedulerGuard) CompiledSchedulerGuard {
+	guard.Root = cloneExpr(guard.Root)
+
+	return guard
+}
+
 func cloneTimeWindow(window CompiledTimeWindow) CompiledTimeWindow {
 	window.Days = append([]time.Weekday(nil), window.Days...)
 	window.Intervals = append([]CompiledTimeInterval(nil), window.Intervals...)
@@ -405,6 +420,7 @@ func cloneStagePlan(plan CompiledStagePlan) CompiledStagePlan {
 	for index := range plan.Checks {
 		plan.Checks[index].Operations = append([]policy.Operation(nil), plan.Checks[index].Operations...)
 		plan.Checks[index].After = append([]string(nil), plan.Checks[index].After...)
+		plan.Checks[index].SkipIf = append([]string(nil), plan.Checks[index].SkipIf...)
 	}
 
 	plan.Policies = append([]CompiledPolicy(nil), plan.Policies...)

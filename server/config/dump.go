@@ -973,6 +973,7 @@ func configDumpAuthPolicyDefaults() map[string]configDumpValueProvider {
 		"auth.policy.registry_scripts":          func() any { return []any{} },
 		"auth.policy.sets.networks":             func() any { return map[string]any{} },
 		"auth.policy.sets.time_windows":         func() any { return map[string]any{} },
+		"auth.policy.scheduler_guards":          func() any { return map[string]any{} },
 		"auth.policy.report.enabled":            func() any { return false },
 		"auth.policy.report.include_fsm":        func() any { return true },
 		"auth.policy.report.include_checks":     func() any { return true },

@@ -157,10 +157,24 @@ type typeCheckContext struct {
 	attributes    map[string]policyregistry.AttributeDefinition
 }
 
+type conditionCompileOptions struct {
+	validateAttribute func(config.PolicyConditionConfig, policyregistry.AttributeDefinition, string, typeCheckContext) error
+	validateOperator  func(policyruntime.Operator, policyregistry.AttributeType, string) error
+}
+
 func compileCondition(
 	condition config.PolicyConditionConfig,
 	path string,
 	ctx typeCheckContext,
+) (policyruntime.CompiledExpr, error) {
+	return compileConditionWithOptions(condition, path, ctx, conditionCompileOptions{})
+}
+
+func compileConditionWithOptions(
+	condition config.PolicyConditionConfig,
+	path string,
+	ctx typeCheckContext,
+	options conditionCompileOptions,
 ) (policyruntime.CompiledExpr, error) {
 	kind, err := conditionKind(condition, path)
 	if err != nil {
@@ -169,11 +183,11 @@ func compileCondition(
 
 	switch kind {
 	case policyruntime.ExprKindAttribute:
-		return compileAttributeCondition(condition, path, ctx)
+		return compileAttributeCondition(condition, path, ctx, options)
 	case policyruntime.ExprKindAll:
 		children := make([]policyruntime.CompiledExpr, 0, len(condition.All))
 		for index, child := range condition.All {
-			compiled, err := compileCondition(child, indexedPath(childPath(path, "all"), index), ctx)
+			compiled, err := compileConditionWithOptions(child, indexedPath(childPath(path, "all"), index), ctx, options)
 			if err != nil {
 				return policyruntime.CompiledExpr{}, err
 			}
@@ -185,7 +199,7 @@ func compileCondition(
 	case policyruntime.ExprKindAny:
 		children := make([]policyruntime.CompiledExpr, 0, len(condition.Any))
 		for index, child := range condition.Any {
-			compiled, err := compileCondition(child, indexedPath(childPath(path, "any"), index), ctx)
+			compiled, err := compileConditionWithOptions(child, indexedPath(childPath(path, "any"), index), ctx, options)
 			if err != nil {
 				return policyruntime.CompiledExpr{}, err
 			}
@@ -195,7 +209,7 @@ func compileCondition(
 
 		return policyruntime.CompiledExpr{Kind: policyruntime.ExprKindAny, Children: children}, nil
 	case policyruntime.ExprKindNot:
-		compiled, err := compileCondition(*condition.Not, childPath(path, "not"), ctx)
+		compiled, err := compileConditionWithOptions(*condition.Not, childPath(path, "not"), ctx, options)
 		if err != nil {
 			return policyruntime.CompiledExpr{}, err
 		}
@@ -264,6 +278,7 @@ func compileAttributeCondition(
 	condition config.PolicyConditionConfig,
 	path string,
 	ctx typeCheckContext,
+	options conditionCompileOptions,
 ) (policyruntime.CompiledExpr, error) {
 	definition, ok := ctx.attributes[condition.Attribute]
 	if !ok {
@@ -280,21 +295,23 @@ func compileAttributeCondition(
 		valueType = detail.Type
 	}
 
-	if stageOrder(definition.Stage) > stageOrder(ctx.stage) {
-		return policyruntime.CompiledExpr{}, configPathError(childPath(path, policyFieldAttribute), "references a future-stage attribute")
-	}
-
-	if !operationsIntersect(ctx.operations, definition.Operations) {
-		return policyruntime.CompiledExpr{}, configPathError(childPath(path, policyFieldAttribute), "cannot be emitted for this policy operation")
-	}
-
-	if err := validateProducerPlan(definition, ctx, childPath(path, policyFieldAttribute)); err != nil {
+	if options.validateAttribute != nil {
+		if err := options.validateAttribute(condition, definition, childPath(path, policyFieldAttribute), ctx); err != nil {
+			return policyruntime.CompiledExpr{}, err
+		}
+	} else if err := validatePolicyAttributeReference(definition, ctx, childPath(path, policyFieldAttribute)); err != nil {
 		return policyruntime.CompiledExpr{}, err
 	}
 
 	operator, rawValue, err := selectedOperator(condition, path)
 	if err != nil {
 		return policyruntime.CompiledExpr{}, err
+	}
+
+	if options.validateOperator != nil {
+		if err := options.validateOperator(operator, valueType, path); err != nil {
+			return policyruntime.CompiledExpr{}, err
+		}
 	}
 
 	expected, err := compileExpectedValue(operator, rawValue, valueType, ctx.sets, path)
@@ -310,6 +327,22 @@ func compileAttributeCondition(
 		Expected:    expected,
 		ValueType:   valueType,
 	}, nil
+}
+
+func validatePolicyAttributeReference(
+	definition policyregistry.AttributeDefinition,
+	ctx typeCheckContext,
+	path string,
+) error {
+	if stageOrder(definition.Stage) > stageOrder(ctx.stage) {
+		return configPathError(path, "references a future-stage attribute")
+	}
+
+	if !operationsIntersect(ctx.operations, definition.Operations) {
+		return configPathError(path, "cannot be emitted for this policy operation")
+	}
+
+	return validateProducerPlan(definition, ctx, path)
 }
 
 func validateProducerPlan(

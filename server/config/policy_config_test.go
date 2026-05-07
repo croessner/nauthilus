@@ -26,6 +26,11 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	testPolicyConditionFieldAttribute     = "attribute"
+	testPolicySchedulerGuardTrustedSource = "trusted_source"
+)
+
 func TestAuthPolicyConfigDecodesAndDumps(t *testing.T) {
 	t.Helper()
 
@@ -74,12 +79,22 @@ func policyConfigDecodeFixture(t *testing.T) map[string]any {
 			"include_checks":     true,
 			"include_attributes": false,
 		},
+		"scheduler_guards": map[string]any{
+			testPolicySchedulerGuardTrustedSource: map[string]any{
+				"on_missing_attribute": "run",
+				"if": map[string]any{
+					testPolicyConditionFieldAttribute: "request.client.ip.trusted",
+					"is":                              true,
+				},
+			},
+		},
 		"checks": []any{
 			map[string]any{
 				"name":       "brute_force",
 				"type":       "builtin.brute_force",
 				"stage":      "pre_auth",
 				"config_ref": "auth.controls.brute_force",
+				"skip_if":    []any{testPolicySchedulerGuardTrustedSource},
 			},
 		},
 		"policies": []any{
@@ -88,8 +103,8 @@ func policyConfigDecodeFixture(t *testing.T) map[string]any {
 				"stage":          "pre_auth",
 				"require_checks": []any{"brute_force"},
 				"if": map[string]any{
-					"attribute": "auth.brute_force.triggered",
-					"is":        true,
+					testPolicyConditionFieldAttribute: "auth.brute_force.triggered",
+					"is":                              true,
 				},
 				"then": map[string]any{
 					"decision":         "deny",
@@ -114,6 +129,15 @@ func assertDecodedPolicyConfig(t *testing.T, cfg *FileSettings) {
 	if got := cfg.Auth.Policy.Sets.Networks["trusted"]; len(got) != 1 || got[0] != "10.0.0.0/8" {
 		t.Fatalf("network set = %#v, want configured CIDR", got)
 	}
+
+	guard := cfg.Auth.Policy.SchedulerGuards[testPolicySchedulerGuardTrustedSource]
+	if guard.OnMissingAttribute != "run" || guard.If.Attribute != "request.client.ip.trusted" {
+		t.Fatalf("scheduler guard = %#v, want decoded trusted_source guard", guard)
+	}
+
+	if got := cfg.Auth.Policy.Checks[0].SkipIf; len(got) != 1 || got[0] != testPolicySchedulerGuardTrustedSource {
+		t.Fatalf("check skip_if = %#v, want trusted_source", got)
+	}
 }
 
 func assertPolicyConfigDumps(t *testing.T) {
@@ -128,6 +152,7 @@ func assertPolicyConfigDumps(t *testing.T) {
 		`auth.policy.mode = "enforce"`,
 		`auth.policy.default_policy = "standard_auth"`,
 		`auth.policy.registry_scripts = []`,
+		`auth.policy.scheduler_guards = {}`,
 	})
 
 	nonDefaultDump, err := RenderNonDefaultConfigDump(viper.AllSettings())
@@ -138,6 +163,10 @@ func assertPolicyConfigDumps(t *testing.T) {
 	assertContainsAll(t, nonDefaultDump, []string{
 		`auth.policy.mode = "observe"`,
 		`auth.policy.checks[0].name = "brute_force"`,
+		`auth.policy.checks[0].skip_if = ["` + testPolicySchedulerGuardTrustedSource + `"]`,
+		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.if.attribute = "request.client.ip.trusted"`,
+		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.if.is = true`,
+		`auth.policy.scheduler_guards.` + testPolicySchedulerGuardTrustedSource + `.on_missing_attribute = "run"`,
 		`auth.policy.policies[0].then.fsm_event_marker = "auth.fsm.event.pre_auth_deny"`,
 	})
 }

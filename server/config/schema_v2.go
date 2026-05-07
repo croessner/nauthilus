@@ -352,6 +352,7 @@ type AuthServicesSection struct {
 // AuthPolicySection configures the declarative auth decision compiler.
 type AuthPolicySection struct {
 	Sets              PolicySetsConfig                       `mapstructure:"sets" validate:"omitempty"`
+	SchedulerGuards   map[string]PolicySchedulerGuardConfig  `mapstructure:"scheduler_guards" validate:"omitempty"`
 	Report            PolicyReportConfig                     `mapstructure:"report" validate:"omitempty"`
 	AttributeSources  PolicyAttributeSourcesConfig           `mapstructure:"attribute_sources" validate:"omitempty"`
 	ObligationTargets PolicyObligationTargetsConfig          `mapstructure:"obligation_targets" validate:"omitempty"`
@@ -427,6 +428,12 @@ type PolicySetsConfig struct {
 	TimeWindows map[string]PolicyTimeWindowConfig `mapstructure:"time_windows" validate:"omitempty"`
 }
 
+// PolicySchedulerGuardConfig configures one compile-time scheduler skip guard.
+type PolicySchedulerGuardConfig struct {
+	If                 PolicyConditionConfig `mapstructure:"if" validate:"omitempty"`
+	OnMissingAttribute string                `mapstructure:"on_missing_attribute" validate:"omitempty,printascii"`
+}
+
 // PolicyTimeWindowConfig configures a named local-time window set.
 type PolicyTimeWindowConfig struct {
 	Timezone  string                     `mapstructure:"timezone" validate:"omitempty,printascii"`
@@ -483,13 +490,14 @@ type PolicyAttributeExportConfig struct {
 type PolicyCheckConfig struct {
 	RunIf       PolicyRunIfConfig `mapstructure:"run_if" validate:"omitempty"`
 	ObserveSafe *bool             `mapstructure:"observe_safe" validate:"omitempty"`
+	Operations  []string          `mapstructure:"operations" validate:"omitempty,dive,printascii"`
+	After       []string          `mapstructure:"after" validate:"omitempty,dive,printascii"`
+	SkipIf      []string          `mapstructure:"skip_if" validate:"omitempty,dive,printascii"`
 	Name        string            `mapstructure:"name" validate:"omitempty,printascii"`
 	Type        string            `mapstructure:"type" validate:"omitempty,printascii"`
 	Stage       string            `mapstructure:"stage" validate:"omitempty,printascii"`
 	ConfigRef   string            `mapstructure:"config_ref" validate:"omitempty,printascii"`
 	Output      string            `mapstructure:"output" validate:"omitempty,printascii"`
-	Operations  []string          `mapstructure:"operations" validate:"omitempty,dive,printascii"`
-	After       []string          `mapstructure:"after" validate:"omitempty,dive,printascii"`
 }
 
 // PolicyRunIfConfig configures the small structural check scheduler guard.

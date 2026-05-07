@@ -55,6 +55,7 @@ type compiledSnapshotParts struct {
 	policyConfig config.AuthPolicySection
 	sets         policyruntime.CompiledSets
 	stagePlans   map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan
+	guards       map[string]policyruntime.CompiledSchedulerGuard
 	attributes   map[string]policyregistry.AttributeDefinition
 	checkTypes   map[string]policyruntime.CheckTypeDefinition
 	responses    map[string]policyruntime.ResponseDefinition
@@ -102,6 +103,15 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 		return compiledSnapshotParts{}, err
 	}
 
+	guards, err := compileSchedulerGuards(policyConfig.SchedulerGuards, attributes, sets)
+	if err != nil {
+		return compiledSnapshotParts{}, err
+	}
+
+	if err := validateCheckSchedulerGuards(checks, guards); err != nil {
+		return compiledSnapshotParts{}, err
+	}
+
 	fsmEvents := builtinFSMEventRegistry()
 	responses := builtinResponseRegistry()
 	obligations := builtinObligationRegistry()
@@ -130,6 +140,7 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 		policyConfig: policyConfig,
 		sets:         sets,
 		stagePlans:   stagePlans,
+		guards:       guards,
 		attributes:   attributes,
 		checkTypes:   checkTypes,
 		responses:    responses,
@@ -194,6 +205,7 @@ func (c *SnapshotCompiler) newSnapshot(generation uint64, parts compiledSnapshot
 		AdviceRegistry:     parts.advice,
 		FSMEventRegistry:   parts.fsmEvents,
 		StagePlans:         parts.stagePlans,
+		SchedulerGuards:    parts.guards,
 		Sets:               parts.sets,
 		RequestAttributes:  parts.requestAttrs,
 	}
