@@ -146,6 +146,12 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 				return nil
 			},
 			func() error {
+				if tr.mockData.I18N != nil {
+					return tr.mockData.I18N.ValidateComplete()
+				}
+				return nil
+			},
+			func() error {
 				if tr.mockData.LDAP != nil {
 					return tr.mockData.LDAP.ValidateComplete()
 				}

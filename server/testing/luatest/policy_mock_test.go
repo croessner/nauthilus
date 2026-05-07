@@ -16,18 +16,11 @@
 package luatest
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
 func TestPolicyMockRecordsExpectedEmitAttributeCalls(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "environment.lua")
-	mockPath := filepath.Join(dir, "mock.json")
-
-	writePolicyMockTestFile(t, scriptPath, `
+	runner, result := runLuaMockFixture(t, "environment.lua", "environment", `
 local policy = require("nauthilus_policy")
 
 function nauthilus_call_environment(request)
@@ -41,8 +34,7 @@ function nauthilus_call_environment(request)
 
   return true, false, 0
 end
-`)
-	writePolicyMockTestFile(t, mockPath, `{
+`, `{
   "policy": {
     "expected_calls": [
       {
@@ -52,20 +44,7 @@ end
     ]
   }
 }`)
-
-	runner, err := NewTestRunner(scriptPath, "environment", mockPath)
-	if err != nil {
-		t.Fatalf("NewTestRunner failed: %v", err)
-	}
-
-	result, err := runner.Run()
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	if !result.Success {
-		t.Fatalf("result.Success = false, errors = %v", result.Errors)
-	}
+	requireLuaMockSuccess(t, result)
 
 	if runner.mockData.Policy == nil || len(runner.mockData.Policy.Emitted) != 1 {
 		t.Fatalf("policy emissions = %#v, want exactly one emission", runner.mockData.Policy)
@@ -77,16 +56,11 @@ end
 }
 
 func TestPolicyMockReportsMissingExpectedEmitAttributeCall(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "environment.lua")
-	mockPath := filepath.Join(dir, "mock.json")
-
-	writePolicyMockTestFile(t, scriptPath, `
+	_, result := runLuaMockFixture(t, "environment.lua", "environment", `
 function nauthilus_call_environment(request)
   return true, false, 0
 end
-`)
-	writePolicyMockTestFile(t, mockPath, `{
+`, `{
   "policy": {
     "expected_calls": [
       {
@@ -97,39 +71,11 @@ end
   }
 }`)
 
-	runner, err := NewTestRunner(scriptPath, "environment", mockPath)
-	if err != nil {
-		t.Fatalf("NewTestRunner failed: %v", err)
-	}
-
-	result, err := runner.Run()
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
 	if result.Success {
 		t.Fatalf("result.Success = true, want false for missing policy expected_call")
 	}
 
-	if !policyMockErrorsContain(result.Errors, "missing expected policy call") {
+	if !testErrorsContain(result.Errors, "missing expected policy call") {
 		t.Fatalf("errors = %v, want missing expected policy call", result.Errors)
 	}
-}
-
-func writePolicyMockTestFile(t *testing.T, path string, content string) {
-	t.Helper()
-
-	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o600); err != nil {
-		t.Fatalf("failed to write %s: %v", path, err)
-	}
-}
-
-func policyMockErrorsContain(errors []error, substring string) bool {
-	for _, err := range errors {
-		if err != nil && strings.Contains(err.Error(), substring) {
-			return true
-		}
-	}
-
-	return false
 }

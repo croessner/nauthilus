@@ -146,6 +146,105 @@ func policyEmissionArgs(emission PolicyEmission) string {
 	return strings.Join(parts, " ")
 }
 
+// LoaderModI18NMock creates a fixture-aware nauthilus_i18n module.
+func LoaderModI18NMock(mockData *I18NMock) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.NewTable()
+		L.SetFuncs(mod, map[string]lua.LGFunction{
+			definitions.LuaFnI18NRegisterCatalog: func(L *lua.LState) int {
+				table := L.CheckTable(1)
+				registration := i18NCatalogFromTable(table)
+				if registration.Language == "" {
+					L.ArgError(1, "language must be a non-empty string")
+
+					return 0
+				}
+
+				args := i18NCatalogArgs(registration)
+				if err := mockData.RecordCall(definitions.LuaFnI18NRegisterCatalog, args); err != nil {
+					L.RaiseError("%s", err.Error())
+
+					return 0
+				}
+
+				if mockData != nil {
+					mockData.Catalogs = append(mockData.Catalogs, registration)
+				}
+
+				return 0
+			},
+			definitions.LuaFnI18NGetLocalized: func(L *lua.LState) int {
+				table := L.CheckTable(1)
+				key := strings.TrimSpace(luaValueString(table.RawGetString("i18n_key")))
+				fallback := luaValueString(table.RawGetString("fallback"))
+				language := strings.TrimSpace(luaValueString(table.RawGetString("language")))
+				if language == "" {
+					language = "en"
+				}
+
+				args := strings.Join([]string{
+					"i18n_key=" + key,
+					"language=" + language,
+					"fallback=" + fallback,
+				}, " ")
+				if err := mockData.RecordCall(definitions.LuaFnI18NGetLocalized, args); err != nil {
+					L.RaiseError("%s", err.Error())
+
+					return 0
+				}
+
+				result := L.NewTable()
+				L.SetField(result, "message", lua.LString(fallback))
+				L.SetField(result, "language", lua.LString(language))
+				L.SetField(result, "localized", lua.LBool(false))
+				L.SetField(result, "i18n_key", lua.LString(key))
+				L.SetField(result, "fallback_used", lua.LBool(true))
+				L.Push(result)
+
+				return 1
+			},
+		})
+		L.Push(mod)
+
+		return 1
+	}
+}
+
+func i18NCatalogFromTable(table *lua.LTable) I18NCatalogRegistration {
+	registration := I18NCatalogRegistration{
+		Language:  strings.TrimSpace(luaValueString(table.RawGetString("language"))),
+		Namespace: strings.TrimSpace(luaValueString(table.RawGetString("namespace"))),
+		Entries:   map[string]string{},
+	}
+
+	if entriesTable, ok := table.RawGetString("entries").(*lua.LTable); ok {
+		entriesTable.ForEach(func(key lua.LValue, value lua.LValue) {
+			registration.Entries[key.String()] = luaValueString(value)
+		})
+	}
+
+	return registration
+}
+
+func i18NCatalogArgs(registration I18NCatalogRegistration) string {
+	parts := []string{
+		"language=" + registration.Language,
+		"namespace=" + registration.Namespace,
+	}
+
+	keys := make([]string, 0, len(registration.Entries))
+	for key := range registration.Entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		parts = append(parts, "entries."+key+"="+registration.Entries[key])
+	}
+
+	return strings.Join(parts, " ")
+}
+
 func luaValueString(value lua.LValue) string {
 	switch typed := value.(type) {
 	case lua.LBool:
@@ -1580,8 +1679,33 @@ func LoaderModOTELMock(mockData *OpenTelemetryMock) lua.LGFunction {
 				L.Push(newSpan())
 				return 1
 			}))
+			L.SetField(tracer, "with_span", L.NewFunction(func(L *lua.LState) int {
+				name := L.OptString(2, "")
+				callback := L.CheckFunction(3)
+				_ = mockData.RecordCall("with_span", name)
+
+				topBefore := L.GetTop()
+				if err := L.CallByParam(lua.P{
+					Fn:      callback,
+					NRet:    lua.MultRet,
+					Protect: true,
+				}, newSpan()); err != nil {
+					L.RaiseError("%s", err.Error())
+
+					return 0
+				}
+
+				return L.GetTop() - topBefore
+			}))
 			return tracer
 		}
+
+		L.SetField(mod, "is_enabled", L.NewFunction(func(L *lua.LState) int {
+			_ = mockData.RecordCall("is_enabled", "")
+			L.Push(lua.LBool(false))
+
+			return 1
+		}))
 
 		L.SetField(mod, "tracer", L.NewFunction(func(L *lua.LState) int {
 			_ = L.OptString(1, "")
@@ -2363,6 +2487,13 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	mockData.Policy = policyMock
 	policyMock.ResetRuntimeState()
 
+	i18nMock := mockData.I18N
+	if i18nMock == nil {
+		i18nMock = &I18NMock{}
+	}
+	mockData.I18N = i18nMock
+	i18nMock.ResetRuntimeState()
+
 	ldapMock := mockData.LDAP
 	if ldapMock == nil {
 		ldapMock = &LDAPMock{}
@@ -2521,10 +2652,23 @@ func SetupMockModules(L *lua.LState, mockData *MockData, logger *MockLogger) (fu
 	L.PreloadModule(definitions.LuaModContext, LoaderModContextMock(contextMock))
 	L.PreloadModule(definitions.LuaModRedis, redisRuntime.Loader(context.Background(), resolveLuaTestConfig(), redisMock))
 	L.PreloadModule(definitions.LuaModBackend, LoaderModBackendMock(backendMock))
-	L.PreloadModule(definitions.LuaBackendResultTypeName, LoaderModBackendResultMock(backendResultMock))
+	backendResultLoader := LoaderModBackendResultMock(backendResultMock)
+	L.PreloadModule(definitions.LuaBackendResultTypeName, backendResultLoader)
+	if err = L.CallByParam(lua.P{
+		Fn:      L.NewFunction(backendResultLoader),
+		NRet:    1,
+		Protect: true,
+	}); err != nil {
+		cleanup()
+
+		return nil, fmt.Errorf("failed to bind backend result test module: %w", err)
+	}
+	L.SetGlobal(definitions.LuaBackendResultTypeName, L.Get(-1))
+	L.Pop(1)
 	L.PreloadModule(definitions.LuaModHTTPRequest, LoaderModHTTPRequestMock(httpRequestMock))
 	L.PreloadModule(definitions.LuaModHTTPResponse, LoaderModHTTPResponseMock(httpResponseMock))
 	L.PreloadModule(definitions.LuaModPolicy, LoaderModPolicyMock(policyMock))
+	L.PreloadModule(definitions.LuaModI18N, LoaderModI18NMock(i18nMock))
 	L.PreloadModule(definitions.LuaModLDAP, LoaderModLDAPMock(ldapMock))
 	L.PreloadModule(definitions.LuaModDNS, LoaderModDNSMock(dnsMock))
 	L.PreloadModule(definitions.LuaModPrometheus, LoaderModPrometheusMock(prometheusMock))

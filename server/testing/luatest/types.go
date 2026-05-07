@@ -94,6 +94,7 @@ type MockData struct {
 	Context        *ContextMock        `json:"context"`
 	Redis          *RedisMock          `json:"redis"`
 	Policy         *PolicyMock         `json:"policy"`
+	I18N           *I18NMock           `json:"i18n"`
 	LDAP           *LDAPMock           `json:"ldap"`
 	Backend        *BackendMock        `json:"backend"`
 	Misc           *MiscMock           `json:"misc"`
@@ -120,6 +121,51 @@ type PolicyEmission struct {
 	Details map[string]string `json:"details,omitempty"`
 	ID      string            `json:"id"`
 	Value   string            `json:"value"`
+}
+
+// I18NCatalogRegistration captures one nauthilus_i18n.register_catalog call.
+type I18NCatalogRegistration struct {
+	Entries   map[string]string `json:"entries"`
+	Language  string            `json:"language"`
+	Namespace string            `json:"namespace"`
+}
+
+// I18NMock contains expected calls for the nauthilus_i18n module.
+type I18NMock struct {
+	ExpectedCalls []ModuleExpectedCall      `json:"expected_calls"`
+	Catalogs      []I18NCatalogRegistration `json:"-"`
+
+	callIndex  int    `json:"-"`
+	runtimeErr string `json:"-"`
+}
+
+// ResetRuntimeState clears call tracking and captured i18n catalog registrations.
+func (m *I18NMock) ResetRuntimeState() {
+	if m == nil {
+		return
+	}
+
+	m.callIndex = 0
+	m.runtimeErr = ""
+	m.Catalogs = nil
+}
+
+// RecordCall validates one i18n mock call against expected_calls.
+func (m *I18NMock) RecordCall(method, args string) error {
+	if m == nil {
+		return nil
+	}
+
+	return recordModuleCall("i18n", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
+}
+
+// ValidateComplete verifies that all expected i18n calls were observed.
+func (m *I18NMock) ValidateComplete() error {
+	if m == nil {
+		return nil
+	}
+
+	return validateModuleCalls("i18n", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
 // PolicyMock contains expected calls for the nauthilus_policy module.
