@@ -19,7 +19,9 @@ package evaluation
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -829,13 +831,7 @@ func checksAvailable(policyReport *report.DecisionReport, names []string) bool {
 }
 
 func operationApplies(operations []policy.Operation, operation policy.Operation) bool {
-	for _, candidate := range operations {
-		if candidate == operation {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(operations, operation)
 }
 
 func sortedChecks(policyReport *report.DecisionReport, checkType string) []report.CheckResult {
@@ -1013,9 +1009,7 @@ func cloneEffectRequests(requests []report.EffectRequest) []report.EffectRequest
 		}
 
 		args := make(map[string]any, len(cloned[index].Args))
-		for key, value := range cloned[index].Args {
-			args[key] = value
-		}
+		maps.Copy(args, cloned[index].Args)
 
 		cloned[index].Args = args
 	}

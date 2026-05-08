@@ -17,7 +17,9 @@ package compiler
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -26,15 +28,15 @@ import (
 )
 
 const (
-	checkTypeBruteForce      = policy.CheckTypeBruteForce
-	checkTypeTLSEncryption   = policy.CheckTypeTLSEncryption
-	checkTypeRelayDomains    = policy.CheckTypeRelayDomains
-	checkTypeRBL             = policy.CheckTypeRBL
-	checkTypeLuaEnvironment  = policy.CheckTypeLuaEnvironment
-	checkTypeLDAPBackend     = policy.CheckTypeLDAPBackend
-	checkTypeLuaBackend      = policy.CheckTypeLuaBackend
-	checkTypeLuaSubjectSource      = policy.CheckTypeLuaSubjectSource
-	checkTypeAccountProvider = policy.CheckTypeAccountProvider
+	checkTypeBruteForce       = policy.CheckTypeBruteForce
+	checkTypeTLSEncryption    = policy.CheckTypeTLSEncryption
+	checkTypeRelayDomains     = policy.CheckTypeRelayDomains
+	checkTypeRBL              = policy.CheckTypeRBL
+	checkTypeLuaEnvironment   = policy.CheckTypeLuaEnvironment
+	checkTypeLDAPBackend      = policy.CheckTypeLDAPBackend
+	checkTypeLuaBackend       = policy.CheckTypeLuaBackend
+	checkTypeLuaSubjectSource = policy.CheckTypeLuaSubjectSource
+	checkTypeAccountProvider  = policy.CheckTypeAccountProvider
 
 	runIfAny             = policy.RunIfAny
 	runIfAuthenticated   = policy.RunIfAuthenticated
@@ -74,9 +76,7 @@ func addCheckTypes(
 	registry map[string]policyruntime.CheckTypeDefinition,
 	definitions map[string]policyruntime.CheckTypeDefinition,
 ) {
-	for checkType, definition := range definitions {
-		registry[checkType] = definition
-	}
+	maps.Copy(registry, definitions)
 }
 
 func preAuthCheckTypes() map[string]policyruntime.CheckTypeDefinition {
@@ -274,23 +274,11 @@ func stageOrder(stage policy.Stage) int {
 }
 
 func stringsContain(values []string, value string) bool {
-	for _, current := range values {
-		if current == value {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(values, value)
 }
 
 func operationsContain(values []policy.Operation, value policy.Operation) bool {
-	for _, current := range values {
-		if current == value {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(values, value)
 }
 
 func operationsIntersect(left []policy.Operation, right []policy.Operation) bool {
@@ -304,8 +292,8 @@ func operationsIntersect(left []policy.Operation, right []policy.Operation) bool
 }
 
 func normalizeIdentifierFromConfigRef(prefix string, configRef string, fallback string) string {
-	if strings.HasPrefix(configRef, prefix) {
-		return strings.TrimSpace(strings.TrimPrefix(configRef, prefix))
+	if after, ok := strings.CutPrefix(configRef, prefix); ok {
+		return strings.TrimSpace(after)
 	}
 
 	return strings.TrimSpace(fallback)

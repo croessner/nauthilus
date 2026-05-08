@@ -19,6 +19,7 @@ package collection
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -357,10 +358,8 @@ func (c *DecisionContext) guardHasMissingAttributeLocked(expr policyruntime.Comp
 
 		return !exists
 	case policyruntime.ExprKindAll, policyruntime.ExprKindAny, policyruntime.ExprKindNot:
-		for _, child := range expr.Children {
-			if c.guardHasMissingAttributeLocked(child) {
-				return true
-			}
+		if slices.ContainsFunc(expr.Children, c.guardHasMissingAttributeLocked) {
+			return true
 		}
 	}
 

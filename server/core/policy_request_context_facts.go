@@ -230,7 +230,7 @@ func headerIPMatches(headerValue string, candidate string) bool {
 		return false
 	}
 
-	for _, part := range strings.Split(headerValue, ",") {
+	for part := range strings.SplitSeq(headerValue, ",") {
 		if sameIP(strings.TrimSpace(part), candidate) {
 			return true
 		}

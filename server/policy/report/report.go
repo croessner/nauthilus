@@ -16,6 +16,8 @@
 // Package report contains redaction-aware policy decision report primitives.
 package report
 
+import "maps"
+
 import "github.com/croessner/nauthilus/server/policy"
 
 // RedactedValue is the placeholder used for unsafe report values.
@@ -202,17 +204,11 @@ func (r *DecisionReport) Redacted() *DecisionReport {
 		redacted.Attributes[id] = attribute.Redacted()
 	}
 
-	for name, check := range r.Checks {
-		redacted.Checks[name] = check
-	}
+	maps.Copy(redacted.Checks, r.Checks)
 
-	for name, reason := range r.MissingChecks {
-		redacted.MissingChecks[name] = reason
-	}
+	maps.Copy(redacted.MissingChecks, r.MissingChecks)
 
-	for name, fact := range r.Unavailable {
-		redacted.Unavailable[name] = fact
-	}
+	maps.Copy(redacted.Unavailable, r.Unavailable)
 
 	return redacted
 }
@@ -295,9 +291,7 @@ func cloneEffectRequests(requests []EffectRequest) []EffectRequest {
 		}
 
 		args := make(map[string]any, len(cloned[index].Args))
-		for key, value := range cloned[index].Args {
-			args[key] = value
-		}
+		maps.Copy(args, cloned[index].Args)
 
 		cloned[index].Args = args
 	}

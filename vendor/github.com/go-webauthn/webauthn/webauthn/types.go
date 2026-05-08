@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/go-webauthn/webauthn/metadata"
 	"github.com/go-webauthn/webauthn/protocol"
 )
@@ -28,8 +30,8 @@ type WebAuthn struct {
 }
 
 // Config represents the Relying Party configuration for WebAuthn operations. At minimum, RPID and RPOrigins must
-// be configured. The RPID should be the effective domain of the Relying Party (e.g. "example.com") and RPOrigins
-// should contain the fully qualified origins that are permitted (e.g. "https://example.com").
+// be configured. The RPID should be the effective domain of the Relying Party (i.e. "example.com") and RPOrigins
+// should contain the fully qualified origins that are permitted (i.e. "https://example.com").
 type Config struct {
 	// RPID configures the Relying Party Server ID. This should generally be the origin without a scheme and port.
 	RPID string
@@ -51,10 +53,17 @@ type Config struct {
 	// is utilized to determine equality.
 	RPTopOrigins []string
 
-	// RPTopOriginVerificationMode determines the verification mode for the Top Origin value. By default the
-	// TopOriginIgnoreVerificationMode is used however this is going to change at such a time as WebAuthn Level 3
-	// becomes recommended, implementers should explicitly set this value if they want stability.
+	// RPTopOriginVerificationMode determines the verification mode for the Top Origin value used in cross-origin
+	// ceremonies. When the zero value ([protocol.TopOriginDefaultVerificationMode]) is provided, the config
+	// validator coerces this field to [protocol.TopOriginExplicitVerificationMode]; i.e. any Top Origin supplied
+	// by the client must appear in [Config.RPTopOrigins]. Set this field explicitly to
+	// [protocol.TopOriginAutoVerificationMode] or [protocol.TopOriginImplicitVerificationMode] if you need
+	// different matching semantics; there is no longer a mode that disables verification entirely.
 	RPTopOriginVerificationMode protocol.TopOriginVerificationMode
+
+	// RPAllowCrossOrigin determines whether the RP is allowed to be used in cross-origin contexts. This is disabled
+	// by default.
+	RPAllowCrossOrigin bool
 
 	// AttestationPreference sets the default attestation conveyance preferences.
 	AttestationPreference protocol.ConveyancePreference
@@ -79,7 +88,27 @@ type Config struct {
 	// or [github.com/go-webauthn/webauthn/metadata/providers/cached] to create a provider instance.
 	MDS metadata.Provider
 
+	// Filtering configures the filtering of authenticators based on their AAGUIDs. This is useful for enforcing
+	// policy on the authenticators that are available to be registered with the Relying Party.
+	Filtering *FilteringConfig
+
 	validated bool
+}
+
+// FilteringConfig configures the filtering of authenticators based on their AAGUIDs. This is useful for enforcing
+// policy on the authenticators that are available to be registered with the Relying Party.
+type FilteringConfig struct {
+	// ProhibitBackupEligibility if set will prohibit the use of authenticators with the backup eligible flag set.
+	ProhibitBackupEligibility bool
+
+	// PermittedAAGUIDs if set is used to filter authenticators by their AAGUID only allowing specific values. This
+	// option is mutually exclusive with ProhibitedAAGUIDs and will never exclude a zero AAGUID. To prohibit the use
+	// of Zero AAGUIDs, use [Config.MDS] or [FilteringConfig.ProhibitedAAGUIDs].
+	PermittedAAGUIDs []uuid.UUID
+
+	// ProhibitedAAGUIDs if set is used to filter authenticators by their AAGUID only prohibiting specific values. This
+	// option is mutually exclusive with PermittedAAGUIDs.
+	ProhibitedAAGUIDs []uuid.UUID
 }
 
 // TimeoutsConfig configures the timeout durations for both login and registration ceremonies. These values are sent
@@ -139,7 +168,13 @@ func (config *Config) validate() (err error) {
 	}
 
 	if config.RPTopOriginVerificationMode == protocol.TopOriginDefaultVerificationMode {
-		config.RPTopOriginVerificationMode = protocol.TopOriginIgnoreVerificationMode
+		config.RPTopOriginVerificationMode = protocol.TopOriginExplicitVerificationMode
+	}
+
+	if config.Filtering != nil {
+		if len(config.Filtering.PermittedAAGUIDs) > 0 && len(config.Filtering.ProhibitedAAGUIDs) > 0 {
+			return fmt.Errorf("cannot set both 'PermittedAAGUIDs' and 'ProhibitedAAGUIDs' in the filtering config")
+		}
 	}
 
 	config.validated = true

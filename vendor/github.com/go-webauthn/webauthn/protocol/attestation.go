@@ -77,6 +77,13 @@ type AttestationObject struct {
 
 	// The attestation statement data sent back if attestation is requested.
 	AttStatement map[string]any `json:"attStmt,omitempty"`
+
+	// Type is the attestation type as conveyed by the authenticator, one of the values defined by
+	// [metadata.AuthenticatorAttestationType] (i.e. "basic_full", "basic_surrogate", "attca", "anonca", "none").
+	// It is populated as a side-effect of a successful [AttestationObject.VerifyAttestation]; before that the field
+	// is empty. This field is excluded from serialization because the attestation object wire format does not carry
+	// this value; it is derived by the format-specific verifier.
+	Type string `json:"-"`
 }
 
 // NonCompoundAttestationObject is a subset of [AttestationObject] used within compound attestation statements. Each
@@ -193,6 +200,8 @@ func (a *AttestationObject) VerifyAttestation(clientDataHash []byte, mds metadat
 			return ErrAttestationFormat.WithInfo("Attestation format none with attestation present")
 		}
 
+		a.Type = string(metadata.None)
+
 		return nil
 	}
 
@@ -224,9 +233,7 @@ func (a *AttestationObject) VerifyAttestation(clientDataHash []byte, mds metadat
 		return ErrInvalidAttestation.WithDetails(err.Error()).WithInfo(attestationType).WithError(err)
 	}
 
-	if attestationType == string(AttestationFormatCompound) {
-		return nil
-	}
+	a.Type = attestationType
 
 	if len(a.AuthData.AttData.AAGUID) != 0 {
 		if aaguid, err = uuid.FromBytes(a.AuthData.AttData.AAGUID); err != nil {
@@ -238,7 +245,7 @@ func (a *AttestationObject) VerifyAttestation(clientDataHash []byte, mds metadat
 		return nil
 	}
 
-	if e := ValidateMetadata(context.Background(), mds, aaguid, attestationType, a.Format, x5cs); e != nil {
+	if e := ValidateMetadata(context.Background(), mds, aaguid, a.Type, a.Format, x5cs); e != nil {
 		return ErrInvalidAttestation.WithInfo(fmt.Sprintf("Error occurred validating metadata during attestation validation: %+v", e)).WithDetails(e.DevInfo).WithError(e)
 	}
 

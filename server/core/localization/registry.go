@@ -15,6 +15,8 @@
 
 package localization
 
+import "maps"
+
 import "sync"
 
 // CatalogRegistry owns deployment overlays and publishes effective catalogs.
@@ -159,9 +161,7 @@ func cloneCatalogEntries(entries map[string]map[string]string) map[string]map[st
 	cloned := make(map[string]map[string]string, len(entries))
 	for languageName, messages := range entries {
 		cloned[languageName] = make(map[string]string, len(messages))
-		for key, value := range messages {
-			cloned[languageName][key] = value
-		}
+		maps.Copy(cloned[languageName], messages)
 	}
 
 	return cloned

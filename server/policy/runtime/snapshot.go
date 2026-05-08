@@ -18,6 +18,7 @@ package runtime
 
 import (
 	"errors"
+	"maps"
 	"net/netip"
 	"sync/atomic"
 	"time"
@@ -458,9 +459,7 @@ func cloneEffectRequests(requests []EffectRequest) []EffectRequest {
 		}
 
 		args := make(map[string]any, len(cloned[index].Args))
-		for key, value := range cloned[index].Args {
-			args[key] = value
-		}
+		maps.Copy(args, cloned[index].Args)
 
 		cloned[index].Args = args
 	}

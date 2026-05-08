@@ -657,11 +657,11 @@ func TestConfiguredAuthEnforceSelectsI18NMessageAndLiteralLanguage(t *testing.T)
 func TestConfiguredAuthEnforceSelectsAttributeResponseLanguage(t *testing.T) {
 	testCases := map[string]responseLanguageCase{
 		"valid attribute": {
-			attributeValue: stringPtr("fr"),
+			attributeValue: new("fr"),
 			wantLanguage:   "fr",
 		},
 		"invalid attribute": {
-			attributeValue: stringPtr("not a language"),
+			attributeValue: new("not a language"),
 			wantLanguage:   testFallbackLanguage,
 			wantFallback:   true,
 		},
@@ -788,8 +788,9 @@ func stringAttr(
 	}
 }
 
+//go:fix inline
 func stringPtr(value string) *string {
-	return &value
+	return new(value)
 }
 
 func observeSnapshotWithCustomDecision(compiled policyruntime.CompiledPolicy) *policyruntime.Snapshot {

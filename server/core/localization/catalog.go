@@ -19,6 +19,7 @@ package localization
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -292,9 +293,7 @@ func cloneStringCatalog(entries map[string]map[string]string) (map[string]map[st
 		tagSet[languageKey] = tag
 		cloned[languageKey] = make(map[string]string, len(entries[languageName]))
 
-		for key, value := range entries[languageName] {
-			cloned[languageKey][key] = value
-		}
+		maps.Copy(cloned[languageKey], entries[languageName])
 	}
 
 	return cloned, sortedTags(tagSet)

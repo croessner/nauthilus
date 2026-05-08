@@ -19,6 +19,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/policy"
@@ -186,9 +187,7 @@ func CloneDefinition(definition AttributeDefinition) AttributeDefinition {
 
 	if definition.Details != nil {
 		cloned.Details = make(map[string]DetailDefinition, len(definition.Details))
-		for name, detail := range definition.Details {
-			cloned.Details[name] = detail
-		}
+		maps.Copy(cloned.Details, definition.Details)
 	}
 
 	return cloned

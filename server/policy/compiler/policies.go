@@ -17,6 +17,7 @@ package compiler
 
 import (
 	"fmt"
+	"maps"
 	"net/netip"
 	"regexp"
 	"strings"
@@ -745,8 +746,8 @@ func compileNetworkOperand(
 		return policyruntime.TypedValue{}, configPathError(path, "must be a string")
 	}
 
-	if strings.HasPrefix(value, "@network.") {
-		name := strings.TrimPrefix(value, "@network.")
+	if after, ok0 := strings.CutPrefix(value, "@network."); ok0 {
+		name := after
 		prefixes, ok := sets.Networks[name]
 		if !ok {
 			return policyruntime.TypedValue{}, configPathError(path, "references unknown network set")
@@ -1173,9 +1174,7 @@ func compileEffectArgs(id string, input map[string]any, path string) (map[string
 	}
 
 	args := make(map[string]any, len(input))
-	for key, value := range input {
-		args[key] = value
-	}
+	maps.Copy(args, input)
 
 	return args, nil
 }

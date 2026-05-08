@@ -76,8 +76,6 @@ func parseX5C(x5c []any) (x5cs []*x509.Certificate, err error) {
 // general.
 //
 // WARNING: Setting mangleNotAfter=true weakens security by accepting expired certificates.
-//
-//nolint:unparam
 func attStatementCertChainVerify(certs []*x509.Certificate, roots *x509.CertPool, mangleNotAfter bool, mangleNotAfterSafeTime time.Time) (chains [][]*x509.Certificate, err error) {
 	if len(certs) == 0 {
 		return nil, errors.New("empty chain")
@@ -141,7 +139,7 @@ func isSelfSigned(c *x509.Certificate) bool {
 //
 // WARNING: Setting mangle=true weakens security by accepting expired certificates.
 func certInsecureConditionalNotAfterMangle(cert *x509.Certificate, mangle bool, safe time.Time) (out *x509.Certificate) {
-	if !mangle || cert.NotAfter.After(safe) {
+	if !mangle || cert.NotAfter.After(time.Now().Add(time.Minute)) {
 		return cert
 	}
 
@@ -250,4 +248,23 @@ func ValidateRPID(value string) (err error) {
 	}
 
 	return nil
+}
+
+// IsAttestationFormatString reports whether s is one of the WebAuthn-defined attestation statement format
+// identifiers. Used to detect and migrate records from prior releases which stored
+// the format string in the AttestationType field.
+func IsAttestationFormatString(s string) bool {
+	switch AttestationFormat(s) {
+	case AttestationFormatPacked,
+		AttestationFormatTPM,
+		AttestationFormatAndroidKey,
+		AttestationFormatAndroidSafetyNet,
+		AttestationFormatFIDOUniversalSecondFactor,
+		AttestationFormatApple,
+		AttestationFormatCompound,
+		AttestationFormatNone:
+		return true
+	default:
+		return false
+	}
 }

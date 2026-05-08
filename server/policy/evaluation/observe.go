@@ -17,9 +17,11 @@ package evaluation
 
 import (
 	"context"
+	"maps"
 	"net/netip"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -386,9 +388,7 @@ func effectRequestsFromPlan(requests []policyruntime.EffectRequest) []report.Eff
 	converted := make([]report.EffectRequest, 0, len(requests))
 	for _, request := range requests {
 		args := make(map[string]any, len(request.Args))
-		for key, value := range request.Args {
-			args[key] = value
-		}
+		maps.Copy(args, request.Args)
 
 		converted = append(converted, report.EffectRequest{ID: request.ID, Args: args})
 	}
@@ -696,13 +696,7 @@ func stringSliceContainsAll(actual any, expected any) bool {
 }
 
 func stringsContain(values []string, candidate string) bool {
-	for _, value := range values {
-		if value == candidate {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(values, candidate)
 }
 
 func compareOrdered(operator policyruntime.Operator, actual any, expected any) bool {
@@ -819,13 +813,7 @@ func withinTimeWindow(actual any, expected any) bool {
 }
 
 func weekdayAllowed(day time.Weekday, days []time.Weekday) bool {
-	for _, allowed := range days {
-		if day == allowed {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(days, day)
 }
 
 func compareObserveDecisions(defaultFinal *report.FinalDecision, customFinal *report.FinalDecision) (string, bool) {

@@ -18,6 +18,7 @@ package lualib
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -159,13 +160,7 @@ func policyOperationAllowed(operation policy.Operation, operations []policy.Oper
 		return true
 	}
 
-	for _, candidate := range operations {
-		if candidate == operation {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(operations, operation)
 }
 
 func luaPolicyStringField(table *lua.LTable, name string) string {

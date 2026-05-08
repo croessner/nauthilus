@@ -445,12 +445,20 @@ type SQLiteDriver struct {
 
 // SQLiteConn implements driver.Conn.
 type SQLiteConn struct {
-	mu          sync.Mutex
-	db          *C.sqlite3
-	loc         *time.Location
-	txlock      string
-	funcs       []*functionInfo
-	aggregators []*aggInfo
+	mu             sync.Mutex
+	db             *C.sqlite3
+	loc            *time.Location
+	txlock         string
+	funcs          []*functionInfo
+	aggregators    []*aggInfo
+	// Prepared-statement cache. The slice is allocated at Open with a
+	// fixed capacity equal to the configured cache size; cap bounds the
+	// cache, len is the live count, and entries are ordered LRU-first
+	// (index 0 is the oldest, the tail is most recently put). Access
+	// requires mu; stmtCacheEnabled is immutable after Open and is the
+	// only field safe to read without the lock.
+	stmtCache        []*SQLiteStmt
+	stmtCacheEnabled bool
 }
 
 // SQLiteTx implements driver.Tx.
@@ -467,6 +475,7 @@ type SQLiteStmt struct {
 	closed      bool
 	cls         bool // True if the statement was created by SQLiteConn.Query
 	namedParams map[string][3]int
+	cacheKey    string
 }
 
 // SQLiteResult implements sql.Result.
@@ -944,7 +953,7 @@ func (c *SQLiteConn) exec(ctx context.Context, query string, args []driver.Named
 
 	start := 0
 	for {
-		s, err := c.prepare(ctx, query)
+		s, err := c.prepareWithCache(ctx, query)
 		if err != nil {
 			return nil, err
 		}
@@ -1009,29 +1018,41 @@ func (c *SQLiteConn) Query(query string, args []driver.Value) (driver.Rows, erro
 func (c *SQLiteConn) query(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	start := 0
 	for {
-		s, err := c.prepare(ctx, query)
+		s, err := c.prepareWithCache(ctx, query)
 		if err != nil {
 			return nil, err
 		}
-		s.(*SQLiteStmt).cls = true
+		ss := s.(*SQLiteStmt)
+		ss.cls = true
+		// sqlite3_prepare_v2 returns SQLITE_OK with a NULL statement handle
+		// when the input is empty or contains only whitespace/comments.
+		if ss.s == nil {
+			tail := ss.t
+			ss.Close()
+			if tail == "" {
+				return &SQLiteRows{cls: true, ctx: ctx}, nil
+			}
+			query = tail
+			continue
+		}
 		na := s.NumInput()
 		if len(args)-start < na {
-			s.Close()
+			ss.Close()
 			return nil, fmt.Errorf("not enough args to execute query: want %d got %d", na, len(args)-start)
 		}
 		stmtArgs := stmtArgs(args, start, na)
-		rows, err := s.(*SQLiteStmt).query(ctx, stmtArgs)
+		rows, err := ss.query(ctx, stmtArgs)
 		if err != nil && err != driver.ErrSkip {
-			s.Close()
+			ss.Close()
 			return rows, err
 		}
 		start += na
-		tail := s.(*SQLiteStmt).t
+		tail := ss.t
 		if tail == "" {
 			return rows, nil
 		}
 		rows.Close()
-		s.Close()
+		ss.Close()
 		query = tail
 	}
 }
@@ -1185,6 +1206,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	writableSchema := -1
 	vfsName := ""
 	var cacheSize *int64
+	stmtCacheSize := 0
 
 	pos := strings.IndexRune(dsn, '?')
 	if pos >= 1 {
@@ -1520,6 +1542,20 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			cacheSize = &iv
 		}
 
+		// _stmt_cache_size sets the maximum number of prepared statements
+		// cached per connection. Note that sql.DB is a connection pool, so
+		// each connection maintains its own independent cache.
+		if val := params.Get("_stmt_cache_size"); val != "" {
+			iv, err := strconv.Atoi(val)
+			if err != nil {
+				return nil, fmt.Errorf("Invalid _stmt_cache_size: %v: %v", val, err)
+			}
+			if iv < 0 {
+				return nil, fmt.Errorf("Invalid _stmt_cache_size: %v, expecting non-negative integer", val)
+			}
+			stmtCacheSize = iv
+		}
+
 		if val := params.Get("vfs"); val != "" {
 			vfsName = val
 		}
@@ -1593,6 +1629,10 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 
 	// Create connection to SQLite
 	conn := &SQLiteConn{db: db, loc: loc, txlock: txlock}
+	if stmtCacheSize > 0 {
+		conn.stmtCache = make([]*SQLiteStmt, 0, stmtCacheSize)
+		conn.stmtCacheEnabled = true
+	}
 
 	// Password Cipher has to be registered before authentication
 	if len(authCrypt) > 0 {
@@ -1865,6 +1905,7 @@ func (c *SQLiteConn) Close() error {
 		return nil
 	}
 	runtime.SetFinalizer(c, nil)
+	c.closeCachedStmtsLocked()
 	rv := C.sqlite3_close_v2(c.db)
 	if rv != C.SQLITE_OK {
 		return lastError(c.db)
@@ -1881,6 +1922,88 @@ func (c *SQLiteConn) dbConnOpen() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.db != nil
+}
+
+func (c *SQLiteConn) takeCachedStmt(query string) *SQLiteStmt {
+	if c == nil || query == "" || !c.stmtCacheEnabled {
+		return nil
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.db == nil {
+		return nil
+	}
+	// Scan from the MRU end (tail) so that a stmt put just before is
+	// found immediately.
+	for i := len(c.stmtCache) - 1; i >= 0; i-- {
+		s := c.stmtCache[i]
+		if s.cacheKey != query {
+			continue
+		}
+		n := len(c.stmtCache)
+		copy(c.stmtCache[i:n-1], c.stmtCache[i+1:n])
+		c.stmtCache[n-1] = nil
+		c.stmtCache = c.stmtCache[:n-1]
+		// The stmt was marked closed by Close before being cached, and
+		// cls may have been set if Query opened it; reset both so the
+		// caller gets a stmt equivalent to a fresh Prepare.
+		s.closed = false
+		s.cls = false
+		return s
+	}
+	return nil
+}
+
+func (c *SQLiteConn) putCachedStmt(s *SQLiteStmt) bool {
+	if c == nil || s == nil || s.s == nil || s.cacheKey == "" {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.db == nil {
+		return false
+	}
+	rv := C._sqlite3_reset_clear(s.s)
+	if rv != C.SQLITE_ROW && rv != C.SQLITE_OK && rv != C.SQLITE_DONE {
+		return false
+	}
+	// If full, finalize the LRU entry at index 0 and shift left; the
+	// freed tail slot is immediately reused by the append below.
+	if len(c.stmtCache) == cap(c.stmtCache) {
+		finalizeCachedStmt(c.stmtCache[0])
+		copy(c.stmtCache, c.stmtCache[1:])
+		c.stmtCache = c.stmtCache[:len(c.stmtCache)-1]
+	}
+	c.stmtCache = append(c.stmtCache, s)
+	return true
+}
+
+func (c *SQLiteConn) closeCachedStmtsLocked() {
+	for i, s := range c.stmtCache {
+		c.stmtCache[i] = nil
+		finalizeCachedStmt(s)
+	}
+	c.stmtCache = c.stmtCache[:0]
+}
+
+// finalizeCachedStmt tears down a stmt that was sitting in the connection's
+// stmt cache. The caller must hold c.mu. It is safe to pass a nil stmt or a
+// stmt whose handle has already been released.
+func finalizeCachedStmt(s *SQLiteStmt) {
+	if s == nil {
+		return
+	}
+	runtime.SetFinalizer(s, nil)
+	if s.s != nil {
+		C.sqlite3_finalize(s.s)
+		s.s = nil
+	}
+	s.c = nil
+	s.closed = true
 }
 
 // Prepare the query string. Return a new statement.
@@ -1903,6 +2026,21 @@ func (c *SQLiteConn) prepare(ctx context.Context, query string) (driver.Stmt, er
 	}
 	ss := &SQLiteStmt{c: c, s: s, t: t}
 	runtime.SetFinalizer(ss, (*SQLiteStmt).Close)
+	return ss, nil
+}
+
+func (c *SQLiteConn) prepareWithCache(ctx context.Context, query string) (driver.Stmt, error) {
+	if stmt := c.takeCachedStmt(query); stmt != nil {
+		return stmt, nil
+	}
+	stmt, err := c.prepare(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	ss := stmt.(*SQLiteStmt)
+	if ss.t == "" && c.stmtCacheEnabled {
+		ss.cacheKey = query
+	}
 	return ss, nil
 }
 
@@ -2014,11 +2152,18 @@ func (s *SQLiteStmt) Close() error {
 	runtime.SetFinalizer(s, nil)
 	conn := s.c
 	stmt := s.s
-	s.s = nil
-	s.c = nil
+	if stmt == nil {
+		s.c = nil
+		return nil
+	}
 	if !conn.dbConnOpen() {
 		return errors.New("sqlite statement with already closed database connection")
 	}
+	if s.cacheKey != "" && conn.putCachedStmt(s) {
+		return nil
+	}
+	s.s = nil
+	s.c = nil
 	rv := C.sqlite3_finalize(stmt)
 	if rv != C.SQLITE_OK {
 		return conn.lastError()
@@ -2332,6 +2477,9 @@ func (rc *SQLiteRows) Close() error {
 
 // Columns return column names.
 func (rc *SQLiteRows) Columns() []string {
+	if rc.s == nil {
+		return rc.cols
+	}
 	rc.s.mu.Lock()
 	defer rc.s.mu.Unlock()
 	if rc.s.s != nil && int(rc.nc) != len(rc.cols) {
@@ -2355,6 +2503,9 @@ func (rc *SQLiteRows) declTypes() []string {
 
 // DeclTypes return column types.
 func (rc *SQLiteRows) DeclTypes() []string {
+	if rc.s == nil {
+		return rc.decltype
+	}
 	rc.s.mu.Lock()
 	defer rc.s.mu.Unlock()
 	return rc.declTypes()
@@ -2362,6 +2513,9 @@ func (rc *SQLiteRows) DeclTypes() []string {
 
 // Next move cursor to next. Attempts to honor context timeout from QueryContext call.
 func (rc *SQLiteRows) Next(dest []driver.Value) error {
+	if rc.s == nil {
+		return io.EOF
+	}
 	rc.s.mu.Lock()
 	defer rc.s.mu.Unlock()
 
