@@ -25,6 +25,7 @@ import (
 	corepkg "github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/log"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,7 @@ const (
 	httpI18NTempFailText   = "Temporary company account check failed."
 	httpI18NTempFailGerman = "Pruefung voruebergehend fehlgeschlagen."
 	jsonErrorField         = "error"
+	cborContentType        = "application/cbor"
 )
 
 func setupConfigForResponseTests(t *testing.T) {
@@ -53,6 +55,15 @@ func newJSONResponseAuthState(
 	cfg config.File,
 	resolver localization.MessageResolver,
 ) *corepkg.AuthState {
+	return newResponseAuthState(ctx, cfg, resolver, definitions.ServJSON)
+}
+
+func newResponseAuthState(
+	ctx *gin.Context,
+	cfg config.File,
+	resolver localization.MessageResolver,
+	service string,
+) *corepkg.AuthState {
 	deps := corepkg.AuthDeps{Cfg: cfg}
 	if resolver != nil {
 		deps.Resp = corepkg.NewDefaultResponseWriter(corepkg.ResponseDeps{
@@ -62,7 +73,7 @@ func newJSONResponseAuthState(
 	}
 
 	auth := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
-	auth.Request.Service = definitions.ServJSON
+	auth.Request.Service = service
 	auth.Request.Protocol = config.NewProtocol("imap")
 	auth.SetStatusCodes(auth.Request.Service)
 
@@ -243,6 +254,77 @@ func TestResponseWriter_TempFail_JSONErrorBody(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON body: %v", err)
 	}
+	if msg, ok := body[jsonErrorField].(string); !ok || msg != reason {
+		t.Fatalf("expected error field %q, got %v (present=%v)", reason, body[jsonErrorField], ok)
+	}
+}
+
+func TestResponseWriter_Fail_CBORBodyNullAndHeaders(t *testing.T) {
+	setupConfigForResponseTests(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	auth := newResponseAuthState(ctx, cfg, nil, definitions.ServCBOR)
+	auth.Runtime.GUID = "guid-fail-cbor"
+
+	auth.AuthFail(ctx)
+
+	if w.Code != auth.Runtime.StatusCodeFail {
+		t.Fatalf("status code = %d, want %d", w.Code, auth.Runtime.StatusCodeFail)
+	}
+
+	if got := w.Header().Get("Content-Type"); got != cborContentType {
+		t.Fatalf("Content-Type = %q, want %s", got, cborContentType)
+	}
+
+	if got := w.Header().Get("Auth-Status"); got != definitions.PasswordFail {
+		t.Fatalf("Auth-Status header = %q, want %q", got, definitions.PasswordFail)
+	}
+
+	var body any
+	if err := cborcodec.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid CBOR body: %v", err)
+	}
+
+	if body != nil {
+		t.Fatalf("expected CBOR null body, got %#v", body)
+	}
+}
+
+func TestResponseWriter_TempFail_CBORErrorBody(t *testing.T) {
+	setupConfigForResponseTests(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+
+	reason := "Temporary server problem"
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	auth := newResponseAuthState(ctx, cfg, nil, definitions.ServCBOR)
+	auth.Runtime.GUID = "guid-tempfail-cbor"
+
+	auth.AuthTempFail(ctx, reason)
+
+	if w.Code != auth.Runtime.StatusCodeInternalError {
+		t.Fatalf("status code = %d, want %d", w.Code, auth.Runtime.StatusCodeInternalError)
+	}
+
+	if got := w.Header().Get("Content-Type"); got != cborContentType {
+		t.Fatalf("Content-Type = %q, want %s", got, cborContentType)
+	}
+
+	if got := w.Header().Get("Auth-Status"); got != reason {
+		t.Fatalf("Auth-Status header = %q, want %q", got, reason)
+	}
+
+	var body map[string]any
+	if err := cborcodec.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid CBOR body: %v", err)
+	}
+
 	if msg, ok := body[jsonErrorField].(string); !ok || msg != reason {
 		t.Fatalf("expected error field %q, got %v (present=%v)", reason, body[jsonErrorField], ok)
 	}

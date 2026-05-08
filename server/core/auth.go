@@ -21,8 +21,10 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
+	stdjson "encoding/json"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -60,6 +62,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
@@ -1855,19 +1858,28 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context, render responseMessageRe
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 
 	switch a.Request.Service {
-	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON, definitions.ServCBOR:
-		maxWaitDelay := uint(a.Cfg().GetServer().GetNginxWaitDelay())
-
-		if maxWaitDelay > 0 {
-			waitDelay := bfWaitDelay(maxWaitDelay, a.Security.LoginAttempts)
-			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
-		}
+	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON:
+		a.setAuthWaitHeader(ctx)
 
 		// Do not include password history in responses; always return JSON null on failure
 		ctx.JSON(a.Runtime.StatusCodeFail, nil)
+	case definitions.ServCBOR:
+		a.setAuthWaitHeader(ctx)
+
+		sendCBOR(ctx, a.Runtime.StatusCodeFail, nil)
 	default:
 		ctx.String(a.Runtime.StatusCodeFail, statusMessage)
 	}
+}
+
+func (a *AuthState) setAuthWaitHeader(ctx *gin.Context) {
+	maxWaitDelay := uint(a.Cfg().GetServer().GetNginxWaitDelay())
+	if maxWaitDelay == 0 {
+		return
+	}
+
+	waitDelay := bfWaitDelay(maxWaitDelay, a.Security.LoginAttempts)
+	ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 }
 
 // loginAttemptProcessing performs processing for a failed login attempt.
@@ -3797,7 +3809,7 @@ func processStructuredAuthRequest(ctx *gin.Context, auth State, metricName strin
 // processApplicationJSON decodes application/json authentication requests.
 func processApplicationJSON(ctx *gin.Context, auth State) {
 	processStructuredAuthRequest(ctx, auth, "request_json_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
-		return ctx.ShouldBindJSON(request)
+		return decodeStrictJSONRequest(ctx, request)
 	})
 }
 
@@ -3806,6 +3818,30 @@ func processApplicationCBOR(ctx *gin.Context, auth State) {
 	processStructuredAuthRequest(ctx, auth, "request_cbor_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
 		return cborcodec.DecodeReader(ctx.Request.Body, request)
 	})
+}
+
+func decodeStrictJSONRequest(ctx *gin.Context, request *authdto.Request) error {
+	decoder := stdjson.NewDecoder(ctx.Request.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(request); err != nil {
+		return err
+	}
+
+	var trailing struct{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return stderrors.New("request body must contain a single JSON value")
+		}
+
+		return err
+	}
+
+	if binding.Validator == nil {
+		return nil
+	}
+
+	return binding.Validator.ValidateStruct(request)
 }
 
 // ApplyStructuredAuthRequest updates the provided authentication state with

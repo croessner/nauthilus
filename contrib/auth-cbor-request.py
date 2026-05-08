@@ -15,6 +15,8 @@ from typing import Any
 
 
 DEFAULT_URL = "http://127.0.0.1:8080/api/v1/auth/cbor"
+CBOR_CONTENT_TYPE = "application/cbor"
+AUTH_RESPONSE_KEYS = ("ok", "account_field", "totp_secret_field", "backend", "attributes")
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,6 +83,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds.")
     parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification.")
     parser.add_argument("--dump-payload-json", action="store_true", help="Print the request payload as JSON.")
+    parser.add_argument(
+        "--skip-response-check",
+        action="store_true",
+        help="Skip response shape validation for successful CBOR responses.",
+    )
     parser.add_argument("--quiet", action="store_true", help="Only print the response body.")
 
     return parser.parse_args()
@@ -324,8 +331,8 @@ def decode_response(content_type: str, body: bytes) -> Any:
     if not body:
         return ""
 
-    normalized = content_type.split(";", 1)[0].strip().lower()
-    if normalized == "application/cbor":
+    normalized = normalize_content_type(content_type)
+    if normalized == CBOR_CONTENT_TYPE:
         return cbor_loads(body)
 
     if normalized == "application/json":
@@ -334,8 +341,39 @@ def decode_response(content_type: str, body: bytes) -> Any:
     return body.decode("utf-8", errors="replace")
 
 
-def print_response(status: int, headers: Any, body: bytes, quiet: bool) -> None:
-    decoded = decode_response(headers.get("Content-Type", ""), body)
+def normalize_content_type(content_type: str) -> str:
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def validate_success_response(headers: Any, decoded: Any, args: argparse.Namespace) -> None:
+    if args.skip_response_check:
+        return
+
+    content_type = normalize_content_type(headers.get("Content-Type", ""))
+    if content_type != CBOR_CONTENT_TYPE:
+        raise SystemExit(f"Expected successful CBOR response, got Content-Type {content_type!r}")
+
+    if args.mode == "list-accounts":
+        if not isinstance(decoded, list):
+            raise SystemExit(f"Expected CBOR list-accounts array, got {type(decoded).__name__}")
+
+        return
+
+    if not isinstance(decoded, dict):
+        raise SystemExit(f"Expected CBOR auth response map, got {type(decoded).__name__}")
+
+    missing = [key for key in AUTH_RESPONSE_KEYS if key not in decoded]
+    if missing:
+        raise SystemExit(f"CBOR auth response missing field(s): {', '.join(missing)}")
+
+    if decoded.get("ok") is not True:
+        raise SystemExit(f"Expected CBOR auth response ok=true, got {decoded.get('ok')!r}")
+
+    if not isinstance(decoded.get("attributes"), dict):
+        raise SystemExit("Expected CBOR auth response attributes to be a map")
+
+
+def print_response(status: int, headers: Any, decoded: Any, quiet: bool) -> None:
 
     if quiet:
         if isinstance(decoded, str):
@@ -378,12 +416,15 @@ def main() -> int:
     try:
         with urllib.request.urlopen(request, timeout=args.timeout, context=context) as response:
             body = response.read()
-            print_response(response.status, response.headers, body, args.quiet)
+            decoded = decode_response(response.headers.get("Content-Type", ""), body)
+            validate_success_response(response.headers, decoded, args)
+            print_response(response.status, response.headers, decoded, args.quiet)
 
             return 0 if 200 <= response.status < 300 else 1
     except urllib.error.HTTPError as exc:
         body = exc.read()
-        print_response(exc.code, exc.headers, body, args.quiet)
+        decoded = decode_response(exc.headers.get("Content-Type", ""), body)
+        print_response(exc.code, exc.headers, decoded, args.quiet)
 
         return 1
 

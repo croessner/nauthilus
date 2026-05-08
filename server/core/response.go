@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 
@@ -86,6 +87,14 @@ type depResponseWriter struct {
 }
 
 const responseBodyFieldError = "error"
+
+type authResponse struct {
+	OK           bool                    `json:"ok"`
+	AccountField string                  `json:"account_field"`
+	TOTPSecret   string                  `json:"totp_secret_field"`
+	Backend      int                     `json:"backend"`
+	Attributes   bktype.AttributeMapping `json:"attributes"`
+}
 
 type writerHolder struct {
 	w ResponseWriter
@@ -195,7 +204,7 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		setNginxHeaders(ctx, a)
 	case definitions.ServHeader:
 		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON:
+	case definitions.ServJSON, definitions.ServCBOR:
 		sendAuthResponse(ctx, a)
 	}
 
@@ -219,6 +228,12 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 
 	if a.Request.Service == definitions.ServJSON {
 		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
+
+		return
+	}
+
+	if a.Request.Service == definitions.ServCBOR {
+		sendCBOR(ctx, a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
 
 		return
 	}
@@ -261,7 +276,7 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Logger, ctx, a)
 	case definitions.ServHeader:
 		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON:
+	case definitions.ServJSON, definitions.ServCBOR:
 		sendAuthResponse(ctx, a)
 	}
 
@@ -287,6 +302,12 @@ func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason st
 
 	if a.Request.Service == definitions.ServJSON {
 		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
+
+		return
+	}
+
+	if a.Request.Service == definitions.ServCBOR {
+		sendCBOR(ctx, a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
 
 		return
 	}
@@ -362,25 +383,21 @@ func defaultResponseLanguage(cfg config.File) string {
 	return cfg.GetServer().Frontend.GetDefaultLanguage()
 }
 
-// sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
-// It now includes an explicit {"ok": true} field and emits only the fields required by clients and tests,
-// in the exact order expected by the golden file.
+// sendAuthResponse sends a structured success response with the appropriate
+// media type based on the AuthState.
 func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
-	// Build a minimal response matching the golden expectations exactly.
-	type response struct {
-		OK           bool                    `json:"ok"`
-		AccountField string                  `json:"account_field"`
-		TOTPSecret   string                  `json:"totp_secret_field"`
-		Backend      int                     `json:"backend"`
-		Attributes   bktype.AttributeMapping `json:"attributes"`
-	}
-
-	resp := response{
+	resp := authResponse{
 		OK:           true,
 		AccountField: auth.Runtime.AccountField,
 		TOTPSecret:   auth.Runtime.TOTPSecretField,
 		Backend:      int(auth.Runtime.SourcePassDBBackend),
 		Attributes:   auth.Attributes.Attributes,
+	}
+
+	if auth.Request.Service == definitions.ServCBOR {
+		sendCBOR(ctx, auth.Runtime.StatusCodeOK, resp)
+
+		return
 	}
 
 	// Use stable JSON encoding to avoid parallel_mismatched in client tests
@@ -393,4 +410,15 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 	}
 
 	ctx.Data(auth.Runtime.StatusCodeOK, "application/json; charset=utf-8", b)
+}
+
+func sendCBOR(ctx *gin.Context, status int, body any) {
+	payload, err := cborcodec.Marshal(body)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	ctx.Data(status, "application/cbor", payload)
 }

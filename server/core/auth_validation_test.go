@@ -121,6 +121,28 @@ func TestAuthValidation_InvalidJSON(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"error"`)
 }
 
+func TestAuthValidation_JSONUnknownFieldStrict(t *testing.T) {
+	setupMinimalTestConfig(t)
+	gin.SetMode(gin.TestMode)
+	deps := setupAuthDeps()
+
+	body := []byte(`{"username":"user1","password":"secret","unexpected":"value"}`)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/json", bytes.NewBuffer(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set(definitions.CtxServiceKey, definitions.ServJSON)
+	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+
+	auth := NewAuthStateWithSetupWithDeps(ctx, deps)
+	assert.Nil(t, auth, "NewAuthStateWithSetupWithDeps should return nil for JSON unknown fields")
+	assert.True(t, ctx.IsAborted())
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), `"error"`)
+}
+
 func TestAuthValidation_ApplicationCBOR(t *testing.T) {
 	setupMinimalTestConfig(t)
 	gin.SetMode(gin.TestMode)
