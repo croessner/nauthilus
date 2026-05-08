@@ -38,5 +38,7 @@ COPY entrypoint.sh /usr/local/bin/pam-nauthilus-entrypoint
 
 RUN chmod 0755 /usr/local/bin/pam-nauthilus-entrypoint
 
+ENV TZ=UTC
+
 ENTRYPOINT ["/usr/local/bin/pam-nauthilus-entrypoint"]
 CMD ["sleep", "infinity"]

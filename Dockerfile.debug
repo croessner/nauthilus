@@ -51,6 +51,7 @@ RUN echo 'hosts: files dns' > /etc/nsswitch.conf
 
 ENV TERM=xterm-256color
 ENV ZONEINFO=/zoneinfo.zip
+ENV TZ=UTC
 
 EXPOSE 8080
 

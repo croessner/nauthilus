@@ -34,6 +34,7 @@ COPY --from=builder ["/build/blocklist", "./"]
 COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
 
 ENV ZONEINFO=/zoneinfo.zip
+ENV TZ=UTC
 ENV TERM=xterm-256color
 
 EXPOSE 8080
