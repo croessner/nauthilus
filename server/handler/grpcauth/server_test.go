@@ -263,7 +263,7 @@ func TestUnaryServerInterceptorRequiresClientCertificateWhenConfigured(t *testin
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
 	}, config.OIDCAuth{})
-	cfg.Runtime.Servers.GRPC.Auth.TLS.RequireClientCert = true
+	cfg.Runtime.Servers.GRPC.Authority.TLS.RequireClientCert = true
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg:    cfg,
 		Logger: slog.Default(),
@@ -287,7 +287,7 @@ func TestUnaryServerInterceptorAllowsClientCertificateWhenConfigured(t *testing.
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
 	}, config.OIDCAuth{})
-	cfg.Runtime.Servers.GRPC.Auth.TLS.RequireClientCert = true
+	cfg.Runtime.Servers.GRPC.Authority.TLS.RequireClientCert = true
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg:    cfg,
 		Logger: slog.Default(),
@@ -869,7 +869,7 @@ func grpcAuthTestConfig(basic config.BasicAuth, oidc config.OIDCAuth) *config.Fi
 		Runtime: &config.RuntimeSection{
 			Servers: config.RuntimeServersSection{
 				GRPC: config.RuntimeGRPCServersSection{
-					Auth: config.RuntimeGRPCAuthServerSection{
+					Authority: config.RuntimeGRPCAuthServerSection{
 						Enabled: true,
 						Address: "127.0.0.1:9444",
 					},

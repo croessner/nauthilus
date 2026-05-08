@@ -190,7 +190,7 @@ func TestRequestContextGRPCMetadataCandidateIsNotTrusted(t *testing.T) {
 	assertRequestContextValue(t, policyReport, requestClientIPTrustedAttribute, false)
 	assertRequestContextValue(t, policyReport, requestClientIPSourceAttribute, requestClientIPSourceMetadata)
 	assertRequestContextValue(t, policyReport, requestTransportKindAttribute, "grpc")
-	assertRequestContextValue(t, policyReport, requestListenerNameAttribute, "grpc.auth")
+	assertRequestContextValue(t, policyReport, requestListenerNameAttribute, "grpc.authority")
 }
 
 func TestRequestContextHTTPRouteIsEmittedWhenAvailable(t *testing.T) {

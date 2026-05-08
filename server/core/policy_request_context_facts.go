@@ -44,9 +44,9 @@ const (
 	requestPolicyTransportIDP     = "idp"
 	requestPolicyTransportUnknown = "unknown"
 
-	requestPolicyListenerHTTP     = "http"
-	requestPolicyListenerIDP      = "http.idp"
-	requestPolicyListenerGRPCAuth = "grpc.auth"
+	requestPolicyListenerHTTP          = "http"
+	requestPolicyListenerIDP           = "http.idp"
+	requestPolicyListenerGRPCAuthority = "grpc.authority"
 
 	requestPolicyInitiatorExternalUser    = "external_user"
 	requestPolicyInitiatorInternalService = "internal_service"
@@ -313,7 +313,7 @@ func (a *AuthState) requestListenerName() string {
 
 	switch a.Request.Service {
 	case definitions.ServGRPC:
-		return requestPolicyListenerGRPCAuth
+		return requestPolicyListenerGRPCAuthority
 	case definitions.ServIdP:
 		return requestPolicyListenerIDP
 	case definitions.ServBasic, definitions.ServCBOR, definitions.ServHeader, definitions.ServJSON, definitions.ServNginx:

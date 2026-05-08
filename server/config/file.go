@@ -2440,13 +2440,13 @@ func (f *FileSettings) validateTLSSettings() error {
 	)
 }
 
-// RuntimeGRPCAuthServerProvider exposes the gRPC AuthService listener settings.
+// RuntimeGRPCAuthServerProvider exposes the gRPC authority listener settings.
 type RuntimeGRPCAuthServerProvider interface {
 	GetRuntimeGRPCAuthServer() *RuntimeGRPCAuthServerSection
 	GetServer() *ServerSection
 }
 
-// ValidateGRPCAuthServerConfig validates the gRPC AuthService listener and its
+// ValidateGRPCAuthServerConfig validates the gRPC authority listener and its
 // shared backchannel caller authentication requirements.
 func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error {
 	if provider == nil {
@@ -2459,16 +2459,16 @@ func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error 
 	}
 
 	if grpcAuth.Address == "" {
-		grpcAuth.Address = defaultGRPCAuthAddress
+		grpcAuth.Address = defaultGRPCAuthorityAddress
 	}
 
 	if err := checkAddress(grpcAuth.GetAddress()); err != nil {
-		return fmt.Errorf("runtime.servers.grpc.auth.address: %w", err)
+		return fmt.Errorf("runtime.servers.grpc.authority.address: %w", err)
 	}
 
 	server := provider.GetServer()
 	if server == nil || (!server.GetBasicAuth().IsEnabled() && !server.GetOIDCAuth().IsEnabled()) {
-		return fmt.Errorf("runtime.servers.grpc.auth.enabled requires auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
+		return fmt.Errorf("runtime.servers.grpc.authority.enabled requires auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
 	}
 
 	if server.GetBasicAuth().IsEnabled() {
@@ -2482,30 +2482,30 @@ func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error 
 		}
 
 		if len(problems) > 0 {
-			return fmt.Errorf("%s are required when runtime.servers.grpc.auth.enabled=true and auth.backchannel.basic_auth.enabled=true", strings.Join(problems, " and "))
+			return fmt.Errorf("%s are required when runtime.servers.grpc.authority.enabled=true and auth.backchannel.basic_auth.enabled=true", strings.Join(problems, " and "))
 		}
 	}
 
 	tlsConfig := grpcAuth.GetTLS()
 	if !tlsConfig.IsEnabled() && !isLoopbackListenAddress(grpcAuth.GetAddress()) {
-		return fmt.Errorf("runtime.servers.grpc.auth.address %q requires TLS; plaintext gRPC is only allowed on loopback addresses", grpcAuth.GetAddress())
+		return fmt.Errorf("runtime.servers.grpc.authority.address %q requires TLS; plaintext gRPC is only allowed on loopback addresses", grpcAuth.GetAddress())
 	}
 
 	if tlsConfig.RequiresClientCert() && !tlsConfig.IsEnabled() {
-		return fmt.Errorf("runtime.servers.grpc.auth.tls.require_client_cert requires runtime.servers.grpc.auth.tls.enabled=true")
+		return fmt.Errorf("runtime.servers.grpc.authority.tls.require_client_cert requires runtime.servers.grpc.authority.tls.enabled=true")
 	}
 
 	if tlsConfig.IsEnabled() {
 		if tlsConfig.GetCert() == "" || tlsConfig.GetKey() == "" {
-			return fmt.Errorf("runtime.servers.grpc.auth.tls.cert and runtime.servers.grpc.auth.tls.key are required when gRPC TLS is enabled")
+			return fmt.Errorf("runtime.servers.grpc.authority.tls.cert and runtime.servers.grpc.authority.tls.key are required when gRPC TLS is enabled")
 		}
 
 		if tlsConfig.GetMinTLSVersion() != "TLS1.2" && tlsConfig.GetMinTLSVersion() != "TLS1.3" {
-			return fmt.Errorf("runtime.servers.grpc.auth.tls.min_tls_version must be TLS1.2 or TLS1.3")
+			return fmt.Errorf("runtime.servers.grpc.authority.tls.min_tls_version must be TLS1.2 or TLS1.3")
 		}
 
 		if tlsConfig.RequiresClientCert() && tlsConfig.GetClientCA() == "" {
-			return fmt.Errorf("runtime.servers.grpc.auth.tls.client_ca is required when require_client_cert is true")
+			return fmt.Errorf("runtime.servers.grpc.authority.tls.client_ca is required when require_client_cert is true")
 		}
 	}
 

@@ -611,12 +611,12 @@ func startGRPCAuthForHTTP(
 	if err != nil {
 		store.grpcAuthDone = nil
 		if options.continueHTTPOnGRPCAuthError {
-			_ = level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to start gRPC AuthService server; continuing HTTP startup", definitions.LogKeyError, err)
+			_ = level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to start gRPC authority server; continuing HTTP startup", definitions.LogKeyError, err)
 
 			return nil
 		}
 
-		return fmt.Errorf("start gRPC AuthService server: %w", err)
+		return fmt.Errorf("start gRPC authority server: %w", err)
 	}
 
 	store.grpcAuthDone = grpcAuthDone

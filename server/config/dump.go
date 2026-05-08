@@ -940,11 +940,11 @@ func addConfigDumpDefaultProviders(target map[string]configDumpValueProvider, pr
 func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
 		"developer_mode":                                         func() any { return false },
-		"runtime.servers.grpc.auth.address":                      func() any { return defaultGRPCAuthAddress },
-		"runtime.servers.grpc.auth.enabled":                      func() any { return false },
-		"runtime.servers.grpc.auth.tls.enabled":                  func() any { return false },
-		"runtime.servers.grpc.auth.tls.min_tls_version":          func() any { return defaultTLSMinVersion },
-		"runtime.servers.grpc.auth.tls.require_client_cert":      func() any { return false },
+		"runtime.servers.grpc.authority.address":                 func() any { return defaultGRPCAuthorityAddress },
+		"runtime.servers.grpc.authority.enabled":                 func() any { return false },
+		"runtime.servers.grpc.authority.tls.enabled":             func() any { return false },
+		"runtime.servers.grpc.authority.tls.min_tls_version":     func() any { return defaultTLSMinVersion },
+		"runtime.servers.grpc.authority.tls.require_client_cert": func() any { return false },
 		"runtime.servers.http.address":                           func() any { return definitions.HTTPAddress },
 		"runtime.servers.http.middlewares.logging":               func() any { return true },
 		"runtime.servers.http.middlewares.limit":                 func() any { return true },

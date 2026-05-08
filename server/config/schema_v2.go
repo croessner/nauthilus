@@ -6,7 +6,7 @@ import (
 	"github.com/croessner/nauthilus/server/secret"
 )
 
-const defaultGRPCAuthAddress = "127.0.0.1:9444"
+const defaultGRPCAuthorityAddress = "127.0.0.1:9444"
 const defaultAuthPolicyName = "standard_auth"
 
 // RuntimeSection groups process, server, and client runtime behavior.
@@ -49,17 +49,17 @@ type RuntimeHTTPServerSection struct {
 
 // RuntimeGRPCServersSection groups inbound gRPC servers.
 type RuntimeGRPCServersSection struct {
-	Auth RuntimeGRPCAuthServerSection `mapstructure:"auth" validate:"omitempty"`
+	Authority RuntimeGRPCAuthServerSection `mapstructure:"authority" validate:"omitempty"`
 }
 
-// RuntimeGRPCAuthServerSection configures the future gRPC AuthService listener.
+// RuntimeGRPCAuthServerSection configures the gRPC authority listener.
 type RuntimeGRPCAuthServerSection struct {
 	Address string                `mapstructure:"address" validate:"omitempty,tcp_addr"`
 	TLS     RuntimeGRPCTLSSection `mapstructure:"tls" validate:"omitempty"`
 	Enabled bool                  `mapstructure:"enabled"`
 }
 
-// IsEnabled reports whether the gRPC AuthService listener is enabled.
+// IsEnabled reports whether the gRPC authority listener is enabled.
 func (s *RuntimeGRPCAuthServerSection) IsEnabled() bool {
 	if s == nil {
 		return false
@@ -68,16 +68,16 @@ func (s *RuntimeGRPCAuthServerSection) IsEnabled() bool {
 	return s.Enabled
 }
 
-// GetAddress returns the configured gRPC AuthService address or the loopback default.
+// GetAddress returns the configured gRPC authority address or the loopback default.
 func (s *RuntimeGRPCAuthServerSection) GetAddress() string {
 	if s == nil || s.Address == "" {
-		return defaultGRPCAuthAddress
+		return defaultGRPCAuthorityAddress
 	}
 
 	return s.Address
 }
 
-// GetTLS returns the gRPC AuthService TLS configuration.
+// GetTLS returns the gRPC authority TLS configuration.
 func (s *RuntimeGRPCAuthServerSection) GetTLS() *RuntimeGRPCTLSSection {
 	if s == nil {
 		return &RuntimeGRPCTLSSection{}
@@ -150,13 +150,13 @@ func (t *RuntimeGRPCTLSSection) RequiresClientCert() bool {
 	return t.RequireClientCert
 }
 
-// GetRuntimeGRPCAuthServer returns the configured gRPC AuthService listener settings.
+// GetRuntimeGRPCAuthServer returns the configured gRPC authority listener settings.
 func (f *FileSettings) GetRuntimeGRPCAuthServer() *RuntimeGRPCAuthServerSection {
 	if f == nil || f.Runtime == nil {
-		return &RuntimeGRPCAuthServerSection{Address: defaultGRPCAuthAddress}
+		return &RuntimeGRPCAuthServerSection{Address: defaultGRPCAuthorityAddress}
 	}
 
-	return &f.Runtime.Servers.GRPC.Auth
+	return &f.Runtime.Servers.GRPC.Authority
 }
 
 // GetAuthPolicy returns the configured auth policy block with target defaults.
