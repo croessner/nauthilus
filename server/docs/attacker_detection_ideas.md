@@ -17,7 +17,7 @@ Conclusion: we must assume no stable client fingerprint. Detection must be accou
   - server/bruteforce/bruteforce.go: Redis‑backed BucketManager with counters, password history, pre‑result markers, network derivation, repeating‑wrong‑password detection.
   - server/core/auth.go: End‑to‑end auth flow incl. post‑Lua action, header/protocol handling, caching.
 - Lua extensibility
-  - server/lua-plugins.d/hooks/ and .../features/: HTTP‑exposed custom hooks and feature plugins; ideal for global patterning and dynamic responses.
+  - server/lua-plugins.d/hooks/ and .../environment/: HTTP-exposed custom hooks and environment source plugins; ideal for global patterning and dynamic responses.
 - Documentation
   - server/docs/distributed_brute_force_detection.md: Detailed concept for distributed brute‑force detection via Lua/Redis (sliding windows, global and account‑centric metrics).
 

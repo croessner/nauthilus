@@ -41,6 +41,12 @@ type persistentCredentialJSON struct {
 	SignCount *uint32   `json:"signCount,omitempty"`
 }
 
+type persistentCredentialMetadataJSON struct {
+	Name      string    `json:"name,omitempty"`
+	LastUsed  time.Time `json:"lastUsed"`
+	SignCount *uint32   `json:"signCount,omitempty"`
+}
+
 // MarshalJSON ensures the legacy top-level signCount field is present for compatibility.
 func (p *PersistentCredential) MarshalJSON() ([]byte, error) {
 	if p == nil {
@@ -58,22 +64,27 @@ func (p *PersistentCredential) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// UnmarshalJSON maps a legacy top-level signCount field into Authenticator.SignCount when present.
+// UnmarshalJSON preserves Nauthilus metadata while letting webauthn.Credential run its own migrations.
 func (p *PersistentCredential) UnmarshalJSON(data []byte) error {
 	if p == nil {
 		return ErrNilPersistentCredential
 	}
 
-	var aux persistentCredentialJSON
-	if err := json.Unmarshal(data, &aux); err != nil {
+	var credential webauthn.Credential
+	if err := json.Unmarshal(data, &credential); err != nil {
 		return err
 	}
 
-	p.Credential = aux.Credential
-	p.Name = aux.Name
-	p.LastUsed = aux.LastUsed
-	if aux.SignCount != nil {
-		p.Authenticator.SignCount = *aux.SignCount
+	var metadata persistentCredentialMetadataJSON
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return err
+	}
+
+	p.Credential = credential
+	p.Name = metadata.Name
+	p.LastUsed = metadata.LastUsed
+	if metadata.SignCount != nil {
+		p.Authenticator.SignCount = *metadata.SignCount
 	}
 
 	p.RawJSON = string(data)

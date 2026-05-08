@@ -24,6 +24,11 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	configProblemKeyAuth = "auth"
+	configProblemKeyGRPC = "grpc"
+)
+
 func TestFormatDecodeErrors_UsesCanonicalConfigPaths(t *testing.T) {
 	t.Helper()
 
@@ -203,35 +208,67 @@ func TestHandleFile_RejectsRemovedRuntimeListenAndHTTPPaths(t *testing.T) {
 	assertContainsAll(t, got, []string{"runtime", "listen", "http"})
 }
 
-func TestHandleFile_RejectsEnabledGRPCAuthWithoutBackchannelAuth(t *testing.T) {
+func TestHandleFile_RejectsEnabledGRPCAuthorityWithoutBackchannelAuth(t *testing.T) {
 	t.Helper()
 
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
-	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+	setGRPCAuthorityValidationTestConfig("127.0.0.1:9444")
 
 	cfg := &FileSettings{}
 	err := cfg.HandleFile()
 	if err == nil {
-		t.Fatal("HandleFile() error = nil, want gRPC backchannel auth configuration error")
+		t.Fatal("HandleFile() error = nil, want gRPC authority backchannel auth configuration error")
 	}
 
 	got := err.Error()
 	assertContainsAll(t, got, []string{
-		"runtime.servers.grpc.auth.enabled",
+		"runtime.servers.grpc.authority.enabled",
 		"auth.backchannel.basic_auth.enabled=true",
 		"auth.backchannel.oidc_bearer.enabled=true",
 	})
 }
 
-func TestHandleFile_RejectsPlaintextGRPCAuthOnNonLoopback(t *testing.T) {
+func TestHandleFile_RejectsLegacyGRPCAuthPath(t *testing.T) {
 	t.Helper()
 
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
-	setGRPCAuthValidationTestConfig("0.0.0.0:9444")
+	setGRPCValidationStorageConfig()
+	setGRPCAuthBasicBackchannelTestConfig()
+	viper.Set("runtime", map[string]any{
+		"servers": map[string]any{
+			configProblemKeyGRPC: map[string]any{
+				configProblemKeyAuth: map[string]any{
+					"enabled": true,
+					"address": "127.0.0.1:9444",
+				},
+			},
+		},
+	})
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want legacy gRPC auth path rejection")
+	}
+
+	got := err.Error()
+	assertContainsAll(t, got, []string{
+		"runtime.servers.grpc",
+		configProblemKeyAuth,
+	})
+}
+
+func TestHandleFile_RejectsPlaintextGRPCAuthorityOnNonLoopback(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	setGRPCAuthorityValidationTestConfig("0.0.0.0:9444")
 	setGRPCAuthBasicBackchannelTestConfig()
 
 	cfg := &FileSettings{}
@@ -242,22 +279,22 @@ func TestHandleFile_RejectsPlaintextGRPCAuthOnNonLoopback(t *testing.T) {
 
 	got := err.Error()
 	assertContainsAll(t, got, []string{
-		"runtime.servers.grpc.auth.address",
+		"runtime.servers.grpc.authority.address",
 		"plaintext",
 		"loopback",
 	})
 }
 
-func TestHandleFile_AcceptsGRPCAuthMinTLSVersion(t *testing.T) {
+func TestHandleFile_AcceptsGRPCAuthorityMinTLSVersion(t *testing.T) {
 	t.Helper()
 
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
 	certFile, keyFile := writeTestTLSKeyPair(t)
-	setGRPCAuthValidationTestConfig("0.0.0.0:9444")
+	setGRPCAuthorityValidationTestConfig("0.0.0.0:9444")
 	setGRPCAuthBasicBackchannelTestConfig()
-	viper.Set("runtime.servers.grpc.auth.tls", map[string]any{
+	viper.Set("runtime.servers.grpc.authority.tls", map[string]any{
 		"enabled":         true,
 		"cert":            certFile,
 		"key":             keyFile,
@@ -346,14 +383,14 @@ func TestHandleFile_RejectsUnknownHTTPServerCipherSuites(t *testing.T) {
 	})
 }
 
-func TestHandleFile_RejectsGRPCAuthWithIncompleteBasicBackchannelAuth(t *testing.T) {
+func TestHandleFile_RejectsGRPCAuthorityWithIncompleteBasicBackchannelAuth(t *testing.T) {
 	t.Helper()
 
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
-	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
-	viper.Set("auth", map[string]any{
+	setGRPCAuthorityValidationTestConfig("127.0.0.1:9444")
+	viper.Set(configProblemKeyAuth, map[string]any{
 		"backchannel": map[string]any{
 			"basic_auth": map[string]any{
 				"enabled": true,
@@ -374,15 +411,15 @@ func TestHandleFile_RejectsGRPCAuthWithIncompleteBasicBackchannelAuth(t *testing
 	})
 }
 
-func TestHandleFile_RejectsGRPCAuthClientCertWithoutTLS(t *testing.T) {
+func TestHandleFile_RejectsGRPCAuthorityClientCertWithoutTLS(t *testing.T) {
 	t.Helper()
 
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
-	setGRPCAuthValidationTestConfig("127.0.0.1:9444")
+	setGRPCAuthorityValidationTestConfig("127.0.0.1:9444")
 	setGRPCAuthBasicBackchannelTestConfig()
-	viper.Set("runtime.servers.grpc.auth.tls.require_client_cert", true)
+	viper.Set("runtime.servers.grpc.authority.tls.require_client_cert", true)
 
 	cfg := &FileSettings{}
 	err := cfg.HandleFile()
@@ -392,8 +429,8 @@ func TestHandleFile_RejectsGRPCAuthClientCertWithoutTLS(t *testing.T) {
 
 	got := err.Error()
 	assertContainsAll(t, got, []string{
-		"runtime.servers.grpc.auth.tls.require_client_cert",
-		"runtime.servers.grpc.auth.tls.enabled",
+		"runtime.servers.grpc.authority.tls.require_client_cert",
+		"runtime.servers.grpc.authority.tls.enabled",
 	})
 }
 
@@ -417,7 +454,7 @@ func setValidationErrorTestConfig() {
 			},
 		},
 	})
-	viper.Set("auth", map[string]any{
+	viper.Set(configProblemKeyAuth, map[string]any{
 		"controls": map[string]any{
 			"lua": map[string]any{
 				"hooks": []any{
@@ -432,7 +469,21 @@ func setValidationErrorTestConfig() {
 	})
 }
 
-func setGRPCAuthValidationTestConfig(address string) {
+func setGRPCAuthorityValidationTestConfig(address string) {
+	setGRPCValidationStorageConfig()
+	viper.Set("runtime", map[string]any{
+		"servers": map[string]any{
+			configProblemKeyGRPC: map[string]any{
+				"authority": map[string]any{
+					"enabled": true,
+					"address": address,
+				},
+			},
+		},
+	})
+}
+
+func setGRPCValidationStorageConfig() {
 	viper.Set("storage", map[string]any{
 		"redis": map[string]any{
 			"primary": map[string]any{
@@ -442,20 +493,10 @@ func setGRPCAuthValidationTestConfig(address string) {
 			"encryption_secret": testRedisEncryptionSecret,
 		},
 	})
-	viper.Set("runtime", map[string]any{
-		"servers": map[string]any{
-			"grpc": map[string]any{
-				"auth": map[string]any{
-					"enabled": true,
-					"address": address,
-				},
-			},
-		},
-	})
 }
 
 func setGRPCAuthBasicBackchannelTestConfig() {
-	viper.Set("auth", map[string]any{
+	viper.Set(configProblemKeyAuth, map[string]any{
 		"backchannel": map[string]any{
 			"basic_auth": map[string]any{
 				"enabled":  true,

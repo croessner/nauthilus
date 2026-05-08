@@ -91,6 +91,8 @@ func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	L.PreloadModule(definitions.LuaModPsnet, connmgr.LoaderPsnetStateless())
 	L.PreloadModule(definitions.LuaModDNS, lualib.LoaderDNSStateless())
 	L.PreloadModule(definitions.LuaModBruteForce, bflib.LoaderBruteForceStateless())
+	L.PreloadModule(definitions.LuaModPolicy, lualib.LoaderPolicyStateless())
+	L.PreloadModule(definitions.LuaModI18N, lualib.LoaderI18NStateless())
 
 	return L
 }
@@ -199,8 +201,8 @@ func resetRequestEnv(L *lua.LState) {
 	}
 
 	// Remove transient globals (as outlined in the plan)
-	L.SetGlobal(definitions.LuaFnCallFilter, lua.LNil)
-	L.SetGlobal(definitions.LuaFnCallFeature, lua.LNil)
+	L.SetGlobal(definitions.LuaFnCallSubject, lua.LNil)
+	L.SetGlobal(definitions.LuaFnCallEnvironment, lua.LNil)
 	L.SetGlobal(definitions.LuaFnCallAction, lua.LNil)
 	L.SetGlobal(definitions.LuaDefaultTable, lua.LNil)
 
@@ -247,7 +249,7 @@ func ensureDynamicLoaderStub(L *lua.LState) {
 }
 
 // BindModuleIntoReq exposes the module-binding helper for subsystems that need
-// to bind request-scoped modules (e.g., backend/action/filter/feature) without
+// to bind request-scoped modules (e.g., backend/action/subject/environment) without
 // directly mutating globals. It ensures the module is visible both via direct
 // access from the reqEnv and via require() through package.loaded.
 func BindModuleIntoReq(L *lua.LState, name string, mod *lua.LTable) {

@@ -69,7 +69,7 @@ func TestDefaultActionDispatcher_SkipsCanceledRequest(t *testing.T) {
 	auth.Request.Service = definitions.ServNginx
 	auth.Request.Username = "user@example.com"
 
-	DefaultActionDispatcher{}.Dispatch(auth.View(), definitions.FeatureLua, definitions.LuaActionLua)
+	DefaultActionDispatcher{}.Dispatch(auth.View(), definitions.ControlLua, definitions.LuaActionLua)
 
 	select {
 	case act := <-action.RequestChan:

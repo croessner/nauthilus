@@ -91,6 +91,30 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 		return 1
 	})
 
+	L.PreloadModule("nauthilus_context", func(L *lua.LState) int {
+		state := map[string]lua.LValue{}
+		mod := L.NewTable()
+		mod.RawSetString("context_get", L.NewFunction(func(L *lua.LState) int {
+			if value, ok := state[L.CheckString(1)]; ok {
+				L.Push(value)
+			} else {
+				L.Push(lua.LNil)
+			}
+
+			return 1
+		}))
+		mod.RawSetString("context_set", L.NewFunction(func(L *lua.LState) int {
+			state[L.CheckString(1)] = L.CheckAny(2)
+
+			return 0
+		}))
+		L.Push(mod)
+
+		return 1
+	})
+
+	L.PreloadModule("nauthilus_policy", LoaderPolicyStatelessForTest())
+
 	L.PreloadModule("nauthilus_opentelemetry", func(L *lua.LState) int {
 		mod := L.NewTable()
 		mod.RawSetString("is_enabled", L.NewFunction(func(L *lua.LState) int {
@@ -111,15 +135,17 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 		return 1
 	})
 
+	addLuaPluginSharePath(t, L)
+
 	builtin := L.NewTable()
-	builtin.RawSetString("FILTER_ACCEPT", lua.LNumber(0))
-	builtin.RawSetString("FILTER_RESULT_OK", lua.LNumber(0))
+	builtin.RawSetString("SUBJECT_ACCEPT", lua.LBool(false))
+	builtin.RawSetString("SUBJECT_RESULT_OK", lua.LNumber(0))
 	builtin.RawSetString("custom_log_add", L.NewFunction(func(L *lua.LState) int {
 		return 0
 	}))
 	L.SetGlobal("nauthilus_builtin", builtin)
 
-	scriptPath := filepath.Join("..", "lua-plugins.d", "filters", "account_centric_monitoring.lua")
+	scriptPath := filepath.Join("..", "lua-plugins.d", "subject", "account_centric_monitoring.lua")
 	if err := L.DoFile(scriptPath); err != nil {
 		t.Fatalf("failed to load script: %v", err)
 	}
@@ -133,11 +159,11 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	req.RawSetString("protocol", lua.LString("imap"))
 
 	if err := L.CallByParam(lua.P{
-		Fn:      L.GetGlobal("nauthilus_call_filter"),
+		Fn:      L.GetGlobal("nauthilus_call_subject"),
 		NRet:    2,
 		Protect: true,
 	}, req); err != nil {
-		t.Fatalf("failed to call filter: %v", err)
+		t.Fatalf("failed to call subject source: %v", err)
 	}
 
 	keysVal := L.GetGlobal("last_keys")
@@ -163,4 +189,29 @@ func TestAccountCentricMonitoringKeysIncludeProtocol(t *testing.T) {
 	if len(missing) > 0 {
 		t.Fatalf("keys missing protocol segment: %v", missing)
 	}
+}
+
+func LoaderPolicyStatelessForTest() lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.NewTable()
+		mod.RawSetString("emit_attribute", L.NewFunction(func(_ *lua.LState) int {
+			return 0
+		}))
+		L.Push(mod)
+
+		return 1
+	}
+}
+
+func addLuaPluginSharePath(t *testing.T, L *lua.LState) {
+	t.Helper()
+
+	pkg, ok := L.GetGlobal("package").(*lua.LTable)
+	if !ok {
+		t.Fatal("Lua package table missing")
+	}
+
+	current := L.GetField(pkg, "path").String()
+	pattern := filepath.ToSlash(filepath.Join("..", "lua-plugins.d", "share", "?.lua"))
+	L.SetField(pkg, "path", lua.LString(pattern+";"+current))
 }

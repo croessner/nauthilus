@@ -279,7 +279,7 @@ func checkSMTP(logger *slog.Logger, conn net.Conn, protocol string, username str
 		return err
 	}
 
-	// We asume submission endpoints here! Not using postfix-postscreen multi-line features!
+	// We assume submission endpoints here! Not using postfix-postscreen multi-line replies.
 	if greeting[:4] != "220 " {
 		return fmt.Errorf("S/LMTP greeting failed, response: %s", greeting)
 	}

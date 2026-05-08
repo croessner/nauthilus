@@ -48,7 +48,10 @@ func Fetch() (metadata *Metadata, err error) {
 
 // Metadata represents a FIDO Metadata Service BLOB in either a fully parsed or partially parsed state.
 type Metadata struct {
-	Parsed   Parsed
+	// Parsed contains the successfully parsed BLOB payload entries.
+	Parsed Parsed
+
+	// Unparsed contains entries that failed to parse, along with their errors.
 	Unparsed []EntryError
 }
 
@@ -90,10 +93,16 @@ type Parsed struct {
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-service-v3.1.1-rd-20251016.html#sctn-mds-blob-payload
 type PayloadJSON struct {
+	// LegalHeader is an indication of the acceptance of the relevant legal agreement for using the MDS.
 	LegalHeader string `json:"legalHeader"`
-	Number      int    `json:"no"`
-	NextUpdate  string `json:"nextUpdate"`
 
+	// Number is the serial number of this Metadata BLOB Payload.
+	Number int `json:"no"`
+
+	// NextUpdate is an ISO-8601 formatted date when the next update will be provided at latest.
+	NextUpdate string `json:"nextUpdate"`
+
+	// Entries is a list of zero or more MetadataBLOBPayloadEntry objects.
 	Entries []EntryJSON `json:"entries"`
 }
 
@@ -165,17 +174,32 @@ type Entry struct {
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-service-v3.1.1-rd-20251016.html#sctn-mds-blob-pe
 type EntryJSON struct {
-	Aaid                                 string   `json:"aaid"`
-	AaGUID                               string   `json:"aaguid"`
+	// Aaid is the AAID of the authenticator. Set if the authenticator implements FIDO UAF.
+	Aaid string `json:"aaid"`
+
+	// AaGUID is the Authenticator Attestation GUID. Set if the authenticator implements FIDO2.
+	AaGUID string `json:"aaguid"`
+
+	// AttestationCertificateKeyIdentifiers is a list of attestation certificate public key identifiers (hex).
 	AttestationCertificateKeyIdentifiers []string `json:"attestationCertificateKeyIdentifiers"`
 
-	MetadataStatement      StatementJSON               `json:"metadataStatement"`
-	BiometricStatusReports []BiometricStatusReportJSON `json:"biometricStatusReports"`
-	StatusReports          []StatusReportJSON          `json:"statusReports"`
+	// MetadataStatement is the metadataStatement JSON object as defined in FIDOMetadataStatement.
+	MetadataStatement StatementJSON `json:"metadataStatement"`
 
+	// BiometricStatusReports is the biometric certification status of one or more biometric components.
+	BiometricStatusReports []BiometricStatusReportJSON `json:"biometricStatusReports"`
+
+	// StatusReports is an array of status reports applicable to this authenticator.
+	StatusReports []StatusReportJSON `json:"statusReports"`
+
+	// TimeOfLastStatusChange is an ISO-8601 formatted date since when the status report array was set.
 	TimeOfLastStatusChange string `json:"timeOfLastStatusChange"`
-	RogueListURL           string `json:"rogueListURL"`
-	RogueListHash          string `json:"rogueListHash"`
+
+	// RogueListURL is a URL of a list of rogue (i.e. untrusted) individual authenticators.
+	RogueListURL string `json:"rogueListURL"`
+
+	// RogueListHash is the hash value computed over the Base64url encoding of the rogueList at rogueListURL.
+	RogueListHash string `json:"rogueListHash"`
 }
 
 func (j EntryJSON) Parse() (entry Entry, err error) {
@@ -266,7 +290,7 @@ type Statement struct {
 	// hex string.
 	AttestationCertificateKeyIdentifiers []string
 
-	// FriendlyNames contains friendly names (e.g., public trade name) of the authenticator in multiple languages.
+	// FriendlyNames contains friendly names (i.e., public trade name) of the authenticator in multiple languages.
 	FriendlyNames map[string]string
 
 	// Description is a human-readable, short description of the authenticator, in English.
@@ -314,7 +338,7 @@ type Statement struct {
 
 	// IsFreshUserVerificationRequired is set to true or it is omitted, if Uauth key usage always requires a fresh user
 	// verification. This entry is set to false, if the Uauth key can be used without requiring a fresh user
-	// verification, e.g. without any additional user interaction, if the user was verified a (potentially configurable)
+	// verification, i.e. without any additional user interaction, if the user was verified a (potentially configurable)
 	// caching time ago.
 	IsFreshUserVerificationRequired bool
 
@@ -354,24 +378,24 @@ type Statement struct {
 	// if attestationType includes ATTESTATION_ECDAA.
 	EcdaaTrustAnchors []EcdaaTrustAnchor
 
-	// Icon is a 'data:' url [RFC2397] encoded [PNG] or [SVG11] (light mode) icon for the Authenticator (e.g., depicting
+	// Icon is a 'data:' url [RFC2397] encoded [PNG] or [SVG11] (light mode) icon for the Authenticator (i.e., depicting
 	// the security key). This icon is intended to be shown to users by RPs. Use of [SVG11] format is mandatory if any
 	// of the iconDark, providerLogoLight and/or providerLogoDark is used in addition to icon. Use of [SVG11] is
 	// recommended if only icon is used. The icon is more specific than the provider logo and should be shown if
 	// present.
 	Icon *url.URL
 
-	// IconDark is a 'data:' url [RFC2397] encoded [SVG11] dark mode icon for the Authenticator (e.g., depicting the
+	// IconDark is a 'data:' url [RFC2397] encoded [SVG11] dark mode icon for the Authenticator (i.e., depicting the
 	// security key). This icon is intended to be shown to users by RPs. The icon is more specific than the provider
 	// logo and should be shown if present.
 	IconDark *url.URL
 
-	// ProviderLogoLight is a 'data:' url [RFC2397] encoded [SVG11] light mode icon for the provider (e.g., logomark of
+	// ProviderLogoLight is a 'data:' url [RFC2397] encoded [SVG11] light mode icon for the provider (i.e., logomark of
 	// the passkey provider). The SVG MUST meet all of the requirements defined in § 4.1 SVG requirements. This icon
 	// is intended to be shown to users by RPs.
 	ProviderLogoLight *url.URL
 
-	// ProviderLogoDark is a 'data:' url [RFC2397] encoded [SVG11] dark mode icon for the provider (e.g., logomark of
+	// ProviderLogoDark is a 'data:' url [RFC2397] encoded [SVG11] dark mode icon for the provider (i.e., logomark of
 	// the passkey provider). The SVG MUST meet all of the requirements defined in § 4.1 SVG requirements. This icon
 	// is intended to be shown to users by RPs.
 	ProviderLogoDark *url.URL
@@ -653,11 +677,11 @@ type BiometricStatusReport struct {
 	CertificateNumber string
 
 	// CertificationPolicyVersion is the version of the Biometric Certification Policy the implementation is Certified
-	// to, e.g. "1.0.0".
+	// to, i.e. "1.0.0".
 	CertificationPolicyVersion string
 
 	// CertificationRequirementsVersion is the version of the Biometric Requirements [FIDOBiometricsRequirements] the
-	// implementation is certified to, e.g. "1.0.0".
+	// implementation is certified to, i.e. "1.0.0".
 	CertificationRequirementsVersion string
 }
 
@@ -680,10 +704,10 @@ type BiometricStatusReportJSON struct {
 	// CertificateNumber is the unique identifier for the issued Biometric Certification.
 	CertificateNumber string `json:"certificateNumber"`
 
-	// CertificationPolicyVersion is the version of the Biometric Certification Policy, e.g. "1.0.0".
+	// CertificationPolicyVersion is the version of the Biometric Certification Policy, i.e. "1.0.0".
 	CertificationPolicyVersion string `json:"certificationPolicyVersion"`
 
-	// CertificationRequirementsVersion is the version of the Biometric Requirements, e.g. "1.0.0".
+	// CertificationRequirementsVersion is the version of the Biometric Requirements, i.e. "1.0.0".
 	CertificationRequirementsVersion string `json:"certificationRequirementsVersion"`
 }
 
@@ -740,22 +764,22 @@ type StatusReport struct {
 	CertificateNumber string
 
 	// CertificationPolicyVersion is the version of the Authenticator Certification Policy the implementation is
-	// Certified to, e.g. "1.0.0".
+	// Certified to, i.e. "1.0.0".
 	CertificationPolicyVersion string
 
 	// CertificationProfiles is a list of certification profile strings. Each entry represents a supported
-	// certification profile, e.g. "consumer" or "enterprise".
+	// certification profile, i.e. "consumer" or "enterprise".
 	CertificationProfiles []string
 
 	// CertificationRequirementsVersion is the Document Version of the Authenticator Security Requirements (DV)
-	// [FIDOAuthenticatorSecurityRequirements] the implementation is certified to, e.g. "1.2.0".
+	// [FIDOAuthenticatorSecurityRequirements] the implementation is certified to, i.e. "1.2.0".
 	CertificationRequirementsVersion string
 
 	// SunsetDate is an ISO-8601 formatted date since when the status will expire, if applicable. If no date is given,
 	// the status is assumed to not have a scheduled expiry.
 	SunsetDate *time.Time
 
-	// FIPSRevision is the revision number of the FIPS 140 specification, e.g. "3" in the case of FIPS 140-3. This
+	// FIPSRevision is the revision number of the FIPS 140 specification, i.e. "3" in the case of FIPS 140-3. This
 	// entry MUST be present if and only if the status entry is one of FIPS140_CERTIFIED_L*.
 	FIPSRevision uint32
 
@@ -793,19 +817,19 @@ type StatusReportJSON struct {
 	// CertificateNumber is the unique identifier for the issued Certification.
 	CertificateNumber string `json:"certificateNumber"`
 
-	// CertificationPolicyVersion is the version of the Authenticator Certification Policy, e.g. "1.0.0".
+	// CertificationPolicyVersion is the version of the Authenticator Certification Policy, i.e. "1.0.0".
 	CertificationPolicyVersion string `json:"certificationPolicyVersion"`
 
-	// CertificationProfiles is a list of supported certification profiles, e.g. "consumer" or "enterprise".
+	// CertificationProfiles is a list of supported certification profiles, i.e. "consumer" or "enterprise".
 	CertificationProfiles []string `json:"certificationProfiles"`
 
-	// CertificationRequirementsVersion is the Document Version of the Authenticator Security Requirements, e.g. "1.2.0".
+	// CertificationRequirementsVersion is the Document Version of the Authenticator Security Requirements, i.e. "1.2.0".
 	CertificationRequirementsVersion string `json:"certificationRequirementsVersion"`
 
 	// SunsetDate is an ISO-8601 formatted date when the status will expire.
 	SunsetDate string `json:"sunsetDate"`
 
-	// FIPSRevision is the revision number of the FIPS 140 specification, e.g. "3" for FIPS 140-3.
+	// FIPSRevision is the revision number of the FIPS 140 specification, i.e. "3" for FIPS 140-3.
 	FIPSRevision uint32 `json:"fipsRevision"`
 
 	// FIPSPhysicalSecurityLevel is the physical security level of the FIPS certification.
@@ -873,9 +897,9 @@ func (j StatusReportJSON) Parse() (report StatusReport, err error) {
 	}, nil
 }
 
-// RogueListEntry is a structure representing the RogueListEntry MDS3.1 dictionary.
+// RogueListEntry is a structure representing the RogueListEntry dictionary.
 //
-// See: https://fidoalliance.org/specs/mds/fido-metadata-service-v3.1-ps-20250521.html#sctn-rogue-list-entry
+// See: https://fidoalliance.org/specs/mds/fido-metadata-service-v3.1.1-rd-20251016.html#sctn-rogue-list-entry
 type RogueListEntry struct {
 	// Sk is the base64url encoding of the rogue authenticator's secret key.
 	Sk string `json:"sk"`
@@ -884,15 +908,15 @@ type RogueListEntry struct {
 	Date string `json:"date"`
 }
 
-// CodeAccuracyDescriptor is a structure representing the CodeAccuracyDescriptor MDS3.1 dictionary.
+// CodeAccuracyDescriptor is a structure representing the CodeAccuracyDescriptor dictionary.
 // It describes the relevant accuracy/complexity aspects of passcode user verification methods.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-cad
 type CodeAccuracyDescriptor struct {
-	// Base is the numeric system base (radix) of the code, e.g. 10 in the case of decimal digits.
+	// Base is the numeric system base (radix) of the code, i.e. 10 in the case of decimal digits.
 	Base uint16 `json:"base"`
 
-	// MinLength is the minimum number of digits of the given base required for that code, e.g. 4 in the case of 4
+	// MinLength is the minimum number of digits of the given base required for that code, i.e. 4 in the case of 4
 	// digits.
 	MinLength uint16 `json:"minLength"`
 
@@ -900,14 +924,14 @@ type CodeAccuracyDescriptor struct {
 	// some time). 0 means it will never block.
 	MaxRetries uint16 `json:"maxRetries"`
 
-	// BlockSlowdown is the enforced minimum number of seconds wait time after blocking (e.g. due to forced reboot or
+	// BlockSlowdown is the enforced minimum number of seconds wait time after blocking (i.e. due to forced reboot or
 	// similar). 0 means this user verification method will be blocked, either permanently, or until an alternative user
 	// verification method method succeeded. All alternative user verification methods MUST be specified appropriately
 	// in the Metadata in userVerificationDetails.
 	BlockSlowdown uint16 `json:"blockSlowdown"`
 }
 
-// BiometricAccuracyDescriptor is a structure representing the BiometricAccuracyDescriptor MDS3.1 dictionary.
+// BiometricAccuracyDescriptor is a structure representing the BiometricAccuracyDescriptor dictionary.
 // It describes relevant accuracy/complexity aspects in the case of a biometric user verification method.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-bad
@@ -934,14 +958,14 @@ type BiometricAccuracyDescriptor struct {
 	// some time). 0 means it will never block.
 	MaxRetries uint16 `json:"maxRetries"`
 
-	// BlockSlowdown is the enforced minimum number of seconds wait time after blocking (e.g. due to forced reboot or
+	// BlockSlowdown is the enforced minimum number of seconds wait time after blocking (i.e. due to forced reboot or
 	// similar).0 means that this user verification method will be blocked either permanently or until an alternative
 	// user verification method succeeded. All alternative user verification methods MUST be specified appropriately in
 	// the metadata in userVerificationDetails.
 	BlockSlowdown uint16 `json:"blockSlowdown"`
 }
 
-// PatternAccuracyDescriptor is a structure representing the PatternAccuracyDescriptor MDS3.1 dictionary.
+// PatternAccuracyDescriptor is a structure representing the PatternAccuracyDescriptor dictionary.
 // It describes relevant accuracy/complexity aspects in the case that a pattern is used as the user verification method.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-pad
@@ -961,7 +985,7 @@ type PatternAccuracyDescriptor struct {
 	BlockSlowdown uint16 `json:"blockSlowdown"`
 }
 
-// VerificationMethodDescriptor is a structure representing the VerificationMethodDescriptor MDS3.1 dictionary.
+// VerificationMethodDescriptor is a structure representing the VerificationMethodDescriptor dictionary.
 // It describes a descriptor for a specific base user verification method as implemented by the authenticator.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-vmd
@@ -981,7 +1005,7 @@ type VerificationMethodDescriptor struct {
 	PaDesc PatternAccuracyDescriptor `json:"paDesc"`
 }
 
-// RGBPaletteEntry is a structure representing the RGBPaletteEntry MDS3.1 dictionary.
+// RGBPaletteEntry is a structure representing the RGBPaletteEntry dictionary.
 // It describes an RGB three-sample tuple palette entry.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-rgbpe
@@ -1027,7 +1051,7 @@ type DisplayPNGCharacteristicsDescriptor struct {
 	Plte []RGBPaletteEntry `json:"plte"`
 }
 
-// EcdaaTrustAnchor is a structure representing the EcdaaTrustAnchor MDS3.1 dictionary.
+// EcdaaTrustAnchor is a structure representing the EcdaaTrustAnchor dictionary.
 // In the case of ECDAA attestation, the ECDAA-Issuer's trust anchor MUST be specified in this field.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-ecdaata
@@ -1052,7 +1076,7 @@ type EcdaaTrustAnchor struct {
 	G1Curve string `json:"G1Curve"`
 }
 
-// ExtensionDescriptor is a structure representing the ExtensionDescriptor MDS3.1 dictionary.
+// ExtensionDescriptor is a structure representing the ExtensionDescriptor dictionary.
 // This descriptor contains an extension supported by the authenticator.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-ed
@@ -1084,7 +1108,7 @@ type Version struct {
 	Minor uint16 `json:"minor"`
 }
 
-// AuthenticatorGetInfo is a structure representing the AuthenticatorGetInfo MDS3.1 dictionary.
+// AuthenticatorGetInfo is a structure representing the AuthenticatorGetInfo dictionary.
 //
 // See: https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1-ps-20250521.html#sctn-type-agid
 type AuthenticatorGetInfo struct {
@@ -1266,7 +1290,7 @@ func (j AuthenticatorGetInfoJSON) Parse() (info AuthenticatorGetInfo, err error)
 
 // MDSGetEndpointsRequest is the request sent to the conformance metadata getEndpoints endpoint.
 type MDSGetEndpointsRequest struct {
-	// Endpoint is the URL of the local server endpoint, e.g. https://webauthn.io/
+	// Endpoint is the URL of the local server endpoint, i.e. https://webauthn.io/
 	Endpoint string `json:"endpoint"`
 }
 
@@ -1288,7 +1312,11 @@ func DefaultUndesiredAuthenticatorStatuses() []AuthenticatorStatus {
 	return undesired
 }
 
+// EntryError represents an [EntryJSON] that failed to parse, along with the error that occurred.
 type EntryError struct {
+	// Error is the parsing error that occurred.
 	Error error
+
+	// EntryJSON is the raw JSON entry that failed to parse.
 	EntryJSON
 }

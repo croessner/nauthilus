@@ -41,3 +41,15 @@ func TestLuaAction_String(t *testing.T) {
 		})
 	}
 }
+
+func TestDbgModuleMappingContainsPolicy(t *testing.T) {
+	mapping := NewDbgModuleMapping()
+
+	if got := mapping.StrToMod[DbgPolicyName]; got != DbgPolicy {
+		t.Fatalf("StrToMod[%q] = %d, want %d", DbgPolicyName, got, DbgPolicy)
+	}
+
+	if got := mapping.ModToStr[DbgPolicy]; got != DbgPolicyName {
+		t.Fatalf("ModToStr[%d] = %q, want %q", DbgPolicy, got, DbgPolicyName)
+	}
+}

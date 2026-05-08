@@ -41,6 +41,17 @@ type Problem struct {
 	Message string      `mapstructure:"-"`
 }
 
+// NewValidationProblem returns a formatted single validation problem.
+func NewValidationProblem(path string, message string) error {
+	return formatConfigProblems([]Problem{
+		{
+			Kind:    configProblemValidation,
+			Path:    path,
+			Message: message,
+		},
+	})
+}
+
 func formatConfigProblems(problems []Problem) error {
 	if len(problems) == 0 {
 		return nil
@@ -143,8 +154,10 @@ func collectDecodeErrors(err error) []*mapstructure.DecodeError {
 		return nil
 	}
 
-	var joined interface{ Unwrap() []error }
-	if errors.As(err, &joined) {
+	if joined, ok := errors.AsType[interface {
+		error
+		Unwrap() []error
+	}](err); ok {
 		problems := make([]*mapstructure.DecodeError, 0)
 		for _, nested := range joined.Unwrap() {
 			problems = append(problems, collectDecodeErrors(nested)...)
@@ -153,8 +166,7 @@ func collectDecodeErrors(err error) []*mapstructure.DecodeError {
 		return problems
 	}
 
-	var decodeErr *mapstructure.DecodeError
-	if errors.As(err, &decodeErr) {
+	if decodeErr, ok := errors.AsType[*mapstructure.DecodeError](err); ok {
 		return []*mapstructure.DecodeError{decodeErr}
 	}
 

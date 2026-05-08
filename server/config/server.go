@@ -57,7 +57,7 @@ type ServerSection struct {
 	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
 	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`
-	Features                  []*Feature               `mapstructure:"-" validate:"omitempty,dive"`
+	RuntimeModules            []*RuntimeModule         `mapstructure:"-" validate:"omitempty,dive"`
 	Controls                  []*Control               `mapstructure:"controls" validate:"omitempty,dive"`
 	Services                  []*Service               `mapstructure:"services" validate:"omitempty,dive"`
 	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols" validate:"omitempty,dive"`
@@ -74,7 +74,7 @@ type ServerSection struct {
 	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
 	KeepAlive                 KeepAlive                `mapstructure:"keep_alive" validate:"omitempty"`
 	SecurityTxt               SecurityTxt              `mapstructure:"security_txt" validate:"omitempty"`
-	// Middlewares holds feature switches to enable/disable individual HTTP middlewares.
+	// Middlewares holds runtimeModule switches to enable/disable individual HTTP middlewares.
 	// By default, all middlewares are considered enabled if not explicitly disabled in the config file.
 	Middlewares Middlewares `mapstructure:"middlewares" validate:"omitempty"`
 	Timeouts    Timeouts    `mapstructure:"timeouts" validate:"omitempty"`
@@ -691,36 +691,35 @@ func (s *ServerSection) GetBackends() []*Backend {
 	return s.Backends
 }
 
-// GetFeatures retrieves the list of features configured in the ServerSection instance.
+// GetRuntimeModules retrieves the list of runtimeModules configured in the ServerSection instance.
 // Returns an empty slice if the ServerSection is nil.
-func (s *ServerSection) GetFeatures() []*Feature {
+func (s *ServerSection) GetRuntimeModules() []*RuntimeModule {
 	if s == nil {
-		return []*Feature{}
+		return []*RuntimeModule{}
 	}
 
-	return s.Features
+	return s.RuntimeModules
 }
 
-func (s *ServerSection) hasConfiguredFeatures() bool {
+func (s *ServerSection) hasConfiguredRuntimeModules() bool {
 	return s != nil && (s.Controls != nil || s.Services != nil)
 }
 
-func (s *ServerSection) normalizeConfiguredFeatures() {
+func (s *ServerSection) normalizeConfiguredRuntimeModules() {
 	if s == nil {
 		return
 	}
 
-	if s.hasConfiguredFeatures() {
-		features := make([]*Feature, 0, len(s.Controls)+len(s.Services))
+	if s.hasConfiguredRuntimeModules() {
+		runtimeModules := make([]*RuntimeModule, 0, len(s.Controls)+len(s.Services))
 
 		for _, control := range s.Controls {
 			if control == nil {
 				continue
 			}
 
-			features = append(features, &Feature{
-				name:       control.Get(),
-				whenNoAuth: control.GetWhenNoAuth(),
+			runtimeModules = append(runtimeModules, &RuntimeModule{
+				name: control.Get(),
 			})
 		}
 
@@ -729,10 +728,10 @@ func (s *ServerSection) normalizeConfiguredFeatures() {
 				continue
 			}
 
-			features = append(features, &Feature{name: service.Get()})
+			runtimeModules = append(runtimeModules, &RuntimeModule{name: service.Get()})
 		}
 
-		s.Features = features
+		s.RuntimeModules = runtimeModules
 	}
 }
 
@@ -1530,7 +1529,7 @@ type Redis struct {
 	MaintNotificationsEnabled bool `mapstructure:"maint_notifications_enabled"`
 
 	// Protocol sets the Redis protocol version (2 or 3). If not set (0), it defaults to 2
-	// unless features requiring RESP3 (like client-side tracking or maintenance notifications)
+	// unless runtimeModules requiring RESP3 (like client-side tracking or maintenance notifications)
 	// are enabled. Forcing 2 can resolve parsing issues with asynchronous push messages in pipelines.
 	Protocol int `mapstructure:"protocol" validate:"omitempty,oneof=0 2 3"`
 }
@@ -2724,7 +2723,7 @@ func hostnameRFC1123WithOptionalTrailingDot(fl validator.FieldLevel) bool {
 // PrometheusTimer is a configuration structure for enabling and setting labels for Prometheus metrics timers.
 type PrometheusTimer struct {
 	Enabled bool     `mapstructure:"enabled"`
-	Labels  []string `mapstructure:"labels" validate:"omitempty,dive,oneof=action account backend brute_force feature filter post_action request store_totp dns auth"`
+	Labels  []string `mapstructure:"labels" validate:"omitempty,dive,oneof=action account backend brute_force environment subject post_action request store_totp dns auth"`
 }
 
 // IsEnabled indicates whether the Prometheus timer is enabled based on the Enabled property of PrometheusTimer.

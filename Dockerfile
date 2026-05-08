@@ -66,6 +66,7 @@ COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
 
 ENV ZONEINFO=/zoneinfo.zip
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV TZ=UTC
 ENV TERM=xterm-256color
 
 EXPOSE 8080

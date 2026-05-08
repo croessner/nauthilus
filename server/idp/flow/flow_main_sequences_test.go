@@ -185,8 +185,7 @@ func TestMainFlowSequences_InvalidOrderAndDoubleSubmit(t *testing.T) {
 		t.Fatal("expected transition error")
 	}
 
-	var transitionErr TransitionError
-	if !errors.As(err, &transitionErr) {
+	if _, ok := errors.AsType[TransitionError](err); !ok {
 		t.Fatalf("expected TransitionError, got %v", err)
 	}
 

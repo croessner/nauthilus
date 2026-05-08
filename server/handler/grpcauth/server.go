@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
@@ -57,15 +58,16 @@ const authorizationMetadataKey = "authorization"
 
 // ServerDeps contains the dependencies required by the gRPC AuthService server.
 type ServerDeps struct {
-	Cfg           config.File
-	Env           config.Environment
-	Logger        *slog.Logger
-	Redis         rediscli.Client
-	AccountCache  *accountcache.Manager
-	Channel       backend.Channel
-	AuthService   core.AuthApplicationService
-	OIDCValidator oidcbearer.TokenValidator
-	Listener      net.Listener
+	Cfg             config.File
+	Env             config.Environment
+	Logger          *slog.Logger
+	Redis           rediscli.Client
+	AccountCache    *accountcache.Manager
+	Channel         backend.Channel
+	AuthService     core.AuthApplicationService
+	MessageResolver localization.MessageResolver
+	OIDCValidator   oidcbearer.TokenValidator
+	Listener        net.Listener
 }
 
 type grpcAuthServerConfigProvider interface {
@@ -94,7 +96,7 @@ func StartServer(ctx context.Context, deps ServerDeps) (<-chan struct{}, error) 
 		var err error
 		listener, err = net.Listen("tcp", grpcAuthConfig.GetAddress())
 		if err != nil {
-			return nil, fmt.Errorf("listen on runtime.servers.grpc.auth.address %q: %w", grpcAuthConfig.GetAddress(), err)
+			return nil, fmt.Errorf("listen on runtime.servers.grpc.authority.address %q: %w", grpcAuthConfig.GetAddress(), err)
 		}
 	}
 
@@ -109,7 +111,7 @@ func StartServer(ctx context.Context, deps ServerDeps) (<-chan struct{}, error) 
 	go serveGRPCAuth(ctx, deps.effectiveLogger(), server, listener, done)
 
 	_ = level.Info(deps.effectiveLogger()).Log(
-		definitions.LogKeyMsg, "Starting Nauthilus gRPC AuthService server",
+		definitions.LogKeyMsg, "Starting Nauthilus gRPC authority server",
 		"address", grpcAuthConfig.GetAddress(),
 		"tls", grpcAuthConfig.GetTLS().IsEnabled(),
 	)
@@ -138,7 +140,7 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 	}
 
 	server := grpc.NewServer(options...)
-	authv1.RegisterAuthServiceServer(server, New(deps.authApplicationService()))
+	authv1.RegisterAuthServiceServer(server, NewWithResolver(deps.authApplicationService(), deps.MessageResolver))
 
 	return server, nil
 }
@@ -180,7 +182,7 @@ func serveGRPCAuth(
 
 	if err := server.Serve(listener); err != nil && !stderrors.Is(err, grpc.ErrServerStopped) {
 		_ = level.Error(logger).Log(
-			definitions.LogKeyMsg, "gRPC AuthService server failed",
+			definitions.LogKeyMsg, "gRPC authority server failed",
 			definitions.LogKeyError, err,
 		)
 	}
@@ -255,19 +257,19 @@ func buildServerTLSConfig(tlsSection *config.RuntimeGRPCTLSSection) (*tls.Config
 
 	cert, err := tls.LoadX509KeyPair(tlsSection.GetCert(), tlsSection.GetKey())
 	if err != nil {
-		return nil, fmt.Errorf("load runtime.servers.grpc.auth.tls certificate: %w", err)
+		return nil, fmt.Errorf("load runtime.servers.grpc.authority.tls certificate: %w", err)
 	}
 
 	var clientCAs *x509.CertPool
 	if tlsSection.GetClientCA() != "" {
 		pem, err := os.ReadFile(tlsSection.GetClientCA())
 		if err != nil {
-			return nil, fmt.Errorf("read runtime.servers.grpc.auth.tls.client_ca: %w", err)
+			return nil, fmt.Errorf("read runtime.servers.grpc.authority.tls.client_ca: %w", err)
 		}
 
 		clientCAs = x509.NewCertPool()
 		if !clientCAs.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("parse runtime.servers.grpc.auth.tls.client_ca: invalid PEM data")
+			return nil, fmt.Errorf("parse runtime.servers.grpc.authority.tls.client_ca: invalid PEM data")
 		}
 	}
 
@@ -673,13 +675,13 @@ func isListAccountsMethod(fullMethod string) bool {
 func grpcSpanName(fullMethod string) string {
 	switch fullMethod {
 	case authv1.AuthService_Authenticate_FullMethodName:
-		return "grpc.auth_authenticate"
+		return "grpc.authority_authenticate"
 	case authv1.AuthService_LookupIdentity_FullMethodName:
-		return "grpc.auth_lookup_identity"
+		return "grpc.authority_lookup_identity"
 	case authv1.AuthService_ListAccounts_FullMethodName:
-		return "grpc.auth_list_accounts"
+		return "grpc.authority_list_accounts"
 	default:
-		return "grpc.auth_unknown"
+		return "grpc.authority_unknown"
 	}
 }
 

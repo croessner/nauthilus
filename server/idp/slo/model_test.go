@@ -91,8 +91,7 @@ func TestSLOTransactionTransitionInvalid(t *testing.T) {
 		t.Fatal("expected invalid transition error")
 	}
 
-	var transitionErr TransitionError
-	if !errors.As(err, &transitionErr) {
+	if _, ok := errors.AsType[TransitionError](err); !ok {
 		t.Fatalf("expected TransitionError, got %T (%v)", err, err)
 	}
 }

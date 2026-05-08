@@ -45,29 +45,29 @@ func (m *SoftAllowManager) SoftWhitelistSet(L *lua.LState) int {
 
 	username := stack.CheckString(1)
 	network := stack.CheckString(2)
-	feature := stack.CheckString(3)
+	environmentName := stack.CheckString(3)
 
-	switch feature {
-	case definitions.FeatureBruteForce:
+	switch environmentName {
+	case definitions.ControlBruteForce:
 		if !m.Cfg.GetBruteForce().HasSoftWhitelist() {
 			m.Cfg.GetBruteForce().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
 		provider = m.Cfg.GetBruteForce()
-	case definitions.FeatureRelayDomains:
+	case definitions.ControlRelayDomains:
 		if !m.Cfg.GetRelayDomains().HasSoftWhitelist() {
 			m.Cfg.GetRelayDomains().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
 		provider = m.Cfg.GetRelayDomains()
-	case definitions.FeatureRBL:
+	case definitions.ControlRBL:
 		if !m.Cfg.GetRBLs().HasSoftWhitelist() {
 			m.Cfg.GetRBLs().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
 		provider = m.Cfg.GetRBLs()
 	default:
-		return stack.PushResult(lua.LString("invalid feature category"))
+		return stack.PushResult(lua.LString("invalid environment category"))
 	}
 
 	provider.Set(username, network)
@@ -79,16 +79,16 @@ func (m *SoftAllowManager) SoftWhitelistSet(L *lua.LState) int {
 func (m *SoftAllowManager) SoftWhitelistGet(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	username := stack.CheckString(1)
-	feature := stack.CheckString(2)
+	environmentName := stack.CheckString(2)
 
 	var provider config.SoftWhitelistProvider
 
-	switch feature {
-	case definitions.FeatureBruteForce:
+	switch environmentName {
+	case definitions.ControlBruteForce:
 		provider = m.Cfg.GetBruteForce()
-	case definitions.FeatureRelayDomains:
+	case definitions.ControlRelayDomains:
 		provider = m.Cfg.GetRelayDomains()
-	case definitions.FeatureRBL:
+	case definitions.ControlRBL:
 		provider = m.Cfg.GetRBLs()
 	default:
 		return stack.PushResults(L.NewTable(), lua.LNil)
@@ -116,14 +116,14 @@ func (m *SoftAllowManager) SoftWhitelistDelete(L *lua.LState) int {
 
 	username := stack.CheckString(1)
 	network := stack.CheckString(2)
-	feature := stack.CheckString(3)
+	environmentName := stack.CheckString(3)
 
-	switch feature {
-	case definitions.FeatureBruteForce:
+	switch environmentName {
+	case definitions.ControlBruteForce:
 		provider = m.Cfg.GetBruteForce()
-	case definitions.FeatureRelayDomains:
+	case definitions.ControlRelayDomains:
 		provider = m.Cfg.GetRelayDomains()
-	case definitions.FeatureRBL:
+	case definitions.ControlRBL:
 		provider = m.Cfg.GetRBLs()
 	default:
 		return 0

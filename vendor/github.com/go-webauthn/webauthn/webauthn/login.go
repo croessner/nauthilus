@@ -13,7 +13,7 @@ import (
 )
 
 // LoginOption is a functional option that modifies the [protocol.PublicKeyCredentialRequestOptions] sent to the
-// client during a login ceremony. Use the With* functions in this package (e.g. [WithUserVerification],
+// client during a login ceremony. Use the With* functions in this package (i.e. [WithUserVerification],
 // [WithAllowedCredentials]) to create login options.
 type LoginOption func(*protocol.PublicKeyCredentialRequestOptions)
 
@@ -103,7 +103,7 @@ func (webauthn *WebAuthn) beginLogin(userID []byte, allowedCredentials []protoco
 		assertion.Response.Challenge = challenge
 	}
 
-	if len(assertion.Response.Challenge) < 16 {
+	if len(assertion.Response.Challenge) < protocol.MinimumChallengeLength {
 		return nil, nil, fmt.Errorf("error generating assertion: the challenge must be at least 16 bytes")
 	}
 
@@ -346,7 +346,7 @@ func (webauthn *WebAuthn) validateLogin(user User, session SessionData, parsedRe
 			return nil, protocol.ErrBadRequest.WithDetails("Failed to decode AAGUID").WithInfo(fmt.Sprintf("Error occurred decoding AAGUID from the credential record: %s", err)).WithError(err)
 		}
 
-		if e := protocol.ValidateMetadata(context.Background(), webauthn.Config.MDS, aaguid, "", credential.AttestationType, nil); e != nil {
+		if e := protocol.ValidateMetadata(context.Background(), webauthn.Config.MDS, aaguid, credential.AttestationType, credential.AttestationFormat, nil); e != nil {
 			return nil, protocol.ErrBadRequest.WithDetails("Failed to validate credential record metadata").WithInfo(e.DevInfo).WithError(e)
 		}
 	}
@@ -358,12 +358,12 @@ func (webauthn *WebAuthn) validateLogin(user User, session SessionData, parsedRe
 	rpOrigins := webauthn.Config.RPOrigins
 	rpTopOrigins := webauthn.Config.RPTopOrigins
 
-	if appID, err = parsedResponse.GetAppID(session.Extensions, credential.AttestationType); err != nil {
+	if appID, err = parsedResponse.GetAppID(session.Extensions, credential.AttestationFormat); err != nil {
 		return nil, err
 	}
 
 	// Handle steps 4 through 16.
-	if err = parsedResponse.Verify(session.Challenge, rpID, rpOrigins, rpTopOrigins, webauthn.Config.RPTopOriginVerificationMode, appID, shouldVerifyUser, shouldVerifyUserPresence, credential.PublicKey); err != nil {
+	if err = parsedResponse.Verify(session.Challenge, rpID, appID, rpOrigins, rpTopOrigins, webauthn.Config.RPTopOriginVerificationMode, webauthn.Config.RPAllowCrossOrigin, shouldVerifyUser, shouldVerifyUserPresence, credential.PublicKey); err != nil {
 		return nil, err
 	}
 

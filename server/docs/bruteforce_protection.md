@@ -164,8 +164,8 @@ RWP detection prevents automated attacks that try common passwords across many a
 * **Logic:** Uses two Lua scripts: `RWPSlidingWindowCheck` (read-only) and `RWPSlidingWindowCommit` (write).
   The check runs early in `CheckBruteForce` to determine whether the password is a repeat, but does **not** record
   the hash yet. The commit is deferred to `UpdateBruteForceBucketsCounter` and only executes when the rejection was
-  due to a genuine authentication failure — not a feature-based rejection (e.g., RBL) where the password was never
-  verified. If `bruteforce.learning` includes the triggering feature, the commit is still performed.
+	  due to a genuine authentication failure — not an environment-control rejection (e.g., RBL) where the password was never
+	  verified. If `bruteforce.learning` includes the triggering environment control, the commit is still performed.
   The scripts allow a certain number of unique failed password hashes within a sliding window. If a hash is repeated,
   its timestamp is updated on commit, keeping it "fresh" and avoiding eviction. If the number of unique hashes in
   the window exceeds the threshold, the request is no longer "allowed" under RWP grace and must undergo full

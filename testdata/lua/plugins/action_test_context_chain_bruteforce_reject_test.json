@@ -10,83 +10,83 @@
     "expected_calls": [
       {
         "method": "context_get",
-        "arg_contains": "test_stage_feature"
+        "arg_contains": "test_stage_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_feature"
+        "arg_contains": "test_marker_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_filter"
+        "arg_contains": "test_stage_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_filter"
+        "arg_contains": "test_marker_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_feature"
+        "arg_contains": "test_stage_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_feature"
+        "arg_contains": "test_marker_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_filter"
+        "arg_contains": "test_stage_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_filter"
+        "arg_contains": "test_marker_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_feature"
+        "arg_contains": "test_stage_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_feature"
+        "arg_contains": "test_marker_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_feature"
+        "arg_contains": "test_stage_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_feature"
+        "arg_contains": "test_marker_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_filter"
+        "arg_contains": "test_stage_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_filter"
+        "arg_contains": "test_marker_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_filter"
+        "arg_contains": "test_stage_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_filter"
+        "arg_contains": "test_marker_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_feature"
+        "arg_contains": "test_stage_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_feature"
+        "arg_contains": "test_marker_environment"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_stage_filter"
+        "arg_contains": "test_stage_subject"
       },
       {
         "method": "context_get",
-        "arg_contains": "test_marker_filter"
+        "arg_contains": "test_marker_subject"
       }
     ]
   },

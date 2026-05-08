@@ -20,21 +20,21 @@ import (
 	"testing"
 )
 
-func BenchmarkBuildPlanFeatureGraphs(b *testing.B) {
-	benchmarkBuildPlanGraphs(b, "feature", []graphCase{
-		{name: "flat_8", nodes: flatGraph("feature", 8)},
-		{name: "layered_8", nodes: layeredGraph("feature", 8, 2)},
-		{name: "flat_32", nodes: flatGraph("feature", 32)},
-		{name: "layered_32", nodes: layeredGraph("feature", 32, 4)},
+func BenchmarkBuildPlanEnvironmentGraphs(b *testing.B) {
+	benchmarkBuildPlanGraphs(b, "environment", []graphCase{
+		{name: "flat_8", nodes: flatGraph("environment", 8)},
+		{name: "layered_8", nodes: layeredGraph("environment", 8, 2)},
+		{name: "flat_32", nodes: flatGraph("environment", 32)},
+		{name: "layered_32", nodes: layeredGraph("environment", 32, 4)},
 	})
 }
 
-func BenchmarkBuildPlanFilterGraphs(b *testing.B) {
-	benchmarkBuildPlanGraphs(b, "filter", []graphCase{
-		{name: "flat_8", nodes: flatGraph("filter", 8)},
-		{name: "layered_8", nodes: layeredGraph("filter", 8, 2)},
-		{name: "flat_32", nodes: flatGraph("filter", 32)},
-		{name: "layered_32", nodes: layeredGraph("filter", 32, 4)},
+func BenchmarkBuildPlanSubjectGraphs(b *testing.B) {
+	benchmarkBuildPlanGraphs(b, "subject", []graphCase{
+		{name: "flat_8", nodes: flatGraph("subject", 8)},
+		{name: "layered_8", nodes: layeredGraph("subject", 8, 2)},
+		{name: "flat_32", nodes: flatGraph("subject", 32)},
+		{name: "layered_32", nodes: layeredGraph("subject", 32, 4)},
 	})
 }
 

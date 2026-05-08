@@ -181,8 +181,8 @@ end
 
 ### Lua Script Integration
 
-1. **Feature Scripts**: Implement global pattern recognition as a Lua feature
-2. **Filter Scripts**: Implement account-centric monitoring as a Lua filter
+1. **Environment Sources**: Implement global pattern recognition as a Lua environment source
+2. **Subject Sources**: Implement account-centric monitoring as a Lua subject source
 3. **Post-Action Scripts**: Implement dynamic response mechanisms as post-actions
 4. **Custom Hooks**: Create custom endpoints for monitoring and administration
 
@@ -197,7 +197,7 @@ end
 ### Phase 1: Monitoring and Data Collection
 
 1. ✅ Implement global pattern monitoring with Lua and Redis
-   - Implemented in `server/lua-plugins.d/features/global_pattern_monitoring.lua`
+   - Implemented in `server/lua-plugins.d/environment/global_pattern_monitoring.lua`
    - Tracks authentication attempts, unique IPs, and unique usernames in sliding windows
    - Stores metrics for analysis and anomaly detection
 2. ✅ Collect baseline data for normal authentication patterns
@@ -207,7 +207,7 @@ end
 ### Phase 2: Detection Mechanisms
 
 1. ✅ Implement account-centric monitoring
-   - Implemented in `server/lua-plugins.d/filters/account_centric_monitoring.lua`
+   - Implemented in `server/lua-plugins.d/subject/account_centric_monitoring.lua`
    - Tracks IPs attempting to access specific accounts
    - Detects when many unique IPs target a single account
 2. ✅ Develop anomaly detection algorithms for global patterns
@@ -233,13 +233,13 @@ end
 
 The distributed brute force detection and mitigation system has been implemented with the following components:
 
-1. **Global Pattern Monitoring** (`server/lua-plugins.d/features/global_pattern_monitoring.lua`)
+1. **Global Pattern Monitoring** (`server/lua-plugins.d/environment/global_pattern_monitoring.lua`)
    - Tracks authentication attempts, unique IPs, and unique usernames in sliding windows
    - Calculates and stores metrics like attempts per IP, attempts per user, and IPs per user
    - Maintains historical data for anomaly detection
    - Uses atomic Redis operations to prevent race conditions
 
-2. **Account-Centric Monitoring** (`server/lua-plugins.d/filters/account_centric_monitoring.lua`)
+2. **Account-Centric Monitoring** (`server/lua-plugins.d/subject/account_centric_monitoring.lua`)
    - Tracks IPs attempting to access specific accounts
    - Detects when many unique IPs target a single account
    - Identifies accounts under distributed brute force attack
@@ -363,23 +363,26 @@ To enable the distributed brute force detection and mitigation system, you need 
 
 ```yaml
 auth:
-  controls:
-    lua:
-      # Add the controls for global pattern monitoring
-      controls:
-        - name: "global_pattern_monitoring"
-          script_path: "/etc/nauthilus/lua-plugins.d/features/global_pattern_monitoring.lua"
+  policy:
+    attribute_sources:
+      lua:
+        # Add the environment source for global pattern monitoring
+        environment:
+          - name: "global_pattern_monitoring"
+            script_path: "/etc/nauthilus/lua-plugins.d/environment/global_pattern_monitoring.lua"
 
-      # Add the filter for account-centric monitoring
-      filters:
-        - name: "account_centric_monitoring"
-          script_path: "/etc/nauthilus/lua-plugins.d/filters/account_centric_monitoring.lua"
+        # Add the subject source for account-centric monitoring
+        subject:
+          - name: "account_centric_monitoring"
+            script_path: "/etc/nauthilus/lua-plugins.d/subject/account_centric_monitoring.lua"
 
-      # Add the action for dynamic response
-      actions:
-        - type: "post"
-          name: "dynamic_response"
-          script_path: "/etc/nauthilus/lua-plugins.d/actions/dynamic_response.lua"
+    obligation_targets:
+      lua:
+        # Add the action for dynamic response
+        actions:
+          - type: "post"
+            name: "dynamic_response"
+            script_path: "/etc/nauthilus/lua-plugins.d/actions/dynamic_response.lua"
 
   backends:
     lua:
@@ -440,8 +443,8 @@ storage:
 
 1. **Copy Lua Scripts**: Copy all the Lua scripts to your Nauthilus server:
    ```bash
-   cp -r server/lua-plugins.d/features/global_pattern_monitoring.lua /etc/nauthilus/lua-plugins.d/features/
-   cp -r server/lua-plugins.d/filters/account_centric_monitoring.lua /etc/nauthilus/lua-plugins.d/filters/
+   cp -r server/lua-plugins.d/environment/global_pattern_monitoring.lua /etc/nauthilus/lua-plugins.d/environment/
+   cp -r server/lua-plugins.d/subject/account_centric_monitoring.lua /etc/nauthilus/lua-plugins.d/subject/
    cp -r server/lua-plugins.d/actions/dynamic_response.lua /etc/nauthilus/lua-plugins.d/actions/
    ```
 

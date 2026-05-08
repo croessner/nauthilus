@@ -16,10 +16,9 @@
 package auth
 
 import (
-	"strings"
 	"sync"
-	"sync/atomic"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -29,7 +28,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// DefaultRBLService implements the parallel RBL checks analogous to the previous logic in features.go.
+// DefaultRBLService implements the parallel RBL checks analogous to the previous logic in environment.go.
 //
 //goland:nointerface
 type DefaultRBLService struct{}
@@ -49,72 +48,114 @@ func (DefaultRBLService) Threshold() int {
 }
 
 func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, error) {
+	fact, err := DefaultRBLService{}.ScoreWithFacts(ctx, view)
+	if err != nil {
+		return 0, err
+	}
+
+	return fact.Score, nil
+}
+
+// ScoreWithFacts computes the aggregated RBL score and request-local policy facts.
+func (DefaultRBLService) ScoreWithFacts(ctx *gin.Context, view *core.StateView) (core.RBLPolicyFact, error) {
 	auth := view.Auth()
 
 	rbls := auth.Cfg().GetRBLs()
 	if rbls == nil {
-		return 0, nil
+		return core.RBLPolicyFact{}, nil
 	}
 
-	var dnsResolverErr atomic.Bool
-	dnsResolverErr.Store(false)
+	fact := newRBLPolicyFact(rbls)
+	if fact.ListCount == 0 {
+		return fact, nil
+	}
 
+	fact.Lists = collectRBLListFacts(ctx, view, auth, rbls.GetLists())
+	aggregateRBLPolicyFact(auth, &fact)
+	if fact.EffectiveError {
+		return fact, errors.ErrDNSResolver
+	}
+
+	return fact, nil
+}
+
+func newRBLPolicyFact(rbls *config.RBLSection) core.RBLPolicyFact {
 	rblLists := rbls.GetLists()
-	numberOfRBLs := len(rblLists)
-	if numberOfRBLs == 0 {
-		return 0, nil
-	}
 
-	rblChan := make(chan int, numberOfRBLs)
+	return core.RBLPolicyFact{
+		Threshold: rbls.GetThreshold(),
+		ListCount: len(rblLists),
+		Lists:     make([]core.RBLListPolicyFact, 0, len(rblLists)),
+	}
+}
+
+func collectRBLListFacts(
+	ctx *gin.Context,
+	view *core.StateView,
+	auth *core.AuthState,
+	rblLists []config.RBL,
+) []core.RBLListPolicyFact {
+	rblChan := make(chan core.RBLListPolicyFact, len(rblLists))
 	var wg sync.WaitGroup
 
 	for _, rbl := range rblLists {
 		r := rbl
 		wg.Go(func() {
-			listed, rblName, rblErr := core.RBLIsListed(ctx, view, &r)
+			listFact, rblErr := core.RBLPolicyLookup(ctx, view, &r)
 			if rblErr != nil {
-				if strings.Contains(rblErr.Error(), "no such host") {
-					util.DebugModuleWithCfg(ctx.Request.Context(), auth.Cfg(), auth.Logger(), definitions.DbgRBL, definitions.LogKeyGUID, auth.Runtime.GUID, definitions.LogKeyMsg, rblErr)
-				} else {
-					if !r.IsAllowFailure() {
-						dnsResolverErr.Store(true)
-					}
-
-					level.Error(auth.Logger()).Log(
-						definitions.LogKeyGUID, auth.Runtime.GUID,
-						definitions.LogKeyMsg, "RBL check failed",
-						definitions.LogKeyError, rblErr,
-					)
-				}
-
-				rblChan <- 0
-
-				return
+				logRBLPolicyError(ctx, auth, rblErr, listFact)
 			}
 
-			if listed {
-				stats.GetMetrics().GetRblRejected().WithLabelValues(rblName).Inc()
-				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, "rbl "+rblName)
-				auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, r.Weight)
-				rblChan <- r.Weight
-
-				return
-			}
-
-			rblChan <- 0
+			rblChan <- listFact
 		})
 	}
 
 	wg.Wait()
+	close(rblChan)
 
-	if dnsResolverErr.Load() {
-		return 0, errors.ErrDNSResolver
+	facts := make([]core.RBLListPolicyFact, 0, len(rblLists))
+	for listFact := range rblChan {
+		facts = append(facts, listFact)
 	}
 
-	total := 0
-	for range numberOfRBLs {
-		total += <-rblChan
+	return facts
+}
+
+func logRBLPolicyError(ctx *gin.Context, auth *core.AuthState, rblErr error, fact core.RBLListPolicyFact) {
+	if fact.ReasonCode == "dns_no_such_host" {
+		util.DebugModuleWithCfg(ctx.Request.Context(), auth.Cfg(), auth.Logger(), definitions.DbgRBL, definitions.LogKeyGUID, auth.Runtime.GUID, definitions.LogKeyMsg, rblErr)
+
+		return
 	}
 
-	return total, nil
+	_ = level.Error(auth.Logger()).Log(
+		definitions.LogKeyGUID, auth.Runtime.GUID,
+		definitions.LogKeyMsg, "RBL check failed",
+		definitions.LogKeyError, rblErr,
+	)
+}
+
+func aggregateRBLPolicyFact(auth *core.AuthState, fact *core.RBLPolicyFact) {
+	for _, listFact := range fact.Lists {
+		if listFact.Error {
+			switch {
+			case listFact.ReasonCode == "dns_no_such_host":
+			case listFact.AllowFailure:
+				fact.AllowFailureErrorCount++
+			default:
+				fact.EffectiveError = true
+			}
+		}
+
+		if !listFact.Listed {
+			continue
+		}
+
+		stats.GetMetrics().GetRblRejected().WithLabelValues(listFact.Name).Inc()
+		auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, "rbl "+listFact.Name)
+		auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, listFact.Weight)
+		fact.Score += listFact.Weight
+		fact.MatchedCount++
+		fact.MatchedLists = append(fact.MatchedLists, listFact.Name)
+	}
 }

@@ -1,0 +1,83 @@
+{
+  "context": {
+    "username": "eve@example.com",
+    "client_ip": "203.0.113.99",
+    "protocol": "imap",
+    "session": "blocklist-session",
+    "no_auth": false,
+    "expected_calls": [
+      {
+        "method": "context_get",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "rt"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_get",
+        "arg_contains": "policy_facts"
+      },
+      {
+        "method": "context_set",
+        "arg_contains": "policy_facts"
+      }
+    ]
+  },
+  "util": {
+    "expected_calls": [
+      {
+        "method": "getenv",
+        "arg_contains": "BLOCKLIST_URL"
+      },
+      {
+        "method": "is_table"
+      }
+    ]
+  },
+  "prometheus": {
+    "expected_calls": [
+      {
+        "method": "increment_gauge"
+      },
+      {
+        "method": "start_histogram_timer"
+      },
+      {
+        "method": "stop_timer"
+      },
+      {
+        "method": "decrement_gauge"
+      }
+    ]
+  },
+  "expected_output": {
+    "environment_triggered": true,
+    "environment_abort": true,
+    "environment_result": 0,
+    "logs_contain": [
+      "blocklist_ip",
+      "IP address blocked",
+      "policy_fact_blocklist_matched",
+      "policy_fact_blocklist_client_ip",
+      "policy_fact_blocklist_status_message"
+    ],
+    "error_expected": false
+  }
+}

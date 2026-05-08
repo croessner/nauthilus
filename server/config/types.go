@@ -26,23 +26,23 @@ import (
 )
 
 var (
-	featureNames = map[string]struct{}{
-		definitions.FeatureTLSEncryption:            {},
-		definitions.FeatureRBL:                      {},
-		definitions.FeatureRelayDomains:             {},
-		definitions.FeatureLua:                      {},
-		definitions.FeatureBackendServersMonitoring: {},
-		definitions.FeatureBruteForce:               {},
+	runtimeModuleNames = map[string]struct{}{
+		definitions.ControlTLSEncryption:       {},
+		definitions.ControlRBL:                 {},
+		definitions.ControlRelayDomains:        {},
+		definitions.ControlLua:                 {},
+		definitions.ServiceBackendHealthChecks: {},
+		definitions.ControlBruteForce:          {},
 	}
 	controlNames = map[string]struct{}{
-		definitions.FeatureTLSEncryption: {},
-		definitions.FeatureRBL:           {},
-		definitions.FeatureRelayDomains:  {},
-		definitions.FeatureLua:           {},
-		definitions.FeatureBruteForce:    {},
+		definitions.ControlTLSEncryption: {},
+		definitions.ControlRBL:           {},
+		definitions.ControlRelayDomains:  {},
+		definitions.ControlLua:           {},
+		definitions.ControlBruteForce:    {},
 	}
 	serviceNames = map[string]struct{}{
-		definitions.FeatureBackendServersMonitoring: {},
+		definitions.ServiceBackendHealthChecks: {},
 	}
 )
 
@@ -332,13 +332,12 @@ func (b *Backend) GetName() string {
 	return b.name
 }
 
-// Feature is a container for Nauthilus features.
-type Feature struct {
-	name       string `mapstructure:"-"`
-	whenNoAuth bool   `mapstructure:"-"`
+// RuntimeModule is a container for Nauthilus runtimeModules.
+type RuntimeModule struct {
+	name string `mapstructure:"-"`
 }
 
-func (f *Feature) String() string {
+func (f *RuntimeModule) String() string {
 	if f == nil {
 		return "<nil>"
 	}
@@ -346,48 +345,30 @@ func (f *Feature) String() string {
 	return f.name
 }
 
-// SetWhenNoAuth sets the whenNoAuth field of the Feature.
-func (f *Feature) SetWhenNoAuth(value bool) {
-	if f == nil {
-		return
-	}
-
-	f.whenNoAuth = value
-}
-
-// GetWhenNoAuth returns the value of the whenNoAuth field.
-func (f *Feature) GetWhenNoAuth() bool {
-	if f == nil {
-		return false
-	}
-
-	return f.whenNoAuth
-}
-
-// Set updates the feature name based on the provided value.
-// It returns an error if the value is not a valid feature name.
-// Valid feature names are all supported runtime features exposed by the configuration layer.
-// If the value is valid, the name field of the Feature struct is updated accordingly.
-// An error of type ErrWrongFeature is returned if the value is not valid.
-func (f *Feature) Set(value string) error {
+// Set updates the runtimeModule name based on the provided value.
+// It returns an error if the value is not a valid runtimeModule name.
+// Valid runtimeModule names are all supported runtime runtimeModules exposed by the configuration layer.
+// If the value is valid, the name field of the RuntimeModule struct is updated accordingly.
+// An error is returned if the value is not a valid runtime module.
+func (f *RuntimeModule) Set(value string) error {
 	if f == nil {
 		return nil
 	}
 
-	return setNamedConfigValue(&f.name, value, featureNames, "feature")
+	return setNamedConfigValue(&f.name, value, runtimeModuleNames, "runtimeModule")
 }
 
 // Type returns the name of the type.
-func (f *Feature) Type() string {
+func (f *RuntimeModule) Type() string {
 	if f == nil {
 		return "<nil>"
 	}
 
-	return "Feature"
+	return "RuntimeModule"
 }
 
-// Get gets the name of a feature returned as string.
-func (f *Feature) Get() string {
+// Get gets the name of a runtimeModule returned as string.
+func (f *RuntimeModule) Get() string {
 	if f == nil {
 		return ""
 	}
@@ -397,8 +378,7 @@ func (f *Feature) Get() string {
 
 // Control is a container for server controls.
 type Control struct {
-	name       string `mapstructure:"-"`
-	whenNoAuth bool   `mapstructure:"-"`
+	name string `mapstructure:"-"`
 }
 
 func (c *Control) String() string {
@@ -407,24 +387,6 @@ func (c *Control) String() string {
 	}
 
 	return c.name
-}
-
-// SetWhenNoAuth sets the whenNoAuth field of the Control.
-func (c *Control) SetWhenNoAuth(value bool) {
-	if c == nil {
-		return
-	}
-
-	c.whenNoAuth = value
-}
-
-// GetWhenNoAuth returns the value of the whenNoAuth field.
-func (c *Control) GetWhenNoAuth() bool {
-	if c == nil {
-		return false
-	}
-
-	return c.whenNoAuth
 }
 
 // Set updates the control name based on the provided value.

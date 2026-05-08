@@ -23,14 +23,13 @@ import (
 )
 
 type LuaSection struct {
-	Actions             []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
-	Features            []LuaFeature        `mapstructure:"-" validate:"omitempty,dive"`
-	Controls            []LuaFeature        `mapstructure:"controls" validate:"omitempty,dive"`
-	Filters             []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
-	Hooks               []LuaHooks          `mapstructure:"hooks" validate:"omitempty,dive"`
-	Config              *LuaConf            `mapstructure:"config" validate:"omitempty"`
-	OptionalLuaBackends map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive"`
-	Search              []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+	Actions             []LuaAction            `mapstructure:"actions" validate:"omitempty,dive"`
+	EnvironmentSources  []LuaEnvironmentSource `mapstructure:"-" validate:"omitempty,dive"`
+	SubjectSources      []LuaSubjectSource     `mapstructure:"-" validate:"omitempty,dive"`
+	Hooks               []LuaHooks             `mapstructure:"hooks" validate:"omitempty,dive"`
+	Config              *LuaConf               `mapstructure:"config" validate:"omitempty"`
+	OptionalLuaBackends map[string]*LuaConf    `mapstructure:"optional_lua_backends" validate:"omitempty,dive"`
+	Search              []LuaSearchProtocol    `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 func (l *LuaSection) String() string {
@@ -91,34 +90,22 @@ func (l *LuaSection) GetActions() []LuaAction {
 	return l.Actions
 }
 
-// GetFeatures retrieves the list of LuaFeature from the LuaSection. Returns an empty slice if the LuaSection is nil.
-func (l *LuaSection) GetFeatures() []LuaFeature {
+// GetEnvironmentSources retrieves the Lua environment sources from the LuaSection.
+func (l *LuaSection) GetEnvironmentSources() []LuaEnvironmentSource {
 	if l == nil {
-		return []LuaFeature{}
+		return []LuaEnvironmentSource{}
 	}
 
-	return l.Features
+	return l.EnvironmentSources
 }
 
-func (l *LuaSection) normalizeConfiguredFeatures() {
+// GetSubjectSources retrieves the Lua subject sources from the LuaSection.
+func (l *LuaSection) GetSubjectSources() []LuaSubjectSource {
 	if l == nil {
-		return
+		return []LuaSubjectSource{}
 	}
 
-	if l.Controls == nil {
-		return
-	}
-
-	l.Features = append([]LuaFeature(nil), l.Controls...)
-}
-
-// GetFilters retrieves the list of LuaFilter from the LuaSection. Returns an empty slice if the LuaSection is nil.
-func (l *LuaSection) GetFilters() []LuaFilter {
-	if l == nil {
-		return []LuaFilter{}
-	}
-
-	return l.Filters
+	return l.SubjectSources
 }
 
 // GetHooks retrieves the list of LuaHooks from the LuaSection. Returns an empty slice if the LuaSection is nil.
@@ -185,16 +172,13 @@ func (l *LuaAction) GetScriptPath() string {
 	return l.ScriptPath
 }
 
-type LuaFeature struct {
-	Name                string   `mapstructure:"name" validate:"required"`
-	ScriptPath          string   `mapstructure:"script_path" validate:"required,file"`
-	DependsOn           []string `mapstructure:"depends_on" validate:"omitempty,dive,required"`
-	WhenAuthenticated   bool     `mapstructure:"when_authenticated"`
-	WhenUnauthenticated bool     `mapstructure:"when_unauthenticated"`
-	WhenNoAuth          bool     `mapstructure:"when_no_auth"`
+// LuaEnvironmentSource configures one Lua script that emits or evaluates environment attributes.
+type LuaEnvironmentSource struct {
+	Name       string `mapstructure:"name" validate:"required"`
+	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
 }
 
-func (l *LuaFeature) String() string {
+func (l *LuaEnvironmentSource) String() string {
 	if l == nil {
 		return "<nil>"
 	}
@@ -202,8 +186,8 @@ func (l *LuaFeature) String() string {
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
 }
 
-// GetName retrieves the Name from the LuaFeature. Returns an empty string if the LuaFeature is nil.
-func (l *LuaFeature) GetName() string {
+// GetName retrieves the Name from the LuaEnvironmentSource. Returns an empty string if the LuaEnvironmentSource is nil.
+func (l *LuaEnvironmentSource) GetName() string {
 	if l == nil {
 		return ""
 	}
@@ -211,8 +195,8 @@ func (l *LuaFeature) GetName() string {
 	return l.Name
 }
 
-// GetScriptPath retrieves the ScriptPath from the LuaFeature. Returns an empty string if the LuaFeature is nil.
-func (l *LuaFeature) GetScriptPath() string {
+// GetScriptPath retrieves the ScriptPath from the LuaEnvironmentSource. Returns an empty string if the LuaEnvironmentSource is nil.
+func (l *LuaEnvironmentSource) GetScriptPath() string {
 	if l == nil {
 		return ""
 	}
@@ -220,16 +204,13 @@ func (l *LuaFeature) GetScriptPath() string {
 	return l.ScriptPath
 }
 
-type LuaFilter struct {
-	Name                string   `mapstructure:"name" validate:"required"`
-	ScriptPath          string   `mapstructure:"script_path" validate:"required,file"`
-	DependsOn           []string `mapstructure:"depends_on" validate:"omitempty,dive,required"`
-	WhenAuthenticated   bool     `mapstructure:"when_authenticated"`
-	WhenUnauthenticated bool     `mapstructure:"when_unauthenticated"`
-	WhenNoAuth          bool     `mapstructure:"when_no_auth"`
+// LuaSubjectSource configures one Lua script that evaluates or enriches subject attributes.
+type LuaSubjectSource struct {
+	Name       string `mapstructure:"name" validate:"required"`
+	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
 }
 
-func (l *LuaFilter) String() string {
+func (l *LuaSubjectSource) String() string {
 	if l == nil {
 		return "<nil>"
 	}
@@ -237,8 +218,8 @@ func (l *LuaFilter) String() string {
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
 }
 
-// GetName retrieves the Name from the LuaFilter. Returns an empty string if the LuaFilter is nil.
-func (l *LuaFilter) GetName() string {
+// GetName retrieves the Name from the LuaSubjectSource. Returns an empty string if the LuaSubjectSource is nil.
+func (l *LuaSubjectSource) GetName() string {
 	if l == nil {
 		return ""
 	}
@@ -246,8 +227,8 @@ func (l *LuaFilter) GetName() string {
 	return l.Name
 }
 
-// GetScriptPath retrieves the ScriptPath from the LuaFilter. Returns an empty string if the LuaFilter is nil.
-func (l *LuaFilter) GetScriptPath() string {
+// GetScriptPath retrieves the ScriptPath from the LuaSubjectSource. Returns an empty string if the LuaSubjectSource is nil.
+func (l *LuaSubjectSource) GetScriptPath() string {
 	if l == nil {
 		return ""
 	}
@@ -264,12 +245,12 @@ type LuaConf struct {
 	InitScriptPath         string   `mapstructure:"init_script_path" validate:"omitempty,file"`
 	InitScriptPaths        []string `mapstructure:"init_script_paths" validate:"omitempty,dive,file"`
 	ActionNumberOfWorkers  int      `mapstructure:"action_number_of_workers" validate:"omitempty,min=1,max=1000000"`
-	FeatureVMPoolSize      int      `mapstructure:"feature_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
-	FilterVMPoolSize       int      `mapstructure:"filter_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+	EnvironmentVMPoolSize  int      `mapstructure:"environment_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+	SubjectVMPoolSize      int      `mapstructure:"subject_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 	HookVMPoolSize         int      `mapstructure:"hook_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 	CacheFlushScriptPath   string   `mapstructure:"cache_flush_script_path" validate:"omitempty,file"`
 
-	// Optional: generic IP scoping for Lua-driven features/metrics
+	// Optional: generic IP scoping for Lua-driven signals and metrics.
 	LuaIPv6CIDR uint `mapstructure:"ip_scoping_v6_cidr" validate:"omitempty,min=1,max=128"`
 	LuaIPv4CIDR uint `mapstructure:"ip_scoping_v4_cidr" validate:"omitempty,min=1,max=32"`
 }
@@ -316,22 +297,22 @@ func (l *LuaConf) GetActionNumberOfWorkers() int {
 	return l.ActionNumberOfWorkers
 }
 
-// GetFeatureVMPoolSize retrieves the configured feature VM pool size or falls back to the worker count if unset or invalid.
-func (l *LuaConf) GetFeatureVMPoolSize() int {
-	if l == nil || l.FeatureVMPoolSize <= 0 {
+// GetEnvironmentVMPoolSize retrieves the configured environment source VM pool size or falls back to the worker count.
+func (l *LuaConf) GetEnvironmentVMPoolSize() int {
+	if l == nil || l.EnvironmentVMPoolSize <= 0 {
 		return l.GetNumberOfWorkers()
 	}
 
-	return l.FeatureVMPoolSize
+	return l.EnvironmentVMPoolSize
 }
 
-// GetFilterVMPoolSize returns the configured filter VM pool size or falls back to the number of workers if unset or invalid.
-func (l *LuaConf) GetFilterVMPoolSize() int {
-	if l == nil || l.FilterVMPoolSize <= 0 {
+// GetSubjectVMPoolSize returns the configured subject source VM pool size or falls back to the number of workers.
+func (l *LuaConf) GetSubjectVMPoolSize() int {
+	if l == nil || l.SubjectVMPoolSize <= 0 {
 		return l.GetNumberOfWorkers()
 	}
 
-	return l.FilterVMPoolSize
+	return l.SubjectVMPoolSize
 }
 
 // GetHookVMPoolSize retrieves the hook VM pool size or defaults to the number of workers if unset or invalid.

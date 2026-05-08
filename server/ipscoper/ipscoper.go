@@ -22,8 +22,8 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 )
 
-// ScopeContext identifies the feature/context in which IP scoping is applied.
-// It allows reusing the same mechanism for multiple features (e.g., repeating-wrong-password, tolerations).
+// ScopeContext identifies the control/context in which IP scoping is applied.
+// It allows reusing the same mechanism for multiple controls (e.g., repeating-wrong-password, tolerations).
 // Keep values stable as they may be used in logs.
 type ScopeContext string
 
@@ -32,7 +32,7 @@ const (
 	ScopeRepeatingWrongPassword ScopeContext = "repeating_wrong_password"
 	// ScopeTolerations is used when operating on tolerations keys.
 	ScopeTolerations ScopeContext = "tolerations"
-	// ScopeLuaGeneric is used for generic Lua-driven features (metrics, dedup) outside brute-force.
+	// ScopeLuaGeneric is used for generic Lua-driven controls (metrics, dedup) outside brute-force.
 	ScopeLuaGeneric ScopeContext = "lua_generic"
 )
 

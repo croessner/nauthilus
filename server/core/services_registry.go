@@ -24,24 +24,24 @@ import (
 // Implementations should call the Register* functions from their init() to provide defaults.
 
 var (
-	regLuaFilter    LuaFilter
-	regPostAction   PostAction
-	regFeatureEng   FeatureEngine
-	regActionDisp   ActionDispatcher
-	regRBLService   RBLService
-	regBF           BruteForceService
-	regCacheService CacheService
-	regPassVerifier PasswordVerifier
+	regLuaSubject     LuaSubject
+	regPostAction     PostAction
+	regEnvironmentEng EnvironmentEngine
+	regActionDisp     ActionDispatcher
+	regRBLService     RBLService
+	regBF             BruteForceService
+	regCacheService   CacheService
+	regPassVerifier   PasswordVerifier
 )
 
-// RegisterLuaFilter registers the active LuaFilter implementation.
-func RegisterLuaFilter(l LuaFilter) { regLuaFilter = l }
+// RegisterLuaSubject registers the active LuaSubject implementation.
+func RegisterLuaSubject(l LuaSubject) { regLuaSubject = l }
 
 // RegisterPostAction registers the active PostAction implementation.
 func RegisterPostAction(p PostAction) { regPostAction = p }
 
-// RegisterFeatureEngine registers the active FeatureEngine implementation.
-func RegisterFeatureEngine(f FeatureEngine) { regFeatureEng = f }
+// RegisterEnvironmentEngine registers the active EnvironmentEngine implementation.
+func RegisterEnvironmentEngine(f EnvironmentEngine) { regEnvironmentEng = f }
 
 // RegisterActionDispatcher registers the active ActionDispatcher implementation.
 func RegisterActionDispatcher(a ActionDispatcher) { regActionDisp = a }
@@ -55,9 +55,9 @@ func RegisterCacheService(c CacheService) { regCacheService = c }
 // RegisterPasswordVerifier registers the active PasswordVerifier implementation.
 func RegisterPasswordVerifier(v PasswordVerifier) { regPassVerifier = v }
 
-func getLuaFilter() LuaFilter                 { return regLuaFilter }
+func getLuaSubject() LuaSubject               { return regLuaSubject }
 func getPostAction() PostAction               { return regPostAction }
-func getFeatureEngine() FeatureEngine         { return regFeatureEng }
+func getEnvironmentEngine() EnvironmentEngine { return regEnvironmentEng }
 func getActionDispatcher() ActionDispatcher   { return regActionDisp }
 func getRBLService() RBLService               { return regRBLService }
 func getBruteForceService() BruteForceService { return regBF }
@@ -73,9 +73,14 @@ func GetBruteForceService() BruteForceService { return getBruteForceService() }
 func GetCacheService() CacheService           { return getCacheService() }
 func GetPasswordVerifier() PasswordVerifier   { return getPasswordVerifier() }
 
-func GetFeatureEngine() FeatureEngine       { return getFeatureEngine() }
+// GetEnvironmentEngine returns the registered Lua environment source evaluator.
+func GetEnvironmentEngine() EnvironmentEngine { return getEnvironmentEngine() }
+
+// GetActionDispatcher returns the registered Lua action dispatcher.
 func GetActionDispatcher() ActionDispatcher { return getActionDispatcher() }
-func GetRBLService() RBLService             { return getRBLService() }
+
+// GetRBLService returns the registered RBL service.
+func GetRBLService() RBLService { return getRBLService() }
 
 // Optional convenience helpers for callers that don't have *AuthState.
 // They keep signatures local to core while allowing external implementations.

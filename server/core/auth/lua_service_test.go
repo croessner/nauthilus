@@ -29,7 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
-	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/lualib/subject"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
@@ -37,7 +37,7 @@ import (
 	"github.com/go-redis/redismock/v9"
 )
 
-func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
+func TestDefaultLuaSubject_OverridesAccountField(t *testing.T) { //nolint:funlen
 	gin.SetMode(gin.TestMode)
 
 	wd, err := os.Getwd()
@@ -45,7 +45,7 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 		t.Fatalf("Getwd failed: %v", err)
 	}
 
-	scriptPath := filepath.Clean(filepath.Join(wd, "..", "..", "lualib", "filter", "testdata", "account_field.lua"))
+	scriptPath := filepath.Clean(filepath.Join(wd, "..", "..", "lualib", "subject", "testdata", "account_field.lua"))
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
@@ -54,7 +54,7 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 			},
 		},
 		Lua: &config.LuaSection{
-			Filters: []config.LuaFilter{
+			SubjectSources: []config.LuaSubjectSource{
 				{
 					Name:       "account_field",
 					ScriptPath: scriptPath,
@@ -70,8 +70,8 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	util.SetDefaultEnvironment(envCfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
-	if err := filter.PreCompileLuaFilters(config.GetFile()); err != nil {
-		t.Fatalf("PreCompileLuaFilters failed: %v", err)
+	if err := subject.PreCompileLuaSubjectSources(config.GetFile()); err != nil {
+		t.Fatalf("PreCompileLuaSubjectSources failed: %v", err)
 	}
 
 	redisDB, _ := redismock.NewClientMock()
@@ -97,7 +97,7 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
-	result := (DefaultLuaFilter{}).Filter(ctx, auth.View(), &core.PassDBResult{})
+	result := (DefaultLuaSubject{}).Analyze(ctx, auth.View(), &core.PassDBResult{})
 	if result != definitions.AuthResultFail {
 		t.Fatalf("expected AuthResultFail, got %v", result)
 	}
@@ -117,7 +117,7 @@ func TestDefaultLuaFilter_OverridesAccountField(t *testing.T) {
 	}
 }
 
-func TestDefaultLuaFilter_MergesGroupsFromBackendResult(t *testing.T) {
+func TestDefaultLuaSubject_MergesGroupsFromBackendResult(t *testing.T) { //nolint:funlen
 	gin.SetMode(gin.TestMode)
 
 	wd, err := os.Getwd()
@@ -125,7 +125,7 @@ func TestDefaultLuaFilter_MergesGroupsFromBackendResult(t *testing.T) {
 		t.Fatalf("Getwd failed: %v", err)
 	}
 
-	scriptPath := filepath.Clean(filepath.Join(wd, "..", "..", "lualib", "filter", "testdata", "groups_apply.lua"))
+	scriptPath := filepath.Clean(filepath.Join(wd, "..", "..", "lualib", "subject", "testdata", "groups_apply.lua"))
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
@@ -134,7 +134,7 @@ func TestDefaultLuaFilter_MergesGroupsFromBackendResult(t *testing.T) {
 			},
 		},
 		Lua: &config.LuaSection{
-			Filters: []config.LuaFilter{
+			SubjectSources: []config.LuaSubjectSource{
 				{
 					Name:       "groups_apply",
 					ScriptPath: scriptPath,
@@ -150,8 +150,8 @@ func TestDefaultLuaFilter_MergesGroupsFromBackendResult(t *testing.T) {
 	util.SetDefaultEnvironment(envCfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
-	if err := filter.PreCompileLuaFilters(config.GetFile()); err != nil {
-		t.Fatalf("PreCompileLuaFilters failed: %v", err)
+	if err := subject.PreCompileLuaSubjectSources(config.GetFile()); err != nil {
+		t.Fatalf("PreCompileLuaSubjectSources failed: %v", err)
 	}
 
 	redisDB, _ := redismock.NewClientMock()
@@ -175,7 +175,7 @@ func TestDefaultLuaFilter_MergesGroupsFromBackendResult(t *testing.T) {
 	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
 
 	passDBResult := &core.PassDBResult{}
-	result := (DefaultLuaFilter{}).Filter(ctx, auth.View(), passDBResult)
+	result := (DefaultLuaSubject{}).Analyze(ctx, auth.View(), passDBResult)
 	if result != definitions.AuthResultFail {
 		t.Fatalf("expected AuthResultFail, got %v", result)
 	}
@@ -194,14 +194,14 @@ func TestDefaultLuaFilter_MergesGroupsFromBackendResult(t *testing.T) {
 }
 
 func newDefaultPostActionTestConfig(t *testing.T) *config.FileSettings {
-	bfFeature := &config.Feature{}
-	if err := bfFeature.Set(definitions.FeatureBruteForce); err != nil {
-		t.Fatalf("Set feature failed: %v", err)
+	bfControl := &config.RuntimeModule{}
+	if err := bfControl.Set(definitions.ControlBruteForce); err != nil {
+		t.Fatalf("Set runtime module failed: %v", err)
 	}
 
 	return &config.FileSettings{
 		Server: &config.ServerSection{
-			Features: []*config.Feature{bfFeature},
+			RuntimeModules: []*config.RuntimeModule{bfControl},
 		},
 		Lua: &config.LuaSection{
 			Actions: []config.LuaAction{
@@ -283,7 +283,7 @@ func TestDefaultPostAction_QueuesCanceledRequestWithDetachedContext(t *testing.T
 	}
 }
 
-func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
+func TestDefaultPostAction_ForwardsEnvironmentRejectedToLuaRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := prepareDefaultPostActionTest(t)
@@ -291,9 +291,9 @@ func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
 	writer := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(writer)
 	ctx.Request = httptest.NewRequest("POST", "/auth", nil)
-	ctx.Set(definitions.CtxFeatureRejectedKey, true)
+	ctx.Set(definitions.CtxEnvironmentRejectedKey, true)
 
-	auth := newDefaultPostActionAuth(ctx, cfg, "guid-feature-rejected")
+	auth := newDefaultPostActionAuth(ctx, cfg, "guid-environment-rejected")
 
 	DefaultPostAction{}.Run(core.PostActionInput{
 		View: auth.View(),
@@ -301,9 +301,9 @@ func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
 			Authenticated: false,
 			UserFound:     false,
 		},
-		FeatureRejected:      ctx.GetBool(definitions.CtxFeatureRejectedKey),
-		FeatureStageExpected: false,
-		FilterStageExpected:  false,
+		EnvironmentRejected:      ctx.GetBool(definitions.CtxEnvironmentRejectedKey),
+		EnvironmentStageExpected: false,
+		SubjectStageExpected:     false,
 	})
 
 	select {
@@ -312,16 +312,16 @@ func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
 			t.Fatal("expected post action request")
 		}
 
-		if !act.FeatureRejected {
-			t.Fatal("expected feature_rejected to be forwarded to the Lua request")
+		if !act.EnvironmentRejected {
+			t.Fatal("expected environment_rejected to be forwarded to the Lua request")
 		}
 
-		if act.FeatureStageExpected {
-			t.Fatal("expected feature_stage_expected to be forwarded to the Lua request")
+		if act.EnvironmentStageExpected {
+			t.Fatal("expected environment_stage_expected to be forwarded to the Lua request")
 		}
 
-		if act.FilterStageExpected {
-			t.Fatal("expected filter_stage_expected to be forwarded to the Lua request")
+		if act.SubjectStageExpected {
+			t.Fatal("expected subject_stage_expected to be forwarded to the Lua request")
 		}
 
 		act.FinishedChan <- action.Done{}
@@ -330,12 +330,12 @@ func TestDefaultPostAction_ForwardsFeatureRejectedToLuaRequest(t *testing.T) {
 	}
 }
 
-func TestAuthStateFilterLua_SkipsCanceledRequest(t *testing.T) {
+func TestAuthStateSubjectLua_SkipsCanceledRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.FileSettings{
 		Lua: &config.LuaSection{
-			Filters: []config.LuaFilter{
+			SubjectSources: []config.LuaSubjectSource{
 				{Name: "noop"},
 			},
 		},
@@ -361,12 +361,12 @@ func TestAuthStateFilterLua_SkipsCanceledRequest(t *testing.T) {
 		Redis:  rediscli.GetClient(),
 	}).(*core.AuthState)
 
-	auth.Runtime.GUID = "guid-canceled-filter"
+	auth.Runtime.GUID = "guid-canceled-subject"
 	auth.Request.Protocol = config.NewProtocol("imap")
 	auth.Request.Service = definitions.ServNginx
 	auth.Request.Username = "user@example.com"
 
-	result := auth.FilterLua(ctx, &core.PassDBResult{})
+	result := auth.SubjectLua(ctx, &core.PassDBResult{})
 	if result != definitions.AuthResultTempFail {
 		t.Fatalf("expected AuthResultTempFail, got %v", result)
 	}

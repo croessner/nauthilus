@@ -109,11 +109,11 @@ function nauthilus_call_action(request)
         return string.format("%s.%s", base, ms)
     end
 
-    local feature_from_ctx = {}
-    local builtin_features = nauthilus_context.context_get("__lua_ctx_builtin__")
-    if nauthilus_util.is_table(builtin_features) and nauthilus_util.table_length(builtin_features) > 0 then
-        for _, v in ipairs(builtin_features) do
-            table.insert(feature_from_ctx, v)
+    local decision_sources_from_ctx = {}
+    local builtin_decision_sources = nauthilus_context.context_get("__lua_ctx_builtin__")
+    if nauthilus_util.is_table(builtin_decision_sources) and nauthilus_util.table_length(builtin_decision_sources) > 0 then
+        for _, v in ipairs(builtin_decision_sources) do
+            table.insert(decision_sources_from_ctx, v)
         end
     end
     local pwnd_info = ""
@@ -122,20 +122,48 @@ function nauthilus_call_action(request)
 
     -- Get result table
     local rt = nauthilus_context.context_get("rt") or {}
+    local policy_facts = nauthilus_context.context_get("policy_facts") or {}
 
-    if type(rt) == "table" and nauthilus_util.table_length(rt) > 0 then
-        if rt.feature_blocklist then
-            table.insert(feature_from_ctx, "blocklist")
+    local function fact(namespace, key)
+        if type(policy_facts) ~= "table" or type(policy_facts[namespace]) ~= "table" then
+            return nil
         end
-        if rt.filter_geoippolicyd and rt.geoip_info and rt.geoip_info.status and rt.geoip_info.status == "reject" then
-            table.insert(feature_from_ctx, "geoip_policyd")
-        end
-        if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
-            table.insert(feature_from_ctx, "account_protection")
+
+        return policy_facts[namespace][key]
+    end
+
+    local function add_decision_source(name)
+        if not nauthilus_util.exists_in_table(decision_sources_from_ctx, name) then
+            table.insert(decision_sources_from_ctx, name)
         end
     end
 
-    local features = table.concat(feature_from_ctx, ",")
+    if type(rt) == "table" and nauthilus_util.table_length(rt) > 0 then
+        if rt.environment_blocklist then
+            add_decision_source("blocklist")
+        end
+        if rt.subject_geoippolicyd and rt.geoip_info and rt.geoip_info.status and rt.geoip_info.status == "reject" then
+            add_decision_source("geoip_policyd")
+        end
+        if rt.subject_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
+            add_decision_source("account_protection")
+        end
+    end
+
+    if fact("blocklist", "matched") == true then
+        add_decision_source("blocklist")
+    end
+    if fact("geoip", "rejected") == true then
+        add_decision_source("geoip_policyd")
+    end
+    if fact("failed_login_hotspot", "triggered") == true then
+        add_decision_source("failed_login_hotspot")
+    end
+    if fact("account_protection", "active") == true then
+        add_decision_source("account_protection")
+    end
+
+    local decision_sources = table.concat(decision_sources_from_ctx, ",")
 
     local hibp = nauthilus_context.context_get("haveibeenpwnd_hash_info")
     if hibp then pwnd_info = hibp else pwnd_info = "" end
@@ -256,7 +284,7 @@ function nauthilus_call_action(request)
             ts = normalize_ts_for_clickhouse(ts),
             session = request.session,
             service = request.service or "",
-            features = features,
+            decision_sources = decision_sources,
             client_ip = request.client_ip,
             client_port = request.client_port or "",
             client_net = request.client_net or "",

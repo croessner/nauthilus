@@ -136,7 +136,7 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 		MaxRetries:            redisCfg.GetMaxRetries(),
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Prefer RESP3 only if requested or features requiring it are enabled.
+		// Prefer RESP3 only if requested or RESP3-only capabilities are enabled.
 		// Otherwise, default to RESP2 to avoid parsing issues with asynchronous push messages.
 		Protocol: getProtocol(redisCfg),
 	}
@@ -188,7 +188,7 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 		MaxRetries:            redisCfg.GetMaxRetries(),
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP version based on configuration and features
+		// Ensure RESP version based on configuration and Redis capabilities.
 		Protocol: getProtocol(redisCfg),
 	}
 
@@ -218,7 +218,7 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 
 // newRedisClusterClient creates a new Redis cluster client using the specified cluster options.
 // The cluster options include the addresses of the Redis cluster nodes, username, password, pool size, and minimum idle connections.
-// It also includes topology awareness features like RouteByLatency, RouteRandomly, and RouteReadsToReplicas.
+// It also includes topology awareness capabilities like RouteByLatency, RouteRandomly, and RouteReadsToReplicas.
 // Additional options include MaxRedirects, ReadTimeout, and WriteTimeout for fine-tuning the cluster behavior.
 // The function includes the TLS configuration obtained from the RedisTLSOptions function.
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
@@ -252,7 +252,7 @@ func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *confi
 		ReadOnly:       clusterCfg.GetRouteReadsToReplicas(),
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP version based on configuration and features
+		// Ensure RESP version based on configuration and Redis capabilities.
 		Protocol: getProtocol(redisCfg),
 	}
 
@@ -337,7 +337,7 @@ func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCf
 		ReadOnly:       true, // Always use replicas for read operations
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP version based on configuration and features
+		// Ensure RESP version based on configuration and Redis capabilities.
 		Protocol: getProtocol(redisCfg),
 	}
 
@@ -442,7 +442,7 @@ func getProtocol(redisCfg *config.Redis) int {
 		return p
 	}
 
-	// Default to RESP3 only if features requiring it are enabled.
+	// Default to RESP3 only if RESP3-only capabilities are enabled.
 	if redisCfg.GetClientTracking().IsEnabled() || redisCfg.IsMaintNotificationsEnabled() {
 		return 3
 	}

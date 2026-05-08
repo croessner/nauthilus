@@ -58,7 +58,7 @@ type PostActionArgs struct {
 // RunLuaPostAction enqueues a Lua post action on the worker channel using the
 // pooled CommonRequest object. It mirrors prior behavior and preserves metrics.
 func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
-	if !a.Cfg().HasFeature(definitions.FeatureBruteForce) || args.Request.ClientIP == "" {
+	if !a.Cfg().HasRuntimeModule(definitions.ControlBruteForce) || args.Request.ClientIP == "" {
 		return
 	}
 
@@ -138,7 +138,7 @@ func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
 // based on config rules, protocol and optional OIDC client id. The logic matches
 // the previous inline implementation used by ExecuteLuaPostAction.
 func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient rediscli.Client, clientIP, protocol, oidccid string) (clientNet string, repeating bool) {
-	if !cfg.HasFeature(definitions.FeatureBruteForce) || clientIP == "" {
+	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) || clientIP == "" {
 		return "", false
 	}
 

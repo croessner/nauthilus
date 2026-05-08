@@ -16,13 +16,17 @@
 package core
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 
@@ -63,10 +67,13 @@ type ResponseWriter interface {
 // ResponseDeps provides the dependencies required to write responses without using globals.
 // Migrates request paths to use these injected dependencies.
 type ResponseDeps struct {
-	Cfg    config.File
-	Env    config.Environment
-	Logger *slog.Logger
+	Cfg      config.File
+	Env      config.Environment
+	Logger   *slog.Logger
+	Resolver localization.MessageResolver
 }
+
+type responseMessageRenderer func(*gin.Context, *AuthState) string
 
 // globalResponseWriter keeps legacy behavior without requiring config/env/logger to be loaded
 // during package init.
@@ -77,6 +84,16 @@ type globalResponseWriter struct{}
 
 type depResponseWriter struct {
 	deps ResponseDeps
+}
+
+const responseBodyFieldError = "error"
+
+type authResponse struct {
+	OK           bool                    `json:"ok"`
+	AccountField string                  `json:"account_field"`
+	TOTPSecret   string                  `json:"totp_secret_field"`
+	Backend      int                     `json:"backend"`
+	Attributes   bktype.AttributeMapping `json:"attributes"`
 }
 
 type writerHolder struct {
@@ -187,7 +204,7 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		setNginxHeaders(ctx, a)
 	case definitions.ServHeader:
 		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON:
+	case definitions.ServJSON, definitions.ServCBOR:
 		sendAuthResponse(ctx, a)
 	}
 
@@ -196,31 +213,39 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 
 func (globalResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 	a := view.auth
-	a.setFailureHeaders(ctx)
+	a.setFailureHeaders(ctx, nil)
 	a.loginAttemptProcessing(ctx)
 }
 
 func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
 	a := view.auth
-	ctx.Header("Auth-Status", reason)
+	a.prepareAuthTempFail(reason)
+	statusMessage := renderResponseStatusMessage(ctx, a, nil, nil)
+
+	ctx.Header("Auth-Status", statusMessage)
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 	a.setSMPTHeaders(ctx)
 
-	a.prepareAuthTempFail(reason)
-
 	if a.Request.Service == definitions.ServJSON {
-		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
+		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
 
 		return
 	}
 
-	ctx.String(a.Runtime.StatusCodeInternalError, a.Runtime.StatusMessage)
+	if a.Request.Service == definitions.ServCBOR {
+		sendCBOR(ctx, a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
+
+		return
+	}
+
+	ctx.String(a.Runtime.StatusCodeInternalError, statusMessage)
 	a.logAuthTempFail(ctx, getDefaultLogger())
 }
 
 // AuthOK is the general method to indicate authentication success.
 func (a *AuthState) AuthOK(ctx *gin.Context) {
 	a.responseWriter().OK(ctx, a.View())
+	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // AuthFail handles the failure of authentication.
@@ -228,11 +253,13 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
 	a.responseWriter().Fail(ctx, a.View())
+	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // AuthTempFail sends a temporary failure response with the provided reason and logs the error.
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	a.responseWriter().TempFail(ctx, a.View(), reason)
+	a.observeConfiguredPolicyDecision(ctx)
 }
 
 // OK implements the success response logic (unchanged behavior).
@@ -249,58 +276,128 @@ func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Logger, ctx, a)
 	case definitions.ServHeader:
 		setHeaderHeaders(ctx, a)
-	case definitions.ServJSON:
+	case definitions.ServJSON, definitions.ServCBOR:
 		sendAuthResponse(ctx, a)
 	}
 
 	a.finishAuthSuccessSideEffects(ctx)
 }
 
-// Fail implements the failure response logic (unchanged behavior).
+// Fail implements the failure response logic with response-boundary localization.
 func (w depResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 	a := view.auth
-	a.setFailureHeaders(ctx)
+	a.setFailureHeaders(ctx, w.renderStatusMessage)
 	a.loginAttemptProcessing(ctx)
 }
 
-// TempFail implements the temporary failure logic (unchanged behavior).
+// TempFail implements the temporary failure logic with response-boundary localization.
 func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
 	a := view.auth
-	ctx.Header("Auth-Status", reason)
+	a.prepareAuthTempFail(reason)
+	statusMessage := w.renderStatusMessage(ctx, a)
+
+	ctx.Header("Auth-Status", statusMessage)
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 	a.setSMPTHeaders(ctx)
 
-	a.prepareAuthTempFail(reason)
-
 	if a.Request.Service == definitions.ServJSON {
-		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{"error": reason})
+		ctx.JSON(a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
 
 		return
 	}
 
-	ctx.String(a.Runtime.StatusCodeInternalError, a.Runtime.StatusMessage)
+	if a.Request.Service == definitions.ServCBOR {
+		sendCBOR(ctx, a.Runtime.StatusCodeInternalError, gin.H{responseBodyFieldError: statusMessage})
+
+		return
+	}
+
+	ctx.String(a.Runtime.StatusCodeInternalError, statusMessage)
 	a.logAuthTempFail(ctx, w.deps.Logger)
 }
 
-// sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
-// It now includes an explicit {"ok": true} field and emits only the fields required by clients and tests,
-// in the exact order expected by the golden file.
-func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
-	// Build a minimal response matching the golden expectations exactly.
-	type response struct {
-		OK           bool                    `json:"ok"`
-		AccountField string                  `json:"account_field"`
-		TOTPSecret   string                  `json:"totp_secret_field"`
-		Backend      int                     `json:"backend"`
-		Attributes   bktype.AttributeMapping `json:"attributes"`
+func (w depResponseWriter) renderStatusMessage(ctx *gin.Context, auth *AuthState) string {
+	return renderResponseStatusMessage(ctx, auth, w.deps.Resolver, w.deps.Cfg)
+}
+
+func renderResponseStatusMessage(
+	ctx *gin.Context,
+	auth *AuthState,
+	resolver localization.MessageResolver,
+	cfg config.File,
+) string {
+	if auth == nil {
+		return ""
 	}
 
-	resp := response{
+	fallback := auth.Runtime.StatusMessage
+	key := strings.TrimSpace(auth.Runtime.StatusMessageI18NKey)
+	if key == "" || resolver == nil {
+		return fallback
+	}
+
+	resolved := resolver.ResolveStatusMessage(
+		statusMessageContext(ctx),
+		localization.StatusMessage{
+			Text:    fallback,
+			I18NKey: key,
+		},
+		localization.LanguagePreference{
+			Policy:  auth.Runtime.ResponseLanguage,
+			Header:  acceptLanguageHeader(ctx),
+			Default: defaultResponseLanguage(cfg),
+		},
+	)
+	if strings.TrimSpace(resolved.Language) != "" && ctx != nil {
+		ctx.Header("Content-Language", resolved.Language)
+	}
+
+	if resolved.Text == "" {
+		return fallback
+	}
+
+	return resolved.Text
+}
+
+func statusMessageContext(ctx *gin.Context) context.Context {
+	if ctx == nil || ctx.Request == nil || ctx.Request.Context() == nil {
+		return context.Background()
+	}
+
+	return ctx.Request.Context()
+}
+
+func acceptLanguageHeader(ctx *gin.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
+	return ctx.GetHeader("Accept-Language")
+}
+
+func defaultResponseLanguage(cfg config.File) string {
+	if cfg == nil || cfg.GetServer() == nil {
+		return ""
+	}
+
+	return cfg.GetServer().Frontend.GetDefaultLanguage()
+}
+
+// sendAuthResponse sends a structured success response with the appropriate
+// media type based on the AuthState.
+func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
+	resp := authResponse{
 		OK:           true,
 		AccountField: auth.Runtime.AccountField,
 		TOTPSecret:   auth.Runtime.TOTPSecretField,
 		Backend:      int(auth.Runtime.SourcePassDBBackend),
 		Attributes:   auth.Attributes.Attributes,
+	}
+
+	if auth.Request.Service == definitions.ServCBOR {
+		sendCBOR(ctx, auth.Runtime.StatusCodeOK, resp)
+
+		return
 	}
 
 	// Use stable JSON encoding to avoid parallel_mismatched in client tests
@@ -313,4 +410,15 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 	}
 
 	ctx.Data(auth.Runtime.StatusCodeOK, "application/json; charset=utf-8", b)
+}
+
+func sendCBOR(ctx *gin.Context, status int, body any) {
+	payload, err := cborcodec.Marshal(body)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	ctx.Data(status, "application/cbor", payload)
 }

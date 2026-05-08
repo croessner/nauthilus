@@ -89,6 +89,8 @@ ldap:
 lua:
   config:
     package_path: "server/lua-plugins.d"
+    feature_vm_pool_size: 8
+    filter_vm_pool_size: 9
   optional_lua_backends:
     lookup-secondary:
       package_path: "server/lua-plugins.d"
@@ -98,9 +100,13 @@ lua:
       script_path: "server/lua-plugins.d/hooks/hello-world-request-dump.lua"
       roles:
         - "nauthilus:mfa"
+  actions:
+    - type: "post"
+      name: "test_context_chain"
+      script_path: "server/lua-plugins.d/actions/test_context_chain.lua"
   features:
     - name: "test_context_chain"
-      script_path: "server/lua-plugins.d/features/test_context_chain.lua"
+      script_path: "server/lua-plugins.d/environment/test_context_chain.lua"
       when_no_auth: true
 
 brute_force:

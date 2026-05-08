@@ -11,10 +11,10 @@ function nauthilus_call_action(request)
     request.service = "idp"
     request.method = "client_secret_post"
     request.grant_type = "client_credentials"
-    request.feature = ""
-    request.feature_rejected = false
-    request.feature_stage_expected = false
-    request.filter_stage_expected = false
+    request.environment = ""
+    request.environment_rejected = false
+    request.environment_stage_expected = false
+    request.subject_stage_expected = false
     request.status_message = "OIDC token issued"
 
     return original(request)

@@ -135,6 +135,10 @@ func sortedSyntaxKeys(values map[string]struct{}) []string {
 }
 
 func buildConfigSchemaNode(rawType reflect.Type) (*configSchemaNode, error) {
+	return buildConfigSchemaNodeWithSeen(rawType, make(map[reflect.Type]struct{}))
+}
+
+func buildConfigSchemaNodeWithSeen(rawType reflect.Type, seen map[reflect.Type]struct{}) (*configSchemaNode, error) {
 	typ := dereferenceConfigType(rawType)
 	if typ == nil {
 		return &configSchemaNode{kind: configSchemaScalar}, nil
@@ -146,11 +150,20 @@ func buildConfigSchemaNode(rawType reflect.Type) (*configSchemaNode, error) {
 
 	switch typ.Kind() {
 	case reflect.Struct:
-		return buildStructSchemaNode(typ)
+		if _, exists := seen[typ]; exists {
+			return newScalarSchemaNode(typ), nil
+		}
+
+		seen[typ] = struct{}{}
+
+		node, err := buildStructSchemaNode(typ, seen)
+		delete(seen, typ)
+
+		return node, err
 	case reflect.Slice, reflect.Array:
-		return buildCollectionSchemaNode(configSchemaList, typ)
+		return buildCollectionSchemaNode(configSchemaList, typ, seen)
 	case reflect.Map:
-		return buildCollectionSchemaNode(configSchemaMap, typ)
+		return buildCollectionSchemaNode(configSchemaMap, typ, seen)
 	default:
 		return newScalarSchemaNode(typ), nil
 	}
@@ -163,7 +176,7 @@ func newScalarSchemaNode(typ reflect.Type) *configSchemaNode {
 	}
 }
 
-func buildStructSchemaNode(typ reflect.Type) (*configSchemaNode, error) {
+func buildStructSchemaNode(typ reflect.Type, seen map[reflect.Type]struct{}) (*configSchemaNode, error) {
 	node := &configSchemaNode{
 		kind:              configSchemaObject,
 		fieldByConfigName: make(map[string]*configSchemaNode),
@@ -172,7 +185,7 @@ func buildStructSchemaNode(typ reflect.Type) (*configSchemaNode, error) {
 	}
 
 	for field := range typ.Fields() {
-		if err := addStructFieldSchemaNode(node, field); err != nil {
+		if err := addStructFieldSchemaNode(node, field, seen); err != nil {
 			return nil, err
 		}
 	}
@@ -180,7 +193,7 @@ func buildStructSchemaNode(typ reflect.Type) (*configSchemaNode, error) {
 	return node, nil
 }
 
-func addStructFieldSchemaNode(node *configSchemaNode, field reflect.StructField) error {
+func addStructFieldSchemaNode(node *configSchemaNode, field reflect.StructField, seen map[reflect.Type]struct{}) error {
 	tagName, tagOptions, err := parseMapstructureTag(field)
 	if err != nil {
 		return err
@@ -190,7 +203,7 @@ func addStructFieldSchemaNode(node *configSchemaNode, field reflect.StructField)
 		return nil
 	}
 
-	childNode, err := buildConfigSchemaNode(field.Type)
+	childNode, err := buildConfigSchemaNodeWithSeen(field.Type, seen)
 	if err != nil {
 		return err
 	}
@@ -200,8 +213,8 @@ func addStructFieldSchemaNode(node *configSchemaNode, field reflect.StructField)
 	return nil
 }
 
-func buildCollectionSchemaNode(kind configSchemaKind, typ reflect.Type) (*configSchemaNode, error) {
-	element, err := buildConfigSchemaNode(typ.Elem())
+func buildCollectionSchemaNode(kind configSchemaKind, typ reflect.Type, seen map[reflect.Type]struct{}) (*configSchemaNode, error) {
+	element, err := buildConfigSchemaNodeWithSeen(typ.Elem(), seen)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +441,7 @@ func isConfigScalarType(typ reflect.Type) bool {
 		reflect.TypeFor[ContentSecurityPolicyValue](),
 		reflect.TypeFor[Control](),
 		reflect.TypeFor[DbgModule](),
-		reflect.TypeFor[Feature](),
+		reflect.TypeFor[RuntimeModule](),
 		reflect.TypeFor[LDAPScope](),
 		reflect.TypeFor[PermissionsPolicyValue](),
 		reflect.TypeFor[Protocol](),

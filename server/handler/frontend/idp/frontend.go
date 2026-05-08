@@ -41,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/server/middleware/securityheaders"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -615,7 +616,11 @@ func (h *FrontendHandler) completeDeviceCodeFlow(ctx *gin.Context, mgr cookie.Ma
 			"user_code", request.UserCode,
 		)
 
-		renderDeviceCodeFailed(ctx, h.deps, "Invalid login or password")
+		renderDeviceCodeFailed(
+			ctx,
+			h.deps,
+			renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
+		)
 
 		return
 	}
@@ -722,8 +727,8 @@ func (h *FrontendHandler) shouldDenyDeviceCodeAfterMFA(ctx *gin.Context, mgr coo
 	}
 
 	if h != nil && h.deps != nil {
-		if outcome, ok := getFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()); ok {
-			return outcome == flowdomain.AuthOutcomeFailLatched
+		if flowAuthFailureLatched(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix()) {
+			return true
 		}
 	}
 
@@ -752,7 +757,11 @@ func (h *FrontendHandler) handleDeviceCodeDelayedAuthFailure(ctx *gin.Context, m
 	}
 
 	abortFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix())
-	renderDeviceCodeFailed(ctx, h.deps, "Invalid login or password")
+	renderDeviceCodeFailed(
+		ctx,
+		h.deps,
+		renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, mgr, idpGenericInvalidLoginMessage),
+	)
 
 	return true
 }
@@ -816,16 +825,38 @@ func (h *FrontendHandler) handleDelayedResponseFailure(ctx *gin.Context, sess *m
 	}
 
 	data["HaveError"] = true
-	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+	data["ErrorMessage"] = renderStoredIDPAuthStatusBridgeMessage(ctx, h.deps, sess.mgr, idpGenericInvalidLoginMessage)
 
 	h.setLoginRememberData(ctx, data, sess.oidcCID, sess.samlEntityID)
 
-	// Clean up cookie so they start over.
+	h.resetDelayedResponseFailureForRetry(ctx, sess.mgr)
+
+	// Clean up MFA cookie state so the next login attempt starts fresh.
 	CleanupMFAState(sess.mgr)
 
 	ctx.HTML(http.StatusOK, "idp_login.html", data)
 
 	return true
+}
+
+func (h *FrontendHandler) resetDelayedResponseFailureForRetry(ctx *gin.Context, mgr cookie.Manager) bool {
+	if ctx == nil {
+		return false
+	}
+
+	var (
+		redisClient rediscli.Client
+		redisPrefix string
+	)
+
+	if h != nil && h.deps != nil {
+		redisClient = h.deps.Redis
+		if h.deps.Cfg != nil && h.deps.Cfg.GetServer() != nil {
+			redisPrefix = h.deps.Cfg.GetServer().GetRedis().GetPrefix()
+		}
+	}
+
+	return resetFlowAuthOutcomeForRetry(ctx.Request.Context(), mgr, redisClient, redisPrefix)
 }
 
 // PostLogin handles the login submission.
@@ -887,7 +918,8 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 
 	idpInstance := idp.NewNauthilusIdP(h.deps)
 	redisPrefix := h.deps.Cfg.GetServer().GetRedis().GetPrefix()
-	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeUnknown)
+	_ = resetFlowAuthOutcomeForLoginAttempt(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix)
+	clearIDPAuthStatusBridge(mgr)
 
 	var rememberMeTTL int
 
@@ -918,7 +950,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
 		// Check for Delayed Response
-		if idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
+		if idpAuthFailureAllowsDelayedResponse(err) && idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
 			if user, _ := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID); user != nil {
 				if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
 					if mgr != nil {
@@ -927,6 +959,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 						cookie.SetAuthResult(mgr, username, definitions.AuthResultFail)
 						mgr.Set(definitions.SessionKeyProtocol, protocol)
 						_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
+						storeIDPAuthStatusBridgeFromError(mgr, err)
 
 						if rememberMeTTL > 0 {
 							mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
@@ -964,7 +997,7 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		data["CSRFToken"] = csrf.Token(ctx)
 		data["PostLoginEndpoint"] = ctx.Request.URL.Path
 		data["HaveError"] = true
-		data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Invalid login or password")
+		data["ErrorMessage"] = renderIDPAuthFailureMessage(ctx, h.deps, err, idpGenericInvalidLoginMessage)
 
 		h.setLoginRememberData(ctx, data, oidcCID, samlEntityID)
 

@@ -18,6 +18,7 @@ package mfa
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
@@ -58,11 +59,20 @@ func TestPersistentCredentialMarshalIncludesSignCount(t *testing.T) {
 }
 
 func TestPersistentCredentialUnmarshalLegacySignCount(t *testing.T) {
-	data := []byte(`{"id":"AQ==","signCount":9}`)
+	data := []byte(`{"id":"AQ==","name":"device","lastUsed":"2025-01-02T03:04:05Z","signCount":9}`)
 
 	var credential PersistentCredential
 	if err := jsoniter.ConfigFastest.Unmarshal(data, &credential); err != nil {
 		t.Fatalf("unmarshal legacy credential: %v", err)
+	}
+
+	if credential.Name != "device" {
+		t.Fatalf("expected credential name device, got %q", credential.Name)
+	}
+
+	expectedLastUsed := time.Date(2025, time.January, 2, 3, 4, 5, 0, time.UTC)
+	if !credential.LastUsed.Equal(expectedLastUsed) {
+		t.Fatalf("expected lastUsed %s, got %s", expectedLastUsed, credential.LastUsed)
 	}
 
 	if credential.Authenticator.SignCount != 9 {

@@ -1,8 +1,13 @@
 package protocol
 
-import "encoding/asn1"
+import (
+	"encoding/asn1"
+)
 
 const (
+	none          = "none"
+	stmtFmtNone   = none
+	stmtTypNone   = none
 	stmtAttStmt   = "attStmt"
 	stmtFmt       = "fmt"
 	stmtX5C       = "x5c"
@@ -20,6 +25,14 @@ const (
 
 const (
 	attStatementAndroidSafetyNetHostname = "attest.android.com"
+)
+
+const (
+	// MinimumChallengeLength defines the minimum length of the challenge.
+	MinimumChallengeLength = 16
+
+	// DefaultChallengeLength defines the default length of the challenge.
+	DefaultChallengeLength = 32
 )
 
 var (

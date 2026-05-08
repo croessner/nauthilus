@@ -20,13 +20,17 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -34,12 +38,18 @@ import (
 type Handler struct {
 	authv1.UnimplementedAuthServiceServer
 
-	service core.AuthApplicationService
+	service  core.AuthApplicationService
+	resolver localization.MessageResolver
 }
 
 // New constructs the gRPC auth handler around the application service.
 func New(service core.AuthApplicationService) *Handler {
-	return &Handler{service: service}
+	return NewWithResolver(service, nil)
+}
+
+// NewWithResolver constructs the gRPC auth handler with response localization.
+func NewWithResolver(service core.AuthApplicationService, resolver localization.MessageResolver) *Handler {
+	return &Handler{service: service, resolver: resolver}
 }
 
 // Authenticate maps the gRPC request into the auth application service.
@@ -50,6 +60,8 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 
 	dto := authv1.AuthRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeAuthenticate, dto)
+	input = authInputWithIncomingMetadata(ctx, input)
+	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_Authenticate_FullMethodName)
 	dto.Password = ""
 
 	if request != nil {
@@ -65,6 +77,8 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 		return nil, status.Error(codes.Internal, "auth application service returned no outcome")
 	}
 
+	outcome = h.localizedAuthOutcome(ctx, outcome)
+
 	return authOutcomeToProto(outcome), nil
 }
 
@@ -79,6 +93,8 @@ func (h *Handler) LookupIdentity(
 
 	dto := authv1.LookupIdentityRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeLookupIdentity, dto)
+	input = authInputWithIncomingMetadata(ctx, input)
+	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_LookupIdentity_FullMethodName)
 
 	outcome, err := h.service.LookupIdentity(ctx, input)
 	if err != nil {
@@ -88,6 +104,8 @@ func (h *Handler) LookupIdentity(
 	if outcome == nil {
 		return nil, status.Error(codes.Internal, "auth application service returned no lookup-identity outcome")
 	}
+
+	outcome = h.localizedAuthOutcome(ctx, outcome)
 
 	return authOutcomeToProto(outcome), nil
 }
@@ -103,6 +121,8 @@ func (h *Handler) ListAccounts(
 
 	dto := authv1.ListAccountsRequestToDTO(request)
 	input := core.NewAuthInputFromStructuredRequest(definitions.ServGRPC, core.AuthModeListAccounts, dto)
+	input = authInputWithIncomingMetadata(ctx, input)
+	ctx = core.ContextWithGRPCMethod(ctx, authv1.AuthService_ListAccounts_FullMethodName)
 
 	outcome, err := h.service.ListAccounts(ctx, input)
 	if err != nil {
@@ -113,10 +133,167 @@ func (h *Handler) ListAccounts(
 		return nil, status.Error(codes.Internal, "auth application service returned no list-accounts outcome")
 	}
 
+	outcome = h.localizedListAccountsOutcome(ctx, outcome)
+
+	if listAccountsDenied(outcome) {
+		setListAccountsHeaders(ctx, outcome)
+
+		return &authv1.ListAccountsResponse{
+			Session: outcome.Session,
+		}, nil
+	}
+
 	return &authv1.ListAccountsResponse{
 		Accounts: []string(outcome.Accounts),
 		Session:  outcome.Session,
 	}, nil
+}
+
+func listAccountsDenied(outcome *core.ListAccountsOutcome) bool {
+	return outcome != nil &&
+		outcome.Decision != "" &&
+		outcome.Decision != core.AuthDecisionOK
+}
+
+func setListAccountsHeaders(ctx context.Context, outcome *core.ListAccountsOutcome) {
+	pairs := make([]string, 0, 6)
+	if outcome.StatusMessage != "" {
+		pairs = append(pairs, "auth-status", outcome.StatusMessage)
+	}
+
+	if outcome.Error != "" {
+		pairs = append(pairs, "auth-error", outcome.Error)
+	}
+
+	if outcome.Session != "" {
+		pairs = append(pairs, "x-nauthilus-session", outcome.Session)
+	}
+
+	if len(pairs) == 0 {
+		return
+	}
+
+	_ = grpc.SetHeader(ctx, metadata.Pairs(pairs...))
+}
+
+func (h *Handler) localizedAuthOutcome(ctx context.Context, outcome *core.AuthOutcome) *core.AuthOutcome {
+	if outcome == nil {
+		return outcome
+	}
+
+	statusMessage, ok := h.resolvePolicyStatusMessage(ctx, grpcStatusMessageFields{
+		text:     outcome.StatusMessage,
+		i18nKey:  outcome.StatusMessageI18NKey,
+		language: outcome.ResponseLanguage,
+	})
+	if !ok {
+		return outcome
+	}
+
+	localized := *outcome
+	localized.StatusMessage = statusMessage
+
+	return &localized
+}
+
+func (h *Handler) localizedListAccountsOutcome(
+	ctx context.Context,
+	outcome *core.ListAccountsOutcome,
+) *core.ListAccountsOutcome {
+	if outcome == nil {
+		return outcome
+	}
+
+	statusMessage, ok := h.resolvePolicyStatusMessage(ctx, grpcStatusMessageFields{
+		text:     outcome.StatusMessage,
+		i18nKey:  outcome.StatusMessageI18NKey,
+		language: outcome.ResponseLanguage,
+	})
+	if !ok {
+		return outcome
+	}
+
+	localized := *outcome
+	localized.StatusMessage = statusMessage
+
+	return &localized
+}
+
+type grpcStatusMessageFields struct {
+	text     string
+	i18nKey  string
+	language string
+}
+
+func (h *Handler) resolvePolicyStatusMessage(ctx context.Context, fields grpcStatusMessageFields) (string, bool) {
+	key := strings.TrimSpace(fields.i18nKey)
+	if key == "" || h.resolver == nil {
+		return fields.text, false
+	}
+
+	resolved := h.resolver.ResolveStatusMessage(
+		ctx,
+		localization.StatusMessage{
+			Text:    fields.text,
+			I18NKey: key,
+		},
+		localization.LanguagePreference{
+			Policy: fields.language,
+			Header: acceptLanguageMetadata(ctx),
+		},
+	)
+	setContentLanguageMetadata(ctx, resolved)
+
+	return resolvedStatusText(resolved, fields.text), true
+}
+
+func resolvedStatusText(resolved localization.ResolvedStatusMessage, fallback string) string {
+	if resolved.Text == "" {
+		return fallback
+	}
+
+	return resolved.Text
+}
+
+func setContentLanguageMetadata(ctx context.Context, resolved localization.ResolvedStatusMessage) {
+	if strings.TrimSpace(resolved.Language) == "" {
+		return
+	}
+
+	_ = grpc.SetHeader(ctx, metadata.Pairs("content-language", resolved.Language))
+}
+
+func acceptLanguageMetadata(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
+	values := metadata.ValueFromIncomingContext(ctx, "accept-language")
+	if len(values) == 0 {
+		return ""
+	}
+
+	return strings.Join(values, ",")
+}
+
+func authInputWithIncomingMetadata(ctx context.Context, input core.AuthInput) core.AuthInput {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok || len(md) == 0 {
+		return input
+	}
+
+	input.Context.RequestMetadata = cloneIncomingMetadata(md)
+
+	return input
+}
+
+func cloneIncomingMetadata(md metadata.MD) map[string][]string {
+	values := make(map[string][]string, len(md))
+	for key, entries := range md {
+		values[key] = append([]string(nil), entries...)
+	}
+
+	return values
 }
 
 func authOutcomeToProto(outcome *core.AuthOutcome) *authv1.AuthResponse {
@@ -184,18 +361,15 @@ func grpcErrorFromServiceError(err error) error {
 		return nil
 	}
 
-	var inputErr *core.AuthInputError
-	if stderrors.As(err, &inputErr) {
+	if inputErr, ok := stderrors.AsType[*core.AuthInputError](err); ok {
 		return status.Error(codes.InvalidArgument, inputErr.Error())
 	}
 
-	var rejectedErr *core.AuthPreprocessRejectedError
-	if stderrors.As(err, &rejectedErr) {
+	if rejectedErr, ok := stderrors.AsType[*core.AuthPreprocessRejectedError](err); ok {
 		return status.Error(codes.PermissionDenied, rejectedErr.Error())
 	}
 
-	var permissionErr *core.AuthPermissionDeniedError
-	if stderrors.As(err, &permissionErr) {
+	if permissionErr, ok := stderrors.AsType[*core.AuthPermissionDeniedError](err); ok {
 		return status.Error(codes.PermissionDenied, permissionErr.Error())
 	}
 

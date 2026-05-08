@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	corepkg "github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/server/log"
 
 	"github.com/gin-gonic/gin"
@@ -44,11 +45,11 @@ func setupMinimalConfig(t *testing.T) {
 func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {
 	setupMinimalConfig(t)
 
-	// Enable backend server monitoring feature
-	feat := &config.Feature{}
-	_ = feat.Set(definitions.FeatureBackendServersMonitoring)
+	// Enable backend health-check service
+	feat := &config.RuntimeModule{}
+	_ = feat.Set(definitions.ServiceBackendHealthChecks)
 	cfg := config.GetFile().(*config.FileSettings)
-	cfg.Server.Features = []*config.Feature{feat}
+	cfg.Server.RuntimeModules = []*config.RuntimeModule{feat}
 
 	// Ensure BackendServers reports >0 servers
 	corepkg.BackendServers.Update([]*config.BackendServer{{Host: "127.0.0.1", Port: 993, Protocol: "imap"}})
@@ -123,7 +124,54 @@ func TestResponseWriter_OK_JSONBodyIncludesOK(t *testing.T) {
 	if af, ok := body["account_field"].(string); !ok || af != "uid" {
 		t.Fatalf("expected account_field=uid, got %v (present=%v)", body["account_field"], ok)
 	}
-	if _, ok := body["attributes"].(map[string]any); !ok {
-		t.Fatalf("expected attributes field to be an object, got %T", body["attributes"])
+	if attrs, ok := body["attributes"]; !ok || attrs == nil {
+		t.Fatalf("expected attributes field to be present, got %T", body["attributes"])
+	}
+}
+
+func TestResponseWriter_OK_CBORBodyIncludesOK(t *testing.T) {
+	setupMinimalConfig(t)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("GET", "/auth", nil)
+
+	cfgSettings := &config.FileSettings{Server: &config.ServerSection{}}
+	deps := corepkg.AuthDeps{Cfg: cfgSettings}
+	auth := corepkg.NewAuthStateFromContextWithDeps(ctx, deps).(*corepkg.AuthState)
+	auth.Request.Service = definitions.ServCBOR
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Runtime.GUID = "guid-cbor"
+	auth.Runtime.SourcePassDBBackend = definitions.BackendLDAP
+	auth.Runtime.AccountField = "uid"
+	auth.ReplaceAllAttributes(map[string][]any{"uid": {"alice"}})
+	auth.SetStatusCodes(auth.Request.Service)
+
+	auth.AuthOK(ctx)
+
+	if w.Code != auth.Runtime.StatusCodeOK {
+		t.Fatalf("status code = %d, want %d", w.Code, auth.Runtime.StatusCodeOK)
+	}
+
+	if got := w.Header().Get("Content-Type"); got != cborContentType {
+		t.Fatalf("Content-Type = %q, want %s", got, cborContentType)
+	}
+
+	var body map[string]any
+	if err := cborcodec.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid CBOR body: %v", err)
+	}
+
+	if okVal, ok := body["ok"].(bool); !ok || !okVal {
+		t.Fatalf("expected ok=true field, got %v (present=%v)", okVal, ok)
+	}
+
+	if af, ok := body["account_field"].(string); !ok || af != "uid" {
+		t.Fatalf("expected account_field=uid, got %v (present=%v)", body["account_field"], ok)
+	}
+
+	if attrs, ok := body["attributes"]; !ok || attrs == nil {
+		t.Fatalf("expected attributes field to be present, got %T", body["attributes"])
 	}
 }

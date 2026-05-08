@@ -93,6 +93,8 @@ func validateModuleCalls(moduleName string, expectedCalls []ModuleExpectedCall, 
 type MockData struct {
 	Context        *ContextMock        `json:"context"`
 	Redis          *RedisMock          `json:"redis"`
+	Policy         *PolicyMock         `json:"policy"`
+	I18N           *I18NMock           `json:"i18n"`
 	LDAP           *LDAPMock           `json:"ldap"`
 	Backend        *BackendMock        `json:"backend"`
 	Misc           *MiscMock           `json:"misc"`
@@ -112,6 +114,95 @@ type MockData struct {
 	HTTPResponse   *HTTPResponseMock   `json:"http_response"`
 	HTTPClient     *HTTPClientMock     `json:"http_client"`
 	ExpectedOutput *ExpectedOutputMock `json:"expected_output"`
+}
+
+// PolicyEmission captures one nauthilus_policy.emit_attribute call.
+type PolicyEmission struct {
+	Details map[string]string `json:"details,omitempty"`
+	ID      string            `json:"id"`
+	Value   string            `json:"value"`
+}
+
+// I18NCatalogRegistration captures one nauthilus_i18n.register_catalog call.
+type I18NCatalogRegistration struct {
+	Entries   map[string]string `json:"entries"`
+	Language  string            `json:"language"`
+	Namespace string            `json:"namespace"`
+}
+
+// I18NMock contains expected calls for the nauthilus_i18n module.
+type I18NMock struct {
+	ExpectedCalls []ModuleExpectedCall      `json:"expected_calls"`
+	Catalogs      []I18NCatalogRegistration `json:"-"`
+
+	callIndex  int    `json:"-"`
+	runtimeErr string `json:"-"`
+}
+
+// ResetRuntimeState clears call tracking and captured i18n catalog registrations.
+func (m *I18NMock) ResetRuntimeState() {
+	if m == nil {
+		return
+	}
+
+	m.callIndex = 0
+	m.runtimeErr = ""
+	m.Catalogs = nil
+}
+
+// RecordCall validates one i18n mock call against expected_calls.
+func (m *I18NMock) RecordCall(method, args string) error {
+	if m == nil {
+		return nil
+	}
+
+	return recordModuleCall("i18n", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
+}
+
+// ValidateComplete verifies that all expected i18n calls were observed.
+func (m *I18NMock) ValidateComplete() error {
+	if m == nil {
+		return nil
+	}
+
+	return validateModuleCalls("i18n", m.ExpectedCalls, m.callIndex, m.runtimeErr)
+}
+
+// PolicyMock contains expected calls for the nauthilus_policy module.
+type PolicyMock struct {
+	ExpectedCalls []ModuleExpectedCall `json:"expected_calls"`
+	Emitted       []PolicyEmission     `json:"-"`
+
+	callIndex  int    `json:"-"`
+	runtimeErr string `json:"-"`
+}
+
+// ResetRuntimeState clears call tracking and captured policy emissions.
+func (m *PolicyMock) ResetRuntimeState() {
+	if m == nil {
+		return
+	}
+
+	resetCallState(&m.callIndex, &m.runtimeErr)
+	m.Emitted = nil
+}
+
+// RecordCall validates one policy mock call against expected_calls.
+func (m *PolicyMock) RecordCall(method, args string) error {
+	if m == nil {
+		return nil
+	}
+
+	return recordModuleCall("policy", m.ExpectedCalls, &m.callIndex, &m.runtimeErr, method, args)
+}
+
+// ValidateComplete verifies that every expected policy call was observed.
+func (m *PolicyMock) ValidateComplete() error {
+	if m == nil {
+		return nil
+	}
+
+	return validateModuleCalls("policy", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
 // ContextMock contains mock data for nauthilus_context module.
@@ -269,7 +360,7 @@ func (m *BackendMock) ValidateComplete() error {
 	return validateModuleCalls("backend", m.ExpectedCalls, m.callIndex, m.runtimeErr)
 }
 
-// BackendServerMock represents one backend server entry exposed to Lua filters.
+// BackendServerMock represents one backend server entry exposed to Lua subject sources.
 type BackendServerMock struct {
 	Protocol      string `json:"protocol"`
 	Host          string `json:"host"`
@@ -797,11 +888,11 @@ func (m *HTTPClientMock) ValidateComplete() error {
 
 // ExpectedOutputMock defines expected test results.
 type ExpectedOutputMock struct {
-	FilterResult             *int     `json:"filter_result,omitempty"`
-	FilterAction             *bool    `json:"filter_action,omitempty"`
-	FeatureResult            *bool    `json:"feature_result,omitempty"`
-	FeatureAbort             *bool    `json:"feature_abort,omitempty"`
-	FeatureStatus            *int     `json:"feature_status,omitempty"`
+	SubjectResult            *int     `json:"subject_result,omitempty"`
+	SubjectRejected          *bool    `json:"subject_rejected,omitempty"`
+	EnvironmentTriggered     *bool    `json:"environment_triggered,omitempty"`
+	EnvironmentAbort         *bool    `json:"environment_abort,omitempty"`
+	EnvironmentResult        *int     `json:"environment_result,omitempty"`
 	ActionResult             *bool    `json:"action_result,omitempty"`
 	BackendResult            *bool    `json:"backend_result,omitempty"`
 	BackendReturnCode        *int     `json:"backend_return_code,omitempty"`
@@ -824,11 +915,11 @@ type ExpectedOutputMock struct {
 // TestResult contains the results of a Lua script test.
 type TestResult struct {
 	Success                  bool
-	FilterResult             *int
-	FilterAction             *bool
-	FeatureResult            *bool
-	FeatureAbort             *bool
-	FeatureStatus            *int
+	SubjectResult            *int
+	SubjectRejected          *bool
+	EnvironmentTriggered     *bool
+	EnvironmentAbort         *bool
+	EnvironmentResult        *int
 	ActionResult             *bool
 	BackendResult            *bool
 	BackendReturnCode        *int

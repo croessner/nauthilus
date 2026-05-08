@@ -18,7 +18,7 @@ data:
       ts                   DateTime64(3, 'UTC'),
       session              String,
       service              LowCardinality(String) CODEC(ZSTD(3)),
-      features             LowCardinality(String) CODEC(ZSTD(3)),
+      decision_sources     LowCardinality(String) CODEC(ZSTD(3)),
       client_ip            String,
       client_port          String,
       client_net           LowCardinality(String),

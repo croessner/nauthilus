@@ -66,11 +66,11 @@ func TestBackendMonitoringServiceStartStopWhenDisabled(t *testing.T) {
 	}
 
 	if svc.running {
-		t.Fatalf("service should not be running when %q is disabled", definitions.FeatureBackendServersMonitoring)
+		t.Fatalf("service should not be running when %q is disabled", definitions.ServiceBackendHealthChecks)
 	}
 
 	if svc.ticker != nil {
-		t.Fatalf("ticker should be nil when %q is disabled", definitions.FeatureBackendServersMonitoring)
+		t.Fatalf("ticker should be nil when %q is disabled", definitions.ServiceBackendHealthChecks)
 	}
 
 	if err := svc.Stop(context.Background()); err != nil {
@@ -79,10 +79,10 @@ func TestBackendMonitoringServiceStartStopWhenDisabled(t *testing.T) {
 }
 
 func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
-	f := &config.Feature{}
-	_ = f.Set(definitions.FeatureBackendServersMonitoring)
+	f := &config.RuntimeModule{}
+	_ = f.Set(definitions.ServiceBackendHealthChecks)
 
-	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{Features: []*config.Feature{f}}})
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{RuntimeModules: []*config.RuntimeModule{f}}})
 	snap := configfx.Snapshot{File: config.GetFile()}
 
 	svc := NewBackendMonitoringService(10*time.Millisecond, &mockCfgProvider{snap: snap}, slog.Default())
@@ -94,7 +94,7 @@ func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
 	}
 
 	if !svc.running {
-		t.Fatalf("service should be running when %q is enabled", definitions.FeatureBackendServersMonitoring)
+		t.Fatalf("service should be running when %q is enabled", definitions.ServiceBackendHealthChecks)
 	}
 
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
@@ -108,10 +108,10 @@ func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
 	}
 
 	if svc.running {
-		t.Fatalf("service should not be running after disabling %q", definitions.FeatureBackendServersMonitoring)
+		t.Fatalf("service should not be running after disabling %q", definitions.ServiceBackendHealthChecks)
 	}
 
 	if svc.ticker != nil {
-		t.Fatalf("ticker should be nil after disabling %q", definitions.FeatureBackendServersMonitoring)
+		t.Fatalf("ticker should be nil after disabling %q", definitions.ServiceBackendHealthChecks)
 	}
 }

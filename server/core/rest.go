@@ -42,6 +42,8 @@ import (
 	"github.com/croessner/nauthilus/server/model/admin"
 	bf "github.com/croessner/nauthilus/server/model/bruteforce"
 	restdto "github.com/croessner/nauthilus/server/model/rest"
+	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/server/policy/observability"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
@@ -189,6 +191,10 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 // any of the supported types.
 func (a *AuthState) writeListAccountsResponse(ctx *gin.Context) {
 	accounts := a.ListUserAccounts()
+	if ctx.IsAborted() || ctx.Writer.Written() {
+		return
+	}
+
 	chosen := listAccountsNegotiator.BestMatch(ctx.GetHeader("Accept"))
 
 	switch chosen {
@@ -228,9 +234,21 @@ func writeLineSeparated(ctx *gin.Context, accounts AccountList, contentType stri
 }
 
 func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
-	current := authFSMStateInputParsed
+	current := authFSMStateInit
+	nextState, err := a.advanceAuthFSM(current, authFSMEventParseOK)
+	if err != nil {
+		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+
+		return
+	}
+
+	current = nextState
 
 	if abort := a.preprocessBasicEndpointInput(ctx); abort {
+		if _, err = a.advanceAuthFSM(current, authFSMEventAbort); err != nil {
+			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
+		}
+
 		return
 	}
 
@@ -240,20 +258,20 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 
 	if ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
 		// Local-cache hit represents a previously authenticated identity.
-		// Ensure feature predicates based on Authenticated evaluate consistently.
+		// Ensure subject-source predicates based on Authenticated evaluate consistently.
 		a.Runtime.Authenticated = true
 	}
 
-	featureResult := a.HandleFeatures(ctx)
+	preAuthResult := a.HandleEnvironment(ctx)
 
-	event, ok := mapAuthFeatureResultToFSMEvent(featureResult)
+	event, ok := mapPreAuthResultToFSMEvent(preAuthResult)
 	if !ok {
 		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
 
 		return
 	}
 
-	nextState, err := nextAuthFSMState(current, event)
+	nextState, err = nextAuthFSMState(current, event)
 	if err != nil {
 		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
 
@@ -262,8 +280,8 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 
 	a.auditAuthFSMTransition(current, event, nextState)
 
-	if nextState != authFSMStateFeaturesChecked {
-		a.applyFeatureFSMOutcome(ctx, nextState, featureResult)
+	if nextState != authFSMStatePreAuthChecked {
+		a.applyPreAuthFSMOutcome(ctx, nextState, preAuthResult)
 
 		return
 	}
@@ -276,14 +294,14 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 
 	passwordResult := a.HandlePassword(ctx)
 
-	nextState, err = nextAuthFSMState(current, authFSMEventPasswordEvaluated)
+	nextState, err = nextAuthFSMState(current, authFSMEventAuthEvaluated)
 	if err != nil {
 		ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
 
 		return
 	}
 
-	a.auditAuthFSMTransition(current, authFSMEventPasswordEvaluated, nextState)
+	a.auditAuthFSMTransition(current, authFSMEventAuthEvaluated, nextState)
 	current = nextState
 
 	event, ok = mapAuthPasswordResultToFSMEvent(passwordResult)
@@ -305,7 +323,18 @@ func (a *AuthState) runAuthPipelineFSM(ctx *gin.Context) {
 }
 
 func (a *AuthState) auditAuthFSMTransition(from authFSMState, event authFSMEvent, to authFSMState) {
+	a.Runtime.AuthFSMEventPath = append(a.Runtime.AuthFSMEventPath, string(event))
+	if isAuthFSMTerminal(to) {
+		a.Runtime.AuthFSMTerminalState = string(to)
+	}
+
 	stats.GetMetrics().GetAuthFSMTransitionsTotal().WithLabelValues(string(from), string(event), string(to)).Inc()
+	observability.DefaultRecorder().RecordFSMTransition(a.Ctx(), observability.FSMMeasurement{
+		Result:         observability.ResultSuccess,
+		FSMEventMarker: string(event),
+		Operation:      a.policyOperation(),
+		Stage:          authFSMMetricStage(event),
+	})
 
 	if a.deps.Logger == nil || a.deps.Cfg == nil {
 		return
@@ -324,25 +353,67 @@ func (a *AuthState) auditAuthFSMTransition(from authFSMState, event authFSMEvent
 	)
 }
 
-func mapAuthFeatureResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
+func (a *AuthState) advanceAuthFSM(current authFSMState, event authFSMEvent) (authFSMState, error) {
+	next, err := nextAuthFSMState(current, event)
+	if err != nil {
+		return "", err
+	}
+
+	a.auditAuthFSMTransition(current, event, next)
+
+	return next, nil
+}
+
+func (a *AuthState) applyAuthFSMMarkers(markers []string) error {
+	if a == nil || len(markers) == 0 || len(a.Runtime.AuthFSMEventPath) > 0 || a.Runtime.AuthFSMTerminalState != "" {
+		return nil
+	}
+
+	current := authFSMStateInit
+	for _, marker := range markers {
+		next, err := a.advanceAuthFSM(current, authFSMEvent(marker))
+		if err != nil {
+			return err
+		}
+
+		current = next
+	}
+
+	return nil
+}
+
+func authFSMMetricStage(event authFSMEvent) policy.Stage {
+	switch event {
+	case authFSMEventAuthEvaluated:
+		return policy.StageAuthBackend
+	case authFSMEventAccountProviderEvaluated:
+		return policy.StageAccountProvider
+	case authFSMEventAuthPermit, authFSMEventAuthDeny, authFSMEventAuthTempFail, authFSMEventAuthEmptyUser, authFSMEventAuthEmptyPass:
+		return policy.StageAuthDecision
+	default:
+		return policy.StagePreAuth
+	}
+}
+
+func mapPreAuthResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
 	switch result {
-	case definitions.AuthResultFeatureTLS:
-		return authFSMEventFeaturesTempFail, true
-	case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-		return authFSMEventFeaturesFail, true
+	case definitions.AuthResultPreAuthTLS:
+		return authFSMEventPreAuthTempFail, true
+	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment:
+		return authFSMEventPreAuthDeny, true
 	case definitions.AuthResultUnset:
-		return authFSMEventFeaturesUnset, true
+		return authFSMEventPreAuthAbort, true
 	case definitions.AuthResultOK:
-		return authFSMEventFeaturesOK, true
+		return authFSMEventPreAuthOK, true
 	case definitions.AuthResultTempFail:
-		return authFSMEventFeaturesTempFail, true
+		return authFSMEventPreAuthTempFail, true
 	default:
 		return "", false
 	}
 }
 
-func (a *AuthState) applyFeatureFSMOutcome(ctx *gin.Context, nextState authFSMState, featureResult definitions.AuthResult) bool {
-	if nextState == authFSMStateFeaturesChecked {
+func (a *AuthState) applyPreAuthFSMOutcome(ctx *gin.Context, nextState authFSMState, preAuthResult definitions.AuthResult) bool {
+	if nextState == authFSMStatePreAuthChecked {
 		return false
 	}
 
@@ -355,7 +426,7 @@ func (a *AuthState) applyFeatureFSMOutcome(ctx *gin.Context, nextState authFSMSt
 			ctx.Abort()
 		},
 		onAuthTempFail: func() {
-			if featureResult == definitions.AuthResultFeatureTLS {
+			if preAuthResult == definitions.AuthResultPreAuthTLS {
 				result := GetPassDBResultFromPool()
 				a.PostLuaAction(ctx, result)
 				PutPassDBResultToPool(result)
@@ -419,15 +490,15 @@ func dispatchAuthFSMTerminalOutcome(nextState authFSMState, handlers authFSMTerm
 func mapAuthPasswordResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
 	switch result {
 	case definitions.AuthResultOK:
-		return authFSMEventPasswordOK, true
+		return authFSMEventAuthPermit, true
 	case definitions.AuthResultFail:
-		return authFSMEventPasswordFail, true
+		return authFSMEventAuthDeny, true
 	case definitions.AuthResultTempFail:
-		return authFSMEventPasswordTempFail, true
+		return authFSMEventAuthTempFail, true
 	case definitions.AuthResultEmptyUsername:
-		return authFSMEventPasswordEmptyUser, true
+		return authFSMEventAuthEmptyUser, true
 	case definitions.AuthResultEmptyPassword:
-		return authFSMEventPasswordEmptyPass, true
+		return authFSMEventAuthEmptyPass, true
 	default:
 		return "", false
 	}

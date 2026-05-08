@@ -263,7 +263,7 @@ func TestUnaryServerInterceptorRequiresClientCertificateWhenConfigured(t *testin
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
 	}, config.OIDCAuth{})
-	cfg.Runtime.Servers.GRPC.Auth.TLS.RequireClientCert = true
+	cfg.Runtime.Servers.GRPC.Authority.TLS.RequireClientCert = true
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg:    cfg,
 		Logger: slog.Default(),
@@ -287,7 +287,7 @@ func TestUnaryServerInterceptorAllowsClientCertificateWhenConfigured(t *testing.
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
 	}, config.OIDCAuth{})
-	cfg.Runtime.Servers.GRPC.Auth.TLS.RequireClientCert = true
+	cfg.Runtime.Servers.GRPC.Authority.TLS.RequireClientCert = true
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg:    cfg,
 		Logger: slog.Default(),
@@ -322,7 +322,7 @@ func TestUnaryServerInterceptorThrottlesInvalidCallerAuthByPeerIP(t *testing.T) 
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
 	}, config.OIDCAuth{})
-	enableBruteForceFeature(t, cfg)
+	enableBruteForceControl(t, cfg)
 
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg:    cfg,
@@ -677,6 +677,7 @@ func TestBufconnAuthServiceListAccountsSuccess(t *testing.T) {
 	service := &recordingService{
 		listOutcome: &core.ListAccountsOutcome{
 			Accounts: core.AccountList{"alpha@example.test", "zeta@example.test"},
+			Decision: core.AuthDecisionOK,
 			Session:  "bufconn-list-session",
 		},
 	}
@@ -700,6 +701,39 @@ func TestBufconnAuthServiceListAccountsSuccess(t *testing.T) {
 
 	if service.listInput.Mode != core.AuthModeListAccounts {
 		t.Fatalf("mode = %q, want %q", service.listInput.Mode, core.AuthModeListAccounts)
+	}
+}
+
+func TestBufconnAuthServiceListAccountsPolicyDenialUsesResponseMetadata(t *testing.T) {
+	service := &recordingService{
+		listOutcome: &core.ListAccountsOutcome{
+			Decision:      core.AuthDecisionFail,
+			Session:       "bufconn-list-deny-session",
+			StatusMessage: "Custom account listing deny",
+			HTTPStatus:    403,
+		},
+	}
+	client := newBufconnAuthServiceClient(t, service)
+	ctx := outgoingBasicAuthContext(context.Background())
+	var header metadata.MD
+
+	response, err := client.ListAccounts(ctx, &authv1.ListAccountsRequest{
+		ClientIp: "203.0.113.34",
+	}, grpc.Header(&header))
+	if err != nil {
+		t.Fatalf("ListAccounts returned transport error: %v", err)
+	}
+
+	if len(response.GetAccounts()) != 0 {
+		t.Fatalf("accounts = %#v, want empty response data on policy denial", response.GetAccounts())
+	}
+
+	if response.GetSession() != "bufconn-list-deny-session" {
+		t.Fatalf("session = %q, want bufconn-list-deny-session", response.GetSession())
+	}
+
+	if got := header.Get("auth-status"); len(got) != 1 || got[0] != "Custom account listing deny" {
+		t.Fatalf("auth-status metadata = %#v, want configured denial message", got)
 	}
 }
 
@@ -835,7 +869,7 @@ func grpcAuthTestConfig(basic config.BasicAuth, oidc config.OIDCAuth) *config.Fi
 		Runtime: &config.RuntimeSection{
 			Servers: config.RuntimeServersSection{
 				GRPC: config.RuntimeGRPCServersSection{
-					Auth: config.RuntimeGRPCAuthServerSection{
+					Authority: config.RuntimeGRPCAuthServerSection{
 						Enabled: true,
 						Address: "127.0.0.1:9444",
 					},
@@ -895,15 +929,15 @@ func writeGRPCTestTLSKeyPair(t *testing.T) (string, string) {
 	return certFile, keyFile
 }
 
-func enableBruteForceFeature(t *testing.T, cfg *config.FileSettings) {
+func enableBruteForceControl(t *testing.T, cfg *config.FileSettings) {
 	t.Helper()
 
-	var feature config.Feature
-	if err := feature.Set(definitions.FeatureBruteForce); err != nil {
-		t.Fatalf("set brute-force feature: %v", err)
+	var runtimeModule config.RuntimeModule
+	if err := runtimeModule.Set(definitions.ControlBruteForce); err != nil {
+		t.Fatalf("set brute-force control: %v", err)
 	}
 
-	cfg.Server.Features = []*config.Feature{&feature}
+	cfg.Server.RuntimeModules = []*config.RuntimeModule{&runtimeModule}
 }
 
 func grpcAuthDebugLogConfig(t *testing.T, debugModuleName string) *config.FileSettings {

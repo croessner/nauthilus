@@ -36,93 +36,128 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
+const (
+	rblIPFamilyIPv4 = "ipv4"
+	rblIPFamilyIPv6 = "ipv6"
+)
+
 // RBLIsListed is a small wrapper exposing the internal isListed logic to subpackages
 // without duplicating implementation details. It accepts a StateView to avoid import cycles.
 func RBLIsListed(ctx *gin.Context, view *StateView, rbl *config.RBL) (bool, string, error) {
-	if view == nil || view.auth == nil {
+	fact, err := RBLPolicyLookup(ctx, view, rbl)
+	if err != nil {
+		return false, "", err
+	}
+
+	if !fact.Listed {
 		return false, "", nil
 	}
 
-	return view.auth.isListed(ctx, rbl)
+	return true, fact.Name, nil
 }
 
-// isListed triggers a result of true, if an IP address was found on a RBL list. It also returns a human readable name.
-func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus bool, rblName string, err error) {
+// RBLPolicyLookup exposes the internal RBL lookup together with policy-visible list facts.
+func RBLPolicyLookup(ctx *gin.Context, view *StateView, rbl *config.RBL) (RBLListPolicyFact, error) {
+	if view == nil || view.auth == nil {
+		return RBLListPolicyFact{}, nil
+	}
+
+	return view.auth.rblPolicyLookup(ctx, rbl)
+}
+
+// rblPolicyLookup triggers a result of true, if an IP address was found on a RBL list,
+// and returns the request-local policy view of the lookup.
+func (a *AuthState) rblPolicyLookup(ctx *gin.Context, rbl *config.RBL) (RBLListPolicyFact, error) {
 	var (
-		results       []net.IP
-		reverseIPAddr string
+		results []net.IP
 	)
 
-	if stats.HavePrometheusLabelEnabled(a.Cfg(), definitions.PromFeature) {
+	fact := RBLListPolicyFact{
+		Name:         rbl.GetName(),
+		Host:         rbl.GetRBL(),
+		Weight:       rbl.GetWeight(),
+		AllowFailure: rbl.IsAllowFailure(),
+	}
+
+	if stats.HavePrometheusLabelEnabled(a.Cfg(), definitions.PromEnvironment) {
 		timer := prometheus.NewTimer(stats.GetMetrics().GetRblDuration().WithLabelValues(rbl.Name))
 
 		defer timer.ObserveDuration()
 	}
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
-	ipAddress := net.ParseIP(a.Request.ClientIP)
-	if ipAddress.IsLoopback() {
-		return false, "", nil
+	reverseIPAddr, ipFamily, active, err := reverseRBLClientIP(a.Request.ClientIP, rbl)
+	fact.IPFamily = ipFamily
+	if err != nil {
+		fact.Error = true
+		fact.ReasonCode = "invalid_ipv6"
+
+		return fact, err
 	}
 
-	if strings.Contains(ipAddress.String(), ".") {
-		if !rbl.IPv4 {
-			return false, "", nil
-		}
-
-		tmp := strings.Split(a.Request.ClientIP, ".")
-		tmp = []string{tmp[3], tmp[2], tmp[1], tmp[0]}
-		reverseIPAddr = strings.Join(tmp, ".")
-	} else {
-		if !rbl.IPv6 {
-			return false, "", nil
-		}
-
-		tmp, err := netaddr.ParseIPv6(a.Request.ClientIP) //nolint:govet // Ignore
-		if err != nil {
-			return false, "", err
-		}
-
-		// Long version uncompressed
-		ipv6Str := tmp.Long()
-
-		// Remove ':' signs
-		ipv6Slice := strings.Split(ipv6Str, ":")
-		ipv6Str = strings.Join(ipv6Slice, "")
-
-		// Reverse address
-		ipv6Slice = strings.Split(ipv6Str, "")
-		for n := 0; n < (len(ipv6Slice) / 2); n++ { //nolint:gomnd // Ignore
-			ipv6Slice[n], ipv6Slice[len(ipv6Slice)-n-1] = ipv6Slice[len(ipv6Slice)-n-1], ipv6Slice[n]
-		}
-
-		reverseIPAddr = strings.Join(ipv6Slice, ".")
+	if !active {
+		return fact, nil
 	}
 
 	query := fmt.Sprintf("%s.%s", reverseIPAddr, rbl.GetRBL())
+	fact.Query = query
 
+	results, err = a.rblQueryResults(ctx, query)
+	if err != nil {
+		markRBLPolicyFactError(&fact, err)
+
+		return fact, err
+	}
+
+	fact = a.applyRBLPolicyResults(ctx, fact, rbl, results, query, guid)
+
+	return fact, nil
+}
+
+func reverseRBLClientIP(clientIP string, rbl *config.RBL) (string, string, bool, error) {
+	if strings.Contains(clientIP, ".") {
+		if !rbl.IPv4 {
+			return "", rblIPFamilyIPv4, false, nil
+		}
+
+		tmp := strings.Split(clientIP, ".")
+		tmp = []string{tmp[3], tmp[2], tmp[1], tmp[0]}
+
+		return strings.Join(tmp, "."), rblIPFamilyIPv4, true, nil
+	}
+
+	if !rbl.IPv6 {
+		return "", rblIPFamilyIPv6, false, nil
+	}
+
+	tmp, err := netaddr.ParseIPv6(clientIP) //nolint:govet // Ignore
+	if err != nil {
+		return "", rblIPFamilyIPv6, true, err
+	}
+
+	ipv6Str := strings.Join(strings.Split(tmp.Long(), ":"), "")
+	ipv6Slice := strings.Split(ipv6Str, "")
+	for n := 0; n < (len(ipv6Slice) / 2); n++ { //nolint:gomnd // Ignore
+		ipv6Slice[n], ipv6Slice[len(ipv6Slice)-n-1] = ipv6Slice[len(ipv6Slice)-n-1], ipv6Slice[n]
+	}
+
+	return strings.Join(ipv6Slice, "."), rblIPFamilyIPv6, true, nil
+}
+
+func (a *AuthState) rblQueryResults(ctx *gin.Context, query string) ([]net.IP, error) {
 	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(a.Cfg().GetServer().GetDNS().GetTimeout()))
-
 	defer cancel()
 
 	resolver := util.NewDNSResolver(a.Cfg())
-
-	// Trace DNS lookup for RBL
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 		attribute.String("rpc.system", "dns"),
 		semconv.PeerService("dns"),
 		attribute.String("dns.question.name", query),
-		attribute.String("dns.question.type", func() string {
-			if strings.Contains(a.Request.ClientIP, ":") {
-				return "AAAA"
-			}
-
-			return "A"
-		}()),
+		attribute.String("dns.question.type", a.rblQuestionType()),
 	)
 
-	results, err = resolver.LookupIP(tctx, "ip4", query)
+	results, err := resolver.LookupIP(tctx, "ip4", query)
 	if err != nil {
 		tsp.RecordError(err)
 	}
@@ -130,37 +165,52 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	tsp.SetAttributes(attribute.Int("dns.answer.count", len(results)))
 	tsp.End()
 
-	if err != nil {
-		return false, "", err
+	return results, err
+}
+
+func (a *AuthState) rblQuestionType() string {
+	if strings.Contains(a.Request.ClientIP, ":") {
+		return "AAAA"
 	}
 
+	return "A"
+}
+
+func markRBLPolicyFactError(fact *RBLListPolicyFact, err error) {
+	fact.Error = true
+	fact.ReasonCode = "dns_error"
+	if strings.Contains(err.Error(), "no such host") {
+		fact.ReasonCode = "dns_no_such_host"
+	}
+}
+
+func (a *AuthState) applyRBLPolicyResults(
+	ctx *gin.Context,
+	fact RBLListPolicyFact,
+	rbl *config.RBL,
+	results []net.IP,
+	query string,
+	guid string,
+) RBLListPolicyFact {
 	for _, result := range results {
-		if result.String() == rbl.GetReturnCode() {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				a.Cfg(),
-				a.Logger(),
-				definitions.DbgRBL,
-				definitions.LogKeyGUID, guid,
-				"query", query, "result", result.String(), "rbl", rbl.GetName(),
-			)
-
-			return true, rbl.Name, nil
+		if result.String() != rbl.GetReturnCode() && !slices.Contains(rbl.GetReturnCodes(), result.String()) {
+			continue
 		}
 
-		if slices.Contains(rbl.GetReturnCodes(), result.String()) {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				a.Cfg(),
-				a.Logger(),
-				definitions.DbgRBL,
-				definitions.LogKeyGUID, guid,
-				"query", query, "result", result.String(), "rbl", rbl.GetName(),
-			)
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			a.Cfg(),
+			a.Logger(),
+			definitions.DbgRBL,
+			definitions.LogKeyGUID, guid,
+			"query", query, "result", result.String(), "rbl", rbl.GetName(),
+		)
 
-			return true, rbl.Name, nil
-		}
+		fact.Listed = true
+		fact.ReturnCode = result.String()
+
+		return fact
 	}
 
-	return false, "", nil
+	return fact
 }

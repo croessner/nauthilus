@@ -21,8 +21,10 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
+	stdjson "encoding/json"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -50,6 +52,9 @@ import (
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/policy"
+	"github.com/croessner/nauthilus/server/policy/evaluation"
+	"github.com/croessner/nauthilus/server/policy/report"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/stats"
@@ -57,6 +62,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
@@ -290,9 +296,9 @@ type State interface {
 	// HandlePassword processes the password-based authentication for a user and returns the authentication result.
 	HandlePassword(ctx *gin.Context) definitions.AuthResult
 
-	// FilterLua applies Lua-based filtering logic to the provided execution context and PassDBResult.
-	// It returns an AuthResult indicating the outcome of the filtering process.
-	FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
+	// SubjectLua applies Lua-based subject analysis logic to the provided execution context and PassDBResult.
+	// It returns an AuthResult indicating the outcome of the subject analysis process.
+	SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult
 
 	// PostLuaAction performs actions or post-processing after executing Lua scripts during authentication workflow.
 	PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult)
@@ -345,6 +351,9 @@ type AuthRequest struct {
 
 	// HTTPClientRequest is the HTTP request being processed.
 	HTTPClientRequest *http.Request
+
+	// RequestMetadata contains incoming transport metadata such as gRPC metadata.
+	RequestMetadata map[string][]string
 
 	// Method is the authentication method.
 	Method string
@@ -457,11 +466,32 @@ type AuthRuntime struct {
 	// MonitoringFlags holds flags related to request monitoring.
 	MonitoringFlags []definitions.Monitoring
 
+	// BruteForceBuckets contains read-only bucket facts collected for policy evaluation.
+	BruteForceBuckets []bruteforce.BucketPolicyFact
+
+	// BruteForceToleration contains the request-local toleration fact collected for policy evaluation.
+	BruteForceToleration tolerate.PolicyFact
+
+	// RelayDomainPolicy contains the request-local relay-domain facts collected for policy evaluation.
+	RelayDomainPolicy RelayDomainPolicyFact
+
+	// RBLPolicy contains the request-local RBL facts collected for policy evaluation.
+	RBLPolicy RBLPolicyFact
+
 	// GUID is a unique identifier for the authentication request.
 	GUID string
 
 	// StatusMessage is a message describing the status of the request.
 	StatusMessage string
+
+	// StatusMessageI18NKey is the policy-selected localization key for StatusMessage.
+	StatusMessageI18NKey string
+
+	// ResponseLanguage is the policy-selected response-rendering language.
+	ResponseLanguage string
+
+	// AuthFSMTerminalState contains the current auth FSM terminal state when known.
+	AuthFSMTerminalState string
 
 	// AccountField is the name of the field containing the account information.
 	AccountField string
@@ -469,8 +499,8 @@ type AuthRuntime struct {
 	// AccountName is the name of the account being authenticated.
 	AccountName string
 
-	// FeatureName is the name of the feature being accessed.
-	FeatureName string
+	// EnvironmentName is the name of the environment control or source being accessed.
+	EnvironmentName string
 
 	// BackendName is the name of the backend used for authentication.
 	BackendName string
@@ -496,8 +526,11 @@ type AuthRuntime struct {
 	// BFClientNet is the network address used for brute-force detection.
 	BFClientNet string
 
-	// AdditionalFeatures contains additional feature-specific data.
-	AdditionalFeatures map[string]any
+	// AdditionalAttributes contains additional attribute-specific data.
+	AdditionalAttributes map[string]any
+
+	// AuthFSMEventPath contains current auth FSM events seen by this request.
+	AuthFSMEventPath []string
 
 	// Context is the Lua context associated with the request.
 	Context *lualib.Context
@@ -873,8 +906,8 @@ type PassDBResult struct {
 	// GroupDNs contains resolved group distinguished names.
 	GroupDNs []string
 
-	// AdditionalFeatures contains additional features for machine learning
-	AdditionalFeatures map[string]any
+	// AdditionalAttributes contains additional backend attributes
+	AdditionalAttributes map[string]any
 
 	// Authenticated is a flag that is set if a user was not only found, but also succeeded authentication.
 	Authenticated bool
@@ -908,7 +941,7 @@ func (p *PassDBResult) Reset() {
 
 	// Reset map fields to nil
 	p.Attributes = nil
-	p.AdditionalFeatures = nil
+	p.AdditionalAttributes = nil
 	p.Groups = nil
 	p.GroupDNs = nil
 }
@@ -941,9 +974,9 @@ func (p *PassDBResult) Clone() *PassDBResult {
 	res.Groups = slices.Clone(p.Groups)
 	res.GroupDNs = slices.Clone(p.GroupDNs)
 
-	if p.AdditionalFeatures != nil {
-		res.AdditionalFeatures = make(map[string]any, len(p.AdditionalFeatures))
-		maps.Copy(res.AdditionalFeatures, p.AdditionalFeatures)
+	if p.AdditionalAttributes != nil {
+		res.AdditionalAttributes = make(map[string]any, len(p.AdditionalAttributes))
+		maps.Copy(res.AdditionalAttributes, p.AdditionalAttributes)
 	}
 
 	return res
@@ -1071,7 +1104,7 @@ func (a *AuthState) collectFields() []authStateField {
 		{"StatusMessage", a.Runtime.StatusMessage},
 		{"AccountField", a.Runtime.AccountField},
 		{"AccountName", a.Runtime.AccountName},
-		{"FeatureName", a.Runtime.FeatureName},
+		{"EnvironmentName", a.Runtime.EnvironmentName},
 		{"BackendName", a.Runtime.BackendName},
 		{"UsedBackendIP", a.Runtime.UsedBackendIP},
 		{"TOTPSecret", a.Runtime.TOTPSecret},
@@ -1804,36 +1837,49 @@ func (a *AuthState) ResetLoginAttemptsOnSuccess() {
 }
 
 // setFailureHeaders sets the failure headers for the given authentication context.
-// It sets the "Auth-Status" header to the value of definitions.PasswordFail constant.
-// It sets the "X-Nauthilus-Session" header to the value of the authentication's GUID field.
-// It updates the StatusMessage of the authentication to definitions.PasswordFail.
+// It sets Auth-Status to the selected response-boundary status message.
+// It sets X-Nauthilus-Session to the authentication GUID.
+// It falls back to the default password-failure message when no status message was selected.
 //
 // If the Service field of the authentication is equal to global.ServUserInfo, it also sets the following headers:
 //   - "X-User-Found" header to the string representation of the UserFound field of the authentication
 //   - If the PasswordHistory field is not nil, it responds with a JSON representation of the PasswordHistory.
 //     If the PasswordHistory field is nil, it responds with an empty JSON object.
 //
-// If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
-func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
+// If the Service field is not equal to global.ServUserInfo, it responds with the selected status message as plain text.
+func (a *AuthState) setFailureHeaders(ctx *gin.Context, render responseMessageRenderer) {
 	a.prepareAuthFailure()
+	statusMessage := a.Runtime.StatusMessage
+	if render != nil {
+		statusMessage = render(ctx, a)
+	}
 
-	ctx.Header("Auth-Status", a.Runtime.StatusMessage)
+	ctx.Header("Auth-Status", statusMessage)
 	ctx.Header("X-Nauthilus-Session", a.Runtime.GUID)
 
 	switch a.Request.Service {
-	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON, definitions.ServCBOR:
-		maxWaitDelay := uint(a.Cfg().GetServer().GetNginxWaitDelay())
-
-		if maxWaitDelay > 0 {
-			waitDelay := bfWaitDelay(maxWaitDelay, a.Security.LoginAttempts)
-			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
-		}
+	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON:
+		a.setAuthWaitHeader(ctx)
 
 		// Do not include password history in responses; always return JSON null on failure
 		ctx.JSON(a.Runtime.StatusCodeFail, nil)
+	case definitions.ServCBOR:
+		a.setAuthWaitHeader(ctx)
+
+		sendCBOR(ctx, a.Runtime.StatusCodeFail, nil)
 	default:
-		ctx.String(a.Runtime.StatusCodeFail, a.Runtime.StatusMessage)
+		ctx.String(a.Runtime.StatusCodeFail, statusMessage)
 	}
+}
+
+func (a *AuthState) setAuthWaitHeader(ctx *gin.Context) {
+	maxWaitDelay := uint(a.Cfg().GetServer().GetNginxWaitDelay())
+	if maxWaitDelay == 0 {
+		return
+	}
+
+	waitDelay := bfWaitDelay(maxWaitDelay, a.Security.LoginAttempts)
+	ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 }
 
 // loginAttemptProcessing performs processing for a failed login attempt.
@@ -2080,10 +2126,10 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		auth.SetResolvedGroups(passDBResult.Groups, passDBResult.GroupDNs)
 	}
 
-	// Handle AdditionalFeatures if they exist in the PassDBResult
-	if len(passDBResult.AdditionalFeatures) > 0 {
-		// Set AdditionalFeatures in the gin.Context
-		ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+	// Handle AdditionalAttributes if they exist in the PassDBResult
+	if len(passDBResult.AdditionalAttributes) > 0 {
+		// Set AdditionalAttributes in the gin.Context
+		ctx.Set(definitions.CtxAdditionalAttributesKey, passDBResult.AdditionalAttributes)
 	}
 
 	// After attributes were applied, derive the authoritative account directly from attributes
@@ -2286,7 +2332,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.UserFound = a.Runtime.UserFound
 	cr.Authenticated = a.Runtime.Authenticated
 	cr.BruteForceName = a.Security.BruteForceName
-	cr.FeatureName = a.Runtime.FeatureName
+	cr.EnvironmentName = a.Runtime.EnvironmentName
 	cr.StatusMessage = &a.Runtime.StatusMessage
 	cr.RedisPrefix = a.Cfg().GetServer().GetRedis().GetPrefix()
 
@@ -2472,9 +2518,9 @@ func (a *AuthState) GetSlidingWindowKeys(rule *config.BruteForceRule, network *n
 	return bm.GetSlidingWindowKeys(rule, network)
 }
 
-// GetFeatureName returns the feature name from the AuthState.
-func (a *AuthState) GetFeatureName() string {
-	return a.Runtime.FeatureName
+// GetEnvironmentName returns the environment name from the AuthState.
+func (a *AuthState) GetEnvironmentName() string {
+	return a.Runtime.EnvironmentName
 }
 
 // WithUsername sets the username in the AuthState.
@@ -2519,6 +2565,15 @@ func (a *AuthState) WithRWPDecision(enforce bool) bruteforce.BucketManager {
 	return a
 }
 
+// GetTolerationPolicyFact returns the last collected toleration policy fact.
+func (a *AuthState) GetTolerationPolicyFact() tolerate.PolicyFact {
+	if a == nil {
+		return tolerate.PolicyFact{}
+	}
+
+	return a.Runtime.BruteForceToleration
+}
+
 // GetBruteForceName returns the brute force name from the AuthState.
 func (a *AuthState) GetBruteForceName() string {
 	return a.Security.BruteForceName
@@ -2526,7 +2581,7 @@ func (a *AuthState) GetBruteForceName() string {
 
 // LoadAllPasswordHistories loads all password histories for the current AuthState.
 func (a *AuthState) LoadAllPasswordHistories() {
-	if !a.deps.Cfg.HasFeature(definitions.FeatureBruteForce) {
+	if !a.deps.Cfg.HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
 
@@ -2546,6 +2601,24 @@ func (a *AuthState) CheckBucketOverLimit(rules []config.BruteForceRule, message 
 	bm := a.createBucketManager(a.Ctx())
 
 	return bm.CheckBucketOverLimit(rules, message)
+}
+
+// GetBucketPolicyFacts returns the last collected brute-force bucket policy facts.
+func (a *AuthState) GetBucketPolicyFacts() []bruteforce.BucketPolicyFact {
+	if a == nil || len(a.Runtime.BruteForceBuckets) == 0 {
+		return nil
+	}
+
+	return append([]bruteforce.BucketPolicyFact(nil), a.Runtime.BruteForceBuckets...)
+}
+
+// CollectBucketPolicyFacts reads current brute-force bucket policy facts.
+func (a *AuthState) CollectBucketPolicyFacts(rules []config.BruteForceRule) ([]bruteforce.BucketPolicyFact, error) {
+	bm := a.createBucketManager(a.Ctx())
+	facts, err := bm.CollectBucketPolicyFacts(rules)
+	a.Runtime.BruteForceBuckets = facts
+
+	return facts, err
 }
 
 // ProcessBruteForce evaluates and handles a brute force trigger based on the given rule and network.
@@ -2626,39 +2699,39 @@ func (a *AuthState) GetAccountField() string {
 
 // PostLuaAction executes a Lua-based post-processing action using the given authentication result and context.
 func (a *AuthState) PostLuaAction(ctx *gin.Context, passDBResult *PassDBResult) {
-	featureRejected := false
-	featureStageExpected := true
-	filterStageExpected := true
+	environmentRejected := false
+	environmentStageExpected := true
+	subjectStageExpected := true
 
 	if ctx != nil {
-		featureRejected = ctx.GetBool(definitions.CtxFeatureRejectedKey)
+		environmentRejected = ctx.GetBool(definitions.CtxEnvironmentRejectedKey)
 	}
 
-	if featureRejected {
-		filterStageExpected = false
+	if environmentRejected {
+		subjectStageExpected = false
 
-		if a.Runtime.FeatureName == definitions.FeatureBruteForce {
-			featureStageExpected = false
+		if a.Runtime.EnvironmentName == definitions.ControlBruteForce {
+			environmentStageExpected = false
 		}
 	}
 
 	if disp := getPostAction(); disp != nil {
 		disp.Run(PostActionInput{
-			View:                 a.View(),
-			Result:               passDBResult,
-			FeatureRejected:      featureRejected,
-			FeatureStageExpected: featureStageExpected,
-			FilterStageExpected:  filterStageExpected,
+			View:                     a.View(),
+			Result:                   passDBResult,
+			EnvironmentRejected:      environmentRejected,
+			EnvironmentStageExpected: environmentStageExpected,
+			SubjectStageExpected:     subjectStageExpected,
 		})
 	}
 }
 
-func (a *AuthState) markFeatureRejected(ctx *gin.Context) {
+func (a *AuthState) markEnvironmentRejected(ctx *gin.Context) {
 	if ctx == nil {
 		return
 	}
 
-	ctx.Set(definitions.CtxFeatureRejectedKey, true)
+	ctx.Set(definitions.CtxEnvironmentRejectedKey, true)
 }
 
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
@@ -2677,7 +2750,18 @@ func (a *AuthState) SFKeyHash() string {
 // HandlePassword handles the authentication process for the password flow.
 // Delegate orchestration to the Authenticator to keep responsibilities separated.
 func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
-	return defaultAuthenticator.Authenticate(ctx, a)
+	defer a.completePolicyStage(ctx, policy.StageAuthBackend)
+
+	authResult = defaultAuthenticator.Authenticate(ctx, a)
+	if authResult == definitions.AuthResultEmptyUsername || authResult == definitions.AuthResultEmptyPassword {
+		a.recordPolicyBackendResult(ctx, authResult, nil, nil)
+	}
+
+	if configuredResult, ok := a.configuredPolicyAuthResult(ctx, authResult); ok {
+		return configuredResult
+	}
+
+	return a.defaultPolicyAuthResult(ctx, authResult)
 }
 
 // usernamePasswordChecks performs checks on the Username and Password fields of the AuthState object.
@@ -2716,7 +2800,7 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 
 // handleLocalCache handles the local cache authentication logic for the AuthState object.
 // It sets the operation mode and initializes the passDBResult.
-// Then, it filters the authentication result through the Lua filter.
+// Then, it applies Lua subject analysis to the authentication result.
 // After that, the PostLuaAction is executed on the passDBResult.
 // Finally, it returns the authResult of type definitions.AuthResult.
 func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
@@ -2735,14 +2819,19 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	// the PassDB stage has already decided previously. Reflect that in AuthState
 	// so final logs include authn=true for cache hits.
 	a.Runtime.Authenticated = true
+	a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
 
 	authResult := definitions.AuthResultOK
 
-	if lf := getLuaFilter(); lf != nil {
-		authResult = lf.Filter(ctx, a.View(), passDBResult)
+	if lf := getLuaSubject(); lf != nil {
+		authResult = lf.Analyze(ctx, a.View(), passDBResult)
 	}
 
-	a.PostLuaAction(ctx, passDBResult)
+	if a.HasConfiguredAuthPolicyAuthority(ctx) {
+		a.storePolicyPostActionResult(ctx, passDBResult)
+	} else {
+		a.PostLuaAction(ctx, passDBResult)
+	}
 
 	return authResult
 }
@@ -3091,7 +3180,7 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 // It then tries to get all password histories of the user. If the user is not found, it updates the brute force buckets counter,
 // call post Lua action and return authentication failure.
 // It also checks if the user is found during password verification, if true, it sets a new username to the user.
-// Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
+// Afterward, it applies Lua subject analysis to the result and calls the post Lua action, and finally, it returns the authentication result.
 func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) definitions.AuthResult {
 	tr := monittrace.New("nauthilus/auth")
 	actx, aspan := tr.Start(ctx.Request.Context(), "auth.authenticate",
@@ -3126,6 +3215,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	if passDBResult, err = a.processVerifyPassword(ctx, passDBs); err != nil {
 		// tempfail: no backend decision could be made
 		a.Runtime.Authenticated = false
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
 
 		return definitions.AuthResultTempFail
 	}
@@ -3135,6 +3225,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	if accountName, err = a.processUserFound(passDBResult); err != nil || passDBResult == nil {
 		// treat as tempfail
 		a.Runtime.Authenticated = false
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
 
 		return definitions.AuthResultTempFail
 	}
@@ -3142,6 +3233,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	if err = a.processCache(ctx, passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
 		// tempfail during cache processing
 		a.Runtime.Authenticated = false
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
 
 		return definitions.AuthResultTempFail
 	}
@@ -3158,22 +3250,34 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		a.Runtime.Authenticated = false
 	}
 
-	authResult = a.FilterLua(ctx, passDBResult)
+	if passDBResult.Authenticated {
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+	} else {
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
+	}
+
+	authResult = a.SubjectLua(ctx, passDBResult)
 	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
-	a.PostLuaAction(ctx, passDBResult)
+	if a.HasConfiguredAuthPolicyAuthority(ctx) {
+		a.storePolicyPostActionResult(ctx, passDBResult)
+	} else {
+		a.PostLuaAction(ctx, passDBResult)
+	}
 
 	return authResult
 }
 
-// FilterLua calls Lua filters which can change the backend result.
-func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
-	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "filter.lua") {
+// SubjectLua calls Lua subject sources which can change the backend result.
+func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
+	if util.IsHTTPRequestCanceled(a.Logger(), ctx.Request, a.Runtime.GUID, "subject.lua") {
 		return definitions.AuthResultTempFail
 	}
 
+	defer a.completePolicyStage(ctx, policy.StageSubjectAnalysis)
+
 	tr := monittrace.New("nauthilus/auth")
-	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.filter",
+	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.subject",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
 	)
@@ -3185,18 +3289,18 @@ func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) defi
 
 	defer lspan.End()
 
-	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_filter_lua_total", ctx.FullPath()); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_subject_lua_total", ctx.FullPath()); stop != nil {
 		defer stop()
 	}
 
-	if lf := getLuaFilter(); lf != nil {
-		res := lf.Filter(ctx, a.View(), passDBResult)
+	if lf := getLuaSubject(); lf != nil {
+		res := lf.Analyze(ctx, a.View(), passDBResult)
 		lspan.SetAttributes(attribute.String("result", string(res)))
 
 		return res
 	}
 
-	level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, "LuaFilter not registered")
+	_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, "LuaSubject not registered")
 
 	return definitions.AuthResultTempFail
 }
@@ -3204,6 +3308,16 @@ func (a *AuthState) FilterLua(ctx *gin.Context, passDBResult *PassDBResult) defi
 // ListUserAccounts returns the list of all known users from the account databases.
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
+	ginCtx := a.Request.HTTPClientContext
+	errSeen := false
+
+	defer func() {
+		if a.finishListAccountsPolicy(ginCtx, len(accountList), errSeen) {
+			return
+		}
+
+		a.observeConfiguredPolicyDecision(ginCtx)
+	}()
 
 	// Pre-allocate the accounts slice to avoid continuous reallocation
 	// This is a conservative estimate, we'll allocate based on the number of backends
@@ -3252,6 +3366,8 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		if err == nil {
 			accountList = append(accountList, result...)
 		} else {
+			errSeen = true
+
 			if detailedError, ok := stderrors.AsType[*errors.DetailedError](err); ok {
 				level.Error(a.logger()).Log(
 					definitions.LogKeyGUID, a.Runtime.GUID,
@@ -3271,6 +3387,48 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	return accountList
 }
 
+func (a *AuthState) finishListAccountsPolicy(ctx *gin.Context, count int, errSeen bool) bool {
+	a.recordPolicyAccountProvider(ctx, count, errSeen)
+	a.completePolicyStage(ctx, policy.StageAccountProvider)
+
+	final, configured := a.listAccountsPolicyDecision(ctx)
+	if final == nil {
+		return false
+	}
+
+	if configured {
+		if listAccountsPolicyTerminates(final) {
+			a.applyPolicyDecision(ctx, final)
+
+			return true
+		}
+	}
+
+	if err := a.applyAuthFSMMarkers(evaluation.TargetFSMEventMarkers(a.policyReport(ctx), final)); err != nil {
+		_ = level.Error(a.logger()).Log(definitions.LogKeyGUID, a.Runtime.GUID, definitions.LogKeyMsg, err.Error())
+	}
+
+	return false
+}
+
+func (a *AuthState) listAccountsPolicyDecision(ctx *gin.Context) (*report.FinalDecision, bool) {
+	if final, ok := a.configuredPolicyAuthDecision(ctx); ok {
+		return final, true
+	}
+
+	final, _ := a.defaultPolicyAuthDecision(ctx)
+
+	return final, false
+}
+
+func listAccountsPolicyTerminates(final *report.FinalDecision) bool {
+	if final == nil {
+		return false
+	}
+
+	return final.Effect == policy.DecisionDeny || final.Effect == policy.DecisionTempFail
+}
+
 // String returns a human-readable representation of the PassDBResult.
 func (p *PassDBResult) String() string {
 	attributes := redactPassDBResultAttributes(p.Attributes, p.TOTPSecretField, p.TOTPRecoveryField)
@@ -3284,7 +3442,7 @@ func (p *PassDBResult) String() string {
 		{"UniqueUserIDField", p.UniqueUserIDField},
 		{"DisplayNameField", p.DisplayNameField},
 		{"Attributes", attributes},
-		{"AdditionalFeatures", p.AdditionalFeatures},
+		{"AdditionalAttributes", p.AdditionalAttributes},
 		{"Authenticated", p.Authenticated},
 		{"UserFound", p.UserFound},
 		{"Backend", p.Backend},
@@ -3651,7 +3809,7 @@ func processStructuredAuthRequest(ctx *gin.Context, auth State, metricName strin
 // processApplicationJSON decodes application/json authentication requests.
 func processApplicationJSON(ctx *gin.Context, auth State) {
 	processStructuredAuthRequest(ctx, auth, "request_json_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
-		return ctx.ShouldBindJSON(request)
+		return decodeStrictJSONRequest(ctx, request)
 	})
 }
 
@@ -3660,6 +3818,30 @@ func processApplicationCBOR(ctx *gin.Context, auth State) {
 	processStructuredAuthRequest(ctx, auth, "request_cbor_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
 		return cborcodec.DecodeReader(ctx.Request.Body, request)
 	})
+}
+
+func decodeStrictJSONRequest(ctx *gin.Context, request *authdto.Request) error {
+	decoder := stdjson.NewDecoder(ctx.Request.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(request); err != nil {
+		return err
+	}
+
+	var trailing struct{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return stderrors.New("request body must contain a single JSON value")
+		}
+
+		return err
+	}
+
+	if binding.Validator == nil {
+		return nil
+	}
+
+	return binding.Validator.ValidateStruct(request)
 }
 
 // ApplyStructuredAuthRequest updates the provided authentication state with
@@ -3944,7 +4126,7 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 
 	// Default flags
 	a.Runtime.Authenticated = false // not decided yet
-	a.Runtime.Authorized = true     // default allow unless a filter rejects
+	a.Runtime.Authorized = true     // default allow unless subject analysis rejects
 
 	switch a.Request.Service {
 	case definitions.ServBasic:
@@ -4172,9 +4354,9 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 			fn:      nil,
 		})
 
-		// Set AdditionalFeatures in the gin.Context if they exist in the cached result
-		if len(passDBResult.AdditionalFeatures) > 0 {
-			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+		// Set AdditionalAttributes in the gin.Context if they exist in the cached result
+		if len(passDBResult.AdditionalAttributes) > 0 {
+			ctx.Set(definitions.CtxAdditionalAttributesKey, passDBResult.AdditionalAttributes)
 		}
 
 		ctx.Set(definitions.CtxLocalCacheAuthKey, true)
@@ -4196,10 +4378,10 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 // PreproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
 // If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
 // It then performs a post Lua action and triggers a failed authentication response.
-// If a brute force attack is detected, it returns true, otherwise false.
+// If a brute force attack is rejected, it returns true. Configured policy controls may let processing continue.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	tr := monittrace.New("nauthilus/auth")
-	pctx, pspan := tr.Start(ctx.Request.Context(), "auth.features",
+	pctx, pspan := tr.Start(ctx.Request.Context(), "auth.environment",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
 	)
@@ -4215,7 +4397,39 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce(ctx) {
-			a.markFeatureRejected(ctx)
+			if a.applyConfiguredPreAuthDecision(ctx) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("reject", true))
+				pspan.End()
+
+				return true
+			}
+
+			if a.applyConfiguredPreAuthControl(ctx, definitions.AuthResultFail) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("policy_skip_remaining", true))
+				pspan.End()
+
+				return false
+			}
+
+			if a.HasConfiguredPreAuthPolicyAuthority(ctx) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("policy_continue", true))
+				pspan.End()
+
+				return false
+			}
+
+			if a.applyDefaultPreAuthDecision(ctx) {
+				pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
+				pspan.SetAttributes(attribute.Bool("reject", true))
+				pspan.End()
+
+				return true
+			}
+
+			a.markEnvironmentRejected(ctx)
 			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
@@ -4264,6 +4478,10 @@ func (a *AuthState) ApplyCredentials(c Credentials) {
 func (a *AuthState) ApplyContextData(x AuthContext) {
 	if a == nil {
 		return
+	}
+
+	if x.RequestMetadata != nil {
+		a.Request.RequestMetadata = cloneRequestMetadata(x.RequestMetadata)
 	}
 
 	// Field mappings for simple string assignments

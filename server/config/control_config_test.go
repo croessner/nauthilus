@@ -1,8 +1,10 @@
+//nolint:goconst
 package config
 
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +17,7 @@ const (
 	testRedisEncryptionSecret = "redis-secret-1234"
 )
 
-func TestHandleFile_ServerControlsAndServicesEnableRuntimeFeatures(t *testing.T) {
+func TestHandleFile_ServerControlsAndServicesEnableRuntimeModules(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
@@ -42,15 +44,15 @@ func TestHandleFile_ServerControlsAndServicesEnableRuntimeFeatures(t *testing.T)
 		t.Fatalf("handle file failed: %v", err)
 	}
 
-	if !cfg.HasFeature(definitions.FeatureRBL) {
+	if !cfg.HasRuntimeModule(definitions.ControlRBL) {
 		t.Fatal("expected auth.controls to enable rbl")
 	}
 
-	if !cfg.HasFeature(definitions.FeatureBruteForce) {
+	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
 		t.Fatal("expected auth.controls to enable brute_force")
 	}
 
-	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
+	if !cfg.HasRuntimeModule(definitions.ServiceBackendHealthChecks) {
 		t.Fatal("expected auth.services to enable backend_health_checks")
 	}
 }
@@ -186,7 +188,7 @@ func assertBackendHealthCheckTargetOverrides(t *testing.T, monitoring *BackendSe
 	}
 }
 
-func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
+func TestHandleFile_LuaEnvironmentSourcesPopulateInternalList(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
@@ -200,13 +202,14 @@ func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
 		},
 	})
 	viper.Set("auth", map[string]any{
-		"controls": map[string]any{
-			"lua": map[string]any{
-				"controls": []any{
-					map[string]any{
-						"name":         "test_context_chain",
-						"script_path":  testLuaControlScriptPath(t),
-						"when_no_auth": true,
+		"policy": map[string]any{
+			"attribute_sources": map[string]any{
+				"lua": map[string]any{
+					"environment": []any{
+						map[string]any{
+							"name":        "test_context_chain",
+							"script_path": testLuaEnvironmentScriptPath(t),
+						},
 					},
 				},
 			},
@@ -218,21 +221,119 @@ func TestHandleFile_LuaControlsPopulateLuaFeatures(t *testing.T) {
 		t.Fatalf("handle file failed: %v", err)
 	}
 
-	if !cfg.HaveLuaFeatures() {
-		t.Fatal("expected lua.controls to populate Lua features")
+	if !cfg.HaveLuaEnvironmentSources() {
+		t.Fatal("expected Lua environment sources to populate the internal environment source list")
 	}
 
 	luaCfg := cfg.GetLua()
-	if len(luaCfg.GetFeatures()) != 1 {
-		t.Fatalf("expected one Lua control, got %d", len(luaCfg.GetFeatures()))
+	if len(luaCfg.GetEnvironmentSources()) != 1 {
+		t.Fatalf("expected one Lua environment source, got %d", len(luaCfg.GetEnvironmentSources()))
 	}
 
-	if luaCfg.GetFeatures()[0].Name != "test_context_chain" {
-		t.Fatalf("expected Lua control %q, got %q", "test_context_chain", luaCfg.GetFeatures()[0].Name)
+	if luaCfg.GetEnvironmentSources()[0].Name != "test_context_chain" {
+		t.Fatalf("expected Lua environment source %q, got %q", "test_context_chain", luaCfg.GetEnvironmentSources()[0].Name)
+	}
+}
+
+func TestHandleFile_LuaAttributeSourcesRejectRemovedSchedulerKeys(t *testing.T) {
+	for _, testCase := range removedLuaSchedulerKeyCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+
+			setRemovedLuaSchedulerKeyConfig(t, testCase)
+			assertRemovedLuaSchedulerKeyRejected(t, testCase)
+		})
+	}
+}
+
+type removedLuaSchedulerKeyCase struct {
+	name     string
+	category string
+	key      string
+	value    any
+	path     string
+}
+
+func removedLuaSchedulerKeyCases() []removedLuaSchedulerKeyCase {
+	return []removedLuaSchedulerKeyCase{
+		{name: "environment when_no_auth", category: "environment", key: "when_no_auth", value: true, path: "auth.policy.attribute_sources.lua.environment[0]"},
+		{name: "environment depends_on", category: "environment", key: "depends_on", value: []any{"context"}, path: "auth.policy.attribute_sources.lua.environment[0]"},
+		{name: "subject when_authenticated", category: "subject", key: "when_authenticated", value: true, path: "auth.policy.attribute_sources.lua.subject[0]"},
+		{name: "subject depends_on", category: "subject", key: "depends_on", value: []any{"context"}, path: "auth.policy.attribute_sources.lua.subject[0]"},
+	}
+}
+
+func setRemovedLuaSchedulerKeyConfig(t *testing.T, testCase removedLuaSchedulerKeyCase) {
+	t.Helper()
+
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+	viper.Set("auth", map[string]any{
+		"policy": map[string]any{
+			"attribute_sources": map[string]any{
+				"lua": map[string]any{
+					testCase.category: []any{
+						map[string]any{
+							"name":        "test_context_chain",
+							"script_path": testLuaEnvironmentScriptPath(t),
+							testCase.key:  testCase.value,
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
+func assertRemovedLuaSchedulerKeyRejected(t *testing.T, testCase removedLuaSchedulerKeyCase) {
+	t.Helper()
+
+	cfg := &FileSettings{}
+	err := cfg.HandleFile()
+	if err == nil {
+		t.Fatal("HandleFile() error = nil, want removed scheduler key rejection")
 	}
 
-	if !luaCfg.GetFeatures()[0].WhenNoAuth {
-		t.Fatal("expected when_no_auth from lua.controls to be preserved")
+	if !strings.Contains(err.Error(), testCase.path) || !strings.Contains(err.Error(), testCase.key) {
+		t.Fatalf("HandleFile() error = %q, want path %q and key %q", err, testCase.path, testCase.key)
+	}
+}
+
+func TestHandleFile_ServerControlsRejectRemovedWhenNoAuthShape(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("auth", map[string]any{
+		"controls": map[string]any{
+			"enabled": []any{
+				map[string]any{
+					"name":         "tls_encryption",
+					"when_no_auth": true,
+				},
+			},
+		},
+	})
+	viper.Set("storage", map[string]any{
+		"redis": map[string]any{
+			"primary": map[string]any{
+				"address": "localhost:6379",
+			},
+			"password_nonce":    testRedisPasswordNonce,
+			"encryption_secret": testRedisEncryptionSecret,
+		},
+	})
+
+	cfg := &FileSettings{}
+	if err := cfg.HandleFile(); err == nil {
+		t.Fatal("HandleFile() error = nil, want removed when_no_auth shape rejection")
 	}
 }
 
@@ -286,7 +387,7 @@ func TestHandleFile_ServerServicesRejectControls(t *testing.T) {
 	}
 }
 
-func TestHandleFile_BruteForceLearningAcceptsFeatureNames(t *testing.T) {
+func TestHandleFile_BruteForceLearningAcceptsControlNames(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
@@ -321,9 +422,9 @@ func TestHandleFile_BruteForceLearningAcceptsFeatureNames(t *testing.T) {
 		t.Fatalf("handle file failed: %v", err)
 	}
 
-	for _, feature := range []string{"lua", "relay_domains", "rbl", "brute_force"} {
-		if !cfg.GetBruteForce().LearnFromFeature(feature) {
-			t.Fatalf("expected brute force learning to include %q", feature)
+	for _, runtimeModule := range []string{"lua", "relay_domains", "rbl", "brute_force"} {
+		if !cfg.GetBruteForce().LearnFromControl(runtimeModule) {
+			t.Fatalf("expected brute force learning to include %q", runtimeModule)
 		}
 	}
 }
@@ -389,7 +490,7 @@ func TestHandleFile_OptionalLDAPAndLuaBackendsInV2(t *testing.T) {
 	}
 }
 
-func testLuaControlScriptPath(t *testing.T) string {
+func testLuaEnvironmentScriptPath(t *testing.T) string {
 	t.Helper()
 
 	wd, err := os.Getwd()
@@ -397,7 +498,7 @@ func testLuaControlScriptPath(t *testing.T) string {
 		t.Fatalf("get working directory: %v", err)
 	}
 
-	return filepath.Join(wd, "..", "lua-plugins.d", "features", "test_context_chain.lua")
+	return filepath.Join(wd, "..", "lua-plugins.d", "environment", "test_context_chain.lua")
 }
 
 func testLuaBackendScriptPath(t *testing.T) string {

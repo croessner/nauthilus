@@ -144,7 +144,7 @@ func TestCaptureResponseWriter_TempFailCapturesOutcomeWithoutHTTPRendering(t *te
 	}
 }
 
-func TestCaptureResponseWriter_FeatureRejectionPreservesPostActionAndCapturesFail(t *testing.T) {
+func TestCaptureResponseWriter_EnvironmentRejectionPreservesPostActionAndCapturesFail(t *testing.T) {
 	postAction := &countingPostAction{}
 	previousPostAction := getPostAction()
 	RegisterPostAction(postAction)
@@ -155,13 +155,13 @@ func TestCaptureResponseWriter_FeatureRejectionPreservesPostActionAndCapturesFai
 	capture := NewCaptureResponseWriter(slog.New(&countingLogHandler{}))
 	auth, ctx, rec := newCaptureWriterTestState(t, "/api/v1/auth/json?mode=auth", capture)
 
-	handled := auth.applyFeatureFSMOutcome(ctx, authFSMStateAuthFail, definitions.AuthResultFeatureRelayDomain)
+	handled := auth.applyPreAuthFSMOutcome(ctx, authFSMStateAuthFail, definitions.AuthResultPreAuthRelayDomain)
 	if !handled {
-		t.Fatal("expected auth FSM feature outcome to be handled")
+		t.Fatal("expected auth FSM pre-auth outcome to be handled")
 	}
 
 	if !ctx.IsAborted() {
-		t.Fatal("expected context to be aborted for feature-rejection auth fail")
+		t.Fatal("expected context to be aborted for environment-rejection auth fail")
 	}
 
 	assertNoHTTPRendering(t, rec)

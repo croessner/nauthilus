@@ -27,7 +27,7 @@ type DefaultActionDispatcher struct{}
 
 // Dispatch sends an action to the Lua execution pipeline, initializing context and preparing authentication details.
 // It blocks until the action is completed and ensures proper resource cleanup.
-func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string, luaAction definitions.LuaAction) {
+func (DefaultActionDispatcher) Dispatch(view *core.StateView, environmentName string, luaAction definitions.LuaAction) {
 	auth := view.Auth()
 
 	if !auth.Cfg().HaveLuaActions() {
@@ -48,7 +48,7 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 	auth.FillCommonRequest(commonRequest)
 
 	commonRequest.UserFound = auth.GetAccount() != ""
-	commonRequest.FeatureName = featureName
+	commonRequest.EnvironmentName = environmentName
 
 	actionRequest := &action.Action{
 		LuaAction:     luaAction,

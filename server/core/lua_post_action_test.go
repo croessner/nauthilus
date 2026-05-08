@@ -34,14 +34,14 @@ import (
 )
 
 func newLuaPostActionTestConfig(t *testing.T) *config.FileSettings {
-	bfFeature := &config.Feature{}
-	if err := bfFeature.Set(definitions.FeatureBruteForce); err != nil {
-		t.Fatalf("Set feature failed: %v", err)
+	bfControl := &config.RuntimeModule{}
+	if err := bfControl.Set(definitions.ControlBruteForce); err != nil {
+		t.Fatalf("Set runtime module failed: %v", err)
 	}
 
 	return &config.FileSettings{
 		Server: &config.ServerSection{
-			Features: []*config.Feature{bfFeature},
+			RuntimeModules: []*config.RuntimeModule{bfControl},
 		},
 		Lua: &config.LuaSection{
 			Actions: []config.LuaAction{
