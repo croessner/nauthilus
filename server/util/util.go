@@ -764,30 +764,10 @@ func NewDNSResolver(cfg config.File) (resolver *net.Resolver) {
 
 // NewHTTPClient creates and returns a new instance of http.Client configured with settings from the provided config.File.
 func NewHTTPClient(cfg config.File) *http.Client {
-	var proxyFunc func(*http.Request) (*url.URL, error)
-
-	if cfg.GetServer().GetHTTPClient().GetProxy() != "" {
-		proxyURL, err := url.Parse(cfg.GetServer().GetHTTPClient().GetProxy())
-		if err != nil {
-			proxyFunc = http.ProxyFromEnvironment
-		} else {
-			proxyFunc = http.ProxyURL(proxyURL)
-		}
-	} else {
-		proxyFunc = http.ProxyFromEnvironment
-	}
-
-	baseTransport := &http.Transport{
-		Proxy:               proxyFunc,
-		MaxConnsPerHost:     cfg.GetServer().GetHTTPClient().GetMaxConnsPerHost(),
-		MaxIdleConns:        cfg.GetServer().GetHTTPClient().GetMaxIdleConns(),
-		MaxIdleConnsPerHost: cfg.GetServer().GetHTTPClient().GetMaxIdleConnsPerHost(),
-		IdleConnTimeout:     cfg.GetServer().GetHTTPClient().GetIdleConnTimeout(),
-		TLSClientConfig:     cfg.GetServer().GetHTTPClient().GetTLS().ToTLSConfig(),
-	}
+	baseTransport := newHTTPTransport(cfg)
 
 	var transport http.RoundTripper = baseTransport
-	if cfg.GetServer().GetInsights().IsTracingEnabled() {
+	if isHTTPClientTracingEnabled(cfg) {
 		// Use otelhttp transport (client-kind spans) and add peer.service="http"
 		transport = otelhttp.NewTransport(
 			baseTransport,
@@ -801,6 +781,71 @@ func NewHTTPClient(cfg config.File) *http.Client {
 	}
 
 	return httpClient
+}
+
+func newHTTPTransport(cfg config.File) *http.Transport {
+	baseTransport := defaultHTTPTransport()
+	httpClientConfig := getHTTPClientConfig(cfg)
+
+	baseTransport.Proxy = newHTTPClientProxy(httpClientConfig)
+
+	if maxConnsPerHost := httpClientConfig.GetMaxConnsPerHost(); maxConnsPerHost > 0 {
+		baseTransport.MaxConnsPerHost = maxConnsPerHost
+	}
+
+	if maxIdleConns := httpClientConfig.GetMaxIdleConns(); maxIdleConns > 0 {
+		baseTransport.MaxIdleConns = maxIdleConns
+	}
+
+	if maxIdleConnsPerHost := httpClientConfig.GetMaxIdleConnsPerHost(); maxIdleConnsPerHost > 0 {
+		baseTransport.MaxIdleConnsPerHost = maxIdleConnsPerHost
+	}
+
+	if idleConnTimeout := httpClientConfig.GetIdleConnTimeout(); idleConnTimeout > 0 {
+		baseTransport.IdleConnTimeout = idleConnTimeout
+	}
+
+	if tlsConfig := httpClientConfig.GetTLS().ToTLSConfig(); tlsConfig != nil {
+		baseTransport.TLSClientConfig = tlsConfig
+	}
+
+	return baseTransport
+}
+
+func defaultHTTPTransport() *http.Transport {
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return defaultTransport.Clone()
+	}
+
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+	}
+}
+
+func getHTTPClientConfig(cfg config.File) *config.HTTPClient {
+	if cfg == nil {
+		return &config.HTTPClient{}
+	}
+
+	return cfg.GetServer().GetHTTPClient()
+}
+
+func isHTTPClientTracingEnabled(cfg config.File) bool {
+	return cfg != nil && cfg.GetServer().GetInsights().IsTracingEnabled()
+}
+
+func newHTTPClientProxy(httpClientConfig *config.HTTPClient) func(*http.Request) (*url.URL, error) {
+	proxy := httpClientConfig.GetProxy()
+	if proxy == "" {
+		return http.ProxyFromEnvironment
+	}
+
+	proxyURL, err := url.Parse(proxy)
+	if err != nil {
+		return http.ProxyFromEnvironment
+	}
+
+	return http.ProxyURL(proxyURL)
 }
 
 // GetCtxWithDeadlineRedisRead creates a context with a timeout derived from the Redis read timeout configuration.
