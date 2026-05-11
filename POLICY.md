@@ -14,6 +14,16 @@ A task is incomplete if any mandatory rule is not satisfied.
 - MUST: Write code comments and technical docs in English.
 - MUST (CRITICAL, Go 1.26): Always run Go tests with `GOEXPERIMENT=runtimesecret` as prefix.
     - Required command pattern: `GOEXPERIMENT=runtimesecret go test ...`
+- MUST: Keep `.golangci.yml` aligned with the repository guardrail policy and
+  run `golangci-lint` through `make lint` or `make guardrails`.
+- MUST: Write commit messages as `Prefix: Concise headline`, using only the
+  approved prefixes `Add`, `Change`, `Fix`, `Remove`, `Refactor`, `Test`,
+  `Docs`, `Build`, `Ci`, `Vendor`, `Security`, and `Chore`.
+- MUST: Use the commit subject as a headline for what was fundamentally done,
+  then use the body as a short bullet list of the essential implementation,
+  validation, operator-facing, packaging, or dependency details.
+- MUST: Split unrelated work into separate commits when no single approved
+  prefix and headline describes the change cleanly.
 
 ## Definition Of Done (Required)
 
@@ -22,3 +32,6 @@ A task is incomplete if any mandatory rule is not satisfied.
 - [ ] OOP structure verified; responsibilities are small and cohesive.
 - [ ] Comments/docs introduced in this change are English-only.
 - [ ] `make guardrails` passes locally and in CI.
+- [ ] `golangci-lint` findings are fixed or intentionally documented.
+- [ ] Commit messages use the approved prefix, headline, and bullet-list body
+      format.

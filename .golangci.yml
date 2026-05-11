@@ -1,0 +1,31 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: vendor
+
+linters:
+  default: standard
+  enable:
+    - dupl
+    - errcheck
+    - funlen
+    - goconst
+    - gocyclo
+    - govet
+    - revive
+    - wsl_v5
+  settings:
+    dupl:
+      threshold: 75
+    funlen:
+      lines: 60
+      statements: 40
+    goconst:
+      min-len: 2
+      min-occurrences: 2
+    gocyclo:
+      min-complexity: 12
+  exclusions:
+    paths:
+      - vendor/

@@ -29,8 +29,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate mandatory PR checklist
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          printf '%s\n' "${{ github.event.pull_request.body }}" > /tmp/pr-body.md
+          printf '%s\n' "${PR_BODY}" > /tmp/pr-body.md
           ./scripts/check-pr-guardrails.sh /tmp/pr-body.md
 
   quality-gates:
@@ -74,4 +76,6 @@ jobs:
 
       - name: Run short unit tests
         if: github.event_name == 'pull_request'
-        run: go test -short $(go list ./... | grep -v /vendor/)
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v /vendor/)
+          go test -short "${packages[@]}"
