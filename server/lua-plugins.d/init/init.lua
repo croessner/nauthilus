@@ -296,17 +296,16 @@ function nauthilus_run_hook(request)
     --       For each window w in ARGV windows list (W_COUNT windows):
     --         ga:w (auth_attempts), gi:w (unique_ips), gu:w (unique_users)
     --       After that:
-    --         current_metrics_key, historical_metrics_key
+    --         current_metrics_key, historical_metrics_key, per_attempt_metrics_key
     --     ARGV:
     --       1: now_ts
     --       2: request_id
     --       3: client_ip
     --       4: username
     --       5: success ("true"|"false")
-    --       6: per-attempt metrics hash key (for logging this attempt)
-    --       7: per-attempt metrics ttl seconds (e.g., 3600)
-    --       8: W_COUNT (number of windows)
-    --       9..: windows list (W_COUNT numbers)
+    --       6: per-attempt metrics ttl seconds (e.g., 3600)
+    --       7: W_COUNT (number of windows)
+    --       8..: windows list (W_COUNT numbers)
     --       ... then at end: hour_window (e.g., 3600)
     local gpm_script = [[
         local now_ts = tonumber(ARGV[1])
@@ -314,15 +313,15 @@ function nauthilus_run_hook(request)
         local client_ip = ARGV[3]
         local username = ARGV[4]
         local success = ARGV[5]
-        local per_attempt_key = ARGV[6]
-        local per_attempt_ttl = tonumber(ARGV[7]) or 3600
-        local W_COUNT = tonumber(ARGV[8]) or 0
+        local per_attempt_ttl = tonumber(ARGV[6]) or 3600
+        local W_COUNT = tonumber(ARGV[7]) or 0
         local windows = {}
-        local idx = 9
+        local idx = 8
         for i = 1, W_COUNT do
             windows[i] = tonumber(ARGV[idx]); idx = idx + 1
         end
         local hour_window = tonumber(ARGV[idx]) or 3600
+        local per_attempt_key = KEYS[W_COUNT * 3 + 3]
 
         -- KEYS layout: for each window: ga, gi, gu
         local function key_pos(i)

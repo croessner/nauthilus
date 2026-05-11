@@ -67,6 +67,7 @@ function nauthilus_call_environment(request)
 
     local per_attempt_key = nauthilus_util.get_redis_key(request, "multilayer:global:metrics:" .. timestamp)
     local per_attempt_ttl = 3600
+    table.insert(keys, per_attempt_key)
 
     local args = {
         timestamp,
@@ -74,7 +75,6 @@ function nauthilus_call_environment(request)
         request.client_ip or "",
         username_value,
         tostring(request.authenticated or false),
-        per_attempt_key,
         per_attempt_ttl,
         #window_sizes,
     }
