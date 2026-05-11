@@ -28,6 +28,9 @@ jobs:
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Validate release metadata
+        run: ./scripts/release-semver-metadata.sh "${GITHUB_REF_NAME}" > /dev/null
+
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version: 1.26.x
@@ -43,7 +46,6 @@ jobs:
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient ./contrib/saml2testclient
       - name: Create artifact
         run: |
-          os="${{ runner.os }}"
           assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
           echo "$assets"
           mkdir -p "dist/$assets"
@@ -55,7 +57,7 @@ jobs:
           (
             cd dist
             tar czf "$assets.tar.gz" "$assets"
-            ls -lah *.*
+            ls -lah ./*.tar.gz
           )
         shell: bash
 
@@ -116,6 +118,10 @@ jobs:
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient ./contrib/oidctestclient
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient ./contrib/saml2testclient
 
+      - name: Resolve release metadata
+        id: release_metadata
+        run: ./scripts/release-semver-metadata.sh "${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
       - name: Copy binaries and resources
         run: |
           for pkg in .debpkg .rpmpkg; do
@@ -144,7 +150,7 @@ jobs:
           package: ${{ env.APP_NAME }}
           package_root: .debpkg
           maintainer: ${{ env.MAINTAINER }}
-          version: ${{ github.ref }}
+          version: ${{ steps.release_metadata.outputs.package_version }}
           arch: '${{ matrix.goarch }}'
           desc: '${{ env.DESC }}'
 
@@ -155,7 +161,7 @@ jobs:
           package: ${{ env.APP_NAME }}
           package_root: .rpmpkg
           maintainer: ${{ env.MAINTAINER }}
-          version: ${{ github.ref }}
+          version: ${{ steps.release_metadata.outputs.package_version }}
           arch: '${{ matrix.rpm_arch }}'
           desc: '${{ env.DESC }}'
           summary: '${{ env.DESC }}'
@@ -208,9 +214,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve release metadata
+        id: release_metadata
+        run: ./scripts/release-semver-metadata.sh "${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
       - name: Create release with generated notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ steps.release_metadata.outputs.prerelease }}
         run: |
           if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release ${{ github.ref_name }} already exists."
@@ -229,6 +240,7 @@ jobs:
           fi
 
           release_prefix_notes_file="$(mktemp)"
+          trap 'rm -f "${release_prefix_notes_file}"' EXIT
 
           {
             echo "## Commit Summary"
@@ -274,14 +286,21 @@ jobs:
             } >> "${release_prefix_notes_file}"
           fi
 
-          gh release create "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
-            --verify-tag \
-            --notes-file "${release_prefix_notes_file}" \
-            --generate-notes \
-            --latest
+          release_args=(
+            "${GITHUB_REF_NAME}"
+            --repo "${{ github.repository }}"
+            --verify-tag
+            --notes-file "${release_prefix_notes_file}"
+            --generate-notes
+          )
 
-          rm -f "${release_prefix_notes_file}"
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            release_args+=(--prerelease)
+          else
+            release_args+=(--latest)
+          fi
+
+          gh release create "${release_args[@]}"
 
   upload-release:
     runs-on: ubuntu-latest
@@ -337,7 +356,11 @@ jobs:
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
 
-      - run: echo "ASSET_NAME=$(ls *.${{ matrix.pkg }} | head -n 1)" >> "$GITHUB_ENV"
+      - name: Select package asset
+        run: |
+          asset_name="$(find . -maxdepth 1 -type f -name '*.${{ matrix.pkg }}' -print -quit)"
+          asset_name="${asset_name#./}"
+          echo "ASSET_NAME=${asset_name}" >> "$GITHUB_ENV"
 
       - name: Upload Asset
         env:

@@ -64,9 +64,9 @@ jobs:
         run: |
           release_commit="$(git -C workflow-src rev-list -n 1 "${RELEASE_TAG}")"
           registry_image="ghcr.io/${{ github.repository_owner }}/nauthilus"
-          major="$(echo "${RELEASE_TAG}" | cut -d'.' -f1)"
-          minor="$(echo "${RELEASE_TAG}" | cut -d'.' -f2)"
-          patch="$(echo "${RELEASE_TAG}" | cut -d'.' -f3)"
+          prerelease=""
+          tag_major=""
+          tag_minor=""
           rebuild_tag=""
           annotation_prefix="index,manifest:org.opencontainers.image.description="
           alpine_digest="${{ steps.base_digests.outputs.alpine_digest }}"
@@ -74,23 +74,39 @@ jobs:
           golang_digest="${{ steps.base_digests.outputs.golang_digest }}"
           golang_image="${{ steps.base_digests.outputs.golang_image }}"
 
+          while IFS='=' read -r key value; do
+            echo "${key}=${value}" >> "${GITHUB_OUTPUT}"
+
+            case "${key}" in
+              prerelease)
+                prerelease="${value}"
+                ;;
+              tag_major)
+                tag_major="${value}"
+                ;;
+              tag_minor)
+                tag_minor="${value}"
+                ;;
+            esac
+          done < <(./workflow-src/scripts/release-semver-metadata.sh "${RELEASE_TAG}")
+
           if [[ -n "${REBUILD_SUFFIX}" ]]; then
             rebuild_tag="${RELEASE_TAG}-${REBUILD_SUFFIX}"
           fi
 
           {
             echo "release_commit=${release_commit}"
-            echo "major=${major}"
-            echo "minor=${minor}"
-            echo "patch=${patch}"
           } >> "${GITHUB_OUTPUT}"
 
           {
             echo 'tags<<EOF'
-            echo "${registry_image}:latest"
-            echo "${registry_image}:${major}"
-            echo "${registry_image}:${major}.${minor}"
-            echo "${registry_image}:${major}.${minor}.${patch}"
+            echo "${registry_image}:${RELEASE_TAG}"
+
+            if [[ "${prerelease}" != "true" ]]; then
+              echo "${registry_image}:latest"
+              echo "${registry_image}:${tag_major}"
+              echo "${registry_image}:${tag_minor}"
+            fi
 
             if [[ -n "${rebuild_tag}" ]]; then
               echo "${registry_image}:${rebuild_tag}"
