@@ -46,6 +46,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -149,6 +150,7 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 func UnaryServerInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	return chainUnaryInterceptors(
 		recoveryInterceptor(deps),
+		traceContextInterceptor(),
 		loggingTracingInterceptor(deps),
 		mtlsInterceptor(deps),
 		backchannelAuthInterceptor(deps),
@@ -329,6 +331,43 @@ func recoveryInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	}
 }
 
+func traceContextInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok || len(md) == 0 {
+			return handler(ctx, req)
+		}
+
+		traceCtx := otel.GetTextMapPropagator().Extract(ctx, grpcMetadataCarrier(md))
+
+		return handler(traceCtx, req)
+	}
+}
+
+type grpcMetadataCarrier metadata.MD
+
+func (c grpcMetadataCarrier) Get(key string) string {
+	values := metadata.MD(c).Get(key)
+	if len(values) == 0 {
+		return ""
+	}
+
+	return values[0]
+}
+
+func (c grpcMetadataCarrier) Set(key string, value string) {
+	metadata.MD(c).Set(strings.ToLower(key), value)
+}
+
+func (c grpcMetadataCarrier) Keys() []string {
+	keys := make([]string, 0, len(c))
+	for key := range c {
+		keys = append(keys, key)
+	}
+
+	return keys
+}
+
 func loggingTracingInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	logger := deps.effectiveLogger()
 	tracer := monittrace.New("nauthilus/grpc")
@@ -336,7 +375,8 @@ func loggingTracingInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		method := grpcFullMethod(info)
 		start := time.Now()
-		traceCtx, span := tracer.Start(ctx, grpcSpanName(method))
+
+		traceCtx, span := tracer.StartServer(ctx, grpcSpanName(method))
 		defer span.End()
 
 		response, err := handler(traceCtx, req)
