@@ -26,11 +26,14 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
+	"github.com/croessner/nauthilus/server/testing/tracetest"
 	"github.com/gin-gonic/gin"
 	"github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func TestGetBackendServers(t *testing.T) { //nolint:funlen
@@ -611,5 +614,54 @@ end
 
 	if got := request.Get("backend_snapshot_seen"); got != "yes" {
 		t.Fatalf("expected backend snapshot marker %q, got %v", "yes", got)
+	}
+}
+
+func TestCallSubjectLuaEmitsExecutionPhaseSpans(t *testing.T) {
+	collector := tracetest.Setup(t)
+	scriptDir := t.TempDir()
+	scriptPath := writeSubjectScript(t, scriptDir, "instrumented.lua", `
+local top_level_marker = "loaded"
+
+function nauthilus_call_subject(request)
+    if top_level_marker ~= "loaded" then
+        return nauthilus_builtin.SUBJECT_REJECT, nauthilus_builtin.SUBJECT_RESULT_FAIL
+    end
+
+    return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
+end
+`)
+
+	withTestLuaSubjectSources(t, mustNewLuaSubjectSource(t, "instrumented_subject", scriptPath))
+
+	request := newSubjectTestRequest(nil, nil)
+	_ = runCallSubjectLua(t, request)
+
+	spans := collector.Spans()
+	attrs := []attribute.KeyValue{
+		attribute.String("lua.kind", "subject"),
+		attribute.String("lua.script.name", "instrumented_subject"),
+	}
+
+	for _, spanName := range []string{
+		"lua.script.package_path",
+		"lua.script.load_chunk",
+		"lua.script.lookup_entrypoint",
+		"lua.script.call",
+		"lua.script.decode_result",
+	} {
+		if _, ok := tracetest.FindByNameAndAttributes(spans, spanName, attrs...); !ok {
+			t.Fatalf("missing %s span for instrumented subject source; spans=%d", spanName, len(spans))
+		}
+	}
+
+	if _, ok := tracetest.FindByNameAndAttributes(
+		spans,
+		"lua.script.call",
+		attribute.String("lua.kind", "subject"),
+		attribute.String("lua.script.name", "instrumented_subject"),
+		attribute.String("lua.entrypoint", definitions.LuaFnCallSubject),
+	); !ok {
+		t.Fatal("missing lua.script.call span with subject entrypoint attribute")
 	}
 }

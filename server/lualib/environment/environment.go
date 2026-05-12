@@ -311,6 +311,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 	tr := monittrace.New("nauthilus/environment")
 	mode := requestEnvironmentMode(r)
+	modeText := pipeline.ModeText(mode)
 	pctx, pspan := tr.Start(ctx.Request.Context(), "environment.plan.lookup")
 	_ = pctx
 
@@ -319,6 +320,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),
 		attribute.Int("scripts", pipeline.PlannedNodeCount(plan)),
+		attribute.String("mode", modeText),
 	)
 	if err != nil {
 		pspan.RecordError(err)
@@ -330,13 +332,23 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 	pspan.End()
 
 	var statusSet bool
-	for _, level := range plan.Levels {
+
+	traceCtx := ctx.Request.Context()
+
+	for levelIndex, level := range plan.Levels {
 		var (
 			mu           sync.Mutex
 			levelResults = make([]*environmentResult, 0, len(level))
 		)
 
-		g, egCtx := errgroup.WithContext(ctx)
+		g, egCtx := errgroup.WithContext(traceCtx)
+
+		pstartCtx, pstart := tr.Start(traceCtx, "environment_sources.parallel.start",
+			attribute.Int("runnable", len(level)),
+			attribute.Int("level", levelIndex),
+			attribute.String("mode", modeText),
+		)
+		_ = pstartCtx
 
 		for _, planned := range level {
 			idx := planned.Index
@@ -344,14 +356,37 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 			g.Go(func() error {
 				scriptStarted := time.Now()
+				sCtx, sSpan := tr.Start(traceCtx, "environment_sources.script",
+					attribute.String("name", source.Name),
+					attribute.String("mode", modeText),
+					attribute.Int("level", levelIndex),
+				)
+				_ = sCtx
+				scriptTrace := lualib.NewLuaScriptTrace(lualib.LuaScriptTraceOptions{
+					Kind:       lualib.LuaScriptKindEnvironment,
+					ScriptName: source.Name,
+					Mode:       modeText,
+					Level:      levelIndex,
+				})
+
 				util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgEnvironment,
 					definitions.LogKeyGUID, r.Session,
 					definitions.LogKeyMsg, "Executing environment source script",
 					"name", source.Name,
 				)
 
-				Llocal, acqErr := pool.Acquire(egCtx)
+				actx, asp := tr.Start(egCtx, "environment_sources.vm.acquire",
+					attribute.String("name", source.Name),
+					attribute.String("mode", modeText),
+					attribute.Int("level", levelIndex),
+				)
+				Llocal, acqErr := pool.Acquire(actx)
+
+				asp.End()
+
 				if acqErr != nil {
+					sSpan.RecordError(acqErr)
+					sSpan.End()
 					r.recordEnvironmentScriptResult(egCtx, source.Name, false, false, "", time.Since(scriptStarted), acqErr)
 
 					return acqErr
@@ -368,6 +403,8 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					} else {
 						pool.Release(Llocal)
 					}
+
+					sSpan.End()
 				}()
 
 				localContext := r.Clone()
@@ -375,6 +412,13 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				localLogs := new(lualib.CustomLogKeyValue)
 
 				var localStatus *string
+
+				envCtx, envSpan := tr.Start(traceCtx, "environment_sources.env.prepare",
+					attribute.String("name", source.Name),
+					attribute.String("mode", modeText),
+					attribute.Int("level", levelIndex),
+				)
+				_ = envCtx
 
 				lualib.SetBuiltinTableForEnvironment(
 					Llocal,
@@ -416,6 +460,11 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 				Llocal.SetContext(luaCtx)
 
+				_, mspan := tr.Start(envCtx, "environment_sources.env.modules",
+					attribute.String("name", source.Name),
+					attribute.String("mode", modeText),
+					attribute.Int("level", levelIndex),
+				)
 				luapool.PrepareRequestEnv(Llocal)
 
 				modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
@@ -433,23 +482,48 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 				modManager.BindHTTPResponse(Llocal, ctx)
 				modManager.BindLDAP(Llocal, backend.LoaderModLDAP(luaCtx, cfg))
+				mspan.End()
+				envSpan.End()
 
 				fr := &environmentResult{name: source.Name, scriptIdx: idx, statusText: &localStatus}
 
+				execCtx, execSpan := tr.Start(traceCtx, "environment_sources.execute",
+					attribute.String("name", source.Name),
+					attribute.String("mode", modeText),
+					attribute.Int("level", levelIndex),
+				)
+
+				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.package_path")
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
+					packagePathSpan.RecordError(e)
+					packagePathSpan.End()
+					execSpan.RecordError(e)
+					execSpan.End()
 					r.recordEnvironmentScriptResult(egCtx, source.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
 
+				packagePathSpan.End()
+
+				_, loadSpan := scriptTrace.Start(execCtx, "lua.script.load_chunk")
 				if e := lualib.DoCompiledFile(Llocal, source.CompiledScript); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
+					loadSpan.RecordError(e)
+					loadSpan.End()
+					execSpan.RecordError(e)
+					execSpan.End()
 					r.recordEnvironmentScriptResult(egCtx, source.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
 
+				loadSpan.End()
+
+				_, lookupSpan := scriptTrace.Start(execCtx, "lua.script.lookup_entrypoint",
+					attribute.String("lua.entrypoint", definitions.LuaFnCallEnvironment),
+				)
 				callEnvironmentFunc := lua.LNil
 				if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
 					if fn := Llocal.GetField(v, definitions.LuaFnCallEnvironment); fn != nil {
@@ -464,18 +538,36 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				if callEnvironmentFunc.Type() != lua.LTFunction {
 					e := fmt.Errorf("entry function '%s' is not defined in Lua environment source %s", definitions.LuaFnCallEnvironment, source.Name)
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
+					lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", false))
+					lookupSpan.RecordError(e)
+					lookupSpan.End()
+					execSpan.RecordError(e)
+					execSpan.End()
 					r.recordEnvironmentScriptResult(egCtx, source.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
 
+				lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", true))
+				lookupSpan.End()
+
+				_, callSpan := scriptTrace.Start(execCtx, "lua.script.call",
+					attribute.String("lua.entrypoint", definitions.LuaFnCallEnvironment),
+				)
 				if e := Llocal.CallByParam(lua.P{Fn: callEnvironmentFunc, NRet: 3, Protect: true}, request); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
+					callSpan.RecordError(e)
+					callSpan.End()
+					execSpan.RecordError(e)
+					execSpan.End()
 					r.recordEnvironmentScriptResult(egCtx, source.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
 
 					return e
 				}
 
+				callSpan.End()
+
+				_, decodeSpan := scriptTrace.Start(execCtx, "lua.script.decode_result")
 				ret := Llocal.ToInt(-1)
 				Llocal.Pop(1)
 				ab := Llocal.ToBool(-1)
@@ -485,6 +577,18 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				fr.ret = ret
 				fr.abort = ab
 				fr.triggered = tr
+				execSpan.SetAttributes(
+					attribute.Int("result", ret),
+					attribute.Bool("abort", ab),
+					attribute.Bool("triggered", tr),
+				)
+				decodeSpan.SetAttributes(
+					attribute.Int("lua.result", ret),
+					attribute.Bool("lua.abort", ab),
+					attribute.Bool("lua.triggered", tr),
+				)
+				decodeSpan.End()
+				execSpan.End()
 
 				fr.logs = *localLogs
 				fr.contextDelta = localRequest.Diff(contextBefore)
@@ -519,9 +623,31 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			})
 		}
 
+		pstart.End()
+
+		wctx, wspan := tr.Start(traceCtx, "environment_sources.parallel.wait",
+			attribute.Int("level", levelIndex),
+			attribute.Int("runnable", len(level)),
+			attribute.String("mode", modeText),
+		)
+		_ = wctx
+
 		if e := g.Wait(); e != nil {
+			wspan.RecordError(e)
+			wspan.End()
+
 			return false, false, e
 		}
+
+		wspan.SetAttributes(attribute.Int("completed", len(levelResults)))
+		wspan.End()
+
+		mctx, mspan := tr.Start(traceCtx, "environment_sources.level.merge",
+			attribute.Int("level", levelIndex),
+			attribute.Int("scripts", len(levelResults)),
+			attribute.String("mode", modeText),
+		)
+		_ = mctx
 
 		sort.Slice(levelResults, func(i, j int) bool {
 			return levelResults[i].scriptIdx < levelResults[j].scriptIdx
@@ -529,6 +655,9 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 
 		for _, fr := range levelResults {
 			if fr.err != nil {
+				mspan.RecordError(fr.err)
+				mspan.End()
+
 				return false, false, fr.err
 			}
 
@@ -543,6 +672,12 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			r.ApplyDelta(fr.contextDelta)
 			lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, *fr.statusText, fr.logs)
 		}
+
+		mspan.SetAttributes(
+			attribute.Bool("triggered", triggered),
+			attribute.Bool("skip_remaining", skipRemainingEnvironment),
+		)
+		mspan.End()
 	}
 
 	return triggered, skipRemainingEnvironment, nil

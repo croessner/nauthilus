@@ -41,6 +41,18 @@ func RequestModes() []ModeMask {
 	return []ModeMask{ModeAuthenticated, ModeUnauthenticated, ModeNoAuth}
 }
 
+// ModeText returns a stable low-cardinality label for a request mode.
+func ModeText(mode ModeMask) string {
+	switch mode {
+	case ModeNoAuth:
+		return "no_auth"
+	case ModeAuthenticated:
+		return "authenticated"
+	default:
+		return "unauthenticated"
+	}
+}
+
 // Node describes one configured script in a dependency graph.
 type Node struct {
 	Name      string

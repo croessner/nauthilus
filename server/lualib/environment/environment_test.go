@@ -25,10 +25,13 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/pipeline"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
+	"github.com/croessner/nauthilus/server/testing/tracetest"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func writeEnvironmentScript(t *testing.T, dir, name, content string) string {
@@ -329,4 +332,60 @@ func (r *policyEnvironmentScheduleRecorder) ScriptPlan(kind policycollection.Scr
 	}
 
 	return r.plan
+}
+
+func TestCallEnvironmentLuaEmitsExecutionPhaseSpans(t *testing.T) {
+	collector := tracetest.Setup(t)
+	scriptDir := t.TempDir()
+	scriptPath := writeEnvironmentScript(t, scriptDir, "instrumented.lua", `
+local top_level_marker = "loaded"
+
+function nauthilus_call_environment(request)
+    if top_level_marker ~= "loaded" then
+        return nauthilus_builtin.ENVIRONMENT_TRIGGER_YES, nauthilus_builtin.ENVIRONMENT_ABORT_YES, nauthilus_builtin.ENVIRONMENT_RESULT_FAIL
+    end
+
+    return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
+end
+`)
+
+	withTestLuaEnvironmentSources(t, mustNewLuaEnvironmentSource(t, "instrumented_environment", scriptPath))
+
+	request := newEnvironmentTestRequest()
+	ctx := newEnvironmentTestContext()
+	cfg := newEnvironmentTestConfig()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	_, _, err := request.CallEnvironmentLua(ctx, cfg, logger, nil)
+	if err != nil {
+		t.Fatalf("CallEnvironmentLua returned error: %v", err)
+	}
+
+	spans := collector.Spans()
+	attrs := []attribute.KeyValue{
+		attribute.String("lua.kind", "environment"),
+		attribute.String("lua.script.name", "instrumented_environment"),
+	}
+
+	for _, spanName := range []string{
+		"lua.script.package_path",
+		"lua.script.load_chunk",
+		"lua.script.lookup_entrypoint",
+		"lua.script.call",
+		"lua.script.decode_result",
+	} {
+		if _, ok := tracetest.FindByNameAndAttributes(spans, spanName, attrs...); !ok {
+			t.Fatalf("missing %s span for instrumented environment source; spans=%d", spanName, len(spans))
+		}
+	}
+
+	if _, ok := tracetest.FindByNameAndAttributes(
+		spans,
+		"lua.script.call",
+		attribute.String("lua.kind", "environment"),
+		attribute.String("lua.script.name", "instrumented_environment"),
+		attribute.String("lua.entrypoint", definitions.LuaFnCallEnvironment),
+	); !ok {
+		t.Fatal("missing lua.script.call span with environment entrypoint attribute")
+	}
 }
