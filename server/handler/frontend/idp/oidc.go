@@ -21,7 +21,6 @@ import (
 	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -52,6 +51,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
+	jsoniter "github.com/json-iterator/go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -615,7 +615,7 @@ func extractIssFromJWT(tokenString string) string {
 	// Simple JSON extraction without full parse
 	var claims map[string]any
 
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	if err := jsoniter.ConfigFastest.Unmarshal(payload, &claims); err != nil {
 		return ""
 	}
 
@@ -1246,7 +1246,7 @@ func appendStateToLogoutTarget(target, state string) string {
 }
 
 func encodeFrontChannelLogoutTasks(tasks []frontChannelLogoutTask) string {
-	rawTasks, err := json.Marshal(tasks)
+	rawTasks, err := jsoniter.ConfigFastest.Marshal(tasks)
 	if err != nil {
 		return "[]"
 	}

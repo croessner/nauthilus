@@ -521,30 +521,44 @@ func (n *NauthilusIdP) IssueLogoutToken(ctx context.Context, clientID string, us
 
 // ValidateToken parses and validates an access token (JWT or opaque).
 func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
-	_, sp := n.tracer.Start(ctx, "idp.validate_token")
+	ctx, sp := n.tracer.Start(ctx, "idp.validate_token")
 	defer sp.End()
 
 	// Heuristic: JWT tokens always contain dots. Opaque tokens (KSUIDs) do not.
 	if !strings.Contains(tokenString, ".") {
-		session, err := n.storage.GetAccessToken(ctx, tokenString)
+		lookupCtx, lookupSpan := n.tracer.Start(ctx, "idp.validate_token.opaque.redis_get")
+
+		session, err := n.storage.GetAccessToken(lookupCtx, tokenString)
+		if err != nil {
+			lookupSpan.RecordError(err)
+		}
+
+		lookupSpan.End()
+
 		if err == nil && session != nil {
 			token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
 
-			return token.Validate(ctx, tokenString)
+			return token.ClaimsFromSession(session), nil
+		}
+
+		if err != nil {
+			sp.RecordError(err)
 		}
 
 		return nil, fmt.Errorf("invalid or expired opaque token")
 	}
 
-	// Check JWT denylist before validation.
-	if n.storage.IsJWTAccessTokenDenied(ctx, tokenString) {
-		return nil, fmt.Errorf("access token has been revoked")
+	// Fallback to JWT. Verify first so malformed input cannot force Redis denylist reads.
+	verifyCtx, verifySpan := n.tracer.Start(ctx, "idp.validate_token.jwt.verify")
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+		return n.resolveJWTPublicKey(verifyCtx, token)
+	})
+
+	if err != nil {
+		verifySpan.RecordError(err)
 	}
 
-	// Fallback to JWT
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
-		return n.resolveJWTPublicKey(ctx, token)
-	})
+	verifySpan.End()
 
 	if err != nil {
 		sp.RecordError(err)
@@ -553,7 +567,24 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		sp.SetAttributes(attribute.String("sub", claims["sub"].(string)))
+		denyCtx, denySpan := n.tracer.Start(ctx, "idp.validate_token.jwt.denylist")
+
+		denied := n.storage.IsJWTAccessTokenDenied(denyCtx, tokenString)
+
+		if denied {
+			err := fmt.Errorf("access token has been revoked")
+			denySpan.RecordError(err)
+			denySpan.End()
+			sp.RecordError(err)
+
+			return nil, err
+		}
+
+		denySpan.End()
+
+		if sub, ok := claims["sub"].(string); ok {
+			sp.SetAttributes(attribute.String("sub", sub))
+		}
 
 		return claims, nil
 	}
@@ -565,16 +596,28 @@ func (n *NauthilusIdP) ValidateToken(ctx context.Context, tokenString string) (j
 // For opaque tokens it reads the IdTokenClaims from the stored session.
 // For JWT tokens it falls back to standard JWT validation (claims are already embedded in the token).
 func (n *NauthilusIdP) ValidateTokenForUserInfo(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
-	_, sp := n.tracer.Start(ctx, "idp.validate_token_for_userinfo")
+	ctx, sp := n.tracer.Start(ctx, "idp.validate_token_for_userinfo")
 	defer sp.End()
 
 	// Heuristic: JWT tokens always contain dots. Opaque tokens (KSUIDs) do not.
 	if !strings.Contains(tokenString, ".") {
-		session, err := n.storage.GetAccessToken(ctx, tokenString)
+		lookupCtx, lookupSpan := n.tracer.Start(ctx, "idp.validate_token_for_userinfo.opaque.redis_get")
+
+		session, err := n.storage.GetAccessToken(lookupCtx, tokenString)
+		if err != nil {
+			lookupSpan.RecordError(err)
+		}
+
+		lookupSpan.End()
+
 		if err == nil && session != nil {
 			token := NewOpaqueAccessToken(session, n.storage, n.tokenGen, 0)
 
-			return token.ValidateForUserInfo(ctx, tokenString)
+			return token.UserInfoClaimsFromSession(session), nil
+		}
+
+		if err != nil {
+			sp.RecordError(err)
 		}
 
 		return nil, fmt.Errorf("invalid or expired opaque token")
@@ -588,29 +631,45 @@ func (n *NauthilusIdP) ValidateTokenForUserInfo(ctx context.Context, tokenString
 func (n *NauthilusIdP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token) (any, error) {
 	kid, _ := token.Header["kid"].(string)
 
+	_, sp := n.tracer.Start(ctx, "idp.validate_token.jwt.key_resolve",
+		attribute.String("alg", fmt.Sprint(token.Header["alg"])),
+		attribute.String("kid", kid),
+	)
+
+	defer sp.End()
+
 	switch token.Method.(type) {
 	case *jwt.SigningMethodRSA:
-		return n.resolveRSAPublicKey(ctx, kid)
+		key, err := n.resolveRSAPublicKey(ctx, kid)
+		if err != nil {
+			sp.RecordError(err)
+		}
+
+		return key, err
 	case *jwt.SigningMethodEd25519:
-		return n.resolveEdDSAPublicKey(ctx, kid)
+		key, err := n.resolveEdDSAPublicKey(ctx, kid)
+		if err != nil {
+			sp.RecordError(err)
+		}
+
+		return key, err
 	default:
-		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		err := fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		sp.RecordError(err)
+
+		return nil, err
 	}
 }
 
 // resolveRSAPublicKey finds the RSA public key matching the given kid.
 func (n *NauthilusIdP) resolveRSAPublicKey(ctx context.Context, kid string) (any, error) {
-	allKeys, err := n.keyMgr.GetAllKeys(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	if kid != "" {
-		if key, ok := allKeys[kid]; ok {
-			return &key.PublicKey, nil
+		key, err := n.keyMgr.GetRSAKeyByID(ctx, kid)
+		if err != nil {
+			return nil, err
 		}
 
-		return nil, fmt.Errorf("RSA key with kid %s not found", kid)
+		return &key.PublicKey, nil
 	}
 
 	// Fallback: try the active key
@@ -624,17 +683,13 @@ func (n *NauthilusIdP) resolveRSAPublicKey(ctx context.Context, kid string) (any
 
 // resolveEdDSAPublicKey finds the Ed25519 public key matching the given kid.
 func (n *NauthilusIdP) resolveEdDSAPublicKey(ctx context.Context, kid string) (any, error) {
-	allKeys, err := n.keyMgr.GetAllEdKeys(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	if kid != "" {
-		if key, ok := allKeys[kid]; ok {
-			return key.Public(), nil
+		key, err := n.keyMgr.GetEdKeyByID(ctx, kid)
+		if err != nil {
+			return nil, err
 		}
 
-		return nil, fmt.Errorf("EdDSA key with kid %s not found", kid)
+		return key.Public(), nil
 	}
 
 	// Fallback: try the active EdDSA signer

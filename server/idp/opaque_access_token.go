@@ -63,6 +63,11 @@ func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (j
 		return nil, fmt.Errorf("invalid or expired opaque token: %w", err)
 	}
 
+	return t.ClaimsFromSession(session), nil
+}
+
+// ClaimsFromSession builds access-token claims from an already validated opaque-token session.
+func (t *OpaqueAccessToken) ClaimsFromSession(session *OIDCSession) jwt.MapClaims {
 	claims := jwt.MapClaims{
 		"sub":   session.UserID,
 		"aud":   session.ClientID,
@@ -71,7 +76,7 @@ func (t *OpaqueAccessToken) Validate(ctx context.Context, tokenString string) (j
 
 	maps.Copy(claims, session.AccessTokenClaims)
 
-	return claims, nil
+	return claims
 }
 
 // ValidateForUserInfo verifies an opaque access token and returns IdTokenClaims (for the UserInfo endpoint).
@@ -81,11 +86,16 @@ func (t *OpaqueAccessToken) ValidateForUserInfo(ctx context.Context, tokenString
 		return nil, fmt.Errorf("invalid or expired opaque token: %w", err)
 	}
 
+	return t.UserInfoClaimsFromSession(session), nil
+}
+
+// UserInfoClaimsFromSession builds UserInfo claims from an already validated opaque-token session.
+func (t *OpaqueAccessToken) UserInfoClaimsFromSession(session *OIDCSession) jwt.MapClaims {
 	claims := jwt.MapClaims{
 		"sub": session.UserID,
 	}
 
 	maps.Copy(claims, session.IdTokenClaims)
 
-	return claims, nil
+	return claims
 }

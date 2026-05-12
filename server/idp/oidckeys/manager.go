@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -18,6 +17,7 @@ import (
 	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 )
@@ -44,6 +44,8 @@ type SigningKeyEntry struct {
 	Algorithm string
 	PublicKey crypto.PublicKey
 }
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Manager handles OIDC signing keys.
 type Manager struct {
@@ -243,6 +245,100 @@ func (m *Manager) GetAllEdKeys(ctx context.Context) (map[string]ed25519.PrivateK
 	return keys, nil
 }
 
+// GetRSAKeyByID returns one RSA signing key by key ID without scanning the full key set.
+func (m *Manager) GetRSAKeyByID(ctx context.Context, kid string) (*rsa.PrivateKey, error) {
+	if kid == "" {
+		key, _, err := m.GetActiveKey(ctx)
+
+		return key, err
+	}
+
+	if key, err := m.getRSAKeyFromRedis(ctx, kid); err == nil {
+		return key, nil
+	}
+
+	if key, err := m.getStaticRSAKeyByID(kid); err == nil {
+		return key, nil
+	}
+
+	return nil, fmt.Errorf("RSA key with kid %s not found", kid)
+}
+
+// GetEdKeyByID returns one Ed25519 signing key by key ID without scanning the full key set.
+func (m *Manager) GetEdKeyByID(ctx context.Context, kid string) (ed25519.PrivateKey, error) {
+	if kid == "" {
+		return nil, fmt.Errorf("EdDSA key ID is required")
+	}
+
+	if key, err := m.getEdKeyFromRedis(ctx, kid); err == nil {
+		return key, nil
+	}
+
+	if key, err := m.getStaticEdKeyByID(kid); err == nil {
+		return key, nil
+	}
+
+	return nil, fmt.Errorf("EdDSA key with kid %s not found", kid)
+}
+
+func (m *Manager) getRSAKeyFromRedis(ctx context.Context, kid string) (*rsa.PrivateKey, error) {
+	meta, err := m.getKeyMetadataFromRedisHash(ctx, kid, RedisKeyOIDCKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	if isExpired(meta, time.Now()) {
+		return nil, fmt.Errorf("RSA key with kid %s is expired", kid)
+	}
+
+	return m.pemToPrivateKey(meta.PEM)
+}
+
+func (m *Manager) getEdKeyFromRedis(ctx context.Context, kid string) (ed25519.PrivateKey, error) {
+	meta, err := m.getKeyMetadataFromRedisHash(ctx, kid, RedisKeyOIDCEdKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	if isExpired(meta, time.Now()) {
+		return nil, fmt.Errorf("EdDSA key with kid %s is expired", kid)
+	}
+
+	return signing.ParseEd25519PrivateKeyPEM(meta.PEM)
+}
+
+func (m *Manager) getStaticRSAKeyByID(kid string) (*rsa.PrivateKey, error) {
+	content, err := m.staticKeyContentByID(kid, signing.AlgorithmRS256)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.pemToPrivateKey(content)
+}
+
+func (m *Manager) getStaticEdKeyByID(kid string) (ed25519.PrivateKey, error) {
+	content, err := m.staticKeyContentByID(kid, signing.AlgorithmEdDSA)
+	if err != nil {
+		return nil, err
+	}
+
+	return signing.ParseEd25519PrivateKeyPEM(content)
+}
+
+func (m *Manager) staticKeyContentByID(kid string, algorithm string) (string, error) {
+	oidcCfg := m.deps.Cfg.GetIdP().OIDC
+
+	for _, sk := range oidcCfg.SigningKeys {
+		if sk.ID != kid || sk.GetAlgorithm() != algorithm {
+			continue
+		}
+
+		return config.GetContent(sk.Key, sk.KeyFile)
+	}
+
+	return "", fmt.Errorf("%s key with kid %s not found", algorithm, kid)
+}
+
 // loadRSAKeysFromRedis loads RSA keys from Redis into the provided map.
 func (m *Manager) loadRSAKeysFromRedis(ctx context.Context, keys map[string]*rsa.PrivateKey) (map[string]*rsa.PrivateKey, error) {
 	readCtx, cancel := m.redisReadContext(ctx)
@@ -389,27 +485,27 @@ func (m *Manager) getEncryptedEdKeyFromRedis(ctx context.Context, kid string) (s
 }
 
 func (m *Manager) getEncryptedKeyFromRedisHash(ctx context.Context, kid, hashKey string) (string, error) {
-	readCtx, cancel := m.redisReadContext(ctx)
-	encryptedData, err := m.deps.Redis.GetReadHandle().HGet(readCtx, m.redisPrefix()+hashKey, kid).Result()
-	cancel()
+	meta, err := m.getKeyMetadataFromRedisHash(ctx, kid, hashKey)
 	if err != nil {
-		return "", err
-	}
-
-	sm := m.deps.Redis.GetSecurityManager()
-
-	jsonData, err := sm.Decrypt(encryptedData)
-	if err != nil {
-		return "", err
-	}
-
-	var meta KeyMetadata
-
-	if err := json.Unmarshal([]byte(jsonData), &meta); err != nil {
 		return "", err
 	}
 
 	return meta.PEM, nil
+}
+
+func (m *Manager) getKeyMetadataFromRedisHash(ctx context.Context, kid, hashKey string) (*KeyMetadata, error) {
+	readCtx, cancel := m.redisReadContext(ctx)
+	encryptedData, err := m.deps.Redis.GetReadHandle().HGet(readCtx, m.redisPrefix()+hashKey, kid).Result()
+
+	cancel()
+
+	if err != nil {
+		return nil, err
+	}
+
+	sm := m.deps.Redis.GetSecurityManager()
+
+	return m.decryptMetadata(sm, encryptedData)
 }
 
 func (m *Manager) rsaPrivateKeyToPEM(key *rsa.PrivateKey) string {
