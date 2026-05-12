@@ -16,10 +16,12 @@
 package idp
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,11 +30,31 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/idp/oidckeys"
+	"github.com/croessner/nauthilus/server/idp/signing"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+)
+
+const (
+	testRedisPrefix = "test:"
+	testIssuer      = "https://issuer.example.com"
+	testClientID    = "client1"
+	testUserID      = "user123"
+	testScopeClaim  = "openid profile"
+
+	claimIssuer   = "iss"
+	claimSubject  = "sub"
+	claimAudience = "aud"
+	claimIssuedAt = "iat"
+	claimExpires  = "exp"
+	claimScope    = "scope"
 )
 
 func generateTestKey() string {
@@ -70,10 +92,141 @@ func (m *mockIdpConfig) GetServer() *config.ServerSection {
 	return m.FileSettings.GetServer()
 }
 
+func testAccessTokenKey(token string) string {
+	return testRedisPrefix + "oidc:access_token:" + token
+}
+
+func testDeniedAccessTokenKey(token string) string {
+	return testRedisPrefix + "oidc:denied_access_token:" + token
+}
+
+func testRefreshTokenKey(token string) string {
+	return testRedisPrefix + "oidc:refresh_token:" + token
+}
+
+func testUserAccessTokensKey(userID string) string {
+	return testRedisPrefix + "oidc:user_access_tokens:" + userID
+}
+
+func testUserRefreshTokensKey(userID string) string {
+	return testRedisPrefix + "oidc:user_refresh_tokens:" + userID
+}
+
+func testOIDCKeysHashKey() string {
+	return testRedisPrefix + oidckeys.RedisKeyOIDCKeys
+}
+
+type idpTraceSpanCollector struct {
+	mu    sync.Mutex
+	spans []sdktrace.ReadOnlySpan
+}
+
+func (c *idpTraceSpanCollector) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.spans = append(c.spans, spans...)
+
+	return nil
+}
+
+func (c *idpTraceSpanCollector) Shutdown(context.Context) error {
+	return nil
+}
+
+func (c *idpTraceSpanCollector) findSpan(name string) (sdktrace.ReadOnlySpan, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, span := range c.spans {
+		if span.Name() == name {
+			return span, true
+		}
+	}
+
+	return nil, false
+}
+
+func installIDPTraceTestProvider(tp *sdktrace.TracerProvider) func() {
+	previousProvider := otel.GetTracerProvider()
+
+	otel.SetTracerProvider(tp)
+
+	return func() {
+		otel.SetTracerProvider(previousProvider)
+
+		_ = tp.Shutdown(context.Background())
+	}
+}
+
+func assertIDPSpanRecorded(t *testing.T, collector *idpTraceSpanCollector, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+
+	span, found := collector.findSpan(name)
+	if !found {
+		t.Fatalf("span %q was not recorded", name)
+	}
+
+	return span
+}
+
+func newTestIDPWithMock(t *testing.T, oidcCfg config.OIDCConfig) (*NauthilusIdP, redismock.ClientMock, rediscli.Client) {
+	t.Helper()
+
+	cfg := &mockIdpConfig{
+		FileSettings: &config.FileSettings{
+			Server: &config.ServerSection{
+				Redis: config.Redis{
+					Prefix: testRedisPrefix,
+				},
+			},
+		},
+		oidc: oidcCfg,
+	}
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+
+	return NewNauthilusIdP(&deps.Deps{Cfg: cfg, Redis: redisClient}), mock, redisClient
+}
+
+func signedTestAccessToken(t *testing.T, kid string, pemData string) string {
+	t.Helper()
+
+	signer, err := signing.NewRS256SignerFromPEM(pemData, kid)
+	assert.NoError(t, err)
+
+	tokenString, err := signer.Sign(jwt.MapClaims{
+		claimIssuer:   testIssuer,
+		claimSubject:  testUserID,
+		claimAudience: testClientID,
+		claimIssuedAt: time.Now().Add(-time.Minute).Unix(),
+		claimExpires:  time.Now().Add(time.Hour).Unix(),
+		claimScope:    testScopeClaim,
+	})
+	assert.NoError(t, err)
+
+	return tokenString
+}
+
+func redisKeyMetadataJSON(t *testing.T, kid string, pemData string) string {
+	t.Helper()
+
+	raw, err := json.Marshal(oidckeys.KeyMetadata{
+		ID:        kid,
+		PEM:       pemData,
+		Algorithm: signing.AlgorithmRS256,
+		CreatedAt: time.Now().Add(-time.Minute),
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	assert.NoError(t, err)
+
+	return string(raw)
+}
+
 func TestNauthilusIdP_Tokens(t *testing.T) {
 	signingKey := secret.New(generateTestKey())
 	oidcCfg := config.OIDCConfig{
-		Issuer: "https://issuer.example.com",
+		Issuer: testIssuer,
 		SigningKeys: []config.OIDCKey{
 			{ID: "default", Key: signingKey, Active: true},
 		},
@@ -95,7 +248,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		},
 		Clients: []config.OIDCClient{
 			{
-				ClientID:             "client1",
+				ClientID:             testClientID,
 				RedirectURIs:         []string{"http://localhost/cb"},
 				DelayedResponse:      true,
 				AccessTokenLifetime:  2 * time.Hour,
@@ -107,7 +260,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		FileSettings: &config.FileSettings{
 			Server: &config.ServerSection{
 				Redis: config.Redis{
-					Prefix: "test:",
+					Prefix: testRedisPrefix,
 				},
 			},
 		},
@@ -123,23 +276,23 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	fixedTime := time.Date(2026, 1, 26, 8, 0, 0, 0, time.UTC)
 
 	t.Run("FindClient", func(t *testing.T) {
-		client, found := idp.FindClient("client1")
+		client, found := idp.FindClient(testClientID)
 		assert.True(t, found)
-		assert.Equal(t, "client1", client.ClientID)
+		assert.Equal(t, testClientID, client.ClientID)
 
 		_, found = idp.FindClient("nonexistent")
 		assert.False(t, found)
 	})
 
 	t.Run("IsDelayedResponse", func(t *testing.T) {
-		assert.True(t, idp.IsDelayedResponse("client1", ""))
+		assert.True(t, idp.IsDelayedResponse(testClientID, ""))
 		assert.False(t, idp.IsDelayedResponse("nonexistent", ""))
 	})
 
 	t.Run("IssueAndValidateToken", func(t *testing.T) {
 		session := &OIDCSession{
-			ClientID: "client1",
-			UserID:   "user123",
+			ClientID: testClientID,
+			UserID:   testUserID,
 			Scopes:   []string{"openid", "profile"},
 			AuthTime: fixedTime,
 			Nonce:    "test-nonce",
@@ -154,16 +307,16 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 		claims, err := idp.ValidateToken(ctx, idToken)
 		assert.NoError(t, err)
-		assert.Equal(t, "user123", claims["sub"])
-		assert.Equal(t, "https://issuer.example.com", claims["iss"])
+		assert.Equal(t, testUserID, claims[claimSubject])
+		assert.Equal(t, testIssuer, claims[claimIssuer])
 		assert.Equal(t, "test-nonce", claims["nonce"])
 	})
 
 	t.Run("IssueWithoutOpenIDScope", func(t *testing.T) {
 		// Per OIDC Core 1.0 §3.1.2.1: without "openid" scope, no id_token should be issued.
 		session := &OIDCSession{
-			ClientID: "client1",
-			UserID:   "user123",
+			ClientID: testClientID,
+			UserID:   testUserID,
 			Scopes:   []string{"profile"},
 			AuthTime: fixedTime,
 			Nonce:    "test-nonce",
@@ -179,17 +332,17 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 	t.Run("IssueWithOfflineAccess", func(t *testing.T) {
 		session := &OIDCSession{
-			ClientID: "client1",
-			UserID:   "user123",
+			ClientID: testClientID,
+			UserID:   testUserID,
 			Scopes:   []string{"openid", "offline_access"},
 			AuthTime: fixedTime,
 		}
 
 		// The stored session will contain the access token (JWT), so we use
 		// regexp matching for the refresh token SET value.
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.Regexp().ExpectSet(testRefreshTokenKey("na_rt_fixed-token"), ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
 
 		idToken, accessToken, refreshToken, _, err := idp.IssueTokens(ctx, session)
 		assert.NoError(t, err)
@@ -203,8 +356,8 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	t.Run("ExchangeRefreshToken_WithJWTAccessToken", func(t *testing.T) {
 		oldAccessToken := "header.payload.signature"
 		session := &OIDCSession{
-			ClientID:    "client1",
-			UserID:      "user123",
+			ClientID:    testClientID,
+			UserID:      testUserID,
 			Scopes:      []string{"openid", "offline_access"},
 			AuthTime:    fixedTime,
 			AccessToken: oldAccessToken,
@@ -214,19 +367,19 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		sessionData, _ := json.Marshal(session)
 
 		// Get old RT
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(string(sessionData))
 		// Deny old JWT access token
-		mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", 2*time.Hour).SetVal("OK")
+		mock.ExpectSet(testDeniedAccessTokenKey(oldAccessToken), "1", 2*time.Hour).SetVal("OK")
 		// Delete old RT
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
-		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
+		mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(string(sessionData))
+		mock.ExpectSRem(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(1)
+		mock.ExpectDel(testRefreshTokenKey(refreshToken)).SetVal(1)
 		// Store new RT (fixed-token due to mock) — value contains JWT, so use regexp
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.Regexp().ExpectSet(testRefreshTokenKey("na_rt_fixed-token"), ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
 
-		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, testClientID)
 		assert.NoError(t, err)
 		assert.Equal(t, session.UserID, exchangedSession.UserID)
 		assert.NotEmpty(t, idToken)
@@ -238,8 +391,8 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	t.Run("ExchangeRefreshToken_WithOpaqueAccessToken", func(t *testing.T) {
 		oldAccessToken := "na_at_old-opaque-token"
 		session := &OIDCSession{
-			ClientID:    "client1",
-			UserID:      "user123",
+			ClientID:    testClientID,
+			UserID:      testUserID,
 			Scopes:      []string{"openid", "offline_access"},
 			AuthTime:    fixedTime,
 			AccessToken: oldAccessToken,
@@ -249,21 +402,21 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		sessionData, _ := json.Marshal(session)
 
 		// Get old RT
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
+		mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(string(sessionData))
 		// Delete old opaque access token
-		mock.ExpectGet("test:oidc:access_token:" + oldAccessToken).SetVal(string(sessionData))
-		mock.ExpectSRem("test:oidc:user_access_tokens:user123", oldAccessToken).SetVal(1)
-		mock.ExpectDel("test:oidc:access_token:" + oldAccessToken).SetVal(1)
+		mock.ExpectGet(testAccessTokenKey(oldAccessToken)).SetVal(string(sessionData))
+		mock.ExpectSRem(testUserAccessTokensKey(testUserID), oldAccessToken).SetVal(1)
+		mock.ExpectDel(testAccessTokenKey(oldAccessToken)).SetVal(1)
 		// Delete old RT
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectSRem("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(1)
-		mock.ExpectDel("test:oidc:refresh_token:" + refreshToken).SetVal(1)
+		mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(string(sessionData))
+		mock.ExpectSRem(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(1)
+		mock.ExpectDel(testRefreshTokenKey(refreshToken)).SetVal(1)
 		// Store new RT — value contains JWT, so use regexp
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.Regexp().ExpectSet(testRefreshTokenKey("na_rt_fixed-token"), ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
 
-		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, testClientID)
 		assert.NoError(t, err)
 		assert.Equal(t, session.UserID, exchangedSession.UserID)
 		assert.NotEmpty(t, idToken)
@@ -275,8 +428,8 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 	t.Run("ExchangeRefreshToken_WithoutRotation_ReusesRefreshToken", func(t *testing.T) {
 		oldAccessToken := "header.payload.signature"
 		session := &OIDCSession{
-			ClientID:    "client1",
-			UserID:      "user123",
+			ClientID:    testClientID,
+			UserID:      testUserID,
 			Scopes:      []string{"openid", "offline_access"},
 			AuthTime:    fixedTime,
 			AccessToken: oldAccessToken,
@@ -291,13 +444,13 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 			cfg.oidc.Clients[0] = originalClient
 		}()
 
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(sessionData))
-		mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", 2*time.Hour).SetVal("OK")
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(string(sessionData))
+		mock.ExpectSet(testDeniedAccessTokenKey(oldAccessToken), "1", 2*time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSet(testRefreshTokenKey(refreshToken), ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(0)
+		mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
 
-		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		exchangedSession, idToken, accessToken, newRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, testClientID)
 		assert.NoError(t, err)
 		assert.Equal(t, session.UserID, exchangedSession.UserID)
 		assert.NotEmpty(t, idToken)
@@ -308,13 +461,13 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		updatedSession.AccessToken = accessToken
 		updatedSessionData, _ := json.Marshal(&updatedSession)
 
-		mock.ExpectGet("test:oidc:refresh_token:" + refreshToken).SetVal(string(updatedSessionData))
-		mock.ExpectSet("test:oidc:denied_access_token:"+accessToken, "1", 2*time.Hour).SetVal("OK")
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:"+refreshToken, ".*", 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", refreshToken).SetVal(0)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(string(updatedSessionData))
+		mock.ExpectSet(testDeniedAccessTokenKey(accessToken), "1", 2*time.Hour).SetVal("OK")
+		mock.Regexp().ExpectSet(testRefreshTokenKey(refreshToken), ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(0)
+		mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
 
-		_, _, secondAccessToken, secondRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, "client1")
+		_, _, secondAccessToken, secondRefreshToken, _, err := idp.ExchangeRefreshToken(ctx, refreshToken, testClientID)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, secondAccessToken)
 		assert.Empty(t, secondRefreshToken)
@@ -323,7 +476,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 	t.Run("GetClaimsWithScopes", func(t *testing.T) {
 		user := &backend.User{
-			Id:          "user123",
+			Id:          testUserID,
 			Name:        "jdoe",
 			DisplayName: "John Doe",
 			Attributes: bktype.AttributeMapping{
@@ -332,7 +485,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 			},
 		}
 		client := &config.OIDCClient{
-			ClientID: "client1",
+			ClientID: testClientID,
 			IdTokenClaims: config.IdTokenClaims{
 				Mappings: []config.OIDCClaimMapping{
 					{Claim: definitions.ClaimEmail, Attribute: "mail", Type: definitions.ClaimTypeString},
@@ -353,7 +506,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		// Only openid requested -> no extra claims except defaults (sub, name, preferred_username)
 		idClaims, accessClaims, err := idp.GetClaims(ctx, user, client, []string{"openid"})
 		assert.NoError(t, err)
-		assert.Equal(t, "user123", idClaims["sub"])
+		assert.Equal(t, testUserID, idClaims[claimSubject])
 		assert.Equal(t, "John Doe", idClaims["name"])
 		assert.Nil(t, idClaims["email"])
 		assert.Nil(t, idClaims["groups"])
@@ -379,7 +532,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 		// roles implied for compatibility -> roles claim is now included
 		clientWithImpliedRoles := &config.OIDCClient{
-			ClientID:          "client1",
+			ClientID:          testClientID,
 			Scopes:            []string{"openid", "roles"},
 			ImpliedScopes:     []string{"roles"},
 			IdTokenClaims:     client.IdTokenClaims,
@@ -396,7 +549,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 	t.Run("FilterScopes", func(t *testing.T) {
 		client := &config.OIDCClient{
-			ClientID: "client1",
+			ClientID: testClientID,
 			Scopes:   []string{"openid", "profile"},
 		}
 
@@ -452,7 +605,7 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 	t.Run("IssueWithImpliedOfflineAccess", func(t *testing.T) {
 		client := &config.OIDCClient{
-			ClientID:             "client1",
+			ClientID:             testClientID,
 			Scopes:               []string{"openid", "profile", "offline_access"},
 			ImpliedScopes:        []string{"offline_access"},
 			RefreshTokenLifetime: 7 * 24 * time.Hour,
@@ -462,15 +615,15 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 		assert.Equal(t, []string{"openid", "profile", "offline_access"}, filteredScopes)
 
 		session := &OIDCSession{
-			ClientID: "client1",
-			UserID:   "user123",
+			ClientID: testClientID,
+			UserID:   testUserID,
 			Scopes:   filteredScopes,
 			AuthTime: fixedTime,
 		}
 
-		mock.Regexp().ExpectSet("test:oidc:refresh_token:na_rt_fixed-token", ".*", 7*24*time.Hour).SetVal("OK")
-		mock.ExpectSAdd("test:oidc:user_refresh_tokens:user123", "na_rt_fixed-token").SetVal(1)
-		mock.ExpectExpire("test:oidc:user_refresh_tokens:user123", 30*24*time.Hour).SetVal(true)
+		mock.Regexp().ExpectSet(testRefreshTokenKey("na_rt_fixed-token"), ".*", 7*24*time.Hour).SetVal("OK")
+		mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), "na_rt_fixed-token").SetVal(1)
+		mock.ExpectExpire(testUserRefreshTokensKey(testUserID), 30*24*time.Hour).SetVal(true)
 
 		_, _, refreshToken, _, err := idp.IssueTokens(ctx, session)
 		assert.NoError(t, err)
@@ -487,11 +640,109 @@ func TestNauthilusIdP_Tokens(t *testing.T) {
 
 		// Opaque token (without dots) SHOULD hit Redis
 		opaqueToken := "na_at_someopaquevalue"
-		mock.ExpectGet("test:oidc:access_token:" + opaqueToken).RedisNil()
+		mock.ExpectGet(testAccessTokenKey(opaqueToken)).RedisNil()
 		_, err = idp.ValidateToken(ctx, opaqueToken)
 		assert.Error(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet(), "Redis should have been hit for opaque token")
 	})
+}
+
+func TestValidateTokenOpaqueUsesSingleRedisLookup(t *testing.T) {
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+	})
+
+	tokenString := "na_at_single-read"
+	session := &OIDCSession{
+		ClientID:          testClientID,
+		UserID:            testUserID,
+		Scopes:            []string{"openid", "profile"},
+		AccessTokenClaims: map[string]any{"role": "reader"},
+	}
+
+	sessionData, err := json.Marshal(session)
+	assert.NoError(t, err)
+
+	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
+
+	claims, err := idp.ValidateToken(t.Context(), tokenString)
+	assert.NoError(t, err)
+	assert.Equal(t, testUserID, claims[claimSubject])
+	assert.Equal(t, testClientID, claims[claimAudience])
+	assert.Equal(t, testScopeClaim, claims[claimScope])
+	assert.Equal(t, "reader", claims["role"])
+	assert.NoError(t, mock.ExpectationsWereMet(), "opaque token validation must use the session loaded by the first Redis lookup")
+}
+
+func TestValidateTokenJWTResolvesRedisKeyByKID(t *testing.T) {
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+	})
+	mock.MatchExpectationsInOrder(false)
+
+	kid := "redis-key-1"
+	pemData := generateTestKey()
+	tokenString := signedTestAccessToken(t, kid, pemData)
+
+	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+
+	claims, err := idp.ValidateToken(t.Context(), tokenString)
+	assert.NoError(t, err)
+	assert.Equal(t, testUserID, claims[claimSubject])
+	assert.NoError(t, mock.ExpectationsWereMet(), "JWT validation should resolve the public key by kid and still check the denylist")
+}
+
+func TestValidateTokenJWTRejectsDeniedTokenAfterSignatureValidation(t *testing.T) {
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+	})
+	mock.MatchExpectationsInOrder(false)
+
+	kid := "denied-key-1"
+	pemData := generateTestKey()
+	tokenString := signedTestAccessToken(t, kid, pemData)
+
+	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).SetVal("1")
+
+	claims, err := idp.ValidateToken(t.Context(), tokenString)
+	assert.Error(t, err)
+	assert.Nil(t, claims)
+	assert.Contains(t, err.Error(), "revoked")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateTokenEmitsDiagnosticChildSpans(t *testing.T) {
+	collector := &idpTraceSpanCollector{}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(collector)),
+	)
+
+	restore := installIDPTraceTestProvider(tp)
+	defer restore()
+
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+	})
+	mock.MatchExpectationsInOrder(false)
+
+	kid := "trace-key-1"
+	pemData := generateTestKey()
+	tokenString := signedTestAccessToken(t, kid, pemData)
+
+	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+
+	_, err := idp.ValidateToken(t.Context(), tokenString)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+
+	assertIDPSpanRecorded(t, collector, "idp.validate_token")
+	assertIDPSpanRecorded(t, collector, "idp.validate_token.jwt.verify")
+	assertIDPSpanRecorded(t, collector, "idp.validate_token.jwt.key_resolve")
+	assertIDPSpanRecorded(t, collector, "idp.validate_token.jwt.denylist")
 }
 
 func TestNauthilusIdP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) {
@@ -499,7 +750,7 @@ func TestNauthilusIdP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) 
 		FileSettings: &config.FileSettings{
 			Server: &config.ServerSection{
 				Redis: config.Redis{
-					Prefix: "test:",
+					Prefix: testRedisPrefix,
 				},
 			},
 		},
@@ -531,7 +782,7 @@ func TestNauthilusIdP_FindSAMLServiceProvider_ReturnsSliceElement(t *testing.T) 
 func TestNauthilusIdP_ClientCredentials(t *testing.T) {
 	signingKey := secret.New(generateTestKey())
 	oidcCfg := config.OIDCConfig{
-		Issuer: "https://issuer.example.com",
+		Issuer: testIssuer,
 		SigningKeys: []config.OIDCKey{
 			{ID: "default", Key: signingKey, Active: true},
 		},
@@ -555,7 +806,7 @@ func TestNauthilusIdP_ClientCredentials(t *testing.T) {
 		FileSettings: &config.FileSettings{
 			Server: &config.ServerSection{
 				Redis: config.Redis{
-					Prefix: "test:",
+					Prefix: testRedisPrefix,
 				},
 			},
 		},
@@ -580,9 +831,9 @@ func TestNauthilusIdP_ClientCredentials(t *testing.T) {
 		// Validate the token
 		claims, err := idpInst.ValidateToken(ctx, accessToken)
 		assert.NoError(t, err)
-		assert.Equal(t, "cc-client", claims["sub"])
-		assert.Equal(t, "cc-client", claims["aud"])
-		assert.Equal(t, "https://issuer.example.com", claims["iss"])
+		assert.Equal(t, "cc-client", claims[claimSubject])
+		assert.Equal(t, "cc-client", claims[claimAudience])
+		assert.Equal(t, testIssuer, claims[claimIssuer])
 	})
 
 	t.Run("IssueClientCredentialsToken_UnsupportedGrant", func(t *testing.T) {

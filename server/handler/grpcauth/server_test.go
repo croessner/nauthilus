@@ -42,6 +42,10 @@ import (
 	"github.com/croessner/nauthilus/server/secret"
 
 	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -438,6 +442,57 @@ func TestLoggingTracingInterceptorIncludesPhase5Fields(t *testing.T) {
 	assertLogAttrValue(t, attrs, definitions.LogKeyAuthLoginAttempt, float64(4))
 	assertLogAttr(t, attrs, "decision", authv1.AuthDecision_AUTH_DECISION_OK.String())
 	assertLogAttr(t, attrs, "debug_module", definitions.DbgAuthName)
+}
+
+func TestUnaryServerInterceptorExtractsIncomingTraceContext(t *testing.T) {
+	collector := &grpcTraceSpanCollector{}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(collector)),
+	)
+
+	restore := installGRPCTraceTestGlobals(tp)
+	defer restore()
+
+	cfg := grpcAuthTestConfig(config.BasicAuth{
+		Enabled:  true,
+		Username: "grpc-client",
+		Password: secret.New("grpc-secret-1234"),
+	}, config.OIDCAuth{})
+	interceptor := UnaryServerInterceptor(ServerDeps{
+		Cfg:    cfg,
+		Logger: slog.Default(),
+	})
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs(
+			"authorization", basicAuthorization("grpc-client", "grpc-secret-1234"),
+			"traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		),
+	)
+
+	var handlerSpanContext oteltrace.SpanContext
+
+	response, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{
+		FullMethod: authv1.AuthService_Authenticate_FullMethodName,
+	}, func(ctx context.Context, _ any) (any, error) {
+		handlerSpanContext = oteltrace.SpanContextFromContext(ctx)
+
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatalf("interceptor returned error: %v", err)
+	}
+
+	if response != "ok" {
+		t.Fatalf("response = %v, want ok", response)
+	}
+
+	if !handlerSpanContext.IsValid() {
+		t.Fatal("handler context did not receive a valid span context")
+	}
+
+	assertIncomingGRPCTraceParent(t, collector, handlerSpanContext)
 }
 
 func TestLoggingTracingInterceptorUsesAuthDebugModule(t *testing.T) {
@@ -993,6 +1048,80 @@ func assertLogAttrValue(t *testing.T, attrs map[string]any, key string, want any
 
 	if got != want {
 		t.Fatalf("log key %q = %#v, want %#v", key, got, want)
+	}
+}
+
+type grpcTraceSpanCollector struct {
+	mu    sync.Mutex
+	spans []sdktrace.ReadOnlySpan
+}
+
+func (c *grpcTraceSpanCollector) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.spans = append(c.spans, spans...)
+
+	return nil
+}
+
+func (c *grpcTraceSpanCollector) Shutdown(context.Context) error {
+	return nil
+}
+
+func (c *grpcTraceSpanCollector) findSpan(name string) (sdktrace.ReadOnlySpan, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, span := range c.spans {
+		if span.Name() == name {
+			return span, true
+		}
+	}
+
+	return nil, false
+}
+
+func installGRPCTraceTestGlobals(tp *sdktrace.TracerProvider) func() {
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
+	return func() {
+		_ = tp.Shutdown(context.Background())
+
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+	}
+}
+
+func assertIncomingGRPCTraceParent(
+	t *testing.T,
+	collector *grpcTraceSpanCollector,
+	handlerSpanContext oteltrace.SpanContext,
+) {
+	t.Helper()
+
+	if got := handlerSpanContext.TraceID().String(); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("handler trace id = %s, want incoming trace id", got)
+	}
+
+	span, found := collector.findSpan(grpcSpanName(authv1.AuthService_Authenticate_FullMethodName))
+	if !found {
+		t.Fatalf("gRPC span %q was not recorded", grpcSpanName(authv1.AuthService_Authenticate_FullMethodName))
+	}
+
+	if got := span.Parent().SpanID().String(); got != "00f067aa0ba902b7" {
+		t.Fatalf("gRPC span parent = %s, want incoming parent span", got)
+	}
+
+	if span.SpanKind() != oteltrace.SpanKindServer {
+		t.Fatalf("span kind = %v, want %v", span.SpanKind(), oteltrace.SpanKindServer)
 	}
 }
 
