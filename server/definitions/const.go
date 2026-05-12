@@ -663,6 +663,9 @@ const (
 
 	// BackendLocalCache represents the local in-memory cache localcache.LocalCache
 	BackendLocalCache
+
+	// BackendRemote represents a remote authority backend
+	BackendRemote
 )
 
 const (
@@ -683,6 +686,9 @@ const (
 
 	// BackendLocalCacheName refers to th elocal in memory localcache.LocalCache.
 	BackendLocalCacheName = "memory"
+
+	// BackendRemoteName refers to a remote authority backend.
+	BackendRemoteName = "remote"
 )
 
 // Supported auth controls and runtime services.

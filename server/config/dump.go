@@ -41,6 +41,16 @@ const (
 	defaultWebAuthnResidentKey      = "discouraged"
 	defaultWebAuthnUserVerification = "preferred"
 	defaultSAMLSignatureMethod      = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+	developerModeConfigKey          = "developer_mode"
+	passwordConfigLeaf              = "password"
+	passwordEncodedConfigLeaf       = "password_encoded"
+	passwordNonceConfigLeaf         = "password_nonce"
+	bindPWConfigLeaf                = "bind_pw"
+	encryptionSecretConfigLeaf      = "encryption_secret"
+	clientSecretConfigLeaf          = "client_secret"
+	clientPrivateKeyConfigLeaf      = "client_private_key"
+	staticTokenConfigLeaf           = "static_token"
+	testPasswordConfigLeaf          = "test_password"
 )
 
 var printSensitiveConfigValues atomic.Bool
@@ -861,7 +871,7 @@ func shouldRedactConfigDumpValue(path string, value any) bool {
 	}
 
 	switch configPathLeaf(path) {
-	case "password", "password_encoded", "password_nonce", "encryption_secret", "bind_pw", "client_secret", "test_password":
+	case passwordConfigLeaf, passwordEncodedConfigLeaf, passwordNonceConfigLeaf, encryptionSecretConfigLeaf, bindPWConfigLeaf, clientSecretConfigLeaf, clientPrivateKeyConfigLeaf, staticTokenConfigLeaf, testPasswordConfigLeaf:
 		return true
 	default:
 		return false
@@ -939,7 +949,8 @@ func addConfigDumpDefaultProviders(target map[string]configDumpValueProvider, pr
 
 func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
-		"developer_mode":                                         func() any { return false },
+		developerModeConfigKey:                                   func() any { return false },
+		"runtime.clients.grpc.nauthilus_authorities":             func() any { return map[string]any{} },
 		"runtime.servers.grpc.authority.address":                 func() any { return defaultGRPCAuthorityAddress },
 		"runtime.servers.grpc.authority.enabled":                 func() any { return false },
 		"runtime.servers.grpc.authority.tls.enabled":             func() any { return false },
@@ -968,6 +979,7 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 
 func configDumpAuthPolicyDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
+		"auth.backends.remote":                  func() any { return map[string]any{} },
 		"auth.policy.mode":                      func() any { return "enforce" },
 		"auth.policy.default_policy":            func() any { return defaultAuthPolicyName },
 		"auth.policy.registry_scripts":          func() any { return []any{} },

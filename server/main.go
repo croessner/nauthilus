@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/app/reloadfx"
 	"github.com/croessner/nauthilus/server/app/restartfx"
 	"github.com/croessner/nauthilus/server/app/signalsfx"
+	remotebackend "github.com/croessner/nauthilus/server/backend/remote"
 	"github.com/croessner/nauthilus/server/config"
 	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -130,6 +131,7 @@ func main() {
 		fx.Provide(newReloadOrchestrator),
 		fx.Provide(newRestartOrchestrator),
 		fx.Invoke(registerRuntimeLifecycle),
+		fx.Invoke(registerRemoteBackendLifecycle),
 		signalsfx.Module(),
 	)
 
@@ -145,6 +147,14 @@ func main() {
 	if err := fApp.Stop(stopCtx); err != nil {
 		stdlog.Printf("Unable to stop fx app. Error: %v", err)
 	}
+}
+
+func registerRemoteBackendLifecycle(lc fx.Lifecycle) {
+	lc.Append(fx.Hook{
+		OnStop: func(context.Context) error {
+			return remotebackend.CloseConnectionManagers()
+		},
+	})
 }
 
 func runConfigCheck(setupConfiguration func() error, stderr io.Writer) int {

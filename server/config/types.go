@@ -266,7 +266,7 @@ func (b *Backend) String() string {
 
 // Set updates the backend of the Backend based on the provided value.
 // It returns an error if the value is not valid.
-// Valid values for the backend are "cache", "ldap", "lua" and "test".
+// Valid values for the backend are "cache", "ldap", "lua", "test" and "remote".
 // If the value is valid, the backend field of Backend is updated accordingly.
 // An error of type ErrWrongPassDB is returned if the value is not valid.
 func (b *Backend) Set(value string) error {
@@ -277,7 +277,7 @@ func (b *Backend) Set(value string) error {
 	value = strings.TrimSpace(value)
 	b.name = definitions.DefaultBackendName
 
-	regex := regexp.MustCompile(`^(ldap|lua|test)\((.*?)\)$`)
+	regex := regexp.MustCompile(`^(ldap|lua|test|remote)\((.*?)\)$`)
 
 	if matches := regex.FindStringSubmatch(value); matches != nil {
 		name := strings.TrimSpace(matches[2])
@@ -298,6 +298,8 @@ func (b *Backend) Set(value string) error {
 		b.backend = definitions.BackendLua
 	case definitions.BackendTestName:
 		b.backend = definitions.BackendTest
+	case definitions.BackendRemoteName:
+		b.backend = definitions.BackendRemote
 	default:
 		return fmt.Errorf(errors.ErrWrongPassDB.Error(), value)
 	}

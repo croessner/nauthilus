@@ -16,6 +16,9 @@
 package core
 
 import (
+	"sync"
+
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
 )
 
@@ -53,4 +56,41 @@ type BackendManager interface {
 
 	// UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
 	UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error)
+}
+
+// BackendManagerFactory constructs a backend manager for a backend plugged in from another package.
+type BackendManagerFactory func(backendName string, deps AuthDeps) BackendManager
+
+var backendManagerFactories sync.Map
+
+// RegisterBackendManagerFactory registers a backend manager factory.
+func RegisterBackendManagerFactory(backendType definitions.Backend, factory BackendManagerFactory) {
+	if factory == nil {
+		return
+	}
+
+	backendManagerFactories.Store(backendType, factory)
+}
+
+func backendManagerFromFactory(backendType definitions.Backend, backendName string, deps AuthDeps) BackendManager {
+	factory, ok := backendManagerFactories.Load(backendType)
+	if !ok {
+		return nil
+	}
+
+	return factory.(BackendManagerFactory)(backendName, deps)
+}
+
+// RemoteBackendRef binds an edge session to an authority-side backend reference.
+type RemoteBackendRef struct {
+	Type        string
+	Name        string
+	Protocol    string
+	Authority   string
+	OpaqueToken string
+}
+
+// IsZero reports whether the reference is empty.
+func (r RemoteBackendRef) IsZero() bool {
+	return r.Type == "" && r.Name == "" && r.Protocol == "" && r.Authority == "" && r.OpaqueToken == ""
 }
