@@ -282,7 +282,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 		// Best-effort: ensure the process keeps serving HTTP even if the restart
 		// operation fails or times out.
-		if err := startHTTPServerWithOptions(r.ctx, r.store, httpServerStartOptions{continueHTTPOnGRPCAuthError: true}); err != nil {
+		if err := startHTTPServerWithOptions(r.ctx, r.store, httpServerStartOptions{continueHTTPOnGRPCAuthorityError: true}); err != nil {
 			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to start HTTP server after restart", definitions.LogKeyError, err)
 		}
 	}()
@@ -315,11 +315,11 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 			}
 		}
 
-		if r.store.grpcAuthDone != nil {
+		if r.store.grpcAuthorityDone != nil {
 			select {
-			case <-r.store.grpcAuthDone:
+			case <-r.store.grpcAuthorityDone:
 			case <-opCtx.Done():
-				step = "wait_grpc_auth_done"
+				step = "wait_grpc_authority_done"
 				restartErr = opCtx.Err()
 
 				return restartErr
@@ -522,9 +522,10 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 				return
 			}
 		}
-		if store.grpcAuthDone != nil {
+
+		if store.grpcAuthorityDone != nil {
 			select {
-			case <-store.grpcAuthDone:
+			case <-store.grpcAuthorityDone:
 			case <-ctx.Done():
 				return
 			}

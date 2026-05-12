@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package grpcauth
+package grpcauthority
 
 import (
 	"bytes"
@@ -357,7 +357,8 @@ func TestUnaryServerInterceptorThrottlesInvalidCallerAuthByPeerIP(t *testing.T) 
 	}
 }
 
-func TestLoggingTracingInterceptorIncludesPhase5Fields(t *testing.T) {
+//nolint:funlen
+func TestLoggingTracingInterceptorIncludesAuthorityFields(t *testing.T) {
 	var logBuffer bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	interceptor := loggingTracingInterceptor(ServerDeps{
@@ -595,7 +596,7 @@ func TestStartServerStopsOnContextCancel(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("gRPC AuthService server did not stop after context cancellation")
+		t.Fatal("gRPC authority server did not stop after context cancellation")
 	}
 }
 
@@ -817,7 +818,7 @@ func TestBufconnAuthServiceRejectsMissingCallerAuth(t *testing.T) {
 func newBlockingListener() *blockingListener {
 	return &blockingListener{
 		closed: make(chan struct{}),
-		addr:   testAddr("grpc-auth-test"),
+		addr:   testAddr("grpc-authority-test"),
 	}
 }
 

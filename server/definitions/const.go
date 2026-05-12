@@ -256,8 +256,29 @@ const (
 	// ScopeAuthenticate is the base scope required for all backchannel API access.
 	ScopeAuthenticate = "nauthilus:authenticate"
 
+	// ScopeLookupIdentity grants access to trusted identity lookup operations.
+	ScopeLookupIdentity = "nauthilus:lookup_identity"
+
 	// ScopeListAccounts grants access to the list-accounts mode.
 	ScopeListAccounts = "nauthilus:list_accounts"
+
+	// ScopeMFARead grants access to read public MFA state.
+	ScopeMFARead = "nauthilus:mfa_read"
+
+	// ScopeMFAVerify grants access to verify MFA material.
+	ScopeMFAVerify = "nauthilus:mfa_verify"
+
+	// ScopeMFAWrite grants access to mutate MFA material.
+	ScopeMFAWrite = "nauthilus:mfa_write"
+
+	// ScopeWebAuthnRead grants access to read public WebAuthn credential state.
+	ScopeWebAuthnRead = "nauthilus:webauthn_read"
+
+	// ScopeWebAuthnWrite grants access to mutate WebAuthn credential state.
+	ScopeWebAuthnWrite = "nauthilus:webauthn_write"
+
+	// ScopeAttributeRead grants access to released identity attributes.
+	ScopeAttributeRead = "nauthilus:attribute_read"
 )
 
 const (

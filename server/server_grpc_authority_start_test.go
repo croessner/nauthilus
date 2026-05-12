@@ -21,42 +21,42 @@ import (
 	"log/slog"
 	"testing"
 
-	handlergrpcauth "github.com/croessner/nauthilus/server/handler/grpcauth"
+	handlerauthority "github.com/croessner/nauthilus/server/handler/grpcauthority"
 )
 
-func TestStartGRPCAuthForHTTPFailsInitialStartup(t *testing.T) {
+func TestStartGRPCAuthorityForHTTPFailsInitialStartup(t *testing.T) {
 	startErr := errors.New("bind failed")
 	store := &contextStore{}
 
-	err := startGRPCAuthForHTTP(context.Background(), store, nil, nil, slog.Default(), httpServerStartOptions{
-		grpcAuthStarter: failingGRPCAuthStarter(startErr),
+	err := startGRPCAuthorityForHTTP(context.Background(), store, nil, nil, slog.Default(), httpServerStartOptions{
+		grpcAuthorityStarter: failingGRPCAuthorityStarter(startErr),
 	})
 	if !errors.Is(err, startErr) {
 		t.Fatalf("error = %v, want %v", err, startErr)
 	}
 }
 
-func TestStartGRPCAuthForHTTPAllowsRestartFallback(t *testing.T) {
+func TestStartGRPCAuthorityForHTTPAllowsRestartFallback(t *testing.T) {
 	startErr := errors.New("bind failed")
 	store := &contextStore{
-		grpcAuthDone: closedDoneChannel(),
+		grpcAuthorityDone: closedDoneChannel(),
 	}
 
-	err := startGRPCAuthForHTTP(context.Background(), store, nil, nil, slog.Default(), httpServerStartOptions{
-		continueHTTPOnGRPCAuthError: true,
-		grpcAuthStarter:             failingGRPCAuthStarter(startErr),
+	err := startGRPCAuthorityForHTTP(context.Background(), store, nil, nil, slog.Default(), httpServerStartOptions{
+		continueHTTPOnGRPCAuthorityError: true,
+		grpcAuthorityStarter:             failingGRPCAuthorityStarter(startErr),
 	})
 	if err != nil {
 		t.Fatalf("error = %v, want nil", err)
 	}
 
-	if store.grpcAuthDone != nil {
-		t.Fatal("grpcAuthDone was not cleared after tolerated gRPC start failure")
+	if store.grpcAuthorityDone != nil {
+		t.Fatal("grpcAuthorityDone was not cleared after tolerated gRPC start failure")
 	}
 }
 
-func failingGRPCAuthStarter(err error) grpcAuthStarter {
-	return func(context.Context, handlergrpcauth.ServerDeps) (<-chan struct{}, error) {
+func failingGRPCAuthorityStarter(err error) grpcAuthorityStarter {
+	return func(context.Context, handlerauthority.ServerDeps) (<-chan struct{}, error) {
 		return nil, err
 	}
 }

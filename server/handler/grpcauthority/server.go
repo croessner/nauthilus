@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package grpcauth
+package grpcauthority
 
 import (
 	"context"
@@ -36,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
+	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -55,9 +56,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const authorizationMetadataKey = "authorization"
+const (
+	authorizationMetadataKey          = "authorization"
+	edgeClusterMetadataKey            = "x-nauthilus-edge-cluster"
+	edgeInstanceMetadataKey           = "x-nauthilus-edge-instance"
+	authorityServicePrincipalFallback = "grpc-authority-caller"
+)
 
-// ServerDeps contains the dependencies required by the gRPC AuthService server.
+// ServerDeps contains the dependencies required by the gRPC authority server.
 type ServerDeps struct {
 	Cfg             config.File
 	Env             config.Environment
@@ -66,21 +72,23 @@ type ServerDeps struct {
 	AccountCache    *accountcache.Manager
 	Channel         backend.Channel
 	AuthService     core.AuthApplicationService
+	IdentityService AuthorityIdentityService
+	BackendRefs     BackendRefStore
 	MessageResolver localization.MessageResolver
 	OIDCValidator   oidcbearer.TokenValidator
 	Listener        net.Listener
 }
 
-type grpcAuthServerConfigProvider interface {
+type grpcAuthorityServerConfigProvider interface {
 	GetRuntimeGRPCAuthServer() *config.RuntimeGRPCAuthServerSection
 }
 
-// StartServer starts the optional gRPC AuthService listener and returns a done
+// StartServer starts the optional gRPC authority listener and returns a done
 // channel that is closed after graceful shutdown completes. A nil done channel
 // means the listener is disabled.
 func StartServer(ctx context.Context, deps ServerDeps) (<-chan struct{}, error) {
-	grpcAuthConfig := runtimeGRPCAuthServerConfig(deps.Cfg)
-	if !grpcAuthConfig.IsEnabled() {
+	grpcAuthorityConfig := runtimeGRPCAuthorityServerConfig(deps.Cfg)
+	if !grpcAuthorityConfig.IsEnabled() {
 		return nil, nil
 	}
 
@@ -95,9 +103,10 @@ func StartServer(ctx context.Context, deps ServerDeps) (<-chan struct{}, error) 
 	listener := deps.Listener
 	if listener == nil {
 		var err error
-		listener, err = net.Listen("tcp", grpcAuthConfig.GetAddress())
+
+		listener, err = net.Listen("tcp", grpcAuthorityConfig.GetAddress())
 		if err != nil {
-			return nil, fmt.Errorf("listen on runtime.servers.grpc.authority.address %q: %w", grpcAuthConfig.GetAddress(), err)
+			return nil, fmt.Errorf("listen on runtime.servers.grpc.authority.address %q: %w", grpcAuthorityConfig.GetAddress(), err)
 		}
 	}
 
@@ -109,30 +118,30 @@ func StartServer(ctx context.Context, deps ServerDeps) (<-chan struct{}, error) 
 	}
 
 	done := make(chan struct{})
-	go serveGRPCAuth(ctx, deps.effectiveLogger(), server, listener, done)
+	go serveGRPCAuthority(ctx, deps.effectiveLogger(), server, listener, done)
 
 	_ = level.Info(deps.effectiveLogger()).Log(
 		definitions.LogKeyMsg, "Starting Nauthilus gRPC authority server",
-		"address", grpcAuthConfig.GetAddress(),
-		"tls", grpcAuthConfig.GetTLS().IsEnabled(),
+		"address", grpcAuthorityConfig.GetAddress(),
+		"tls", grpcAuthorityConfig.GetTLS().IsEnabled(),
 	)
 
 	return done, nil
 }
 
-// NewServer builds a gRPC server and registers the AuthService.
+// NewServer builds a gRPC authority server and registers its services.
 func NewServer(deps ServerDeps) (*grpc.Server, error) {
 	if err := validateServerConfig(deps.Cfg); err != nil {
 		return nil, err
 	}
 
-	grpcAuthConfig := runtimeGRPCAuthServerConfig(deps.Cfg)
+	grpcAuthorityConfig := runtimeGRPCAuthorityServerConfig(deps.Cfg)
 	options := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(UnaryServerInterceptor(deps)),
 	}
 
-	if grpcAuthConfig.GetTLS().IsEnabled() {
-		tlsConfig, err := buildServerTLSConfig(grpcAuthConfig.GetTLS())
+	if grpcAuthorityConfig.GetTLS().IsEnabled() {
+		tlsConfig, err := buildServerTLSConfig(grpcAuthorityConfig.GetTLS())
 		if err != nil {
 			return nil, err
 		}
@@ -141,12 +150,19 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 	}
 
 	server := grpc.NewServer(options...)
-	authv1.RegisterAuthServiceServer(server, NewWithResolver(deps.authApplicationService(), deps.MessageResolver))
+	handler := NewWithServices(
+		deps.authApplicationService(),
+		deps.MessageResolver,
+		deps.authorityIdentityService(),
+		deps.backendRefStore(),
+	)
+	authv1.RegisterAuthServiceServer(server, handler)
+	identityv1.RegisterIdentityBackendServiceServer(server, handler)
 
 	return server, nil
 }
 
-// UnaryServerInterceptor returns the complete Phase-5 unary interceptor chain.
+// UnaryServerInterceptor returns the complete authority unary interceptor chain.
 func UnaryServerInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	return chainUnaryInterceptors(
 		recoveryInterceptor(deps),
@@ -157,7 +173,7 @@ func UnaryServerInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	)
 }
 
-func serveGRPCAuth(
+func serveGRPCAuthority(
 	ctx context.Context,
 	logger *slog.Logger,
 	server *grpc.Server,
@@ -199,8 +215,8 @@ func validateServerConfig(cfg config.File) error {
 	return config.ValidateGRPCAuthServerConfig(provider)
 }
 
-func runtimeGRPCAuthServerConfig(cfg config.File) *config.RuntimeGRPCAuthServerSection {
-	provider, ok := cfg.(grpcAuthServerConfigProvider)
+func runtimeGRPCAuthorityServerConfig(cfg config.File) *config.RuntimeGRPCAuthServerSection {
+	provider, ok := cfg.(grpcAuthorityServerConfigProvider)
 	if !ok {
 		return &config.RuntimeGRPCAuthServerSection{}
 	}
@@ -221,6 +237,36 @@ func (d ServerDeps) authApplicationService() core.AuthApplicationService {
 		AccountCache: d.AccountCache,
 		Channel:      d.Channel,
 	})
+}
+
+func (d ServerDeps) authorityIdentityService() AuthorityIdentityService {
+	if d.IdentityService != nil {
+		return d.IdentityService
+	}
+
+	return NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{
+		AuthService: d.authApplicationService(),
+		AuthDeps: core.AuthDeps{
+			Cfg:          d.Cfg,
+			Env:          d.Env,
+			Logger:       d.effectiveLogger(),
+			Redis:        d.Redis,
+			AccountCache: d.AccountCache,
+			Channel:      d.Channel,
+		},
+	})
+}
+
+func (d ServerDeps) backendRefStore() BackendRefStore {
+	if d.BackendRefs != nil {
+		return d.BackendRefs
+	}
+
+	if d.Redis == nil {
+		return nil
+	}
+
+	return NewRedisBackendRefStore(d.Redis, RedisBackendRefStoreOptions{})
 }
 
 func (d ServerDeps) effectiveLogger() *slog.Logger {
@@ -316,14 +362,14 @@ func recoveryInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				_ = level.Error(logger).Log(
-					definitions.LogKeyMsg, "Recovered panic in gRPC AuthService request",
+					definitions.LogKeyMsg, "Recovered panic in gRPC authority request",
 					definitions.LogKeyError, fmt.Sprint(recovered),
 					"method", grpcFullMethod(info),
 					"stack", string(debug.Stack()),
 				)
 
 				response = nil
-				err = status.Error(codes.Internal, "internal gRPC AuthService error")
+				err = status.Error(codes.Internal, "internal gRPC authority error")
 			}
 		}()
 
@@ -382,7 +428,7 @@ func loggingTracingInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 		response, err := handler(traceCtx, req)
 		code := status.Code(err)
 		logFields := []any{
-			definitions.LogKeyMsg, "gRPC AuthService request completed",
+			definitions.LogKeyMsg, "gRPC authority request completed",
 			"method", method,
 			"status", code.String(),
 			"duration", time.Since(start).String(),
@@ -518,7 +564,7 @@ func appendNonZeroUint32LogField(fields []any, key string, value uint32) []any {
 }
 
 func mtlsInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
-	tlsSection := runtimeGRPCAuthServerConfig(deps.Cfg).GetTLS()
+	tlsSection := runtimeGRPCAuthorityServerConfig(deps.Cfg).GetTLS()
 
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if !tlsSection.RequiresClientCert() {
@@ -541,7 +587,9 @@ func mtlsInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 
 func backchannelAuthInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		result, err := authenticateCaller(ctx, deps, grpcFullMethod(info))
+		authCtx := context.WithValue(ctx, authorityRequestContextKey{}, req)
+
+		result, err := authenticateCaller(authCtx, deps, grpcFullMethod(info))
 		if err != nil {
 			return nil, err
 		}
@@ -550,12 +598,107 @@ func backchannelAuthInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 			ctx = core.ContextWithOIDCClaims(ctx, result.claims)
 		}
 
+		ctx = contextWithAuthorityCaller(ctx, result.caller)
+
 		return handler(ctx, req)
 	}
 }
 
 type callerAuthResult struct {
 	claims jwt.MapClaims
+	caller authorityCaller
+}
+
+type authorityCaller struct {
+	Principal          string
+	MTLSClientIdentity string
+	EdgeClusterID      string
+	EdgeInstanceID     string
+	AllScopes          bool
+}
+
+type authorityCallerContextKey struct{}
+
+type authorityRequestContextKey struct{}
+
+func contextWithAuthorityCaller(ctx context.Context, caller authorityCaller) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if caller.Principal == "" {
+		caller.Principal = authorityServicePrincipalFallback
+	}
+
+	return context.WithValue(ctx, authorityCallerContextKey{}, caller)
+}
+
+func authorityCallerFromContext(ctx context.Context) authorityCaller {
+	if ctx == nil {
+		return authorityCaller{Principal: authorityServicePrincipalFallback}
+	}
+
+	caller, ok := ctx.Value(authorityCallerContextKey{}).(authorityCaller)
+	if !ok {
+		return authorityCaller{Principal: authorityServicePrincipalFallback}
+	}
+
+	if caller.Principal == "" {
+		caller.Principal = authorityServicePrincipalFallback
+	}
+
+	return caller
+}
+
+func authorityCallerFromContextValues(ctx context.Context, principal string, allScopes bool) authorityCaller {
+	return authorityCaller{
+		Principal:      strings.TrimSpace(principal),
+		EdgeClusterID:  firstIncomingMetadata(ctx, edgeClusterMetadataKey),
+		EdgeInstanceID: firstIncomingMetadata(ctx, edgeInstanceMetadataKey),
+		AllScopes:      allScopes,
+	}
+}
+
+func authorityCallerFromClaims(ctx context.Context, claims jwt.MapClaims) authorityCaller {
+	principal := claimString(claims, "sub")
+	if principal == "" {
+		principal = claimString(claims, "client_id")
+	}
+
+	if principal == "" {
+		principal = claimString(claims, "azp")
+	}
+
+	if principal == "" {
+		principal = claimString(claims, "iss")
+	}
+
+	return authorityCallerFromContextValues(ctx, principal, false)
+}
+
+func claimString(claims jwt.MapClaims, key string) string {
+	value, ok := claims[key]
+	if !ok {
+		return ""
+	}
+
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func firstIncomingMetadata(ctx context.Context, key string) string {
+	values := metadata.ValueFromIncomingContext(ctx, key)
+	if len(values) == 0 {
+		return ""
+	}
+
+	return strings.TrimSpace(values[0])
 }
 
 func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string) (callerAuthResult, error) {
@@ -585,8 +728,15 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 
 	for _, value := range values {
 		scheme, payload, ok := splitAuthorization(value)
-		if ok && scheme == "basic" && basicEnabled && validateBasicAuthorization(cfg, payload) {
-			return callerAuthResult{}, nil
+		if !ok || scheme != "basic" || !basicEnabled {
+			continue
+		}
+
+		username, valid := validateBasicAuthorization(cfg, payload)
+		if valid {
+			return callerAuthResult{
+				caller: authorityCallerFromContextValues(ctx, username, true),
+			}, nil
 		}
 	}
 
@@ -603,7 +753,10 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 
 		claims, err := validateBearerAuthorization(ctx, deps, payload, fullMethod)
 		if err == nil {
-			return callerAuthResult{claims: claims}, nil
+			return callerAuthResult{
+				claims: claims,
+				caller: authorityCallerFromClaims(ctx, claims),
+			}, nil
 		}
 
 		if status.Code(err) == codes.PermissionDenied {
@@ -660,19 +813,19 @@ func splitAuthorization(value string) (string, string, bool) {
 	return strings.ToLower(scheme), strings.TrimSpace(payload), true
 }
 
-func validateBasicAuthorization(cfg config.File, payload string) bool {
+func validateBasicAuthorization(cfg config.File, payload string) (string, bool) {
 	decoded, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
-		return false
+		return "", false
 	}
 	defer zeroBytes(decoded)
 
 	username, password, ok := strings.Cut(string(decoded), ":")
 	if !ok {
-		return false
+		return "", false
 	}
 
-	return mdauth.ValidateBasicCredentials(cfg, username, password)
+	return username, mdauth.ValidateBasicCredentials(cfg, username, password)
 }
 
 func zeroBytes(value []byte) {
@@ -697,19 +850,111 @@ func validateBearerAuthorization(
 		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
 
-	if !oidcbearer.HasScope(claims, definitions.ScopeAuthenticate) {
-		return nil, status.Error(codes.PermissionDenied, "missing required scope: "+definitions.ScopeAuthenticate)
-	}
-
-	if isListAccountsMethod(fullMethod) && !oidcbearer.HasScope(claims, definitions.ScopeListAccounts) {
-		return nil, status.Error(codes.PermissionDenied, "missing required scope: "+definitions.ScopeListAccounts)
+	for _, requiredScope := range requiredScopesForRPC(fullMethod, requestFromContext(ctx)) {
+		if !oidcbearer.HasScope(claims, requiredScope) {
+			return nil, status.Error(codes.PermissionDenied, "missing required scope: "+requiredScope)
+		}
 	}
 
 	return claims, nil
 }
 
-func isListAccountsMethod(fullMethod string) bool {
-	return fullMethod == authv1.AuthService_ListAccounts_FullMethodName
+func requiredScopesForRPC(fullMethod string, request any) []string {
+	if scopes, ok := staticScopeRequirements[fullMethod]; ok {
+		return scopes
+	}
+
+	switch fullMethod {
+	case identityv1.IdentityBackendService_ResolveUser_FullMethodName:
+		return resolveUserRequiredScopes(request)
+	case identityv1.IdentityBackendService_GetMFAState_FullMethodName:
+		return getMFAStateRequiredScopes(request)
+	default:
+		return []string{definitions.ScopeAuthenticate}
+	}
+}
+
+var staticScopeRequirements = map[string][]string{
+	authv1.AuthService_Authenticate_FullMethodName:                            definitionsScopes(definitions.ScopeAuthenticate),
+	authv1.AuthService_LookupIdentity_FullMethodName:                          definitionsScopes(definitions.ScopeLookupIdentity),
+	authv1.AuthService_ListAccounts_FullMethodName:                            definitionsScopes(definitions.ScopeListAccounts),
+	identityv1.IdentityBackendService_BeginTOTPRegistration_FullMethodName:    definitionsScopes(definitions.ScopeMFAWrite),
+	identityv1.IdentityBackendService_FinishTOTPRegistration_FullMethodName:   definitionsScopes(definitions.ScopeMFAWrite),
+	identityv1.IdentityBackendService_DeleteTOTP_FullMethodName:               definitionsScopes(definitions.ScopeMFAWrite),
+	identityv1.IdentityBackendService_GenerateRecoveryCodes_FullMethodName:    definitionsScopes(definitions.ScopeMFAWrite),
+	identityv1.IdentityBackendService_DeleteRecoveryCodes_FullMethodName:      definitionsScopes(definitions.ScopeMFAWrite),
+	identityv1.IdentityBackendService_VerifyTOTP_FullMethodName:               definitionsScopes(definitions.ScopeMFAVerify),
+	identityv1.IdentityBackendService_UseRecoveryCode_FullMethodName:          definitionsScopes(definitions.ScopeMFAVerify, definitions.ScopeMFAWrite),
+	identityv1.IdentityBackendService_GetWebAuthnCredentials_FullMethodName:   definitionsScopes(definitions.ScopeWebAuthnRead),
+	identityv1.IdentityBackendService_SaveWebAuthnCredential_FullMethodName:   definitionsScopes(definitions.ScopeWebAuthnWrite),
+	identityv1.IdentityBackendService_UpdateWebAuthnCredential_FullMethodName: definitionsScopes(definitions.ScopeWebAuthnWrite),
+	identityv1.IdentityBackendService_DeleteWebAuthnCredential_FullMethodName: definitionsScopes(definitions.ScopeWebAuthnWrite),
+}
+
+func definitionsScopes(scopes ...string) []string {
+	return scopes
+}
+
+func resolveUserRequiredScopes(request any) []string {
+	scopes := []string{definitions.ScopeLookupIdentity}
+	if resolveRequestNeedsAttributeRead(request) {
+		scopes = append(scopes, definitions.ScopeAttributeRead)
+	}
+
+	if resolveRequest, ok := request.(resolveUserScopeRequest); ok {
+		if resolveRequest.GetIncludeMfaState() {
+			scopes = append(scopes, definitions.ScopeMFARead)
+		}
+
+		if resolveRequest.GetIncludeWebauthnCredentials() {
+			scopes = append(scopes, definitions.ScopeWebAuthnRead)
+		}
+	}
+
+	return scopes
+}
+
+func getMFAStateRequiredScopes(request any) []string {
+	scopes := []string{definitions.ScopeMFARead}
+	if mfaRequest, ok := request.(getMFAStateScopeRequest); ok && mfaRequest.GetIncludeWebauthnCredentials() {
+		scopes = append(scopes, definitions.ScopeWebAuthnRead)
+	}
+
+	return scopes
+}
+
+type resolveUserScopeRequest interface {
+	GetAttributes() *identityv1.AttributeRequest
+	GetIncludeMfaState() bool
+	GetIncludeWebauthnCredentials() bool
+}
+
+type getMFAStateScopeRequest interface {
+	GetIncludeWebauthnCredentials() bool
+}
+
+func requestFromContext(ctx context.Context) any {
+	value := ctx.Value(authorityRequestContextKey{})
+	if value == nil {
+		return nil
+	}
+
+	return value
+}
+
+func resolveRequestNeedsAttributeRead(request any) bool {
+	resolveRequest, ok := request.(resolveUserScopeRequest)
+	if !ok || resolveRequest.GetAttributes() == nil {
+		return false
+	}
+
+	attributes := resolveRequest.GetAttributes()
+
+	return len(attributes.GetNames()) > 0 ||
+		attributes.GetIncludeStandardIdentity() ||
+		attributes.GetIncludeGroups() ||
+		attributes.GetIncludeGroupDns() ||
+		attributes.GetReportMissing()
 }
 
 func grpcSpanName(fullMethod string) string {

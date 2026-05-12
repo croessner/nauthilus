@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package grpcauth adapts the gRPC AuthService API to the core auth application service.
-package grpcauth
+// Package grpcauthority adapts authority-side gRPC APIs to application services.
+package grpcauthority
 
 import (
 	"context"
@@ -27,6 +27,8 @@ import (
 	"github.com/croessner/nauthilus/server/core/localization"
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
+	commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
+	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -34,22 +36,40 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Handler implements the gRPC AuthService contract.
+// Handler implements the authority-side gRPC service contracts.
 type Handler struct {
 	authv1.UnimplementedAuthServiceServer
+	identityv1.UnimplementedIdentityBackendServiceServer
 
-	service  core.AuthApplicationService
-	resolver localization.MessageResolver
+	service         core.AuthApplicationService
+	identityService AuthorityIdentityService
+	backendRefs     BackendRefStore
+	resolver        localization.MessageResolver
 }
 
-// New constructs the gRPC auth handler around the application service.
+// New constructs the authority handler around the application service.
 func New(service core.AuthApplicationService) *Handler {
 	return NewWithResolver(service, nil)
 }
 
-// NewWithResolver constructs the gRPC auth handler with response localization.
+// NewWithResolver constructs the authority handler with response localization.
 func NewWithResolver(service core.AuthApplicationService, resolver localization.MessageResolver) *Handler {
 	return &Handler{service: service, resolver: resolver}
+}
+
+// NewWithServices constructs the authority handler with all application services.
+func NewWithServices(
+	service core.AuthApplicationService,
+	resolver localization.MessageResolver,
+	identityService AuthorityIdentityService,
+	backendRefs BackendRefStore,
+) *Handler {
+	return &Handler{
+		service:         service,
+		resolver:        resolver,
+		identityService: identityService,
+		backendRefs:     backendRefs,
+	}
 }
 
 // Authenticate maps the gRPC request into the auth application service.
@@ -79,7 +99,10 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 
 	outcome = h.localizedAuthOutcome(ctx, outcome)
 
-	return authOutcomeToProto(outcome), nil
+	response := authOutcomeToProto(outcome)
+	h.attachAuthBackendRef(ctx, response, outcome, input, AuthorityOperationAuthenticate)
+
+	return response, nil
 }
 
 // LookupIdentity maps the gRPC request into the trusted identity lookup application path.
@@ -107,7 +130,10 @@ func (h *Handler) LookupIdentity(
 
 	outcome = h.localizedAuthOutcome(ctx, outcome)
 
-	return authOutcomeToProto(outcome), nil
+	response := authOutcomeToProto(outcome)
+	h.attachAuthBackendRef(ctx, response, outcome, input, AuthorityOperationLookupIdentity)
+
+	return response, nil
 }
 
 // ListAccounts maps the gRPC request into the account-provider application path.
@@ -310,6 +336,71 @@ func authOutcomeToProto(outcome *core.AuthOutcome) *authv1.AuthResponse {
 	}
 }
 
+func (h *Handler) attachAuthBackendRef(
+	ctx context.Context,
+	response *authv1.AuthResponse,
+	outcome *core.AuthOutcome,
+	input core.AuthInput,
+	operation AuthorityOperation,
+) {
+	if h == nil || h.backendRefs == nil || response == nil || outcome == nil || outcome.Decision != core.AuthDecisionOK {
+		return
+	}
+
+	payload := BackendRefPayload{
+		Type:              outcome.Backend.String(),
+		Name:              definitions.DefaultBackendName,
+		Protocol:          input.Context.Protocol,
+		Username:          input.Credentials.Username,
+		ServicePrincipal:  authorityCallerFromContext(ctx).Principal,
+		EdgeClusterID:     authorityCallerFromContext(ctx).EdgeClusterID,
+		EdgeInstanceID:    authorityCallerFromContext(ctx).EdgeInstanceID,
+		AllowedOperations: allowedOperationsAfterAuth(operation),
+	}
+
+	ref, err := h.backendRefs.Issue(ctx, payload)
+	if err != nil {
+		return
+	}
+
+	response.BackendRef = ref
+}
+
+func allowedOperationsAfterAuth(operation AuthorityOperation) []AuthorityOperation {
+	if operation == AuthorityOperationLookupIdentity {
+		return []AuthorityOperation{
+			AuthorityOperationResolveUser,
+			AuthorityOperationGetMFAState,
+			AuthorityOperationBeginTOTPRegistration,
+			AuthorityOperationFinishTOTPRegistration,
+			AuthorityOperationVerifyTOTP,
+			AuthorityOperationDeleteTOTP,
+			AuthorityOperationGenerateRecoveryCodes,
+			AuthorityOperationUseRecoveryCode,
+			AuthorityOperationDeleteRecoveryCodes,
+			AuthorityOperationGetWebAuthnCredentials,
+			AuthorityOperationSaveWebAuthnCredential,
+			AuthorityOperationUpdateWebAuthnCredential,
+			AuthorityOperationDeleteWebAuthnCredential,
+		}
+	}
+
+	return []AuthorityOperation{
+		AuthorityOperationGetMFAState,
+		AuthorityOperationBeginTOTPRegistration,
+		AuthorityOperationFinishTOTPRegistration,
+		AuthorityOperationVerifyTOTP,
+		AuthorityOperationDeleteTOTP,
+		AuthorityOperationGenerateRecoveryCodes,
+		AuthorityOperationUseRecoveryCode,
+		AuthorityOperationDeleteRecoveryCodes,
+		AuthorityOperationGetWebAuthnCredentials,
+		AuthorityOperationSaveWebAuthnCredential,
+		AuthorityOperationUpdateWebAuthnCredential,
+		AuthorityOperationDeleteWebAuthnCredential,
+	}
+}
+
 func authDecisionToProto(decision core.AuthDecision) authv1.AuthDecision {
 	switch decision {
 	case core.AuthDecisionOK:
@@ -331,6 +422,19 @@ func attributeMappingToProto(attributes bktype.AttributeMapping) map[string]*aut
 	result := make(map[string]*authv1.AttributeValues, len(attributes))
 	for key, values := range attributes {
 		result[key] = &authv1.AttributeValues{Values: stringifyAttributeValues(values)}
+	}
+
+	return result
+}
+
+func stringAttributesToProto(attributes map[string][]string) map[string]*commonv1.AttributeValues {
+	if len(attributes) == 0 {
+		return nil
+	}
+
+	result := make(map[string]*commonv1.AttributeValues, len(attributes))
+	for key, values := range attributes {
+		result[key] = &commonv1.AttributeValues{Values: append([]string(nil), values...)}
 	}
 
 	return result
