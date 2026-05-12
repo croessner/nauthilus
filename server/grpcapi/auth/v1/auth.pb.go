@@ -7,6 +7,7 @@
 package authv1
 
 import (
+	v1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -741,68 +742,25 @@ func (x *LookupIdentityRequest) GetOidcCid() string {
 	return ""
 }
 
-type AttributeValues struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Values        []string               `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AttributeValues) Reset() {
-	*x = AttributeValues{}
-	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AttributeValues) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AttributeValues) ProtoMessage() {}
-
-func (x *AttributeValues) ProtoReflect() protoreflect.Message {
-	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use AttributeValues.ProtoReflect.Descriptor instead.
-func (*AttributeValues) Descriptor() ([]byte, []int) {
-	return file_server_grpcapi_auth_v1_auth_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *AttributeValues) GetValues() []string {
-	if x != nil {
-		return x.Values
-	}
-	return nil
-}
-
 type AuthResponse struct {
-	state           protoimpl.MessageState      `protogen:"open.v1"`
-	Ok              bool                        `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	Decision        AuthDecision                `protobuf:"varint,2,opt,name=decision,proto3,enum=nauthilus.auth.v1.AuthDecision" json:"decision,omitempty"`
-	Session         string                      `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
-	AccountField    string                      `protobuf:"bytes,4,opt,name=account_field,json=accountField,proto3" json:"account_field,omitempty"`
-	TotpSecretField string                      `protobuf:"bytes,5,opt,name=totp_secret_field,json=totpSecretField,proto3" json:"totp_secret_field,omitempty"`
-	Backend         uint32                      `protobuf:"varint,6,opt,name=backend,proto3" json:"backend,omitempty"`
-	Attributes      map[string]*AttributeValues `protobuf:"bytes,7,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	StatusMessage   string                      `protobuf:"bytes,8,opt,name=status_message,json=statusMessage,proto3" json:"status_message,omitempty"`
-	Error           string                      `protobuf:"bytes,9,opt,name=error,proto3" json:"error,omitempty"`
+	state           protoimpl.MessageState         `protogen:"open.v1"`
+	Ok              bool                           `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Decision        AuthDecision                   `protobuf:"varint,2,opt,name=decision,proto3,enum=nauthilus.auth.v1.AuthDecision" json:"decision,omitempty"`
+	Session         string                         `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
+	AccountField    string                         `protobuf:"bytes,4,opt,name=account_field,json=accountField,proto3" json:"account_field,omitempty"`
+	TotpSecretField string                         `protobuf:"bytes,5,opt,name=totp_secret_field,json=totpSecretField,proto3" json:"totp_secret_field,omitempty"`
+	Backend         uint32                         `protobuf:"varint,6,opt,name=backend,proto3" json:"backend,omitempty"`
+	Attributes      map[string]*v1.AttributeValues `protobuf:"bytes,7,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	StatusMessage   string                         `protobuf:"bytes,8,opt,name=status_message,json=statusMessage,proto3" json:"status_message,omitempty"`
+	Error           string                         `protobuf:"bytes,9,opt,name=error,proto3" json:"error,omitempty"`
+	BackendRef      *v1.BackendRef                 `protobuf:"bytes,10,opt,name=backend_ref,json=backendRef,proto3" json:"backend_ref,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AuthResponse) Reset() {
 	*x = AuthResponse{}
-	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[4]
+	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -814,7 +772,7 @@ func (x *AuthResponse) String() string {
 func (*AuthResponse) ProtoMessage() {}
 
 func (x *AuthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[4]
+	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -827,7 +785,7 @@ func (x *AuthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthResponse.ProtoReflect.Descriptor instead.
 func (*AuthResponse) Descriptor() ([]byte, []int) {
-	return file_server_grpcapi_auth_v1_auth_proto_rawDescGZIP(), []int{4}
+	return file_server_grpcapi_auth_v1_auth_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AuthResponse) GetOk() bool {
@@ -872,7 +830,7 @@ func (x *AuthResponse) GetBackend() uint32 {
 	return 0
 }
 
-func (x *AuthResponse) GetAttributes() map[string]*AttributeValues {
+func (x *AuthResponse) GetAttributes() map[string]*v1.AttributeValues {
 	if x != nil {
 		return x.Attributes
 	}
@@ -893,6 +851,13 @@ func (x *AuthResponse) GetError() string {
 	return ""
 }
 
+func (x *AuthResponse) GetBackendRef() *v1.BackendRef {
+	if x != nil {
+		return x.BackendRef
+	}
+	return nil
+}
+
 type ListAccountsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Accounts      []string               `protobuf:"bytes,1,rep,name=accounts,proto3" json:"accounts,omitempty"`
@@ -903,7 +868,7 @@ type ListAccountsResponse struct {
 
 func (x *ListAccountsResponse) Reset() {
 	*x = ListAccountsResponse{}
-	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[5]
+	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -915,7 +880,7 @@ func (x *ListAccountsResponse) String() string {
 func (*ListAccountsResponse) ProtoMessage() {}
 
 func (x *ListAccountsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[5]
+	mi := &file_server_grpcapi_auth_v1_auth_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -928,7 +893,7 @@ func (x *ListAccountsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAccountsResponse.ProtoReflect.Descriptor instead.
 func (*ListAccountsResponse) Descriptor() ([]byte, []int) {
-	return file_server_grpcapi_auth_v1_auth_proto_rawDescGZIP(), []int{5}
+	return file_server_grpcapi_auth_v1_auth_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ListAccountsResponse) GetAccounts() []string {
@@ -949,7 +914,7 @@ var File_server_grpcapi_auth_v1_auth_proto protoreflect.FileDescriptor
 
 const file_server_grpcapi_auth_v1_auth_proto_rawDesc = "" +
 	"\n" +
-	"!server/grpcapi/auth/v1/auth.proto\x12\x11nauthilus.auth.v1\"\xb4\b\n" +
+	"!server/grpcapi/auth/v1/auth.proto\x12\x11nauthilus.auth.v1\x1a%server/grpcapi/common/v1/common.proto\"\xb4\b\n" +
 	"\vAuthRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\x12\x1b\n" +
@@ -1040,9 +1005,7 @@ const file_server_grpcapi_auth_v1_auth_proto_rawDesc = "" +
 	"\n" +
 	"ssl_serial\x18\x1a \x01(\tR\tsslSerial\x12'\n" +
 	"\x0fssl_fingerprint\x18\x1b \x01(\tR\x0esslFingerprint\x12\x19\n" +
-	"\boidc_cid\x18\x1c \x01(\tR\aoidcCid\")\n" +
-	"\x0fAttributeValues\x12\x16\n" +
-	"\x06values\x18\x01 \x03(\tR\x06values\"\xd1\x03\n" +
+	"\boidc_cid\x18\x1c \x01(\tR\aoidcCid\"\x95\x04\n" +
 	"\fAuthResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12;\n" +
 	"\bdecision\x18\x02 \x01(\x0e2\x1f.nauthilus.auth.v1.AuthDecisionR\bdecision\x12\x18\n" +
@@ -1054,10 +1017,13 @@ const file_server_grpcapi_auth_v1_auth_proto_rawDesc = "" +
 	"attributes\x18\a \x03(\v2/.nauthilus.auth.v1.AuthResponse.AttributesEntryR\n" +
 	"attributes\x12%\n" +
 	"\x0estatus_message\x18\b \x01(\tR\rstatusMessage\x12\x14\n" +
-	"\x05error\x18\t \x01(\tR\x05error\x1aa\n" +
+	"\x05error\x18\t \x01(\tR\x05error\x12@\n" +
+	"\vbackend_ref\x18\n" +
+	" \x01(\v2\x1f.nauthilus.common.v1.BackendRefR\n" +
+	"backendRef\x1ac\n" +
 	"\x0fAttributesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
-	"\x05value\x18\x02 \x01(\v2\".nauthilus.auth.v1.AttributeValuesR\x05value:\x028\x01\"L\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
+	"\x05value\x18\x02 \x01(\v2$.nauthilus.common.v1.AttributeValuesR\x05value:\x028\x01\"L\n" +
 	"\x14ListAccountsResponse\x12\x1a\n" +
 	"\baccounts\x18\x01 \x03(\tR\baccounts\x12\x18\n" +
 	"\asession\x18\x02 \x01(\tR\asession*w\n" +
@@ -1084,32 +1050,34 @@ func file_server_grpcapi_auth_v1_auth_proto_rawDescGZIP() []byte {
 }
 
 var file_server_grpcapi_auth_v1_auth_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_server_grpcapi_auth_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_server_grpcapi_auth_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_server_grpcapi_auth_v1_auth_proto_goTypes = []any{
 	(AuthDecision)(0),             // 0: nauthilus.auth.v1.AuthDecision
 	(*AuthRequest)(nil),           // 1: nauthilus.auth.v1.AuthRequest
 	(*ListAccountsRequest)(nil),   // 2: nauthilus.auth.v1.ListAccountsRequest
 	(*LookupIdentityRequest)(nil), // 3: nauthilus.auth.v1.LookupIdentityRequest
-	(*AttributeValues)(nil),       // 4: nauthilus.auth.v1.AttributeValues
-	(*AuthResponse)(nil),          // 5: nauthilus.auth.v1.AuthResponse
-	(*ListAccountsResponse)(nil),  // 6: nauthilus.auth.v1.ListAccountsResponse
-	nil,                           // 7: nauthilus.auth.v1.AuthResponse.AttributesEntry
+	(*AuthResponse)(nil),          // 4: nauthilus.auth.v1.AuthResponse
+	(*ListAccountsResponse)(nil),  // 5: nauthilus.auth.v1.ListAccountsResponse
+	nil,                           // 6: nauthilus.auth.v1.AuthResponse.AttributesEntry
+	(*v1.BackendRef)(nil),         // 7: nauthilus.common.v1.BackendRef
+	(*v1.AttributeValues)(nil),    // 8: nauthilus.common.v1.AttributeValues
 }
 var file_server_grpcapi_auth_v1_auth_proto_depIdxs = []int32{
 	0, // 0: nauthilus.auth.v1.AuthResponse.decision:type_name -> nauthilus.auth.v1.AuthDecision
-	7, // 1: nauthilus.auth.v1.AuthResponse.attributes:type_name -> nauthilus.auth.v1.AuthResponse.AttributesEntry
-	4, // 2: nauthilus.auth.v1.AuthResponse.AttributesEntry.value:type_name -> nauthilus.auth.v1.AttributeValues
-	1, // 3: nauthilus.auth.v1.AuthService.Authenticate:input_type -> nauthilus.auth.v1.AuthRequest
-	3, // 4: nauthilus.auth.v1.AuthService.LookupIdentity:input_type -> nauthilus.auth.v1.LookupIdentityRequest
-	2, // 5: nauthilus.auth.v1.AuthService.ListAccounts:input_type -> nauthilus.auth.v1.ListAccountsRequest
-	5, // 6: nauthilus.auth.v1.AuthService.Authenticate:output_type -> nauthilus.auth.v1.AuthResponse
-	5, // 7: nauthilus.auth.v1.AuthService.LookupIdentity:output_type -> nauthilus.auth.v1.AuthResponse
-	6, // 8: nauthilus.auth.v1.AuthService.ListAccounts:output_type -> nauthilus.auth.v1.ListAccountsResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	6, // 1: nauthilus.auth.v1.AuthResponse.attributes:type_name -> nauthilus.auth.v1.AuthResponse.AttributesEntry
+	7, // 2: nauthilus.auth.v1.AuthResponse.backend_ref:type_name -> nauthilus.common.v1.BackendRef
+	8, // 3: nauthilus.auth.v1.AuthResponse.AttributesEntry.value:type_name -> nauthilus.common.v1.AttributeValues
+	1, // 4: nauthilus.auth.v1.AuthService.Authenticate:input_type -> nauthilus.auth.v1.AuthRequest
+	3, // 5: nauthilus.auth.v1.AuthService.LookupIdentity:input_type -> nauthilus.auth.v1.LookupIdentityRequest
+	2, // 6: nauthilus.auth.v1.AuthService.ListAccounts:input_type -> nauthilus.auth.v1.ListAccountsRequest
+	4, // 7: nauthilus.auth.v1.AuthService.Authenticate:output_type -> nauthilus.auth.v1.AuthResponse
+	4, // 8: nauthilus.auth.v1.AuthService.LookupIdentity:output_type -> nauthilus.auth.v1.AuthResponse
+	5, // 9: nauthilus.auth.v1.AuthService.ListAccounts:output_type -> nauthilus.auth.v1.ListAccountsResponse
+	7, // [7:10] is the sub-list for method output_type
+	4, // [4:7] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_server_grpcapi_auth_v1_auth_proto_init() }
@@ -1123,7 +1091,7 @@ func file_server_grpcapi_auth_v1_auth_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_server_grpcapi_auth_v1_auth_proto_rawDesc), len(file_server_grpcapi_auth_v1_auth_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

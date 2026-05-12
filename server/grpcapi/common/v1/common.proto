@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package nauthilus.common.v1;
+
+option go_package = "github.com/croessner/nauthilus/server/grpcapi/common/v1;commonv1";
+
+// OperationResult describes the domain result of an authority-side operation.
+enum OperationResult {
+  OPERATION_RESULT_UNSPECIFIED = 0;
+  OPERATION_RESULT_OK = 1;
+  OPERATION_RESULT_FAIL = 2;
+  OPERATION_RESULT_TEMPFAIL = 3;
+  OPERATION_RESULT_DENIED = 4;
+  OPERATION_RESULT_NOT_FOUND = 5;
+  OPERATION_RESULT_CONFLICT = 6;
+}
+
+// ErrorDetail describes a single safe validation or operation error detail.
+message ErrorDetail {
+  string field = 1;
+  string reason = 2;
+}
+
+// OperationStatus carries a safe, transport-neutral operation outcome.
+message OperationStatus {
+  OperationResult result = 1;
+  string error_code = 2;
+  string safe_message = 3;
+  string edge_request_id = 4;
+  string authority_request_id = 5;
+  repeated ErrorDetail details = 6;
+}
+
+// AttributeValues stores released string attribute values under one attribute name.
+message AttributeValues {
+  repeated string values = 1;
+}
+
+// BackendRef identifies an authority-side backend selection without exposing backend credentials.
+message BackendRef {
+  string type = 1;
+  string name = 2;
+  string protocol = 3;
+  string authority = 4;
+  string opaque_token = 5;
+}

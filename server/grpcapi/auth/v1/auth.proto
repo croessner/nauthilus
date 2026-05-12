@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package nauthilus.auth.v1;
 
+import "server/grpcapi/common/v1/common.proto";
+
 option go_package = "github.com/croessner/nauthilus/server/grpcapi/auth/v1;authv1";
 
 service AuthService {
@@ -96,10 +98,6 @@ enum AuthDecision {
   AUTH_DECISION_TEMPFAIL = 3;
 }
 
-message AttributeValues {
-  repeated string values = 1;
-}
-
 message AuthResponse {
   bool ok = 1;
   AuthDecision decision = 2;
@@ -107,9 +105,10 @@ message AuthResponse {
   string account_field = 4;
   string totp_secret_field = 5;
   uint32 backend = 6;
-  map<string, AttributeValues> attributes = 7;
+  map<string, .nauthilus.common.v1.AttributeValues> attributes = 7;
   string status_message = 8;
   string error = 9;
+  .nauthilus.common.v1.BackendRef backend_ref = 10;
 }
 
 message ListAccountsResponse {

@@ -40,6 +40,12 @@ const (
 	authFieldAttributes       protoreflect.Name = "attributes"
 	authFieldStatusMessage    protoreflect.Name = "status_message"
 	authFieldError            protoreflect.Name = "error"
+	authFieldBackendRef       protoreflect.Name = "backend_ref"
+)
+
+const (
+	commonAttributeValuesFullName protoreflect.FullName = "nauthilus.common.v1.AttributeValues"
+	commonBackendRefFullName      protoreflect.FullName = "nauthilus.common.v1.BackendRef"
 )
 
 func TestAuthProtoContract(t *testing.T) {
@@ -182,10 +188,48 @@ func assertAuthResponseFieldNumbers(t *testing.T, fileDescriptor protoreflect.Fi
 		{fieldName: authFieldAttributes, number: 7},
 		{fieldName: authFieldStatusMessage, number: 8},
 		{fieldName: authFieldError, number: 9},
+		{fieldName: authFieldBackendRef, number: 10},
 	}
 
 	for _, testCase := range cases {
 		assertFieldNumber(t, responseMessage, testCase.fieldName, testCase.number)
+	}
+
+	assertAuthResponseSharedCommonTypes(t, fileDescriptor, responseMessage)
+}
+
+func assertAuthResponseSharedCommonTypes(
+	t *testing.T,
+	fileDescriptor protoreflect.FileDescriptor,
+	responseMessage protoreflect.MessageDescriptor,
+) {
+	t.Helper()
+
+	if message := fileDescriptor.Messages().ByName("AttributeValues"); message != nil {
+		t.Fatal("auth-local AttributeValues must be replaced by nauthilus.common.v1.AttributeValues")
+	}
+
+	attributesField := responseMessage.Fields().ByName(authFieldAttributes)
+	if attributesField == nil || !attributesField.IsMap() {
+		t.Fatal("AuthResponse.attributes must be a map field")
+	}
+
+	valueField := attributesField.Message().Fields().ByName("value")
+	if valueField == nil || valueField.Message() == nil {
+		t.Fatal("AuthResponse.attributes map value must be a message")
+	}
+
+	if got := valueField.Message().FullName(); got != commonAttributeValuesFullName {
+		t.Fatalf("AuthResponse.attributes value type = %q, want %q", got, commonAttributeValuesFullName)
+	}
+
+	backendRefField := responseMessage.Fields().ByName(authFieldBackendRef)
+	if backendRefField == nil || backendRefField.Message() == nil {
+		t.Fatal("AuthResponse.backend_ref must be a message field")
+	}
+
+	if got := backendRefField.Message().FullName(); got != commonBackendRefFullName {
+		t.Fatalf("AuthResponse.backend_ref type = %q, want %q", got, commonBackendRefFullName)
 	}
 }
 

@@ -1,0 +1,284 @@
+syntax = "proto3";
+
+package nauthilus.identity.v1;
+
+import "google/protobuf/timestamp.proto";
+import "server/grpcapi/common/v1/common.proto";
+
+option go_package = "github.com/croessner/nauthilus/server/grpcapi/identity/v1;identityv1";
+
+// IdentityBackendService exposes persistent identity and MFA data operations.
+service IdentityBackendService {
+  rpc ResolveUser(ResolveUserRequest) returns (UserSnapshotResponse);
+  rpc GetMFAState(GetMFAStateRequest) returns (MFAStateResponse);
+  rpc BeginTOTPRegistration(BeginTOTPRegistrationRequest) returns (BeginTOTPRegistrationResponse);
+  rpc FinishTOTPRegistration(FinishTOTPRegistrationRequest) returns (MFAWriteResponse);
+  rpc VerifyTOTP(VerifyTOTPRequest) returns (VerifyTOTPResponse);
+  rpc DeleteTOTP(DeleteTOTPRequest) returns (MFAWriteResponse);
+  rpc GenerateRecoveryCodes(GenerateRecoveryCodesRequest) returns (GenerateRecoveryCodesResponse);
+  rpc UseRecoveryCode(UseRecoveryCodeRequest) returns (UseRecoveryCodeResponse);
+  rpc DeleteRecoveryCodes(DeleteRecoveryCodesRequest) returns (MFAWriteResponse);
+  rpc GetWebAuthnCredentials(GetWebAuthnCredentialsRequest) returns (WebAuthnCredentialsResponse);
+  rpc SaveWebAuthnCredential(SaveWebAuthnCredentialRequest) returns (MFAWriteResponse);
+  rpc UpdateWebAuthnCredential(UpdateWebAuthnCredentialRequest) returns (MFAWriteResponse);
+  rpc DeleteWebAuthnCredential(DeleteWebAuthnCredentialRequest) returns (MFAWriteResponse);
+}
+
+// RequestContext carries transport-neutral request metadata from the edge.
+message RequestContext {
+  string username = 1;
+  string client_ip = 2;
+  string client_port = 3;
+  string client_hostname = 4;
+  string client_id = 5;
+  string external_session_id = 6;
+  string user_agent = 7;
+  string local_ip = 8;
+  string local_port = 9;
+  string protocol = 10;
+  string method = 11;
+  string ssl = 12;
+  string ssl_session_id = 13;
+  string ssl_client_verify = 14;
+  string ssl_client_dn = 15;
+  string ssl_client_cn = 16;
+  string ssl_issuer = 17;
+  string ssl_client_notbefore = 18;
+  string ssl_client_notafter = 19;
+  string ssl_subject_dn = 20;
+  string ssl_issuer_dn = 21;
+  string ssl_client_subject_dn = 22;
+  string ssl_client_issuer_dn = 23;
+  string ssl_protocol = 24;
+  string ssl_cipher = 25;
+  string ssl_serial = 26;
+  string ssl_fingerprint = 27;
+  string oidc_cid = 28;
+  string saml_entity_id = 29;
+  uint32 auth_login_attempt = 30;
+  map<string, .nauthilus.common.v1.AttributeValues> metadata = 31;
+  string edge_instance = 32;
+  string edge_request_id = 33;
+  string requested_language = 34;
+}
+
+// AttributeRequest selects which identity attributes the authority may release.
+message AttributeRequest {
+  repeated string names = 1;
+  bool include_standard_identity = 2;
+  bool include_groups = 3;
+  bool include_group_dns = 4;
+  bool report_missing = 5;
+}
+
+// UserSnapshot contains released identity data for edge-side IdP materialization.
+message UserSnapshot {
+  string username = 1;
+  string account = 2;
+  string unique_user_id = 3;
+  string display_name = 4;
+  map<string, .nauthilus.common.v1.AttributeValues> attributes = 5;
+  repeated string groups = 6;
+  repeated string group_dns = 7;
+  .nauthilus.common.v1.BackendRef backend = 8;
+  MFAState mfa = 9;
+}
+
+// MFAState contains public MFA state only; it never carries TOTP secrets or recovery-code values.
+message MFAState {
+  bool has_totp = 1;
+  uint32 recovery_code_count = 2;
+  bool has_webauthn = 3;
+  repeated WebAuthnCredential webauthn_credentials = 4;
+  string preferred_method = 5;
+}
+
+// WebAuthnCredential carries persisted public WebAuthn credential material.
+message WebAuthnCredential {
+  bytes credential_id = 1;
+  bytes public_key = 2;
+  uint32 sign_count = 3;
+  repeated string transports = 4;
+  bool backup_eligible = 5;
+  bool backup_state = 6;
+  string attestation_type = 7;
+  string name = 8;
+  google.protobuf.Timestamp last_used = 9;
+  string raw_json = 10;
+}
+
+// ResolveUserRequest resolves a user and optionally released attributes and MFA state.
+message ResolveUserRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  AttributeRequest attributes = 4;
+  bool include_mfa_state = 5;
+  bool include_webauthn_credentials = 6;
+}
+
+// UserSnapshotResponse returns a released user snapshot and attribute release diagnostics.
+message UserSnapshotResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  UserSnapshot user = 2;
+  repeated string missing_attributes = 3;
+  repeated string denied_attributes = 4;
+}
+
+// GetMFAStateRequest loads public MFA state for a user.
+message GetMFAStateRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  bool include_webauthn_credentials = 4;
+}
+
+// MFAStateResponse returns public MFA state and the effective backend reference.
+message MFAStateResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  MFAState mfa = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+}
+
+// BeginTOTPRegistrationRequest starts a TOTP registration operation.
+message BeginTOTPRegistrationRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  string idempotency_key = 4;
+}
+
+// BeginTOTPRegistrationResponse returns the one-time TOTP setup material.
+message BeginTOTPRegistrationResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  string pending_registration_id = 2;
+  string totp_secret = 3;
+  string otpauth_url = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  .nauthilus.common.v1.BackendRef backend = 6;
+}
+
+// FinishTOTPRegistrationRequest completes a pending TOTP registration.
+message FinishTOTPRegistrationRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  string pending_registration_id = 4;
+  string code = 5;
+  string idempotency_key = 6;
+}
+
+// VerifyTOTPRequest verifies a TOTP code.
+message VerifyTOTPRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  string code = 4;
+}
+
+// VerifyTOTPResponse reports whether the supplied TOTP code is valid.
+message VerifyTOTPResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  bool valid = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+}
+
+// DeleteTOTPRequest deletes a user's TOTP state.
+message DeleteTOTPRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  string idempotency_key = 4;
+}
+
+// GenerateRecoveryCodesRequest creates a fresh recovery-code set.
+message GenerateRecoveryCodesRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  uint32 count = 4;
+  string idempotency_key = 5;
+}
+
+// GenerateRecoveryCodesResponse returns recovery codes exactly once.
+message GenerateRecoveryCodesResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  repeated string codes = 2;
+  uint32 recovery_code_count = 3;
+  .nauthilus.common.v1.BackendRef backend = 4;
+}
+
+// UseRecoveryCodeRequest consumes one recovery code.
+message UseRecoveryCodeRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  string code = 4;
+  string idempotency_key = 5;
+}
+
+// UseRecoveryCodeResponse reports recovery-code verification state.
+message UseRecoveryCodeResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  bool valid = 2;
+  uint32 remaining_recovery_code_count = 3;
+  .nauthilus.common.v1.BackendRef backend = 4;
+}
+
+// DeleteRecoveryCodesRequest deletes all recovery codes for a user.
+message DeleteRecoveryCodesRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  string idempotency_key = 4;
+}
+
+// GetWebAuthnCredentialsRequest loads public WebAuthn credentials for ceremony setup.
+message GetWebAuthnCredentialsRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+}
+
+// WebAuthnCredentialsResponse returns public WebAuthn credentials.
+message WebAuthnCredentialsResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  repeated WebAuthnCredential credentials = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+}
+
+// SaveWebAuthnCredentialRequest persists a newly registered WebAuthn credential.
+message SaveWebAuthnCredentialRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  WebAuthnCredential credential = 4;
+  string idempotency_key = 5;
+}
+
+// UpdateWebAuthnCredentialRequest compares and updates a persisted WebAuthn credential.
+message UpdateWebAuthnCredentialRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  WebAuthnCredential old_credential = 4;
+  WebAuthnCredential new_credential = 5;
+  string idempotency_key = 6;
+}
+
+// DeleteWebAuthnCredentialRequest deletes a WebAuthn credential by credential ID.
+message DeleteWebAuthnCredentialRequest {
+  RequestContext context = 1;
+  string username = 2;
+  .nauthilus.common.v1.BackendRef backend = 3;
+  bytes credential_id = 4;
+  string idempotency_key = 5;
+}
+
+// MFAWriteResponse returns the outcome for a mutating MFA operation.
+message MFAWriteResponse {
+  .nauthilus.common.v1.OperationStatus status = 1;
+  bool changed = 2;
+  MFAState mfa = 3;
+  .nauthilus.common.v1.BackendRef backend = 4;
+}

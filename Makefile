@@ -16,7 +16,7 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-auth-proto guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
 
@@ -92,8 +92,10 @@ generate-vim-syntax: ## Generate contrib/vim/syntax/nauthilus.vim from the canon
 generate-vim-syntax-check: ## Verify that contrib/vim/syntax/nauthilus.vim is up to date
 	python3 scripts/generate-vim-syntax.py --check
 
-generate-grpc-auth-proto: ## Generate gRPC auth API bindings from server/grpcapi/auth/v1/auth.proto
-	./scripts/generate-grpc-auth-proto.sh
+generate-grpc-proto: ## Generate committed gRPC API bindings
+	./scripts/generate-grpc-proto.sh
+
+generate-grpc-auth-proto: generate-grpc-proto ## Generate committed gRPC API bindings
 
 install-hooks: ## Install Git hooks for development
 	./scripts/install-hooks.sh

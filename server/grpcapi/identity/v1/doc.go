@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2026 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,5 +15,5 @@
 
 //go:generate ../../../../scripts/generate-grpc-proto.sh
 
-// Package authv1 contains the versioned gRPC auth service contract.
-package authv1
+// Package identityv1 contains the versioned gRPC identity backend service contract.
+package identityv1

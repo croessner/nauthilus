@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2026 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:generate ../../../../scripts/generate-grpc-proto.sh
-
-// Package authv1 contains the versioned gRPC auth service contract.
 package authv1
+
+import commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
+
+// AttributeValues keeps existing auth callers source-compatible while the wire
+// contract uses the shared common protobuf message.
+type AttributeValues = commonv1.AttributeValues
