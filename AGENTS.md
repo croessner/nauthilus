@@ -12,6 +12,7 @@ This document captures practical, project-specific details to build, configure, 
 - MUST: Apply DRY strictly; avoid duplicated logic and copy-paste implementations.
 - MUST: Follow OOP-oriented design with small responsibilities, clear boundaries, and composition-first structure.
 - MUST: Write code comments and technical docs in English.
+- MUST: Keep numbered rollout-stage terminology out of source code, tests, docs, filenames, branch names, tags, commit subjects, and commit bodies. Use domain-specific names such as `baseline`, `authority`, `identity`, or the concrete feature name instead.
 - MUST (CRITICAL, GO 1.26): ALWAYS prefix Go test commands with `GOEXPERIMENT=runtimesecret`.
     - Required form: `GOEXPERIMENT=runtimesecret go test ...`
     - This is mandatory for every Go 1.26 test run and must never be skipped.
