@@ -16,6 +16,7 @@
 package idp
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -27,8 +28,10 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	_ "github.com/croessner/nauthilus/server/core/auth"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -37,6 +40,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 )
@@ -215,6 +219,111 @@ func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 
 	err := s.DeleteTOTP(ctx, mfaLDAPTestUser, uint8(definitions.BackendLDAP))
 	assert.NoError(t, err)
+}
+
+func TestMFAServiceRemoteTOTPRegistrationFallsBackToFlowState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{
+				Prefix: "edge:",
+			},
+		},
+	}
+	env := config.NewTestEnvironmentConfig()
+	configureMFAGlobals(cfg, env)
+
+	db, mock := redismock.NewClientMock()
+
+	service := NewMFAService(newMFATestDeps(cfg, env, rediscli.NewTestClient(db)))
+	ctx := newMFATestContext()
+	mgr := cookie.NewSecureManager([]byte("test-secret-32bytes-1234567890!!"), definitions.SecureDataCookieName, cfg, env)
+	flowID := "remote-totp-flow"
+	mgr.Set(definitions.SessionKeyIdPFlowID, flowID)
+	ctx.Set(definitions.CtxSecureDataKey, mgr)
+
+	key := "edge:idp:flow:" + flowID
+	baseState := newRemoteTOTPFlowState(flowID, map[string]string{})
+	pendingState := newRemoteTOTPFlowState(flowID, map[string]string{
+		remoteTOTPPendingRegistrationMetadata: "pending-id",
+		remoteTOTPOperationIDMetadata:         "finish-idempotency",
+	})
+	clearedState := newRemoteTOTPFlowState(flowID, map[string]string{})
+
+	mock.ExpectGet(key).SetVal(string(mustMarshalFlowState(t, baseState)))
+	mock.CustomMatch(matchFlowSet(key, "pending-id", "finish-idempotency")).
+		ExpectSet(key, "", 10*time.Minute).
+		SetVal("OK")
+
+	service.storeRemoteTOTPRegistration(ctx, "pending-id", "finish-idempotency")
+	mgr.Delete(definitions.SessionKeyTOTPPendingRegistration)
+	mgr.Delete(definitions.SessionKeyTOTPOperationID)
+
+	mock.ExpectGet(key).SetVal(string(mustMarshalFlowState(t, pendingState)))
+
+	registration, ok := service.loadRemoteTOTPRegistration(ctx)
+	assert.True(t, ok)
+	assert.Equal(t, "pending-id", registration.pendingID)
+	assert.Equal(t, "finish-idempotency", registration.operationID)
+
+	mock.ExpectGet(key).SetVal(string(mustMarshalFlowState(t, pendingState)))
+	mock.CustomMatch(matchFlowSet(key)).
+		ExpectSet(key, "", 10*time.Minute).
+		SetVal("OK")
+	service.clearRemoteTOTPRegistration(ctx)
+	mock.ExpectGet(key).SetVal(string(mustMarshalFlowState(t, clearedState)))
+
+	_, ok = service.loadRemoteTOTPRegistration(ctx)
+	assert.False(t, ok)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func newRemoteTOTPFlowState(flowID string, metadata map[string]string) *flowdomain.State {
+	now := time.Unix(1_700_000_000, 0).UTC()
+
+	return &flowdomain.State{
+		FlowID:      flowID,
+		Metadata:    metadata,
+		FlowType:    flowdomain.FlowTypeOIDCAuthorization,
+		Protocol:    flowdomain.FlowProtocolOIDC,
+		CurrentStep: flowdomain.FlowStepMFA,
+		AuthOutcome: flowdomain.AuthOutcomeOK,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+}
+
+func mustMarshalFlowState(t *testing.T, state *flowdomain.State) []byte {
+	t.Helper()
+
+	blob, err := jsoniter.ConfigFastest.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal flow state: %v", err)
+	}
+
+	return blob
+}
+
+func matchFlowSet(key string, fragments ...string) redismock.CustomMatch {
+	return func(_, actual []interface{}) error {
+		if len(actual) < 3 || fmt.Sprint(actual[0]) != "set" || fmt.Sprint(actual[1]) != key {
+			return fmt.Errorf("unexpected SET command: %#v", actual)
+		}
+
+		value := fmt.Sprint(actual[2])
+		if raw, ok := actual[2].([]byte); ok {
+			value = string(raw)
+		}
+
+		for _, fragment := range fragments {
+			if !strings.Contains(value, fragment) {
+				return fmt.Errorf("SET %s missing fragment %q in %s", key, fragment, value)
+			}
+		}
+
+		return nil
+	}
 }
 
 func TestMFAService_GenerateRecoveryCodesLDAPContract(t *testing.T) {

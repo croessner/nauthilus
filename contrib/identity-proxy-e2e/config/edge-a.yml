@@ -1,0 +1,272 @@
+# Split identity-proxy edge profile for the first edge instance.
+# This edge owns public IdP state and uses only the remote backend.
+
+runtime:
+  instance_name: "edge-a"
+
+  servers:
+    http:
+      address: "0.0.0.0:18080"
+      tls:
+        enabled: true
+        cert: "/etc/nauthilus/e2e/certs/edge-http.crt"
+        key: "/etc/nauthilus/e2e/certs/edge-http.key"
+        min_tls_version: "TLS1.3"
+      keep_alive:
+        enabled: true
+      middlewares:
+        recovery: true
+        request_decompression: false
+        response_compression: false
+        limit: false
+        rate: false
+
+  clients:
+    grpc:
+      nauthilus_authorities:
+        authority:
+          address: "172.30.80.10:19444"
+          timeout: 5s
+          edge_cluster_id: "edge-e2e"
+          edge_instance_id: "edge-a"
+          tls:
+            enabled: true
+            server_name: "authority"
+            ca: "/etc/nauthilus/e2e/certs/e2e-ca.crt"
+            cert: "/etc/nauthilus/e2e/certs/edge-client.crt"
+            key: "/etc/nauthilus/e2e/certs/edge-client.key"
+            min_tls_version: "TLS1.3"
+          caller_auth:
+            oidc_bearer:
+              enabled: true
+              mode: "client_credentials"
+              token_endpoint: "http://authority:18081/oidc/token"
+              client_id: "nauthilus-edge-e2e"
+              token_endpoint_auth_method: "private_key_jwt"
+              client_private_key_file: "/etc/nauthilus/e2e/keys/edge-authority-client.key"
+              client_key_id: "edge-e2e-rs256"
+              client_assertion_alg: "RS256"
+              audience: "http://authority:18081/oidc/token"
+              scopes:
+                - nauthilus:authenticate
+                - nauthilus:lookup_identity
+                - nauthilus:list_accounts
+                - nauthilus:mfa_read
+                - nauthilus:mfa_verify
+                - nauthilus:mfa_write
+                - nauthilus:webauthn_read
+                - nauthilus:webauthn_write
+                - nauthilus:attribute_read
+              token_cache:
+                backend: "redis"
+                key_prefix: "grpc:authority_tokens:"
+                refresh_before_expiry: 30s
+                refresh_lock_ttl: 10s
+
+  timeouts:
+    redis_read: 2s
+    redis_write: 2s
+    lua_script: 2s
+
+observability:
+  log:
+    level: "info"
+    add_source: false
+    color: false
+    json: false
+
+  profiles:
+    pprof:
+      enabled: false
+    block:
+      enabled: false
+
+  tracing:
+    enabled: false
+
+storage:
+  redis:
+    protocol: 3
+    primary:
+      address: "edge-redis:6379"
+    database_number: 0
+    prefix: "edge:"
+    pool_size: 16
+    pool_timeout: 1s
+    read_timeout: 1s
+    write_timeout: 1s
+    idle_pool_size: 4
+    positive_cache_ttl: 120
+    negative_cache_ttl: 60
+    encryption_secret: "edgeRedisSecret2026!"
+    password_nonce: "edgeRedisNonce2026!"
+
+auth:
+  backchannel:
+    oidc_bearer:
+      enabled: true
+
+  pipeline:
+    max_concurrent_requests: 32
+
+  backends:
+    order: [remote]
+    remote:
+      default:
+        authority: "authority"
+        mode: "nauthilus"
+        timeout: 5s
+        allowed_operations:
+          - auth
+          - lookup_identity
+          - list_accounts
+          - mfa_read
+          - mfa_verify
+          - mfa_write
+          - webauthn_read
+          - webauthn_write
+          - attribute_read
+
+  controls:
+    enabled: []
+
+  services:
+    enabled: []
+
+identity:
+  session:
+    remember_me_ttl: 8h
+
+  frontend:
+    enabled: true
+    encryption_secret: "edgeFrontendSharedSecret2026!"
+    assets:
+      html_static_content_path: "/usr/app/static/templates"
+      language_resources: "/usr/app/server/resources"
+    localization:
+      languages: [en]
+      default_language: "en"
+
+  mfa:
+    totp:
+      issuer: "Nauthilus Split E2E"
+      skew: 1
+
+    webauthn:
+      rp_display_name: "Nauthilus Split E2E"
+      rp_id: "split.example.test"
+      rp_origins:
+        - "https://split.example.test:18080"
+        - "https://split.example.test:18082"
+      authenticator_attachment: "cross-platform"
+      resident_key: "discouraged"
+      user_verification: "preferred"
+
+  oidc:
+    enabled: true
+    issuer: "https://split.example.test:18080"
+    access_token_type: "opaque"
+    response_types_supported: [code]
+    subject_types_supported: [public]
+    id_token_signing_alg_values_supported: [RS256]
+    token_endpoint_auth_methods_supported:
+      - client_secret_post
+      - client_secret_basic
+    code_challenge_methods_supported: [S256]
+    scopes_supported:
+      - openid
+      - profile
+      - email
+      - groups
+      - offline_access
+    claims_supported:
+      - sub
+      - name
+      - email
+      - groups
+    tokens:
+      default_access_token_lifetime: 10m
+      default_refresh_token_lifetime: 1h
+    consent:
+      mode: "all_or_nothing"
+      ttl: 1h
+    device_flow:
+      code_expiry: 10m
+      polling_interval: 1
+      user_code_length: 8
+    signing_keys:
+      - id: "edge-e2e-rs256"
+        key_file: "/etc/nauthilus/e2e/keys/edge-oidc-signing.key"
+        algorithm: "RS256"
+        active: true
+    clients:
+      - name: "Split Browser Client"
+        client_id: "split-e2e-browser"
+        client_secret: "split-e2e-browser-secret"
+        redirect_uris:
+          - "https://split.example.test:19094/callback"
+        grant_types:
+          - authorization_code
+          - refresh_token
+          - urn:ietf:params:oauth:grant-type:device_code
+        token_endpoint_auth_method: "client_secret_post"
+        skip_consent: true
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+          - offline_access
+        id_token_claims:
+          mappings:
+            - claim: "email"
+              attribute: "uid"
+            - claim: "name"
+              attribute: "displayName"
+        access_token_claims:
+          mappings:
+            - claim: "email"
+              attribute: "uid"
+
+      - name: "Split MFA Browser Client"
+        client_id: "split-e2e-mfa"
+        client_secret: "split-e2e-mfa-secret"
+        redirect_uris:
+          - "https://split.example.test:19094/callback"
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: "client_secret_post"
+        skip_consent: true
+        require_mfa:
+          - totp
+          - webauthn
+          - recovery_codes
+        supported_mfa:
+          - totp
+          - webauthn
+          - recovery_codes
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        id_token_claims:
+          mappings:
+            - claim: "email"
+              attribute: "uid"
+            - claim: "name"
+              attribute: "displayName"
+
+  saml:
+    enabled: true
+    entity_id: "https://split.example.test:18080/saml/metadata"
+    cert_file: "/etc/nauthilus/e2e/certs/edge-saml.crt"
+    key_file: "/etc/nauthilus/e2e/certs/edge-saml.key"
+    service_providers:
+      - name: "Split SAML Test Client"
+        entity_id: "https://localhost:19095/saml/metadata"
+        acs_url: "https://localhost:19095/saml/acs"
+        slo_url: "https://localhost:19095/saml/slo"
+        allowed_attributes:
+          - uid
+          - displayName

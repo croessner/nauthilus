@@ -1,0 +1,169 @@
+# Split identity-proxy authority profile.
+# Generated key and certificate material is expected under /etc/nauthilus/e2e.
+
+runtime:
+  instance_name: "authority"
+
+  servers:
+    http:
+      address: "0.0.0.0:18081"
+      keep_alive:
+        enabled: true
+      middlewares:
+        recovery: true
+        request_decompression: false
+        response_compression: false
+        limit: false
+        rate: false
+
+    grpc:
+      authority:
+        enabled: true
+        address: "0.0.0.0:19444"
+        tls:
+          enabled: true
+          cert: "/etc/nauthilus/e2e/certs/authority-server.crt"
+          key: "/etc/nauthilus/e2e/certs/authority-server.key"
+          client_ca: "/etc/nauthilus/e2e/certs/e2e-ca.crt"
+          require_client_cert: true
+          min_tls_version: "TLS1.3"
+
+  timeouts:
+    redis_read: 2s
+    redis_write: 2s
+    lua_script: 2s
+
+observability:
+  log:
+    level: "info"
+    add_source: false
+    color: false
+    json: false
+
+  profiles:
+    pprof:
+      enabled: false
+    block:
+      enabled: false
+
+  tracing:
+    enabled: false
+
+storage:
+  redis:
+    protocol: 3
+    primary:
+      address: "authority-redis:6379"
+    database_number: 0
+    prefix: "authority:"
+    pool_size: 16
+    pool_timeout: 1s
+    read_timeout: 1s
+    write_timeout: 1s
+    idle_pool_size: 4
+    positive_cache_ttl: 120
+    negative_cache_ttl: 60
+    encryption_secret: "authorityRedisSecret2026!"
+    password_nonce: "authorityRedisNonce2026!"
+
+auth:
+  backchannel:
+    oidc_bearer:
+      enabled: true
+
+  pipeline:
+    max_concurrent_requests: 32
+
+  backends:
+    order: [test]
+
+  controls:
+    enabled: []
+
+  services:
+    enabled: []
+
+identity:
+  frontend:
+    enabled: true
+    encryption_secret: "authorityFrontendSecret2026!"
+    assets:
+      html_static_content_path: "/usr/app/static/templates"
+      language_resources: "/usr/app/server/resources"
+    localization:
+      languages: [en]
+      default_language: "en"
+
+  mfa:
+    totp:
+      issuer: "Nauthilus Authority E2E"
+      skew: 1
+
+    webauthn:
+      rp_display_name: "Nauthilus Authority E2E"
+      rp_id: "authority.example.test"
+      rp_origins:
+        - "http://authority.example.test:18081"
+      resident_key: "discouraged"
+      user_verification: "preferred"
+
+  oidc:
+    enabled: true
+    issuer: "http://authority:18081"
+    access_token_type: "opaque"
+    response_types_supported: [code]
+    subject_types_supported: [public]
+    id_token_signing_alg_values_supported: [RS256]
+    token_endpoint_auth_methods_supported:
+      - private_key_jwt
+      - client_secret_post
+      - client_secret_basic
+    code_challenge_methods_supported: [S256]
+    scopes_supported:
+      - openid
+      - profile
+      - email
+      - groups
+      - offline_access
+      - nauthilus:authenticate
+      - nauthilus:lookup_identity
+      - nauthilus:list_accounts
+      - nauthilus:mfa_read
+      - nauthilus:mfa_verify
+      - nauthilus:mfa_write
+      - nauthilus:webauthn_read
+      - nauthilus:webauthn_write
+      - nauthilus:attribute_read
+    claims_supported:
+      - sub
+      - name
+      - email
+      - groups
+    tokens:
+      default_access_token_lifetime: 5m
+      default_refresh_token_lifetime: 30m
+    signing_keys:
+      - id: "authority-e2e-rs256"
+        key_file: "/etc/nauthilus/e2e/keys/authority-oidc-signing.key"
+        algorithm: "RS256"
+        active: true
+    clients:
+      - name: "Split Edge Service Principal"
+        client_id: "nauthilus-edge-e2e"
+        grant_types:
+          - client_credentials
+        token_endpoint_auth_method: "private_key_jwt"
+        client_public_key_file: "/etc/nauthilus/e2e/keys/edge-authority-client.pub"
+        client_public_key_algorithm: "RS256"
+        access_token_type: "opaque"
+        access_token_lifetime: 5m
+        scopes:
+          - nauthilus:authenticate
+          - nauthilus:lookup_identity
+          - nauthilus:list_accounts
+          - nauthilus:mfa_read
+          - nauthilus:mfa_verify
+          - nauthilus:mfa_write
+          - nauthilus:webauthn_read
+          - nauthilus:webauthn_write
+          - nauthilus:attribute_read

@@ -107,6 +107,8 @@ nauthilus/bin/*
 bin/*
 /ui/node_modules/
 /node_modules/
+contrib/identity-proxy-e2e/.work/
+contrib/identity-proxy-e2e/node_modules/
 temp/*
 .cache/
 scripts/__pycache__/

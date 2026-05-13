@@ -392,6 +392,7 @@ func allowedOperationsAfterAuth(operation AuthorityOperation) []AuthorityOperati
 	}
 
 	return []AuthorityOperation{
+		AuthorityOperationResolveUser,
 		AuthorityOperationGetMFAState,
 		AuthorityOperationBeginTOTPRegistration,
 		AuthorityOperationFinishTOTPRegistration,

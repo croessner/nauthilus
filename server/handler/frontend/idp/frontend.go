@@ -1064,9 +1064,13 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 }
 
 func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
+	if user == nil {
+		return false
+	}
+
 	totpField := user.TOTPSecretField
 
-	if totpField == "" {
+	if totpField == "" && h != nil && h.deps != nil && h.deps.Cfg != nil {
 		if protocols := h.deps.Cfg.GetLDAP().GetSearch(); len(protocols) > 0 {
 			totpField = protocols[0].GetTotpSecretField()
 		}
@@ -1854,12 +1858,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 	// must be sent to the continue endpoint so that the next required method (if any)
 	// is registered before the IdP flow resumes.
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		remaining := util.RemoveFromCommaSeparatedList(
-			mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
-			definitions.MFAMethodTOTP,
-		)
-
-		flowdomain.SetRequireMFAPending(mgr, remaining)
+		flowdomain.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodTOTP)
 
 		ctx.Header("HX-Redirect", definitions.MFARoot+"/register/continue")
 		ctx.Status(http.StatusOK)
@@ -2052,12 +2051,7 @@ func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
 		mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
 		mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
 		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-			remaining := util.RemoveFromCommaSeparatedList(
-				mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
-				definitions.MFAMethodRecoveryCodes,
-			)
-
-			flowdomain.SetRequireMFAPending(mgr, remaining)
+			flowdomain.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodRecoveryCodes)
 		}
 	}
 
@@ -2107,12 +2101,11 @@ func (h *FrontendHandler) PostRegisterRecoveryCodes(ctx *gin.Context) {
 	}
 
 	if mgr != nil && mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-		remaining := util.RemoveFromCommaSeparatedList(
-			mgr.GetString(definitions.SessionKeyRequireMFAPending, ""),
-			definitions.MFAMethodRecoveryCodes,
-		)
+		flowdomain.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodRecoveryCodes)
 
-		flowdomain.SetRequireMFAPending(mgr, remaining)
+		ctx.Redirect(http.StatusFound, definitions.MFARoot+"/register/continue")
+
+		return
 	}
 
 	if mgr != nil && mgr.GetString(definitions.SessionKeyIdPFlowID, "") != "" {
@@ -2318,6 +2311,8 @@ func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
 
 		return
 	}
+
+	h.restoreRequireMFAIdentityContextFromStore(ctx, mgr)
 
 	uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, "")
 	if uniqueUserID == "" {

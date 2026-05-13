@@ -16,6 +16,7 @@
 package idp
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -48,6 +50,16 @@ type MFAProvider interface {
 type MFAService struct {
 	deps *deps.Deps
 }
+
+type remoteTOTPRegistration struct {
+	pendingID   string
+	operationID string
+}
+
+const (
+	remoteTOTPPendingRegistrationMetadata = "remote_totp_pending_registration"
+	remoteTOTPOperationIDMetadata         = "remote_totp_operation_id"
+)
 
 // NewMFAService creates a new MFAService.
 func NewMFAService(d *deps.Deps) *MFAService {
@@ -74,14 +86,12 @@ func (s *MFAService) GenerateTOTPSecret(ctx *gin.Context, username string) (stri
 		}
 
 		if mgr := cookie.GetManager(ctx); mgr != nil {
-			mgr.Set(definitions.SessionKeyTOTPPendingRegistration, registration.PendingRegistrationID)
-
 			finishKey, keyErr := newMFAOperationID("totp-finish")
 			if keyErr != nil {
 				return "", "", keyErr
 			}
 
-			mgr.Set(definitions.SessionKeyTOTPOperationID, finishKey)
+			s.storeRemoteTOTPRegistration(ctx, registration.PendingRegistrationID, finishKey)
 		}
 
 		return registration.Secret, registration.OTPAuthURL, nil
@@ -106,13 +116,12 @@ func (s *MFAService) VerifyAndSaveTOTP(ctx *gin.Context, username string, secret
 			return err
 		}
 
-		mgr := cookie.GetManager(ctx)
 		pendingID := ""
 		idempotencyKey := ""
 
-		if mgr != nil {
-			pendingID = mgr.GetString(definitions.SessionKeyTOTPPendingRegistration, "")
-			idempotencyKey = mgr.GetString(definitions.SessionKeyTOTPOperationID, "")
+		if registration, ok := s.loadRemoteTOTPRegistration(ctx); ok {
+			pendingID = registration.pendingID
+			idempotencyKey = registration.operationID
 		}
 
 		if pendingID == "" || idempotencyKey == "" {
@@ -123,10 +132,7 @@ func (s *MFAService) VerifyAndSaveTOTP(ctx *gin.Context, username string, secret
 			return err
 		}
 
-		if mgr != nil {
-			mgr.Delete(definitions.SessionKeyTOTPPendingRegistration)
-			mgr.Delete(definitions.SessionKeyTOTPOperationID)
-		}
+		s.clearRemoteTOTPRegistration(ctx)
 
 		return nil
 	}
@@ -430,6 +436,106 @@ func (s *MFAService) remoteMFAOperations(ctx *gin.Context, username string, sour
 	}
 
 	return auth, operations, nil
+}
+
+func (s *MFAService) storeRemoteTOTPRegistration(ctx *gin.Context, pendingID string, operationID string) {
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		mgr.Set(definitions.SessionKeyTOTPPendingRegistration, pendingID)
+		mgr.Set(definitions.SessionKeyTOTPOperationID, operationID)
+	}
+
+	state, store, ok := s.loadRemoteTOTPFlowState(ctx)
+	if !ok {
+		return
+	}
+
+	if state.Metadata == nil {
+		state.Metadata = make(map[string]string)
+	}
+
+	state.Metadata[remoteTOTPPendingRegistrationMetadata] = pendingID
+	state.Metadata[remoteTOTPOperationIDMetadata] = operationID
+	_ = store.Save(mfaContext(ctx), state)
+}
+
+func (s *MFAService) loadRemoteTOTPRegistration(ctx *gin.Context) (remoteTOTPRegistration, bool) {
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		registration := remoteTOTPRegistration{
+			pendingID:   mgr.GetString(definitions.SessionKeyTOTPPendingRegistration, ""),
+			operationID: mgr.GetString(definitions.SessionKeyTOTPOperationID, ""),
+		}
+		if registration.pendingID != "" && registration.operationID != "" {
+			return registration, true
+		}
+	}
+
+	state, _, ok := s.loadRemoteTOTPFlowState(ctx)
+	if !ok || state.Metadata == nil {
+		return remoteTOTPRegistration{}, false
+	}
+
+	registration := remoteTOTPRegistration{
+		pendingID:   state.Metadata[remoteTOTPPendingRegistrationMetadata],
+		operationID: state.Metadata[remoteTOTPOperationIDMetadata],
+	}
+	if registration.pendingID == "" || registration.operationID == "" {
+		return remoteTOTPRegistration{}, false
+	}
+
+	return registration, true
+}
+
+func (s *MFAService) clearRemoteTOTPRegistration(ctx *gin.Context) {
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		mgr.Delete(definitions.SessionKeyTOTPPendingRegistration)
+		mgr.Delete(definitions.SessionKeyTOTPOperationID)
+	}
+
+	state, store, ok := s.loadRemoteTOTPFlowState(ctx)
+	if !ok || state.Metadata == nil {
+		return
+	}
+
+	delete(state.Metadata, remoteTOTPPendingRegistrationMetadata)
+	delete(state.Metadata, remoteTOTPOperationIDMetadata)
+	_ = store.Save(mfaContext(ctx), state)
+}
+
+func (s *MFAService) loadRemoteTOTPFlowState(ctx *gin.Context) (*flowdomain.State, *flowdomain.RedisStore, bool) {
+	if s == nil || s.deps == nil || s.deps.Redis == nil || s.deps.Redis.GetWriteHandle() == nil || s.deps.Cfg == nil {
+		return nil, nil, false
+	}
+
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		return nil, nil, false
+	}
+
+	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID == "" {
+		return nil, nil, false
+	}
+
+	store := flowdomain.NewRedisStore(
+		s.deps.Redis.GetWriteHandle(),
+		s.deps.Cfg.GetServer().GetRedis().GetPrefix()+"idp:flow",
+		0,
+	)
+
+	state, err := store.Load(mfaContext(ctx), flowID)
+	if err != nil || state == nil {
+		return nil, nil, false
+	}
+
+	return state, store, true
+}
+
+func mfaContext(ctx *gin.Context) context.Context {
+	if ctx != nil && ctx.Request != nil {
+		return ctx.Request.Context()
+	}
+
+	return context.Background()
 }
 
 func sourceBackendFromSession(ctx *gin.Context, fallback uint8) uint8 {

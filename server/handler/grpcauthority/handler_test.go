@@ -270,6 +270,13 @@ func TestHandlerAuthenticateMapsInputValidationToInvalidArgument(t *testing.T) {
 	}
 }
 
+func TestAllowedOperationsAfterAuthenticateIncludesResolveUser(t *testing.T) {
+	operations := allowedOperationsAfterAuth(AuthorityOperationAuthenticate)
+	if !authorityOperationSet(operations)[AuthorityOperationResolveUser] {
+		t.Fatalf("authenticate backend reference operations = %v, want resolve_user", operations)
+	}
+}
+
 func TestHandlerLookupIdentityConsumesApplicationService(t *testing.T) {
 	service := &recordingService{
 		lookupOutcome: &core.AuthOutcome{
@@ -309,6 +316,15 @@ func TestHandlerLookupIdentityConsumesApplicationService(t *testing.T) {
 	if response.GetSession() != "session-lookup" {
 		t.Fatalf("session = %q, want session-lookup", response.GetSession())
 	}
+}
+
+func authorityOperationSet(operations []AuthorityOperation) map[AuthorityOperation]bool {
+	result := make(map[AuthorityOperation]bool, len(operations))
+	for _, operation := range operations {
+		result[operation] = true
+	}
+
+	return result
 }
 
 func TestHandlerListAccountsConsumesApplicationService(t *testing.T) {

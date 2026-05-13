@@ -59,7 +59,7 @@ const (
 	remoteTestUseRecoveryKey       = "use-recovery-key"
 	remoteTestDeleteRecoveryKey    = "delete-recovery-key"
 	remoteTestWebAuthnSaveKey      = "save-webauthn:alice:remote-guid"
-	remoteTestWebAuthnUpdateKey    = "update-webauthn:alice:remote-guid"
+	remoteTestWebAuthnUpdateKey    = "update-webauthn:alice:remote-guid:63726564656e7469616c2d61:3:9"
 	remoteTestWebAuthnDeleteKey    = "delete-webauthn:alice:remote-guid"
 )
 
@@ -406,6 +406,51 @@ func TestManagerRemoteWebAuthnMutationsUseAuthorityAndInvalidateCache(t *testing
 	assertRemoteWebAuthnSave(t, manager, auth, client, mock, oldCredential)
 	assertRemoteWebAuthnUpdate(t, manager, auth, client, mock, oldCredential, newCredential)
 	assertRemoteWebAuthnDelete(t, manager, auth, client, mock, newCredential)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("redis expectations: %v", err)
+	}
+}
+
+func TestManagerWebAuthnUpdateIdempotencyKeyIncludesCredentialTransition(t *testing.T) {
+	client := &fakeAuthorityClient{
+		writeResponse: &identityv1.MFAWriteResponse{
+			Status:  okRemoteOperationStatus(),
+			Changed: true,
+			Backend: remoteBackendRefProto(),
+		},
+	}
+	manager := NewManagerForTest(
+		remoteTestBackendName,
+		remoteTestAuthorityName,
+		remoteBackendConfig(config.RemoteBackendOperationWebAuthnWrite),
+		client,
+	)
+	auth, mock := newRemoteAuthStateWithWebAuthnCacheMock(t)
+	firstOld := remoteWebAuthnCredential("credential-a", "Security key", 3)
+	firstNew := remoteWebAuthnCredential("credential-a", "Security key", 9)
+	secondOld := remoteWebAuthnCredential("credential-a", "Security key", 9)
+	secondNew := remoteWebAuthnCredential("credential-a", "Security key", 10)
+
+	mock.ExpectDel("nt:webauthn:user:alice").SetVal(1)
+
+	if err := manager.UpdateWebAuthnCredential(auth, firstOld, firstNew); err != nil {
+		t.Fatalf("first UpdateWebAuthnCredential() error = %v", err)
+	}
+
+	firstKey := client.updateWebAuthnRequest.GetIdempotencyKey()
+
+	mock.ExpectDel("nt:webauthn:user:alice").SetVal(1)
+
+	if err := manager.UpdateWebAuthnCredential(auth, secondOld, secondNew); err != nil {
+		t.Fatalf("second UpdateWebAuthnCredential() error = %v", err)
+	}
+
+	secondKey := client.updateWebAuthnRequest.GetIdempotencyKey()
+
+	if firstKey == secondKey {
+		t.Fatalf("WebAuthn update idempotency keys must differ across sign-count transitions: %q", firstKey)
+	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("redis expectations: %v", err)

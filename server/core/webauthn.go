@@ -194,6 +194,80 @@ func resolveWebAuthnDisplayName(mgr cookie.Manager, userName string) (string, bo
 	return userName, true
 }
 
+func webAuthnRegistrationUserName(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	userName := mgr.GetString(definitions.SessionKeyAccount, "")
+	if userName != "" {
+		return userName
+	}
+
+	return mgr.GetString(definitions.SessionKeyUsername, "")
+}
+
+func restoreWebAuthnRegistrationIdentityFromFlow(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager) {
+	if ctx == nil || deps.Cfg == nil || deps.Redis == nil || deps.Redis.GetWriteHandle() == nil || mgr == nil {
+		return
+	}
+
+	flowID := webAuthnRegistrationFlowIDFromSession(mgr)
+	if flowID == "" {
+		return
+	}
+
+	store := flow.NewRedisStore(deps.Redis.GetWriteHandle(), deps.Cfg.GetServer().GetRedis().GetPrefix()+"idp:flow", 0)
+
+	state, err := store.Load(ctx.Request.Context(), flowID)
+	if err != nil {
+		return
+	}
+
+	restoreWebAuthnRegistrationIdentityFromState(mgr, state)
+}
+
+func webAuthnRegistrationFlowIDFromSession(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID != "" {
+		return flowID
+	}
+
+	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		return flow.FlowIDRequireMFA
+	}
+
+	return ""
+}
+
+func restoreWebAuthnRegistrationIdentityFromState(mgr cookie.Manager, state *flow.State) {
+	if mgr == nil || state == nil || state.FlowType != flow.FlowTypeRequireMFA || state.Metadata == nil {
+		return
+	}
+
+	if mgr.GetString(definitions.SessionKeyAccount, "") == "" {
+		if account := state.Metadata[flow.FlowMetadataAccount]; account != "" {
+			mgr.Set(definitions.SessionKeyAccount, account)
+		}
+	}
+
+	if mgr.GetString(definitions.SessionKeyUniqueUserID, "") == "" {
+		if uniqueUserID := state.Metadata[flow.FlowMetadataUniqueUserID]; uniqueUserID != "" {
+			mgr.Set(definitions.SessionKeyUniqueUserID, uniqueUserID)
+		}
+	}
+
+	if mgr.GetString(definitions.SessionKeyDisplayName, "") == "" {
+		if displayName := state.Metadata[flow.FlowMetadataDisplayName]; displayName != "" {
+			mgr.Set(definitions.SessionKeyDisplayName, displayName)
+		}
+	}
+}
+
 // BeginRegistration Page: '/mfa/webauthn/register/begin'
 func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
@@ -225,8 +299,10 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
+		restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
+
 		// We use the account name as username!
-		userName = mgr.GetString(definitions.SessionKeyAccount, "")
+		userName = webAuthnRegistrationUserName(mgr)
 		if userName == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -354,11 +430,9 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		userName = mgr.GetString(definitions.SessionKeyAccount, "")
-		if userName == "" {
-			userName = mgr.GetString(definitions.SessionKeyUsername, "")
-		}
+		restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
 
+		userName = webAuthnRegistrationUserName(mgr)
 		if userName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
 
@@ -502,10 +576,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		// that ContinueRequiredMFARegistration can advance to the next method or
 		// resume the IdP flow.
 		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-			pending := mgr.GetString(definitions.SessionKeyRequireMFAPending, "")
-			remaining := util.RemoveFromCommaSeparatedList(pending, definitions.MFAMethodWebAuthn)
-
-			mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+			flow.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodWebAuthn)
 		}
 
 		if err = mgr.Save(ctx); err != nil {

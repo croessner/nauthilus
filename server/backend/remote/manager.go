@@ -540,7 +540,7 @@ func (m *Manager) UpdateWebAuthnCredential(
 	oldCredential *mfa.PersistentCredential,
 	newCredential *mfa.PersistentCredential,
 ) error {
-	idempotencyKey := m.idempotencyKey(auth, "update-webauthn")
+	idempotencyKey := m.webAuthnUpdateIdempotencyKey(auth, oldCredential, newCredential)
 	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationWebAuthnWrite, idempotencyKey); err != nil {
 		return err
 	}
@@ -702,6 +702,38 @@ func (m *Manager) idempotencyKey(auth *core.AuthState, operation string) string 
 	}
 
 	return fmt.Sprintf("%s:%s:%s", operation, username, guid)
+}
+
+func (m *Manager) webAuthnUpdateIdempotencyKey(
+	auth *core.AuthState,
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) string {
+	base := m.idempotencyKey(auth, "update-webauthn")
+	credentialID := webAuthnCredentialIDForIdempotency(oldCredential, newCredential)
+	oldSignCount := webAuthnCredentialSignCount(oldCredential)
+	newSignCount := webAuthnCredentialSignCount(newCredential)
+
+	return fmt.Sprintf("%s:%s:%d:%d", base, credentialID, oldSignCount, newSignCount)
+}
+
+func webAuthnCredentialIDForIdempotency(oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) string {
+	switch {
+	case newCredential != nil && len(newCredential.ID) > 0:
+		return fmt.Sprintf("%x", newCredential.ID)
+	case oldCredential != nil && len(oldCredential.ID) > 0:
+		return fmt.Sprintf("%x", oldCredential.ID)
+	default:
+		return "credential"
+	}
+}
+
+func webAuthnCredentialSignCount(credential *mfa.PersistentCredential) uint32 {
+	if credential == nil {
+		return 0
+	}
+
+	return credential.Authenticator.SignCount
 }
 
 func (m *Manager) shouldResolveUserSnapshot(auth *core.AuthState) bool {

@@ -16,7 +16,7 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto identity-proxy-e2e guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
 
@@ -96,6 +96,9 @@ generate-grpc-proto: ## Generate committed gRPC API bindings
 	./scripts/generate-grpc-proto.sh
 
 generate-grpc-auth-proto: generate-grpc-proto ## Generate committed gRPC API bindings
+
+identity-proxy-e2e: ## Run the split identity-proxy smoke profile
+	contrib/identity-proxy-e2e/scripts/run.sh smoke
 
 install-hooks: ## Install Git hooks for development
 	./scripts/install-hooks.sh

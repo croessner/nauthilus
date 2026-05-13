@@ -1,0 +1,35 @@
+scenarios:
+  - grpc-authenticate
+  - grpc-lookup-identity
+  - grpc-list-accounts
+  - grpc-resolve-user
+  - oidc-authorization-code
+  - oidc-device-code
+  - saml-sso
+  - totp-registration-login
+  - recovery-code-generation-consumption
+  - webauthn-registration-login
+  - authority-webauthn-sign-count
+  - multi-edge-oidc-continuity
+  - multi-edge-webauthn-continuity
+  - edge-no-local-credentials
+  - redis-network-separation
+  - missing-caller-auth
+  - missing-scope
+  - expired-backend-ref
+  - authority-unavailable
+  - idempotency-replay
+
+commands:
+  profile-check: "GOEXPERIMENT=runtimesecret go test ./contrib/identity-proxy-e2e"
+  stack-up: "contrib/identity-proxy-e2e/scripts/run.sh up"
+  grpc-smoke: "contrib/identity-proxy-e2e/scripts/run.sh rpc"
+  redis-check: "contrib/identity-proxy-e2e/scripts/run.sh redis-check"
+  smoke: "contrib/identity-proxy-e2e/scripts/run.sh smoke"
+  browser: "npm --prefix contrib/identity-proxy-e2e run browser"
+  stack-down: "contrib/identity-proxy-e2e/scripts/run.sh down"
+
+notes:
+  - "The profile check is intentionally local and fast; it asserts the split Redis, remote-only edge, mTLS, bearer scopes, and virtual authenticator harness."
+  - "The browser smoke uses Playwright and must create a CDP virtual authenticator before WebAuthn registration or login."
+  - "The Compose topology keeps authority Redis and edge Redis on separate internal networks so neither Nauthilus role can address the other role's Redis."

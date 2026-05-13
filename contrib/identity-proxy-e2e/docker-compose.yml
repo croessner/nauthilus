@@ -1,0 +1,102 @@
+name: nauthilus-identity-proxy-e2e
+
+x-nauthilus-service: &nauthilus-service
+  image: ${NAUTHILUS_E2E_IMAGE:-nauthilus:identity-proxy-e2e}
+  restart: "no"
+  read_only: true
+  tmpfs:
+    - /tmp
+  volumes:
+    - ./.work/certs:/etc/nauthilus/e2e/certs:ro
+    - ./.work/keys:/etc/nauthilus/e2e/keys:ro
+
+services:
+  authority-redis:
+    image: ${NAUTHILUS_E2E_REDIS_IMAGE:-redis:7-alpine}
+    restart: "no"
+    networks:
+      - authority-data
+
+  edge-redis:
+    image: ${NAUTHILUS_E2E_REDIS_IMAGE:-redis:7-alpine}
+    restart: "no"
+    networks:
+      - edge-data
+
+  authority:
+    <<: *nauthilus-service
+    depends_on:
+      - authority-redis
+    command:
+      - /usr/app/nauthilus
+      - -config
+      - /etc/nauthilus/nauthilus.yml
+      - -config-format
+      - yaml
+    volumes:
+      - ./config/authority.yml:/etc/nauthilus/nauthilus.yml:ro
+      - ./.work/certs:/etc/nauthilus/e2e/certs:ro
+      - ./.work/keys:/etc/nauthilus/e2e/keys:ro
+    networks:
+      authority-data:
+      authority-grpc:
+        ipv4_address: 172.30.80.10
+    expose:
+      - "18081"
+      - "19444"
+    ports:
+      - "127.0.0.1:18081:18081"
+      - "127.0.0.1:19444:19444"
+
+  edge-a:
+    <<: *nauthilus-service
+    depends_on:
+      - edge-redis
+      - authority
+    command:
+      - /usr/app/nauthilus
+      - -config
+      - /etc/nauthilus/nauthilus.yml
+      - -config-format
+      - yaml
+    volumes:
+      - ./config/edge-a.yml:/etc/nauthilus/nauthilus.yml:ro
+      - ./.work/certs:/etc/nauthilus/e2e/certs:ro
+      - ./.work/keys:/etc/nauthilus/e2e/keys:ro
+    networks:
+      - edge-data
+      - authority-grpc
+    ports:
+      - "127.0.0.1:18080:18080"
+
+  edge-b:
+    <<: *nauthilus-service
+    depends_on:
+      - edge-redis
+      - authority
+    command:
+      - /usr/app/nauthilus
+      - -config
+      - /etc/nauthilus/nauthilus.yml
+      - -config-format
+      - yaml
+    volumes:
+      - ./config/edge-b.yml:/etc/nauthilus/nauthilus.yml:ro
+      - ./.work/certs:/etc/nauthilus/e2e/certs:ro
+      - ./.work/keys:/etc/nauthilus/e2e/keys:ro
+    networks:
+      - edge-data
+      - authority-grpc
+    ports:
+      - "127.0.0.1:18082:18082"
+
+networks:
+  authority-data:
+    internal: true
+  edge-data:
+    internal: true
+  authority-grpc:
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.30.80.0/24
