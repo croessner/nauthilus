@@ -16,6 +16,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 	commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
+	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-redis/redismock/v9"
@@ -248,13 +249,19 @@ func remoteBackendConfig(operations ...string) *config.RemoteBackendSection {
 }
 
 type fakeAuthorityClient struct {
-	authResponse   *authv1.AuthResponse
-	lookupResponse *authv1.AuthResponse
-	listResponse   *authv1.ListAccountsResponse
-	err            error
-	authRequests   int
-	lookupRequests int
-	listRequests   int
+	authResponse     *authv1.AuthResponse
+	lookupResponse   *authv1.AuthResponse
+	listResponse     *authv1.ListAccountsResponse
+	resolveResponse  *identityv1.UserSnapshotResponse
+	mfaResponse      *identityv1.MFAStateResponse
+	webauthnResponse *identityv1.WebAuthnCredentialsResponse
+	err              error
+	authRequests     int
+	lookupRequests   int
+	listRequests     int
+	resolveRequests  int
+	mfaRequests      int
+	webauthnRequests int
 }
 
 func (c *fakeAuthorityClient) Authenticate(_ context.Context, _ *authv1.AuthRequest) (*authv1.AuthResponse, error) {
@@ -285,4 +292,37 @@ func (c *fakeAuthorityClient) ListAccounts(_ context.Context, _ *authv1.ListAcco
 	}
 
 	return c.listResponse, nil
+}
+
+func (c *fakeAuthorityClient) ResolveUser(_ context.Context, _ *identityv1.ResolveUserRequest) (*identityv1.UserSnapshotResponse, error) {
+	c.resolveRequests++
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.resolveResponse, nil
+}
+
+func (c *fakeAuthorityClient) GetMFAState(_ context.Context, _ *identityv1.GetMFAStateRequest) (*identityv1.MFAStateResponse, error) {
+	c.mfaRequests++
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.mfaResponse, nil
+}
+
+func (c *fakeAuthorityClient) GetWebAuthnCredentials(
+	_ context.Context,
+	_ *identityv1.GetWebAuthnCredentialsRequest,
+) (*identityv1.WebAuthnCredentialsResponse, error) {
+	c.webauthnRequests++
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.webauthnResponse, nil
 }

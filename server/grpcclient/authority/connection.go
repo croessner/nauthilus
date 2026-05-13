@@ -11,6 +11,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
+	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -22,6 +23,9 @@ type Client interface {
 	Authenticate(ctx context.Context, request *authv1.AuthRequest) (*authv1.AuthResponse, error)
 	LookupIdentity(ctx context.Context, request *authv1.LookupIdentityRequest) (*authv1.AuthResponse, error)
 	ListAccounts(ctx context.Context, request *authv1.ListAccountsRequest) (*authv1.ListAccountsResponse, error)
+	ResolveUser(ctx context.Context, request *identityv1.ResolveUserRequest) (*identityv1.UserSnapshotResponse, error)
+	GetMFAState(ctx context.Context, request *identityv1.GetMFAStateRequest) (*identityv1.MFAStateResponse, error)
+	GetWebAuthnCredentials(ctx context.Context, request *identityv1.GetWebAuthnCredentialsRequest) (*identityv1.WebAuthnCredentialsResponse, error)
 }
 
 // ConnectionManagerOptions contains dependencies for an authority connection.
@@ -42,26 +46,48 @@ type ConnectionManager struct {
 	authorityName string
 }
 
-type authServiceClientAdapter struct {
-	client authv1.AuthServiceClient
+type serviceClientAdapter struct {
+	auth     authv1.AuthServiceClient
+	identity identityv1.IdentityBackendServiceClient
 }
 
-func (a authServiceClientAdapter) Authenticate(ctx context.Context, request *authv1.AuthRequest) (*authv1.AuthResponse, error) {
-	return a.client.Authenticate(ctx, request)
+func (a serviceClientAdapter) Authenticate(ctx context.Context, request *authv1.AuthRequest) (*authv1.AuthResponse, error) {
+	return a.auth.Authenticate(ctx, request)
 }
 
-func (a authServiceClientAdapter) LookupIdentity(
+func (a serviceClientAdapter) LookupIdentity(
 	ctx context.Context,
 	request *authv1.LookupIdentityRequest,
 ) (*authv1.AuthResponse, error) {
-	return a.client.LookupIdentity(ctx, request)
+	return a.auth.LookupIdentity(ctx, request)
 }
 
-func (a authServiceClientAdapter) ListAccounts(
+func (a serviceClientAdapter) ListAccounts(
 	ctx context.Context,
 	request *authv1.ListAccountsRequest,
 ) (*authv1.ListAccountsResponse, error) {
-	return a.client.ListAccounts(ctx, request)
+	return a.auth.ListAccounts(ctx, request)
+}
+
+func (a serviceClientAdapter) ResolveUser(
+	ctx context.Context,
+	request *identityv1.ResolveUserRequest,
+) (*identityv1.UserSnapshotResponse, error) {
+	return a.identity.ResolveUser(ctx, request)
+}
+
+func (a serviceClientAdapter) GetMFAState(
+	ctx context.Context,
+	request *identityv1.GetMFAStateRequest,
+) (*identityv1.MFAStateResponse, error) {
+	return a.identity.GetMFAState(ctx, request)
+}
+
+func (a serviceClientAdapter) GetWebAuthnCredentials(
+	ctx context.Context,
+	request *identityv1.GetWebAuthnCredentialsRequest,
+) (*identityv1.WebAuthnCredentialsResponse, error) {
+	return a.identity.GetWebAuthnCredentials(ctx, request)
 }
 
 // NewConnectionManager creates an outbound authority gRPC client connection.
@@ -99,7 +125,10 @@ func NewConnectionManager(opts ConnectionManagerOptions) (*ConnectionManager, er
 	}
 
 	manager.conn = conn
-	manager.client = authServiceClientAdapter{client: authv1.NewAuthServiceClient(conn)}
+	manager.client = serviceClientAdapter{
+		auth:     authv1.NewAuthServiceClient(conn),
+		identity: identityv1.NewIdentityBackendServiceClient(conn),
+	}
 
 	return manager, nil
 }

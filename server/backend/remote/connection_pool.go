@@ -11,16 +11,28 @@ import (
 	authorityclient "github.com/croessner/nauthilus/server/grpcclient/authority"
 )
 
-var authorityConnections sync.Map
+var (
+	authorityClientOverrides sync.Map
+	authorityConnections     sync.Map
+)
+
+type authorityConnection interface {
+	Client() authorityclient.Client
+	Close() error
+}
 
 func authorityClientFor(
 	authorityName string,
 	cfg *config.NauthilusAuthorityClientSection,
 	tokenSource authorityclient.BearerTokenSource,
 ) (authorityclient.Client, error) {
+	if client, ok := authorityClientOverrides.Load(authorityName); ok {
+		return client.(authorityclient.Client), nil
+	}
+
 	key := authorityConnectionKey(authorityName, cfg)
 	if existing, ok := authorityConnections.Load(key); ok {
-		return existing.(*authorityclient.ConnectionManager).Client(), nil
+		return existing.(authorityConnection).Client(), nil
 	}
 
 	manager, err := authorityclient.NewConnectionManager(authorityclient.ConnectionManagerOptions{
@@ -36,10 +48,19 @@ func authorityClientFor(
 	if loaded {
 		_ = manager.Close()
 
-		return actual.(*authorityclient.ConnectionManager).Client(), nil
+		return actual.(authorityConnection).Client(), nil
 	}
 
 	return manager.Client(), nil
+}
+
+// SetAuthorityClientForTest installs a static authority client for focused integration tests.
+func SetAuthorityClientForTest(authorityName string, client authorityclient.Client) func() {
+	authorityClientOverrides.Store(authorityName, client)
+
+	return func() {
+		authorityClientOverrides.Delete(authorityName)
+	}
 }
 
 func authorityConnectionKey(authorityName string, cfg *config.NauthilusAuthorityClientSection) string {
@@ -74,8 +95,8 @@ func CloseConnectionManagers() error {
 	var result error
 
 	authorityConnections.Range(func(key any, value any) bool {
-		if manager, ok := value.(*authorityclient.ConnectionManager); ok {
-			result = stderrors.Join(result, manager.Close())
+		if connection, ok := value.(authorityConnection); ok {
+			result = stderrors.Join(result, connection.Close())
 		}
 
 		authorityConnections.Delete(key)

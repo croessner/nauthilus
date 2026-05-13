@@ -46,10 +46,15 @@ type CapturedAuthOutcome struct {
 	Session              string
 	AccountField         string
 	TOTPSecretField      string
+	TOTPRecoveryField    string
+	UniqueUserIDField    string
+	DisplayNameField     string
 	StatusMessage        string
 	StatusMessageI18NKey string
 	ResponseLanguage     string
 	Error                string
+	Groups               []string
+	GroupDNS             []string
 	Backend              definitions.Backend
 	HTTPStatus           int
 }
@@ -83,6 +88,8 @@ func (w *CaptureResponseWriter) Outcome() CapturedAuthOutcome {
 
 	out := w.outcome
 	out.Attributes = cloneAttributeMapping(out.Attributes)
+	out.Groups = append([]string(nil), out.Groups...)
+	out.GroupDNS = append([]string(nil), out.GroupDNS...)
 
 	return out
 }
@@ -142,10 +149,15 @@ func (w *CaptureResponseWriter) captureOutcome(
 		Session:              auth.Runtime.GUID,
 		AccountField:         auth.Runtime.AccountField,
 		TOTPSecretField:      auth.Runtime.TOTPSecretField,
+		TOTPRecoveryField:    auth.Runtime.TOTPRecoveryField,
+		UniqueUserIDField:    auth.Runtime.UniqueUserIDField,
+		DisplayNameField:     auth.Runtime.DisplayNameField,
 		StatusMessage:        auth.Runtime.StatusMessage,
 		StatusMessageI18NKey: auth.Runtime.StatusMessageI18NKey,
 		ResponseLanguage:     auth.Runtime.ResponseLanguage,
 		Error:                reason,
+		Groups:               auth.GetGroups(),
+		GroupDNS:             auth.GetGroupDNs(),
 		Backend:              auth.Runtime.SourcePassDBBackend,
 		HTTPStatus:           status,
 	}

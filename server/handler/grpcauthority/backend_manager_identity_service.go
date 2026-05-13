@@ -71,29 +71,82 @@ func (s *backendManagerIdentityService) ResolveUser(ctx context.Context, input A
 		return nil, status.Error(codes.Internal, "lookup identity returned no outcome")
 	}
 
-	backend := BackendRefPayload{
+	backend := backendPayloadFromOutcome(ctx, input, outcome)
+
+	mfaState, err := s.resolveMFAStateForSnapshot(ctx, input, backend)
+	if err != nil {
+		return nil, err
+	}
+
+	return &AuthorityIdentityResult{
+		Status:  authDecisionStatus(outcome.Decision, outcome.StatusMessage, outcome.Error),
+		User:    userSnapshotFromOutcome(input, outcome, backend, mfaState),
+		Backend: backend,
+	}, nil
+}
+
+func (s *backendManagerIdentityService) resolveMFAStateForSnapshot(
+	ctx context.Context,
+	input AuthorityIdentityInput,
+	backend BackendRefPayload,
+) (AuthorityMFAState, error) {
+	if !input.IncludeMFAState {
+		return AuthorityMFAState{}, nil
+	}
+
+	result, err := s.GetMFAState(ctx, AuthorityIdentityInput{
+		Operation:                  AuthorityOperationGetMFAState,
+		Context:                    input.Context,
+		Username:                   input.Username,
+		Backend:                    backend,
+		IncludeWebAuthnCredentials: input.IncludeWebAuthnCredentials,
+	})
+	if err != nil {
+		return AuthorityMFAState{}, err
+	}
+
+	return result.GetMFA(), nil
+}
+
+func backendPayloadFromOutcome(ctx context.Context, input AuthorityIdentityInput, outcome *core.AuthOutcome) BackendRefPayload {
+	caller := authorityCallerFromContext(ctx)
+
+	return BackendRefPayload{
 		Type:              outcome.Backend.String(),
 		Name:              definitions.DefaultBackendName,
 		Protocol:          input.Context.GetProtocol(),
 		Username:          input.Username,
 		Account:           firstAttributeValue(outcome.Attributes, outcome.AccountField, input.Username),
-		ServicePrincipal:  authorityCallerFromContext(ctx).Principal,
-		EdgeClusterID:     authorityCallerFromContext(ctx).EdgeClusterID,
+		ServicePrincipal:  caller.Principal,
+		EdgeClusterID:     caller.EdgeClusterID,
 		EdgeInstanceID:    input.Context.GetEdgeInstance(),
 		EdgeRequestID:     input.Context.GetEdgeRequestId(),
 		AllowedOperations: allowedOperationsAfterAuth(AuthorityOperationLookupIdentity),
 	}
+}
 
-	return &AuthorityIdentityResult{
-		Status: authDecisionStatus(outcome.Decision, outcome.StatusMessage, outcome.Error),
-		User: &AuthorityUserSnapshot{
-			Username:   input.Username,
-			Account:    backend.Account,
-			Attributes: releasedAttributes(outcome.Attributes, input.Attributes),
-			Backend:    backend,
-		},
-		Backend: backend,
-	}, nil
+func userSnapshotFromOutcome(
+	input AuthorityIdentityInput,
+	outcome *core.AuthOutcome,
+	backend BackendRefPayload,
+	mfaState AuthorityMFAState,
+) *AuthorityUserSnapshot {
+	return &AuthorityUserSnapshot{
+		Username:     input.Username,
+		Account:      backend.Account,
+		UniqueUserID: firstAttributeValue(outcome.Attributes, outcome.UniqueUserIDField, ""),
+		DisplayName:  firstAttributeValue(outcome.Attributes, outcome.DisplayNameField, backend.Account),
+		Attributes: releasedAttributes(
+			outcome.Attributes,
+			input.Attributes,
+			outcome.TOTPSecretField,
+			outcome.TOTPRecoveryField,
+		),
+		Groups:   groupsForRequest(outcome.Groups, input.Attributes),
+		GroupDNS: groupDNSForRequest(outcome.GroupDNS, input.Attributes),
+		Backend:  backend,
+		MFA:      mfaState,
+	}
 }
 
 func (s *backendManagerIdentityService) GetMFAState(_ context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
@@ -102,13 +155,21 @@ func (s *backendManagerIdentityService) GetMFAState(_ context.Context, input Aut
 		return nil, err
 	}
 
-	if passDBResult, passErr := manager.PassDB(auth); passErr == nil && passDBResult != nil {
+	passDBResult, passErr := manager.PassDB(auth)
+	if passErr != nil {
+		return nil, passErr
+	}
+
+	if passDBResult != nil {
 		applyPassDBResult(auth, passDBResult)
 	}
 
-	credentials, err := manager.GetWebAuthnCredentials(auth)
-	if err != nil {
-		return nil, err
+	var credentials []mfa.PersistentCredential
+	if input.IncludeWebAuthnCredentials {
+		credentials, err = manager.GetWebAuthnCredentials(auth)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	state := AuthorityMFAState{
@@ -371,17 +432,22 @@ func backendTypeFromRef(value string) definitions.Backend {
 	}
 }
 
-func releasedAttributes(attributes bktype.AttributeMapping, request *identityv1.AttributeRequest) map[string][]string {
+func releasedAttributes(attributes bktype.AttributeMapping, request *identityv1.AttributeRequest, deniedNames ...string) map[string][]string {
 	if len(attributes) == 0 {
 		return nil
 	}
 
+	denied := deniedAttributeSet(deniedNames...)
 	if request == nil || len(request.GetNames()) == 0 {
-		return allAttributes(attributes)
+		return allAttributes(attributes, denied)
 	}
 
 	result := make(map[string][]string, len(request.GetNames()))
 	for _, name := range request.GetNames() {
+		if _, deny := denied[name]; deny {
+			continue
+		}
+
 		if values, ok := attributes[name]; ok {
 			result[name] = stringifyAttributeValues(values)
 		}
@@ -390,13 +456,48 @@ func releasedAttributes(attributes bktype.AttributeMapping, request *identityv1.
 	return result
 }
 
-func allAttributes(attributes bktype.AttributeMapping) map[string][]string {
+func allAttributes(attributes bktype.AttributeMapping, denied map[string]struct{}) map[string][]string {
 	result := make(map[string][]string, len(attributes))
 	for name, values := range attributes {
+		if _, deny := denied[name]; deny {
+			continue
+		}
+
 		result[name] = stringifyAttributeValues(values)
 	}
 
 	return result
+}
+
+func deniedAttributeSet(names ...string) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+
+	result := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name != "" {
+			result[name] = struct{}{}
+		}
+	}
+
+	return result
+}
+
+func groupsForRequest(groups []string, request *identityv1.AttributeRequest) []string {
+	if request == nil || request.GetIncludeGroups() {
+		return append([]string(nil), groups...)
+	}
+
+	return nil
+}
+
+func groupDNSForRequest(groupDNS []string, request *identityv1.AttributeRequest) []string {
+	if request == nil || request.GetIncludeGroupDns() {
+		return append([]string(nil), groupDNS...)
+	}
+
+	return nil
 }
 
 func firstAttributeValue(attributes bktype.AttributeMapping, field string, fallback string) string {

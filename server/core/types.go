@@ -58,6 +58,19 @@ type BackendManager interface {
 	UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error)
 }
 
+// PublicMFAState contains public MFA metadata that is safe to expose to an IdP edge.
+type PublicMFAState struct {
+	WebAuthnCredentials []mfa.PersistentCredential
+	RecoveryCodeCount   int
+	HasTOTP             bool
+	HasWebAuthn         bool
+}
+
+// PublicMFAStateProvider is implemented by backends that can read public MFA state directly.
+type PublicMFAStateProvider interface {
+	GetPublicMFAState(auth *AuthState, includeWebAuthn bool) (PublicMFAState, error)
+}
+
 // BackendManagerFactory constructs a backend manager for a backend plugged in from another package.
 type BackendManagerFactory func(backendName string, deps AuthDeps) BackendManager
 

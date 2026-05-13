@@ -587,6 +587,31 @@ func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.Fi
 	return nil
 }
 
+// DeleteWebAuthnFromRedis removes a cached WebAuthn user entry by unique user ID.
+func DeleteWebAuthnFromRedis(ctx context.Context, logger *slog.Logger, cfg config.File, redisClient rediscli.Client, uniqueUserID string) error {
+	if uniqueUserID == "" {
+		return nil
+	}
+
+	key := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserID
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
+	defer cancel()
+
+	if err := redisClient.GetWriteHandle().Del(dCtx, key).Err(); err != nil {
+		_ = level.Error(logger).Log(
+			definitions.LogKeyMsg, "Failed to delete WebAuthn user from redis",
+			definitions.LogKeyError, err,
+		)
+
+		return err
+	}
+
+	return nil
+}
+
 // GetUserAccountFromCache fetches the user account name from Redis cache using the provided username.
 // Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
 func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, username, protocol, oidcClientID, guid string) (accountName string) {
