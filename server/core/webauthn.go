@@ -64,6 +64,8 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 	protocolName := ""
 
+	a.restoreRemoteBackendRefFromSession(mgr)
+
 	if a.Request.HTTPClientContext != nil {
 		protocolName = a.Request.HTTPClientContext.Query("protocol")
 	}
@@ -488,7 +490,9 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		auth.(*AuthState).updateUser(user)
+		if shouldPersistWebAuthnCache(auth.(*AuthState)) {
+			auth.(*AuthState).updateUser(user)
+		}
 
 		auth.PurgeCacheFor(userName)
 
@@ -793,15 +797,18 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		)
 
 		if oldCredential != nil {
-			// Update the credential in the backend
-			_ = auth.UpdateWebAuthnCredential(oldCredential, newPersistentCredential)
+			if err = persistWebAuthnLoginUpdate(auth, user, oldCredential, newPersistentCredential); err != nil {
+				LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, err.Error(), false)
+				stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
 
-			// Also update in user object for cache
-			for i, c := range user.Credentials {
-				if bytes.Equal(c.ID, credential.ID) {
-					user.Credentials[i] = *newPersistentCredential
-					break
-				}
+				_ = level.Error(authState.Logger()).Log(
+					definitions.LogKeyGUID, authState.Runtime.GUID,
+					definitions.LogKeyMsg, "Failed to persist WebAuthn login credential update",
+					definitions.LogKeyError, err,
+				)
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+
+				return
 			}
 		}
 
@@ -814,8 +821,9 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", secure, true)
 
-		// Persist the updated user to Redis (cache)
-		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
+		if shouldPersistWebAuthnCache(authState) {
+			_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
+		}
 
 		if mgr != nil {
 			// Check if the original password authentication was successful (delayed response case).
@@ -959,6 +967,52 @@ func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, 
 	}
 
 	return oldCredential, newCredential
+}
+
+type webAuthnCredentialUpdater interface {
+	UpdateWebAuthnCredential(oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) error
+}
+
+func persistWebAuthnLoginUpdate(
+	updater webAuthnCredentialUpdater,
+	user *backend.User,
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) error {
+	if updater == nil || user == nil || oldCredential == nil || newCredential == nil {
+		return nil
+	}
+
+	if err := updater.UpdateWebAuthnCredential(oldCredential, newCredential); err != nil {
+		return err
+	}
+
+	for index, credential := range user.Credentials {
+		if bytes.Equal(credential.ID, newCredential.ID) {
+			user.Credentials[index] = *newCredential
+
+			break
+		}
+	}
+
+	return nil
+}
+
+func shouldPersistWebAuthnCache(auth *AuthState) bool {
+	if auth == nil {
+		return true
+	}
+
+	if !auth.Runtime.RemoteBackendRef.IsZero() {
+		return false
+	}
+
+	mgr := cookie.GetManager(auth.Request.HTTPClientContext)
+	if mgr == nil {
+		return true
+	}
+
+	return definitions.Backend(mgr.GetUint8(definitions.SessionKeyUserBackend, 0)) != definitions.BackendRemote
 }
 
 func hashCredentialID(credentialID []byte) string {

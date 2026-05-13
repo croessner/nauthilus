@@ -6,6 +6,7 @@ import (
 	stderrors "errors"
 	"fmt"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
@@ -25,6 +26,7 @@ import (
 var (
 	ErrRemoteAuthorityUnavailable = stderrors.New("remote authority unavailable")
 	ErrRemoteOperationDenied      = stderrors.New("remote backend operation denied")
+	ErrRemoteAuthorityRejected    = stderrors.New("remote authority rejected operation")
 )
 
 const (
@@ -466,19 +468,92 @@ func (m *Manager) GetWebAuthnCredentials(auth *core.AuthState) ([]mfa.Persistent
 	return persistentCredentialsFromProto(response.GetCredentials()), nil
 }
 
-// SaveWebAuthnCredential is intentionally not implemented by this edge slice.
-func (m *Manager) SaveWebAuthnCredential(*core.AuthState, *mfa.PersistentCredential) error {
-	return ErrRemoteOperationDenied
+// SaveWebAuthnCredential persists a verified edge registration on the authority.
+func (m *Manager) SaveWebAuthnCredential(auth *core.AuthState, credential *mfa.PersistentCredential) error {
+	idempotencyKey := m.idempotencyKey(auth, "save-webauthn")
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationWebAuthnWrite, idempotencyKey); err != nil {
+		return err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	response, err := m.client.SaveWebAuthnCredential(ctx, &identityv1.SaveWebAuthnCredentialRequest{
+		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username:       auth.GetUsername(),
+		Backend:        ref,
+		Credential:     identityv1.PersistentCredentialToProto(credential),
+		IdempotencyKey: idempotencyKey,
+	})
+
+	return m.finishRemoteWebAuthnMutation(auth, response, err)
 }
 
-// DeleteWebAuthnCredential is intentionally not implemented by this edge slice.
-func (m *Manager) DeleteWebAuthnCredential(*core.AuthState, *mfa.PersistentCredential) error {
-	return ErrRemoteOperationDenied
+// DeleteWebAuthnCredential deletes a credential on the authority by credential ID.
+func (m *Manager) DeleteWebAuthnCredential(auth *core.AuthState, credential *mfa.PersistentCredential) error {
+	idempotencyKey := m.idempotencyKey(auth, "delete-webauthn")
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationWebAuthnWrite, idempotencyKey); err != nil {
+		return err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	var credentialID []byte
+	if credential != nil {
+		credentialID = append([]byte(nil), credential.ID...)
+	}
+
+	response, err := m.client.DeleteWebAuthnCredential(ctx, &identityv1.DeleteWebAuthnCredentialRequest{
+		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username:       auth.GetUsername(),
+		Backend:        ref,
+		CredentialId:   credentialID,
+		IdempotencyKey: idempotencyKey,
+	})
+
+	return m.finishRemoteWebAuthnMutation(auth, response, err)
 }
 
-// UpdateWebAuthnCredential is intentionally not implemented by this edge slice.
-func (m *Manager) UpdateWebAuthnCredential(*core.AuthState, *mfa.PersistentCredential, *mfa.PersistentCredential) error {
-	return ErrRemoteOperationDenied
+// UpdateWebAuthnCredential sends old and new credential state to the authority for compare-and-update.
+func (m *Manager) UpdateWebAuthnCredential(
+	auth *core.AuthState,
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) error {
+	idempotencyKey := m.idempotencyKey(auth, "update-webauthn")
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationWebAuthnWrite, idempotencyKey); err != nil {
+		return err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	response, err := m.client.UpdateWebAuthnCredential(ctx, &identityv1.UpdateWebAuthnCredentialRequest{
+		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username:       auth.GetUsername(),
+		Backend:        ref,
+		OldCredential:  identityv1.PersistentCredentialToProto(oldCredential),
+		NewCredential:  identityv1.PersistentCredentialToProto(newCredential),
+		IdempotencyKey: idempotencyKey,
+	})
+
+	return m.finishRemoteWebAuthnMutation(auth, response, err)
 }
 
 type remoteMFADeleteOperation uint8
@@ -530,6 +605,49 @@ func (m *Manager) runRemoteMFADelete(auth *core.AuthState, idempotencyKey string
 	}
 
 	return operationStatusError(response.GetStatus())
+}
+
+func (m *Manager) finishRemoteWebAuthnMutation(auth *core.AuthState, response *identityv1.MFAWriteResponse, err error) error {
+	if err != nil {
+		m.purgeWebAuthnCache(auth)
+
+		return mapAuthorityError(err)
+	}
+
+	if statusErr := operationStatusError(response.GetStatus()); statusErr != nil {
+		m.purgeWebAuthnCache(auth)
+
+		return statusErr
+	}
+
+	m.purgeWebAuthnCache(auth)
+
+	return nil
+}
+
+func (m *Manager) purgeWebAuthnCache(auth *core.AuthState) {
+	if auth == nil || auth.Cfg() == nil || auth.Cfg().GetServer() == nil || auth.Redis() == nil {
+		return
+	}
+
+	ids := make([]string, 0, 2)
+	if uniqueUserID := auth.GetUniqueUserID(); uniqueUserID != "" {
+		ids = append(ids, uniqueUserID)
+	}
+
+	if username := auth.GetUsername(); username != "" {
+		ids = append(ids, username)
+	}
+
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+		_ = backend.DeleteWebAuthnFromRedis(auth.Ctx(), auth.Logger(), auth.Cfg(), auth.Redis(), id)
+	}
 }
 
 func (m *Manager) requestContext(auth *core.AuthState) (context.Context, context.CancelFunc) {
@@ -708,6 +826,8 @@ func mapAuthorityError(err error) error {
 			return fmt.Errorf("%w: %v", ErrRemoteAuthorityUnavailable, err)
 		case codes.PermissionDenied, codes.Unauthenticated:
 			return fmt.Errorf("%w: %v", ErrRemoteOperationDenied, err)
+		case codes.FailedPrecondition, codes.InvalidArgument, codes.AlreadyExists:
+			return fmt.Errorf("%w: %v", ErrRemoteAuthorityRejected, err)
 		default:
 			return fmt.Errorf("%w: %v", ErrRemoteAuthorityUnavailable, err)
 		}
@@ -896,6 +1016,8 @@ func operationStatusError(operationStatus *commonv1.OperationStatus) error {
 		return nil
 	case commonv1.OperationResult_OPERATION_RESULT_DENIED:
 		return statusError(ErrRemoteOperationDenied, operationStatus)
+	case commonv1.OperationResult_OPERATION_RESULT_CONFLICT:
+		return statusError(ErrRemoteAuthorityRejected, operationStatus)
 	default:
 		return statusError(ErrRemoteAuthorityUnavailable, operationStatus)
 	}

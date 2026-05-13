@@ -2507,6 +2507,15 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 		return
 	}
 
+	if userData.UsesRemoteWebAuthnAuthority() {
+		_ = backend.DeleteWebAuthnFromRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.UniqueUserID)
+		userData.AuthState.PurgeCacheFor(userData.Username)
+		ctx.Header("HX-Redirect", definitions.MFARoot+"/webauthn/devices")
+		ctx.Status(http.StatusOK)
+
+		return
+	}
+
 	// update Redis cache
 	// Also remove the entire user if no credentials left?
 	// Existing code just Del the key in DeleteWebAuthn.
@@ -2591,6 +2600,15 @@ func (h *FrontendHandler) UpdateWebAuthnDeviceName(ctx *gin.Context) {
 	if err := userData.AuthState.UpdateWebAuthnCredential(&oldCredential, &newCredential); err != nil {
 		sp.RecordError(err)
 		h.renderErrorModalWithErr(ctx, "Failed to update credential", err)
+
+		return
+	}
+
+	if userData.UsesRemoteWebAuthnAuthority() {
+		_ = backend.DeleteWebAuthnFromRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.UniqueUserID)
+		userData.AuthState.PurgeCacheFor(userData.Username)
+		ctx.Header("HX-Redirect", definitions.MFARoot+"/webauthn/devices")
+		ctx.Status(http.StatusOK)
 
 		return
 	}

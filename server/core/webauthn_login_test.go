@@ -16,9 +16,11 @@
 package core
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
@@ -136,6 +138,46 @@ func TestDelayedResponseWithCorrectCredentialsAllowAfterMFA(t *testing.T) {
 
 	// User should be allowed because initial credentials were correct
 	assert.True(t, isValid, "User with correct initial credentials must be allowed after MFA")
+}
+
+func TestPersistWebAuthnLoginUpdateFailsClosedOnRejectedPersistence(t *testing.T) {
+	persistenceErr := errors.New("authority rejected WebAuthn update")
+	user := &backend.User{
+		Id:   "uid-123",
+		Name: "testuser-closed",
+		Credentials: []mfa.PersistentCredential{
+			{
+				Credential: webauthn.Credential{
+					ID: []byte("device-a"),
+					Authenticator: webauthn.Authenticator{
+						SignCount: 3,
+					},
+				},
+				Name: "Security key",
+			},
+		},
+	}
+	oldCredential := user.Credentials[0]
+	newCredential := oldCredential
+	newCredential.Authenticator.SignCount = 4
+	store := failingWebAuthnCredentialUpdater{err: persistenceErr}
+
+	err := persistWebAuthnLoginUpdate(store, user, &oldCredential, &newCredential)
+	if !errors.Is(err, persistenceErr) {
+		t.Fatalf("persistWebAuthnLoginUpdate() error = %v, want %v", err, persistenceErr)
+	}
+
+	if got := user.Credentials[0].Authenticator.SignCount; got != 3 {
+		t.Fatalf("cached credential sign count = %d, want unchanged 3", got)
+	}
+}
+
+type failingWebAuthnCredentialUpdater struct {
+	err error
+}
+
+func (u failingWebAuthnCredentialUpdater) UpdateWebAuthnCredential(*mfa.PersistentCredential, *mfa.PersistentCredential) error {
+	return u.err
 }
 
 func TestUpdateWebAuthnCredentialAfterLoginKeepsDeviceData(t *testing.T) {

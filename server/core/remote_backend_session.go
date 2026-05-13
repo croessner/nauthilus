@@ -60,6 +60,16 @@ func RemoteBackendRefFromSession(mgr cookie.Manager) (RemoteBackendRef, bool) {
 	return ref, true
 }
 
+func (a *AuthState) restoreRemoteBackendRefFromSession(mgr cookie.Manager) {
+	if a == nil {
+		return
+	}
+
+	if ref, ok := RemoteBackendRefFromSession(mgr); ok {
+		a.Runtime.RemoteBackendRef = ref
+	}
+}
+
 // ClearRemoteBackendRef removes an authority backend reference from the encrypted edge session.
 func ClearRemoteBackendRef(mgr cookie.Manager) {
 	if mgr == nil {

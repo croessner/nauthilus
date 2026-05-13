@@ -17,6 +17,7 @@ package identityv1
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -74,12 +75,66 @@ func TestWebAuthnCredentialMapperPreservesPersistentCredentialFields(t *testing.
 		t.Fatalf("sign count = %d, want %d", got, persistent.Authenticator.SignCount)
 	}
 
+	if got := roundTripped.Transport; len(got) != 2 || got[0] != protocol.USB || got[1] != protocol.Internal {
+		t.Fatalf("transports = %#v, want usb and internal", got)
+	}
+
+	if got := roundTripped.Flags.BackupEligible; got != persistent.Flags.BackupEligible {
+		t.Fatalf("backup eligible = %v, want %v", got, persistent.Flags.BackupEligible)
+	}
+
+	if got := roundTripped.Flags.BackupState; got != persistent.Flags.BackupState {
+		t.Fatalf("backup state = %v, want %v", got, persistent.Flags.BackupState)
+	}
+
+	if got := roundTripped.AttestationType; got != persistent.AttestationType {
+		t.Fatalf("attestation type = %q, want %q", got, persistent.AttestationType)
+	}
+
 	if got := roundTripped.Name; got != persistent.Name {
 		t.Fatalf("name = %q, want %q", got, persistent.Name)
 	}
 
+	if got := roundTripped.RawJSON; got != persistent.RawJSON {
+		t.Fatalf("raw json = %q, want %q", got, persistent.RawJSON)
+	}
+
 	if got := roundTripped.LastUsed; !got.Equal(persistent.LastUsed) {
 		t.Fatalf("last used = %s, want %s", got, persistent.LastUsed)
+	}
+}
+
+func TestWebAuthnCredentialMapperPreservesLegacySignCountJSONCompatibility(t *testing.T) {
+	t.Parallel()
+
+	const legacyJSON = `{"id":"AQID","publicKey":"BAUG","signCount":7,"name":"Legacy device","lastUsed":"2026-05-12T10:15:30Z"}`
+
+	var persistent mfa.PersistentCredential
+	if err := json.Unmarshal([]byte(legacyJSON), &persistent); err != nil {
+		t.Fatalf("unmarshal legacy credential: %v", err)
+	}
+
+	if got := persistent.Authenticator.SignCount; got != 7 {
+		t.Fatalf("legacy signCount = %d, want 7", got)
+	}
+
+	roundTripped := WebAuthnCredentialToPersistent(PersistentCredentialToProto(&persistent))
+	if got := roundTripped.Authenticator.SignCount; got != 7 {
+		t.Fatalf("round-tripped sign count = %d, want 7", got)
+	}
+
+	encoded, err := json.Marshal(roundTripped)
+	if err != nil {
+		t.Fatalf("marshal round-tripped credential: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal marshaled credential: %v", err)
+	}
+
+	if got := decoded["signCount"]; got != float64(7) {
+		t.Fatalf("marshaled signCount = %#v, want 7", got)
 	}
 }
 

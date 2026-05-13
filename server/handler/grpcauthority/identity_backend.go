@@ -635,6 +635,8 @@ func grpcErrorFromAuthorityError(err error) error {
 	switch {
 	case errors.Is(err, ErrBackendRefPrincipalMismatch), errors.Is(err, ErrBackendRefEdgeClusterMismatch):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, ErrWebAuthnCredentialStateMismatch):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrBackendRefInvalid),
 		errors.Is(err, ErrBackendRefExpired),
 		errors.Is(err, ErrBackendRefOperationDenied),

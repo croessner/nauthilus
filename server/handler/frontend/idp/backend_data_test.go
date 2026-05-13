@@ -916,3 +916,24 @@ func (c *remoteBackendDataAuthorityClient) GetWebAuthnCredentials(
 		Backend:     c.mfaStateResponse.GetBackend(),
 	}, nil
 }
+
+func (c *remoteBackendDataAuthorityClient) SaveWebAuthnCredential(
+	_ context.Context,
+	_ *identityv1.SaveWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return nil, errors.New("unexpected SaveWebAuthnCredential call")
+}
+
+func (c *remoteBackendDataAuthorityClient) UpdateWebAuthnCredential(
+	_ context.Context,
+	_ *identityv1.UpdateWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return nil, errors.New("unexpected UpdateWebAuthnCredential call")
+}
+
+func (c *remoteBackendDataAuthorityClient) DeleteWebAuthnCredential(
+	_ context.Context,
+	_ *identityv1.DeleteWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return nil, errors.New("unexpected DeleteWebAuthnCredential call")
+}

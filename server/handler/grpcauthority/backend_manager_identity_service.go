@@ -16,6 +16,7 @@
 package grpcauthority
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -37,6 +38,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// ErrWebAuthnCredentialStateMismatch reports a stale or missing persistent credential during compare-and-update.
+var ErrWebAuthnCredentialStateMismatch = errors.New("webauthn credential state mismatch")
 
 // BackendManagerIdentityServiceDeps contains domain dependencies for authority identity operations.
 type BackendManagerIdentityServiceDeps struct {
@@ -534,6 +538,10 @@ func (s *backendManagerIdentityService) UpdateWebAuthnCredential(_ context.Conte
 		return nil, err
 	}
 
+	if err = compareWebAuthnCredentialState(manager, auth, input.OldCredential, input.NewCredential); err != nil {
+		return nil, err
+	}
+
 	if err = manager.UpdateWebAuthnCredential(auth, input.OldCredential, input.NewCredential); err != nil {
 		return nil, err
 	}
@@ -554,6 +562,41 @@ func (s *backendManagerIdentityService) DeleteWebAuthnCredential(_ context.Conte
 	}
 
 	return changedMFAResult(input.Backend), nil
+}
+
+func compareWebAuthnCredentialState(
+	manager core.BackendManager,
+	auth *core.AuthState,
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) error {
+	if manager == nil || auth == nil || oldCredential == nil || newCredential == nil {
+		return ErrWebAuthnCredentialStateMismatch
+	}
+
+	if !bytes.Equal(oldCredential.ID, newCredential.ID) {
+		return ErrWebAuthnCredentialStateMismatch
+	}
+
+	credentials, err := manager.GetWebAuthnCredentials(auth)
+	if err != nil {
+		return err
+	}
+
+	for index := range credentials {
+		stored := credentials[index]
+		if !bytes.Equal(stored.ID, oldCredential.ID) {
+			continue
+		}
+
+		if stored.Authenticator.SignCount != oldCredential.Authenticator.SignCount {
+			return ErrWebAuthnCredentialStateMismatch
+		}
+
+		return nil
+	}
+
+	return ErrWebAuthnCredentialStateMismatch
 }
 
 func (s *backendManagerIdentityService) authAndManager(input AuthorityIdentityInput) (*core.AuthState, core.BackendManager, error) {

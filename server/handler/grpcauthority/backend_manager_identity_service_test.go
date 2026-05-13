@@ -17,6 +17,7 @@ package grpcauthority
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const (
@@ -133,6 +135,57 @@ func TestBackendManagerIdentityServiceConsumesRecoveryCodeOnce(t *testing.T) {
 	}
 }
 
+func TestBackendManagerIdentityServiceWebAuthnUpdateComparesPersistentState(t *testing.T) {
+	backendName := "authority-webauthn-update"
+	username := "webauthn-update@example.test"
+	deps := core.AuthDeps{}
+	original := authorityWebAuthnCredential("credential-a", "Security key", 10)
+	updated := authorityWebAuthnCredential("credential-a", "Renamed key", 11)
+
+	seedAuthorityWebAuthnCredential(t, deps, backendName, username, original)
+
+	service := NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{AuthDeps: deps})
+	input := authorityMFATestInput(backendName, username)
+	input.OldCredential = original
+	input.NewCredential = updated
+
+	if _, err := service.UpdateWebAuthnCredential(context.Background(), input); err != nil {
+		t.Fatalf("UpdateWebAuthnCredential() error = %v", err)
+	}
+
+	credentials := readAuthorityWebAuthnCredentials(t, deps, backendName, username)
+	if len(credentials) != 1 || credentials[0].Name != "Renamed key" || credentials[0].Authenticator.SignCount != 11 {
+		t.Fatalf("credentials after update = %#v, want renamed sign-count 11 credential", credentials)
+	}
+}
+
+func TestBackendManagerIdentityServiceWebAuthnUpdateRejectsStalePersistentState(t *testing.T) {
+	backendName := "authority-webauthn-stale"
+	username := "webauthn-stale@example.test"
+	deps := core.AuthDeps{}
+	persistent := authorityWebAuthnCredential("credential-a", "Security key", 10)
+	staleOld := authorityWebAuthnCredential("credential-a", "Security key", 3)
+	newCredential := authorityWebAuthnCredential("credential-a", "Security key", 11)
+
+	seedAuthorityWebAuthnCredential(t, deps, backendName, username, persistent)
+
+	service := NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{AuthDeps: deps})
+	input := authorityMFATestInput(backendName, username)
+	input.OldCredential = staleOld
+	input.NewCredential = newCredential
+
+	if _, err := service.UpdateWebAuthnCredential(context.Background(), input); err == nil {
+		t.Fatal("UpdateWebAuthnCredential() error = nil, want stale-state rejection")
+	} else if !errors.Is(err, ErrWebAuthnCredentialStateMismatch) {
+		t.Fatalf("UpdateWebAuthnCredential() error = %v, want ErrWebAuthnCredentialStateMismatch", err)
+	}
+
+	credentials := readAuthorityWebAuthnCredentials(t, deps, backendName, username)
+	if len(credentials) != 1 || credentials[0].Authenticator.SignCount != 10 {
+		t.Fatalf("credentials after stale update = %#v, want unchanged sign-count 10 credential", credentials)
+	}
+}
+
 func useRecoveryCodeConcurrently(
 	t *testing.T,
 	service AuthorityIdentityService,
@@ -180,6 +233,57 @@ func useRecoveryCodeConcurrently(
 	}
 
 	return collected
+}
+
+func seedAuthorityWebAuthnCredential(
+	t *testing.T,
+	deps core.AuthDeps,
+	backendName string,
+	username string,
+	credential *mfa.PersistentCredential,
+) {
+	t.Helper()
+
+	auth := core.NewAuthStateFromContextWithDeps(nil, deps).(*core.AuthState)
+	auth.SetUsername(username)
+
+	manager := core.NewTestBackendManager(backendName, deps)
+	if err := manager.SaveWebAuthnCredential(auth, credential); err != nil {
+		t.Fatalf("SaveWebAuthnCredential() error = %v", err)
+	}
+}
+
+func readAuthorityWebAuthnCredentials(
+	t *testing.T,
+	deps core.AuthDeps,
+	backendName string,
+	username string,
+) []mfa.PersistentCredential {
+	t.Helper()
+
+	auth := core.NewAuthStateFromContextWithDeps(nil, deps).(*core.AuthState)
+	auth.SetUsername(username)
+
+	manager := core.NewTestBackendManager(backendName, deps)
+
+	credentials, err := manager.GetWebAuthnCredentials(auth)
+	if err != nil {
+		t.Fatalf("GetWebAuthnCredentials() error = %v", err)
+	}
+
+	return credentials
+}
+
+func authorityWebAuthnCredential(id string, name string, signCount uint32) *mfa.PersistentCredential {
+	return &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte(id),
+			Authenticator: webauthn.Authenticator{
+				SignCount: signCount,
+			},
+		},
+		Name: name,
+	}
 }
 
 func seedAuthorityMFATestUser(

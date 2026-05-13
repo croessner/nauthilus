@@ -2,6 +2,7 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"log/slog"
@@ -17,9 +18,11 @@ import (
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 	commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
 	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-redis/redismock/v9"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -46,6 +49,9 @@ const (
 	remoteTestGenerateRecoveryKey  = "generate-recovery-key"
 	remoteTestUseRecoveryKey       = "use-recovery-key"
 	remoteTestDeleteRecoveryKey    = "delete-recovery-key"
+	remoteTestWebAuthnSaveKey      = "save-webauthn:alice:remote-guid"
+	remoteTestWebAuthnUpdateKey    = "update-webauthn:alice:remote-guid"
+	remoteTestWebAuthnDeleteKey    = "delete-webauthn:alice:remote-guid"
 )
 
 func TestMain(m *testing.M) {
@@ -261,6 +267,142 @@ func TestManagerRemoteRecoveryOperationsUseAuthority(t *testing.T) {
 	assertRemoteRecoveryDeletion(t, manager, auth, client)
 }
 
+func TestManagerRemoteWebAuthnMutationsUseAuthorityAndInvalidateCache(t *testing.T) {
+	client := &fakeAuthorityClient{
+		writeResponse: &identityv1.MFAWriteResponse{
+			Status:  okRemoteOperationStatus(),
+			Changed: true,
+			Backend: remoteBackendRefProto(),
+		},
+	}
+	manager := NewManagerForTest(
+		remoteTestBackendName,
+		remoteTestAuthorityName,
+		remoteBackendConfig(config.RemoteBackendOperationWebAuthnWrite),
+		client,
+	)
+	auth, mock := newRemoteAuthStateWithWebAuthnCacheMock(t)
+	oldCredential := remoteWebAuthnCredential("credential-a", "Security key", 3)
+	newCredential := remoteWebAuthnCredential("credential-a", "Renamed key", 9)
+
+	assertRemoteWebAuthnSave(t, manager, auth, client, mock, oldCredential)
+	assertRemoteWebAuthnUpdate(t, manager, auth, client, mock, oldCredential, newCredential)
+	assertRemoteWebAuthnDelete(t, manager, auth, client, mock, newCredential)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("redis expectations: %v", err)
+	}
+}
+
+func assertRemoteWebAuthnSave(
+	t *testing.T,
+	manager *Manager,
+	auth *core.AuthState,
+	client *fakeAuthorityClient,
+	mock redismock.ClientMock,
+	credential *mfa.PersistentCredential,
+) {
+	t.Helper()
+
+	mock.ExpectDel("nt:webauthn:user:alice").SetVal(1)
+
+	if err := manager.SaveWebAuthnCredential(auth, credential); err != nil {
+		t.Fatalf("SaveWebAuthnCredential() error = %v", err)
+	}
+
+	if client.saveWebAuthnRequests != 1 {
+		t.Fatalf("save WebAuthn calls = %d, want 1", client.saveWebAuthnRequests)
+	}
+
+	assertRemoteCredential(t, client.saveWebAuthnRequest.GetCredential(), credential)
+	assertRemoteIdempotencyKey(t, client.saveWebAuthnRequest.GetIdempotencyKey(), remoteTestWebAuthnSaveKey)
+}
+
+func assertRemoteWebAuthnUpdate(
+	t *testing.T,
+	manager *Manager,
+	auth *core.AuthState,
+	client *fakeAuthorityClient,
+	mock redismock.ClientMock,
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) {
+	t.Helper()
+
+	mock.ExpectDel("nt:webauthn:user:alice").SetVal(1)
+
+	if err := manager.UpdateWebAuthnCredential(auth, oldCredential, newCredential); err != nil {
+		t.Fatalf("UpdateWebAuthnCredential() error = %v", err)
+	}
+
+	if client.updateWebAuthnRequests != 1 {
+		t.Fatalf("update WebAuthn calls = %d, want 1", client.updateWebAuthnRequests)
+	}
+
+	assertRemoteCredential(t, client.updateWebAuthnRequest.GetOldCredential(), oldCredential)
+	assertRemoteCredential(t, client.updateWebAuthnRequest.GetNewCredential(), newCredential)
+	assertRemoteIdempotencyKey(t, client.updateWebAuthnRequest.GetIdempotencyKey(), remoteTestWebAuthnUpdateKey)
+}
+
+func assertRemoteWebAuthnDelete(
+	t *testing.T,
+	manager *Manager,
+	auth *core.AuthState,
+	client *fakeAuthorityClient,
+	mock redismock.ClientMock,
+	credential *mfa.PersistentCredential,
+) {
+	t.Helper()
+
+	mock.ExpectDel("nt:webauthn:user:alice").SetVal(1)
+
+	if err := manager.DeleteWebAuthnCredential(auth, credential); err != nil {
+		t.Fatalf("DeleteWebAuthnCredential() error = %v", err)
+	}
+
+	if client.deleteWebAuthnRequests != 1 {
+		t.Fatalf("delete WebAuthn calls = %d, want 1", client.deleteWebAuthnRequests)
+	}
+
+	if !bytes.Equal(client.deleteWebAuthnRequest.GetCredentialId(), credential.ID) {
+		t.Fatalf("delete credential ID = %q, want %q", client.deleteWebAuthnRequest.GetCredentialId(), credential.ID)
+	}
+
+	assertRemoteIdempotencyKey(t, client.deleteWebAuthnRequest.GetIdempotencyKey(), remoteTestWebAuthnDeleteKey)
+}
+
+func TestManagerRemoteWebAuthnUpdateFailurePurgesCache(t *testing.T) {
+	client := &fakeAuthorityClient{
+		err: status.Error(codes.FailedPrecondition, "stale WebAuthn credential"),
+	}
+	manager := NewManagerForTest(
+		remoteTestBackendName,
+		remoteTestAuthorityName,
+		remoteBackendConfig(config.RemoteBackendOperationWebAuthnWrite),
+		client,
+	)
+	auth, mock := newRemoteAuthStateWithWebAuthnCacheMock(t)
+
+	mock.ExpectDel("nt:webauthn:user:alice").SetVal(1)
+
+	err := manager.UpdateWebAuthnCredential(
+		auth,
+		remoteWebAuthnCredential("credential-a", "Security key", 3),
+		remoteWebAuthnCredential("credential-a", "Security key", 4),
+	)
+	if err == nil {
+		t.Fatal("UpdateWebAuthnCredential() error = nil, want fail-closed authority error")
+	}
+
+	if client.updateWebAuthnRequests != 1 {
+		t.Fatalf("update WebAuthn calls = %d, want 1", client.updateWebAuthnRequests)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("redis expectations: %v", err)
+	}
+}
+
 func assertBeginTOTPRegistration(t *testing.T, manager *Manager, auth *core.AuthState, client *fakeAuthorityClient) core.TOTPRegistration {
 	t.Helper()
 
@@ -374,6 +516,34 @@ func assertRemoteRecoveryDeletion(t *testing.T, manager *Manager, auth *core.Aut
 
 	if got := client.deleteRecoveryRequest.GetIdempotencyKey(); got != remoteTestDeleteRecoveryKey {
 		t.Fatalf("delete recovery idempotency key = %q, want %s", got, remoteTestDeleteRecoveryKey)
+	}
+}
+
+func assertRemoteCredential(t *testing.T, got *identityv1.WebAuthnCredential, want *mfa.PersistentCredential) {
+	t.Helper()
+
+	if got == nil {
+		t.Fatal("credential = nil")
+	}
+
+	if !bytes.Equal(got.GetCredentialId(), want.ID) {
+		t.Fatalf("credential ID = %q, want %q", got.GetCredentialId(), want.ID)
+	}
+
+	if got.GetName() != want.Name {
+		t.Fatalf("credential name = %q, want %q", got.GetName(), want.Name)
+	}
+
+	if got.GetSignCount() != want.Authenticator.SignCount {
+		t.Fatalf("sign count = %d, want %d", got.GetSignCount(), want.Authenticator.SignCount)
+	}
+}
+
+func assertRemoteIdempotencyKey(t *testing.T, got string, want string) {
+	t.Helper()
+
+	if got != want {
+		t.Fatalf("idempotency key = %q, want %q", got, want)
 	}
 }
 
@@ -525,6 +695,48 @@ func newRemoteAuthStateWithRef(t *testing.T) *core.AuthState {
 	return auth
 }
 
+func newRemoteAuthStateWithWebAuthnCacheMock(t *testing.T) (*core.AuthState, redismock.ClientMock) {
+	t.Helper()
+
+	db, mock := redismock.NewClientMock()
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{
+				Prefix: "nt:",
+			},
+		},
+	}
+	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
+		Cfg:    cfg,
+		Logger: slog.Default(),
+		Redis:  rediscli.NewTestClient(db),
+	}).(*core.AuthState)
+	auth.Request.Username = "alice"
+	auth.Request.Protocol = config.NewProtocol("imap")
+	auth.Runtime.GUID = "remote-guid"
+	auth.Runtime.RemoteBackendRef = core.RemoteBackendRef{
+		Type:        remoteTestAuthorityBackendType,
+		Name:        remoteTestAuthorityBackendName,
+		Protocol:    "imap",
+		Authority:   remoteTestAuthorityName,
+		OpaqueToken: remoteTestBackendRefToken,
+	}
+
+	return auth, mock
+}
+
+func remoteWebAuthnCredential(id string, name string, signCount uint32) *mfa.PersistentCredential {
+	return &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte(id),
+			Authenticator: webauthn.Authenticator{
+				SignCount: signCount,
+			},
+		},
+		Name: name,
+	}
+}
+
 func remoteBackendRefProto() *commonv1.BackendRef {
 	return &commonv1.BackendRef{
 		Type:        remoteTestAuthorityBackendType,
@@ -569,6 +781,9 @@ type fakeAuthorityClient struct {
 	generateRecoveryRequest  *identityv1.GenerateRecoveryCodesRequest
 	useRecoveryRequest       *identityv1.UseRecoveryCodeRequest
 	deleteRecoveryRequest    *identityv1.DeleteRecoveryCodesRequest
+	saveWebAuthnRequest      *identityv1.SaveWebAuthnCredentialRequest
+	updateWebAuthnRequest    *identityv1.UpdateWebAuthnCredentialRequest
+	deleteWebAuthnRequest    *identityv1.DeleteWebAuthnCredentialRequest
 	err                      error
 	authRequests             int
 	lookupRequests           int
@@ -583,6 +798,9 @@ type fakeAuthorityClient struct {
 	useRecoveryRequests      int
 	deleteRecoveryRequests   int
 	webauthnRequests         int
+	saveWebAuthnRequests     int
+	updateWebAuthnRequests   int
+	deleteWebAuthnRequests   int
 }
 
 func (c *fakeAuthorityClient) Authenticate(_ context.Context, _ *authv1.AuthRequest) (*authv1.AuthResponse, error) {
@@ -744,4 +962,46 @@ func (c *fakeAuthorityClient) GetWebAuthnCredentials(
 	}
 
 	return c.webauthnResponse, nil
+}
+
+func (c *fakeAuthorityClient) SaveWebAuthnCredential(
+	_ context.Context,
+	request *identityv1.SaveWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	c.saveWebAuthnRequests++
+	c.saveWebAuthnRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.writeResponse, nil
+}
+
+func (c *fakeAuthorityClient) UpdateWebAuthnCredential(
+	_ context.Context,
+	request *identityv1.UpdateWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	c.updateWebAuthnRequests++
+	c.updateWebAuthnRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.writeResponse, nil
+}
+
+func (c *fakeAuthorityClient) DeleteWebAuthnCredential(
+	_ context.Context,
+	request *identityv1.DeleteWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	c.deleteWebAuthnRequests++
+	c.deleteWebAuthnRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.writeResponse, nil
 }

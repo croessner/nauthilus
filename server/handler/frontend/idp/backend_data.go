@@ -25,6 +25,16 @@ type UserBackendData struct {
 	AuthState        *core.AuthState
 }
 
+// UsesRemoteWebAuthnAuthority reports whether WebAuthn writes must stay authority-owned.
+func (d *UserBackendData) UsesRemoteWebAuthnAuthority() bool {
+	if d == nil || d.AuthState == nil {
+		return false
+	}
+
+	return d.AuthState.Runtime.UsedPassDBBackend == definitions.BackendRemote ||
+		!d.AuthState.Runtime.RemoteBackendRef.IsZero()
+}
+
 type webAuthnCredentialProvider interface {
 	GetWebAuthnCredentials() ([]mfa.PersistentCredential, error)
 }

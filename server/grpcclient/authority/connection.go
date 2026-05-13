@@ -33,6 +33,9 @@ type Client interface {
 	UseRecoveryCode(ctx context.Context, request *identityv1.UseRecoveryCodeRequest) (*identityv1.UseRecoveryCodeResponse, error)
 	DeleteRecoveryCodes(ctx context.Context, request *identityv1.DeleteRecoveryCodesRequest) (*identityv1.MFAWriteResponse, error)
 	GetWebAuthnCredentials(ctx context.Context, request *identityv1.GetWebAuthnCredentialsRequest) (*identityv1.WebAuthnCredentialsResponse, error)
+	SaveWebAuthnCredential(ctx context.Context, request *identityv1.SaveWebAuthnCredentialRequest) (*identityv1.MFAWriteResponse, error)
+	UpdateWebAuthnCredential(ctx context.Context, request *identityv1.UpdateWebAuthnCredentialRequest) (*identityv1.MFAWriteResponse, error)
+	DeleteWebAuthnCredential(ctx context.Context, request *identityv1.DeleteWebAuthnCredentialRequest) (*identityv1.MFAWriteResponse, error)
 }
 
 // ConnectionManagerOptions contains dependencies for an authority connection.
@@ -144,6 +147,27 @@ func (a serviceClientAdapter) GetWebAuthnCredentials(
 	request *identityv1.GetWebAuthnCredentialsRequest,
 ) (*identityv1.WebAuthnCredentialsResponse, error) {
 	return a.identity.GetWebAuthnCredentials(ctx, request)
+}
+
+func (a serviceClientAdapter) SaveWebAuthnCredential(
+	ctx context.Context,
+	request *identityv1.SaveWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return a.identity.SaveWebAuthnCredential(ctx, request)
+}
+
+func (a serviceClientAdapter) UpdateWebAuthnCredential(
+	ctx context.Context,
+	request *identityv1.UpdateWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return a.identity.UpdateWebAuthnCredential(ctx, request)
+}
+
+func (a serviceClientAdapter) DeleteWebAuthnCredential(
+	ctx context.Context,
+	request *identityv1.DeleteWebAuthnCredentialRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return a.identity.DeleteWebAuthnCredential(ctx, request)
 }
 
 // NewConnectionManager creates an outbound authority gRPC client connection.

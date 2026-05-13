@@ -690,6 +690,7 @@ func (a *AuthState) GetWebAuthnCredentials() (credentials []mfa.PersistentCreden
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
@@ -735,6 +736,7 @@ func (a *AuthState) SaveWebAuthnCredential(credential *mfa.PersistentCredential)
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
@@ -777,6 +779,7 @@ func (a *AuthState) DeleteWebAuthnCredential(credential *mfa.PersistentCredentia
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
@@ -816,6 +819,7 @@ func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCreden
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
