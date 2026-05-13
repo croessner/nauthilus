@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -172,10 +173,19 @@ func (s *backendManagerIdentityService) ResolveUser(ctx context.Context, input A
 		return nil, err
 	}
 
+	release := releaseRequestedAttributes(
+		outcome.Attributes,
+		input.Attributes,
+		outcome.TOTPSecretField,
+		outcome.TOTPRecoveryField,
+	)
+
 	return &AuthorityIdentityResult{
-		Status:  authDecisionStatus(outcome.Decision, outcome.StatusMessage, outcome.Error),
-		User:    userSnapshotFromOutcome(input, outcome, backend, mfaState),
-		Backend: backend,
+		Status:            authDecisionStatus(outcome.Decision, outcome.StatusMessage, outcome.Error),
+		User:              userSnapshotFromOutcomeWithAttributes(input, outcome, backend, mfaState, release.Attributes),
+		Backend:           backend,
+		MissingAttributes: release.Missing,
+		DeniedAttributes:  release.Denied,
 	}, nil
 }
 
@@ -225,21 +235,41 @@ func userSnapshotFromOutcome(
 	backend BackendRefPayload,
 	mfaState AuthorityMFAState,
 ) *AuthorityUserSnapshot {
+	release := releaseRequestedAttributes(
+		outcome.Attributes,
+		input.Attributes,
+		outcome.TOTPSecretField,
+		outcome.TOTPRecoveryField,
+	)
+
+	return userSnapshotFromOutcomeWithAttributes(input, outcome, backend, mfaState, release.Attributes)
+}
+
+func userSnapshotFromOutcomeWithAttributes(
+	input AuthorityIdentityInput,
+	outcome *core.AuthOutcome,
+	backend BackendRefPayload,
+	mfaState AuthorityMFAState,
+	attributes map[string][]string,
+) *AuthorityUserSnapshot {
+	uniqueUserID := ""
+	displayName := ""
+
+	if standardIdentityRequested(input.Attributes) {
+		uniqueUserID = firstAttributeValue(outcome.Attributes, outcome.UniqueUserIDField, "")
+		displayName = firstAttributeValue(outcome.Attributes, outcome.DisplayNameField, backend.Account)
+	}
+
 	return &AuthorityUserSnapshot{
 		Username:     input.Username,
 		Account:      backend.Account,
-		UniqueUserID: firstAttributeValue(outcome.Attributes, outcome.UniqueUserIDField, ""),
-		DisplayName:  firstAttributeValue(outcome.Attributes, outcome.DisplayNameField, backend.Account),
-		Attributes: releasedAttributes(
-			outcome.Attributes,
-			input.Attributes,
-			outcome.TOTPSecretField,
-			outcome.TOTPRecoveryField,
-		),
-		Groups:   groupsForRequest(outcome.Groups, input.Attributes),
-		GroupDNS: groupDNSForRequest(outcome.GroupDNS, input.Attributes),
-		Backend:  backend,
-		MFA:      mfaState,
+		UniqueUserID: uniqueUserID,
+		DisplayName:  displayName,
+		Attributes:   attributes,
+		Groups:       groupsForRequest(outcome.Groups, input.Attributes),
+		GroupDNS:     groupDNSForRequest(outcome.GroupDNS, input.Attributes),
+		Backend:      backend,
+		MFA:          mfaState,
 	}
 }
 
@@ -656,38 +686,88 @@ func backendTypeFromRef(value string) definitions.Backend {
 	}
 }
 
-func releasedAttributes(attributes bktype.AttributeMapping, request *identityv1.AttributeRequest, deniedNames ...string) map[string][]string {
-	if len(attributes) == 0 {
-		return nil
-	}
-
-	denied := deniedAttributeSet(deniedNames...)
-	if request == nil || len(request.GetNames()) == 0 {
-		return allAttributes(attributes, denied)
-	}
-
-	result := make(map[string][]string, len(request.GetNames()))
-	for _, name := range request.GetNames() {
-		if _, deny := denied[name]; deny {
-			continue
-		}
-
-		if values, ok := attributes[name]; ok {
-			result[name] = stringifyAttributeValues(values)
-		}
-	}
-
-	return result
+type attributeRelease struct {
+	Attributes map[string][]string
+	Missing    []string
+	Denied     []string
 }
 
-func allAttributes(attributes bktype.AttributeMapping, denied map[string]struct{}) map[string][]string {
-	result := make(map[string][]string, len(attributes))
-	for name, values := range attributes {
-		if _, deny := denied[name]; deny {
+func releaseRequestedAttributes(attributes bktype.AttributeMapping, request *identityv1.AttributeRequest, deniedNames ...string) attributeRelease {
+	release := attributeRelease{}
+	if request == nil || len(request.GetNames()) == 0 {
+		return release
+	}
+
+	reportDiagnostics := request.GetReportMissing()
+	denied := deniedAttributeSet(deniedNames...)
+	released := make(map[string][]string, len(request.GetNames()))
+
+	for _, name := range uniqueRequestedAttributeNames(request.GetNames()) {
+		release.applyRequestedAttribute(name, attributes, released, denied, reportDiagnostics)
+	}
+
+	if len(released) > 0 {
+		release.Attributes = released
+	}
+
+	return release
+}
+
+func (r *attributeRelease) applyRequestedAttribute(
+	name string,
+	attributes bktype.AttributeMapping,
+	released map[string][]string,
+	denied map[string]struct{},
+	reportDiagnostics bool,
+) {
+	if isFirstClassIdentityAttributeName(name) {
+		return
+	}
+
+	if isDeniedAttributeName(name, denied) {
+		r.recordDenied(name, reportDiagnostics)
+
+		return
+	}
+
+	values, ok := attributes[name]
+	if !ok || len(values) == 0 {
+		r.recordMissing(name, reportDiagnostics)
+
+		return
+	}
+
+	released[name] = stringifyAttributeValues(values)
+}
+
+func (r *attributeRelease) recordDenied(name string, reportDiagnostics bool) {
+	if reportDiagnostics {
+		r.Denied = append(r.Denied, name)
+	}
+}
+
+func (r *attributeRelease) recordMissing(name string, reportDiagnostics bool) {
+	if reportDiagnostics {
+		r.Missing = append(r.Missing, name)
+	}
+}
+
+func uniqueRequestedAttributeNames(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	result := make([]string, 0, len(names))
+
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
 			continue
 		}
 
-		result[name] = stringifyAttributeValues(values)
+		if _, duplicate := seen[name]; duplicate {
+			continue
+		}
+
+		seen[name] = struct{}{}
+		result = append(result, name)
 	}
 
 	return result
@@ -709,7 +789,7 @@ func deniedAttributeSet(names ...string) map[string]struct{} {
 }
 
 func groupsForRequest(groups []string, request *identityv1.AttributeRequest) []string {
-	if request == nil || request.GetIncludeGroups() {
+	if request != nil && request.GetIncludeGroups() {
 		return append([]string(nil), groups...)
 	}
 
@@ -717,11 +797,39 @@ func groupsForRequest(groups []string, request *identityv1.AttributeRequest) []s
 }
 
 func groupDNSForRequest(groupDNS []string, request *identityv1.AttributeRequest) []string {
-	if request == nil || request.GetIncludeGroupDns() {
+	if request != nil && request.GetIncludeGroupDns() {
 		return append([]string(nil), groupDNS...)
 	}
 
 	return nil
+}
+
+func standardIdentityRequested(request *identityv1.AttributeRequest) bool {
+	return request == nil || request.GetIncludeStandardIdentity()
+}
+
+func isFirstClassIdentityAttributeName(name string) bool {
+	switch name {
+	case "groups", "group_dns":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDeniedAttributeName(name string, configured map[string]struct{}) bool {
+	if _, denied := configured[name]; denied {
+		return true
+	}
+
+	lower := strings.ToLower(name)
+
+	return strings.Contains(lower, "totp") ||
+		strings.Contains(lower, "recovery") ||
+		strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "privatekey") ||
+		strings.Contains(lower, "private_key") ||
+		strings.Contains(lower, "bearer")
 }
 
 func firstAttributeValue(attributes bktype.AttributeMapping, field string, fallback string) string {

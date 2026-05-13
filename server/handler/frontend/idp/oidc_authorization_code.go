@@ -233,16 +233,16 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
+	requestedScopes := strings.Split(scope, " ")
+	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
+
 	// User is logged in.
-	user, err := h.idp.GetUserByUsername(ctx, account, clientID, "")
+	user, err := h.idp.GetUserByUsernameForOIDCClaims(ctx, account, client, filteredScopes)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error loading user details")
 
 		return
 	}
-
-	requestedScopes := strings.Split(scope, " ")
-	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
 
 	idTokenClaims, accessTokenClaims, err := h.idp.GetClaims(ctx, user, client, filteredScopes)
 	if err != nil {
@@ -547,7 +547,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 			return
 		}
 
-		user, userErr := h.idp.GetUserByUsername(ctx, session.Username, session.ClientID, "")
+		user, userErr := h.idp.GetUserByUsernameForOIDCClaims(ctx, session.Username, client, grantedScopes)
 		if userErr != nil {
 			ctx.String(http.StatusInternalServerError, "Internal error loading user details")
 

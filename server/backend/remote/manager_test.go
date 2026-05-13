@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	authv1 "github.com/croessner/nauthilus/server/grpcapi/auth/v1"
 	commonv1 "github.com/croessner/nauthilus/server/grpcapi/common/v1"
 	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
+	authorityclient "github.com/croessner/nauthilus/server/grpcclient/authority"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
@@ -35,8 +37,15 @@ const (
 	remoteTestAuthorityBackendName = "primary"
 	remoteTestBackendRefToken      = "opaque-ref"
 	remoteTestBufconnRefToken      = "bufconn-ref"
+	remoteTestUsername             = "alice"
+	remoteTestAccount              = "alice@example.test"
+	remoteTestUniqueUserID         = "alice-uid"
+	remoteTestDisplayName          = "Alice Example"
 	remoteTestAccountA             = "a@example.test"
 	remoteTestAccountB             = "b@example.test"
+	remoteTestDepartmentNumber     = "departmentNumber"
+	remoteTestEmployeeNumber       = "employeeNumber"
+	remoteTestSAMLGroupDN          = "cn=developers,ou=groups,dc=example,dc=test"
 	remoteTestTOTPCode             = "123456"
 	remoteTestTOTPSetupSecret      = "JBSWY3DPEHPK3PXP"
 	remoteTestTOTPSetupURL         = "otpauth://totp/Nauthilus:alice?secret=JBSWY3DPEHPK3PXP"
@@ -72,7 +81,7 @@ func TestManagerPassDBAuthenticatesAndBindsBackendRef(t *testing.T) {
 			TotpSecretField: "totp",
 			Backend:         uint32(definitions.BackendLDAP),
 			Attributes: map[string]*commonv1.AttributeValues{
-				remoteTestAccountField: {Values: []string{"alice@example.test"}},
+				remoteTestAccountField: {Values: []string{remoteTestAccount}},
 			},
 			BackendRef: &commonv1.BackendRef{
 				Type:        remoteTestAuthorityBackendType,
@@ -135,6 +144,115 @@ func TestManagerPassDBUsesLookupForNoAuth(t *testing.T) {
 
 	if client.authRequests != 0 || client.lookupRequests != 1 {
 		t.Fatalf("auth calls=%d lookup calls=%d, want 0/1", client.authRequests, client.lookupRequests)
+	}
+}
+
+func TestManagerPassDBResolvesOIDCRequestedAttributesThroughAuthority(t *testing.T) {
+	client := newResolveUserAuthorityClient(
+		definitions.ProtoOIDC,
+		map[string]*commonv1.AttributeValues{
+			remoteTestAccountField:     {Values: []string{remoteTestAccount}},
+			remoteTestDepartmentNumber: {Values: []string{"42"}},
+		},
+		[]string{"developers"},
+		nil,
+	)
+	manager := newResolveUserManager(client)
+	auth := newRemoteAuthState(t, true)
+	auth.Request.Protocol.Set(definitions.ProtoOIDC)
+	auth.Runtime.IdentityAttributeRequest = &core.IdentityAttributeRequest{
+		Names:                   []string{remoteTestDepartmentNumber, remoteTestAccountField},
+		IncludeStandardIdentity: true,
+		IncludeGroups:           true,
+		ReportMissing:           true,
+	}
+
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		t.Fatalf("PassDB() error = %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	assertResolveOnly(t, client)
+
+	request := client.resolveUserRequest
+	if request == nil {
+		t.Fatal("ResolveUser request was not captured")
+	}
+
+	attributes := request.GetAttributes()
+	if attributes == nil {
+		t.Fatal("ResolveUser attributes = nil, want requested claim attributes")
+	}
+
+	if got := attributes.GetNames(); !slices.Equal(got, []string{remoteTestDepartmentNumber, remoteTestAccountField}) {
+		t.Fatalf("requested attribute names = %#v, want departmentNumber/mail", got)
+	}
+
+	if !attributes.GetIncludeStandardIdentity() || !attributes.GetIncludeGroups() || attributes.GetIncludeGroupDns() {
+		t.Fatalf("requested identity flags = standard:%v groups:%v group_dns:%v, want true/true/false",
+			attributes.GetIncludeStandardIdentity(),
+			attributes.GetIncludeGroups(),
+			attributes.GetIncludeGroupDns(),
+		)
+	}
+
+	if !attributes.GetReportMissing() {
+		t.Fatal("ReportMissing = false, want true for edge claim materialization")
+	}
+
+	if _, ok := result.Attributes["unrequestedRaw"]; ok {
+		t.Fatal("remote result exposed unrequestedRaw")
+	}
+
+	if got := result.Attributes[remoteTestAccountField]; !slices.Equal(anyStrings(got), []string{remoteTestAccount}) {
+		t.Fatalf("mail attribute = %#v, want alice@example.test", got)
+	}
+}
+
+func TestManagerPassDBResolvesSAMLRequestedAttributesThroughAuthority(t *testing.T) {
+	client := newResolveUserAuthorityClient(
+		definitions.ProtoSAML,
+		map[string]*commonv1.AttributeValues{
+			remoteTestAccountField:   {Values: []string{remoteTestAccount}},
+			remoteTestEmployeeNumber: {Values: []string{"1234"}},
+		},
+		nil,
+		[]string{remoteTestSAMLGroupDN},
+	)
+	manager := newResolveUserManager(client)
+	auth := newRemoteAuthState(t, true)
+	auth.Request.Protocol.Set(definitions.ProtoSAML)
+	auth.Request.SAMLEntityID = "https://sp.example.test/metadata"
+	auth.Runtime.IdentityAttributeRequest = &core.IdentityAttributeRequest{
+		Names:                   []string{remoteTestEmployeeNumber, remoteTestAccountField},
+		IncludeStandardIdentity: true,
+		IncludeGroupDNS:         true,
+		ReportMissing:           true,
+	}
+
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		t.Fatalf("PassDB() error = %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	assertResolveOnly(t, client)
+
+	attributes := client.resolveUserRequest.GetAttributes()
+	if got := attributes.GetNames(); !slices.Equal(got, []string{remoteTestEmployeeNumber, remoteTestAccountField}) {
+		t.Fatalf("requested SAML attribute names = %#v, want employeeNumber/mail", got)
+	}
+
+	if attributes.GetIncludeGroups() || !attributes.GetIncludeGroupDns() {
+		t.Fatalf("requested SAML group flags = groups:%v group_dns:%v, want false/true",
+			attributes.GetIncludeGroups(),
+			attributes.GetIncludeGroupDns(),
+		)
+	}
+
+	if got := result.GroupDNs; !slices.Equal(got, []string{remoteTestSAMLGroupDN}) {
+		t.Fatalf("group DNs = %#v, want first-class SAML group DNs", got)
 	}
 }
 
@@ -747,10 +865,70 @@ func remoteBackendRefProto() *commonv1.BackendRef {
 	}
 }
 
+func newResolveUserAuthorityClient(
+	protocol string,
+	attributes map[string]*commonv1.AttributeValues,
+	groups []string,
+	groupDNS []string,
+) *fakeAuthorityClient {
+	return &fakeAuthorityClient{
+		resolveResponse: &identityv1.UserSnapshotResponse{
+			Status: okRemoteOperationStatus(),
+			User: &identityv1.UserSnapshot{
+				Username:     remoteTestUsername,
+				Account:      remoteTestAccount,
+				UniqueUserId: remoteTestUniqueUserID,
+				DisplayName:  remoteTestDisplayName,
+				Attributes:   attributes,
+				Groups:       groups,
+				GroupDns:     groupDNS,
+				Backend: &commonv1.BackendRef{
+					Type:        remoteTestAuthorityBackendType,
+					Name:        remoteTestAuthorityBackendName,
+					Protocol:    protocol,
+					Authority:   remoteTestAuthorityName,
+					OpaqueToken: remoteTestBackendRefToken,
+				},
+			},
+		},
+	}
+}
+
+func newResolveUserManager(client authorityclient.Client) *Manager {
+	return NewManagerForTest(
+		remoteTestBackendName,
+		remoteTestAuthorityName,
+		remoteBackendConfig(
+			config.RemoteBackendOperationLookupIdentity,
+			config.RemoteBackendOperationAttributeRead,
+		),
+		client,
+	)
+}
+
+func assertResolveOnly(t *testing.T, client *fakeAuthorityClient) {
+	t.Helper()
+
+	if client.resolveRequests != 1 || client.lookupRequests != 0 {
+		t.Fatalf("resolve calls=%d lookup calls=%d, want 1/0", client.resolveRequests, client.lookupRequests)
+	}
+}
+
 func okRemoteOperationStatus() *commonv1.OperationStatus {
 	return &commonv1.OperationStatus{
 		Result: commonv1.OperationResult_OPERATION_RESULT_OK,
 	}
+}
+
+func anyStrings(values []any) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			result = append(result, text)
+		}
+	}
+
+	return result
 }
 
 func remoteBackendConfig(operations ...string) *config.RemoteBackendSection {
@@ -784,6 +962,7 @@ type fakeAuthorityClient struct {
 	saveWebAuthnRequest      *identityv1.SaveWebAuthnCredentialRequest
 	updateWebAuthnRequest    *identityv1.UpdateWebAuthnCredentialRequest
 	deleteWebAuthnRequest    *identityv1.DeleteWebAuthnCredentialRequest
+	resolveUserRequest       *identityv1.ResolveUserRequest
 	err                      error
 	authRequests             int
 	lookupRequests           int
@@ -833,8 +1012,9 @@ func (c *fakeAuthorityClient) ListAccounts(_ context.Context, _ *authv1.ListAcco
 	return c.listResponse, nil
 }
 
-func (c *fakeAuthorityClient) ResolveUser(_ context.Context, _ *identityv1.ResolveUserRequest) (*identityv1.UserSnapshotResponse, error) {
+func (c *fakeAuthorityClient) ResolveUser(_ context.Context, request *identityv1.ResolveUserRequest) (*identityv1.UserSnapshotResponse, error) {
 	c.resolveRequests++
+	c.resolveUserRequest = request
 
 	if c.err != nil {
 		return nil, c.err

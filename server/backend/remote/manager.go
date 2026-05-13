@@ -147,7 +147,16 @@ func (m *Manager) PassDB(auth *core.AuthState) (*core.PassDBResult, error) {
 		}
 
 		if m.shouldResolveUserSnapshot(auth) {
-			response, err := m.client.ResolveUser(ctx, m.resolveUserRequest(dto, false))
+			request, err := m.resolveUserRequest(auth, false)
+			if err != nil {
+				return nil, err
+			}
+
+			if err = m.ensureResolveUserAllowed(request.GetAttributes()); err != nil {
+				return nil, err
+			}
+
+			response, err := m.client.ResolveUser(ctx, request)
 			if err != nil {
 				return nil, mapAuthorityError(err)
 			}
@@ -700,17 +709,86 @@ func (m *Manager) shouldResolveUserSnapshot(auth *core.AuthState) bool {
 		return false
 	}
 
-	return auth.Request.Protocol.Get() == definitions.ProtoIDP
+	switch auth.Request.Protocol.Get() {
+	case definitions.ProtoIDP, definitions.ProtoOIDC, definitions.ProtoSAML:
+		return true
+	default:
+		return false
+	}
 }
 
-func (m *Manager) resolveUserRequest(dto authdto.Request, includeMFAState bool) *identityv1.ResolveUserRequest {
-	return &identityv1.ResolveUserRequest{
+func (m *Manager) resolveUserRequest(auth *core.AuthState, includeMFAState bool) (*identityv1.ResolveUserRequest, error) {
+	dto := authDTOFromState(auth)
+	request := &identityv1.ResolveUserRequest{
 		Context:                    identityv1.DTOToRequestContext(dto),
 		Username:                   dto.Username,
-		Attributes:                 &identityv1.AttributeRequest{IncludeStandardIdentity: true, IncludeGroups: true, IncludeGroupDns: true},
+		Attributes:                 identityAttributeRequestToProto(defaultIdentityAttributeRequest(auth)),
 		IncludeMfaState:            includeMFAState,
 		IncludeWebauthnCredentials: includeMFAState,
 	}
+
+	if auth != nil && !auth.Runtime.RemoteBackendRef.IsZero() {
+		ref, err := backendRefToProto(auth)
+		if err != nil {
+			return nil, err
+		}
+
+		request.Backend = ref
+	}
+
+	return request, nil
+}
+
+func (m *Manager) ensureResolveUserAllowed(attributes *identityv1.AttributeRequest) error {
+	if m == nil || m.cfg == nil || !m.cfg.AllowsOperation(config.RemoteBackendOperationLookupIdentity) {
+		return ErrRemoteOperationDenied
+	}
+
+	if resolveUserRequestNeedsAttributeRead(attributes) && !m.cfg.AllowsOperation(config.RemoteBackendOperationAttributeRead) {
+		return ErrRemoteOperationDenied
+	}
+
+	return nil
+}
+
+func defaultIdentityAttributeRequest(auth *core.AuthState) *core.IdentityAttributeRequest {
+	if auth != nil && auth.Runtime.IdentityAttributeRequest != nil {
+		return auth.Runtime.IdentityAttributeRequest.Clone()
+	}
+
+	request := &core.IdentityAttributeRequest{IncludeStandardIdentity: true}
+	if auth == nil || auth.Request.Protocol == nil || auth.Request.Protocol.Get() == definitions.ProtoIDP {
+		request.IncludeGroups = true
+		request.IncludeGroupDNS = true
+	}
+
+	return request
+}
+
+func identityAttributeRequestToProto(request *core.IdentityAttributeRequest) *identityv1.AttributeRequest {
+	if request == nil {
+		return nil
+	}
+
+	return &identityv1.AttributeRequest{
+		Names:                   append([]string(nil), request.Names...),
+		IncludeStandardIdentity: request.IncludeStandardIdentity,
+		IncludeGroups:           request.IncludeGroups,
+		IncludeGroupDns:         request.IncludeGroupDNS,
+		ReportMissing:           request.ReportMissing,
+	}
+}
+
+func resolveUserRequestNeedsAttributeRead(attributes *identityv1.AttributeRequest) bool {
+	if attributes == nil {
+		return false
+	}
+
+	return len(attributes.GetNames()) > 0 ||
+		attributes.GetIncludeStandardIdentity() ||
+		attributes.GetIncludeGroups() ||
+		attributes.GetIncludeGroupDns() ||
+		attributes.GetReportMissing()
 }
 
 func (m *Manager) passDBResultFromResponse(response *authv1.AuthResponse, passwordAuth bool) (*core.PassDBResult, error) {

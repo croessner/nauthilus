@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -34,6 +35,15 @@ const (
 	authorityMFATestSecretField   = "test_totp_secret"
 	authorityMFATestRecoveryField = "test_totp_recovery"
 	authorityMFATestTOTPSecret    = "JBSWY3DPEHPK3PXP"
+	authorityAttributeMail        = "mail"
+	authorityAttributeEmployee    = "employeeNumber"
+	authorityAttributeMissing     = "missingAttribute"
+	authorityAttributePrivateKey  = "sshPrivateKey"
+	authorityAttributeRaw         = "unrequestedRawAttribute"
+	authorityAttributeSecret      = "oidcClientSecretFromBackend"
+	authorityAttributeBearer      = "upstreamBearerTokenAttribute"
+	authoritySnapshotMail         = "snapshot@example.test"
+	authorityEmployeeNumber       = "1234"
 )
 
 func TestBackendManagerIdentityServiceMFAStateDoesNotExposeStoredSecrets(t *testing.T) {
@@ -74,7 +84,7 @@ func TestAuthorityUserSnapshotFiltersMFASecretAttributes(t *testing.T) {
 		TOTPRecoveryField: authorityMFATestRecoveryField,
 		Backend:           definitions.BackendTest,
 		Attributes: bktype.AttributeMapping{
-			authorityTestUID:              []any{"snapshot@example.test"},
+			authorityTestUID:              []any{authoritySnapshotMail},
 			authorityMFATestSecretField:   []any{authorityMFATestTOTPSecret},
 			authorityMFATestRecoveryField: []any{authorityMFATestRecoveryCodeA, authorityMFATestRecoveryCodeB},
 		},
@@ -92,6 +102,76 @@ func TestAuthorityUserSnapshotFiltersMFASecretAttributes(t *testing.T) {
 	if _, ok := user.Attributes[authorityMFATestRecoveryField]; ok {
 		t.Fatalf("user snapshot exposed %s", authorityMFATestRecoveryField)
 	}
+}
+
+func TestAuthorityRequestedAttributeReleaseDoesNotDefaultToRawAttributes(t *testing.T) {
+	release := releaseRequestedAttributes(
+		bktype.AttributeMapping{
+			authorityTestUID:           []any{authoritySnapshotMail},
+			authorityAttributeMail:     []any{authoritySnapshotMail},
+			authorityAttributeEmployee: []any{authorityEmployeeNumber},
+		},
+		&identityv1.AttributeRequest{IncludeStandardIdentity: true},
+	)
+
+	if len(release.Attributes) != 0 {
+		t.Fatalf("released attributes = %#v, want no raw attributes without requested names", release.Attributes)
+	}
+}
+
+func TestAuthorityRequestedAttributeReleaseReportsDeniedAndMissingSafely(t *testing.T) {
+	release := releaseRequestedAttributes(
+		bktype.AttributeMapping{
+			authorityAttributeMail:        []any{authoritySnapshotMail},
+			authorityAttributeEmployee:    []any{authorityEmployeeNumber},
+			authorityMFATestSecretField:   []any{authorityMFATestTOTPSecret},
+			authorityMFATestRecoveryField: []any{authorityMFATestRecoveryCodeA},
+			authorityAttributePrivateKey:  []any{"private-key-material"},
+			authorityAttributeRaw:         []any{"must-not-leak"},
+			authorityAttributeSecret:      []any{"client-secret"},
+			authorityAttributeBearer:      []any{"bearer-token"},
+		},
+		&identityv1.AttributeRequest{
+			Names: []string{
+				authorityAttributeMail,
+				authorityAttributeMissing,
+				authorityMFATestSecretField,
+				authorityMFATestRecoveryField,
+				authorityAttributePrivateKey,
+				authorityAttributeSecret,
+				authorityAttributeBearer,
+			},
+			ReportMissing: true,
+		},
+		authorityMFATestSecretField,
+		authorityMFATestRecoveryField,
+	)
+
+	if got := release.Attributes[authorityAttributeMail]; len(got) != 1 || got[0] != authoritySnapshotMail {
+		t.Fatalf("released mail = %#v, want snapshot@example.test", got)
+	}
+
+	for _, name := range []string{
+		authorityMFATestSecretField,
+		authorityMFATestRecoveryField,
+		authorityAttributePrivateKey,
+		authorityAttributeSecret,
+		authorityAttributeBearer,
+		authorityAttributeRaw,
+	} {
+		if _, ok := release.Attributes[name]; ok {
+			t.Fatalf("released sensitive or unrequested attribute %q", name)
+		}
+	}
+
+	assertSameStringSet(t, release.Missing, []string{authorityAttributeMissing})
+	assertSameStringSet(t, release.Denied, []string{
+		authorityMFATestSecretField,
+		authorityMFATestRecoveryField,
+		authorityAttributeSecret,
+		authorityAttributePrivateKey,
+		authorityAttributeBearer,
+	})
 }
 
 func TestBackendManagerIdentityServiceConsumesRecoveryCodeOnce(t *testing.T) {
@@ -156,6 +236,25 @@ func TestBackendManagerIdentityServiceWebAuthnUpdateComparesPersistentState(t *t
 	credentials := readAuthorityWebAuthnCredentials(t, deps, backendName, username)
 	if len(credentials) != 1 || credentials[0].Name != "Renamed key" || credentials[0].Authenticator.SignCount != 11 {
 		t.Fatalf("credentials after update = %#v, want renamed sign-count 11 credential", credentials)
+	}
+}
+
+func assertSameStringSet(t *testing.T, got []string, want []string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("string set = %#v, want %#v", got, want)
+	}
+
+	index := make(map[string]struct{}, len(got))
+	for _, value := range got {
+		index[value] = struct{}{}
+	}
+
+	for _, value := range want {
+		if _, ok := index[value]; !ok {
+			t.Fatalf("string set = %#v, missing %q", got, value)
+		}
 	}
 }
 

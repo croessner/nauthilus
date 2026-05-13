@@ -554,6 +554,7 @@ func newBackendDataRemoteConfig(t *testing.T) *config.FileSettings {
 						Mode:      config.RemoteBackendModeNauthilus,
 						AllowedOperations: []string{
 							config.RemoteBackendOperationLookupIdentity,
+							config.RemoteBackendOperationAttributeRead,
 							config.RemoteBackendOperationMFARead,
 							config.RemoteBackendOperationWebAuthnRead,
 						},

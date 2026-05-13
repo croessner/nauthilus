@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/cookie"
@@ -76,6 +77,7 @@ const (
 	defaultSLORateLimitBurst     = 20
 	sloMaxInboundMessageBytes    = 512 * 1024
 	sloMaxInboundBodyBytes       = 1024 * 1024
+	samlAttributeTypeString      = "xs:string"
 )
 
 var (
@@ -621,7 +623,14 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 		issuerValue = req.Request.Issuer.Value
 	}
 
-	user, err := h.idp.GetUserByUsername(ctx, username, "", issuerValue)
+	samlSP, ok := h.idp.FindSAMLServiceProvider(issuerValue)
+	if !ok {
+		ctx.String(http.StatusBadRequest, "Invalid SAML service provider")
+
+		return
+	}
+
+	user, err := h.idp.GetUserByUsernameForSAML(ctx, username, samlSP)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Failed to load user details: %v", err)
 
@@ -648,11 +657,14 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 	}
 
 	// Add attributes (filtered by allowed_attributes if configured)
-	samlSP, _ := h.idp.FindSAMLServiceProvider(issuerValue)
 	allowedAttrs := samlSP.GetAllowedAttributes()
 
 	for k, v := range user.Attributes {
 		if len(v) == 0 {
+			continue
+		}
+
+		if k == definitions.ClaimGroups || k == definitions.LuaBackendResultGroupDNs {
 			continue
 		}
 
@@ -664,12 +676,14 @@ func (h *SAMLHandler) SSO(ctx *gin.Context) {
 			Name: k,
 			Values: []saml.AttributeValue{
 				{
-					Type:  "xs:string",
+					Type:  samlAttributeTypeString,
 					Value: fmt.Sprintf("%v", v[0]),
 				},
 			},
 		})
 	}
+
+	appendFirstClassSAMLAttributes(&samlSession.CustomAttributes, user, allowedAttrs)
 
 	req.Now = time.Now().UTC()
 
@@ -1298,6 +1312,34 @@ func (h *SAMLHandler) performLocalSLOCleanupInternal(
 	}
 
 	return result
+}
+
+func appendFirstClassSAMLAttributes(attributes *[]saml.Attribute, user *backend.User, allowedAttrs []string) {
+	if attributes == nil || user == nil || len(allowedAttrs) == 0 {
+		return
+	}
+
+	appendSAMLStringValues(attributes, definitions.ClaimGroups, user.Groups, allowedAttrs)
+	appendSAMLStringValues(attributes, definitions.LuaBackendResultGroupDNs, user.GroupDNs, allowedAttrs)
+}
+
+func appendSAMLStringValues(attributes *[]saml.Attribute, name string, values []string, allowedAttrs []string) {
+	if len(values) == 0 || !slices.Contains(allowedAttrs, name) {
+		return
+	}
+
+	samlValues := make([]saml.AttributeValue, 0, len(values))
+	for _, value := range values {
+		samlValues = append(samlValues, saml.AttributeValue{
+			Type:  samlAttributeTypeString,
+			Value: value,
+		})
+	}
+
+	*attributes = append(*attributes, saml.Attribute{
+		Name:   name,
+		Values: samlValues,
+	})
 }
 
 func (h *SAMLHandler) redisPrefix() string {

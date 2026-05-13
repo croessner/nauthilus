@@ -505,6 +505,9 @@ type AuthRuntime struct {
 	// RemoteBackendRef binds follow-up identity operations to an authority-side backend.
 	RemoteBackendRef RemoteBackendRef
 
+	// IdentityAttributeRequest carries edge-side requested backend attributes for claim materialization.
+	IdentityAttributeRequest *IdentityAttributeRequest
+
 	// BackendName is the name of the backend used for authentication.
 	BackendName string
 
