@@ -16,10 +16,14 @@
 package idp
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"slices"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/model/mfa"
@@ -32,6 +36,7 @@ import (
 type MFAProvider interface {
 	GenerateTOTPSecret(ctx *gin.Context, username string) (string, string, error)
 	VerifyAndSaveTOTP(ctx *gin.Context, username string, secret string, code string, sourceBackend uint8) error
+	VerifyTOTP(ctx *gin.Context, username string, code string, sourceBackend uint8) (bool, error)
 	DeleteTOTP(ctx *gin.Context, username string, sourceBackend uint8) error
 	GenerateRecoveryCodes(ctx *gin.Context, username string, sourceBackend uint8) ([]string, error)
 	SaveRecoveryCodes(ctx *gin.Context, username string, codes []string, sourceBackend uint8) error
@@ -50,7 +55,38 @@ func NewMFAService(d *deps.Deps) *MFAService {
 }
 
 // GenerateTOTPSecret generates a new TOTP secret and returns the secret and QR code URL.
-func (s *MFAService) GenerateTOTPSecret(_ *gin.Context, username string) (string, string, error) {
+func (s *MFAService) GenerateTOTPSecret(ctx *gin.Context, username string) (string, string, error) {
+	sourceBackend := sourceBackendFromSession(ctx, uint8(definitions.BackendLDAP))
+	if sourceBackend == uint8(definitions.BackendRemote) {
+		auth, operations, err := s.remoteMFAOperations(ctx, username, sourceBackend)
+		if err != nil {
+			return "", "", err
+		}
+
+		beginKey, err := newMFAOperationID("totp-begin")
+		if err != nil {
+			return "", "", err
+		}
+
+		registration, err := operations.BeginTOTPRegistration(auth, beginKey)
+		if err != nil {
+			return "", "", err
+		}
+
+		if mgr := cookie.GetManager(ctx); mgr != nil {
+			mgr.Set(definitions.SessionKeyTOTPPendingRegistration, registration.PendingRegistrationID)
+
+			finishKey, keyErr := newMFAOperationID("totp-finish")
+			if keyErr != nil {
+				return "", "", keyErr
+			}
+
+			mgr.Set(definitions.SessionKeyTOTPOperationID, finishKey)
+		}
+
+		return registration.Secret, registration.OTPAuthURL, nil
+	}
+
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      s.deps.Cfg.GetServer().Frontend.GetTotpIssuer(),
 		AccountName: username,
@@ -64,17 +100,49 @@ func (s *MFAService) GenerateTOTPSecret(_ *gin.Context, username string) (string
 
 // VerifyAndSaveTOTP verifies the TOTP code and saves the secret to the backend.
 func (s *MFAService) VerifyAndSaveTOTP(ctx *gin.Context, username string, secret string, code string, sourceBackend uint8) error {
+	if sourceBackend == uint8(definitions.BackendRemote) {
+		auth, operations, err := s.remoteMFAOperations(ctx, username, sourceBackend)
+		if err != nil {
+			return err
+		}
+
+		mgr := cookie.GetManager(ctx)
+		pendingID := ""
+		idempotencyKey := ""
+
+		if mgr != nil {
+			pendingID = mgr.GetString(definitions.SessionKeyTOTPPendingRegistration, "")
+			idempotencyKey = mgr.GetString(definitions.SessionKeyTOTPOperationID, "")
+		}
+
+		if pendingID == "" || idempotencyKey == "" {
+			return errors.New("missing pending TOTP registration")
+		}
+
+		if err := operations.FinishTOTPRegistration(auth, pendingID, code, idempotencyKey); err != nil {
+			return err
+		}
+
+		if mgr != nil {
+			mgr.Delete(definitions.SessionKeyTOTPPendingRegistration)
+			mgr.Delete(definitions.SessionKeyTOTPOperationID)
+		}
+
+		return nil
+	}
+
 	if !totp.Validate(code, secret) {
 		return errors.New("invalid OTP code")
 	}
 
 	authDeps := s.deps.Auth()
-	mgr, err := s.getBackendManager(sourceBackend, authDeps)
+
+	dummyAuth, err := s.getAuthState(ctx, username)
 	if err != nil {
 		return err
 	}
 
-	dummyAuth, err := s.getAuthState(ctx, username)
+	mgr, err := s.getBackendManager(ctx, sourceBackend, authDeps, dummyAuth)
 	if err != nil {
 		return err
 	}
@@ -86,17 +154,64 @@ func (s *MFAService) VerifyAndSaveTOTP(ctx *gin.Context, username string, secret
 	return nil
 }
 
+// VerifyTOTP verifies a login TOTP code against the selected backend.
+func (s *MFAService) VerifyTOTP(ctx *gin.Context, username string, code string, sourceBackend uint8) (bool, error) {
+	if sourceBackend == uint8(definitions.BackendRemote) {
+		auth, operations, err := s.remoteMFAOperations(ctx, username, sourceBackend)
+		if err != nil {
+			return false, err
+		}
+
+		return operations.VerifyTOTP(auth, code)
+	}
+
+	authDeps := s.deps.Auth()
+
+	auth, err := s.getAuthState(ctx, username)
+	if err != nil {
+		return false, err
+	}
+
+	idpInstance := NewNauthilusIdP(s.deps)
+	oidcCID, samlEntityID := flowClientIdentifiers(ctx)
+
+	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
+	if err != nil {
+		return false, err
+	}
+
+	auth.ReplaceAllAttributes(user.Attributes)
+	auth.SetTOTPSecretField(user.TOTPSecretField)
+	auth.SetTOTPRecoveryField(user.TOTPRecoveryField)
+
+	if err = core.TotpValidation(ctx, auth, code, authDeps); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 // DeleteTOTP removes the TOTP secret from the backend.
 func (s *MFAService) DeleteTOTP(ctx *gin.Context, username string, sourceBackend uint8) error {
 	authDeps := s.deps.Auth()
-	mgr, err := s.getBackendManager(sourceBackend, authDeps)
-	if err != nil {
-		return err
-	}
 
 	dummyAuth, err := s.getAuthState(ctx, username)
 	if err != nil {
 		return err
+	}
+
+	mgr, err := s.getBackendManager(ctx, sourceBackend, authDeps, dummyAuth)
+	if err != nil {
+		return err
+	}
+
+	if operations, ok := mgr.(core.RemoteMFAOperations); ok {
+		key, err := newMFAOperationID("totp-delete")
+		if err != nil {
+			return err
+		}
+
+		return operations.DeleteTOTP(dummyAuth, key)
 	}
 
 	return mgr.DeleteTOTPSecret(dummyAuth)
@@ -105,14 +220,24 @@ func (s *MFAService) DeleteTOTP(ctx *gin.Context, username string, sourceBackend
 // GenerateRecoveryCodes generates new recovery codes and saves them to the backend.
 func (s *MFAService) GenerateRecoveryCodes(ctx *gin.Context, username string, sourceBackend uint8) ([]string, error) {
 	authDeps := s.deps.Auth()
-	mgr, err := s.getBackendManager(sourceBackend, authDeps)
-	if err != nil {
-		return nil, err
-	}
 
 	dummyAuth, err := s.getAuthState(ctx, username)
 	if err != nil {
 		return nil, err
+	}
+
+	mgr, err := s.getBackendManager(ctx, sourceBackend, authDeps, dummyAuth)
+	if err != nil {
+		return nil, err
+	}
+
+	if operations, ok := mgr.(core.RemoteMFAOperations); ok {
+		key, err := newMFAOperationID("recovery-generate")
+		if err != nil {
+			return nil, err
+		}
+
+		return operations.GenerateRecoveryCodes(dummyAuth, 0, key)
 	}
 
 	recovery, err := core.GenerateBackupCodes()
@@ -130,14 +255,19 @@ func (s *MFAService) GenerateRecoveryCodes(ctx *gin.Context, username string, so
 // SaveRecoveryCodes stores the provided recovery codes in the backend.
 func (s *MFAService) SaveRecoveryCodes(ctx *gin.Context, username string, codes []string, sourceBackend uint8) error {
 	authDeps := s.deps.Auth()
-	mgr, err := s.getBackendManager(sourceBackend, authDeps)
-	if err != nil {
-		return err
-	}
 
 	dummyAuth, err := s.getAuthState(ctx, username)
 	if err != nil {
 		return err
+	}
+
+	mgr, err := s.getBackendManager(ctx, sourceBackend, authDeps, dummyAuth)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := mgr.(core.RemoteMFAOperations); ok {
+		return nil
 	}
 
 	recovery := mfa.NewTOTPRecovery(codes)
@@ -152,14 +282,24 @@ func (s *MFAService) SaveRecoveryCodes(ctx *gin.Context, username string, codes 
 // UseRecoveryCode verifies a recovery code and removes it from the backend if valid.
 func (s *MFAService) UseRecoveryCode(ctx *gin.Context, username string, code string, sourceBackend uint8) (bool, error) {
 	authDeps := s.deps.Auth()
-	mgr, err := s.getBackendManager(sourceBackend, authDeps)
-	if err != nil {
-		return false, err
-	}
 
 	dummyAuth, err := s.getAuthState(ctx, username)
 	if err != nil {
 		return false, err
+	}
+
+	mgr, err := s.getBackendManager(ctx, sourceBackend, authDeps, dummyAuth)
+	if err != nil {
+		return false, err
+	}
+
+	if operations, ok := mgr.(core.RemoteMFAOperations); ok {
+		key, err := newMFAOperationID("recovery-use")
+		if err != nil {
+			return false, err
+		}
+
+		return operations.UseRecoveryCode(dummyAuth, code, key)
 	}
 
 	// We need to fetch the current codes.
@@ -199,12 +339,13 @@ func (s *MFAService) UseRecoveryCode(ctx *gin.Context, username string, code str
 // DeleteWebAuthnCredential removes a WebAuthn credential from the backend.
 func (s *MFAService) DeleteWebAuthnCredential(ctx *gin.Context, username string, credentialID string, sourceBackend uint8) error {
 	authDeps := s.deps.Auth()
-	mgr, err := s.getBackendManager(sourceBackend, authDeps)
+
+	dummyAuth, err := s.getAuthState(ctx, username)
 	if err != nil {
 		return err
 	}
 
-	dummyAuth, err := s.getAuthState(ctx, username)
+	mgr, err := s.getBackendManager(ctx, sourceBackend, authDeps, dummyAuth)
 	if err != nil {
 		return err
 	}
@@ -233,16 +374,93 @@ func (s *MFAService) getAuthState(ctx *gin.Context, username string) (*core.Auth
 
 	authState.SetUsername(username)
 
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		protocol := mgr.GetString(definitions.SessionKeyProtocol, "")
+		if protocol != "" {
+			authState.SetProtocol(config.NewProtocol(protocol))
+		}
+
+		if ref, ok := core.RemoteBackendRefFromSession(mgr); ok {
+			authState.Runtime.RemoteBackendRef = ref
+		}
+	}
+
 	return authState, nil
 }
 
-func (s *MFAService) getBackendManager(sourceBackend uint8, authDeps core.AuthDeps) (core.BackendManager, error) {
+func (s *MFAService) getBackendManager(ctx *gin.Context, sourceBackend uint8, authDeps core.AuthDeps, authState *core.AuthState) (core.BackendManager, error) {
 	switch sourceBackend {
 	case uint8(definitions.BackendLDAP):
 		return core.NewLDAPManager(definitions.DefaultBackendName, authDeps), nil
 	case uint8(definitions.BackendLua):
 		return core.NewLuaManager(definitions.DefaultBackendName, authDeps), nil
+	case uint8(definitions.BackendRemote):
+		backendName := definitions.DefaultBackendName
+		if mgr := cookie.GetManager(ctx); mgr != nil {
+			backendName = mgr.GetString(definitions.SessionKeyUserBackendName, backendName)
+		}
+
+		manager := authState.GetBackendManager(definitions.BackendRemote, backendName)
+		if manager != nil {
+			return manager, nil
+		}
+
+		return nil, errors.New("remote backend manager is unavailable")
 	default:
 		return nil, errors.New("unsupported backend")
 	}
+}
+
+func (s *MFAService) remoteMFAOperations(ctx *gin.Context, username string, sourceBackend uint8) (*core.AuthState, core.RemoteMFAOperations, error) {
+	authDeps := s.deps.Auth()
+
+	auth, err := s.getAuthState(ctx, username)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	manager, err := s.getBackendManager(ctx, sourceBackend, authDeps, auth)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	operations, ok := manager.(core.RemoteMFAOperations)
+	if !ok {
+		return nil, nil, errors.New("remote backend does not support MFA operations")
+	}
+
+	return auth, operations, nil
+}
+
+func sourceBackendFromSession(ctx *gin.Context, fallback uint8) uint8 {
+	if mgr := cookie.GetManager(ctx); mgr != nil {
+		return mgr.GetUint8(definitions.SessionKeyUserBackend, fallback)
+	}
+
+	return fallback
+}
+
+func flowClientIdentifiers(ctx *gin.Context) (string, string) {
+	mgr := cookie.GetManager(ctx)
+	if mgr == nil {
+		return "", ""
+	}
+
+	switch mgr.GetString(definitions.SessionKeyIdPFlowType, "") {
+	case definitions.ProtoOIDC:
+		return mgr.GetString(definitions.SessionKeyIdPClientID, ""), ""
+	case definitions.ProtoSAML:
+		return "", mgr.GetString(definitions.SessionKeyIdPSAMLEntityID, "")
+	default:
+		return "", ""
+	}
+}
+
+func newMFAOperationID(prefix string) (string, error) {
+	token := make([]byte, 18)
+	if _, err := rand.Read(token); err != nil {
+		return "", err
+	}
+
+	return prefix + ":" + base64.RawURLEncoding.EncodeToString(token), nil
 }

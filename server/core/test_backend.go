@@ -171,6 +171,7 @@ type testBackendManagerImpl struct {
 }
 
 var _ BackendManager = (*testBackendManagerImpl)(nil)
+var _ TOTPRecoveryCodeConsumer = (*testBackendManagerImpl)(nil)
 
 // NewTestBackendManager constructs a BackendManager backed by an in-memory store.
 func NewTestBackendManager(backendName string, deps AuthDeps) BackendManager {
@@ -208,6 +209,21 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 	passDBResult.BackendName = tm.backendName
 	passDBResult.Attributes = bktype.AttributeMapping{
 		passDBResult.AccountField: []any{username},
+	}
+
+	if user.TOTPSecret != nil {
+		passDBResult.Attributes[passDBResult.TOTPSecretField] = []any{user.TOTPSecret.GetValue()}
+	}
+
+	if user.TOTPRecovery != nil {
+		recoveryCodes := user.TOTPRecovery.GetCodes()
+
+		values := make([]any, 0, len(recoveryCodes))
+		for _, code := range recoveryCodes {
+			values = append(values, code)
+		}
+
+		passDBResult.Attributes[passDBResult.TOTPRecoveryField] = values
 	}
 
 	if auth.Request.NoAuth {
@@ -274,6 +290,37 @@ func (tm *testBackendManagerImpl) DeleteTOTPRecoveryCodes(auth *AuthState) (err 
 	})
 
 	return nil
+}
+
+// ConsumeTOTPRecoveryCode removes one matching recovery code while holding the backend store lock.
+func (tm *testBackendManagerImpl) ConsumeTOTPRecoveryCode(auth *AuthState, code string) (bool, int, error) {
+	if auth == nil || code == "" {
+		return false, 0, nil
+	}
+
+	tm.store.mu.Lock()
+	defer tm.store.mu.Unlock()
+
+	user, ok := tm.store.getUserLocked(tm.backendName, auth.Request.Username)
+	if !ok || user.TOTPRecovery == nil {
+		return false, 0, nil
+	}
+
+	recoveryCodes := user.TOTPRecovery.GetCodes()
+	for index, recoveryCode := range recoveryCodes {
+		if recoveryCode != code {
+			continue
+		}
+
+		remaining := append([]string(nil), recoveryCodes[:index]...)
+		remaining = append(remaining, recoveryCodes[index+1:]...)
+		user.TOTPRecovery = mfa.NewTOTPRecovery(remaining)
+		tm.store.cache.Set(testBackendUserKey(tm.backendName, auth.Request.Username), user, 0)
+
+		return true, len(remaining), nil
+	}
+
+	return false, len(recoveryCodes), nil
 }
 
 // GetWebAuthnCredentials returns a defensive copy of stored WebAuthn credentials.

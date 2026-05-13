@@ -40,6 +40,11 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
+const (
+	authorityTestTOTPPendingID = "pending-totp-a"
+	authorityTestDeleteTOTPKey = "delete-totp-key"
+)
+
 func TestNewServerRegistersAuthorityServices(t *testing.T) {
 	server, err := NewServer(ServerDeps{
 		Cfg:             grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
@@ -132,9 +137,10 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.BeginTOTPRegistration(ctx, &identityv1.BeginTOTPRegistrationRequest{
-					Context:  identityRequestContextForTest(),
-					Username: authorityTestUsername,
-					Backend:  ref,
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					IdempotencyKey: "begin-totp-key",
 				})
 				if err != nil {
 					return err
@@ -155,10 +161,12 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.FinishTOTPRegistration(ctx, &identityv1.FinishTOTPRegistrationRequest{
-					Context:  identityRequestContextForTest(),
-					Username: authorityTestUsername,
-					Backend:  ref,
-					Code:     "123456",
+					Context:               identityRequestContextForTest(),
+					Username:              authorityTestUsername,
+					Backend:               ref,
+					Code:                  "123456",
+					IdempotencyKey:        "finish-totp-key",
+					PendingRegistrationId: authorityTestTOTPPendingID,
 				})
 				if err != nil {
 					return err
@@ -203,9 +211,10 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.DeleteTOTP(ctx, &identityv1.DeleteTOTPRequest{
-					Context:  identityRequestContextForTest(),
-					Username: authorityTestUsername,
-					Backend:  ref,
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					IdempotencyKey: authorityTestDeleteTOTPKey,
 				})
 				if err != nil {
 					return err
@@ -226,10 +235,11 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.GenerateRecoveryCodes(ctx, &identityv1.GenerateRecoveryCodesRequest{
-					Context:  identityRequestContextForTest(),
-					Username: authorityTestUsername,
-					Backend:  ref,
-					Count:    2,
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					Count:          2,
+					IdempotencyKey: "generate-recovery-key",
 				})
 				if err != nil {
 					return err
@@ -250,10 +260,11 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.UseRecoveryCode(ctx, &identityv1.UseRecoveryCodeRequest{
-					Context:  identityRequestContextForTest(),
-					Username: authorityTestUsername,
-					Backend:  ref,
-					Code:     authorityTestRecoveryCode,
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					Code:           authorityTestRecoveryCode,
+					IdempotencyKey: "use-recovery-key",
 				})
 				if err != nil {
 					return err
@@ -274,9 +285,10 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.DeleteRecoveryCodes(ctx, &identityv1.DeleteRecoveryCodesRequest{
-					Context:  identityRequestContextForTest(),
-					Username: authorityTestUsername,
-					Backend:  ref,
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					IdempotencyKey: "delete-recovery-key",
 				})
 				if err != nil {
 					return err
@@ -320,9 +332,10 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.SaveWebAuthnCredential(ctx, &identityv1.SaveWebAuthnCredentialRequest{
-					Context:  identityRequestContextForTest(),
-					Username: authorityTestUsername,
-					Backend:  ref,
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					IdempotencyKey: "save-webauthn-key",
 					Credential: &identityv1.WebAuthnCredential{
 						CredentialId: []byte("credential-a"),
 						PublicKey:    []byte("public-key-a"),
@@ -347,11 +360,12 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.UpdateWebAuthnCredential(ctx, &identityv1.UpdateWebAuthnCredentialRequest{
-					Context:       identityRequestContextForTest(),
-					Username:      authorityTestUsername,
-					Backend:       ref,
-					OldCredential: &identityv1.WebAuthnCredential{CredentialId: []byte("credential-a")},
-					NewCredential: &identityv1.WebAuthnCredential{CredentialId: []byte("credential-a"), PublicKey: []byte("public-key-b")},
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					OldCredential:  &identityv1.WebAuthnCredential{CredentialId: []byte("credential-a")},
+					NewCredential:  &identityv1.WebAuthnCredential{CredentialId: []byte("credential-a"), PublicKey: []byte("public-key-b")},
+					IdempotencyKey: "update-webauthn-key",
 				})
 				if err != nil {
 					return err
@@ -372,10 +386,11 @@ func TestBufconnIdentityBackendServiceOperations(t *testing.T) {
 			validateBackend: true,
 			call: func(ctx context.Context, client identityv1.IdentityBackendServiceClient) error {
 				response, err := client.DeleteWebAuthnCredential(ctx, &identityv1.DeleteWebAuthnCredentialRequest{
-					Context:      identityRequestContextForTest(),
-					Username:     authorityTestUsername,
-					Backend:      ref,
-					CredentialId: []byte("credential-a"),
+					Context:        identityRequestContextForTest(),
+					Username:       authorityTestUsername,
+					Backend:        ref,
+					CredentialId:   []byte("credential-a"),
+					IdempotencyKey: "delete-webauthn-key",
 				})
 				if err != nil {
 					return err
@@ -465,9 +480,10 @@ func TestBufconnIdentityBackendServiceRejectsBackendRefFailuresBeforeDomainCalls
 	client := newBufconnIdentityBackendServiceClient(t, service, store, grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}))
 
 	_, err := client.DeleteTOTP(outgoingBasicAuthContext(context.Background()), &identityv1.DeleteTOTPRequest{
-		Context:  identityRequestContextForTest(),
-		Username: authorityTestUsername,
-		Backend:  backendRefProtoForTest("opaque-input-token"),
+		Context:        identityRequestContextForTest(),
+		Username:       authorityTestUsername,
+		Backend:        backendRefProtoForTest("opaque-input-token"),
+		IdempotencyKey: authorityTestDeleteTOTPKey,
 	})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("code = %v, want %v", status.Code(err), codes.FailedPrecondition)
@@ -475,6 +491,44 @@ func TestBufconnIdentityBackendServiceRejectsBackendRefFailuresBeforeDomainCalls
 
 	if service.calls != 0 {
 		t.Fatalf("identity service calls = %d, want none after backend-ref failure", service.calls)
+	}
+}
+
+func TestBufconnIdentityBackendServiceEnforcesMutatingIdempotencyKeys(t *testing.T) {
+	service := &recordingAuthorityIdentityService{
+		result: authorityIdentityResultForTest(),
+	}
+	store := newRecordingBackendRefStore()
+	client := newBufconnIdentityBackendServiceClient(t, service, store, grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}))
+	ctx := outgoingBasicAuthContext(context.Background())
+	request := &identityv1.DeleteTOTPRequest{
+		Context:  identityRequestContextForTest(),
+		Username: authorityTestUsername,
+		Backend:  backendRefProtoForTest("opaque-input-token"),
+	}
+
+	_, err := client.DeleteTOTP(ctx, request)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("missing idempotency key code = %v, want %v", status.Code(err), codes.InvalidArgument)
+	}
+
+	if service.calls != 0 {
+		t.Fatalf("identity service calls = %d, want none when idempotency key is missing", service.calls)
+	}
+
+	request.IdempotencyKey = "delete-totp-replay-key"
+
+	if _, err = client.DeleteTOTP(ctx, request); err != nil {
+		t.Fatalf("first DeleteTOTP() error = %v", err)
+	}
+
+	_, err = client.DeleteTOTP(ctx, request)
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("replayed idempotency key code = %v, want %v", status.Code(err), codes.AlreadyExists)
+	}
+
+	if service.calls != 1 {
+		t.Fatalf("identity service calls = %d, want one after replay is rejected", service.calls)
 	}
 }
 
@@ -842,7 +896,7 @@ func authorityIdentityResultForTest() *AuthorityIdentityResult {
 			},
 		},
 		Backend:                    payload,
-		PendingRegistrationID:      "pending-totp-a",
+		PendingRegistrationID:      authorityTestTOTPPendingID,
 		TOTPSecret:                 "JBSWY3DPEHPK3PXP",
 		OTPAuthURL:                 "otpauth://totp/Nauthilus:identity-user@example.test?secret=JBSWY3DPEHPK3PXP",
 		ExpiresAt:                  time.Now().Add(5 * time.Minute),

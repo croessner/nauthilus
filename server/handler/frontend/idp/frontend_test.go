@@ -28,6 +28,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
@@ -782,6 +783,51 @@ func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
 			assert.NotContains(t, resp.Body.String(), "2FA Verwaltung")
 		})
 	}
+}
+
+func TestDelayedResponseFirstFactorLatchSurvivesTOTPCompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUsername: "alice",
+	}}
+	cookie.SetAuthResult(mgr, "alice", definitions.AuthResultFail)
+
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:         &mockFrontendCfg{},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	tmpl := template.Must(template.New("login-template").Parse(`
+{{ define "idp_login.html" }}{{ if .HaveError }}latched failure{{ end }}{{ end }}
+`))
+
+	r := gin.New()
+	r.SetHTMLTemplate(tmpl)
+	r.POST("/login/totp", func(c *gin.Context) {
+		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
+		c.Set(definitions.CtxLocalizedKey, localizer)
+		c.Set(definitions.CtxSecureDataKey, mgr)
+
+		handled := h.handleDelayedResponseFailure(c, &mfaSessionState{
+			mgr:      mgr,
+			username: "alice",
+		}, definitions.MFAMethodTOTP)
+
+		assert.True(t, handled)
+	})
+
+	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/login/totp", nil)
+
+	r.ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.Contains(t, resp.Body.String(), "latched failure")
 }
 
 func loadMFASelectTemplate(t *testing.T) *template.Template {

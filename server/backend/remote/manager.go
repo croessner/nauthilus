@@ -43,6 +43,7 @@ type Manager struct {
 
 var _ core.BackendManager = (*Manager)(nil)
 var _ core.PublicMFAStateProvider = (*Manager)(nil)
+var _ core.RemoteMFAOperations = (*Manager)(nil)
 
 type remoteConfigProvider interface {
 	GetRemoteBackend(name string) (*config.RemoteBackendSection, bool)
@@ -197,24 +198,203 @@ func (m *Manager) AccountDB(auth *core.AuthState) (core.AccountList, error) {
 	return core.AccountList(response.GetAccounts()), nil
 }
 
-// AddTOTPSecret is intentionally not implemented by this edge slice.
+// BeginTOTPRegistration starts an authority-owned TOTP setup and returns one-time setup material.
+func (m *Manager) BeginTOTPRegistration(auth *core.AuthState, idempotencyKey string) (core.TOTPRegistration, error) {
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationMFAWrite, idempotencyKey); err != nil {
+		return core.TOTPRegistration{}, err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return core.TOTPRegistration{}, err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	response, err := m.client.BeginTOTPRegistration(ctx, &identityv1.BeginTOTPRegistrationRequest{
+		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username:       auth.GetUsername(),
+		Backend:        ref,
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		return core.TOTPRegistration{}, mapAuthorityError(err)
+	}
+
+	if err = operationStatusError(response.GetStatus()); err != nil {
+		return core.TOTPRegistration{}, err
+	}
+
+	return core.TOTPRegistration{
+		PendingRegistrationID: response.GetPendingRegistrationId(),
+		Secret:                response.GetTotpSecret(),
+		OTPAuthURL:            response.GetOtpauthUrl(),
+		ExpiresAt:             response.GetExpiresAt().AsTime(),
+	}, nil
+}
+
+// FinishTOTPRegistration completes an authority-owned TOTP setup.
+func (m *Manager) FinishTOTPRegistration(
+	auth *core.AuthState,
+	pendingRegistrationID string,
+	code string,
+	idempotencyKey string,
+) error {
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationMFAWrite, idempotencyKey); err != nil {
+		return err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	response, err := m.client.FinishTOTPRegistration(ctx, &identityv1.FinishTOTPRegistrationRequest{
+		Context:               identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username:              auth.GetUsername(),
+		Backend:               ref,
+		PendingRegistrationId: pendingRegistrationID,
+		Code:                  code,
+		IdempotencyKey:        idempotencyKey,
+	})
+	if err != nil {
+		return mapAuthorityError(err)
+	}
+
+	return operationStatusError(response.GetStatus())
+}
+
+// VerifyTOTP verifies a TOTP code through the authority without exposing the stored secret.
+func (m *Manager) VerifyTOTP(auth *core.AuthState, code string) (bool, error) {
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationMFAVerify, "verify"); err != nil {
+		return false, err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return false, err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	response, err := m.client.VerifyTOTP(ctx, &identityv1.VerifyTOTPRequest{
+		Context:  identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username: auth.GetUsername(),
+		Backend:  ref,
+		Code:     code,
+	})
+	if err != nil {
+		return false, mapAuthorityError(err)
+	}
+
+	if err = operationStatusError(response.GetStatus()); err != nil {
+		return false, err
+	}
+
+	return response.GetValid(), nil
+}
+
+// DeleteTOTP deletes persisted TOTP state through the authority.
+func (m *Manager) DeleteTOTP(auth *core.AuthState, idempotencyKey string) error {
+	return m.runRemoteMFADelete(auth, idempotencyKey, remoteMFADeleteTOTP)
+}
+
+// GenerateRecoveryCodes replaces recovery codes through the authority and returns plaintext values once.
+func (m *Manager) GenerateRecoveryCodes(auth *core.AuthState, count uint32, idempotencyKey string) ([]string, error) {
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationMFAWrite, idempotencyKey); err != nil {
+		return nil, err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	response, err := m.client.GenerateRecoveryCodes(ctx, &identityv1.GenerateRecoveryCodesRequest{
+		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username:       auth.GetUsername(),
+		Backend:        ref,
+		Count:          count,
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		return nil, mapAuthorityError(err)
+	}
+
+	if err = operationStatusError(response.GetStatus()); err != nil {
+		return nil, err
+	}
+
+	return append([]string(nil), response.GetCodes()...), nil
+}
+
+// UseRecoveryCode verifies and atomically consumes one recovery code through the authority.
+func (m *Manager) UseRecoveryCode(auth *core.AuthState, code string, idempotencyKey string) (bool, error) {
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationMFAVerify, idempotencyKey); err != nil {
+		return false, err
+	}
+
+	if !m.cfg.AllowsOperation(config.RemoteBackendOperationMFAWrite) {
+		return false, ErrRemoteOperationDenied
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return false, err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	response, err := m.client.UseRecoveryCode(ctx, &identityv1.UseRecoveryCodeRequest{
+		Context:        identityv1.DTOToRequestContext(authDTOFromState(auth)),
+		Username:       auth.GetUsername(),
+		Backend:        ref,
+		Code:           code,
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		return false, mapAuthorityError(err)
+	}
+
+	if err = operationStatusError(response.GetStatus()); err != nil {
+		return false, err
+	}
+
+	return response.GetValid(), nil
+}
+
+// DeleteRecoveryCodes deletes persisted recovery-code state through the authority.
+func (m *Manager) DeleteRecoveryCodes(auth *core.AuthState, idempotencyKey string) error {
+	return m.runRemoteMFADelete(auth, idempotencyKey, remoteMFADeleteRecoveryCodes)
+}
+
+// AddTOTPSecret rejects edge-selected TOTP secrets; remote registration must use Begin/FinishTOTPRegistration.
 func (m *Manager) AddTOTPSecret(*core.AuthState, *mfa.TOTPSecret) error {
 	return ErrRemoteOperationDenied
 }
 
-// DeleteTOTPSecret is intentionally not implemented by this edge slice.
-func (m *Manager) DeleteTOTPSecret(*core.AuthState) error {
-	return ErrRemoteOperationDenied
+// DeleteTOTPSecret deletes TOTP state with a manager-generated idempotency key.
+func (m *Manager) DeleteTOTPSecret(auth *core.AuthState) error {
+	return m.DeleteTOTP(auth, m.idempotencyKey(auth, "delete-totp"))
 }
 
-// AddTOTPRecoveryCodes is intentionally not implemented by this edge slice.
+// AddTOTPRecoveryCodes rejects edge-selected recovery-code values; remote generation must stay authority-owned.
 func (m *Manager) AddTOTPRecoveryCodes(*core.AuthState, *mfa.TOTPRecovery) error {
 	return ErrRemoteOperationDenied
 }
 
-// DeleteTOTPRecoveryCodes is intentionally not implemented by this edge slice.
-func (m *Manager) DeleteTOTPRecoveryCodes(*core.AuthState) error {
-	return ErrRemoteOperationDenied
+// DeleteTOTPRecoveryCodes deletes recovery codes with a manager-generated idempotency key.
+func (m *Manager) DeleteTOTPRecoveryCodes(auth *core.AuthState) error {
+	return m.DeleteRecoveryCodes(auth, m.idempotencyKey(auth, "delete-recovery"))
 }
 
 // GetPublicMFAState loads public MFA state from the authority without exposing secrets.
@@ -301,6 +481,57 @@ func (m *Manager) UpdateWebAuthnCredential(*core.AuthState, *mfa.PersistentCrede
 	return ErrRemoteOperationDenied
 }
 
+type remoteMFADeleteOperation uint8
+
+const (
+	remoteMFADeleteTOTP remoteMFADeleteOperation = iota
+	remoteMFADeleteRecoveryCodes
+)
+
+func (m *Manager) runRemoteMFADelete(auth *core.AuthState, idempotencyKey string, operation remoteMFADeleteOperation) error {
+	if err := m.ensureRemoteMFAOperation(config.RemoteBackendOperationMFAWrite, idempotencyKey); err != nil {
+		return err
+	}
+
+	ref, err := backendRefToProto(auth)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := m.requestContext(auth)
+	defer cancel()
+
+	requestContext := identityv1.DTOToRequestContext(authDTOFromState(auth))
+	username := auth.GetUsername()
+
+	var response *identityv1.MFAWriteResponse
+
+	switch operation {
+	case remoteMFADeleteTOTP:
+		response, err = m.client.DeleteTOTP(ctx, &identityv1.DeleteTOTPRequest{
+			Context:        requestContext,
+			Username:       username,
+			Backend:        ref,
+			IdempotencyKey: idempotencyKey,
+		})
+	case remoteMFADeleteRecoveryCodes:
+		response, err = m.client.DeleteRecoveryCodes(ctx, &identityv1.DeleteRecoveryCodesRequest{
+			Context:        requestContext,
+			Username:       username,
+			Backend:        ref,
+			IdempotencyKey: idempotencyKey,
+		})
+	default:
+		return ErrRemoteOperationDenied
+	}
+
+	if err != nil {
+		return mapAuthorityError(err)
+	}
+
+	return operationStatusError(response.GetStatus())
+}
+
 func (m *Manager) requestContext(auth *core.AuthState) (context.Context, context.CancelFunc) {
 	ctx := context.Background()
 	if auth != nil {
@@ -312,6 +543,38 @@ func (m *Manager) requestContext(auth *core.AuthState) (context.Context, context
 	}
 
 	return ctx, func() {}
+}
+
+func (m *Manager) ensureRemoteMFAOperation(operation string, idempotencyKey string) error {
+	if m == nil || m.cfg == nil || m.client == nil {
+		return fmt.Errorf("%w: missing authority client", ErrRemoteAuthorityUnavailable)
+	}
+
+	if idempotencyKey == "" {
+		return fmt.Errorf("%w: missing idempotency key", ErrRemoteOperationDenied)
+	}
+
+	if !m.cfg.AllowsOperation(operation) {
+		return ErrRemoteOperationDenied
+	}
+
+	return nil
+}
+
+func (m *Manager) idempotencyKey(auth *core.AuthState, operation string) string {
+	username := ""
+	guid := ""
+
+	if auth != nil {
+		username = auth.GetUsername()
+		guid = auth.Runtime.GUID
+	}
+
+	if guid == "" {
+		guid = "request"
+	}
+
+	return fmt.Sprintf("%s:%s:%s", operation, username, guid)
 }
 
 func (m *Manager) shouldResolveUserSnapshot(auth *core.AuthState) bool {

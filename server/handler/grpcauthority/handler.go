@@ -44,6 +44,7 @@ type Handler struct {
 	service         core.AuthApplicationService
 	identityService AuthorityIdentityService
 	backendRefs     BackendRefStore
+	idempotency     idempotencyStore
 	resolver        localization.MessageResolver
 }
 
@@ -54,7 +55,11 @@ func New(service core.AuthApplicationService) *Handler {
 
 // NewWithResolver constructs the authority handler with response localization.
 func NewWithResolver(service core.AuthApplicationService, resolver localization.MessageResolver) *Handler {
-	return &Handler{service: service, resolver: resolver}
+	return &Handler{
+		service:     service,
+		resolver:    resolver,
+		idempotency: newMemoryIdempotencyStore(defaultMFAIdempotencyTTL),
+	}
 }
 
 // NewWithServices constructs the authority handler with all application services.
@@ -69,6 +74,7 @@ func NewWithServices(
 		resolver:        resolver,
 		identityService: identityService,
 		backendRefs:     backendRefs,
+		idempotency:     newMemoryIdempotencyStore(defaultMFAIdempotencyTTL),
 	}
 }
 

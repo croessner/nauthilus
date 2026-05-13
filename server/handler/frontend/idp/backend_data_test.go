@@ -855,6 +855,55 @@ func (c *remoteBackendDataAuthorityClient) GetMFAState(
 	return c.mfaStateResponse, nil
 }
 
+func (c *remoteBackendDataAuthorityClient) BeginTOTPRegistration(
+	_ context.Context,
+	_ *identityv1.BeginTOTPRegistrationRequest,
+) (*identityv1.BeginTOTPRegistrationResponse, error) {
+	return nil, errors.New("unexpected BeginTOTPRegistration call")
+}
+
+func (c *remoteBackendDataAuthorityClient) FinishTOTPRegistration(
+	_ context.Context,
+	_ *identityv1.FinishTOTPRegistrationRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return nil, errors.New("unexpected FinishTOTPRegistration call")
+}
+
+func (c *remoteBackendDataAuthorityClient) VerifyTOTP(
+	_ context.Context,
+	_ *identityv1.VerifyTOTPRequest,
+) (*identityv1.VerifyTOTPResponse, error) {
+	return nil, errors.New("unexpected VerifyTOTP call")
+}
+
+func (c *remoteBackendDataAuthorityClient) DeleteTOTP(
+	_ context.Context,
+	_ *identityv1.DeleteTOTPRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return nil, errors.New("unexpected DeleteTOTP call")
+}
+
+func (c *remoteBackendDataAuthorityClient) GenerateRecoveryCodes(
+	_ context.Context,
+	_ *identityv1.GenerateRecoveryCodesRequest,
+) (*identityv1.GenerateRecoveryCodesResponse, error) {
+	return nil, errors.New("unexpected GenerateRecoveryCodes call")
+}
+
+func (c *remoteBackendDataAuthorityClient) UseRecoveryCode(
+	_ context.Context,
+	_ *identityv1.UseRecoveryCodeRequest,
+) (*identityv1.UseRecoveryCodeResponse, error) {
+	return nil, errors.New("unexpected UseRecoveryCode call")
+}
+
+func (c *remoteBackendDataAuthorityClient) DeleteRecoveryCodes(
+	_ context.Context,
+	_ *identityv1.DeleteRecoveryCodesRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return nil, errors.New("unexpected DeleteRecoveryCodes call")
+}
+
 func (c *remoteBackendDataAuthorityClient) GetWebAuthnCredentials(
 	_ context.Context,
 	request *identityv1.GetWebAuthnCredentialsRequest,

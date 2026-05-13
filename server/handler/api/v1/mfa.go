@@ -78,6 +78,8 @@ func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
 		return
 	}
 
+	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
+
 	secret, qrCodeURL, err := a.mfa.GenerateTOTPSecret(ctx, username)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -85,7 +87,11 @@ func (a *MFAAPI) SetupTOTP(ctx *gin.Context) {
 		return
 	}
 
-	mgr.Set(definitions.SessionKeyTOTPSecret, secret)
+	if sourceBackend == uint8(definitions.BackendRemote) {
+		mgr.Delete(definitions.SessionKeyTOTPSecret)
+	} else {
+		mgr.Set(definitions.SessionKeyTOTPSecret, secret)
+	}
 
 	if err := mgr.Save(ctx); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save session"})
@@ -112,6 +118,7 @@ func (a *MFAAPI) RegisterTOTP(ctx *gin.Context) {
 
 	username := mgr.GetString(definitions.SessionKeyAccount, "")
 	secret := mgr.GetString(definitions.SessionKeyTOTPSecret, "")
+	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	var input struct {
 		Code string `json:"code" binding:"required"`
@@ -123,13 +130,11 @@ func (a *MFAAPI) RegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	if username == "" || secret == "" {
+	if username == "" || (sourceBackend != uint8(definitions.BackendRemote) && secret == "") {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 
 		return
 	}
-
-	sourceBackend := mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 
 	if err := a.mfa.VerifyAndSaveTOTP(ctx, username, secret, input.Code, sourceBackend); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

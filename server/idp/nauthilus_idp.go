@@ -790,6 +790,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	if mgr := cookie.GetManager(ctx); mgr != nil {
 		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
 		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
+		core.StoreRemoteBackendRef(mgr, auth.Runtime.RemoteBackendRef)
 	}
 
 	return n.userFromAuthState(auth)
@@ -844,6 +845,7 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 	if mgr := cookie.GetManager(ctx); mgr != nil {
 		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
 		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
+		core.StoreRemoteBackendRef(mgr, auth.Runtime.RemoteBackendRef)
 	}
 
 	return n.userFromAuthState(auth)

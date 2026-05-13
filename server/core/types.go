@@ -17,6 +17,7 @@ package core
 
 import (
 	"sync"
+	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
@@ -69,6 +70,30 @@ type PublicMFAState struct {
 // PublicMFAStateProvider is implemented by backends that can read public MFA state directly.
 type PublicMFAStateProvider interface {
 	GetPublicMFAState(auth *AuthState, includeWebAuthn bool) (PublicMFAState, error)
+}
+
+// TOTPRegistration contains one-time setup material for a pending TOTP registration.
+type TOTPRegistration struct {
+	ExpiresAt             time.Time
+	PendingRegistrationID string
+	Secret                string
+	OTPAuthURL            string
+}
+
+// RemoteMFAOperations is implemented by backends that delegate MFA operations to an authority.
+type RemoteMFAOperations interface {
+	BeginTOTPRegistration(auth *AuthState, idempotencyKey string) (TOTPRegistration, error)
+	FinishTOTPRegistration(auth *AuthState, pendingRegistrationID string, code string, idempotencyKey string) error
+	VerifyTOTP(auth *AuthState, code string) (bool, error)
+	DeleteTOTP(auth *AuthState, idempotencyKey string) error
+	GenerateRecoveryCodes(auth *AuthState, count uint32, idempotencyKey string) ([]string, error)
+	UseRecoveryCode(auth *AuthState, code string, idempotencyKey string) (bool, error)
+	DeleteRecoveryCodes(auth *AuthState, idempotencyKey string) error
+}
+
+// TOTPRecoveryCodeConsumer consumes a matching recovery code in one backend-owned operation.
+type TOTPRecoveryCodeConsumer interface {
+	ConsumeTOTPRecoveryCode(auth *AuthState, code string) (valid bool, remaining int, err error)
 }
 
 // BackendManagerFactory constructs a backend manager for a backend plugged in from another package.

@@ -20,6 +20,8 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/go-redis/redismock/v9"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -32,6 +34,18 @@ const (
 	remoteTestBufconnRefToken      = "bufconn-ref"
 	remoteTestAccountA             = "a@example.test"
 	remoteTestAccountB             = "b@example.test"
+	remoteTestTOTPCode             = "123456"
+	remoteTestTOTPSetupSecret      = "JBSWY3DPEHPK3PXP"
+	remoteTestTOTPSetupURL         = "otpauth://totp/Nauthilus:alice?secret=JBSWY3DPEHPK3PXP"
+	remoteTestTOTPPendingID        = "pending-registration-a"
+	remoteTestBeginTOTPKey         = "begin-key"
+	remoteTestFinishTOTPKey        = "finish-key"
+	remoteTestDeleteTOTPKey        = "delete-totp-key"
+	remoteTestRecoveryCodeA        = "recovery-a"
+	remoteTestRecoveryCodeB        = "recovery-b"
+	remoteTestGenerateRecoveryKey  = "generate-recovery-key"
+	remoteTestUseRecoveryKey       = "use-recovery-key"
+	remoteTestDeleteRecoveryKey    = "delete-recovery-key"
 )
 
 func TestMain(m *testing.M) {
@@ -166,6 +180,263 @@ func TestManagerFailsClosedForDeniedOperationsAndTransientErrors(t *testing.T) {
 	})
 }
 
+func TestManagerRemoteTOTPOperationsUseAuthority(t *testing.T) {
+	client := &fakeAuthorityClient{
+		beginTOTPResponse: &identityv1.BeginTOTPRegistrationResponse{
+			Status:                okRemoteOperationStatus(),
+			PendingRegistrationId: remoteTestTOTPPendingID,
+			TotpSecret:            remoteTestTOTPSetupSecret,
+			OtpauthUrl:            remoteTestTOTPSetupURL,
+			Backend:               remoteBackendRefProto(),
+		},
+		verifyTOTPResponse: &identityv1.VerifyTOTPResponse{
+			Status:  okRemoteOperationStatus(),
+			Valid:   true,
+			Backend: remoteBackendRefProto(),
+		},
+		writeResponse: &identityv1.MFAWriteResponse{
+			Status:  okRemoteOperationStatus(),
+			Changed: true,
+			Mfa: &identityv1.MFAState{
+				HasTotp:           true,
+				RecoveryCodeCount: 2,
+			},
+			Backend: remoteBackendRefProto(),
+		},
+	}
+	manager := NewManagerForTest(
+		remoteTestBackendName,
+		remoteTestAuthorityName,
+		remoteBackendConfig(
+			config.RemoteBackendOperationMFARead,
+			config.RemoteBackendOperationMFAVerify,
+			config.RemoteBackendOperationMFAWrite,
+		),
+		client,
+	)
+	auth := newRemoteAuthStateWithRef(t)
+
+	registration := assertBeginTOTPRegistration(t, manager, auth, client)
+	assertFinishTOTPRegistration(t, manager, auth, client, registration)
+	assertRemoteTOTPVerification(t, manager, auth, client)
+	assertRemoteTOTPDeletion(t, manager, auth, client)
+}
+
+func TestManagerRemoteRecoveryOperationsUseAuthority(t *testing.T) {
+	client := &fakeAuthorityClient{
+		generateRecoveryResponse: &identityv1.GenerateRecoveryCodesResponse{
+			Status:            okRemoteOperationStatus(),
+			Codes:             []string{remoteTestRecoveryCodeA, remoteTestRecoveryCodeB},
+			RecoveryCodeCount: 2,
+			Backend:           remoteBackendRefProto(),
+		},
+		useRecoveryResponse: &identityv1.UseRecoveryCodeResponse{
+			Status:                     okRemoteOperationStatus(),
+			Valid:                      true,
+			RemainingRecoveryCodeCount: 1,
+			Backend:                    remoteBackendRefProto(),
+		},
+		writeResponse: &identityv1.MFAWriteResponse{
+			Status:  okRemoteOperationStatus(),
+			Changed: true,
+			Mfa: &identityv1.MFAState{
+				RecoveryCodeCount: 0,
+			},
+			Backend: remoteBackendRefProto(),
+		},
+	}
+	manager := NewManagerForTest(
+		remoteTestBackendName,
+		remoteTestAuthorityName,
+		remoteBackendConfig(
+			config.RemoteBackendOperationMFAVerify,
+			config.RemoteBackendOperationMFAWrite,
+		),
+		client,
+	)
+	auth := newRemoteAuthStateWithRef(t)
+
+	assertRemoteRecoveryGeneration(t, manager, auth, client)
+	assertRemoteRecoveryConsumption(t, manager, auth, client)
+	assertRemoteRecoveryDeletion(t, manager, auth, client)
+}
+
+func assertBeginTOTPRegistration(t *testing.T, manager *Manager, auth *core.AuthState, client *fakeAuthorityClient) core.TOTPRegistration {
+	t.Helper()
+
+	registration, err := manager.BeginTOTPRegistration(auth, remoteTestBeginTOTPKey)
+	if err != nil {
+		t.Fatalf("BeginTOTPRegistration() error = %v", err)
+	}
+
+	if registration.PendingRegistrationID != remoteTestTOTPPendingID || registration.Secret == "" || registration.OTPAuthURL == "" {
+		t.Fatalf("registration = %#v, want setup material from authority", registration)
+	}
+
+	if got := client.beginTOTPRequest.GetIdempotencyKey(); got != remoteTestBeginTOTPKey {
+		t.Fatalf("begin idempotency key = %q, want %s", got, remoteTestBeginTOTPKey)
+	}
+
+	return registration
+}
+
+func assertFinishTOTPRegistration(
+	t *testing.T,
+	manager *Manager,
+	auth *core.AuthState,
+	client *fakeAuthorityClient,
+	registration core.TOTPRegistration,
+) {
+	t.Helper()
+
+	if err := manager.FinishTOTPRegistration(auth, registration.PendingRegistrationID, remoteTestTOTPCode, remoteTestFinishTOTPKey); err != nil {
+		t.Fatalf("FinishTOTPRegistration() error = %v", err)
+	}
+
+	if got := client.finishTOTPRequest.GetPendingRegistrationId(); got != registration.PendingRegistrationID {
+		t.Fatalf("finish pending id = %q, want %q", got, registration.PendingRegistrationID)
+	}
+
+	if got := client.finishTOTPRequest.GetIdempotencyKey(); got != remoteTestFinishTOTPKey {
+		t.Fatalf("finish idempotency key = %q, want %s", got, remoteTestFinishTOTPKey)
+	}
+}
+
+func assertRemoteTOTPVerification(t *testing.T, manager *Manager, auth *core.AuthState, client *fakeAuthorityClient) {
+	t.Helper()
+
+	valid, err := manager.VerifyTOTP(auth, remoteTestTOTPCode)
+	if err != nil {
+		t.Fatalf("VerifyTOTP() error = %v", err)
+	}
+
+	if !valid {
+		t.Fatal("VerifyTOTP() valid = false, want true")
+	}
+
+	if got := client.verifyTOTPRequest.GetCode(); got != remoteTestTOTPCode {
+		t.Fatalf("verify code = %q, want submitted code", got)
+	}
+}
+
+func assertRemoteTOTPDeletion(t *testing.T, manager *Manager, auth *core.AuthState, client *fakeAuthorityClient) {
+	t.Helper()
+
+	if err := manager.DeleteTOTP(auth, remoteTestDeleteTOTPKey); err != nil {
+		t.Fatalf("DeleteTOTP() error = %v", err)
+	}
+
+	if got := client.deleteTOTPRequest.GetIdempotencyKey(); got != remoteTestDeleteTOTPKey {
+		t.Fatalf("delete TOTP idempotency key = %q, want %s", got, remoteTestDeleteTOTPKey)
+	}
+}
+
+func assertRemoteRecoveryGeneration(t *testing.T, manager *Manager, auth *core.AuthState, client *fakeAuthorityClient) {
+	t.Helper()
+
+	codes, err := manager.GenerateRecoveryCodes(auth, 2, remoteTestGenerateRecoveryKey)
+	if err != nil {
+		t.Fatalf("GenerateRecoveryCodes() error = %v", err)
+	}
+
+	if len(codes) != 2 || codes[0] != remoteTestRecoveryCodeA {
+		t.Fatalf("GenerateRecoveryCodes() = %#v, want authority codes", codes)
+	}
+
+	if got := client.generateRecoveryRequest.GetIdempotencyKey(); got != remoteTestGenerateRecoveryKey {
+		t.Fatalf("generate recovery idempotency key = %q, want %s", got, remoteTestGenerateRecoveryKey)
+	}
+}
+
+func assertRemoteRecoveryConsumption(t *testing.T, manager *Manager, auth *core.AuthState, client *fakeAuthorityClient) {
+	t.Helper()
+
+	valid, err := manager.UseRecoveryCode(auth, remoteTestRecoveryCodeA, remoteTestUseRecoveryKey)
+	if err != nil {
+		t.Fatalf("UseRecoveryCode() error = %v", err)
+	}
+
+	if !valid {
+		t.Fatal("UseRecoveryCode() valid = false, want true")
+	}
+
+	if got := client.useRecoveryRequest.GetIdempotencyKey(); got != remoteTestUseRecoveryKey {
+		t.Fatalf("use recovery idempotency key = %q, want %s", got, remoteTestUseRecoveryKey)
+	}
+}
+
+func assertRemoteRecoveryDeletion(t *testing.T, manager *Manager, auth *core.AuthState, client *fakeAuthorityClient) {
+	t.Helper()
+
+	if err := manager.DeleteRecoveryCodes(auth, remoteTestDeleteRecoveryKey); err != nil {
+		t.Fatalf("DeleteRecoveryCodes() error = %v", err)
+	}
+
+	if got := client.deleteRecoveryRequest.GetIdempotencyKey(); got != remoteTestDeleteRecoveryKey {
+		t.Fatalf("delete recovery idempotency key = %q, want %s", got, remoteTestDeleteRecoveryKey)
+	}
+}
+
+func TestManagerRemoteMFAOperationsFailClosed(t *testing.T) {
+	auth := newRemoteAuthStateWithRef(t)
+
+	t.Run("authority unavailable during TOTP verify", func(t *testing.T) {
+		manager := NewManagerForTest(
+			remoteTestBackendName,
+			remoteTestAuthorityName,
+			remoteBackendConfig(config.RemoteBackendOperationMFAVerify),
+			&fakeAuthorityClient{err: status.Error(codes.Unavailable, "authority down")},
+		)
+
+		_, err := manager.VerifyTOTP(auth, remoteTestTOTPCode)
+		if err == nil || !stderrors.Is(err, ErrRemoteAuthorityUnavailable) {
+			t.Fatalf("VerifyTOTP() error = %v, want ErrRemoteAuthorityUnavailable", err)
+		}
+	})
+
+	t.Run("authority unavailable during recovery consumption", func(t *testing.T) {
+		manager := NewManagerForTest(
+			remoteTestBackendName,
+			remoteTestAuthorityName,
+			remoteBackendConfig(config.RemoteBackendOperationMFAVerify, config.RemoteBackendOperationMFAWrite),
+			&fakeAuthorityClient{err: context.DeadlineExceeded},
+		)
+
+		_, err := manager.UseRecoveryCode(auth, remoteTestRecoveryCodeA, "use-key")
+		if err == nil || !stderrors.Is(err, ErrRemoteAuthorityUnavailable) {
+			t.Fatalf("UseRecoveryCode() error = %v, want ErrRemoteAuthorityUnavailable", err)
+		}
+	})
+
+	t.Run("missing backend reference", func(t *testing.T) {
+		manager := NewManagerForTest(
+			remoteTestBackendName,
+			remoteTestAuthorityName,
+			remoteBackendConfig(config.RemoteBackendOperationMFAVerify),
+			&fakeAuthorityClient{},
+		)
+
+		_, err := manager.VerifyTOTP(newRemoteAuthState(t, false), remoteTestTOTPCode)
+		if err == nil || !stderrors.Is(err, ErrRemoteOperationDenied) {
+			t.Fatalf("VerifyTOTP() error = %v, want ErrRemoteOperationDenied", err)
+		}
+	})
+
+	t.Run("local operation guard", func(t *testing.T) {
+		manager := NewManagerForTest(
+			remoteTestBackendName,
+			remoteTestAuthorityName,
+			remoteBackendConfig(config.RemoteBackendOperationMFARead),
+			&fakeAuthorityClient{},
+		)
+
+		_, err := manager.VerifyTOTP(auth, remoteTestTOTPCode)
+		if err == nil || !stderrors.Is(err, ErrRemoteOperationDenied) {
+			t.Fatalf("VerifyTOTP() error = %v, want ErrRemoteOperationDenied", err)
+		}
+	})
+}
+
 func TestCoreRegistryBuildsRemoteBackendManager(t *testing.T) {
 	cfg := &config.FileSettings{
 		Runtime: &config.RuntimeSection{
@@ -239,6 +510,37 @@ func newRemoteAuthState(t *testing.T, noAuth bool) *core.AuthState {
 	return auth
 }
 
+func newRemoteAuthStateWithRef(t *testing.T) *core.AuthState {
+	t.Helper()
+
+	auth := newRemoteAuthState(t, false)
+	auth.Runtime.RemoteBackendRef = core.RemoteBackendRef{
+		Type:        remoteTestAuthorityBackendType,
+		Name:        remoteTestAuthorityBackendName,
+		Protocol:    "imap",
+		Authority:   remoteTestAuthorityName,
+		OpaqueToken: remoteTestBackendRefToken,
+	}
+
+	return auth
+}
+
+func remoteBackendRefProto() *commonv1.BackendRef {
+	return &commonv1.BackendRef{
+		Type:        remoteTestAuthorityBackendType,
+		Name:        remoteTestAuthorityBackendName,
+		Protocol:    "imap",
+		Authority:   remoteTestAuthorityName,
+		OpaqueToken: remoteTestBackendRefToken,
+	}
+}
+
+func okRemoteOperationStatus() *commonv1.OperationStatus {
+	return &commonv1.OperationStatus{
+		Result: commonv1.OperationResult_OPERATION_RESULT_OK,
+	}
+}
+
 func remoteBackendConfig(operations ...string) *config.RemoteBackendSection {
 	return &config.RemoteBackendSection{
 		Authority:         remoteTestAuthorityName,
@@ -249,19 +551,38 @@ func remoteBackendConfig(operations ...string) *config.RemoteBackendSection {
 }
 
 type fakeAuthorityClient struct {
-	authResponse     *authv1.AuthResponse
-	lookupResponse   *authv1.AuthResponse
-	listResponse     *authv1.ListAccountsResponse
-	resolveResponse  *identityv1.UserSnapshotResponse
-	mfaResponse      *identityv1.MFAStateResponse
-	webauthnResponse *identityv1.WebAuthnCredentialsResponse
-	err              error
-	authRequests     int
-	lookupRequests   int
-	listRequests     int
-	resolveRequests  int
-	mfaRequests      int
-	webauthnRequests int
+	authResponse             *authv1.AuthResponse
+	lookupResponse           *authv1.AuthResponse
+	listResponse             *authv1.ListAccountsResponse
+	resolveResponse          *identityv1.UserSnapshotResponse
+	mfaResponse              *identityv1.MFAStateResponse
+	beginTOTPResponse        *identityv1.BeginTOTPRegistrationResponse
+	writeResponse            *identityv1.MFAWriteResponse
+	verifyTOTPResponse       *identityv1.VerifyTOTPResponse
+	generateRecoveryResponse *identityv1.GenerateRecoveryCodesResponse
+	useRecoveryResponse      *identityv1.UseRecoveryCodeResponse
+	webauthnResponse         *identityv1.WebAuthnCredentialsResponse
+	beginTOTPRequest         *identityv1.BeginTOTPRegistrationRequest
+	finishTOTPRequest        *identityv1.FinishTOTPRegistrationRequest
+	verifyTOTPRequest        *identityv1.VerifyTOTPRequest
+	deleteTOTPRequest        *identityv1.DeleteTOTPRequest
+	generateRecoveryRequest  *identityv1.GenerateRecoveryCodesRequest
+	useRecoveryRequest       *identityv1.UseRecoveryCodeRequest
+	deleteRecoveryRequest    *identityv1.DeleteRecoveryCodesRequest
+	err                      error
+	authRequests             int
+	lookupRequests           int
+	listRequests             int
+	resolveRequests          int
+	mfaRequests              int
+	beginTOTPRequests        int
+	finishTOTPRequests       int
+	verifyTOTPRequests       int
+	deleteTOTPRequests       int
+	generateRecoveryRequests int
+	useRecoveryRequests      int
+	deleteRecoveryRequests   int
+	webauthnRequests         int
 }
 
 func (c *fakeAuthorityClient) Authenticate(_ context.Context, _ *authv1.AuthRequest) (*authv1.AuthResponse, error) {
@@ -312,6 +633,104 @@ func (c *fakeAuthorityClient) GetMFAState(_ context.Context, _ *identityv1.GetMF
 	}
 
 	return c.mfaResponse, nil
+}
+
+func (c *fakeAuthorityClient) BeginTOTPRegistration(
+	_ context.Context,
+	request *identityv1.BeginTOTPRegistrationRequest,
+) (*identityv1.BeginTOTPRegistrationResponse, error) {
+	c.beginTOTPRequests++
+	c.beginTOTPRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.beginTOTPResponse, nil
+}
+
+func (c *fakeAuthorityClient) FinishTOTPRegistration(
+	_ context.Context,
+	request *identityv1.FinishTOTPRegistrationRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	c.finishTOTPRequests++
+	c.finishTOTPRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.writeResponse, nil
+}
+
+func (c *fakeAuthorityClient) VerifyTOTP(
+	_ context.Context,
+	request *identityv1.VerifyTOTPRequest,
+) (*identityv1.VerifyTOTPResponse, error) {
+	c.verifyTOTPRequests++
+	c.verifyTOTPRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.verifyTOTPResponse, nil
+}
+
+func (c *fakeAuthorityClient) DeleteTOTP(
+	_ context.Context,
+	request *identityv1.DeleteTOTPRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	c.deleteTOTPRequests++
+	c.deleteTOTPRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.writeResponse, nil
+}
+
+func (c *fakeAuthorityClient) GenerateRecoveryCodes(
+	_ context.Context,
+	request *identityv1.GenerateRecoveryCodesRequest,
+) (*identityv1.GenerateRecoveryCodesResponse, error) {
+	c.generateRecoveryRequests++
+	c.generateRecoveryRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.generateRecoveryResponse, nil
+}
+
+func (c *fakeAuthorityClient) UseRecoveryCode(
+	_ context.Context,
+	request *identityv1.UseRecoveryCodeRequest,
+) (*identityv1.UseRecoveryCodeResponse, error) {
+	c.useRecoveryRequests++
+	c.useRecoveryRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.useRecoveryResponse, nil
+}
+
+func (c *fakeAuthorityClient) DeleteRecoveryCodes(
+	_ context.Context,
+	request *identityv1.DeleteRecoveryCodesRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	c.deleteRecoveryRequests++
+	c.deleteRecoveryRequest = request
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return c.writeResponse, nil
 }
 
 func (c *fakeAuthorityClient) GetWebAuthnCredentials(

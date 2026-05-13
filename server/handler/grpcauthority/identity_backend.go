@@ -98,6 +98,10 @@ func (h *Handler) BeginTOTPRegistration(
 	ctx context.Context,
 	request *identityv1.BeginTOTPRegistrationRequest,
 ) (*identityv1.BeginTOTPRegistrationResponse, error) {
+	if err := h.reserveIdempotency(ctx, AuthorityOperationBeginTOTPRegistration, request.GetIdempotencyKey()); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, request.GetBackend(), request.GetUsername(), request.GetContext(), AuthorityOperationBeginTOTPRegistration)
 	if err != nil {
 		return nil, err
@@ -125,6 +129,10 @@ func (h *Handler) FinishTOTPRegistration(
 	ctx context.Context,
 	request *identityv1.FinishTOTPRegistrationRequest,
 ) (*identityv1.MFAWriteResponse, error) {
+	if err := h.reserveIdempotency(ctx, AuthorityOperationFinishTOTPRegistration, request.GetIdempotencyKey()); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, request.GetBackend(), request.GetUsername(), request.GetContext(), AuthorityOperationFinishTOTPRegistration)
 	if err != nil {
 		return nil, err
@@ -184,6 +192,10 @@ func (h *Handler) GenerateRecoveryCodes(
 	ctx context.Context,
 	request *identityv1.GenerateRecoveryCodesRequest,
 ) (*identityv1.GenerateRecoveryCodesResponse, error) {
+	if err := h.reserveIdempotency(ctx, AuthorityOperationGenerateRecoveryCodes, request.GetIdempotencyKey()); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, request.GetBackend(), request.GetUsername(), request.GetContext(), AuthorityOperationGenerateRecoveryCodes)
 	if err != nil {
 		return nil, err
@@ -210,6 +222,10 @@ func (h *Handler) UseRecoveryCode(
 	ctx context.Context,
 	request *identityv1.UseRecoveryCodeRequest,
 ) (*identityv1.UseRecoveryCodeResponse, error) {
+	if err := h.reserveIdempotency(ctx, AuthorityOperationUseRecoveryCode, request.GetIdempotencyKey()); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, request.GetBackend(), request.GetUsername(), request.GetContext(), AuthorityOperationUseRecoveryCode)
 	if err != nil {
 		return nil, err
@@ -274,6 +290,10 @@ func (h *Handler) SaveWebAuthnCredential(
 	ctx context.Context,
 	request *identityv1.SaveWebAuthnCredentialRequest,
 ) (*identityv1.MFAWriteResponse, error) {
+	if err := h.reserveIdempotency(ctx, AuthorityOperationSaveWebAuthnCredential, request.GetIdempotencyKey()); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, request.GetBackend(), request.GetUsername(), request.GetContext(), AuthorityOperationSaveWebAuthnCredential)
 	if err != nil {
 		return nil, err
@@ -292,6 +312,10 @@ func (h *Handler) UpdateWebAuthnCredential(
 	ctx context.Context,
 	request *identityv1.UpdateWebAuthnCredentialRequest,
 ) (*identityv1.MFAWriteResponse, error) {
+	if err := h.reserveIdempotency(ctx, AuthorityOperationUpdateWebAuthnCredential, request.GetIdempotencyKey()); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, request.GetBackend(), request.GetUsername(), request.GetContext(), AuthorityOperationUpdateWebAuthnCredential)
 	if err != nil {
 		return nil, err
@@ -311,6 +335,10 @@ func (h *Handler) DeleteWebAuthnCredential(
 	ctx context.Context,
 	request *identityv1.DeleteWebAuthnCredentialRequest,
 ) (*identityv1.MFAWriteResponse, error) {
+	if err := h.reserveIdempotency(ctx, AuthorityOperationDeleteWebAuthnCredential, request.GetIdempotencyKey()); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, request.GetBackend(), request.GetUsername(), request.GetContext(), AuthorityOperationDeleteWebAuthnCredential)
 	if err != nil {
 		return nil, err
@@ -438,6 +466,10 @@ func (h *Handler) runMFAWrite(
 	idempotencyKey string,
 	run func(context.Context, AuthorityIdentityInput) (*AuthorityIdentityResult, error),
 ) (*identityv1.MFAWriteResponse, error) {
+	if err := h.reserveIdempotency(ctx, operation, idempotencyKey); err != nil {
+		return nil, err
+	}
+
 	input, err := h.backendInput(ctx, ref, username, requestContext, operation)
 	if err != nil {
 		return nil, err
@@ -447,6 +479,31 @@ func (h *Handler) runMFAWrite(
 	result, err := run(ctx, input)
 
 	return h.mfaWriteResponse(result, ref, err)
+}
+
+func (h *Handler) reserveIdempotency(ctx context.Context, operation AuthorityOperation, key string) error {
+	store := h.idempotency
+	if store == nil {
+		store = newMemoryIdempotencyStore(defaultMFAIdempotencyTTL)
+		h.idempotency = store
+	}
+
+	principal := authorityCallerFromContext(ctx).Principal
+
+	err := store.Reserve(ctx, operation, principal, key)
+	if errors.Is(err, ErrIdempotencyKeyMissing) {
+		return status.Error(codes.InvalidArgument, "idempotency key is required")
+	}
+
+	if errors.Is(err, ErrIdempotencyKeyReplay) {
+		return status.Error(codes.AlreadyExists, "idempotency key replay")
+	}
+
+	if err != nil {
+		return status.Error(codes.Internal, "idempotency key check failed")
+	}
+
+	return nil
 }
 
 func identityUsername(username string, requestContext *identityv1.RequestContext) string {

@@ -53,6 +53,21 @@ const (
 	// SessionKeyUserBackendName is the logical name of the user backend.
 	SessionKeyUserBackendName = "user_backend_name"
 
+	// SessionKeyRemoteBackendRefType stores the authority-backed backend type echo.
+	SessionKeyRemoteBackendRefType = "remote_backend_ref_type"
+
+	// SessionKeyRemoteBackendRefName stores the authority-backed backend name echo.
+	SessionKeyRemoteBackendRefName = "remote_backend_ref_name"
+
+	// SessionKeyRemoteBackendRefProtocol stores the authority-backed backend protocol echo.
+	SessionKeyRemoteBackendRefProtocol = "remote_backend_ref_protocol"
+
+	// SessionKeyRemoteBackendRefAuthority stores the issuing authority name.
+	SessionKeyRemoteBackendRefAuthority = "remote_backend_ref_authority"
+
+	// SessionKeyRemoteBackendRefToken stores the opaque authority backend-reference token.
+	SessionKeyRemoteBackendRefToken = "remote_backend_ref_token"
+
 	// SessionKeyUniqueUserID stores a backend-specific unique user identifier.
 	SessionKeyUniqueUserID = "unique_userid"
 
@@ -98,11 +113,23 @@ const (
 	// SessionKeyRegistration is used during WebAuthn device registration.
 	SessionKeyRegistration = "webauthn_registration"
 
-	// SessionKeyTOTPSecret temporarily holds a generated TOTP secret during flow.
+	// SessionKeyTOTPSecret temporarily holds a locally generated TOTP setup secret during flow.
 	SessionKeyTOTPSecret = "totp_secret"
 
-	// SessionKeyRecoveryCodes temporarily holds generated recovery codes during registration.
+	// SessionKeyTOTPPendingRegistration stores an authority-owned pending TOTP registration token.
+	SessionKeyTOTPPendingRegistration = "totp_pending_registration"
+
+	// SessionKeyTOTPOperationID stores the idempotency key for the active TOTP registration step.
+	SessionKeyTOTPOperationID = "totp_operation_id"
+
+	// SessionKeyRecoveryCodes temporarily holds locally generated recovery codes during registration.
 	SessionKeyRecoveryCodes = "recovery_codes"
+
+	// SessionKeyRecoveryCodesRemoteGenerated records that recovery codes were generated and persisted by authority.
+	SessionKeyRecoveryCodesRemoteGenerated = "recovery_codes_remote_generated"
+
+	// SessionKeyRecoveryOperationID stores the idempotency key for the active recovery-code operation.
+	SessionKeyRecoveryOperationID = "recovery_operation_id"
 
 	// SessionKeyRecoveryCodesSaved indicates the recovery codes have been persisted in the backend.
 	SessionKeyRecoveryCodesSaved = "recovery_codes_saved"

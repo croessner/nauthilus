@@ -1625,33 +1625,25 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
-	// Verify TOTP
-	authDeps := h.deps.Auth()
-	state := core.NewAuthStateWithSetupWithDeps(ctx, authDeps)
-
-	if state == nil {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return
+	sourceBackend := uint8(definitions.BackendLDAP)
+	if sess.mgr != nil {
+		sourceBackend = sess.mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
-	auth := state.(*core.AuthState)
-	auth.SetUsername(sess.username)
-	auth.SetOIDCCID(sess.oidcCID)
-	auth.SetSAMLEntityID(sess.samlEntityID)
+	valid, err := h.mfa.VerifyTOTP(ctx, sess.username, code, sourceBackend)
+	if err != nil || !valid {
+		if err != nil {
+			sp.RecordError(err)
+		}
 
-	// We need to load user into auth to get TOTP secret and recovery codes
-	// GetUserByUsername already did some of this, but TotpValidation expects secrets in AuthState
-	auth.ReplaceAllAttributes(user.Attributes)
-	auth.SetTOTPSecretField(user.TOTPSecretField)
-	auth.SetTOTPRecoveryField(user.TOTPRecoveryField)
-
-	err := core.TotpValidation(ctx, auth, code, authDeps)
-
-	if err != nil {
-		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "totp", "fail").Inc()
-		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodTOTP, err.Error(), false)
+
+		statusMessage := "Invalid OTP code"
+		if err != nil {
+			statusMessage = err.Error()
+		}
+
+		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodTOTP, statusMessage, false)
 
 		data := h.basePageData(ctx)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
@@ -1757,10 +1749,12 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 
 	haveTOTP := false
 	account := ""
+	sourceBackend := uint8(definitions.BackendLDAP)
 
 	if mgr != nil {
 		haveTOTP = mgr.GetBool(definitions.SessionKeyHaveTOTP, false)
 		account = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
 	if haveTOTP {
@@ -1789,8 +1783,10 @@ func (h *FrontendHandler) RegisterTOTP(ctx *gin.Context) {
 		return
 	}
 
-	if mgr != nil {
+	if mgr != nil && sourceBackend != uint8(definitions.BackendRemote) {
 		mgr.Set(definitions.SessionKeyTOTPSecret, secret)
+	} else if mgr != nil {
+		mgr.Delete(definitions.SessionKeyTOTPSecret)
 	}
 
 	data := h.basePageData(ctx)
@@ -1829,7 +1825,7 @@ func (h *FrontendHandler) PostRegisterTOTP(ctx *gin.Context) {
 
 	code := ctx.PostForm("code")
 
-	if secret == "" || username == "" || code == "" {
+	if username == "" || code == "" || (sourceBackend != uint8(definitions.BackendRemote) && secret == "") {
 		h.renderErrorModal(ctx, "Invalid request")
 
 		return
@@ -1880,10 +1876,13 @@ func (h *FrontendHandler) RegisterRecoveryCodes(ctx *gin.Context) {
 	mgr := cookie.GetManager(ctx)
 	account := ""
 	requireFlow := false
+	sourceBackend := uint8(definitions.BackendLDAP)
 
 	if mgr != nil {
 		account = mgr.GetString(definitions.SessionKeyAccount, "")
+		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 		mgr.Delete(definitions.SessionKeyRecoveryCodesSaved)
+		mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
 		requireFlow = mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false)
 	}
 
@@ -1941,16 +1940,31 @@ func (h *FrontendHandler) RegisterRecoveryCodes(ctx *gin.Context) {
 		return
 	}
 
-	recovery, err := core.GenerateBackupCodes()
-	if err != nil {
-		h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
+	var codes []string
 
-		return
+	if sourceBackend == uint8(definitions.BackendRemote) {
+		codes, err = h.mfa.GenerateRecoveryCodes(ctx, account, sourceBackend)
+		if err != nil {
+			h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
+
+			return
+		}
+
+		if mgr != nil {
+			mgr.Set(definitions.SessionKeyRecoveryCodesRemoteGenerated, true)
+		}
+	} else {
+		recovery, err := core.GenerateBackupCodes()
+		if err != nil {
+			h.renderErrorModalWithErr(ctx, "Failed to generate recovery codes", err)
+
+			return
+		}
+
+		codes = recovery.GetCodes()
 	}
 
-	codes := recovery.GetCodes()
-
-	if mgr != nil {
+	if mgr != nil && sourceBackend != uint8(definitions.BackendRemote) {
 		mgr.Set(definitions.SessionKeyRecoveryCodes, strings.Join(codes, ","))
 	}
 
@@ -1982,14 +1996,16 @@ func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
 	username := ""
 	sourceBackend := uint8(definitions.BackendLDAP)
 	stored := ""
+	remoteGenerated := false
 
 	if mgr != nil {
 		username = mgr.GetString(definitions.SessionKeyAccount, "")
 		sourceBackend = mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 		stored = mgr.GetString(definitions.SessionKeyRecoveryCodes, "")
+		remoteGenerated = mgr.GetBool(definitions.SessionKeyRecoveryCodesRemoteGenerated, false)
 	}
 
-	if username == "" || stored == "" {
+	if username == "" || (stored == "" && !remoteGenerated) {
 		h.renderErrorModal(ctx, "Invalid request")
 
 		return
@@ -2005,8 +2021,12 @@ func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
 		return
 	}
 
-	storedCodes := strings.Split(stored, ",")
-	if len(payload.Codes) > 0 && !slices.Equal(payload.Codes, storedCodes) {
+	var storedCodes []string
+	if stored != "" {
+		storedCodes = strings.Split(stored, ",")
+	}
+
+	if !remoteGenerated && len(payload.Codes) > 0 && !slices.Equal(payload.Codes, storedCodes) {
 		h.renderErrorModal(ctx, "Invalid request")
 
 		return
@@ -2029,6 +2049,7 @@ func (h *FrontendHandler) SaveRecoveryCodes(ctx *gin.Context) {
 
 	if mgr != nil {
 		mgr.Delete(definitions.SessionKeyRecoveryCodes)
+		mgr.Delete(definitions.SessionKeyRecoveryCodesRemoteGenerated)
 		mgr.Set(definitions.SessionKeyRecoveryCodesSaved, true)
 		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
 			remaining := util.RemoveFromCommaSeparatedList(

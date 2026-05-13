@@ -25,6 +25,13 @@ type Client interface {
 	ListAccounts(ctx context.Context, request *authv1.ListAccountsRequest) (*authv1.ListAccountsResponse, error)
 	ResolveUser(ctx context.Context, request *identityv1.ResolveUserRequest) (*identityv1.UserSnapshotResponse, error)
 	GetMFAState(ctx context.Context, request *identityv1.GetMFAStateRequest) (*identityv1.MFAStateResponse, error)
+	BeginTOTPRegistration(ctx context.Context, request *identityv1.BeginTOTPRegistrationRequest) (*identityv1.BeginTOTPRegistrationResponse, error)
+	FinishTOTPRegistration(ctx context.Context, request *identityv1.FinishTOTPRegistrationRequest) (*identityv1.MFAWriteResponse, error)
+	VerifyTOTP(ctx context.Context, request *identityv1.VerifyTOTPRequest) (*identityv1.VerifyTOTPResponse, error)
+	DeleteTOTP(ctx context.Context, request *identityv1.DeleteTOTPRequest) (*identityv1.MFAWriteResponse, error)
+	GenerateRecoveryCodes(ctx context.Context, request *identityv1.GenerateRecoveryCodesRequest) (*identityv1.GenerateRecoveryCodesResponse, error)
+	UseRecoveryCode(ctx context.Context, request *identityv1.UseRecoveryCodeRequest) (*identityv1.UseRecoveryCodeResponse, error)
+	DeleteRecoveryCodes(ctx context.Context, request *identityv1.DeleteRecoveryCodesRequest) (*identityv1.MFAWriteResponse, error)
 	GetWebAuthnCredentials(ctx context.Context, request *identityv1.GetWebAuthnCredentialsRequest) (*identityv1.WebAuthnCredentialsResponse, error)
 }
 
@@ -81,6 +88,55 @@ func (a serviceClientAdapter) GetMFAState(
 	request *identityv1.GetMFAStateRequest,
 ) (*identityv1.MFAStateResponse, error) {
 	return a.identity.GetMFAState(ctx, request)
+}
+
+func (a serviceClientAdapter) BeginTOTPRegistration(
+	ctx context.Context,
+	request *identityv1.BeginTOTPRegistrationRequest,
+) (*identityv1.BeginTOTPRegistrationResponse, error) {
+	return a.identity.BeginTOTPRegistration(ctx, request)
+}
+
+func (a serviceClientAdapter) FinishTOTPRegistration(
+	ctx context.Context,
+	request *identityv1.FinishTOTPRegistrationRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return a.identity.FinishTOTPRegistration(ctx, request)
+}
+
+func (a serviceClientAdapter) VerifyTOTP(
+	ctx context.Context,
+	request *identityv1.VerifyTOTPRequest,
+) (*identityv1.VerifyTOTPResponse, error) {
+	return a.identity.VerifyTOTP(ctx, request)
+}
+
+func (a serviceClientAdapter) DeleteTOTP(
+	ctx context.Context,
+	request *identityv1.DeleteTOTPRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return a.identity.DeleteTOTP(ctx, request)
+}
+
+func (a serviceClientAdapter) GenerateRecoveryCodes(
+	ctx context.Context,
+	request *identityv1.GenerateRecoveryCodesRequest,
+) (*identityv1.GenerateRecoveryCodesResponse, error) {
+	return a.identity.GenerateRecoveryCodes(ctx, request)
+}
+
+func (a serviceClientAdapter) UseRecoveryCode(
+	ctx context.Context,
+	request *identityv1.UseRecoveryCodeRequest,
+) (*identityv1.UseRecoveryCodeResponse, error) {
+	return a.identity.UseRecoveryCode(ctx, request)
+}
+
+func (a serviceClientAdapter) DeleteRecoveryCodes(
+	ctx context.Context,
+	request *identityv1.DeleteRecoveryCodesRequest,
+) (*identityv1.MFAWriteResponse, error) {
+	return a.identity.DeleteRecoveryCodes(ctx, request)
 }
 
 func (a serviceClientAdapter) GetWebAuthnCredentials(

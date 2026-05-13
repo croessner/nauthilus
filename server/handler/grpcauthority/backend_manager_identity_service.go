@@ -17,7 +17,10 @@ package grpcauthority
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -29,7 +32,6 @@ import (
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
 
-	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pquerna/otp/totp"
 	"google.golang.org/grpc/codes"
@@ -45,6 +47,7 @@ type BackendManagerIdentityServiceDeps struct {
 type backendManagerIdentityService struct {
 	authService core.AuthApplicationService
 	authDeps    core.AuthDeps
+	totpPending *pendingTOTPStore
 }
 
 // NewBackendManagerIdentityService constructs the default authority identity service.
@@ -52,7 +55,94 @@ func NewBackendManagerIdentityService(deps BackendManagerIdentityServiceDeps) Au
 	return &backendManagerIdentityService{
 		authService: deps.AuthService,
 		authDeps:    deps.AuthDeps,
+		totpPending: newPendingTOTPStore(10 * time.Minute),
 	}
+}
+
+type pendingTOTPRegistration struct {
+	expiresAt time.Time
+	backend   BackendRefPayload
+	username  string
+	secret    string
+}
+
+type pendingTOTPStore struct {
+	ttl     time.Duration
+	mu      sync.Mutex
+	entries map[string]pendingTOTPRegistration
+}
+
+func newPendingTOTPStore(ttl time.Duration) *pendingTOTPStore {
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+
+	return &pendingTOTPStore{
+		ttl:     ttl,
+		entries: make(map[string]pendingTOTPRegistration),
+	}
+}
+
+func (s *pendingTOTPStore) create(username string, backend BackendRefPayload, secret string) (string, time.Time, error) {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", time.Time{}, err
+	}
+
+	id := base64.RawURLEncoding.EncodeToString(tokenBytes)
+	expiresAt := time.Now().UTC().Add(s.ttl)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pruneLocked(time.Now().UTC())
+	s.entries[id] = pendingTOTPRegistration{
+		expiresAt: expiresAt,
+		backend:   backend,
+		username:  username,
+		secret:    secret,
+	}
+
+	return id, expiresAt, nil
+}
+
+func (s *pendingTOTPStore) consume(id string, username string, backend BackendRefPayload) (string, bool) {
+	if s == nil || id == "" {
+		return "", false
+	}
+
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pruneLocked(now)
+
+	registration, ok := s.entries[id]
+	if !ok || registration.username != username || !sameBackendBinding(registration.backend, backend) {
+		return "", false
+	}
+
+	delete(s.entries, id)
+
+	return registration.secret, true
+}
+
+func (s *pendingTOTPStore) pruneLocked(now time.Time) {
+	for id, registration := range s.entries {
+		if !now.Before(registration.expiresAt) {
+			delete(s.entries, id)
+		}
+	}
+}
+
+func sameBackendBinding(left BackendRefPayload, right BackendRefPayload) bool {
+	return left.Type == right.Type &&
+		left.Name == right.Name &&
+		left.Protocol == right.Protocol &&
+		left.Authority == right.Authority &&
+		left.Username == right.Username &&
+		left.ServicePrincipal == right.ServicePrincipal
 }
 
 func (s *backendManagerIdentityService) ResolveUser(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
@@ -197,18 +287,31 @@ func (s *backendManagerIdentityService) BeginTOTPRegistration(_ context.Context,
 
 	secret := key.Secret()
 
+	pendingID, expiresAt, err := s.totpPending.create(input.Username, input.Backend, secret)
+	if err != nil {
+		return nil, err
+	}
+
 	return &AuthorityIdentityResult{
 		Status:                okOperationStatus(),
 		Backend:               input.Backend,
-		PendingRegistrationID: secret,
+		PendingRegistrationID: pendingID,
 		TOTPSecret:            secret,
 		OTPAuthURL:            key.URL(),
-		ExpiresAt:             time.Now().Add(10 * time.Minute),
+		ExpiresAt:             expiresAt,
 	}, nil
 }
 
 func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
-	if !totp.Validate(input.Code, input.PendingRegistrationID) {
+	secret, ok := s.totpPending.consume(input.PendingRegistrationID, input.Username, input.Backend)
+	if !ok {
+		return &AuthorityIdentityResult{
+			Status:  validationOperationStatus("totp_pending_invalid", "TOTP registration is invalid or expired"),
+			Backend: input.Backend,
+		}, nil
+	}
+
+	if !totp.Validate(input.Code, secret) {
 		return &AuthorityIdentityResult{
 			Status:  validationOperationStatus("totp_invalid", "TOTP code is invalid"),
 			Backend: input.Backend,
@@ -220,7 +323,7 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context
 		return nil, err
 	}
 
-	if err = manager.AddTOTPSecret(auth, core.NewTOTPSecret(input.PendingRegistrationID)); err != nil {
+	if err = manager.AddTOTPSecret(auth, core.NewTOTPSecret(secret)); err != nil {
 		return nil, err
 	}
 
@@ -228,18 +331,32 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context
 }
 
 func (s *backendManagerIdentityService) VerifyTOTP(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
-	result, err := s.GetMFAState(ctx, input)
+	auth, manager, err := s.authAndManager(input)
 	if err != nil {
 		return nil, err
 	}
 
-	auth, _, err := s.authAndManager(input)
-	if err != nil {
-		return nil, err
+	passDBResult, passErr := manager.PassDB(auth)
+	if passErr != nil {
+		return nil, passErr
 	}
 
-	valid := core.TotpValidation(&gin.Context{}, auth, input.Code, s.authDeps) == nil
-	result.Valid = valid
+	if passDBResult != nil {
+		applyPassDBResult(auth, passDBResult)
+	}
+
+	err = core.ValidateTOTPCode(input.Code, auth.GetTOTPSecret(), s.authDeps)
+	valid := err == nil
+
+	result := &AuthorityIdentityResult{
+		Status:  okOperationStatus(),
+		Backend: input.Backend,
+		Valid:   valid,
+		MFA: AuthorityMFAState{
+			HasTOTP:           auth.GetTOTPSecret() != "",
+			RecoveryCodeCount: uint32(len(auth.GetTOTPRecoveryCodes())),
+		},
+	}
 
 	return result, nil
 }
@@ -288,15 +405,79 @@ func (s *backendManagerIdentityService) GenerateRecoveryCodes(_ context.Context,
 }
 
 func (s *backendManagerIdentityService) UseRecoveryCode(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
-	result, err := s.VerifyTOTP(ctx, input)
+	_ = ctx
+
+	auth, manager, err := s.authAndManager(input)
 	if err != nil {
 		return nil, err
 	}
 
-	result.Changed = result.Valid
-	result.RemainingRecoveryCodeCount = result.MFA.RecoveryCodeCount
+	if consumer, ok := manager.(core.TOTPRecoveryCodeConsumer); ok {
+		valid, remaining, consumeErr := consumer.ConsumeTOTPRecoveryCode(auth, input.Code)
+		if consumeErr != nil {
+			return nil, consumeErr
+		}
 
-	return result, nil
+		return recoveryUseResult(input.Backend, valid, remaining), nil
+	}
+
+	passDBResult, passErr := manager.PassDB(auth)
+	if passErr != nil {
+		return nil, passErr
+	}
+
+	if passDBResult != nil {
+		applyPassDBResult(auth, passDBResult)
+	}
+
+	valid, remaining, err := consumeRecoveryCodeFallback(auth, manager, input.Code)
+	if err != nil {
+		return nil, err
+	}
+
+	return recoveryUseResult(input.Backend, valid, remaining), nil
+}
+
+func consumeRecoveryCodeFallback(auth *core.AuthState, manager core.BackendManager, code string) (bool, int, error) {
+	recoveryCodes := auth.GetTOTPRecoveryCodes()
+
+	for index, recoveryCode := range recoveryCodes {
+		if recoveryCode != code {
+			continue
+		}
+
+		remainingCodes := append([]string(nil), recoveryCodes[:index]...)
+		remainingCodes = append(remainingCodes, recoveryCodes[index+1:]...)
+
+		if len(remainingCodes) == 0 {
+			if err := manager.DeleteTOTPRecoveryCodes(auth); err != nil {
+				return true, len(recoveryCodes), err
+			}
+
+			return true, 0, nil
+		}
+
+		if err := manager.AddTOTPRecoveryCodes(auth, mfa.NewTOTPRecovery(remainingCodes)); err != nil {
+			return true, len(recoveryCodes), err
+		}
+
+		return true, len(remainingCodes), nil
+	}
+
+	return false, len(recoveryCodes), nil
+}
+
+func recoveryUseResult(backend BackendRefPayload, valid bool, remaining int) *AuthorityIdentityResult {
+	return &AuthorityIdentityResult{
+		Status:                     okOperationStatus(),
+		Backend:                    backend,
+		Changed:                    valid,
+		Valid:                      valid,
+		RemainingRecoveryCodeCount: uint32(remaining),
+		MFA: AuthorityMFAState{
+			RecoveryCodeCount: uint32(remaining),
+		},
+	}
 }
 
 func (s *backendManagerIdentityService) DeleteRecoveryCodes(_ context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
