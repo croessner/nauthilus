@@ -28,8 +28,12 @@
                     </label>
                     <label>
                         <input autofocus class="input input-bordered w-full text-center text-2xl tracking-widest"
-                               maxlength="6"
-                               name="code" placeholder="123456"
+                               autocomplete="one-time-code"
+                               inputmode="numeric"
+                               maxlength="16"
+                               name="code"
+                               pattern="[0-9\s-]*"
+                               placeholder="123456"
                                required type="text"/>
                     </label>
                 </div>

@@ -18,10 +18,12 @@ package grpcauthority
 import (
 	"context"
 	"errors"
+	"net/url"
 	"sync"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
@@ -44,6 +46,7 @@ const (
 	authorityAttributeBearer      = "upstreamBearerTokenAttribute"
 	authoritySnapshotMail         = "snapshot@example.test"
 	authorityEmployeeNumber       = "1234"
+	authorityTOTPIssuer           = "AuthorityIssuer"
 )
 
 func TestBackendManagerIdentityServiceMFAStateDoesNotExposeStoredSecrets(t *testing.T) {
@@ -73,6 +76,36 @@ func TestBackendManagerIdentityServiceMFAStateDoesNotExposeStoredSecrets(t *test
 
 	if result.TOTPSecret != "" || len(result.RecoveryCodes) != 0 {
 		t.Fatalf("GetMFAState() exposed TOTP secret %q or recovery codes %#v", result.TOTPSecret, result.RecoveryCodes)
+	}
+}
+
+func TestBackendManagerIdentityServiceBeginTOTPRegistrationUsesConfiguredIssuer(t *testing.T) {
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Frontend: config.Frontend{
+				TotpIssuer: authorityTOTPIssuer,
+			},
+		},
+	}
+	service := NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{
+		AuthDeps: core.AuthDeps{Cfg: cfg},
+	})
+
+	result, err := service.BeginTOTPRegistration(
+		context.Background(),
+		authorityMFATestInput("authority-totp-issuer", "issuer-user@example.test"),
+	)
+	if err != nil {
+		t.Fatalf("BeginTOTPRegistration() error = %v", err)
+	}
+
+	parsed, err := url.Parse(result.OTPAuthURL)
+	if err != nil {
+		t.Fatalf("parse OTPAuthURL: %v", err)
+	}
+
+	if got := parsed.Query().Get("issuer"); got != authorityTOTPIssuer {
+		t.Fatalf("issuer = %q, want %s", got, authorityTOTPIssuer)
 	}
 }
 

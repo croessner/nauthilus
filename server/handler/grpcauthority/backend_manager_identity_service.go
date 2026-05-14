@@ -35,7 +35,6 @@ import (
 	"github.com/croessner/nauthilus/server/model/mfa"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/pquerna/otp/totp"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -311,15 +310,12 @@ func (s *backendManagerIdentityService) GetMFAState(_ context.Context, input Aut
 }
 
 func (s *backendManagerIdentityService) BeginTOTPRegistration(_ context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "Nauthilus",
-		AccountName: input.Username,
-	})
+	registration, err := core.NewTOTPSettings(s.authDeps.Cfg).Generate(input.Username)
 	if err != nil {
 		return nil, err
 	}
 
-	secret := key.Secret()
+	secret := registration.Secret
 
 	pendingID, expiresAt, err := s.totpPending.create(input.Username, input.Backend, secret)
 	if err != nil {
@@ -331,7 +327,7 @@ func (s *backendManagerIdentityService) BeginTOTPRegistration(_ context.Context,
 		Backend:               input.Backend,
 		PendingRegistrationID: pendingID,
 		TOTPSecret:            secret,
-		OTPAuthURL:            key.URL(),
+		OTPAuthURL:            registration.OTPAuthURL,
 		ExpiresAt:             expiresAt,
 	}, nil
 }
@@ -345,7 +341,7 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context
 		}, nil
 	}
 
-	if !totp.Validate(input.Code, secret) {
+	if err := core.ValidateTOTPCode(input.Code, secret, s.authDeps); err != nil {
 		return &AuthorityIdentityResult{
 			Status:  validationOperationStatus("totp_invalid", "TOTP code is invalid"),
 			Backend: input.Backend,

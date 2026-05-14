@@ -31,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/pquerna/otp/totp"
 )
 
 // MFAProvider defines the interface for MFA management operations.
@@ -97,15 +96,12 @@ func (s *MFAService) GenerateTOTPSecret(ctx *gin.Context, username string) (stri
 		return registration.Secret, registration.OTPAuthURL, nil
 	}
 
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      s.deps.Cfg.GetServer().Frontend.GetTotpIssuer(),
-		AccountName: username,
-	})
+	registration, err := core.NewTOTPSettings(s.deps.Cfg).Generate(username)
 	if err != nil {
 		return "", "", err
 	}
 
-	return key.Secret(), key.URL(), nil
+	return registration.Secret, registration.OTPAuthURL, nil
 }
 
 // VerifyAndSaveTOTP verifies the TOTP code and saves the secret to the backend.
@@ -137,8 +133,8 @@ func (s *MFAService) VerifyAndSaveTOTP(ctx *gin.Context, username string, secret
 		return nil
 	}
 
-	if !totp.Validate(code, secret) {
-		return errors.New("invalid OTP code")
+	if err := core.ValidateTOTPCode(code, secret, s.deps.Auth()); err != nil {
+		return err
 	}
 
 	authDeps := s.deps.Auth()

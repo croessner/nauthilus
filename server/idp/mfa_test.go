@@ -158,6 +158,38 @@ func TestMFAService_VerifyAndSaveTOTP_LDAP(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestMFAServiceVerifyAndSaveTOTPNormalizesRegistrationCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Frontend: config.Frontend{
+				TotpIssuer: "NauthilusTest",
+				TotpSkew:   1,
+			},
+		},
+	}
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Env:    config.NewTestEnvironmentConfig(),
+		Logger: log.GetLogger(),
+	}
+	service := NewMFAService(d)
+
+	secret := "JBSWY3DPEHPK3PXP"
+	code, err := totp.GenerateCode(secret, time.Now())
+	assert.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
+	setupMfaMockContext(ctx, "test-guid", definitions.ServIdP)
+
+	groupedCode := code[:3] + " " + code[3:]
+	err = service.VerifyAndSaveTOTP(ctx, mfaLDAPTestUser, secret, groupedCode, 255)
+	assert.ErrorContains(t, err, "unsupported backend")
+}
+
 func TestMFAService_DeleteTOTP_LDAP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
