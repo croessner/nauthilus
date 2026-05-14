@@ -1,0 +1,758 @@
+openapi: 3.1.0
+info:
+  title: Nauthilus IdP API
+  version: v1
+  description: >
+    Public contract for stable Nauthilus IdP routes. It covers OIDC, SAML, and
+    browser flow endpoints that are intentionally reachable outside the
+    protected backchannel API.
+servers:
+  - url: /
+tags:
+  - name: OpenAPI
+    description: Public IdP API contract documents.
+  - name: OIDC
+    description: OpenID Connect and OAuth 2.0 protocol endpoints.
+  - name: SAML
+    description: SAML Identity Provider protocol endpoints.
+  - name: Browser
+    description: Browser-oriented login, consent, and MFA flow endpoints.
+paths:
+  /.well-known/openapi.yaml:
+    get:
+      tags:
+        - OpenAPI
+      operationId: getPublicIdPOpenAPIYAML
+      summary: Get the public IdP OpenAPI document as YAML.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI document in YAML format.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /.well-known/openapi.json:
+    get:
+      tags:
+        - OpenAPI
+      operationId: getPublicIdPOpenAPIJSON
+      summary: Get the public IdP OpenAPI document as JSON.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI document in JSON format.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /.well-known/openid-configuration:
+    get:
+      tags:
+        - OIDC
+      operationId: getOIDCDiscovery
+      summary: Get OIDC discovery metadata.
+      security: []
+      responses:
+        "200":
+          description: OIDC provider metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCDiscovery"
+  /oidc/authorize:
+    get:
+      tags:
+        - OIDC
+      operationId: authorizeOIDC
+      summary: Start or continue an OIDC authorization request.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ClientID"
+        - $ref: "#/components/parameters/RedirectURI"
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: nonce
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+        "400":
+          $ref: "#/components/responses/Error"
+  /oidc/token:
+    post:
+      tags:
+        - OIDC
+      operationId: exchangeOIDCToken
+      summary: Exchange an OIDC or OAuth token request.
+      security:
+        - clientBasic: []
+        - clientPost: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+      responses:
+        "200":
+          description: Token response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /oidc/userinfo:
+    get:
+      tags:
+        - OIDC
+      operationId: getOIDCUserInfo
+      summary: Get OIDC userinfo claims for the bearer token subject.
+      security:
+        - bearerToken: []
+      responses:
+        "200":
+          description: Userinfo claims.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /oidc/introspect:
+    post:
+      tags:
+        - OIDC
+      operationId: introspectOIDCToken
+      summary: Introspect an OAuth token.
+      security:
+        - clientBasic: []
+        - clientPost: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/IntrospectionRequest"
+      responses:
+        "200":
+          description: Token introspection response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntrospectionResponse"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /oidc/jwks:
+    get:
+      tags:
+        - OIDC
+      operationId: getOIDCJWKS
+      summary: Get the OIDC JSON Web Key Set.
+      security: []
+      responses:
+        "200":
+          description: JSON Web Key Set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JWKS"
+  /oidc/device:
+    post:
+      tags:
+        - OIDC
+      operationId: startOIDCDeviceAuthorization
+      summary: Start the OAuth 2.0 device authorization flow.
+      security:
+        - clientBasic: []
+        - clientPost: []
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                scope:
+                  type: string
+      responses:
+        "200":
+          description: Device authorization response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceAuthorizationResponse"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+  /oidc/device/verify:
+    get:
+      tags:
+        - Browser
+        - OIDC
+      operationId: getOIDCDeviceVerify
+      summary: Render the device verification page.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+    post:
+      tags:
+        - Browser
+        - OIDC
+      operationId: postOIDCDeviceVerify
+      summary: Submit a device verification code.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /oidc/device/consent:
+    get:
+      tags:
+        - Browser
+        - OIDC
+      operationId: getOIDCDeviceConsent
+      summary: Render the device consent page.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+    post:
+      tags:
+        - Browser
+        - OIDC
+      operationId: postOIDCDeviceConsent
+      summary: Submit device consent.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /oidc/logout:
+    get:
+      tags:
+        - OIDC
+        - Browser
+      operationId: oidcLogout
+      summary: Start OIDC logout.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /logout:
+    get:
+      tags:
+        - Browser
+      operationId: browserLogout
+      summary: Start browser logout.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /oidc/consent:
+    get:
+      tags:
+        - OIDC
+        - Browser
+      operationId: getOIDCConsent
+      summary: Render the OIDC consent page.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+    post:
+      tags:
+        - OIDC
+        - Browser
+      operationId: postOIDCConsent
+      summary: Submit OIDC consent.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /saml/metadata:
+    get:
+      tags:
+        - SAML
+      operationId: getSAMLMetadata
+      summary: Get SAML IdP metadata.
+      security: []
+      responses:
+        "200":
+          description: SAML metadata XML.
+          content:
+            application/samlmetadata+xml:
+              schema:
+                type: string
+            application/xml:
+              schema:
+                type: string
+  /saml/sso:
+    get:
+      tags:
+        - SAML
+      operationId: samlSSO
+      summary: Start SAML single sign-on.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /saml/slo:
+    get:
+      tags:
+        - SAML
+      operationId: getSAMLSLO
+      summary: Start SAML single logout with a redirect binding request.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+    post:
+      tags:
+        - SAML
+      operationId: postSAMLSLO
+      summary: Start SAML single logout with a POST binding request.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /login:
+    get:
+      tags:
+        - Browser
+      operationId: getLogin
+      summary: Render the primary login page.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+    post:
+      tags:
+        - Browser
+      operationId: postLogin
+      summary: Submit primary login credentials.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/LoginForm"
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /login/totp:
+    get:
+      tags:
+        - Browser
+      operationId: getTOTPLogin
+      summary: Render the TOTP login page.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+    post:
+      tags:
+        - Browser
+      operationId: postTOTPLogin
+      summary: Submit a TOTP login code.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /login/webauthn:
+    get:
+      tags:
+        - Browser
+      operationId: getWebAuthnLogin
+      summary: Render the WebAuthn login page.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+  /login/webauthn/begin:
+    get:
+      tags:
+        - Browser
+      operationId: beginWebAuthnLogin
+      summary: Begin WebAuthn login.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Public key credential request options.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /login/webauthn/finish:
+    post:
+      tags:
+        - Browser
+      operationId: finishWebAuthnLogin
+      summary: Finish WebAuthn login.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: WebAuthn login result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/Error"
+  /login/mfa:
+    get:
+      tags:
+        - Browser
+      operationId: getMFASelection
+      summary: Render the MFA method selection page.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+  /login/recovery:
+    get:
+      tags:
+        - Browser
+      operationId: getRecoveryLogin
+      summary: Render the recovery-code login page.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+    post:
+      tags:
+        - Browser
+      operationId: postRecoveryLogin
+      summary: Submit a recovery-code login.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+        "302":
+          $ref: "#/components/responses/Redirect"
+  /logged_out:
+    get:
+      tags:
+        - Browser
+      operationId: getLoggedOut
+      summary: Render the logged-out page.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HTMLPage"
+components:
+  securitySchemes:
+    bearerToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    clientBasic:
+      type: http
+      scheme: basic
+      description: OIDC client authentication with HTTP Basic.
+    clientPost:
+      type: apiKey
+      in: query
+      name: client_secret
+      description: OIDC client authentication through form parameters.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nauthilus_secure_data
+      description: Encrypted browser session cookie.
+  parameters:
+    ClientID:
+      name: client_id
+      in: query
+      required: true
+      schema:
+        type: string
+    RedirectURI:
+      name: redirect_uri
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uri
+  responses:
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    HTMLPage:
+      description: Browser-facing HTML response.
+      content:
+        text/html:
+          schema:
+            type: string
+    OAuthError:
+      description: OAuth error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OAuthError"
+    Redirect:
+      description: Redirect response.
+      headers:
+        Location:
+          schema:
+            type: string
+  schemas:
+    DeviceAuthorizationResponse:
+      type: object
+      properties:
+        device_code:
+          type: string
+        user_code:
+          type: string
+        verification_uri:
+          type: string
+          format: uri
+        verification_uri_complete:
+          type: string
+          format: uri
+        expires_in:
+          type: integer
+        interval:
+          type: integer
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+    IntrospectionRequest:
+      type: object
+      required:
+        - token
+      properties:
+        token:
+          type: string
+        token_type_hint:
+          type: string
+    IntrospectionResponse:
+      type: object
+      required:
+        - active
+      properties:
+        active:
+          type: boolean
+      additionalProperties: true
+    JWKS:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    LoginForm:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+    OAuthError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+    OIDCDiscovery:
+      type: object
+      required:
+        - issuer
+        - authorization_endpoint
+        - token_endpoint
+        - jwks_uri
+      properties:
+        issuer:
+          type: string
+          format: uri
+        authorization_endpoint:
+          type: string
+          format: uri
+        token_endpoint:
+          type: string
+          format: uri
+        userinfo_endpoint:
+          type: string
+          format: uri
+        introspection_endpoint:
+          type: string
+          format: uri
+        jwks_uri:
+          type: string
+          format: uri
+      additionalProperties: true
+    TokenRequest:
+      type: object
+      required:
+        - grant_type
+      properties:
+        grant_type:
+          type: string
+        code:
+          type: string
+        redirect_uri:
+          type: string
+          format: uri
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          format: password
+        refresh_token:
+          type: string
+        device_code:
+          type: string
+        scope:
+          type: string
+        code_verifier:
+          type: string
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+        expires_in:
+          type: integer
+        refresh_token:
+          type: string
+        id_token:
+          type: string
+        scope:
+          type: string

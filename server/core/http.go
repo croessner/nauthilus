@@ -256,6 +256,10 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 
 		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
+		if setupIdP != nil {
+			rb.WithIDPOpenAPI()
+		}
+
 		rb.WithFrontend(setupIdP)
 	}
 

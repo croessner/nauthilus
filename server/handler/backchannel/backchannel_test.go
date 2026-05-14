@@ -3,6 +3,7 @@ package backchannel
 import (
 	"context"
 	"encoding/base64"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -126,6 +128,45 @@ func TestBackchannelAuthMiddlewareAllowsEitherBasicOrBearer(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, response.Code)
 		assert.Equal(t, 1, validator.calls)
 	})
+}
+
+func TestSetupRegistersProtectedManagementOpenAPI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			BasicAuth: config.BasicAuth{
+				Enabled:  true,
+				Username: "api-client",
+				Password: secret.New("api-secret-1234"),
+			},
+		},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := gin.New()
+
+	err := Setup(router, &handlerdeps.Deps{
+		Cfg:    cfg,
+		Logger: logger,
+	})
+	assert.NoError(t, err)
+
+	unauthorizedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/openapi.yaml", nil)
+	unauthorizedResponse := httptest.NewRecorder()
+
+	router.ServeHTTP(unauthorizedResponse, unauthorizedRequest)
+
+	assert.Equal(t, http.StatusUnauthorized, unauthorizedResponse.Code)
+
+	authorizedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/openapi.yaml", nil)
+	authorizedRequest.SetBasicAuth("api-client", "api-secret-1234")
+
+	authorizedResponse := httptest.NewRecorder()
+
+	router.ServeHTTP(authorizedResponse, authorizedRequest)
+
+	assert.Equal(t, http.StatusOK, authorizedResponse.Code)
+	assert.Contains(t, authorizedResponse.Body.String(), "Nauthilus Management API")
 }
 
 func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenValidator) *gin.Engine {

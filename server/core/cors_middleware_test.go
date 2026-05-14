@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -80,4 +81,74 @@ func TestDefaultRouterComposer_ApplyCoreMiddlewares_AppliesCORS(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, optionsResp.Code)
 	assert.Equal(t, "https://oc.roessner.cloud", optionsResp.Header().Get("Access-Control-Allow-Origin"))
+}
+
+func TestDefaultRouterComposer_RegisterRoutes_RegistersPublicIdPOpenAPISpec(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	templateDir := frontendTemplateDir(t)
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Frontend: config.Frontend{
+				Enabled:               true,
+				HTMLStaticContentPath: templateDir,
+			},
+		},
+	}
+
+	composer := NewDefaultRouterComposer(HTTPDeps{
+		Cfg:    cfg,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	r := composer.ComposeEngine()
+	composer.RegisterRoutes(r, nil, nil, func(*gin.Engine) {}, nil)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/.well-known/openapi.yaml", nil)
+
+	r.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "Nauthilus IdP API")
+}
+
+func TestDefaultRouterComposer_RegisterRoutes_SkipsPublicIdPOpenAPIWithoutIdPSetup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	templateDir := frontendTemplateDir(t)
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Frontend: config.Frontend{
+				Enabled:               true,
+				HTMLStaticContentPath: templateDir,
+			},
+		},
+	}
+
+	composer := NewDefaultRouterComposer(HTTPDeps{
+		Cfg:    cfg,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	r := composer.ComposeEngine()
+	composer.RegisterRoutes(r, nil, nil, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/.well-known/openapi.yaml", nil)
+
+	r.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNotFound, recorder.Code)
+}
+
+func frontendTemplateDir(t *testing.T) string {
+	t.Helper()
+
+	path, err := filepath.Abs("../../static/templates")
+	if err != nil {
+		t.Fatalf("filepath.Abs error = %v", err)
+	}
+
+	return path
 }
