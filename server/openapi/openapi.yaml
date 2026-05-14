@@ -32,7 +32,9 @@ paths:
         - OpenAPI
       operationId: getOpenAPIYAML
       summary: Get the OpenAPI document as YAML.
-      security: []
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
       responses:
         "200":
           description: OpenAPI document in YAML format.
@@ -46,7 +48,9 @@ paths:
         - OpenAPI
       operationId: getOpenAPIJSON
       summary: Get the OpenAPI document as JSON.
-      security: []
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
       responses:
         "200":
           description: OpenAPI document in JSON format.
