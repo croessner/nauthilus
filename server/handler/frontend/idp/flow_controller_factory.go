@@ -18,6 +18,8 @@ package idp
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/core/cookie"
@@ -26,6 +28,8 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
 )
+
+const frontendLoginPath = "/login"
 
 // newFlowController builds an IdP flow controller with Redis-backed state
 // when available and cookie-reference fallback when Redis is unavailable.
@@ -223,5 +227,29 @@ func (h *FrontendHandler) resumeIdPFlow(ctx *gin.Context, mgr cookie.Manager) {
 		redirectURI = "/"
 	}
 
+	if isLoginSelfResume(ctx.Request.URL.Path, redirectURI) {
+		abortFlow(ctx.Request.Context(), mgr, redisClient, redisPrefix)
+		h.renderNoFlowError(ctx)
+
+		return
+	}
+
 	ctx.Redirect(http.StatusFound, redirectURI)
+}
+
+func isLoginSelfResume(requestPath string, redirectURI string) bool {
+	return isLoginPath(requestPath) && isLoginPath(redirectPath(redirectURI))
+}
+
+func redirectPath(rawURI string) string {
+	parsed, err := url.Parse(rawURI)
+	if err != nil || parsed.Path == "" {
+		return rawURI
+	}
+
+	return parsed.Path
+}
+
+func isLoginPath(path string) bool {
+	return path == frontendLoginPath || strings.HasPrefix(path, frontendLoginPath+"/")
 }

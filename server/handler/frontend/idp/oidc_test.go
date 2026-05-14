@@ -211,6 +211,85 @@ func TestOIDCHandlerTokenSetsGrantTypeContext(t *testing.T) {
 	}
 }
 
+func TestOIDCHandlerAuthorizeRejectsDuplicateSensitiveQueryValues(t *testing.T) {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+	gin.SetMode(gin.TestMode)
+
+	cfg := &mockOIDCCfg{
+		issuer:     "https://auth.example.com",
+		signingKey: secret.New(generateTestKey()),
+		clients: []config.OIDCClient{
+			{
+				ClientID:     "test-client",
+				ClientSecret: secret.New("test-secret"),
+				RedirectURIs: []string{"https://app.com/callback"},
+			},
+		},
+	}
+
+	db, _ := redismock.NewClientMock()
+	rClient := rediscli.NewTestClient(db)
+
+	d := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  rClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	idpInstance := idp.NewNauthilusIdP(d)
+	h := NewOIDCHandler(d, idpInstance, nil)
+
+	for _, duplicateKey := range duplicateSensitiveAuthorizeParameters() {
+		t.Run(duplicateKey, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/oidc/authorize?"+authorizeValuesWithDuplicate(duplicateKey).Encode(), nil)
+
+			h.Authorize(ctx)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "duplicate parameter")
+		})
+	}
+}
+
+func duplicateSensitiveAuthorizeParameters() []string {
+	return []string{
+		oidcParamResponseType,
+		oidcParamClientID,
+		oidcParamRedirectURI,
+		oidcParamScope,
+		oidcParamState,
+		oidcParamNonce,
+		oidcParamPrompt,
+		oidcParamCodeChallenge,
+		oidcParamCodeChallengeMethod,
+	}
+}
+
+func authorizeValuesWithDuplicate(duplicateKey string) url.Values {
+	values := url.Values{}
+	values.Add(oidcParamResponseType, oidcResponseTypeCode)
+	values.Add(oidcParamClientID, "test-client")
+	values.Add(oidcParamRedirectURI, "https://app.com/callback")
+	values.Add(oidcParamScope, definitions.ScopeOpenId)
+	values.Add(oidcParamState, "state-1")
+	values.Add(oidcParamNonce, "nonce-1")
+
+	if duplicateKey == oidcParamPrompt {
+		values.Add(oidcParamPrompt, "login")
+	}
+
+	if duplicateKey == oidcParamCodeChallenge || duplicateKey == oidcParamCodeChallengeMethod {
+		values.Add(oidcParamCodeChallenge, strings.Repeat("a", 43))
+		values.Add(oidcParamCodeChallengeMethod, "S256")
+	}
+
+	values.Add(duplicateKey, "attacker-value")
+
+	return values
+}
+
 func generateTestKey() string {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pemData := pem.EncodeToMemory(&pem.Block{
@@ -1430,10 +1509,10 @@ func TestOIDCHandler_Token(t *testing.T) {
 		ctx, _ := gin.CreateTestContext(w)
 
 		form := url.Values{}
-		form.Add("grant_type", grantType)
+		form.Add(oidcParamGrantType, grantType)
 		form.Add(grantValueKey, grantValue)
-		form.Add("client_id", "test-client")
-		form.Add("client_secret", "test-secret")
+		form.Add(oidcParamClientID, "test-client")
+		form.Add(oidcParamClientSecret, "test-secret")
 
 		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1445,10 +1524,54 @@ func TestOIDCHandler_Token(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 		var resp map[string]any
+
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
-		assert.Equal(t, "invalid_client", resp["error"])
+		assert.Equal(t, "invalid_client", resp[definitions.LogKeyError])
 	}
+
+	assertInvalidRequestForDuplicateTokenParameter := func(t *testing.T, duplicateKey string) {
+		t.Helper()
+
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		form := url.Values{}
+		form.Add(oidcParamGrantType, definitions.OIDCFlowAuthorizationCode)
+		form.Add(oidcParamCode, "valid-code")
+		form.Add(oidcParamRedirectURI, "https://app.com/callback")
+		form.Add(oidcParamClientID, "test-client")
+		form.Add(oidcParamClientSecret, "test-secret")
+		form.Add(duplicateKey, "attacker-value")
+
+		req, _ := http.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		ctx.Request = req
+
+		h.Token(ctx)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var resp map[string]any
+
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.Equal(t, "invalid_request", resp[definitions.LogKeyError])
+	}
+
+	t.Run("Token request with duplicate sensitive form values is rejected", func(t *testing.T) {
+		for _, duplicateKey := range []string{
+			oidcParamGrantType,
+			oidcParamClientID,
+			oidcParamClientSecret,
+			oidcParamCode,
+			oidcParamRedirectURI,
+		} {
+			t.Run(duplicateKey, func(t *testing.T) {
+				assertInvalidRequestForDuplicateTokenParameter(t, duplicateKey)
+			})
+		}
+	})
 
 	t.Run("Token request with Basic Auth", func(t *testing.T) {
 		code := "code123"

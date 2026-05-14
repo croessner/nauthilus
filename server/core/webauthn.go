@@ -786,10 +786,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		signCountZero := newSignCount == 0
 		signCountMonotonic := true
 		if oldSignCount != nil {
-			oldValue := *oldSignCount
-			if newSignCount <= oldValue && (newSignCount != 0 || oldValue != 0) {
-				signCountMonotonic = false
-			}
+			signCountMonotonic = isWebAuthnSignCountMonotonic(*oldSignCount, newSignCount)
 		}
 
 		sp.SetAttributes(
@@ -859,6 +856,14 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			}
 
 			level.Warn(authState.Logger()).Log(warnKeyvals...)
+		}
+
+		if oldSignCount != nil && !signCountMonotonic {
+			LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, "WebAuthn sign count rollback detected", false)
+			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
+			ctx.JSON(http.StatusBadRequest, "WebAuthn sign count rollback detected")
+
+			return
 		}
 
 		oldCredential, newPersistentCredential := updateWebAuthnCredentialAfterLogin(
@@ -1031,6 +1036,10 @@ func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, 
 		return nil, nil
 	}
 
+	if !isWebAuthnSignCountMonotonic(oldCredential.Authenticator.SignCount, credential.Authenticator.SignCount) {
+		return nil, nil
+	}
+
 	newCredential := &mfa.PersistentCredential{
 		Credential: *credential,
 		Name:       oldCredential.Name,
@@ -1038,6 +1047,14 @@ func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, 
 	}
 
 	return oldCredential, newCredential
+}
+
+func isWebAuthnSignCountMonotonic(oldSignCount uint32, newSignCount uint32) bool {
+	if newSignCount == 0 && oldSignCount == 0 {
+		return true
+	}
+
+	return newSignCount > oldSignCount
 }
 
 type webAuthnCredentialUpdater interface {

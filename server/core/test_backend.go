@@ -134,7 +134,7 @@ func (s *testBackendStore) withUser(backendName, username, password string, upda
 		user = &testBackendUser{Username: username}
 	}
 
-	if password != "" {
+	if password != "" && user.PasswordHash == "" {
 		user.PasswordHash = util.GetHash(util.PreparePassword(password))
 	}
 

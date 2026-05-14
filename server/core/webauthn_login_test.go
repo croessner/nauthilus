@@ -223,3 +223,30 @@ func TestUpdateWebAuthnCredentialAfterLoginKeepsDeviceData(t *testing.T) {
 		assert.Equal(t, []byte("device-b"), updatedCredential.ID)
 	}
 }
+
+func TestUpdateWebAuthnCredentialAfterLoginRejectsStaleSignCount(t *testing.T) {
+	now := time.Date(2026, time.January, 30, 12, 0, 0, 0, time.UTC)
+	credentials := []mfa.PersistentCredential{
+		{
+			Credential: webauthn.Credential{
+				ID: []byte("device-a"),
+				Authenticator: webauthn.Authenticator{
+					SignCount: 7,
+				},
+			},
+			Name:     "Security key",
+			LastUsed: time.Date(2026, time.January, 29, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	loginCredential := &webauthn.Credential{
+		ID: []byte("device-a"),
+		Authenticator: webauthn.Authenticator{
+			SignCount: 7,
+		},
+	}
+
+	oldCredential, updatedCredential := updateWebAuthnCredentialAfterLogin(credentials, loginCredential, now)
+
+	assert.Nil(t, oldCredential)
+	assert.Nil(t, updatedCredential)
+}

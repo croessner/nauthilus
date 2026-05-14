@@ -52,6 +52,42 @@ func TestTestBackendPassDBReturnsAccountAttribute(t *testing.T) {
 	}
 }
 
+func TestTestBackendPassDBRejectsChangedPassword(t *testing.T) {
+	setupMinimalTestConfig(t)
+	util.SetDefaultConfigFile(config.GetFile())
+	util.SetDefaultEnvironment(config.GetEnvironment())
+
+	manager := NewTestBackendManager("test_backend_password_contract", AuthDeps{})
+	username := "password-contract@example.test"
+
+	firstResult, err := manager.PassDB(newTestBackendPasswordAuth(username, "original-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !firstResult.Authenticated {
+		t.Fatal("first password authentication should seed and authenticate the test account")
+	}
+
+	wrongResult, err := manager.PassDB(newTestBackendPasswordAuth(username, "changed-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if wrongResult.Authenticated {
+		t.Fatal("changed password must not authenticate an existing test account")
+	}
+
+	retryResult, err := manager.PassDB(newTestBackendPasswordAuth(username, "original-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !retryResult.Authenticated {
+		t.Fatal("original password must remain valid after a failed changed-password attempt")
+	}
+}
+
 func TestTestBackendWebAuthnCredentialPersistenceContract(t *testing.T) {
 	setupMinimalTestConfig(t)
 	util.SetDefaultConfigFile(config.GetFile())
@@ -100,6 +136,15 @@ func TestTestBackendWebAuthnCredentialPersistenceContract(t *testing.T) {
 	}
 
 	assertStoredWebAuthnCredentials(t, manager, auth, nil)
+}
+
+func newTestBackendPasswordAuth(username, password string) *AuthState {
+	auth := &AuthState{}
+	auth.Request.Username = username
+	auth.Request.Password = secret.New(password)
+	auth.Request.Protocol = config.NewProtocol("idp")
+
+	return auth
 }
 
 func assertStoredWebAuthnCredentials(t *testing.T, manager BackendManager, auth *AuthState, expected []mfa.PersistentCredential) {

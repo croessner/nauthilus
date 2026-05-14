@@ -257,6 +257,39 @@ identity:
             - claim: "name"
               attribute: "displayName"
 
+      - name: "Split Consent Browser Client"
+        client_id: "split-e2e-consent"
+        client_secret: "split-e2e-consent-secret"
+        redirect_uris:
+          - "https://split.example.test:19094/callback"
+        grant_types:
+          - authorization_code
+          - urn:ietf:params:oauth:grant-type:device_code
+        token_endpoint_auth_method: "client_secret_post"
+        skip_consent: false
+        scopes:
+          - openid
+          - profile
+          - email
+        id_token_claims:
+          mappings:
+            - claim: "email"
+              attribute: "uid"
+            - claim: "name"
+              attribute: "displayName"
+
+      - name: "Split Device Attacker Client"
+        client_id: "split-e2e-device-attacker"
+        client_secret: "split-e2e-device-attacker-secret"
+        grant_types:
+          - urn:ietf:params:oauth:grant-type:device_code
+        token_endpoint_auth_method: "client_secret_post"
+        skip_consent: true
+        scopes:
+          - openid
+          - profile
+          - email
+
   saml:
     enabled: true
     entity_id: "https://split.example.test:18080/saml/metadata"

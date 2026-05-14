@@ -101,6 +101,8 @@ func TestSplitDeploymentProfileKeepsAuthorityAndEdgeSeparated(t *testing.T) {
 	assertOIDCTokenLifetimes(t, authority, "authority")
 	assertOIDCTokenLifetimes(t, edgeA, "edge-a")
 	assertOIDCTokenLifetimes(t, edgeB, "edge-b")
+	assertEdgeNegativeOIDCClients(t, edgeA, "edge-a")
+	assertEdgeNegativeOIDCClients(t, edgeB, "edge-b")
 }
 
 func TestComposeNetworksPreventDirectCrossRedisAccess(t *testing.T) {
@@ -127,6 +129,80 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"grpc-resolve-user",
 		"oidc-authorization-code",
 		"oidc-device-code",
+		"oidc-authorize-invalid-response-type",
+		"oidc-authorize-invalid-client",
+		"oidc-authorize-invalid-redirect-uri",
+		"oidc-authorize-protocol-relative-redirect-uri",
+		"oidc-authorize-encoded-redirect-smuggling-rejected",
+		"oidc-authorize-double-encoded-redirect-rejected",
+		"oidc-authorize-backslash-redirect-rejected",
+		"oidc-authorize-mixed-case-host-redirect-rejected",
+		"oidc-authorize-trailing-dot-host-redirect-rejected",
+		"oidc-authorize-userinfo-redirect-rejected",
+		"oidc-authorize-dot-segment-redirect-rejected",
+		"oidc-authorize-duplicate-redirect-uri-rejected",
+		"oidc-authorize-response-type-mix-rejected",
+		"oidc-authorize-response-type-none-rejected",
+		"oidc-authorize-response-type-id-token-rejected",
+		"oidc-authorize-pkce-plain-rejected",
+		"oidc-authorize-prompt-none-login-required",
+		"oidc-login-direct-access-rejected",
+		"oidc-login-invalid-password",
+		"oidc-consent-denied",
+		"oidc-login-csrf-missing-rejected",
+		"oidc-login-csrf-foreign-token-rejected",
+		"oidc-consent-csrf-missing-rejected",
+		"oidc-consent-csrf-foreign-token-rejected",
+		"oidc-session-tampered-cookie-rejected",
+		"oidc-session-fixation-cookie-ignored",
+		"oidc-flow-replay-after-callback-rejected",
+		"oidc-cross-edge-flow-replay-after-callback-rejected",
+		"oidc-token-invalid-client-secret",
+		"oidc-token-invalid-code",
+		"oidc-token-unsupported-grant",
+		"oidc-token-json-body-rejected",
+		"oidc-token-duplicate-client-id-rejected",
+		"oidc-token-duplicate-code-rejected",
+		"oidc-token-duplicate-redirect-uri-rejected",
+		"oidc-token-combined-client-auth-rejected",
+		"oidc-token-redirect-mismatch-rejected",
+		"oidc-token-pkce-missing-verifier-rejected",
+		"oidc-token-pkce-wrong-verifier-rejected",
+		"oidc-token-code-client-confusion-rejected",
+		"oidc-token-code-reuse-rejected",
+		"oidc-token-refresh-client-mismatch-rejected",
+		"oidc-token-refresh-reuse-rejected",
+		"oidc-token-refresh-after-logout-rejected",
+		"oidc-introspect-invalid-client-secret",
+		"oidc-introspect-alg-none-token-inactive",
+		"oidc-introspect-unknown-kid-token-inactive",
+		"oidc-revoke-endpoint-not-exposed",
+		"oidc-discovery-metadata-consistent",
+		"oidc-userinfo-missing-token",
+		"oidc-userinfo-invalid-token",
+		"oidc-device-missing-client",
+		"oidc-device-invalid-client",
+		"oidc-device-unsupported-client",
+		"oidc-device-token-authorization-pending",
+		"oidc-device-token-slow-down",
+		"oidc-device-token-expired-code",
+		"oidc-device-token-client-mismatch-rejected",
+		"oidc-device-invalid-user-code",
+		"oidc-device-unicode-user-code-rejected",
+		"oidc-device-user-code-bruteforce-rejected",
+		"oidc-device-token-consent-denied",
+		"oidc-device-consent-denied",
+		"oidc-device-token-reuse-rejected",
+		"oidc-totp-invalid-code",
+		"oidc-recovery-invalid-code",
+		"oidc-recovery-code-reuse-rejected",
+		"oidc-webauthn-missing-credential",
+		"oidc-webauthn-tampered-assertion",
+		"oidc-webauthn-wrong-challenge",
+		"oidc-webauthn-wrong-origin",
+		"oidc-webauthn-unknown-credential",
+		"oidc-webauthn-replay-assertion",
+		"oidc-webauthn-sign-count-rollback",
 		"saml-sso",
 		"totp-registration-login",
 		"recovery-code-generation-consumption",
@@ -164,6 +240,19 @@ func TestBrowserAutomationUsesCDPVirtualAuthenticator(t *testing.T) {
 		"hasUserVerification",
 		"completeRecoveryRegistration",
 		"completeRecoveryLogin",
+		"runNegativeIdPChecks",
+		"runNegativeMFAChecks",
+		"runCSRFAndSessionAttackFailures",
+		"deviceAttackerClient",
+		"duplicateTokenForm",
+		"pkceChallenge",
+		"runWebAuthnTamperedAssertion",
+		"runWebAuthnWrongChallenge",
+		"runWebAuthnWrongOrigin",
+		"runWebAuthnUnknownCredential",
+		"runWebAuthnAssertionReplay",
+		"runWebAuthnSignCountRollback",
+		"runRecoveryCodeReuseRejected",
 		"host-resolver-rules",
 		"runMultiEdgeWebAuthnContinuity",
 		"https://split.example.test",
@@ -455,6 +544,26 @@ func assertOIDCTokenLifetimes(t *testing.T, cfg map[string]any, label string) {
 	}
 }
 
+func assertEdgeNegativeOIDCClients(t *testing.T, cfg map[string]any, label string) {
+	t.Helper()
+
+	clients := sequenceMaps(cfg, "identity", "oidc", "clients")
+
+	consentClient := findClient(t, clients, "split-e2e-consent")
+	if !contains(sequence(consentClient, "grant_types"), "urn:ietf:params:oauth:grant-type:device_code") {
+		t.Fatalf("%s consent client must support device-code flow for consent-denial checks", label)
+	}
+
+	attackerClient := findClient(t, clients, "split-e2e-device-attacker")
+	if !contains(sequence(attackerClient, "grant_types"), "urn:ietf:params:oauth:grant-type:device_code") {
+		t.Fatalf("%s attacker client must support device-code flow for client-mismatch checks", label)
+	}
+
+	if len(sequence(attackerClient, "redirect_uris")) != 0 {
+		t.Fatalf("%s attacker client must not have authorization-code redirect URIs", label)
+	}
+}
+
 func assertServiceNetworks(t *testing.T, compose map[string]any, service string, want []string) {
 	t.Helper()
 
@@ -603,6 +712,16 @@ func containsAll(got []string, want []string) bool {
 	}
 
 	return true
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 func stringSet(values []string) map[string]bool {
