@@ -3,6 +3,7 @@ scenarios:
   - grpc-lookup-identity
   - grpc-list-accounts
   - grpc-resolve-user
+  - openapi-management-cache-flush-async-status
   - oidc-authorization-code
   - oidc-device-code
   - oidc-authorize-invalid-response-type
@@ -105,5 +106,6 @@ commands:
 
 notes:
   - "The profile check is intentionally local and fast; it asserts the split Redis, remote-only edge, mTLS, bearer scopes, and virtual authenticator harness."
+  - "The Go smoke uses the supported generated OpenAPI management client against the live authority management API."
   - "The browser smoke uses Playwright and must create a CDP virtual authenticator before WebAuthn registration or login."
   - "The Compose topology keeps authority Redis and edge Redis on separate internal networks so neither Nauthilus role can address the other role's Redis."

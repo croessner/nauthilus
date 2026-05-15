@@ -40,6 +40,8 @@ import (
 	identityv1 "github.com/croessner/nauthilus/server/grpcapi/identity/v1"
 	"github.com/croessner/nauthilus/server/idp/clientauth"
 	"github.com/croessner/nauthilus/server/idp/signing"
+	openapiclient "github.com/croessner/nauthilus/server/openapi/client"
+	management "github.com/croessner/nauthilus/server/openapi/generated/management"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -63,6 +65,11 @@ const (
 	smokeLocalPort      = "19444"
 	smokeProtocol       = "imap"
 	smokeMethod         = "plain"
+
+	openAPIManagementScenario     = "openapi-management-cache-flush-async-status"
+	openAPIManagementUserSuffix   = ".openapi-management"
+	openAPIManagementPollInterval = 100 * time.Millisecond
+	openAPIManagementPollTimeout  = 10 * time.Second
 )
 
 var allAuthorityScopes = []string{
@@ -81,6 +88,7 @@ type options struct {
 	mode                   string
 	authorityTokenURL      string
 	authorityTokenAudience string
+	authorityManagementURL string
 	authorityGRPC          string
 	authorityUnavailable   string
 	workDir                string
@@ -122,6 +130,7 @@ func parseOptions() options {
 	flag.StringVar(&opts.mode, "mode", modePreBrowser, "smoke mode: pre-browser or post-browser")
 	flag.StringVar(&opts.authorityTokenURL, "authority-token-url", "http://localhost:18081/oidc/token", "authority token endpoint URL reachable from the host")
 	flag.StringVar(&opts.authorityTokenAudience, "authority-token-audience", "http://authority:18081/oidc/token", "private_key_jwt audience expected by the authority")
+	flag.StringVar(&opts.authorityManagementURL, "authority-management-url", "http://localhost:18081", "authority management API base URL reachable from the host")
 	flag.StringVar(&opts.authorityGRPC, "authority-grpc", "localhost:19444", "authority gRPC endpoint reachable from the host")
 	flag.StringVar(&opts.authorityUnavailable, "authority-unavailable", "localhost:19445", "unused endpoint for unavailable-authority negative check")
 	flag.StringVar(&opts.workDir, "work-dir", "contrib/identity-proxy-e2e/.work", "generated E2E material directory")
@@ -241,6 +250,12 @@ func (r *runner) runPreBrowser(parent context.Context) error {
 	if err = r.runPreBrowserMFAChecks(parent, token, authResp.GetBackendRef()); err != nil {
 		return err
 	}
+
+	if err = r.runOpenAPIManagementChecks(parent, token); err != nil {
+		return err
+	}
+
+	ok(openAPIManagementScenario)
 
 	return r.runPreBrowserNegativeChecks(parent, token, lookupResp.GetBackendRef())
 }
@@ -652,6 +667,116 @@ func (r *runner) webauthnCredentials(parent context.Context, token string, ref *
 	return response.GetCredentials(), nil
 }
 
+func (r *runner) runOpenAPIManagementChecks(parent context.Context, token string) error {
+	username := r.opts.username + openAPIManagementUserSuffix
+	if _, err := r.authenticate(parent, token, username, r.opts.password); err != nil {
+		return fmt.Errorf("prepare OpenAPI management cache user: %w", err)
+	}
+
+	client, err := r.openAPIManagementClient(token)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(parent, openAPIManagementPollTimeout)
+	defer cancel()
+
+	response, err := client.EnqueueUserCacheFlush(
+		ctx,
+		management.EnqueueUserCacheFlushJSONRequestBody{User: username},
+	)
+	if err != nil {
+		return fmt.Errorf("enqueue OpenAPI management cache flush: %w", err)
+	}
+
+	if response.StatusCode() != http.StatusAccepted || response.JSON202 == nil {
+		return fmt.Errorf("enqueue OpenAPI management cache flush status=%d body=%s", response.StatusCode(), string(response.Body))
+	}
+
+	jobID := response.JSON202.Result.JobId
+	if jobID == "" {
+		return errors.New("enqueue OpenAPI management cache flush returned empty job ID")
+	}
+
+	return r.waitOpenAPIManagementJob(ctx, client, jobID)
+}
+
+func (r *runner) openAPIManagementClient(token string) (*openapiclient.ManagementClient, error) {
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	client, err := openapiclient.NewManagementClient(
+		r.opts.authorityManagementURL,
+		openapiclient.BearerToken(token),
+		management.WithHTTPClient(httpClient),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create OpenAPI management client: %w", err)
+	}
+
+	return client, nil
+}
+
+func (r *runner) waitOpenAPIManagementJob(
+	ctx context.Context,
+	client *openapiclient.ManagementClient,
+	jobID string,
+) error {
+	ticker := time.NewTicker(openAPIManagementPollInterval)
+	defer ticker.Stop()
+
+	for {
+		done, err := r.checkOpenAPIManagementJob(ctx, client, jobID)
+		if err != nil {
+			return err
+		}
+
+		if done {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("OpenAPI management async job %q timed out: %w", jobID, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (r *runner) checkOpenAPIManagementJob(
+	ctx context.Context,
+	client *openapiclient.ManagementClient,
+	jobID string,
+) (bool, error) {
+	response, err := client.GetAsyncJobStatus(ctx, jobID)
+	if err != nil {
+		return false, fmt.Errorf("get OpenAPI management async job status: %w", err)
+	}
+
+	if response.StatusCode() != http.StatusOK || response.JSON200 == nil {
+		return false, fmt.Errorf("get OpenAPI management async job status=%d body=%s", response.StatusCode(), string(response.Body))
+	}
+
+	payload := response.JSON200.Result
+	if payload.JobId == nil || *payload.JobId != jobID {
+		return false, fmt.Errorf("OpenAPI management async job ID = %q, want %q", stringValue(payload.JobId), jobID)
+	}
+
+	if payload.Status == nil {
+		return false, errors.New("OpenAPI management async job returned empty status")
+	}
+
+	switch *payload.Status {
+	case management.AsyncJobStatusDone:
+		return true, nil
+	case management.AsyncJobStatusError:
+		return false, fmt.Errorf("OpenAPI management async job failed: %s", stringValue(payload.Error))
+	case management.AsyncJobStatusQueued, management.AsyncJobStatusInProgress:
+		return false, nil
+	default:
+		return false, fmt.Errorf("OpenAPI management async job returned unknown status %q", *payload.Status)
+	}
+}
+
 func (r *runner) expectMissingCallerAuth(parent context.Context) error {
 	ctx, cancel := r.rpcContext(parent, "")
 	defer cancel()
@@ -777,6 +902,14 @@ func expectCode(name string, err error, want codes.Code) error {
 
 func ok(name string) {
 	fmt.Printf("ok %s\n", name)
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+
+	return *value
 }
 
 func randomHex(bytes int) (string, error) {

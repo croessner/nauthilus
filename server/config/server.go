@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,8 +77,9 @@ type ServerSection struct {
 	SecurityTxt               SecurityTxt              `mapstructure:"security_txt" validate:"omitempty"`
 	// Middlewares holds runtimeModule switches to enable/disable individual HTTP middlewares.
 	// By default, all middlewares are considered enabled if not explicitly disabled in the config file.
-	Middlewares Middlewares `mapstructure:"middlewares" validate:"omitempty"`
-	Timeouts    Timeouts    `mapstructure:"timeouts" validate:"omitempty"`
+	Middlewares       Middlewares       `mapstructure:"middlewares" validate:"omitempty"`
+	OpenAPIValidation OpenAPIValidation `mapstructure:"openapi_validation" validate:"omitempty"`
+	Timeouts          Timeouts          `mapstructure:"timeouts" validate:"omitempty"`
 
 	TrustedProxies []string `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
 
@@ -103,6 +105,38 @@ type Middlewares struct {
 }
 
 const (
+	// OpenAPIValidationOperationEnqueueBruteForceRuleFlush selects the async brute-force flush operation.
+	OpenAPIValidationOperationEnqueueBruteForceRuleFlush = "enqueueBruteForceRuleFlush"
+	// OpenAPIValidationOperationEnqueueUserCacheFlush selects the async cache flush operation.
+	OpenAPIValidationOperationEnqueueUserCacheFlush = "enqueueUserCacheFlush"
+	// OpenAPIValidationOperationFlushBruteForceRule selects the sync brute-force flush operation.
+	OpenAPIValidationOperationFlushBruteForceRule = "flushBruteForceRule"
+	// OpenAPIValidationOperationFlushUserCache selects the sync cache flush operation.
+	OpenAPIValidationOperationFlushUserCache = "flushUserCache"
+	// OpenAPIValidationOperationListBruteForceEntries selects the brute-force list operation.
+	OpenAPIValidationOperationListBruteForceEntries = "listBruteForceEntries"
+	// OpenAPIValidationOperationListFilteredBruteForceEntries selects the filtered brute-force list operation.
+	OpenAPIValidationOperationListFilteredBruteForceEntries = "listFilteredBruteForceEntries"
+)
+
+var allowedRuntimeOpenAPIValidationOperations = map[string]struct{}{
+	OpenAPIValidationOperationEnqueueBruteForceRuleFlush:    {},
+	OpenAPIValidationOperationEnqueueUserCacheFlush:         {},
+	OpenAPIValidationOperationFlushBruteForceRule:           {},
+	OpenAPIValidationOperationFlushUserCache:                {},
+	OpenAPIValidationOperationListBruteForceEntries:         {},
+	OpenAPIValidationOperationListFilteredBruteForceEntries: {},
+}
+
+// OpenAPIValidation configures the disabled-by-default runtime request
+// validation pilot. Enforcing requires both Enabled and Enforce to be true.
+type OpenAPIValidation struct {
+	Operations []string `mapstructure:"operations" validate:"omitempty,dive,printascii"`
+	Enabled    bool     `mapstructure:"enabled"`
+	Enforce    bool     `mapstructure:"enforce"`
+}
+
+const (
 	defaultCORSPolicyName = "frontend"
 	defaultTLSMinVersion  = "TLS1.2"
 )
@@ -121,6 +155,57 @@ func (s *ServerSection) GetMiddlewares() *Middlewares {
 	}
 
 	return &s.Middlewares
+}
+
+// GetOpenAPIValidation returns the OpenAPI runtime request validation pilot
+// settings.
+func (s *ServerSection) GetOpenAPIValidation() *OpenAPIValidation {
+	if s == nil {
+		return &OpenAPIValidation{}
+	}
+
+	return &s.OpenAPIValidation
+}
+
+// IsEnabled reports whether runtime OpenAPI request validation should enforce
+// selected operations.
+func (v *OpenAPIValidation) IsEnabled() bool {
+	if v == nil {
+		return false
+	}
+
+	return v.Enabled && v.Enforce && len(v.Operations) > 0
+}
+
+// GetOperations returns a copy of the selected OpenAPI operation IDs.
+func (v *OpenAPIValidation) GetOperations() []string {
+	if v == nil {
+		return nil
+	}
+
+	return append([]string(nil), v.Operations...)
+}
+
+// IsOpenAPIValidationOperationAllowed reports whether operation can be selected
+// by the runtime validation pilot.
+func IsOpenAPIValidationOperationAllowed(operation string) bool {
+	_, ok := allowedRuntimeOpenAPIValidationOperations[operation]
+
+	return ok
+}
+
+// AllowedOpenAPIValidationOperations returns the stable allowlist for operator
+// diagnostics and config validation errors.
+func AllowedOpenAPIValidationOperations() []string {
+	operations := make([]string, 0, len(allowedRuntimeOpenAPIValidationOperations))
+
+	for operation := range allowedRuntimeOpenAPIValidationOperations {
+		operations = append(operations, operation)
+	}
+
+	sort.Strings(operations)
+
+	return operations
 }
 
 // GetSecurityTxt returns the configured security.txt settings.

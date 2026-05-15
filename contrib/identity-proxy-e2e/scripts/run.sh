@@ -14,7 +14,7 @@ Commands:
   profile-check  Assert split-profile invariants with the Go harness.
   build-image    Build the current workspace image used by the E2E stack.
   up             Prepare material, build the image unless skipped, and start the stack.
-  rpc            Run gRPC positive and negative checks against the running stack.
+  rpc            Run gRPC and generated OpenAPI management checks against the running stack.
   redis-check    Prove authority and edge Redis are isolated at the Compose network layer.
   browser        Run the Playwright browser smoke against the running stack.
   smoke          Reset the stack, then run profile-check, gRPC, Redis, browser, and post-browser checks.

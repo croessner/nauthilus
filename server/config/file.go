@@ -2424,6 +2424,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateRemoteAuthorityClients,
 		f.validateRemoteBackends,
 		f.validateGRPCAuthServer,
+		f.validateOpenAPIValidation,
 
 		// Without errors, but fixing things
 		f.setDefaultInstanceName,
@@ -2464,6 +2465,62 @@ func (f *FileSettings) validate() (err error) {
 
 func (f *FileSettings) validateGRPCAuthServer() error {
 	return ValidateGRPCAuthServerConfig(f)
+}
+
+func (f *FileSettings) validateOpenAPIValidation() error {
+	validation := f.GetServer().GetOpenAPIValidation()
+	if validation == nil {
+		return nil
+	}
+
+	if err := validateOpenAPIValidationMode(validation); err != nil {
+		return err
+	}
+
+	return validateOpenAPIValidationOperations(validation)
+}
+
+func validateOpenAPIValidationMode(validation *OpenAPIValidation) error {
+	if validation.Enforce && !validation.Enabled {
+		return fmt.Errorf("runtime.servers.http.openapi_validation.enabled must be true when enforce=true")
+	}
+
+	if validation.Enabled && !validation.Enforce {
+		return fmt.Errorf("runtime.servers.http.openapi_validation.enforce must be true when enabled=true; warn-only runtime validation is not supported")
+	}
+
+	if !validation.Enabled && len(validation.Operations) == 0 {
+		return nil
+	}
+
+	if validation.Enabled && len(validation.Operations) == 0 {
+		return fmt.Errorf("runtime.servers.http.openapi_validation.operations must contain at least one operation when enabled=true")
+	}
+
+	return nil
+}
+
+func validateOpenAPIValidationOperations(validation *OpenAPIValidation) error {
+	seen := make(map[string]struct{}, len(validation.Operations))
+	allowedOperations := AllowedOpenAPIValidationOperations()
+
+	for _, operation := range validation.Operations {
+		if strings.TrimSpace(operation) != operation || operation == "" {
+			return fmt.Errorf("runtime.servers.http.openapi_validation.operations contains an empty or whitespace-padded operation")
+		}
+
+		if !IsOpenAPIValidationOperationAllowed(operation) {
+			return fmt.Errorf("runtime.servers.http.openapi_validation.operations contains unsupported operation %q; allowed operations: %s", operation, strings.Join(allowedOperations, ", "))
+		}
+
+		if _, exists := seen[operation]; exists {
+			return fmt.Errorf("runtime.servers.http.openapi_validation.operations contains duplicate operation %q", operation)
+		}
+
+		seen[operation] = struct{}{}
+	}
+
+	return nil
 }
 
 func (f *FileSettings) validateTLSSettings() error {

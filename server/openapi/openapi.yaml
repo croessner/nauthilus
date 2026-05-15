@@ -7,23 +7,36 @@ info:
     custom hook aliases remain runtime configuration. Public IdP protocol and
     browser routes are documented by the public IdP contract.
 servers:
-  - url: /
+  - url: "{baseUrl}"
+    description: Nauthilus deployment base URL.
+    variables:
+      baseUrl:
+        default: https://nauthilus.example.com
+        description: Absolute base URL of the Nauthilus deployment to call.
 tags:
   - name: OpenAPI
+    x-displayName: /api/v1/openapi
     description: Embedded API contract documents.
   - name: Authentication
+    x-displayName: /api/v1/auth
     description: Structured authentication and account listing endpoints.
   - name: BruteForce
+    x-displayName: /api/v1/bruteforce
     description: Backchannel brute-force administration endpoints.
   - name: Cache
+    x-displayName: /api/v1/cache
     description: Backchannel cache administration endpoints.
   - name: Config
+    x-displayName: /api/v1/config
     description: Backchannel configuration inspection endpoint.
   - name: Async
+    x-displayName: /api/v1/async
     description: Asynchronous backchannel job status endpoint.
   - name: MFA
+    x-displayName: /api/v1/mfa
     description: Session-bound MFA management endpoints.
   - name: OIDCSessions
+    x-displayName: /api/v1/oidc/sessions
     description: Backchannel OIDC session administration endpoints.
 paths:
   /api/v1/openapi.yaml:
@@ -180,6 +193,237 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "500":
           $ref: "#/components/responses/Error"
+  /api/v1/auth/header:
+    get:
+      tags:
+        - Authentication
+      operationId: getHeaderAuth
+      summary: Authenticate using configured HTTP request headers.
+      description: >
+        Reads credentials and connection metadata from configured request
+        headers. The default header names are documented as parameters; they can
+        be changed through the Nauthilus runtime configuration.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthHeaderSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AuthHeaderFailure"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Error"
+    post:
+      tags:
+        - Authentication
+      operationId: postHeaderAuth
+      summary: Authenticate using configured HTTP request headers.
+      description: >
+        POST form mirrors the GET form for integrations that submit auth checks
+        with POST while still carrying credentials and metadata in request
+        headers.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthHeaderSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AuthHeaderFailure"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/nginx:
+    get:
+      tags:
+        - Authentication
+      operationId: getNginxAuth
+      summary: Authenticate an NGINX auth_http request.
+      description: >
+        Reads NGINX mail auth_http-compatible headers and returns the decision
+        through Auth-* response headers. NGINX mode intentionally returns HTTP
+        200 for authentication failures and communicates the result via
+        Auth-Status.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthNginxResult"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags:
+        - Authentication
+      operationId: postNginxAuth
+      summary: Authenticate an NGINX auth_http request.
+      description: >
+        POST form mirrors the GET form for deployments that submit NGINX auth
+        checks with POST while still carrying credentials and metadata in
+        request headers.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthNginxResult"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/bruteforce/list:
     get:
       tags:
@@ -653,7 +897,298 @@ components:
         enum:
           - "0"
       description: Disable cache monitoring for this request when set to 0.
+    AuthUserHeader:
+      name: Auth-User
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Username header. Required for authentication unless mode is no-auth or list-accounts.
+    AuthPassHeader:
+      name: Auth-Pass
+      in: header
+      required: false
+      schema:
+        type: string
+        format: password
+      description: Password header. The configured header is removed from the request after it is read.
+    AuthPasswordEncodedHeader:
+      name: X-Auth-Password-Encoded
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - "1"
+      description: Set to 1 when Auth-Pass carries URL-safe base64 encoded password bytes.
+    AuthProtocolHeader:
+      name: Auth-Protocol
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - smtp
+          - imap
+          - pop3
+      description: Mail protocol of the upstream authentication attempt.
+    AuthMethodHeader:
+      name: Auth-Method
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Authentication mechanism such as LOGIN or PLAIN.
+    AuthLoginAttemptHeader:
+      name: Auth-Login-Attempt
+      in: header
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+      description: One-based login attempt hint from the caller.
+    ClientIPHeader:
+      name: Client-IP
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client source IP address.
+    ClientPortHeader:
+      name: X-Client-Port
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client source TCP port.
+    ClientIDHeader:
+      name: X-Client-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional upstream client identifier.
+    ClientHostHeader:
+      name: X-Client-Host
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional upstream client hostname.
+    ExternalSessionIDHeader:
+      name: X-External-Session-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional upstream session correlation identifier.
+    LocalIPHeader:
+      name: X-Local-IP
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Local listener IP address.
+    LocalPortHeader:
+      name: X-Auth-Port
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Local listener TCP port.
+    OIDCCIDHeader:
+      name: X-OIDC-CID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional OIDC client identifier associated with the request.
+    SSLHeader:
+      name: X-SSL
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL/TLS state hint from the caller.
+    SSLSessionIDHeader:
+      name: X-SSL-Session-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL session identifier.
+    SSLClientVerifyHeader:
+      name: X-SSL-Client-Verify
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate verification status.
+    SSLClientDNHeader:
+      name: X-SSL-Client-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate subject DN.
+    SSLClientCNHeader:
+      name: X-SSL-Client-CN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate common name.
+    SSLIssuerHeader:
+      name: X-SSL-Issuer
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate issuer.
+    SSLClientNotBeforeHeader:
+      name: X-SSL-Client-NotBefore
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate validity start.
+    SSLClientNotAfterHeader:
+      name: X-SSL-Client-NotAfter
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate validity end.
+    SSLSubjectDNHeader:
+      name: X-SSL-Subject-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL subject distinguished name.
+    SSLIssuerDNHeader:
+      name: X-SSL-Issuer-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL issuer distinguished name.
+    SSLClientSubjectDNHeader:
+      name: X-SSL-Client-Subject-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate subject distinguished name.
+    SSLClientIssuerDNHeader:
+      name: X-SSL-Client-Issuer-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate issuer distinguished name.
+    SSLCipherHeader:
+      name: X-SSL-Cipher
+      in: header
+      required: false
+      schema:
+        type: string
+      description: TLS cipher suite.
+    SSLProtocolHeader:
+      name: X-SSL-Protocol
+      in: header
+      required: false
+      schema:
+        type: string
+      description: TLS protocol version.
+    SSLSerialHeader:
+      name: Auth-SSL-Serial
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate serial number.
+    SSLFingerprintHeader:
+      name: Auth-SSL-Fingerprint
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate fingerprint.
   responses:
+    AuthHeaderFailure:
+      description: Header-mode authentication failure. The response body is JSON null; Auth-Status carries the status message.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        Auth-Wait:
+          schema:
+            type: string
+        X-Nauthilus-Session:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: "null"
+    AuthHeaderSuccess:
+      description: >
+        Header-mode authentication result. Successful requests return headers
+        such as Auth-Status, Auth-User, X-Nauthilus-Session, and dynamic
+        X-Nauthilus-* attribute headers.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        Auth-User:
+          schema:
+            type: string
+        X-Nauthilus-Memory-Cache:
+          schema:
+            type: string
+            enum:
+              - Hit
+              - Miss
+        X-Nauthilus-Session:
+          schema:
+            type: string
+    AuthNginxResult:
+      description: >
+        NGINX auth_http result. HTTP status is 200 for both success and
+        authentication failure; Auth-Status carries OK or the failure message.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        Auth-User:
+          schema:
+            type: string
+        Auth-Server:
+          schema:
+            type: string
+        Auth-Port:
+          schema:
+            type: string
+        Auth-Wait:
+          schema:
+            type: string
+        Auth-Error-Code:
+          schema:
+            type: string
+        X-Nauthilus-Memory-Cache:
+          schema:
+            type: string
+            enum:
+              - Hit
+              - Miss
+        X-Nauthilus-Session:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: "null"
     AuthJSONSuccess:
       description: Authentication result, account list, or no-auth result.
       headers:
@@ -766,8 +1301,11 @@ components:
           type: string
         status:
           type: string
+          description: The initial state returned immediately after the job is accepted.
           enum:
             - QUEUED
+          x-enum-varnames:
+            - AsyncAcceptedStatusQueued
     AsyncAcceptedResult:
       allOf:
         - $ref: "#/components/schemas/ResultEnvelope"
@@ -782,6 +1320,17 @@ components:
           type: string
         status:
           type: string
+          description: Current async job lifecycle state.
+          enum:
+            - QUEUED
+            - INPROGRESS
+            - DONE
+            - ERROR
+          x-enum-varnames:
+            - AsyncJobStatusQueued
+            - AsyncJobStatusInProgress
+            - AsyncJobStatusDone
+            - AsyncJobStatusError
         type:
           type: string
         createdAt:
@@ -1040,6 +1589,8 @@ components:
               description: JSON-encoded runtime configuration.
     ErrorResponse:
       type: object
+      required:
+        - error
       properties:
         error:
           type: string
@@ -1052,6 +1603,8 @@ components:
           type: string
     FieldErrorResponse:
       type: object
+      required:
+        - errors
       properties:
         errors:
           type: array

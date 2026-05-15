@@ -16,7 +16,7 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto identity-proxy-e2e guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
 
@@ -97,6 +97,16 @@ generate-grpc-proto: ## Generate committed gRPC API bindings
 
 generate-grpc-auth-proto: generate-grpc-proto ## Generate committed gRPC API bindings
 
+generate-openapi-bindings: ## Generate committed OpenAPI model and client bindings
+	./scripts/generate-openapi-bindings.sh
+
+generate-openapi-bindings-check: ## Verify committed OpenAPI model and client bindings are up to date
+	./scripts/generate-openapi-bindings.sh --check
+
+generate-openapi-management: generate-openapi-bindings ## Generate committed OpenAPI management bindings
+
+generate-openapi-management-check: generate-openapi-bindings-check ## Verify committed OpenAPI management bindings are up to date
+
 identity-proxy-e2e: ## Run the split identity-proxy smoke profile
 	contrib/identity-proxy-e2e/scripts/run.sh smoke
 
@@ -117,7 +127,7 @@ sync-prompts-check: ## Verify that AGENTS.md is in sync with .junie/guidelines.m
 policy-check: ## Validate mandatory policy documents and text markers
 	./scripts/check-policy-docs.sh
 
-guardrails: sync-prompts-check policy-check generate-vim-syntax-check ## Run mandatory local quality gates
+guardrails: sync-prompts-check policy-check generate-vim-syntax-check generate-openapi-bindings-check ## Run mandatory local quality gates
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
 	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
 	go test -short $$(go list ./... | grep -v /vendor/)

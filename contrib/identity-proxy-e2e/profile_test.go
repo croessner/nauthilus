@@ -27,26 +27,27 @@ import (
 )
 
 const (
-	configDir          = "config"
-	authorityConfig    = "authority.yml"
-	edgeAConfig        = "edge-a.yml"
-	edgeBConfig        = "edge-b.yml"
-	composeFile        = "docker-compose.yml"
-	browserScript      = "scripts/browser-e2e.js"
-	runScript          = "scripts/run.sh"
-	smokePlanFile      = "smoke-plan.yml"
-	authorityName      = "authority"
-	authorityData      = "authority-data"
-	authorityGRPC      = "authority-grpc"
-	authorityRedisAddr = "authority-redis:6379"
-	edgeData           = "edge-data"
-	edgeRedisAddr      = "edge-redis:6379"
-	edgeClusterID      = "edge-e2e"
-	privateKeyJWT      = "private_key_jwt"
-	redisBackend       = "redis"
-	storageSection     = "storage"
-	identitySection    = "identity"
-	tls13Version       = "TLS1.3"
+	configDir                 = "config"
+	authorityConfig           = "authority.yml"
+	edgeAConfig               = "edge-a.yml"
+	edgeBConfig               = "edge-b.yml"
+	composeFile               = "docker-compose.yml"
+	browserScript             = "scripts/browser-e2e.js"
+	runScript                 = "scripts/run.sh"
+	smokePlanFile             = "smoke-plan.yml"
+	authorityName             = "authority"
+	authorityData             = "authority-data"
+	authorityGRPC             = "authority-grpc"
+	authorityRedisAddr        = "authority-redis:6379"
+	edgeData                  = "edge-data"
+	edgeRedisAddr             = "edge-redis:6379"
+	edgeClusterID             = "edge-e2e"
+	privateKeyJWT             = "private_key_jwt"
+	redisBackend              = "redis"
+	storageSection            = "storage"
+	identitySection           = "identity"
+	tls13Version              = "TLS1.3"
+	openAPIManagementScenario = "openapi-management-cache-flush-async-status"
 )
 
 var requiredAuthorityScopes = []string{
@@ -127,6 +128,7 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"grpc-lookup-identity",
 		"grpc-list-accounts",
 		"grpc-resolve-user",
+		openAPIManagementScenario,
 		"oidc-authorization-code",
 		"oidc-device-code",
 		"oidc-authorize-invalid-response-type",
@@ -220,6 +222,28 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 	} {
 		if !got[scenario] {
 			t.Fatalf("smoke plan missing scenario %q; got %v", scenario, sortedKeys(got))
+		}
+	}
+}
+
+func TestSmokeRunnerUsesGeneratedOpenAPIManagementClient(t *testing.T) {
+	root := fixtureRoot(t)
+
+	raw, err := os.ReadFile(filepath.Join(root, "cmd", "smoke", "main.go"))
+	if err != nil {
+		t.Fatalf("read smoke runner: %v", err)
+	}
+
+	source := string(raw)
+	for _, marker := range []string{
+		`openapiclient "github.com/croessner/nauthilus/server/openapi/client"`,
+		`openapiclient.NewManagementClient`,
+		`management.EnqueueUserCacheFlushJSONRequestBody`,
+		`GetAsyncJobStatus`,
+		openAPIManagementScenario,
+	} {
+		if !strings.Contains(source, marker) {
+			t.Fatalf("smoke runner missing %q marker", marker)
 		}
 	}
 }

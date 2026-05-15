@@ -54,18 +54,19 @@ type RuntimeServersSection struct {
 
 // RuntimeHTTPServerSection configures the inbound HTTP server.
 type RuntimeHTTPServerSection struct {
-	Address           string        `mapstructure:"address" validate:"omitempty,tcp_addr"`
-	HTTP3             bool          `mapstructure:"http3"`
-	HAproxyV2         bool          `mapstructure:"haproxy_v2"`
-	TrustedProxies    []string      `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
-	TLS               TLS           `mapstructure:"tls" validate:"omitempty"`
-	DisabledEndpoints Endpoint      `mapstructure:"disabled_endpoints" validate:"omitempty"`
-	Middlewares       Middlewares   `mapstructure:"middlewares" validate:"omitempty"`
-	Compression       Compression   `mapstructure:"compression" validate:"omitempty"`
-	KeepAlive         KeepAlive     `mapstructure:"keep_alive" validate:"omitempty"`
-	RateLimit         HTTPRateLimit `mapstructure:"rate_limit" validate:"omitempty"`
-	CORS              CORS          `mapstructure:"cors" validate:"omitempty"`
-	SecurityTxt       SecurityTxt   `mapstructure:"security_txt" validate:"omitempty"`
+	Address           string            `mapstructure:"address" validate:"omitempty,tcp_addr"`
+	OpenAPIValidation OpenAPIValidation `mapstructure:"openapi_validation" validate:"omitempty"`
+	HTTP3             bool              `mapstructure:"http3"`
+	HAproxyV2         bool              `mapstructure:"haproxy_v2"`
+	TrustedProxies    []string          `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
+	TLS               TLS               `mapstructure:"tls" validate:"omitempty"`
+	DisabledEndpoints Endpoint          `mapstructure:"disabled_endpoints" validate:"omitempty"`
+	Middlewares       Middlewares       `mapstructure:"middlewares" validate:"omitempty"`
+	Compression       Compression       `mapstructure:"compression" validate:"omitempty"`
+	KeepAlive         KeepAlive         `mapstructure:"keep_alive" validate:"omitempty"`
+	RateLimit         HTTPRateLimit     `mapstructure:"rate_limit" validate:"omitempty"`
+	CORS              CORS              `mapstructure:"cors" validate:"omitempty"`
+	SecurityTxt       SecurityTxt       `mapstructure:"security_txt" validate:"omitempty"`
 }
 
 // RuntimeGRPCServersSection groups inbound gRPC servers.
@@ -1160,6 +1161,7 @@ func (f *FileSettings) applyRuntimeSection(server *ServerSection) {
 	server.TrustedProxies = append([]string(nil), httpServer.TrustedProxies...)
 	server.DisabledEndpoints = httpServer.DisabledEndpoints
 	server.Middlewares = httpServer.Middlewares
+	server.OpenAPIValidation = httpServer.OpenAPIValidation
 	server.Compression = httpServer.Compression
 	server.KeepAlive = httpServer.KeepAlive
 	server.RateLimitPerSecond = httpServer.RateLimit.PerSecond
