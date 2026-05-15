@@ -564,7 +564,7 @@ func managementOpenAPIDocumentOperations() []routeOperation {
 func hasProtectedSecurityScheme(operation *openapi3.Operation) bool {
 	for _, scheme := range operationSecuritySchemes(operation) {
 		switch scheme {
-		case "backchannelBasic", "backchannelBearer", "sessionCookie":
+		case "backchannelBasic", "backchannelBearer", "sessionCookie", "userBasic":
 			return true
 		}
 	}

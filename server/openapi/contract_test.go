@@ -16,9 +16,12 @@
 package openapi
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var protectedBackchannelSecurityPattern = regexp.MustCompile(`security:\n\s+- backchannelBasic: \[\]\n\s+- backchannelBearer: \[\]`)
 
 func TestEmbeddedSpecsPassParserBackedContractGate(t *testing.T) {
 	for _, document := range parserBackedContractDocuments() {
@@ -51,11 +54,9 @@ func TestParserBackedContractGateRejectsBrokenContracts(t *testing.T) {
 			want: "operationId missing",
 		},
 		{
-			name: "missing protected security",
-			content: replaceOpenAPISnippet(t, ManagementYAML(),
-				"security:\n        - backchannelBasic: []\n        - backchannelBearer: []",
-				"security: []"),
-			want: "protected operation missing security requirements",
+			name:    "missing protected security",
+			content: replaceProtectedSecuritySnippet(t, ManagementYAML(), "security: []"),
+			want:    "protected operation missing security requirements",
 		},
 	}
 
@@ -119,4 +120,19 @@ func replaceOpenAPISnippet(t *testing.T, content []byte, oldValue string, newVal
 	}
 
 	return []byte(strings.Replace(original, oldValue, newValue, 1))
+}
+
+func replaceProtectedSecuritySnippet(t *testing.T, content []byte, newValue string) []byte {
+	t.Helper()
+
+	original := string(content)
+	location := protectedBackchannelSecurityPattern.FindStringIndex(original)
+
+	if location != nil {
+		return []byte(original[:location[0]] + newValue + original[location[1]:])
+	}
+
+	t.Fatalf("OpenAPI test fixture does not contain a protected backchannel security requirement")
+
+	return nil
 }

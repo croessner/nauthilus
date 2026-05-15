@@ -1,0 +1,94 @@
+paths:
+  /api/v1/auth/basic:
+    get:
+      tags:
+        - Authentication
+      operationId: getBasicAuth
+      summary: Authenticate with HTTP Basic credentials.
+      description: >
+        Available only when the server binary is compiled with the
+        auth_basic_endpoint build tag. The Authorization header carries the
+        end-user credentials consumed by this authentication protocol endpoint.
+      security:
+        - userBasic: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthBasicSuccess"
+        "401":
+          $ref: "#/components/responses/AuthBasicFailure"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    userBasic:
+      type: http
+      scheme: basic
+      description: End-user HTTP Basic credentials for the build-tagged Basic authentication endpoint.
+  responses:
+    AuthBasicSuccess:
+      description: Basic authentication succeeded. Result metadata is returned in response headers.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        X-Nauthilus-Memory-Cache:
+          schema:
+            type: string
+            enum:
+              - Hit
+              - Miss
+        X-Nauthilus-Session:
+          schema:
+            type: string
+    AuthBasicFailure:
+      description: Basic authentication failed or the Authorization header is missing.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        Auth-Wait:
+          schema:
+            type: string
+        WWW-Authenticate:
+          schema:
+            type: string
+        X-Nauthilus-Session:
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string

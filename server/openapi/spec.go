@@ -28,32 +28,37 @@ import (
 )
 
 //go:embed openapi.yaml
-var managementSpecYAML []byte
+var baseManagementSpecYAML []byte
 
 //go:embed idp.yaml
 var idpSpecYAML []byte
 
+var managementSpecYAML = mustManagementSpecYAML()
 var managementSpecJSON = mustRenderJSON(managementSpecYAML)
 var idpSpecJSON = mustRenderJSON(idpSpecYAML)
 
 // ManagementYAML returns the embedded management OpenAPI document in YAML format.
 func ManagementYAML() []byte {
-	return append([]byte(nil), managementSpecYAML...)
+	return cloneSpecBytes(managementSpecYAML)
 }
 
 // ManagementJSON returns the embedded management OpenAPI document rendered as JSON.
 func ManagementJSON() []byte {
-	return append([]byte(nil), managementSpecJSON...)
+	return cloneSpecBytes(managementSpecJSON)
 }
 
 // IDPYAML returns the embedded public IdP OpenAPI document in YAML format.
 func IDPYAML() []byte {
-	return append([]byte(nil), idpSpecYAML...)
+	return cloneSpecBytes(idpSpecYAML)
 }
 
 // IDPJSON returns the embedded public IdP OpenAPI document rendered as JSON.
 func IDPJSON() []byte {
-	return append([]byte(nil), idpSpecJSON...)
+	return cloneSpecBytes(idpSpecJSON)
+}
+
+func cloneSpecBytes(content []byte) []byte {
+	return append([]byte(nil), content...)
 }
 
 func mustRenderJSON(content []byte) []byte {
