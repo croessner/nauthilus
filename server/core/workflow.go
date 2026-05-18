@@ -109,7 +109,7 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 		defer stop()
 	}
 
-	useCache, backendPos, passDBs := auth.handleBackendTypes()
+	backendPlan := auth.buildBackendExecutionPlan()
 
-	return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
+	return auth.authenticateUser(ctx, backendPlan)
 }

@@ -2877,46 +2877,75 @@ func (a *AuthState) initializePassDBResult() *PassDBResult {
 	return result
 }
 
-// handleBackendTypes initializes and populates variables related to backend types.
-// The `backendPos` map stores the position of each backend type in the configuration list.
-// The `useCache` boolean indicates whether the Cache backend type is used. It is set to true if at least one Cache backend is found in the configuration.
-// The `passDBs` slice holds the PassDBMap objects associated with each backend type in the configuration.
-func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) {
-	backendPos = make(map[definitions.Backend]int)
+// buildBackendExecutionPlan converts the configured backend order into executable backends and side-effect metadata.
+func (a *AuthState) buildBackendExecutionPlan() backendExecutionPlan {
+	plan := backendExecutionPlan{
+		positions: make(map[definitions.Backend]int),
+	}
 
 	cfg := a.Cfg()
 
 	for index, backendType := range cfg.GetServer().GetBackends() {
 		db := backendType.Get()
-		switch db {
-		case definitions.BackendCache:
-			if !a.HaveMonitoringFlag(definitions.MonCache) && !a.IsMasterUser() {
-				passDBs = a.appendBackend(passDBs, definitions.BackendCache, CachePassDB)
-				useCache = true
-			}
-		case definitions.BackendLDAP:
-			if !cfg.LDAPHavePoolOnly(backendType.GetName()) {
-				mgr := NewLDAPManager(backendType.GetName(), a.deps)
-				passDBs = a.appendBackend(passDBs, definitions.BackendLDAP, mgr.PassDB)
-			}
-		case definitions.BackendLua:
-			mgr := NewLuaManager(backendType.GetName(), a.deps)
-			passDBs = a.appendBackend(passDBs, definitions.BackendLua, mgr.PassDB)
-		case definitions.BackendTest:
-			mgr := NewTestBackendManager(backendType.GetName(), a.deps)
-			passDBs = a.appendBackend(passDBs, definitions.BackendTest, mgr.PassDB)
-		case definitions.BackendRemote:
-			if mgr := a.GetBackendManager(definitions.BackendRemote, backendType.GetName()); mgr != nil {
-				passDBs = a.appendBackend(passDBs, definitions.BackendRemote, mgr.PassDB)
-			}
-		case definitions.BackendUnknown:
-		case definitions.BackendLocalCache:
-		}
-
-		backendPos[db] = index
+		a.appendConfiguredBackend(&plan, backendType)
+		plan.positions[db] = index
 	}
 
-	return useCache, backendPos, passDBs
+	return plan
+}
+
+func (a *AuthState) appendConfiguredBackend(plan *backendExecutionPlan, backendType *config.Backend) {
+	switch backendType.Get() {
+	case definitions.BackendCache:
+		a.appendCacheBackend(plan)
+	case definitions.BackendLDAP:
+		a.appendLDAPBackend(plan, backendType.GetName())
+	case definitions.BackendLua:
+		a.appendLuaBackend(plan, backendType.GetName())
+	case definitions.BackendTest:
+		a.appendTestBackend(plan, backendType.GetName())
+	case definitions.BackendRemote:
+		a.appendRemoteBackend(plan, backendType.GetName())
+	case definitions.BackendUnknown:
+	case definitions.BackendLocalCache:
+	}
+}
+
+func (a *AuthState) appendCacheBackend(plan *backendExecutionPlan) {
+	if a.HaveMonitoringFlag(definitions.MonCache) || a.IsMasterUser() {
+		return
+	}
+
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendCache, CachePassDB)
+	plan.hasPositivePasswordCache = true
+}
+
+func (a *AuthState) appendLDAPBackend(plan *backendExecutionPlan, name string) {
+	if a.Cfg().LDAPHavePoolOnly(name) {
+		return
+	}
+
+	mgr := NewLDAPManager(name, a.deps)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendLDAP, mgr.PassDB)
+}
+
+func (a *AuthState) appendLuaBackend(plan *backendExecutionPlan, name string) {
+	mgr := NewLuaManager(name, a.deps)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendLua, mgr.PassDB)
+}
+
+func (a *AuthState) appendTestBackend(plan *backendExecutionPlan, name string) {
+	mgr := NewTestBackendManager(name, a.deps)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendTest, mgr.PassDB)
+}
+
+func (a *AuthState) appendRemoteBackend(plan *backendExecutionPlan, name string) {
+	mgr := a.GetBackendManager(definitions.BackendRemote, name)
+	if mgr == nil {
+		return
+	}
+
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendRemote, mgr.PassDB)
 }
 
 // appendBackend appends a new PassDBMap object to the passDBs slice.
@@ -3081,9 +3110,33 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 	return
 }
 
-// isCacheInCorrectPosition checks if the cache backend is positioned before the used password database backend.
-func (a *AuthState) isCacheInCorrectPosition(backendPos map[definitions.Backend]int) bool {
-	return backendPos[definitions.BackendCache] < backendPos[a.Runtime.UsedPassDBBackend]
+type backendExecutionPlan struct {
+	positions map[definitions.Backend]int
+	passDBs   []*PassDBMap
+
+	hasPositivePasswordCache bool
+}
+
+func (p backendExecutionPlan) positivePasswordCacheEnabled(usedBackend definitions.Backend) bool {
+	if !p.hasPositivePasswordCache || usedBackend == definitions.BackendRemote {
+		return false
+	}
+
+	return p.cachePrecedes(usedBackend)
+}
+
+func (p backendExecutionPlan) cachePrecedes(usedBackend definitions.Backend) bool {
+	cachePosition, hasCache := p.positions[definitions.BackendCache]
+	if !hasCache {
+		return false
+	}
+
+	usedPosition, hasUsedBackend := p.positions[usedBackend]
+	if !hasUsedBackend {
+		return false
+	}
+
+	return cachePosition < usedPosition
 }
 
 // GetUsedCacheBackend returns the cache name backend based on the used password database backend.
@@ -3160,14 +3213,15 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 	}
 }
 
-// processCache updates the relevant user cache entries based on authentication results from password databases.
-func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
+// processPositivePasswordCache updates Redis positive-cache entries when the configured backend order enables them.
+func (a *AuthState) processPositivePasswordCache(ctx *gin.Context, authenticated bool, accountName string, plan backendExecutionPlan) error {
+	positiveCacheEnabled := plan.positivePasswordCacheEnabled(a.Runtime.UsedPassDBBackend)
 	tr := monittrace.New("nauthilus/auth")
 	cctx, cspan := tr.Start(ctx.Request.Context(), "auth.cache.process",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
 		attribute.Bool("authenticated", authenticated),
-		attribute.Bool("use_cache", useCache),
+		attribute.Bool("positive_cache", positiveCacheEnabled),
 	)
 
 	_ = cctx
@@ -3178,38 +3232,74 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 		defer stop()
 	}
 
-	if useCache && a.Runtime.UsedPassDBBackend != definitions.BackendRemote && a.isCacheInCorrectPosition(backendPos) {
-		if cs := getCacheService(); cs != nil {
-			if authenticated {
-				if err := cs.OnSuccess(a, accountName); err != nil {
-					return err
-				}
-			} else {
-				cs.OnFailure(a, accountName)
-			}
-		}
+	if !positiveCacheEnabled {
+		return nil
+	}
 
-		// Load histories and update counters via service (no behavior change)
-		bfLoadHistories(ctx, a, accountName)
+	if cs := getCacheService(); cs != nil {
+		if authenticated {
+			if err := cs.OnSuccess(a, accountName); err != nil {
+				return err
+			}
+		} else {
+			cs.OnFailure(a, accountName)
+		}
 	}
 
 	return nil
 }
 
-// authenticateUser manages the post-verification steps in the authentication process.
-// It first verifies the password provided by the user. If the verification fails, it logs the error and returns temporary failure.
-// If the cache is being used and the user is not excluded from authentication, it ensures that the cache backend precedes the used backend.
-// If the verification is successful, user data is saved to Redis. If it fails, it increases the brute force counter.
-// It then tries to get all password histories of the user. If the user is not found, it updates the brute force buckets counter,
-// call post Lua action and return authentication failure.
-// It also checks if the user is found during password verification, if true, it sets a new username to the user.
-// Afterward, it applies Lua subject analysis to the result and calls the post Lua action, and finally, it returns the authentication result.
-func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) definitions.AuthResult {
+func (a *AuthState) loadBruteForceHistories(ctx *gin.Context, accountName string) {
+	if accountName == "" {
+		return
+	}
+
+	bfLoadHistories(ctx, a, accountName)
+}
+
+func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBResult) {
+	if passDBResult.Authenticated {
+		a.storeAuthenticatedLocalCache(passDBResult)
+		a.Runtime.Authenticated = true
+		a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+
+		return
+	}
+
+	a.UpdateBruteForceBucketsCounter(ctx)
+	a.Runtime.Authenticated = false
+	a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
+}
+
+func (a *AuthState) storeAuthenticatedLocalCache(passDBResult *PassDBResult) {
+	if a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser() {
+		return
+	}
+
+	localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult.Clone(), a.Cfg().GetServer().GetLocalCacheAuthTTL())
+}
+
+func (a *AuthState) runPostBackendActions(ctx *gin.Context, passDBResult *PassDBResult) definitions.AuthResult {
+	authResult := a.SubjectLua(ctx, passDBResult)
+
+	if a.HasConfiguredAuthPolicyAuthority(ctx) {
+		a.storePolicyPostActionResult(ctx, passDBResult)
+	} else {
+		a.PostLuaAction(ctx, passDBResult)
+	}
+
+	return authResult
+}
+
+// authenticateUser runs backend verification and then applies post-backend side effects.
+// Positive password-cache writes are controlled by the backend order, while brute-force
+// history loading follows the resolved account independently from the cache backend.
+func (a *AuthState) authenticateUser(ctx *gin.Context, plan backendExecutionPlan) definitions.AuthResult {
 	tr := monittrace.New("nauthilus/auth")
 	actx, aspan := tr.Start(ctx.Request.Context(), "auth.authenticate",
 		attribute.String("service", a.Request.Service),
 		attribute.String("username", a.Request.Username),
-		attribute.Bool("use_cache", useCache),
+		attribute.Bool("positive_cache_configured", plan.hasPositivePasswordCache),
 	)
 
 	ctx.Request = ctx.Request.WithContext(actx)
@@ -3235,7 +3325,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		err          error
 	)
 
-	if passDBResult, err = a.processVerifyPassword(ctx, passDBs); err != nil {
+	if passDBResult, err = a.processVerifyPassword(ctx, plan.passDBs); err != nil {
 		// tempfail: no backend decision could be made
 		a.Runtime.Authenticated = false
 		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
@@ -3253,7 +3343,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		return definitions.AuthResultTempFail
 	}
 
-	if err = a.processCache(ctx, passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
+	if err = a.processPositivePasswordCache(ctx, passDBResult.Authenticated, accountName, plan); err != nil {
 		// tempfail during cache processing
 		a.Runtime.Authenticated = false
 		a.recordPolicyBackendResult(ctx, definitions.AuthResultTempFail, passDBResult, err)
@@ -3261,32 +3351,10 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		return definitions.AuthResultTempFail
 	}
 
-	if passDBResult.Authenticated {
-		if !a.HaveMonitoringFlag(definitions.MonInMemory) && !a.IsMasterUser() {
-			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult.Clone(), a.Cfg().GetServer().GetLocalCacheAuthTTL())
-		}
-
-		a.Runtime.Authenticated = true
-	} else {
-		a.UpdateBruteForceBucketsCounter(ctx)
-
-		a.Runtime.Authenticated = false
-	}
-
-	if passDBResult.Authenticated {
-		a.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
-	} else {
-		a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
-	}
-
-	authResult = a.SubjectLua(ctx, passDBResult)
+	a.loadBruteForceHistories(ctx, accountName)
+	a.applyBackendResult(ctx, passDBResult)
+	authResult = a.runPostBackendActions(ctx, passDBResult)
 	aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
-
-	if a.HasConfiguredAuthPolicyAuthority(ctx) {
-		a.storePolicyPostActionResult(ctx, passDBResult)
-	} else {
-		a.PostLuaAction(ctx, passDBResult)
-	}
 
 	return authResult
 }
