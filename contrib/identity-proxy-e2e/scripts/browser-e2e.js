@@ -28,6 +28,10 @@ const callbackKey = process.env.NAUTHILUS_E2E_CALLBACK_KEY
   || path.join(__dirname, '..', '.work', 'certs', 'edge-http.key');
 const username = process.env.NAUTHILUS_E2E_USERNAME || 'split-user@example.test';
 const password = process.env.NAUTHILUS_E2E_PASSWORD || 'split-password';
+const defaultSAMLLoginURL = 'https://localhost:19095/saml/login';
+const samlLoginURL = Object.prototype.hasOwnProperty.call(process.env, 'NAUTHILUS_E2E_SAML_URL')
+  ? process.env.NAUTHILUS_E2E_SAML_URL
+  : defaultSAMLLoginURL;
 
 if (process.env.NAUTHILUS_E2E_STRICT_TLS !== '1') {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -1207,24 +1211,64 @@ function newBrowserContext(browser, baseURL) {
 }
 
 async function maybeRunSAMLFlow(browser) {
-  if (process.env.NAUTHILUS_E2E_SAML_URL === '') {
-    return;
-  }
-
-  const samlURL = process.env.NAUTHILUS_E2E_SAML_URL;
-  if (!samlURL) {
-    console.log('SAML smoke skipped; set NAUTHILUS_E2E_SAML_URL when a test SP is running.');
+  if (samlLoginURL === '') {
     return;
   }
 
   const context = await browser.newContext({ignoreHTTPSErrors: true});
   const page = await context.newPage();
-  await page.goto(samlURL);
-  await submitPasswordLogin(page, `${username}.saml`, password);
-  await page.waitForLoadState('networkidle');
-  assert.match(page.url(), /saml|localhost/i, 'SAML flow should return to the SP or SAML route');
-  console.log('ok saml-sso-login');
-  await context.close();
+  try {
+    await page.goto(samlLoginURL);
+    await submitPasswordLogin(page, `${username}.saml`, password);
+    await page.waitForLoadState('networkidle');
+    assert.match(page.url(), /localhost:19095/i, 'SAML flow should return to the local SP');
+    await expectPageText(page, /SAML2 Authentication Successful/i);
+    console.log('ok saml-sso-login');
+
+    await runSAMLSPInitiatedSLO(page);
+  } finally {
+    await context.close();
+  }
+
+  await runSAMLAttackFailures();
+}
+
+async function runSAMLSPInitiatedSLO(page) {
+  await page.click('a.logout-btn');
+  await page.waitForURL(/localhost:19095\/?$/, {timeout: callbackTimeoutMS});
+  await page.waitForLoadState('networkidle').catch(() => undefined);
+  await expectPageText(page, /Login via SAML2/);
+  console.log('ok saml-sp-initiated-slo');
+}
+
+async function runSAMLAttackFailures() {
+  await expectTextResponse(
+    `${edgeAAPI}/saml/sso?SAMLRequest=not-base64`,
+    400,
+    /Failed to parse SAML request|Failed to validate SAML request|illegal base64/i,
+    'saml-sso-malformed-request-rejected',
+  );
+
+  await expectTextResponse(
+    `${edgeAAPI}/saml/slo`,
+    400,
+    /Invalid SAML SLO payload: .*missing SAMLRequest\/SAMLResponse payload/i,
+    'saml-slo-missing-payload-rejected',
+  );
+
+  await expectTextResponse(
+    `${edgeAAPI}/saml/slo?SAMLRequest=req&SAMLResponse=res`,
+    400,
+    /Invalid SAML SLO payload: .*must not be present together/i,
+    'saml-slo-ambiguous-payload-rejected',
+  );
+
+  await expectTextResponse(
+    `${edgeAAPI}/saml/slo?SAMLRequest=req&SAMLRequest=req2`,
+    400,
+    /Invalid SAML SLO payload: .*duplicated/i,
+    'saml-slo-duplicate-request-rejected',
+  );
 }
 
 async function installVirtualAuthenticator(page) {

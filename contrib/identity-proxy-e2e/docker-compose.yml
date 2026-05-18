@@ -90,6 +90,24 @@ services:
     ports:
       - "127.0.0.1:18082:18082"
 
+  saml-sp:
+    <<: *nauthilus-service
+    depends_on:
+      - edge-a
+    command:
+      - /usr/app/saml2testclient
+    environment:
+      SAML2_IDP_METADATA_URL: "https://edge-a:18080/saml/metadata"
+      SAML2_SP_ENTITY_ID: "https://localhost:19095/saml/metadata"
+      SAML2_SP_URL: "https://localhost:19095"
+      SAML2_SP_LISTEN_ADDRESS: "0.0.0.0:19095"
+      SAML2_INSECURE_SKIP_VERIFY: "true"
+    networks:
+      - edge-data
+      - saml-sp-public
+    ports:
+      - "127.0.0.1:19095:19095"
+
 networks:
   authority-data:
     internal: true
@@ -100,3 +118,4 @@ networks:
     ipam:
       config:
         - subnet: 172.30.80.0/24
+  saml-sp-public:

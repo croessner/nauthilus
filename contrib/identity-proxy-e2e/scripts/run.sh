@@ -24,6 +24,7 @@ Environment:
   NAUTHILUS_E2E_SKIP_BUILD=1   Reuse NAUTHILUS_E2E_IMAGE instead of building.
   NAUTHILUS_E2E_IMAGE=...      Image used by docker-compose.
   NAUTHILUS_E2E_FORCE=1        Regenerate key material in prepare.
+  NAUTHILUS_E2E_SAML_URL=...   Override the SAML SP login URL; set empty to skip SAML.
 EOF
 }
 
@@ -67,10 +68,12 @@ wait_for_http() {
 up() {
   prepare
   build_image
-  "${COMPOSE[@]}" up -d
+  "${COMPOSE[@]}" up -d authority edge-a edge-b
   wait_for_http "https://127.0.0.1:18080/ping" "edge-a"
   wait_for_http "https://127.0.0.1:18082/ping" "edge-b"
   wait_for_http "http://127.0.0.1:18081/ping" "authority"
+  "${COMPOSE[@]}" up -d saml-sp
+  wait_for_http "https://127.0.0.1:19095/" "saml-sp"
 }
 
 rpc_pre_browser() {

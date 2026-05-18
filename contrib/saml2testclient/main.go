@@ -52,6 +52,7 @@ var (
 	samlIDPMetadataURL  = os.Getenv("SAML2_IDP_METADATA_URL")
 	samlSPEntityID      = os.Getenv("SAML2_SP_ENTITY_ID")
 	samlSPURL           = os.Getenv("SAML2_SP_URL")
+	samlSPListenAddress = os.Getenv("SAML2_SP_LISTEN_ADDRESS")
 	insecureSkipVerify  = os.Getenv("SAML2_INSECURE_SKIP_VERIFY") != "false" // Default to true for test client
 	signAuthnRequests   = envBool("SAML2_SP_SIGN_AUTHN_REQUESTS", false)
 	signLogoutRequests  = envBool("SAML2_SP_SIGN_LOGOUT_REQUESTS", false)
@@ -229,6 +230,15 @@ func envBool(key string, defaultValue bool) bool {
 
 		return defaultValue
 	}
+}
+
+func resolveListenAddress(spURL *url.URL, override string) string {
+	listenAddress := strings.TrimSpace(override)
+	if listenAddress != "" {
+		return listenAddress
+	}
+
+	return spURL.Host
 }
 
 func clearSessionCookies(w http.ResponseWriter) {
@@ -869,7 +879,7 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr:      spURL.Host,
+		Addr:      resolveListenAddress(spURL, samlSPListenAddress),
 		TLSConfig: tlsConfig,
 	}
 

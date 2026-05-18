@@ -19,6 +19,8 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 )
 
+const testContainerListenAddress = "0.0.0.0:19095"
+
 func TestBuildLogoutInitiationRedirect(t *testing.T) {
 	t.Parallel()
 
@@ -57,6 +59,44 @@ func TestBuildLogoutInitiationRedirect(t *testing.T) {
 			}
 
 			assertRedirectLogoutInitiation(t, initiation, tc.wantSignature)
+		})
+	}
+}
+
+func TestResolveListenAddress(t *testing.T) {
+	t.Parallel()
+
+	spURL := mustParseURL(t, "https://localhost:19095")
+
+	testCases := []struct {
+		name     string
+		override string
+		want     string
+	}{
+		{
+			name: "uses external SP URL host by default",
+			want: "localhost:19095",
+		},
+		{
+			name:     "uses explicit container listen address",
+			override: testContainerListenAddress,
+			want:     testContainerListenAddress,
+		},
+		{
+			name:     "trims explicit listen address",
+			override: "  :19095  ",
+			want:     ":19095",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := resolveListenAddress(&spURL, tc.override)
+			if got != tc.want {
+				t.Fatalf("resolveListenAddress() = %q, want %q", got, tc.want)
+			}
 		})
 	}
 }

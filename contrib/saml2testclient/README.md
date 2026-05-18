@@ -11,6 +11,7 @@ The client is configured via environment variables:
 | `SAML2_IDP_METADATA_URL`         | URL to the IdP metadata of Nauthilus      | `https://localhost:9443/saml/metadata` |
 | `SAML2_SP_ENTITY_ID`             | The entity ID of this test client         | `https://localhost:9095/saml/metadata` |
 | `SAML2_SP_URL`                   | The base URL of this test client          | `https://localhost:9095`               |
+| `SAML2_SP_LISTEN_ADDRESS`        | Optional HTTP listen address override     | value from `SAML2_SP_URL`              |
 | `SAML2_INSECURE_SKIP_VERIFY`     | Skip TLS verification for IdP metadata    | `true`                                 |
 | `SAML2_SP_SIGN_AUTHN_REQUESTS`   | Sign AuthnRequests sent to the IdP        | `false`                                |
 | `SAML2_SP_SIGN_LOGOUT_REQUESTS`  | Sign SP-initiated LogoutRequests          | `false`                                |
@@ -43,6 +44,8 @@ export SAML2_SP_URL=https://localhost:9095
 
 By default, the client listens on `https://localhost:9095`. On the first start, it automatically generates a self-signed
 certificate for the SP if no `token.crt`/`token.key` is present. This certificate is also used for the HTTPS server.
+Set `SAML2_SP_LISTEN_ADDRESS=0.0.0.0:9095` when the public SP URL must stay `https://localhost:9095` but the process
+has to listen on all interfaces, for example inside Docker.
 
 The test client now exposes a real `/saml/slo` endpoint. It can initiate SP-driven logout, accept IdP-initiated
 `LogoutRequest` messages, and process `LogoutResponse` messages from the IdP.
