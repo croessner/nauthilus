@@ -81,6 +81,11 @@ scenarios:
   - oidc-webauthn-replay-assertion
   - oidc-webauthn-sign-count-rollback
   - saml-sso
+  - saml-sp-initiated-slo
+  - saml-sso-malformed-request-rejected
+  - saml-slo-missing-payload-rejected
+  - saml-slo-ambiguous-payload-rejected
+  - saml-slo-duplicate-request-rejected
   - totp-registration-login
   - recovery-code-generation-consumption
   - webauthn-registration-login

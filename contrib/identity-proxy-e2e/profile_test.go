@@ -42,6 +42,11 @@ const (
 	edgeData                  = "edge-data"
 	edgeRedisAddr             = "edge-redis:6379"
 	edgeClusterID             = "edge-e2e"
+	samlSPPublic              = "saml-sp-public"
+	samlSPService             = "saml-sp"
+	defaultSAMLLoginURL       = "https://localhost:19095/saml/login"
+	samlSSOMalformedScenario  = "saml-sso-malformed-request-rejected"
+	samlSLOAmbiguousScenario  = "saml-slo-ambiguous-payload-rejected"
 	privateKeyJWT             = "private_key_jwt"
 	redisBackend              = "redis"
 	storageSection            = "storage"
@@ -115,7 +120,9 @@ func TestComposeNetworksPreventDirectCrossRedisAccess(t *testing.T) {
 	assertServiceNetworks(t, compose, "authority", []string{authorityData, authorityGRPC})
 	assertServiceNetworks(t, compose, "edge-a", []string{edgeData, authorityGRPC})
 	assertServiceNetworks(t, compose, "edge-b", []string{edgeData, authorityGRPC})
+	assertServiceNetworks(t, compose, samlSPService, []string{edgeData, samlSPPublic})
 	assertServicePorts(t, compose, "authority", []string{"127.0.0.1:18081:18081", "127.0.0.1:19444:19444"})
+	assertServicePorts(t, compose, samlSPService, []string{"127.0.0.1:19095:19095"})
 }
 
 func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
@@ -206,6 +213,11 @@ func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
 		"oidc-webauthn-replay-assertion",
 		"oidc-webauthn-sign-count-rollback",
 		"saml-sso",
+		"saml-sp-initiated-slo",
+		samlSSOMalformedScenario,
+		"saml-slo-missing-payload-rejected",
+		samlSLOAmbiguousScenario,
+		"saml-slo-duplicate-request-rejected",
 		"totp-registration-login",
 		"recovery-code-generation-consumption",
 		"webauthn-registration-login",
@@ -270,6 +282,10 @@ func TestBrowserAutomationUsesCDPVirtualAuthenticator(t *testing.T) {
 		"deviceAttackerClient",
 		"duplicateTokenForm",
 		"pkceChallenge",
+		defaultSAMLLoginURL,
+		"runSAMLAttackFailures",
+		samlSSOMalformedScenario,
+		samlSLOAmbiguousScenario,
 		"runWebAuthnTamperedAssertion",
 		"runWebAuthnWrongChallenge",
 		"runWebAuthnWrongOrigin",
@@ -352,8 +368,11 @@ func TestRunScriptIncludesExecutablePositiveNegativeAndTopologyChecks(t *testing
 	for _, marker := range []string{
 		"go run ./contrib/identity-proxy-e2e/cmd/smoke --mode pre-browser",
 		"go run ./contrib/identity-proxy-e2e/cmd/smoke --mode post-browser",
+		`up -d authority edge-a edge-b`,
+		`up -d saml-sp`,
 		"redis-cli -h edge-redis",
 		"redis-cli -h authority-redis",
+		"NAUTHILUS_E2E_SAML_URL",
 	} {
 		if !strings.Contains(script, marker) {
 			t.Fatalf("run script missing %q marker", marker)

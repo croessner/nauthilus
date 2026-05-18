@@ -20,7 +20,8 @@ The profile is intentionally local and repeatable. It uses Docker Compose, gener
 - WebAuthn browser automation uses a CDP virtual authenticator.
 - WebAuthn sign-count updates are visible through authority-side state.
 - A flow can start on `edge-a` and complete on `edge-b` through shared edge Redis.
-- SAML SSO is wired as an optional browser scenario when an operator supplies a test SP URL.
+- SAML SSO and SP-initiated SLO work through a local test SP by default.
+- SAML live negative checks reject malformed SSO input and bad SLO payload shape.
 
 ## Topology
 
@@ -28,6 +29,7 @@ The profile is intentionally local and repeatable. It uses Docker Compose, gener
 flowchart LR
   Browser["Browser / Playwright"]
   Smoke["Go smoke client"]
+  SAMLSP["saml-sp\nSAML test SP"]
 
   subgraph EdgeSide["Edge side"]
     EdgeA["edge-a\nHTTPS IdP\nremote backend only"]
@@ -42,8 +44,10 @@ flowchart LR
   end
 
   Browser -->|"HTTPS OIDC / MFA / WebAuthn"| EdgeA
+  Browser -->|"HTTPS SAML SP login / logout"| SAMLSP
   Browser -->|"HTTPS continuity checks"| EdgeB
   Smoke -->|"mTLS gRPC + bearer"| Authority
+  SAMLSP -->|"IdP metadata fetch"| EdgeA
   Smoke -->|"private_key_jwt token request"| Authority
   EdgeA -->|"shared edge state"| EdgeRedis
   EdgeB -->|"shared edge state"| EdgeRedis
@@ -68,6 +72,7 @@ flowchart TB
     EdgeRedis["edge-redis"]
     EdgeA["edge-a"]
     EdgeB["edge-b"]
+    SAMLSP["saml-sp"]
   end
 
   subgraph authority_grpc["authority-grpc network"]
@@ -244,10 +249,10 @@ NAUTHILUS_E2E_SKIP_BUILD=1 contrib/identity-proxy-e2e/scripts/run.sh smoke
 
 1. `profile-check`: verifies the static split-profile invariants.
 2. `down -v`: removes any previous stack state for a clean run.
-3. `up`: starts the authority, edges, and Redis services.
+3. `up`: starts the authority, edges, local SAML SP, and Redis services.
 4. `rpc --mode pre-browser`: checks gRPC auth, generated OpenAPI management usage, and negative cases before browser state exists.
 5. `redis-check`: checks that authority Redis and edge Redis cannot reach each other.
-6. `browser`: drives positive and negative OIDC, device-code, TOTP, recovery-code, WebAuthn, and multi-edge flows.
+6. `browser`: drives positive and negative OIDC, device-code, TOTP, recovery-code, WebAuthn, SAML, and multi-edge flows.
 7. `rpc --mode post-browser`: reads authority-side WebAuthn state and confirms sign-count advancement.
 
 Expected successful output includes:
@@ -350,6 +355,12 @@ ok recovery-code-login
 ok oidc-recovery-code-reuse-rejected
 ok multi-edge-oidc-continuity
 ok multi-edge-webauthn-continuity
+ok saml-sso-login
+ok saml-sp-initiated-slo
+ok saml-sso-malformed-request-rejected
+ok saml-slo-missing-payload-rejected
+ok saml-slo-ambiguous-payload-rejected
+ok saml-slo-duplicate-request-rejected
 ok authority-webauthn-sign-count
 ```
 
@@ -456,21 +467,28 @@ ok authority-webauthn-sign-count
 | `multi-edge-oidc-continuity`                          | Browser continuity            | Positive baseline that shared edge state supports failover/continuation across edges.                                                                         | A flow started on `edge-a` can complete on `edge-b` through shared edge state.                                                                                                        |
 | `multi-edge-webauthn-continuity`                      | Browser continuity            | Positive baseline that WebAuthn challenge state survives edge switching.                                                                                      | A WebAuthn MFA flow can start on `edge-a`, continue on `edge-b`, and still complete.                                                                                                  |
 | `authority-webauthn-sign-count`                       | Authority gRPC post-check     | Persistence drift would leave the authority unaware of browser-side authenticator use.                                                                        | The authority observes a WebAuthn sign-count increment after the browser login.                                                                                                       |
-| `saml-sso-login`                                      | Optional browser SAML         | Positive optional baseline when an external SAML test SP is supplied.                                                                                         | When `NAUTHILUS_E2E_SAML_URL` is set, the browser can complete SAML SSO against an external test SP.                                                                                  |
-| `saml-slo-negative-fixtures`                          | Go handler guardrail          | SAML logout attacks cover payload parameter pollution, replayed request IDs, RelayState tampering, unsigned-message downgrade, and SHA-1 signature downgrade. | Handler tests reject duplicate SLO payload parameters, replayed request IDs, tampered RelayState signatures, unsigned requests when signatures are required, and SHA-1 signatures.    |
+| `saml-sso-login`                                      | Browser SAML                  | Positive baseline for the local SAML SP and edge IdP integration.                                                                                             | The default Compose `saml-sp` can complete SAML SSO through the edge and receive a successful assertion.                                                                               |
+| `saml-sp-initiated-slo`                               | Browser SAML                  | Positive baseline for SP-initiated logout and IdP SLO response handling.                                                                                      | A logged-in SAML SP session can initiate logout, receive the IdP LogoutResponse, and return to the SP login page.                                                                     |
+| `saml-sso-malformed-request-rejected`                 | SAML SSO negative             | A malformed `SAMLRequest` tries to enter the SSO parser without a valid AuthnRequest.                                                                         | The edge rejects the malformed SSO request with HTTP 400.                                                                                                                             |
+| `saml-slo-missing-payload-rejected`                   | SAML SLO negative             | An attacker probes `/saml/slo` without either `SAMLRequest` or `SAMLResponse`.                                                                                | The SLO endpoint rejects the request with HTTP 400.                                                                                                                                   |
+| `saml-slo-ambiguous-payload-rejected`                 | SAML SLO negative             | Payload parameter pollution sends both `SAMLRequest` and `SAMLResponse` in one SLO message.                                                                  | The SLO endpoint rejects the ambiguous payload with HTTP 400.                                                                                                                         |
+| `saml-slo-duplicate-request-rejected`                 | SAML SLO negative             | Duplicate `SAMLRequest` parameters attempt to exploit parser disagreement.                                                                                    | The SLO endpoint rejects duplicated payload parameters with HTTP 400.                                                                                                                 |
+| `saml-slo-negative-fixtures`                          | Go handler guardrail          | Deeper SAML logout attacks cover replayed request IDs, RelayState tampering, unsigned-message downgrade, and SHA-1 signature downgrade.                      | Handler tests reject replayed logout request IDs, tampered RelayState signatures, unsigned requests when signatures are required, and SHA-1 signatures.                               |
 
 ## SAML
 
-The edge configs and smoke plan include SAML support, but this stack does not start a dedicated SAML SP. To include a browser SSO pass, start a compatible test SP separately and provide its login URL:
+The default Compose stack starts `saml-sp`, a local `contrib/saml2testclient` service on `https://localhost:19095`. The browser smoke uses that SP by default, completes SAML SSO, performs SP-initiated SLO, and then probes live SAML SSO/SLO negative cases.
+
+To run the browser smoke against a different compatible test SP, provide its login URL:
 
 ```sh
 NAUTHILUS_E2E_SAML_URL=https://your-test-sp.example/login \
   contrib/identity-proxy-e2e/scripts/run.sh browser
 ```
 
-When `NAUTHILUS_E2E_SAML_URL` is unset, the browser smoke prints a skip message. Set it to an empty string to suppress the SAML branch completely.
+Set `NAUTHILUS_E2E_SAML_URL` to an empty string only when you intentionally want to suppress the SAML branch.
 
-SAML negative SLO payload checks are covered by the Go handler guardrails, not by the optional browser SP smoke. They cover duplicate `SAMLRequest`/`SAMLResponse` routing, replayed logout request IDs, tampered RelayState signatures, unsigned logout requests when signatures are required, and SHA-1 signature rejection.
+The browser smoke covers live malformed SSO and SLO payload-shape attacks. The Go handler guardrails still cover deeper SLO protocol and signature cases, including replayed logout request IDs, tampered RelayState signatures, unsigned logout requests when signatures are required, and SHA-1 signature rejection.
 
 ## Environment Variables
 
@@ -494,7 +512,7 @@ SAML negative SLO payload checks are covered by the Go handler guardrails, not b
 | `NAUTHILUS_E2E_STRICT_TLS`           | unset                              | Set to `1` to keep Node TLS verification enabled.                              |
 | `NAUTHILUS_E2E_HEADED`               | unset                              | Set to `1` to run Chromium with a visible window.                              |
 | `NAUTHILUS_E2E_TRACE`                | unset                              | Set to `1` for extra browser smoke trace output.                               |
-| `NAUTHILUS_E2E_SAML_URL`             | unset                              | Optional SAML SP login URL.                                                    |
+| `NAUTHILUS_E2E_SAML_URL`             | `https://localhost:19095/saml/login` | SAML SP login URL; set to an empty string to intentionally skip SAML.        |
 
 ## Generated Material And Secrets
 
