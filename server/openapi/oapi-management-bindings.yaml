@@ -1,0 +1,13 @@
+package: management
+generate:
+  models: true
+  client: true
+output-options:
+  include-tags:
+    - OpenAPI
+    - Async
+    - Cache
+    - BruteForce
+    - Config
+    - OIDCSessions
+output: server/openapi/generated/management/bindings.gen.go

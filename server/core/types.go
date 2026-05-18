@@ -16,6 +16,10 @@
 package core
 
 import (
+	"sync"
+	"time"
+
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
 )
 
@@ -53,4 +57,78 @@ type BackendManager interface {
 
 	// UpdateWebAuthnCredential updates an existing WebAuthn credential in the backend.
 	UpdateWebAuthnCredential(auth *AuthState, oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) (err error)
+}
+
+// PublicMFAState contains public MFA metadata that is safe to expose to an IdP edge.
+type PublicMFAState struct {
+	WebAuthnCredentials []mfa.PersistentCredential
+	RecoveryCodeCount   int
+	HasTOTP             bool
+	HasWebAuthn         bool
+}
+
+// PublicMFAStateProvider is implemented by backends that can read public MFA state directly.
+type PublicMFAStateProvider interface {
+	GetPublicMFAState(auth *AuthState, includeWebAuthn bool) (PublicMFAState, error)
+}
+
+// TOTPRegistration contains one-time setup material for a pending TOTP registration.
+type TOTPRegistration struct {
+	ExpiresAt             time.Time
+	PendingRegistrationID string
+	Secret                string
+	OTPAuthURL            string
+}
+
+// RemoteMFAOperations is implemented by backends that delegate MFA operations to an authority.
+type RemoteMFAOperations interface {
+	BeginTOTPRegistration(auth *AuthState, idempotencyKey string) (TOTPRegistration, error)
+	FinishTOTPRegistration(auth *AuthState, pendingRegistrationID string, code string, idempotencyKey string) error
+	VerifyTOTP(auth *AuthState, code string) (bool, error)
+	DeleteTOTP(auth *AuthState, idempotencyKey string) error
+	GenerateRecoveryCodes(auth *AuthState, count uint32, idempotencyKey string) ([]string, error)
+	UseRecoveryCode(auth *AuthState, code string, idempotencyKey string) (bool, error)
+	DeleteRecoveryCodes(auth *AuthState, idempotencyKey string) error
+}
+
+// TOTPRecoveryCodeConsumer consumes a matching recovery code in one backend-owned operation.
+type TOTPRecoveryCodeConsumer interface {
+	ConsumeTOTPRecoveryCode(auth *AuthState, code string) (valid bool, remaining int, err error)
+}
+
+// BackendManagerFactory constructs a backend manager for a backend plugged in from another package.
+type BackendManagerFactory func(backendName string, deps AuthDeps) BackendManager
+
+var backendManagerFactories sync.Map
+
+// RegisterBackendManagerFactory registers a backend manager factory.
+func RegisterBackendManagerFactory(backendType definitions.Backend, factory BackendManagerFactory) {
+	if factory == nil {
+		return
+	}
+
+	backendManagerFactories.Store(backendType, factory)
+}
+
+func backendManagerFromFactory(backendType definitions.Backend, backendName string, deps AuthDeps) BackendManager {
+	factory, ok := backendManagerFactories.Load(backendType)
+	if !ok {
+		return nil
+	}
+
+	return factory.(BackendManagerFactory)(backendName, deps)
+}
+
+// RemoteBackendRef binds an edge session to an authority-side backend reference.
+type RemoteBackendRef struct {
+	Type        string
+	Name        string
+	Protocol    string
+	Authority   string
+	OpaqueToken string
+}
+
+// IsZero reports whether the reference is empty.
+func (r RemoteBackendRef) IsZero() bool {
+	return r.Type == "" && r.Name == "" && r.Protocol == "" && r.Authority == "" && r.OpaqueToken == ""
 }

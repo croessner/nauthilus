@@ -169,6 +169,10 @@ func (m *mockMFAProvider) VerifyAndSaveTOTP(_ *gin.Context, _ string, _ string, 
 	return nil
 }
 
+func (m *mockMFAProvider) VerifyTOTP(_ *gin.Context, _ string, _ string, _ uint8) (bool, error) {
+	return true, nil
+}
+
 func (m *mockMFAProvider) DeleteTOTP(_ *gin.Context, _ string, _ uint8) error {
 	return nil
 }

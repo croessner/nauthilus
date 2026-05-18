@@ -80,10 +80,15 @@ type AuthOutcome struct {
 	Session              string
 	AccountField         string
 	TOTPSecretField      string
+	TOTPRecoveryField    string
+	UniqueUserIDField    string
+	DisplayNameField     string
 	StatusMessage        string
 	StatusMessageI18NKey string
 	ResponseLanguage     string
 	Error                string
+	Groups               []string
+	GroupDNS             []string
 	Backend              definitions.Backend
 	HTTPStatus           int
 }
@@ -427,10 +432,15 @@ func authOutcomeFromCaptured(captured CapturedAuthOutcome) *AuthOutcome {
 		Session:              captured.Session,
 		AccountField:         captured.AccountField,
 		TOTPSecretField:      captured.TOTPSecretField,
+		TOTPRecoveryField:    captured.TOTPRecoveryField,
+		UniqueUserIDField:    captured.UniqueUserIDField,
+		DisplayNameField:     captured.DisplayNameField,
 		StatusMessage:        captured.StatusMessage,
 		StatusMessageI18NKey: captured.StatusMessageI18NKey,
 		ResponseLanguage:     captured.ResponseLanguage,
 		Error:                captured.Error,
+		Groups:               append([]string(nil), captured.Groups...),
+		GroupDNS:             append([]string(nil), captured.GroupDNS...),
 		Backend:              captured.Backend,
 		HTTPStatus:           captured.HTTPStatus,
 	}

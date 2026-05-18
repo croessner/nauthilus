@@ -37,8 +37,9 @@ import (
 )
 
 const (
-	rblIPFamilyIPv4 = "ipv4"
-	rblIPFamilyIPv6 = "ipv6"
+	rblIPFamilyIPv4  = "ipv4"
+	rblIPFamilyIPv6  = "ipv6"
+	rblReverseHalves = 2
 )
 
 // RBLIsListed is a small wrapper exposing the internal isListed logic to subpackages
@@ -137,7 +138,7 @@ func reverseRBLClientIP(clientIP string, rbl *config.RBL) (string, string, bool,
 
 	ipv6Str := strings.Join(strings.Split(tmp.Long(), ":"), "")
 	ipv6Slice := strings.Split(ipv6Str, "")
-	for n := 0; n < (len(ipv6Slice) / 2); n++ { //nolint:gomnd // Ignore
+	for n := 0; n < (len(ipv6Slice) / rblReverseHalves); n++ {
 		ipv6Slice[n], ipv6Slice[len(ipv6Slice)-n-1] = ipv6Slice[len(ipv6Slice)-n-1], ipv6Slice[n]
 	}
 

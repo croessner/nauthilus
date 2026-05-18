@@ -16,6 +16,10 @@ A task is incomplete if any mandatory rule is not satisfied.
     - Required command pattern: `GOEXPERIMENT=runtimesecret go test ...`
 - MUST: Keep `.golangci.yml` aligned with the repository guardrail policy and
   run `golangci-lint` through `make lint` or `make guardrails`.
+- MUST: Keep numbered rollout-stage terminology out of source code, tests,
+  docs, filenames, branch names, tags, commit subjects, and commit bodies. Use
+  domain-specific names such as `baseline`, `authority`, `identity`, or the
+  concrete feature name instead.
 - MUST: Write commit messages as `Prefix: Concise headline`, using only the
   approved prefixes `Add`, `Change`, `Fix`, `Remove`, `Refactor`, `Test`,
   `Docs`, `Build`, `Ci`, `Vendor`, `Security`, and `Chore`.

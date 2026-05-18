@@ -45,8 +45,12 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.authorize")
 	defer sp.End()
 
-	h.logIncomingOIDCFlowRequest(ctx, "authorization_code", "", ctx.Query("client_id"))
-	defer h.logCompletedOIDCFlowRequest(ctx, "authorization_code", "", ctx.Query("client_id"))
+	if rejectDuplicateOIDCAuthorizeParameters(ctx) {
+		return
+	}
+
+	h.logIncomingOIDCFlowRequest(ctx, definitions.OIDCFlowAuthorizationCode, "", ctx.Query(oidcParamClientID))
+	defer h.logCompletedOIDCFlowRequest(ctx, definitions.OIDCFlowAuthorizationCode, "", ctx.Query(oidcParamClientID))
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -55,9 +59,9 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "OIDC Authorize request",
-		"client_id", ctx.Query("client_id"),
-		"redirect_uri", ctx.Query("redirect_uri"),
-		"scope", ctx.Query("scope"),
+		definitions.LogKeyClientID, ctx.Query(oidcParamClientID),
+		oidcParamRedirectURI, ctx.Query(oidcParamRedirectURI),
+		oidcParamScope, ctx.Query(oidcParamScope),
 	)
 
 	mgr := cookie.GetManager(ctx)
@@ -66,15 +70,16 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 
 	account = oidcFlowContext.Account()
 
-	clientID := ctx.Query("client_id")
-	redirectURI := ctx.Query("redirect_uri")
-	scope := ctx.Query("scope")
-	state := ctx.Query("state")
-	nonce := ctx.Query("nonce")
-	responseType := ctx.Query("response_type")
-	prompt := ctx.Query("prompt")
-	codeChallenge := ctx.Query("code_challenge")
-	codeChallengeMethod, pkceErr := normalizeCodeChallengeMethod(codeChallenge, ctx.Query("code_challenge_method"))
+	clientID := ctx.Query(oidcParamClientID)
+	redirectURI := ctx.Query(oidcParamRedirectURI)
+	scope := ctx.Query(oidcParamScope)
+	state := ctx.Query(oidcParamState)
+	nonce := ctx.Query(oidcParamNonce)
+	responseType := ctx.Query(oidcParamResponseType)
+	prompt := ctx.Query(oidcParamPrompt)
+	codeChallenge := ctx.Query(oidcParamCodeChallenge)
+
+	codeChallengeMethod, pkceErr := normalizeCodeChallengeMethod(codeChallenge, ctx.Query(oidcParamCodeChallengeMethod))
 	if pkceErr != nil {
 		ctx.String(http.StatusBadRequest, pkceErr.Error())
 
@@ -82,12 +87,12 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	}
 
 	sp.SetAttributes(
-		attribute.String("client_id", clientID),
-		attribute.String("redirect_uri", redirectURI),
-		attribute.String("scope", scope),
+		attribute.String(definitions.LogKeyClientID, clientID),
+		attribute.String(oidcParamRedirectURI, redirectURI),
+		attribute.String(oidcParamScope, scope),
 	)
 
-	if responseType != "code" {
+	if responseType != oidcResponseTypeCode {
 		ctx.String(http.StatusBadRequest, "Only response_type=code is supported")
 
 		return
@@ -149,7 +154,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 				"user_agent", ctx.GetHeader("User-Agent"),
 				"x_forwarded_host", ctx.GetHeader("X-Forwarded-Host"),
 				"x_forwarded_proto", ctx.GetHeader("X-Forwarded-Proto"),
-				"prompt", prompt,
+				oidcParamPrompt, prompt,
 				"account_present", account != "",
 				"existing_flow_id", existingFlowID,
 				"existing_flow_type", existingFlowType,
@@ -188,7 +193,7 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyMsg, "OIDC authorize flow creation failed",
 					"new_flow_id", createdFlowID,
-					"error", err,
+					definitions.LogKeyError, err,
 				)
 
 				ctx.String(http.StatusInternalServerError, "Failed to initialize flow session")
@@ -233,16 +238,16 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 		return
 	}
 
+	requestedScopes := strings.Split(scope, " ")
+	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
+
 	// User is logged in.
-	user, err := h.idp.GetUserByUsername(ctx, account, clientID, "")
+	user, err := h.idp.GetUserByUsernameForOIDCClaims(ctx, account, client, filteredScopes)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Internal error loading user details")
 
 		return
 	}
-
-	requestedScopes := strings.Split(scope, " ")
-	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
 
 	idTokenClaims, accessTokenClaims, err := h.idp.GetClaims(ctx, user, client, filteredScopes)
 	if err != nil {
@@ -332,15 +337,46 @@ func (h *OIDCHandler) Authorize(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, target)
 }
 
+var oidcAuthorizeSingleValueParameters = []string{
+	oidcParamResponseType,
+	oidcParamClientID,
+	oidcParamRedirectURI,
+	oidcParamScope,
+	oidcParamState,
+	oidcParamNonce,
+	oidcParamPrompt,
+	oidcParamCodeChallenge,
+	oidcParamCodeChallengeMethod,
+}
+
+func rejectDuplicateOIDCAuthorizeParameters(ctx *gin.Context) bool {
+	if ctx == nil || ctx.Request == nil || ctx.Request.URL == nil {
+		return false
+	}
+
+	values := ctx.Request.URL.Query()
+	for _, key := range oidcAuthorizeSingleValueParameters {
+		if len(values[key]) <= 1 {
+			continue
+		}
+
+		ctx.String(http.StatusBadRequest, "duplicate parameter: "+key)
+
+		return true
+	}
+
+	return false
+}
+
 // handleAuthorizationCodeTokenExchange processes the authorization_code grant type
 // within the token endpoint.
 func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
-	code := formValue(ctx, "code")
+	code := formValue(ctx, oidcParamCode)
 
 	session, getErr := h.storage.GetSession(ctx.Request.Context(), code)
 	if getErr != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 		return
 	}
@@ -349,19 +385,19 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 	_ = h.storage.DeleteSession(ctx.Request.Context(), code)
 
 	if session.ClientID != clientID {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 		return
 	}
 
-	if formValue(ctx, "redirect_uri") != session.RedirectURI {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+	if formValue(ctx, oidcParamRedirectURI) != session.RedirectURI {
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 		return
 	}
 
-	if pkceErr := validatePKCEVerifier(session.CodeChallenge, session.CodeChallengeMethod, formValue(ctx, "code_verifier")); pkceErr != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+	if pkceErr := validatePKCEVerifier(session.CodeChallenge, session.CodeChallengeMethod, formValue(ctx, oidcParamCodeVerifier)); pkceErr != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 		return
 	}
@@ -388,13 +424,13 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 // within the token endpoint.
 func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
-	rt := formValue(ctx, "refresh_token")
+	rt := formValue(ctx, oidcParamRefreshToken)
 
 	session, idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
 	if err != nil {
 		if errors.Is(err, idp.ErrInvalidRefreshToken) || errors.Is(err, idp.ErrRefreshTokenClientMismatch) {
 			setOIDCTokenFailureReason(ctx, oidcRefreshTokenFailureReason(err))
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+			ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 			return
 		}
@@ -418,7 +454,7 @@ func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *confi
 // ConsentGET handles the OIDC consent request.
 func (h *OIDCHandler) ConsentGET(ctx *gin.Context) {
 	consentChallenge := ctx.Query("consent_challenge")
-	state := ctx.Query("state")
+	state := ctx.Query(oidcParamState)
 
 	h.logIncomingOIDCFlowRequest(ctx, "consent_get", "", "")
 	defer h.logCompletedOIDCFlowRequest(ctx, "consent_get", "", "")
@@ -494,9 +530,10 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 	defer h.logCompletedOIDCFlowRequest(ctx, "consent_post", "", "")
 
 	consentChallenge := ctx.PostForm("consent_challenge")
-	state := ctx.PostForm("state")
+
+	state := ctx.PostForm(oidcParamState)
 	if state == "" {
-		state = ctx.Query("state")
+		state = ctx.Query(oidcParamState)
 	}
 	submit := ctx.PostForm("submit")
 
@@ -507,7 +544,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 		return
 	}
 
-	sp.SetAttributes(attribute.String("client_id", session.ClientID))
+	sp.SetAttributes(attribute.String(definitions.LogKeyClientID, session.ClientID))
 
 	if submit != "allow" {
 		// Denied
@@ -547,7 +584,7 @@ func (h *OIDCHandler) ConsentPOST(ctx *gin.Context) {
 			return
 		}
 
-		user, userErr := h.idp.GetUserByUsername(ctx, session.Username, session.ClientID, "")
+		user, userErr := h.idp.GetUserByUsernameForOIDCClaims(ctx, session.Username, client, grantedScopes)
 		if userErr != nil {
 			ctx.String(http.StatusInternalServerError, "Internal error loading user details")
 

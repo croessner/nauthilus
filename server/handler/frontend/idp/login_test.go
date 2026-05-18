@@ -27,10 +27,10 @@ func TestLoginRedirects(t *testing.T) {
 
 		h := &FrontendHandler{}
 
-		r.GET("/login", h.Login)
+		r.GET(frontendLoginPath, h.Login)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/login", nil)
+		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
 
 		r.ServeHTTP(w, req)
 
@@ -58,10 +58,10 @@ func TestLoginRedirects(t *testing.T) {
 
 		h := &FrontendHandler{}
 
-		r.GET("/login", h.Login)
+		r.GET(frontendLoginPath, h.Login)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/login", nil)
+		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
 
 		r.ServeHTTP(w, req)
 
@@ -89,10 +89,10 @@ func TestLoginRedirects(t *testing.T) {
 
 		h := &FrontendHandler{}
 
-		r.GET("/login", h.Login)
+		r.GET(frontendLoginPath, h.Login)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/login", nil)
+		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
 
 		r.ServeHTTP(w, req)
 
@@ -116,10 +116,10 @@ func TestLoginRedirects(t *testing.T) {
 
 		h := &FrontendHandler{}
 
-		r.GET("/login", h.Login)
+		r.GET(frontendLoginPath, h.Login)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/login", nil)
+		req, _ := http.NewRequest(http.MethodGet, frontendLoginPath, nil)
 
 		r.ServeHTTP(w, req)
 
@@ -250,6 +250,52 @@ func TestIsValidIdPFlow(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestIsLoginSelfResume(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestPath string
+		redirectURI string
+		want        bool
+	}{
+		{
+			name:        "login to login",
+			requestPath: frontendLoginPath,
+			redirectURI: frontendLoginPath,
+			want:        true,
+		},
+		{
+			name:        "localized login loop",
+			requestPath: "/login/en",
+			redirectURI: frontendLoginPath,
+			want:        true,
+		},
+		{
+			name:        "absolute login loop",
+			requestPath: frontendLoginPath,
+			redirectURI: "https://split.example.test:18080/login/en",
+			want:        true,
+		},
+		{
+			name:        "login to authorize",
+			requestPath: frontendLoginPath,
+			redirectURI: "/oidc/authorize?client_id=test-client",
+			want:        false,
+		},
+		{
+			name:        "non-login request",
+			requestPath: "/oidc/consent",
+			redirectURI: frontendLoginPath,
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isLoginSelfResume(tt.requestPath, tt.redirectURI))
 		})
 	}
 }

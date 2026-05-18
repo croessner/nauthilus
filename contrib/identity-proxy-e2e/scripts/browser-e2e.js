@@ -1,0 +1,1784 @@
+#!/usr/bin/env node
+'use strict';
+
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const https = require('node:https');
+const path = require('node:path');
+
+let chromium;
+try {
+  ({chromium} = require('playwright'));
+} catch (error) {
+  console.error('Missing Playwright. Run: npm --prefix contrib/identity-proxy-e2e install');
+  throw error;
+}
+
+const edgeA = process.env.NAUTHILUS_E2E_EDGE_A || 'https://split.example.test:18080';
+const edgeB = process.env.NAUTHILUS_E2E_EDGE_B || 'https://split.example.test:18082';
+const edgeAAPI = process.env.NAUTHILUS_E2E_EDGE_A_API || 'https://127.0.0.1:18080';
+const callbackBindHost = process.env.NAUTHILUS_E2E_CALLBACK_BIND_HOST || '127.0.0.1';
+const callbackPublicHost = process.env.NAUTHILUS_E2E_CALLBACK_PUBLIC_HOST || 'split.example.test';
+const callbackPort = Number.parseInt(process.env.NAUTHILUS_E2E_CALLBACK_PORT || '19094', 10);
+const callbackTimeoutMS = Number.parseInt(process.env.NAUTHILUS_E2E_CALLBACK_TIMEOUT_MS || '90000', 10);
+const callbackCert = process.env.NAUTHILUS_E2E_CALLBACK_CERT
+  || path.join(__dirname, '..', '.work', 'certs', 'edge-http.crt');
+const callbackKey = process.env.NAUTHILUS_E2E_CALLBACK_KEY
+  || path.join(__dirname, '..', '.work', 'certs', 'edge-http.key');
+const username = process.env.NAUTHILUS_E2E_USERNAME || 'split-user@example.test';
+const password = process.env.NAUTHILUS_E2E_PASSWORD || 'split-password';
+
+if (process.env.NAUTHILUS_E2E_STRICT_TLS !== '1') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+
+const browserClient = {
+  id: 'split-e2e-browser',
+  secret: 'split-e2e-browser-secret',
+};
+
+const mfaClient = {
+  id: 'split-e2e-mfa',
+  secret: 'split-e2e-mfa-secret',
+};
+
+const consentClient = {
+  id: 'split-e2e-consent',
+  secret: 'split-e2e-consent-secret',
+};
+
+const deviceAttackerClient = {
+  id: 'split-e2e-device-attacker',
+  secret: 'split-e2e-device-attacker-secret',
+};
+
+async function main() {
+  const browser = await chromium.launch({
+    headless: process.env.NAUTHILUS_E2E_HEADED !== '1',
+    args: ['--host-resolver-rules=MAP split.example.test 127.0.0.1,MAP authority.example.test 127.0.0.1'],
+  });
+
+  try {
+    await runAuthorizationCodeFlow(browser);
+    await runNegativeIdPChecks(browser);
+    await runDeviceCodeFlow(browser);
+    const webAuthnCredentials = await runRequiredMFAFlows(browser);
+    await runMultiEdgeContinuity(browser);
+    await runMultiEdgeWebAuthnContinuity(browser, webAuthnCredentials);
+    await maybeRunSAMLFlow(browser);
+  } finally {
+    await browser.close();
+  }
+}
+
+async function runAuthorizationCodeFlow(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const callback = await withPageState(page, 'authorization-code flow', async () =>
+    withCallbackServer('authorization-code flow', async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email groups'));
+      await submitPasswordLogin(page, username, password);
+
+      return callbackPromise;
+    }));
+
+  const token = await exchangeCode(edgeAAPI, browserClient, callback.code, callback.redirectURI);
+  assert.ok(token.access_token, 'authorization-code flow returned an access token');
+  assert.ok(token.id_token, 'authorization-code flow returned an ID token');
+  console.log('ok oidc-authorization-code-login');
+  await context.close();
+}
+
+async function runNegativeIdPChecks(browser) {
+  await runAuthorizeParameterFailures(browser);
+  await runDirectLoginFailure(browser);
+  await runPasswordLoginFailure(browser);
+  await runConsentDenied(browser);
+  await runCSRFAndSessionAttackFailures(browser);
+  await runTokenEndpointFailures(browser);
+  await runUserInfoFailures();
+  await runDeviceEndpointFailures(browser);
+}
+
+async function runAuthorizeParameterFailures(browser) {
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, defaultRedirectURI(), 'openid', {response_type: 'token'}),
+    400,
+    /Only response_type=code is supported/,
+    'oidc-authorize-invalid-response-type',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, 'missing-client', defaultRedirectURI(), 'openid'),
+    400,
+    /Invalid client_id/,
+    'oidc-authorize-invalid-client',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://evil.example.test/callback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-invalid-redirect-uri',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, '//evil.example.test/callback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-protocol-relative-redirect-uri',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, '%2F%2Fevil.example.test%2Fcallback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-encoded-redirect-smuggling-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, '%252F%252Fevil.example.test%252Fcallback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-double-encoded-redirect-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https:\\\\evil.example.test\\callback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-backslash-redirect-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://SPLIT.EXAMPLE.TEST:19094/callback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-mixed-case-host-redirect-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test.:19094/callback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-trailing-dot-host-redirect-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test:19094@evil.example.test/callback', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-userinfo-redirect-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test:19094/callback/../evil', 'openid'),
+    400,
+    /Invalid redirect_uri/,
+    'oidc-authorize-dot-segment-redirect-rejected',
+  );
+
+  const duplicateRedirectURL = new URL(buildAuthorizeURL(edgeAAPI, browserClient.id, defaultRedirectURI(), 'openid'));
+  duplicateRedirectURL.searchParams.append('redirect_uri', 'https://evil.example.test/callback');
+  await expectTextResponse(
+    duplicateRedirectURL.toString(),
+    400,
+    /duplicate parameter: redirect_uri/,
+    'oidc-authorize-duplicate-redirect-uri-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, defaultRedirectURI(), 'openid', {response_type: 'code token'}),
+    400,
+    /Only response_type=code is supported/,
+    'oidc-authorize-response-type-mix-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, defaultRedirectURI(), 'openid', {response_type: 'none'}),
+    400,
+    /Only response_type=code is supported/,
+    'oidc-authorize-response-type-none-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, defaultRedirectURI(), 'openid', {response_type: 'id_token'}),
+    400,
+    /Only response_type=code is supported/,
+    'oidc-authorize-response-type-id-token-rejected',
+  );
+
+  await expectTextResponse(
+    buildAuthorizeURL(edgeAAPI, browserClient.id, defaultRedirectURI(), 'openid', {
+      code_challenge: pkceChallenge(pkceVerifier()),
+      code_challenge_method: 'plain',
+    }),
+    400,
+    /unsupported code_challenge_method/,
+    'oidc-authorize-pkce-plain-rejected',
+  );
+
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const callback = await withPageState(page, 'prompt none login-required check', async () =>
+    withCallbackServer('prompt none login-required check', async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid', {prompt: 'none'}));
+
+      return callbackPromise;
+    }));
+
+  assert.equal(callback.error, 'login_required', 'prompt=none without a session must return login_required');
+  assert.ok(callback.state, 'prompt=none error callback must preserve state');
+  console.log('ok oidc-authorize-prompt-none-login-required');
+  await context.close();
+}
+
+async function runDirectLoginFailure(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const response = await page.goto(`${edgeA}/login`);
+
+  assert.equal(response.status(), 400, 'direct /login access without flow must be rejected');
+  await expectPageText(page, /Invalid Request/);
+  await expectPageText(page, /valid OIDC or SAML2 authentication flow/);
+  console.log('ok oidc-login-direct-access-rejected');
+  await context.close();
+}
+
+async function runPasswordLoginFailure(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'invalid password login check', async () =>
+    withCallbackServer('invalid password login check', async (redirectURI) => {
+      await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, username, `${password}-wrong`);
+      assert.match(page.url(), /\/login/, 'invalid password must keep the user on the login flow');
+      await expectPageText(page, /Invalid login or password/);
+    }));
+
+  console.log('ok oidc-login-invalid-password');
+  await context.close();
+}
+
+async function runConsentDenied(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'consent denial check', async () =>
+    withCallbackServer('consent denial check', async (redirectURI) => {
+      await page.goto(buildAuthorizeURL(edgeA, consentClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, username, password);
+      await page.waitForURL(/\/oidc\/consent/, {timeout: 15000});
+
+      const denyResponsePromise = page.waitForResponse((response) =>
+        response.url().includes('/oidc/consent') && response.request().method() === 'POST',
+      {timeout: 15000});
+      await page.click('button[name="submit"][value="deny"]');
+      const denyResponse = await denyResponsePromise;
+
+      assert.equal(denyResponse.status(), 403, 'consent denial must return HTTP 403');
+      await expectPageText(page, /Consent denied/);
+    }));
+
+  console.log('ok oidc-consent-denied');
+  await context.close();
+}
+
+async function runCSRFAndSessionAttackFailures(browser) {
+  await runLoginCSRFMissing(browser);
+  await runLoginCSRFForeignToken(browser);
+  await runConsentCSRFMissing(browser);
+  await runConsentCSRFForeignToken(browser);
+  await runTamperedSessionCookie(browser);
+  await runSessionFixationIgnored(browser);
+  await runFlowReplayAfterCallback(browser);
+}
+
+async function runLoginCSRFMissing(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await page.goto(buildAuthorizeURL(edgeA, browserClient.id, defaultRedirectURI(), 'openid profile email'));
+  const result = await submitSameOriginForm(page, '/login', {
+    username,
+    password,
+  });
+
+  assert.equal(result.status, 400, `login without CSRF token must fail: ${result.text}`);
+  console.log('ok oidc-login-csrf-missing-rejected');
+  await context.close();
+}
+
+async function runLoginCSRFForeignToken(browser) {
+  const contextA = await newBrowserContext(browser, edgeA);
+  const pageA = await contextA.newPage();
+  await pageA.goto(buildAuthorizeURL(edgeA, browserClient.id, defaultRedirectURI(), 'openid profile email'));
+  const foreignToken = await extractCSRFToken(pageA);
+
+  const contextB = await newBrowserContext(browser, edgeA);
+  const pageB = await contextB.newPage();
+  await pageB.goto(buildAuthorizeURL(edgeA, browserClient.id, defaultRedirectURI(), 'openid profile email'));
+  const result = await submitSameOriginForm(pageB, '/login', {
+    csrf_token: foreignToken,
+    username,
+    password,
+  });
+
+  assert.equal(result.status, 400, `login with a foreign CSRF token must fail: ${result.text}`);
+  console.log('ok oidc-login-csrf-foreign-token-rejected');
+  await contextA.close();
+  await contextB.close();
+}
+
+async function runConsentCSRFMissing(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await openOIDCConsentPage(page);
+  const challenge = await page.locator('input[name="consent_challenge"]').inputValue();
+  const result = await submitSameOriginForm(page, '/oidc/consent', {
+    consent_challenge: challenge,
+    submit: 'deny',
+  });
+
+  assert.equal(result.status, 400, `consent without CSRF token must fail: ${result.text}`);
+  console.log('ok oidc-consent-csrf-missing-rejected');
+  await context.close();
+}
+
+async function runConsentCSRFForeignToken(browser) {
+  const contextA = await newBrowserContext(browser, edgeA);
+  const pageA = await contextA.newPage();
+  await openOIDCConsentPage(pageA);
+  const foreignToken = await extractCSRFToken(pageA);
+
+  const contextB = await newBrowserContext(browser, edgeA);
+  const pageB = await contextB.newPage();
+  await openOIDCConsentPage(pageB);
+  const challenge = await pageB.locator('input[name="consent_challenge"]').inputValue();
+  const result = await submitSameOriginForm(pageB, '/oidc/consent', {
+    csrf_token: foreignToken,
+    consent_challenge: challenge,
+    submit: 'deny',
+  });
+
+  assert.equal(result.status, 400, `consent with a foreign CSRF token must fail: ${result.text}`);
+  console.log('ok oidc-consent-csrf-foreign-token-rejected');
+  await contextA.close();
+  await contextB.close();
+}
+
+async function runTamperedSessionCookie(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  await context.addCookies([{
+    name: 'secure_data',
+    value: 'not-valid-cookie-data',
+    domain: 'split.example.test',
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    sameSite: 'Lax',
+  }]);
+
+  const page = await context.newPage();
+  const response = await page.goto(`${edgeA}/login`);
+
+  assert.equal(response.status(), 400, 'tampered session cookie must not create a valid IdP flow');
+  await expectPageText(page, /Invalid Request/);
+  console.log('ok oidc-session-tampered-cookie-rejected');
+  await context.close();
+}
+
+async function runSessionFixationIgnored(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  await context.addCookies([{
+    name: 'secure_data',
+    value: 'attacker-fixed-cookie',
+    domain: 'split.example.test',
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    sameSite: 'Lax',
+  }]);
+  const page = await context.newPage();
+
+  const callback = await withPageState(page, 'session fixation check', async () =>
+    withCallbackServer('session fixation check', async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, `${username}.session-fixation`, password);
+
+      return callbackPromise;
+    }));
+
+  assert.ok(callback.code, 'login with an attacker-fixed invalid cookie must still create fresh flow state');
+  console.log('ok oidc-session-fixation-cookie-ignored');
+  await context.close();
+}
+
+async function runFlowReplayAfterCallback(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  const callback = await withPageState(page, 'flow replay check', async () =>
+    withCallbackServer('flow replay check', async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, `${username}.flow-replay`, password);
+
+      return callbackPromise;
+    }));
+
+  assert.ok(callback.code, 'flow replay setup must complete a real OIDC callback');
+
+  const replayA = await page.goto(`${edgeA}/login`);
+  assert.equal(replayA.status(), 400, 'completed OIDC flow must not leave reusable /login state on edge-a');
+  console.log('ok oidc-flow-replay-after-callback-rejected');
+
+  const replayB = await page.goto(`${edgeB}/login`);
+  assert.equal(replayB.status(), 400, 'completed OIDC flow must not leave reusable /login state on edge-b');
+  console.log('ok oidc-cross-edge-flow-replay-after-callback-rejected');
+  await context.close();
+}
+
+async function openOIDCConsentPage(page) {
+  await page.goto(buildAuthorizeURL(edgeA, consentClient.id, defaultRedirectURI(), 'openid profile email'));
+  await submitPasswordLogin(page, `${username}.consent-csrf`, password);
+  await page.waitForURL(/\/oidc\/consent/, {timeout: 15000});
+}
+
+async function runTokenEndpointFailures(browser) {
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: `${browserClient.secret}-wrong`,
+    code: 'invalid-code',
+    redirect_uri: defaultRedirectURI(),
+  }, 401, 'invalid_client', 'oidc-token-invalid-client-secret');
+
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    code: 'invalid-code',
+    redirect_uri: defaultRedirectURI(),
+  }, 400, 'invalid_grant', 'oidc-token-invalid-code');
+
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'password',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    username,
+    password,
+  }, 400, 'unsupported_grant_type', 'oidc-token-unsupported-grant');
+
+  await expectJSONBodyOAuthError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    code: 'invalid-code',
+    redirect_uri: defaultRedirectURI(),
+  }, 401, 'invalid_client', 'oidc-token-json-body-rejected');
+
+  for (const [duplicateKey, okName] of [
+    ['client_id', 'oidc-token-duplicate-client-id-rejected'],
+    ['code', 'oidc-token-duplicate-code-rejected'],
+    ['redirect_uri', 'oidc-token-duplicate-redirect-uri-rejected'],
+  ]) {
+    await expectFormError(
+      `${edgeAAPI}/oidc/token`,
+      duplicateTokenForm(duplicateKey),
+      400,
+      'invalid_request',
+      okName,
+    );
+  }
+
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    code: 'invalid-code',
+    redirect_uri: defaultRedirectURI(),
+  }, 401, 'invalid_client', 'oidc-token-combined-client-auth-rejected', {
+    headers: {
+      authorization: `Basic ${Buffer.from(`${browserClient.id}:${browserClient.secret}`).toString('base64')}`,
+    },
+  });
+
+  const redirectMismatchCode = await issueAuthorizationCode(browser, browserClient, `${username}.redirect-mismatch`);
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    code: redirectMismatchCode.code,
+    redirect_uri: 'https://split.example.test:19094/other-callback',
+  }, 400, 'invalid_grant', 'oidc-token-redirect-mismatch-rejected');
+
+  const missingVerifier = pkceVerifier();
+  const missingVerifierCode = await issueAuthorizationCode(
+    browser,
+    browserClient,
+    `${username}.pkce-missing`,
+    {authOptions: {code_challenge: pkceChallenge(missingVerifier), code_challenge_method: 'S256'}},
+  );
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    code: missingVerifierCode.code,
+    redirect_uri: missingVerifierCode.redirectURI,
+  }, 400, 'invalid_grant', 'oidc-token-pkce-missing-verifier-rejected');
+
+  const wrongVerifier = pkceVerifier();
+  const wrongVerifierCode = await issueAuthorizationCode(
+    browser,
+    browserClient,
+    `${username}.pkce-wrong`,
+    {authOptions: {code_challenge: pkceChallenge(wrongVerifier), code_challenge_method: 'S256'}},
+  );
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    code: wrongVerifierCode.code,
+    redirect_uri: wrongVerifierCode.redirectURI,
+    code_verifier: pkceVerifier(),
+  }, 400, 'invalid_grant', 'oidc-token-pkce-wrong-verifier-rejected');
+
+  const clientConfusionCode = await issueAuthorizationCode(browser, browserClient, `${username}.client-confusion`);
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: consentClient.id,
+    client_secret: consentClient.secret,
+    code: clientConfusionCode.code,
+    redirect_uri: clientConfusionCode.redirectURI,
+  }, 400, 'invalid_grant', 'oidc-token-code-client-confusion-rejected');
+
+  const reusableCode = await issueAuthorizationCode(browser, browserClient, `${username}.code-reuse`);
+  const token = await exchangeCode(edgeAAPI, browserClient, reusableCode.code, reusableCode.redirectURI);
+  assert.ok(token.access_token, 'first exchange for code-reuse check must succeed');
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    code: reusableCode.code,
+    redirect_uri: reusableCode.redirectURI,
+  }, 400, 'invalid_grant', 'oidc-token-code-reuse-rejected');
+
+  const refreshMismatchToken = await issueRefreshToken(browser, `${username}.refresh-mismatch`);
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'refresh_token',
+    client_id: consentClient.id,
+    client_secret: consentClient.secret,
+    refresh_token: refreshMismatchToken.refresh_token,
+  }, 400, 'invalid_grant', 'oidc-token-refresh-client-mismatch-rejected');
+
+  const refreshReuseToken = await issueRefreshToken(browser, `${username}.refresh-reuse`);
+  const rotatedRefresh = await postForm(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'refresh_token',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    refresh_token: refreshReuseToken.refresh_token,
+  });
+  assert.ok(rotatedRefresh.access_token, 'refresh-token reuse setup must return a new access token');
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'refresh_token',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    refresh_token: refreshReuseToken.refresh_token,
+  }, 400, 'invalid_grant', 'oidc-token-refresh-reuse-rejected');
+
+  const logoutToken = await issueRefreshToken(browser, `${username}.refresh-logout`);
+  await fetch(`${edgeAAPI}/oidc/logout?id_token_hint=${encodeURIComponent(logoutToken.id_token)}`);
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'refresh_token',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    refresh_token: logoutToken.refresh_token,
+  }, 400, 'invalid_grant', 'oidc-token-refresh-after-logout-rejected');
+
+  await runIntrospectionAndMetadataFailures();
+}
+
+async function runUserInfoFailures() {
+  await expectJSONError(`${edgeAAPI}/oidc/userinfo`, {}, 401, 'missing_token', 'oidc-userinfo-missing-token');
+  await expectJSONError(`${edgeAAPI}/oidc/userinfo`, {
+    headers: {
+      authorization: 'Bearer not-a-real-access-token',
+    },
+  }, 401, 'invalid_token', 'oidc-userinfo-invalid-token');
+}
+
+async function runIntrospectionAndMetadataFailures() {
+  await expectFormError(`${edgeAAPI}/oidc/introspect`, {
+    token: 'not-a-real-access-token',
+    client_id: browserClient.id,
+    client_secret: `${browserClient.secret}-wrong`,
+  }, 401, 'invalid_client', 'oidc-introspect-invalid-client-secret');
+
+  await expectIntrospectionInactive(
+    unsignedJWT({alg: 'none', typ: 'JWT'}, {sub: 'attacker', aud: browserClient.id}),
+    'oidc-introspect-alg-none-token-inactive',
+  );
+
+  await expectIntrospectionInactive(
+    `${base64URLJSON({alg: 'RS256', typ: 'JWT', kid: 'unknown-kid'})}.${base64URLJSON({sub: 'attacker', aud: browserClient.id})}.signature`,
+    'oidc-introspect-unknown-kid-token-inactive',
+  );
+
+  const revokeResponse = await fetch(`${edgeAAPI}/oidc/revoke`, {method: 'POST'});
+  assert.equal(revokeResponse.status, 404, `unexpected revocation endpoint exposure: ${await revokeResponse.text()}`);
+  console.log('ok oidc-revoke-endpoint-not-exposed');
+
+  const discoveryResponse = await fetch(`${edgeAAPI}/.well-known/openid-configuration`);
+  const discovery = await discoveryResponse.json();
+  assert.equal(discoveryResponse.status, 200, 'OIDC discovery must be readable');
+  assert.equal(discovery.issuer, edgeA, 'discovery issuer must stay on the public edge URL');
+  assert.ok(discovery.authorization_endpoint.startsWith(edgeA), 'authorization endpoint must use the public edge URL');
+  assert.ok(discovery.token_endpoint.startsWith(edgeA), 'token endpoint must use the public edge URL');
+  assert.ok(discovery.code_challenge_methods_supported.includes('S256'), 'discovery must advertise S256 PKCE');
+  assert.ok(!discovery.code_challenge_methods_supported.includes('plain'), 'discovery must not advertise PKCE plain');
+  console.log('ok oidc-discovery-metadata-consistent');
+}
+
+async function runDeviceEndpointFailures(browser) {
+  await expectFormError(`${edgeAAPI}/oidc/device`, {
+    scope: 'openid',
+  }, 400, 'invalid_request', 'oidc-device-missing-client');
+
+  await expectFormError(`${edgeAAPI}/oidc/device`, {
+    client_id: 'missing-client',
+    scope: 'openid',
+  }, 401, 'invalid_client', 'oidc-device-invalid-client');
+
+  await expectFormError(`${edgeAAPI}/oidc/device`, {
+    client_id: mfaClient.id,
+    scope: 'openid',
+  }, 400, 'unauthorized_client', 'oidc-device-unsupported-client');
+
+  const device = await postForm(`${edgeAAPI}/oidc/device`, {
+    client_id: browserClient.id,
+    scope: 'openid profile email',
+  });
+
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    device_code: device.device_code,
+  }, 400, 'authorization_pending', 'oidc-device-token-authorization-pending');
+
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    device_code: device.device_code,
+  }, 400, 'slow_down', 'oidc-device-token-slow-down');
+
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    device_code: 'expired-or-missing-device-code',
+  }, 400, 'expired_token', 'oidc-device-token-expired-code');
+
+  const clientMismatchDevice = await postForm(`${edgeAAPI}/oidc/device`, {
+    client_id: browserClient.id,
+    scope: 'openid profile email',
+  });
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    client_id: deviceAttackerClient.id,
+    client_secret: deviceAttackerClient.secret,
+    device_code: clientMismatchDevice.device_code,
+  }, 400, 'invalid_grant', 'oidc-device-token-client-mismatch-rejected');
+
+  await runInvalidDeviceUserCodeAttempt(browser, 'INVALID1', 'oidc-device-invalid-user-code');
+  await runInvalidDeviceUserCodeAttempt(browser, 'ＡＢＣＤＥＦＧＨ', 'oidc-device-unicode-user-code-rejected');
+
+  for (const bruteCode of ['AAAA1111', 'BBBB2222', 'CCCC3333']) {
+    await runInvalidDeviceUserCodeAttempt(browser, bruteCode, '', false);
+  }
+  console.log('ok oidc-device-user-code-bruteforce-rejected');
+
+  const deniedDevice = await postForm(`${edgeAAPI}/oidc/device`, {
+    client_id: consentClient.id,
+    scope: 'openid profile email',
+  });
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  await page.goto(deniedDevice.verification_uri || `${edgeA}/oidc/device/verify`);
+  await page.fill('input[name="user_code"]', deniedDevice.user_code);
+  await page.fill('input[name="username"]', username);
+  await page.fill('input[name="password"]', password);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(/\/oidc\/device\/consent/, {timeout: 15000});
+  await page.click('button[name="submit"][value="deny"]');
+  await expectPageText(page, /Authorization denied/);
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    client_id: consentClient.id,
+    client_secret: consentClient.secret,
+    device_code: deniedDevice.device_code,
+  }, 400, 'access_denied', 'oidc-device-token-consent-denied');
+  console.log('ok oidc-device-consent-denied');
+  await context.close();
+}
+
+async function runDeviceCodeFlow(browser) {
+  const device = await postForm(`${edgeAAPI}/oidc/device`, {
+    client_id: browserClient.id,
+    scope: 'openid profile email',
+  });
+  assert.ok(device.device_code, 'device flow returned device_code');
+  assert.ok(device.user_code, 'device flow returned user_code');
+
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  await page.goto(device.verification_uri || `${edgeA}/oidc/device/verify`);
+  await page.fill('input[name="user_code"]', device.user_code);
+  await page.fill('input[name="username"]', username);
+  await page.fill('input[name="password"]', password);
+  await page.click('button[type="submit"]');
+  await page.waitForLoadState('networkidle');
+
+  const token = await pollDeviceToken(edgeAAPI, browserClient, device.device_code);
+  assert.ok(token.access_token, 'device-code flow returned an access token');
+  console.log('ok oidc-device-code-login');
+  await expectFormError(`${edgeAAPI}/oidc/token`, {
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+    device_code: device.device_code,
+  }, 400, 'expired_token', 'oidc-device-token-reuse-rejected');
+  await context.close();
+}
+
+async function withPageState(page, label, run) {
+  try {
+    return await run();
+  } catch (error) {
+    error.message = `${error.message}; ${label} ended at ${page.url()}`;
+    throw error;
+  }
+}
+
+async function runRequiredMFAFlows(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const registrationAuthenticator = await installVirtualAuthenticator(page);
+
+  let recoveryCodes = [];
+  const registration = await withPageState(page, 'required MFA registration', async () =>
+    withCallbackServer('required MFA registration', async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(page, `${username}.mfa`, password);
+    await completeTOTPRegistration(page);
+    console.log('ok totp-registration');
+    await completeWebAuthnRegistration(page);
+    console.log('ok webauthn-registration');
+    recoveryCodes = await completeRecoveryRegistration(page);
+
+    return callbackPromise;
+  }));
+  assert.ok(registration.code, 'required MFA registration resumed the OIDC flow');
+  assert.ok(recoveryCodes.length > 0, 'required MFA registration generated recovery codes');
+  console.log('ok recovery-code-generation');
+  const webAuthnCredentials = await exportVirtualAuthenticatorCredentials(registrationAuthenticator);
+  await context.close();
+
+  await runNegativeMFAChecks(browser, webAuthnCredentials);
+
+  const webAuthnContext = await newBrowserContext(browser, edgeA);
+  const webAuthnPage = await webAuthnContext.newPage();
+  const webAuthnAuthenticator = await installVirtualAuthenticator(webAuthnPage);
+  await importVirtualAuthenticatorCredentials(webAuthnAuthenticator, webAuthnCredentials);
+  const webAuthnLogin = await withPageState(webAuthnPage, 'WebAuthn login', async () =>
+    withCallbackServer('WebAuthn login', async (redirectURI, callbackPromise) => {
+    await webAuthnPage.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(webAuthnPage, `${username}.mfa`, password);
+    await completeWebAuthnLogin(webAuthnPage, edgeA);
+
+    return callbackPromise;
+  }));
+  assert.ok(webAuthnLogin.code, 'WebAuthn login completed the OIDC flow');
+  console.log('ok webauthn-login');
+  let updatedWebAuthnCredentials = await exportVirtualAuthenticatorCredentials(webAuthnAuthenticator);
+  await webAuthnContext.close();
+
+  updatedWebAuthnCredentials = await runWebAuthnAssertionReplay(browser, updatedWebAuthnCredentials);
+  await runWebAuthnSignCountRollback(browser, webAuthnCredentials);
+
+  const recoveryContext = await newBrowserContext(browser, edgeA);
+  const recoveryPage = await recoveryContext.newPage();
+  const recoveryLogin = await withPageState(recoveryPage, 'recovery-code login', async () =>
+    withCallbackServer('recovery-code login', async (redirectURI, callbackPromise) => {
+    await recoveryPage.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(recoveryPage, `${username}.mfa`, password);
+    await completeRecoveryLogin(recoveryPage, recoveryCodes[0]);
+
+    return callbackPromise;
+  }));
+  assert.ok(recoveryLogin.code, 'recovery-code login completed the OIDC flow');
+  console.log('ok recovery-code-login');
+  await recoveryContext.close();
+  await runRecoveryCodeReuseRejected(browser, recoveryCodes[0]);
+
+  return updatedWebAuthnCredentials;
+}
+
+async function runNegativeMFAChecks(browser, webAuthnCredentials) {
+  await runWebAuthnMissingCredential(browser);
+  await runWebAuthnTamperedAssertion(browser, webAuthnCredentials);
+  await runWebAuthnWrongChallenge(browser, webAuthnCredentials);
+  await runWebAuthnWrongOrigin(browser, webAuthnCredentials);
+  await runWebAuthnUnknownCredential(browser, webAuthnCredentials);
+  await runInvalidTOTPCode(browser);
+  await runInvalidRecoveryCode(browser);
+}
+
+async function runWebAuthnMissingCredential(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  await installVirtualAuthenticator(page);
+
+  await withPageState(page, 'missing WebAuthn credential check', async () =>
+    withCallbackServer('missing WebAuthn credential check', async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI);
+      if (!/\/login\/webauthn/.test(page.url())) {
+        await page.goto(`${edgeA}/login/webauthn`);
+      }
+
+      await page.click('#login-button');
+      await page.waitForSelector('#webauthn-error:not(.hidden)', {timeout: 15000});
+      await expectWebAuthnError(page, /credential|not allowed|timed out|unknown/i);
+    }));
+
+  console.log('ok oidc-webauthn-missing-credential');
+  await context.close();
+}
+
+async function runWebAuthnTamperedAssertion(browser, webAuthnCredentials) {
+  await runWebAuthnTamperCase(
+    browser,
+    webAuthnCredentials,
+    'tampered WebAuthn assertion check',
+    'oidc-webauthn-tampered-assertion',
+    (body) => {
+      body.response = body.response || {};
+      body.response.signature = base64URL(Buffer.from('tampered-signature'));
+    },
+    /signature|verification|invalid|error/i,
+  );
+}
+
+async function runWebAuthnWrongChallenge(browser, webAuthnCredentials) {
+  await runWebAuthnTamperCase(
+    browser,
+    webAuthnCredentials,
+    'wrong WebAuthn challenge check',
+    'oidc-webauthn-wrong-challenge',
+    (body) => mutateWebAuthnClientData(body, (clientData) => {
+      clientData.challenge = base64URL(crypto.randomBytes(32));
+    }),
+    /challenge|verification|invalid|error/i,
+  );
+}
+
+async function runWebAuthnWrongOrigin(browser, webAuthnCredentials) {
+  await runWebAuthnTamperCase(
+    browser,
+    webAuthnCredentials,
+    'wrong WebAuthn origin check',
+    'oidc-webauthn-wrong-origin',
+    (body) => mutateWebAuthnClientData(body, (clientData) => {
+      clientData.origin = 'https://evil.example.test';
+    }),
+    /origin|verification|invalid|error/i,
+  );
+}
+
+async function runWebAuthnUnknownCredential(browser, webAuthnCredentials) {
+  await runWebAuthnTamperCase(
+    browser,
+    webAuthnCredentials,
+    'unknown WebAuthn credential check',
+    'oidc-webauthn-unknown-credential',
+    (body) => {
+      const credentialID = base64URL(crypto.randomBytes(32));
+      body.id = credentialID;
+      body.rawId = credentialID;
+    },
+    /credential|verification|invalid|error/i,
+  );
+}
+
+async function runWebAuthnTamperCase(browser, webAuthnCredentials, label, okName, mutateBody, pattern) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
+
+  await withPageState(page, label, async () =>
+    withCallbackServer(label, async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI);
+      if (!/\/login\/webauthn/.test(page.url())) {
+        await page.goto(`${edgeA}/login/webauthn`);
+      }
+
+      await page.route('**/login/webauthn/finish', async (route) => {
+        const request = route.request();
+        const body = JSON.parse(request.postData() || '{}');
+        mutateBody(body);
+
+        await route.continue({
+          headers: {
+            ...request.headers(),
+            'content-type': 'application/json',
+          },
+          postData: JSON.stringify(body),
+        });
+      });
+
+      const finishResponsePromise = page.waitForResponse((response) =>
+        response.url().includes('/login/webauthn/finish') && response.request().method() === 'POST',
+      {timeout: 15000});
+      await page.click('#login-button');
+      const finishResponse = await finishResponsePromise;
+
+      assert.equal(finishResponse.status(), 400, `${okName} must fail closed`);
+      await page.waitForSelector('#webauthn-error:not(.hidden)', {timeout: 15000});
+      await expectWebAuthnError(page, pattern);
+    }));
+
+  console.log(`ok ${okName}`);
+  await context.close();
+}
+
+async function runWebAuthnAssertionReplay(browser, webAuthnCredentials) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
+
+  let capturedBody = '';
+  let capturedCSRF = '';
+  const callback = await withPageState(page, 'WebAuthn replay setup', async () =>
+    withCallbackServer('WebAuthn replay setup', async (redirectURI, callbackPromise) => {
+      await startMFAChallenge(page, redirectURI);
+      if (!/\/login\/webauthn/.test(page.url())) {
+        await page.goto(`${edgeA}/login/webauthn`);
+      }
+
+      await page.route('**/login/webauthn/finish', async (route) => {
+        const request = route.request();
+        const headers = request.headers();
+        capturedBody = request.postData() || '';
+        capturedCSRF = headers['x-csrf-token'] || headers['X-CSRF-Token'] || '';
+
+        await route.continue();
+      });
+
+      await completeWebAuthnLogin(page, edgeA);
+
+      return callbackPromise;
+    }));
+
+  assert.ok(callback.code, 'WebAuthn replay setup must complete the first login');
+  assert.ok(capturedBody, 'WebAuthn replay setup captured an assertion body');
+  await page.goto(`${edgeA}/login`);
+  const replay = await page.evaluate(async ({body, csrf}) => {
+    const response = await fetch('/login/webauthn/finish', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-csrf-token': csrf,
+      },
+      body,
+    });
+
+    return {status: response.status, text: await response.text()};
+  }, {body: capturedBody, csrf: capturedCSRF});
+
+  assert.equal(replay.status, 400, `replayed WebAuthn assertion must fail closed: ${replay.text}`);
+  console.log('ok oidc-webauthn-replay-assertion');
+
+  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
+  await context.close();
+
+  return updatedCredentials;
+}
+
+async function runWebAuthnSignCountRollback(browser, webAuthnCredentials) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
+
+  await withPageState(page, 'WebAuthn sign-count rollback check', async () =>
+    withCallbackServer('WebAuthn sign-count rollback check', async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI);
+      if (!/\/login\/webauthn/.test(page.url())) {
+        await page.goto(`${edgeA}/login/webauthn`);
+      }
+
+      const finishResponsePromise = page.waitForResponse((response) =>
+        response.url().includes('/login/webauthn/finish') && response.request().method() === 'POST',
+      {timeout: 15000});
+      await page.click('#login-button');
+      const finishResponse = await finishResponsePromise;
+
+      assert.equal(finishResponse.status(), 400, 'stale WebAuthn sign count must fail closed');
+      await page.waitForSelector('#webauthn-error:not(.hidden)', {timeout: 15000});
+      await expectWebAuthnError(page, /sign count|rollback|invalid|error/i);
+    }));
+
+  console.log('ok oidc-webauthn-sign-count-rollback');
+  await context.close();
+}
+
+async function runInvalidTOTPCode(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'invalid TOTP code check', async () =>
+    withCallbackServer('invalid TOTP code check', async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI);
+      if (!/\/login\/totp/.test(page.url())) {
+        await page.goto(`${edgeA}/login/totp`);
+      }
+
+      const responsePromise = page.waitForResponse((response) =>
+        response.url().includes('/login/totp') && response.request().method() === 'POST',
+      {timeout: 15000});
+      await page.fill('input[name="code"]', '0000000000000000');
+      await page.click('button[type="submit"]');
+      const response = await responsePromise;
+
+      assert.equal(response.status(), 200, 'invalid TOTP must render the verification page again');
+      await expectPageText(page, /Invalid OTP code/);
+    }));
+
+  console.log('ok oidc-totp-invalid-code');
+  await context.close();
+}
+
+async function runInvalidRecoveryCode(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'invalid recovery code check', async () =>
+    withCallbackServer('invalid recovery code check', async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI);
+      if (!/\/login\/recovery/.test(page.url())) {
+        await page.goto(`${edgeA}/login/recovery`);
+      }
+
+      const responsePromise = page.waitForResponse((response) =>
+        response.url().includes('/login/recovery') && response.request().method() === 'POST',
+      {timeout: 15000});
+      await page.fill('input[name="code"]', 'not-a-valid-recovery-code');
+      await page.click('button[type="submit"]');
+      const response = await responsePromise;
+
+      assert.equal(response.status(), 200, 'invalid recovery code must render the verification page again');
+      await expectPageText(page, /Invalid recovery code/);
+    }));
+
+  console.log('ok oidc-recovery-invalid-code');
+  await context.close();
+}
+
+async function runRecoveryCodeReuseRejected(browser, recoveryCode) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, 'recovery-code reuse check', async () =>
+    withCallbackServer('recovery-code reuse check', async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI);
+      if (!/\/login\/recovery/.test(page.url())) {
+        await page.goto(`${edgeA}/login/recovery`);
+      }
+
+      const responsePromise = page.waitForResponse((response) =>
+        response.url().includes('/login/recovery') && response.request().method() === 'POST',
+      {timeout: 15000});
+      await page.fill('input[name="code"]', recoveryCode);
+      await page.click('button[type="submit"]');
+      const response = await responsePromise;
+
+      assert.equal(response.status(), 200, 'reused recovery code must render the verification page again');
+      await expectPageText(page, /Invalid recovery code/);
+    }));
+
+  console.log('ok oidc-recovery-code-reuse-rejected');
+  await context.close();
+}
+
+async function startMFAChallenge(page, redirectURI) {
+  await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+  await submitPasswordLogin(page, `${username}.mfa`, password);
+  await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/totp|\/login\/recovery/, {timeout: 15000});
+}
+
+async function issueAuthorizationCode(browser, client, user, options = {}) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const scope = options.scope || 'openid profile email';
+  const authOptions = options.authOptions || {};
+
+  try {
+    const callback = await withPageState(page, `authorization-code issue for ${user}`, async () =>
+      withCallbackServer(`authorization-code issue for ${user}`, async (redirectURI, callbackPromise) => {
+        await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, scope, authOptions));
+        await submitPasswordLogin(page, user, password);
+
+        return callbackPromise;
+      }));
+
+    assert.ok(callback.code, `authorization-code issue for ${user} must return a code`);
+
+    return callback;
+  } finally {
+    await context.close();
+  }
+}
+
+async function issueRefreshToken(browser, user) {
+  const code = await issueAuthorizationCode(browser, browserClient, user, {
+    scope: 'openid profile email offline_access',
+  });
+  const token = await exchangeCode(edgeAAPI, browserClient, code.code, code.redirectURI);
+
+  assert.ok(token.refresh_token, `refresh-token setup for ${user} must return a refresh token`);
+
+  return token;
+}
+
+async function runMultiEdgeContinuity(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  await installVirtualAuthenticator(page);
+
+  const callback = await withPageState(page, 'multi-edge OIDC continuity', async () =>
+    withCallbackServer('multi-edge OIDC continuity', async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile email'));
+    await page.waitForSelector('input[name="username"]');
+
+    const edgeBLoginURL = page.url().replace(edgeA, edgeB);
+    await page.goto(edgeBLoginURL);
+    await submitPasswordLogin(page, `${username}.continuity`, password);
+
+    return callbackPromise;
+  }));
+  assert.ok(callback.code, 'flow that started on edge-a completed on edge-b');
+  console.log('ok multi-edge-oidc-continuity');
+
+  await context.close();
+}
+
+async function runMultiEdgeWebAuthnContinuity(browser, webAuthnCredentials) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
+
+  const callback = await withPageState(page, 'multi-edge WebAuthn continuity', async () =>
+    withCallbackServer('multi-edge WebAuthn continuity', async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(page, `${username}.mfa`, password);
+    await page.waitForURL(/\/login\/webauthn|\/login\/mfa/, {timeout: 15000});
+
+    const edgeBMFALoginURL = page.url().replace(edgeA, edgeB);
+    await page.goto(edgeBMFALoginURL);
+    await completeWebAuthnLogin(page, edgeB);
+
+    return callbackPromise;
+  }));
+  assert.ok(callback.code, 'WebAuthn flow that started on edge-a completed on edge-b');
+  console.log('ok multi-edge-webauthn-continuity');
+
+  await context.close();
+}
+
+function newBrowserContext(browser, baseURL) {
+  return browser.newContext({baseURL, ignoreHTTPSErrors: true});
+}
+
+async function maybeRunSAMLFlow(browser) {
+  if (process.env.NAUTHILUS_E2E_SAML_URL === '') {
+    return;
+  }
+
+  const samlURL = process.env.NAUTHILUS_E2E_SAML_URL;
+  if (!samlURL) {
+    console.log('SAML smoke skipped; set NAUTHILUS_E2E_SAML_URL when a test SP is running.');
+    return;
+  }
+
+  const context = await browser.newContext({ignoreHTTPSErrors: true});
+  const page = await context.newPage();
+  await page.goto(samlURL);
+  await submitPasswordLogin(page, `${username}.saml`, password);
+  await page.waitForLoadState('networkidle');
+  assert.match(page.url(), /saml|localhost/i, 'SAML flow should return to the SP or SAML route');
+  console.log('ok saml-sso-login');
+  await context.close();
+}
+
+async function installVirtualAuthenticator(page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('WebAuthn.enable');
+  const result = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport: 'usb',
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  });
+
+  return {cdp, authenticatorId: result.authenticatorId};
+}
+
+async function exportVirtualAuthenticatorCredentials(authenticator) {
+  const result = await authenticator.cdp.send('WebAuthn.getCredentials', {
+    authenticatorId: authenticator.authenticatorId,
+  });
+  const credentials = result.credentials || [];
+  assert.ok(credentials.length > 0, 'WebAuthn registration produced a virtual credential');
+
+  return credentials;
+}
+
+async function importVirtualAuthenticatorCredentials(authenticator, credentials) {
+  assert.ok(credentials.length > 0, 'WebAuthn credential import needs at least one credential');
+
+  for (const credential of credentials) {
+    const credentialForImport = {
+      ...credential,
+      rpId: credential.rpId || new URL(edgeA).hostname,
+    };
+
+    await authenticator.cdp.send('WebAuthn.addCredential', {
+      authenticatorId: authenticator.authenticatorId,
+      credential: credentialForImport,
+    });
+  }
+}
+
+async function submitPasswordLogin(page, user, secret) {
+  await page.waitForSelector('input[name="username"]');
+  await page.fill('input[name="username"]', user);
+  await page.fill('input[name="password"]', secret);
+  await Promise.all([
+    page.waitForLoadState('networkidle').catch(() => undefined),
+    page.click('button[type="submit"]'),
+  ]);
+}
+
+async function completeTOTPRegistration(page) {
+  await page.waitForURL(/\/mfa\/totp\/register/);
+  await traceCookieSizes(page, 'after TOTP registration page');
+  const secret = (await page.locator('.font-mono').innerText()).trim();
+  const counter = Math.floor(Date.now() / 30000);
+  const codes = [counter, counter - 1, counter + 1].map((value) => totp(secret, value));
+
+  for (const code of codes) {
+    await page.fill('input[name="code"]', code);
+    const responsePromise = page.waitForResponse((response) =>
+      response.url().includes('/mfa/totp/register') && response.request().method() === 'POST');
+    await page.click('button[type="submit"]');
+    const response = await responsePromise;
+    const hxRedirect = response.headers()['hx-redirect'];
+    trace(`TOTP registration response status=${response.status()} hx-redirect=${hxRedirect || ''} url=${page.url()}`);
+    if (response.ok() && hxRedirect) {
+      await page.goto(new URL(hxRedirect, edgeA).toString());
+      await page.waitForLoadState('networkidle').catch(() => undefined);
+      await waitForMFARegistrationStep(page);
+
+      return;
+    }
+
+    throw new Error(
+      `TOTP registration failed with status=${response.status()} ` +
+      `body=${await compactResponseText(response)} page=${await visiblePageText(page)}`,
+    );
+  }
+
+  throw new Error(`TOTP registration did not advance from ${page.url()}: ${await visiblePageText(page)}`);
+}
+
+async function completeWebAuthnRegistration(page) {
+  if (!/\/mfa\/webauthn\/register/.test(page.url())) {
+    await page.goto(`${edgeA}/mfa/webauthn/register`);
+  }
+
+  await page.fill('#device-name', 'CDP virtual key');
+  const beginResponsePromise = page.waitForResponse((response) =>
+    response.url().includes('/mfa/webauthn/register/begin') &&
+      response.request().method() === 'GET' &&
+      response.status() !== 302,
+  {timeout: 15000});
+  const finishResponsePromise = page.waitForResponse((response) =>
+    response.url().includes('/mfa/webauthn/register/finish') &&
+      response.request().method() === 'POST',
+  {timeout: 15000});
+
+  await page.click('#register-button');
+  const beginResponse = await beginResponsePromise;
+  if (!beginResponse.ok()) {
+    throw new Error(
+      `WebAuthn registration begin failed with status=${beginResponse.status()} ` +
+      `body=${await compactResponseText(beginResponse)} page=${await visiblePageText(page)}`,
+    );
+  }
+
+  const finishResponse = await finishResponsePromise;
+  if (!finishResponse.ok()) {
+    throw new Error(
+      `WebAuthn registration finish failed with status=${finishResponse.status()} ` +
+      `body=${await compactResponseText(finishResponse)} page=${await visiblePageText(page)}`,
+    );
+  }
+
+  await page.waitForURL(/callback|\/mfa\/register\/continue|\/mfa\/register\/home|\/mfa\/recovery\/register/, {timeout: 15000});
+  if (/\/mfa\/register\/continue/.test(page.url())) {
+    await page.goto(`${edgeA}/mfa/register/continue`);
+    await page.waitForURL(/callback|\/mfa\/recovery\/register|\/mfa\/register\/home/, {timeout: 15000});
+  }
+}
+
+async function completeRecoveryRegistration(page) {
+  if (/callback/.test(page.url())) {
+    return [];
+  }
+
+  if (!/\/mfa\/recovery\/register/.test(page.url())) {
+    await page.goto(`${edgeA}/mfa/register/continue`);
+    await page.waitForURL(/callback|\/mfa\/recovery\/register/, {timeout: 15000});
+  }
+
+  if (/callback/.test(page.url())) {
+    return [];
+  }
+
+  const codes = (await page.locator('#recovery-codes-grid div').allInnerTexts())
+    .map((value) => value.trim())
+    .filter(Boolean);
+  await Promise.all([
+    page.waitForResponse((response) => response.url().includes('/mfa/recovery/register/save')).catch(() => undefined),
+    page.click('#download-btn'),
+  ]);
+  await page.waitForSelector('#continue-btn:not([disabled])');
+  await page.click('#continue-btn');
+  await page.waitForURL(/callback|\/mfa\/register\/continue|\/mfa\/register\/home/, {timeout: 15000});
+
+  return codes;
+}
+
+async function completeWebAuthnLogin(page, base) {
+  await page.waitForURL(/\/login\/webauthn|\/login\/mfa/, {timeout: 15000});
+  if (/\/login\/mfa/.test(page.url())) {
+    await page.goto(`${base}/login/webauthn`);
+  }
+
+  const beginResponsePromise = page.waitForResponse((response) =>
+    response.url().includes('/login/webauthn/begin') &&
+      response.request().method() === 'GET' &&
+      response.status() !== 302,
+  {timeout: 15000});
+  const finishResponsePromise = page.waitForResponse((response) =>
+    response.url().includes('/login/webauthn/finish') &&
+      response.request().method() === 'POST',
+  {timeout: 15000});
+
+  await page.click('#login-button');
+  const beginResponse = await beginResponsePromise;
+  if (!beginResponse.ok()) {
+    throw new Error(
+      `WebAuthn login begin failed with status=${beginResponse.status()} ` +
+      `body=${await compactResponseText(beginResponse)} page=${await visiblePageText(page)}`,
+    );
+  }
+
+  const finishResponse = await finishResponsePromise;
+  if (!finishResponse.ok()) {
+    throw new Error(
+      `WebAuthn login finish failed with status=${finishResponse.status()} ` +
+      `body=${await compactResponseText(finishResponse)} page=${await visiblePageText(page)}`,
+    );
+  }
+
+  await page.waitForURL(/callback/, {timeout: 15000});
+}
+
+async function completeRecoveryLogin(page, code) {
+  await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/recovery/, {timeout: 15000});
+  if (!/\/login\/recovery/.test(page.url())) {
+    await page.goto(`${edgeA}/login/recovery`);
+  }
+
+  await page.fill('input[name="code"]', code);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(/callback/, {timeout: 15000});
+}
+
+function buildAuthorizeURL(base, clientID, redirectURI, scope, overrides = {}) {
+  const url = new URL('/oidc/authorize', base);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', clientID);
+  url.searchParams.set('redirect_uri', redirectURI);
+  url.searchParams.set('scope', scope);
+  url.searchParams.set('state', base64URL(crypto.randomBytes(16)));
+  url.searchParams.set('nonce', base64URL(crypto.randomBytes(16)));
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === null || value === undefined) {
+      url.searchParams.delete(key);
+      continue;
+    }
+
+    url.searchParams.set(key, value);
+  }
+
+  return url.toString();
+}
+
+function defaultRedirectURI() {
+  return `https://${callbackPublicHost}:${callbackPort}/callback`;
+}
+
+async function withCallbackServer(label, run) {
+  let resolveCallback;
+  const callbackPromise = new Promise((resolve) => {
+    resolveCallback = resolve;
+  });
+  const server = https.createServer({
+    cert: fs.readFileSync(callbackCert),
+    key: fs.readFileSync(callbackKey),
+  }, (request, response) => {
+    const url = new URL(request.url, `https://${callbackPublicHost}:${callbackPort}`);
+    if (url.pathname !== '/callback') {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+
+    resolveCallback({
+      code: url.searchParams.get('code') || '',
+      error: url.searchParams.get('error') || '',
+      errorDescription: url.searchParams.get('error_description') || '',
+      state: url.searchParams.get('state') || '',
+    });
+    response.writeHead(200, {'content-type': 'text/plain'});
+    response.end('OK');
+  });
+
+  await new Promise((resolve) => server.listen(callbackPort, callbackBindHost, resolve));
+  const redirectURI = `https://${callbackPublicHost}:${callbackPort}/callback`;
+
+  try {
+    const result = await Promise.race([
+      Promise.resolve(run(redirectURI, callbackPromise)),
+      delay(callbackTimeoutMS).then(() => {
+        throw new Error(`${label} OIDC callback timed out`);
+      }),
+    ]);
+
+    return {...(result || {}), redirectURI};
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function exchangeCode(base, client, code, redirectURI, extraFields = {}) {
+  return postForm(`${base}/oidc/token`, {
+    grant_type: 'authorization_code',
+    client_id: client.id,
+    client_secret: client.secret,
+    code,
+    redirect_uri: redirectURI,
+    ...extraFields,
+  });
+}
+
+async function pollDeviceToken(base, client, deviceCode) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const token = await postForm(`${base}/oidc/token`, {
+      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      client_id: client.id,
+      client_secret: client.secret,
+      device_code: deviceCode,
+    }, false);
+
+    if (token.access_token) {
+      return token;
+    }
+
+    await delay(1000);
+  }
+
+  throw new Error('device token polling timed out');
+}
+
+async function runInvalidDeviceUserCodeAttempt(browser, userCode, okName, logResult = true) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await page.goto(`${edgeA}/oidc/device/verify`);
+  await page.fill('input[name="user_code"]', userCode);
+  await page.fill('input[name="username"]', username);
+  await page.fill('input[name="password"]', password);
+  await Promise.all([
+    page.waitForLoadState('networkidle').catch(() => undefined),
+    page.click('button[type="submit"]'),
+  ]);
+  await expectPageText(page, /Invalid or expired user code/);
+  if (logResult) {
+    console.log(`ok ${okName}`);
+  }
+
+  await context.close();
+}
+
+async function submitSameOriginForm(page, pathName, fields) {
+  return page.evaluate(async ({pathName: targetPath, fields: formFields}) => {
+    const body = new URLSearchParams();
+    for (const [key, value] of Object.entries(formFields)) {
+      body.append(key, value);
+    }
+
+    const response = await fetch(targetPath, {
+      method: 'POST',
+      headers: {'content-type': 'application/x-www-form-urlencoded'},
+      body,
+    });
+
+    return {
+      status: response.status,
+      text: await response.text(),
+    };
+  }, {pathName, fields});
+}
+
+async function extractCSRFToken(page) {
+  return page.locator('input[name="csrf_token"]').inputValue();
+}
+
+function duplicateTokenForm(duplicateKey) {
+  const form = new URLSearchParams();
+  form.append('grant_type', 'authorization_code');
+  form.append('client_id', browserClient.id);
+  form.append('client_secret', browserClient.secret);
+  form.append('code', 'invalid-code');
+  form.append('redirect_uri', defaultRedirectURI());
+  form.append(duplicateKey, 'attacker-value');
+
+  return form;
+}
+
+async function expectJSONBodyOAuthError(url, payload, status, error, okName) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  const parsed = JSON.parse(text);
+
+  assert.equal(response.status, status, `${okName} returned unexpected HTTP status: ${text}`);
+  assert.equal(parsed.error, error, `${okName} returned unexpected OAuth error`);
+  console.log(`ok ${okName}`);
+}
+
+async function expectIntrospectionInactive(token, okName) {
+  const result = await postFormResponse(`${edgeAAPI}/oidc/introspect`, {
+    token,
+    client_id: browserClient.id,
+    client_secret: browserClient.secret,
+  });
+
+  assert.equal(result.status, 200, `${okName} returned unexpected HTTP status: ${result.text}`);
+  assert.equal(result.payload.active, false, `${okName} must be inactive`);
+  console.log(`ok ${okName}`);
+}
+
+async function postForm(url, fields, failOnError = true) {
+  const result = await postFormResponse(url, fields);
+  if (failOnError && !result.ok) {
+    throw new Error(`${url} returned ${result.status}: ${JSON.stringify(result.payload)}`);
+  }
+
+  return result.payload;
+}
+
+async function postFormResponse(url, fields, init = {}) {
+  const body = fields instanceof URLSearchParams ? fields : new URLSearchParams(fields);
+  const response = await fetch(url, {
+    ...init,
+    method: 'POST',
+    headers: {
+      ...init.headers,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+  const text = await response.text();
+  let payload = {};
+  if (text !== '') {
+    payload = JSON.parse(text);
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    payload,
+    text,
+  };
+}
+
+async function expectFormError(url, fields, status, error, okName, init = {}) {
+  const result = await postFormResponse(url, fields, init);
+
+  assert.equal(result.status, status, `${okName} returned unexpected HTTP status: ${result.text}`);
+  assert.equal(result.payload.error, error, `${okName} returned unexpected OAuth error`);
+  console.log(`ok ${okName}`);
+}
+
+async function expectJSONError(url, init, status, error, okName) {
+  const response = await fetch(url, init);
+  const text = await response.text();
+  const payload = JSON.parse(text);
+
+  assert.equal(response.status, status, `${okName} returned unexpected HTTP status: ${text}`);
+  assert.equal(payload.error, error, `${okName} returned unexpected JSON error`);
+  console.log(`ok ${okName}`);
+}
+
+async function expectTextResponse(url, status, pattern, okName) {
+  const response = await fetch(url);
+  const text = await response.text();
+
+  assert.equal(response.status, status, `${okName} returned unexpected HTTP status: ${text}`);
+  assert.match(text, pattern, `${okName} returned unexpected response body`);
+  console.log(`ok ${okName}`);
+}
+
+function totp(secret, counter) {
+  const key = base32Decode(secret.replace(/\s+/g, ''));
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(counter), 0);
+  const hmac = crypto.createHmac('sha1', key).update(msg).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binary = ((hmac[offset] & 0x7f) << 24)
+    | ((hmac[offset + 1] & 0xff) << 16)
+    | ((hmac[offset + 2] & 0xff) << 8)
+    | (hmac[offset + 3] & 0xff);
+
+  return String(binary % 1000000).padStart(6, '0');
+}
+
+function base32Decode(value) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const char of value.toUpperCase().replace(/=+$/, '')) {
+    const index = alphabet.indexOf(char);
+    if (index < 0) {
+      throw new Error(`invalid base32 character ${char}`);
+    }
+
+    bits += index.toString(2).padStart(5, '0');
+  }
+
+  const bytes = [];
+  for (let offset = 0; offset + 8 <= bits.length; offset += 8) {
+    bytes.push(Number.parseInt(bits.slice(offset, offset + 8), 2));
+  }
+
+  return Buffer.from(bytes);
+}
+
+function base64URL(value) {
+  return Buffer.from(value).toString('base64url');
+}
+
+function base64URLJSON(value) {
+  return base64URL(Buffer.from(JSON.stringify(value)));
+}
+
+function unsignedJWT(header, payload) {
+  return `${base64URLJSON(header)}.${base64URLJSON(payload)}.`;
+}
+
+function pkceVerifier() {
+  return base64URL(crypto.randomBytes(48));
+}
+
+function pkceChallenge(verifier) {
+  return base64URL(crypto.createHash('sha256').update(verifier).digest());
+}
+
+function mutateWebAuthnClientData(body, mutate) {
+  body.response = body.response || {};
+  const clientData = JSON.parse(Buffer.from(body.response.clientDataJSON, 'base64url').toString('utf8'));
+  mutate(clientData);
+  body.response.clientDataJSON = base64URL(Buffer.from(JSON.stringify(clientData)));
+}
+
+function trace(message) {
+  if (process.env.NAUTHILUS_E2E_TRACE === '1') {
+    console.log(`trace ${message}`);
+  }
+}
+
+async function waitForMFARegistrationStep(page) {
+  await page.waitForURL(
+    /callback|\/mfa\/webauthn\/register|\/mfa\/recovery\/register|\/mfa\/register\/continue|\/mfa\/register\/home/,
+    {timeout: 15000},
+  );
+}
+
+async function visiblePageText(page) {
+  const text = await page.locator('body').innerText().catch(() => '');
+
+  return text.replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+async function expectPageText(page, pattern) {
+  assert.match(await visiblePageText(page), pattern);
+}
+
+async function expectWebAuthnError(page, pattern) {
+  const text = await page.locator('#error-text').innerText();
+
+  assert.match(text, pattern);
+}
+
+async function traceCookieSizes(page, label) {
+  if (process.env.NAUTHILUS_E2E_TRACE !== '1') {
+    return;
+  }
+
+  const cookies = await page.context().cookies(edgeA);
+  for (const cookie of cookies) {
+    console.log(`trace cookie ${label} ${cookie.name} length=${cookie.value.length}`);
+  }
+}
+
+async function compactResponseText(response) {
+  const text = await response.text().catch(() => '');
+
+  return text.replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

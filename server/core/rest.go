@@ -1065,25 +1065,12 @@ func NewUserFlushHandler(cfg config.File, logger *slog.Logger, redisClient redis
 	}
 }
 
-// processFlushCache takes a user command and a GUID and processes the cache flush.
-// It iterates through the backends in the GetFile() and checks if the backend is BackendCache.
-// If it is, it sets useCache to true and calls processUserCmd to process the user command.
-// If there is an error during the cache flush, cacheFlushError is set to true and the loop breaks.
-// It returns cacheFlushError and useCache flags.
+// processFlushCache takes a user command and a GUID and processes the
+// instance-local cache flush. The endpoint also applies to split deployments
+// where an edge may use only remote backends but still owns local IdP tokens,
+// session-adjacent Redis keys, and optional edge cache state.
 func processFlushCache(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
-	cfg := deps.effectiveCfg()
-	for _, backendType := range cfg.GetServer().GetBackends() {
-		if backendType.Get() != definitions.BackendCache {
-			continue
-		}
-
-		removedKeys, noUserAccountFound = processUserCmd(ctx, deps, userCmd, guid)
-		if noUserAccountFound {
-			break
-		}
-	}
-
-	return removedKeys, noUserAccountFound
+	return processUserCmd(ctx, deps, userCmd, guid)
 }
 
 func collectUserAccountMappings(ctx context.Context, deps restAdminDeps, username, guid string) (config.StringSet, config.StringSet) {

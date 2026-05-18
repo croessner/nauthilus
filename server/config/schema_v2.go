@@ -7,7 +7,28 @@ import (
 )
 
 const defaultGRPCAuthorityAddress = "127.0.0.1:9444"
+const defaultNauthilusAuthorityTimeout = 5 * time.Second
+const defaultAuthorityTokenRefreshBeforeExpiry = 30 * time.Second
+const defaultAuthorityTokenRefreshLockTTL = 10 * time.Second
+const defaultAuthorityTokenCacheKeyPrefix = "grpc:authority_tokens:"
 const defaultAuthPolicyName = "standard_auth"
+
+const (
+	// AuthorityTokenCacheBackendRedis selects Redis for caller-token caching.
+	AuthorityTokenCacheBackendRedis = "redis"
+	// AuthorityClientCredentialsMode is the supported authority caller-token mode.
+	AuthorityClientCredentialsMode = "client_credentials"
+	// AuthorityClientSecretBasicAuth authenticates the token endpoint with HTTP Basic.
+	AuthorityClientSecretBasicAuth = "client_secret_basic"
+	// AuthorityClientSecretPostAuth authenticates the token endpoint with a form secret.
+	AuthorityClientSecretPostAuth = "client_secret_post"
+	// AuthorityPrivateKeyJWTAuth authenticates the token endpoint with a private_key_jwt assertion.
+	AuthorityPrivateKeyJWTAuth = "private_key_jwt"
+	// RemoteBackendDefaultName is the public config key for the unnamed remote backend.
+	RemoteBackendDefaultName = "default"
+	// TLSVersion13 names TLS 1.3 in public config.
+	TLSVersion13 = "TLS1.3"
+)
 
 // RuntimeSection groups process, server, and client runtime behavior.
 type RuntimeSection struct {
@@ -33,18 +54,19 @@ type RuntimeServersSection struct {
 
 // RuntimeHTTPServerSection configures the inbound HTTP server.
 type RuntimeHTTPServerSection struct {
-	Address           string        `mapstructure:"address" validate:"omitempty,tcp_addr"`
-	HTTP3             bool          `mapstructure:"http3"`
-	HAproxyV2         bool          `mapstructure:"haproxy_v2"`
-	TrustedProxies    []string      `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
-	TLS               TLS           `mapstructure:"tls" validate:"omitempty"`
-	DisabledEndpoints Endpoint      `mapstructure:"disabled_endpoints" validate:"omitempty"`
-	Middlewares       Middlewares   `mapstructure:"middlewares" validate:"omitempty"`
-	Compression       Compression   `mapstructure:"compression" validate:"omitempty"`
-	KeepAlive         KeepAlive     `mapstructure:"keep_alive" validate:"omitempty"`
-	RateLimit         HTTPRateLimit `mapstructure:"rate_limit" validate:"omitempty"`
-	CORS              CORS          `mapstructure:"cors" validate:"omitempty"`
-	SecurityTxt       SecurityTxt   `mapstructure:"security_txt" validate:"omitempty"`
+	Address           string            `mapstructure:"address" validate:"omitempty,tcp_addr"`
+	OpenAPIValidation OpenAPIValidation `mapstructure:"openapi_validation" validate:"omitempty"`
+	HTTP3             bool              `mapstructure:"http3"`
+	HAproxyV2         bool              `mapstructure:"haproxy_v2"`
+	TrustedProxies    []string          `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
+	TLS               TLS               `mapstructure:"tls" validate:"omitempty"`
+	DisabledEndpoints Endpoint          `mapstructure:"disabled_endpoints" validate:"omitempty"`
+	Middlewares       Middlewares       `mapstructure:"middlewares" validate:"omitempty"`
+	Compression       Compression       `mapstructure:"compression" validate:"omitempty"`
+	KeepAlive         KeepAlive         `mapstructure:"keep_alive" validate:"omitempty"`
+	RateLimit         HTTPRateLimit     `mapstructure:"rate_limit" validate:"omitempty"`
+	CORS              CORS              `mapstructure:"cors" validate:"omitempty"`
+	SecurityTxt       SecurityTxt       `mapstructure:"security_txt" validate:"omitempty"`
 }
 
 // RuntimeGRPCServersSection groups inbound gRPC servers.
@@ -179,8 +201,270 @@ type HTTPRateLimit struct {
 
 // RuntimeClientsSection configures outbound HTTP and DNS clients.
 type RuntimeClientsSection struct {
-	HTTP HTTPClient `mapstructure:"http" validate:"omitempty"`
-	DNS  DNS        `mapstructure:"dns" validate:"omitempty"`
+	HTTP HTTPClient                `mapstructure:"http" validate:"omitempty"`
+	DNS  DNS                       `mapstructure:"dns" validate:"omitempty"`
+	GRPC RuntimeGRPCClientsSection `mapstructure:"grpc" validate:"omitempty"`
+}
+
+// RuntimeGRPCClientsSection groups outbound gRPC clients.
+type RuntimeGRPCClientsSection struct {
+	NauthilusAuthorities map[string]*NauthilusAuthorityClientSection `mapstructure:"nauthilus_authorities" validate:"omitempty,dive"`
+}
+
+// NauthilusAuthorityClientSection configures one outbound authority client.
+type NauthilusAuthorityClientSection struct {
+	TLS             AuthorityTLSSection        `mapstructure:"tls" validate:"omitempty"`
+	CallerAuth      AuthorityCallerAuthSection `mapstructure:"caller_auth" validate:"omitempty"`
+	Address         string                     `mapstructure:"address" validate:"omitempty,tcp_addr"`
+	Timeout         time.Duration              `mapstructure:"timeout" validate:"omitempty,gt=0,max=1m"`
+	EdgeClusterID   string                     `mapstructure:"edge_cluster_id" validate:"omitempty,printascii"`
+	EdgeInstanceID  string                     `mapstructure:"edge_instance_id" validate:"omitempty,printascii"`
+	SplitStrictMode *bool                      `mapstructure:"split_strict_mode" validate:"omitempty"`
+}
+
+// GetAddress returns the authority network address.
+func (s *NauthilusAuthorityClientSection) GetAddress() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.Address
+}
+
+// GetTimeout returns the authority RPC timeout with the target default.
+func (s *NauthilusAuthorityClientSection) GetTimeout() time.Duration {
+	if s == nil || s.Timeout <= 0 {
+		return defaultNauthilusAuthorityTimeout
+	}
+
+	return s.Timeout
+}
+
+// GetTLS returns the outbound authority TLS settings.
+func (s *NauthilusAuthorityClientSection) GetTLS() *AuthorityTLSSection {
+	if s == nil {
+		return &AuthorityTLSSection{}
+	}
+
+	return &s.TLS
+}
+
+// GetCallerAuth returns the outbound authority caller-auth settings.
+func (s *NauthilusAuthorityClientSection) GetCallerAuth() *AuthorityCallerAuthSection {
+	if s == nil {
+		return &AuthorityCallerAuthSection{}
+	}
+
+	return &s.CallerAuth
+}
+
+// GetEdgeClusterID returns the edge cluster metadata value.
+func (s *NauthilusAuthorityClientSection) GetEdgeClusterID() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.EdgeClusterID
+}
+
+// GetEdgeInstanceID returns the edge instance metadata value.
+func (s *NauthilusAuthorityClientSection) GetEdgeInstanceID() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.EdgeInstanceID
+}
+
+// IsSplitStrictMode reports whether split-mode safety checks are enforced.
+func (s *NauthilusAuthorityClientSection) IsSplitStrictMode() bool {
+	if s == nil || s.SplitStrictMode == nil {
+		return true
+	}
+
+	return *s.SplitStrictMode
+}
+
+// AuthorityTLSSection configures TLS for an outbound authority client.
+type AuthorityTLSSection struct {
+	CA            string `mapstructure:"ca" validate:"omitempty,file"`
+	Cert          string `mapstructure:"cert" validate:"omitempty,file"`
+	Key           string `mapstructure:"key" validate:"omitempty,file"`
+	ServerName    string `mapstructure:"server_name" validate:"omitempty,hostname_rfc1123"`
+	MinTLSVersion string `mapstructure:"min_tls_version" validate:"omitempty,oneof=TLS1.2 TLS1.3"`
+	Enabled       bool   `mapstructure:"enabled"`
+}
+
+// IsEnabled reports whether outbound authority TLS is enabled.
+func (s *AuthorityTLSSection) IsEnabled() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.Enabled
+}
+
+// GetMinTLSVersion returns the configured minimum TLS version.
+func (s *AuthorityTLSSection) GetMinTLSVersion() string {
+	if s == nil || s.MinTLSVersion == "" {
+		return defaultTLSMinVersion
+	}
+
+	return s.MinTLSVersion
+}
+
+// AuthorityCallerAuthSection configures caller authentication for authority RPCs.
+type AuthorityCallerAuthSection struct {
+	BasicAuth  BasicAuth                  `mapstructure:"basic_auth" validate:"omitempty"`
+	OIDCBearer AuthorityOIDCBearerSection `mapstructure:"oidc_bearer" validate:"omitempty"`
+}
+
+// HasCallerAuth reports whether an RPC caller credential source is configured.
+func (s *AuthorityCallerAuthSection) HasCallerAuth() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.BasicAuth.IsEnabled() || s.OIDCBearer.IsEnabled() || s.OIDCBearer.GetStaticTokenFile() != ""
+}
+
+// AuthorityOIDCBearerSection configures client-credentials bearer caller auth.
+type AuthorityOIDCBearerSection struct {
+	TokenCache               AuthorityTokenCacheSection `mapstructure:"token_cache" validate:"omitempty"`
+	ClientSecret             secret.Value               `mapstructure:"client_secret" validate:"omitempty"`
+	Mode                     string                     `mapstructure:"mode" validate:"omitempty,oneof=client_credentials"`
+	TokenEndpoint            string                     `mapstructure:"token_endpoint" validate:"omitempty,url"`
+	ClientID                 string                     `mapstructure:"client_id" validate:"omitempty,printascii,excludesall= "`
+	TokenEndpointAuthMethod  string                     `mapstructure:"token_endpoint_auth_method" validate:"omitempty,oneof=client_secret_basic client_secret_post private_key_jwt"`
+	ClientPrivateKeyFile     string                     `mapstructure:"client_private_key_file" validate:"omitempty,file"`
+	ClientKeyID              string                     `mapstructure:"client_key_id" validate:"omitempty,printascii"`
+	ClientAssertionAlg       string                     `mapstructure:"client_assertion_alg" validate:"omitempty,oneof=RS256 EdDSA"`
+	Audience                 string                     `mapstructure:"audience" validate:"omitempty,printascii"`
+	Scopes                   []string                   `mapstructure:"scopes" validate:"omitempty,dive,scope_token"`
+	StaticTokenFile          string                     `mapstructure:"static_token_file" validate:"omitempty,file"`
+	Enabled                  bool                       `mapstructure:"enabled"`
+	StaticTokenEmergencyMode bool                       `mapstructure:"static_token_emergency_mode"`
+}
+
+// IsEnabled reports whether client-credentials caller auth is enabled.
+func (s *AuthorityOIDCBearerSection) IsEnabled() bool {
+	return s != nil && s.Enabled
+}
+
+// GetMode returns the configured token mode.
+func (s *AuthorityOIDCBearerSection) GetMode() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.Mode
+}
+
+// GetTokenEndpoint returns the OIDC token endpoint URL.
+func (s *AuthorityOIDCBearerSection) GetTokenEndpoint() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.TokenEndpoint
+}
+
+// GetClientID returns the OAuth client identifier.
+func (s *AuthorityOIDCBearerSection) GetClientID() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.ClientID
+}
+
+// GetTokenEndpointAuthMethod returns the token endpoint auth method.
+func (s *AuthorityOIDCBearerSection) GetTokenEndpointAuthMethod() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.TokenEndpointAuthMethod
+}
+
+// GetClientSecret returns the client secret.
+func (s *AuthorityOIDCBearerSection) GetClientSecret() secret.Value {
+	if s == nil {
+		return secret.Value{}
+	}
+
+	return s.ClientSecret
+}
+
+// GetStaticTokenFile returns the development or emergency token-file path.
+func (s *AuthorityOIDCBearerSection) GetStaticTokenFile() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.StaticTokenFile
+}
+
+// StaticTokenAllowed reports whether a static token file is intentionally enabled.
+func (s *AuthorityOIDCBearerSection) StaticTokenAllowed() bool {
+	if s == nil {
+		return false
+	}
+
+	return s.StaticTokenEmergencyMode
+}
+
+// GetTokenCache returns token-cache settings with defaults handled by the section.
+func (s *AuthorityOIDCBearerSection) GetTokenCache() *AuthorityTokenCacheSection {
+	if s == nil {
+		return &AuthorityTokenCacheSection{}
+	}
+
+	return &s.TokenCache
+}
+
+// AuthorityTokenCacheSection configures Redis token-cache behavior.
+type AuthorityTokenCacheSection struct {
+	Backend             string        `mapstructure:"backend" validate:"omitempty,oneof=redis"`
+	KeyPrefix           string        `mapstructure:"key_prefix" validate:"omitempty,printascii"`
+	RefreshBeforeExpiry time.Duration `mapstructure:"refresh_before_expiry" validate:"omitempty,gt=0,max=10m"`
+	RefreshLockTTL      time.Duration `mapstructure:"refresh_lock_ttl" validate:"omitempty,gt=0,max=1m"`
+}
+
+// GetBackend returns the cache backend name.
+func (s *AuthorityTokenCacheSection) GetBackend() string {
+	if s == nil || s.Backend == "" {
+		return AuthorityTokenCacheBackendRedis
+	}
+
+	return s.Backend
+}
+
+// GetKeyPrefix returns the Redis key prefix for caller tokens.
+func (s *AuthorityTokenCacheSection) GetKeyPrefix() string {
+	if s == nil || s.KeyPrefix == "" {
+		return defaultAuthorityTokenCacheKeyPrefix
+	}
+
+	return s.KeyPrefix
+}
+
+// GetRefreshBeforeExpiry returns the refresh skew.
+func (s *AuthorityTokenCacheSection) GetRefreshBeforeExpiry() time.Duration {
+	if s == nil || s.RefreshBeforeExpiry <= 0 {
+		return defaultAuthorityTokenRefreshBeforeExpiry
+	}
+
+	return s.RefreshBeforeExpiry
+}
+
+// GetRefreshLockTTL returns the distributed refresh-lock TTL.
+func (s *AuthorityTokenCacheSection) GetRefreshLockTTL() time.Duration {
+	if s == nil || s.RefreshLockTTL <= 0 {
+		return defaultAuthorityTokenRefreshLockTTL
+	}
+
+	return s.RefreshLockTTL
 }
 
 // ObservabilitySection groups logging, profiling, tracing, and metrics.
@@ -266,9 +550,105 @@ type ProtocolUpstream struct {
 
 // AuthBackendsSection configures backend selection and backend-specific settings.
 type AuthBackendsSection struct {
-	Order []*Backend         `mapstructure:"order" validate:"omitempty,dive"`
-	LDAP  LDAPBackendSection `mapstructure:"ldap" validate:"omitempty"`
-	Lua   LuaBackendRoot     `mapstructure:"lua" validate:"omitempty"`
+	Order  []*Backend                       `mapstructure:"order" validate:"omitempty,dive"`
+	LDAP   LDAPBackendSection               `mapstructure:"ldap" validate:"omitempty"`
+	Lua    LuaBackendRoot                   `mapstructure:"lua" validate:"omitempty"`
+	Remote map[string]*RemoteBackendSection `mapstructure:"remote" validate:"omitempty,dive"`
+}
+
+const (
+	// RemoteBackendModeNauthilus selects a Nauthilus authority backend.
+	RemoteBackendModeNauthilus = "nauthilus"
+
+	// RemoteBackendOperationAuth permits password authentication RPCs.
+	RemoteBackendOperationAuth = "auth"
+	// RemoteBackendOperationLookupIdentity permits no-auth identity lookup RPCs.
+	RemoteBackendOperationLookupIdentity = "lookup_identity"
+	// RemoteBackendOperationListAccounts permits account listing RPCs.
+	RemoteBackendOperationListAccounts = "list_accounts"
+	// RemoteBackendOperationMFARead permits MFA read RPCs in later slices.
+	RemoteBackendOperationMFARead = "mfa_read"
+	// RemoteBackendOperationMFAVerify permits MFA verification RPCs in later slices.
+	RemoteBackendOperationMFAVerify = "mfa_verify"
+	// RemoteBackendOperationMFAWrite permits MFA write RPCs in later slices.
+	RemoteBackendOperationMFAWrite = "mfa_write"
+	// RemoteBackendOperationWebAuthnRead permits WebAuthn read RPCs in later slices.
+	RemoteBackendOperationWebAuthnRead = "webauthn_read"
+	// RemoteBackendOperationWebAuthnWrite permits WebAuthn write RPCs in later slices.
+	RemoteBackendOperationWebAuthnWrite = "webauthn_write"
+	// RemoteBackendOperationAttributeRead permits attribute read RPCs in later slices.
+	RemoteBackendOperationAttributeRead = "attribute_read"
+)
+
+var validRemoteBackendOperations = map[string]struct{}{
+	RemoteBackendOperationAuth:           {},
+	RemoteBackendOperationLookupIdentity: {},
+	RemoteBackendOperationListAccounts:   {},
+	RemoteBackendOperationMFARead:        {},
+	RemoteBackendOperationMFAVerify:      {},
+	RemoteBackendOperationMFAWrite:       {},
+	RemoteBackendOperationWebAuthnRead:   {},
+	RemoteBackendOperationWebAuthnWrite:  {},
+	RemoteBackendOperationAttributeRead:  {},
+}
+
+// RemoteBackendSection configures one named remote backend.
+type RemoteBackendSection struct {
+	Authority         string        `mapstructure:"authority" validate:"omitempty,printascii,excludesall= "`
+	Mode              string        `mapstructure:"mode" validate:"omitempty,oneof=nauthilus"`
+	AllowedOperations []string      `mapstructure:"allowed_operations" validate:"omitempty,dive,printascii,excludesall= "`
+	Timeout           time.Duration `mapstructure:"timeout" validate:"omitempty,gt=0,max=1m"`
+}
+
+// GetAuthority returns the referenced outbound authority name.
+func (s *RemoteBackendSection) GetAuthority() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.Authority
+}
+
+// GetMode returns the remote backend mode.
+func (s *RemoteBackendSection) GetMode() string {
+	if s == nil || s.Mode == "" {
+		return RemoteBackendModeNauthilus
+	}
+
+	return s.Mode
+}
+
+// GetAllowedOperations returns a copy of the allowed operation names.
+func (s *RemoteBackendSection) GetAllowedOperations() []string {
+	if s == nil {
+		return nil
+	}
+
+	return append([]string(nil), s.AllowedOperations...)
+}
+
+// GetTimeout returns the backend-specific authority RPC timeout.
+func (s *RemoteBackendSection) GetTimeout() time.Duration {
+	if s == nil || s.Timeout <= 0 {
+		return defaultNauthilusAuthorityTimeout
+	}
+
+	return s.Timeout
+}
+
+// AllowsOperation reports whether the operation is enabled for this backend.
+func (s *RemoteBackendSection) AllowsOperation(operation string) bool {
+	if s == nil {
+		return false
+	}
+
+	for _, allowed := range s.AllowedOperations {
+		if allowed == operation {
+			return true
+		}
+	}
+
+	return false
 }
 
 // LDAPBackendSection configures LDAP backends and protocol mappings.
@@ -781,6 +1161,7 @@ func (f *FileSettings) applyRuntimeSection(server *ServerSection) {
 	server.TrustedProxies = append([]string(nil), httpServer.TrustedProxies...)
 	server.DisabledEndpoints = httpServer.DisabledEndpoints
 	server.Middlewares = httpServer.Middlewares
+	server.OpenAPIValidation = httpServer.OpenAPIValidation
 	server.Compression = httpServer.Compression
 	server.KeepAlive = httpServer.KeepAlive
 	server.RateLimitPerSecond = httpServer.RateLimit.PerSecond

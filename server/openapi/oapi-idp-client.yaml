@@ -1,0 +1,12 @@
+package: idp
+generate:
+  models: true
+  client: true
+output-options:
+  include-operation-ids:
+    - getPublicIdPOpenAPIYAML
+    - getPublicIdPOpenAPIJSON
+    - getOIDCDiscovery
+    - getOIDCJWKS
+    - getSAMLMetadata
+output: server/openapi/generated/idp/client.gen.go

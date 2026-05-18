@@ -1,0 +1,11 @@
+{
+  "name": "nauthilus-identity-proxy-e2e",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "browser": "node scripts/browser-e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.44.0"
+  }
+}

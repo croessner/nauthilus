@@ -14,14 +14,14 @@ go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
 ```
 
-The generator also requires `protoc` in `PATH`. Phase 1 was generated with
-`libprotoc 34.1`; newer compatible patch releases are acceptable if the
+The generator also requires `protoc` in `PATH`. This contract was generated
+with `libprotoc 34.1`; newer compatible patch releases are acceptable if the
 generated output stays stable.
 
-Regenerate from the repository root:
+Regenerate all committed gRPC bindings from the repository root:
 
 ```sh
-make generate-grpc-auth-proto
+make generate-grpc-proto
 ```
 
 The package-local `go:generate` directive is equivalent:

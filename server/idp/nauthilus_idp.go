@@ -790,6 +790,7 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 	if mgr := cookie.GetManager(ctx); mgr != nil {
 		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
 		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
+		core.StoreRemoteBackendRef(mgr, auth.Runtime.RemoteBackendRef)
 	}
 
 	return n.userFromAuthState(auth)
@@ -797,6 +798,48 @@ func (n *NauthilusIdP) Authenticate(ctx *gin.Context, username, password string,
 
 // GetUserByUsername retrieves user details and attributes without performing password authentication.
 func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidcCID string, samlEntityID string) (*backend.User, error) {
+	return n.getUserByUsername(ctx, username, oidcCID, samlEntityID, nil)
+}
+
+// GetUserByUsernameForOIDCClaims retrieves user data needed for OIDC claim materialization.
+func (n *NauthilusIdP) GetUserByUsernameForOIDCClaims(
+	ctx *gin.Context,
+	username string,
+	client *config.OIDCClient,
+	scopes []string,
+) (*backend.User, error) {
+	if client == nil {
+		return n.getUserByUsername(ctx, username, "", "", nil)
+	}
+
+	effectiveScopes := n.deps.Cfg.GetIdP().OIDC.GetEffectiveCustomScopes(client)
+	request := core.NewOIDCIdentityAttributeRequest(client, scopes, effectiveScopes)
+
+	return n.getUserByUsername(ctx, username, client.ClientID, "", request)
+}
+
+// GetUserByUsernameForSAML retrieves user data needed for SAML attribute materialization.
+func (n *NauthilusIdP) GetUserByUsernameForSAML(
+	ctx *gin.Context,
+	username string,
+	sp *config.SAML2ServiceProvider,
+) (*backend.User, error) {
+	if sp == nil {
+		return n.getUserByUsername(ctx, username, "", "", nil)
+	}
+
+	request := core.NewSAMLIdentityAttributeRequest(sp)
+
+	return n.getUserByUsername(ctx, username, "", sp.EntityID, request)
+}
+
+func (n *NauthilusIdP) getUserByUsername(
+	ctx *gin.Context,
+	username string,
+	oidcCID string,
+	samlEntityID string,
+	attributeRequest *core.IdentityAttributeRequest,
+) (*backend.User, error) {
 	_, sp := n.tracer.Start(ctx.Request.Context(), "idp.get_user_by_username",
 		attribute.String("username", username),
 		attribute.String("oidc_cid", oidcCID),
@@ -817,6 +860,11 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 	auth.SetUsername(username)
 	auth.SetOIDCCID(oidcCID)
 	auth.SetSAMLEntityID(samlEntityID)
+	auth.Runtime.IdentityAttributeRequest = attributeRequest.Clone()
+
+	if ref, ok := core.RemoteBackendRefFromSession(cookie.GetManager(ctx)); ok {
+		auth.Runtime.RemoteBackendRef = ref
+	}
 
 	if oidcCID != "" {
 		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
@@ -844,6 +892,7 @@ func (n *NauthilusIdP) GetUserByUsername(ctx *gin.Context, username string, oidc
 	if mgr := cookie.GetManager(ctx); mgr != nil {
 		mgr.Set(definitions.SessionKeyUserBackend, uint8(auth.GetSourcePassDBBackend()))
 		mgr.Set(definitions.SessionKeyUserBackendName, auth.GetUsedPassDBBackendName())
+		core.StoreRemoteBackendRef(mgr, auth.Runtime.RemoteBackendRef)
 	}
 
 	return n.userFromAuthState(auth)

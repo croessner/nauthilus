@@ -24,8 +24,15 @@ import (
 
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+)
+
+const (
+	testDisplayName  = "Test User"
+	testUniqueUserID = "uid-123"
+	testUser         = "testuser"
 )
 
 // mockCookieManager implements cookie.Manager for testing.
@@ -204,4 +211,30 @@ func TestResolveWebAuthnDisplayNameFallbacksToUserName(t *testing.T) {
 
 	storedName := mgr.GetString(definitions.SessionKeyDisplayName, "")
 	assert.Equal(t, "testuser", storedName)
+}
+
+func TestWebAuthnRegistrationUserNameFallsBackToAuthenticatedUsername(t *testing.T) {
+	mgr := &mockCookieManager{data: make(map[string]any)}
+	mgr.Set(definitions.SessionKeyUsername, "testuser")
+
+	assert.Equal(t, "testuser", webAuthnRegistrationUserName(mgr))
+}
+
+func TestRestoreWebAuthnRegistrationIdentityFromFlowState(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyAccount: testUser,
+	}}
+	state := &flowdomain.State{
+		FlowType: flowdomain.FlowTypeRequireMFA,
+		Metadata: map[string]string{
+			flowdomain.FlowMetadataUniqueUserID: testUniqueUserID,
+			flowdomain.FlowMetadataDisplayName:  testDisplayName,
+		},
+	}
+
+	restoreWebAuthnRegistrationIdentityFromState(mgr, state)
+
+	assert.Equal(t, testUser, mgr.GetString(definitions.SessionKeyAccount, ""))
+	assert.Equal(t, testUniqueUserID, mgr.GetString(definitions.SessionKeyUniqueUserID, ""))
+	assert.Equal(t, testDisplayName, mgr.GetString(definitions.SessionKeyDisplayName, ""))
 }

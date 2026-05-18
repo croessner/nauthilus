@@ -15,15 +15,28 @@
 
 package flow
 
-import "github.com/croessner/nauthilus/server/definitions"
+import (
+	"strings"
+
+	"github.com/croessner/nauthilus/server/definitions"
+)
 
 type sessionContextSetter interface {
 	Set(key string, value any)
 }
 
+type sessionContextStringGetter interface {
+	GetString(key string, defaultValue string) string
+}
+
 type sessionContextMutator interface {
 	sessionContextSetter
 	Delete(key string)
+}
+
+type sessionContextPendingMutator interface {
+	sessionContextSetter
+	sessionContextStringGetter
 }
 
 // RestoreFlowCookieContext restores minimal protocol/grant context in the session
@@ -59,6 +72,19 @@ func SetRequireMFAPending(mgr sessionContextMutator, pending string) {
 	mgr.Set(definitions.SessionKeyRequireMFAPending, pending)
 }
 
+// RemoveRequireMFAPendingMethod removes one completed MFA method while keeping
+// the forced-registration flow alive for the continue handler to finish.
+func RemoveRequireMFAPendingMethod(mgr sessionContextPendingMutator, method string) string {
+	if mgr == nil {
+		return ""
+	}
+
+	remaining := removeCommaSeparatedValue(mgr.GetString(definitions.SessionKeyRequireMFAPending, ""), method)
+	mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+
+	return remaining
+}
+
 // ClearRequireMFAContext removes temporary require_mfa session keys.
 func ClearRequireMFAContext(mgr sessionContextMutator) {
 	if mgr == nil {
@@ -68,4 +94,21 @@ func ClearRequireMFAContext(mgr sessionContextMutator) {
 	mgr.Delete(definitions.SessionKeyRequireMFAFlow)
 	mgr.Delete(definitions.SessionKeyRequireMFAPending)
 	mgr.Delete(definitions.SessionKeyRequireMFAParentFlowID)
+}
+
+func removeCommaSeparatedValue(list string, value string) string {
+	if list == "" {
+		return ""
+	}
+
+	parts := strings.Split(list, ",")
+
+	kept := parts[:0]
+	for _, part := range parts {
+		if strings.TrimSpace(part) != value {
+			kept = append(kept, part)
+		}
+	}
+
+	return strings.Join(kept, ",")
 }

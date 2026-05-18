@@ -21,6 +21,8 @@ import (
 )
 
 const (
+	// FlowIDRequireMFA identifies the durable flow used by required MFA registration.
+	FlowIDRequireMFA                           = "require-mfa-flow"
 	FlowMetadataResumeTarget                   = "resume_target"
 	FlowMetadataResumeTargetDeviceCodeComplete = "nauthilus://idp/device-code/complete"
 	FlowMetadataClientID                       = "client_id"
@@ -35,6 +37,12 @@ const (
 	FlowMetadataSAMLEntityID                   = "saml_entity_id"
 	FlowMetadataOriginalURL                    = "original_url"
 	FlowMetadataDeviceCode                     = "device_code"
+	// FlowMetadataAccount stores the authenticated account name across required MFA hops.
+	FlowMetadataAccount = "account"
+	// FlowMetadataUniqueUserID stores the backend unique user id across required MFA hops.
+	FlowMetadataUniqueUserID = "unique_user_id"
+	// FlowMetadataDisplayName stores the display name across required MFA hops.
+	FlowMetadataDisplayName = "display_name"
 )
 
 // State stores the domain-level state of an IdP flow.

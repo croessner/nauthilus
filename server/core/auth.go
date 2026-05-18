@@ -502,6 +502,12 @@ type AuthRuntime struct {
 	// EnvironmentName is the name of the environment control or source being accessed.
 	EnvironmentName string
 
+	// RemoteBackendRef binds follow-up identity operations to an authority-side backend.
+	RemoteBackendRef RemoteBackendRef
+
+	// IdentityAttributeRequest carries edge-side requested backend attributes for claim materialization.
+	IdentityAttributeRequest *IdentityAttributeRequest
+
 	// BackendName is the name of the backend used for authentication.
 	BackendName string
 
@@ -687,6 +693,7 @@ func (a *AuthState) GetWebAuthnCredentials() (credentials []mfa.PersistentCreden
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
@@ -732,6 +739,7 @@ func (a *AuthState) SaveWebAuthnCredential(credential *mfa.PersistentCredential)
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
@@ -774,6 +782,7 @@ func (a *AuthState) DeleteWebAuthnCredential(credential *mfa.PersistentCredentia
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
@@ -813,6 +822,7 @@ func (a *AuthState) UpdateWebAuthnCredential(oldCredential *mfa.PersistentCreden
 	)
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
 	if mgr != nil {
@@ -868,7 +878,7 @@ func (a *AuthState) GetBackendManager(backendType definitions.Backend, backendNa
 	case definitions.BackendTest:
 		return NewTestBackendManager(backendName, a.deps)
 	default:
-		return nil
+		return backendManagerFromFactory(backendType, backendName, a.deps)
 	}
 }
 
@@ -896,6 +906,9 @@ type PassDBResult struct {
 
 	// DisplayNameField is the display name of a user
 	DisplayNameField string
+
+	// BackendRef binds this result to an authority-side backend without exposing credentials.
+	BackendRef RemoteBackendRef
 
 	// Attributes is the result catalog returned by the underlying password Database.
 	Attributes bktype.AttributeMapping
@@ -938,6 +951,7 @@ func (p *PassDBResult) Reset() {
 
 	// Reset Backend field
 	p.Backend = 0
+	p.BackendRef = RemoteBackendRef{}
 
 	// Reset map fields to nil
 	p.Attributes = nil
@@ -970,6 +984,7 @@ func (p *PassDBResult) Clone() *PassDBResult {
 	res.UniqueUserIDField = p.UniqueUserIDField
 	res.DisplayNameField = p.DisplayNameField
 	res.Backend = p.Backend
+	res.BackendRef = p.BackendRef
 	res.Attributes = p.Attributes.Clone()
 	res.Groups = slices.Clone(p.Groups)
 	res.GroupDNs = slices.Clone(p.GroupDNs)
@@ -2087,6 +2102,10 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 
 		auth.Runtime.SourcePassDBBackend = passDBResult.Backend
 		auth.Runtime.BackendName = passDBResult.BackendName
+		if !passDBResult.BackendRef.IsZero() {
+			auth.Runtime.RemoteBackendRef = passDBResult.BackendRef
+		}
+
 		if passDB != nil {
 			auth.Runtime.UsedPassDBBackend = passDB.backend
 		} else {
@@ -2886,6 +2905,10 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 		case definitions.BackendTest:
 			mgr := NewTestBackendManager(backendType.GetName(), a.deps)
 			passDBs = a.appendBackend(passDBs, definitions.BackendTest, mgr.PassDB)
+		case definitions.BackendRemote:
+			if mgr := a.GetBackendManager(definitions.BackendRemote, backendType.GetName()); mgr != nil {
+				passDBs = a.appendBackend(passDBs, definitions.BackendRemote, mgr.PassDB)
+			}
 		case definitions.BackendUnknown:
 		case definitions.BackendLocalCache:
 		}
@@ -3155,7 +3178,7 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 		defer stop()
 	}
 
-	if useCache && a.isCacheInCorrectPosition(backendPos) {
+	if useCache && a.Runtime.UsedPassDBBackend != definitions.BackendRemote && a.isCacheInCorrectPosition(backendPos) {
 		if cs := getCacheService(); cs != nil {
 			if authenticated {
 				if err := cs.OnSuccess(a, accountName); err != nil {
@@ -3352,6 +3375,13 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 				definitions.BackendTest,
 				mgr.AccountDB,
 			})
+		case definitions.BackendRemote:
+			if mgr := a.GetBackendManager(definitions.BackendRemote, backendType.GetName()); mgr != nil {
+				accounts = append(accounts, &AccountListMap{
+					definitions.BackendRemote,
+					mgr.AccountDB,
+				})
+			}
 		case definitions.BackendUnknown:
 		case definitions.BackendCache:
 		case definitions.BackendLocalCache:

@@ -33,6 +33,14 @@ func (m *contextTestManager) Delete(key string) {
 	delete(m.data, key)
 }
 
+func (m *contextTestManager) GetString(key string, defaultValue string) string {
+	if value, ok := m.data[key].(string); ok {
+		return value
+	}
+
+	return defaultValue
+}
+
 func TestRestoreFlowCookieContext(t *testing.T) {
 	mgr := &contextTestManager{data: map[string]any{}}
 
@@ -68,5 +76,26 @@ func TestSetRequireMFAPending(t *testing.T) {
 
 	if _, ok := mgr.data[definitions.SessionKeyRequireMFAPending]; ok {
 		t.Fatalf("expected %s to be cleared", definitions.SessionKeyRequireMFAPending)
+	}
+}
+
+func TestRemoveRequireMFAPendingMethodPreservesFlowWhenEmpty(t *testing.T) {
+	mgr := &contextTestManager{data: map[string]any{
+		definitions.SessionKeyRequireMFAFlow:    true,
+		definitions.SessionKeyRequireMFAPending: definitions.MFAMethodRecoveryCodes,
+	}}
+
+	remaining := RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodRecoveryCodes)
+
+	if remaining != "" {
+		t.Fatalf("remaining methods = %q, want empty", remaining)
+	}
+
+	if mgr.data[definitions.SessionKeyRequireMFAFlow] != true {
+		t.Fatalf("expected %s to be preserved", definitions.SessionKeyRequireMFAFlow)
+	}
+
+	if value, ok := mgr.data[definitions.SessionKeyRequireMFAPending].(string); !ok || value != "" {
+		t.Fatalf("expected empty %s to be preserved, got %#v", definitions.SessionKeyRequireMFAPending, mgr.data[definitions.SessionKeyRequireMFAPending])
 	}
 }

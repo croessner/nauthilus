@@ -153,3 +153,43 @@ func TestTotpValidation(t *testing.T) {
 		mBackend.AssertExpectations(t)
 	})
 }
+
+func TestValidateTOTPCodeNormalizesAuthenticatorInput(t *testing.T) {
+	cfg := &mockTotpConfig{issuer: "NauthilusTest", skew: 1}
+	deps := AuthDeps{
+		Cfg:    cfg,
+		Logger: slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		Env:    &mockEnv{},
+	}
+
+	secret := "JBSWY3DPEHPK3PXP"
+	codeNow, err := totp.GenerateCode(secret, time.Now())
+	assert.NoError(t, err)
+
+	groupedCode := codeNow[:3] + " " + codeNow[3:]
+	assert.NoError(t, ValidateTOTPCode(groupedCode, secret, deps))
+
+	dashedCode := codeNow[:3] + "-" + codeNow[3:]
+	assert.NoError(t, ValidateTOTPCode(dashedCode, secret, deps))
+}
+
+func TestValidateTOTPCodeAcceptsStoredOTPAuthURL(t *testing.T) {
+	issuer := "NauthilusTest"
+	account := "testuser"
+	cfg := &mockTotpConfig{issuer: issuer, skew: 1}
+	deps := AuthDeps{
+		Cfg:    cfg,
+		Logger: slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		Env:    &mockEnv{},
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      issuer,
+		AccountName: account,
+	})
+	assert.NoError(t, err)
+
+	codeNow, err := totp.GenerateCode(key.Secret(), time.Now())
+	assert.NoError(t, err)
+	assert.NoError(t, ValidateTOTPCode(codeNow, key.URL(), deps))
+}

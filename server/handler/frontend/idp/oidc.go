@@ -72,6 +72,82 @@ func formValue(ctx *gin.Context, key string) string {
 	return ctx.PostForm(key)
 }
 
+const (
+	oidcParamGrantType             = "grant_type"
+	oidcParamClientID              = "client_id"
+	oidcParamClientSecret          = "client_secret"
+	oidcParamClientAssertionType   = "client_assertion_type"
+	oidcParamClientAssertion       = "client_assertion"
+	oidcParamCode                  = "code"
+	oidcParamRedirectURI           = "redirect_uri"
+	oidcParamCodeVerifier          = "code_verifier"
+	oidcParamRefreshToken          = "refresh_token"
+	oidcParamDeviceCode            = "device_code"
+	oidcParamResponseType          = "response_type"
+	oidcParamScope                 = "scope"
+	oidcParamState                 = "state"
+	oidcParamNonce                 = "nonce"
+	oidcParamPrompt                = "prompt"
+	oidcParamCodeChallenge         = "code_challenge"
+	oidcParamCodeChallengeMethod   = "code_challenge_method"
+	oidcGrantTypeRefreshToken      = oidcParamRefreshToken
+	oidcGrantTypeClientCredentials = "client_credentials"
+	oidcResponseTypeCode           = oidcParamCode
+	oidcJSONErrorDescriptionKey    = "error_description"
+	oidcErrorInvalidRequest        = "invalid_request"
+	oidcErrorInvalidClient         = "invalid_client"
+	oidcErrorInvalidGrant          = "invalid_grant"
+	oidcErrorUnauthorizedClient    = "unauthorized_client"
+	oidcErrorServerError           = sloRequestOutcomeServerError
+)
+
+var oidcTokenSingleValueParameters = []string{
+	oidcParamGrantType,
+	oidcParamClientID,
+	oidcParamClientSecret,
+	oidcParamClientAssertionType,
+	oidcParamClientAssertion,
+	oidcParamCode,
+	oidcParamRedirectURI,
+	oidcParamCodeVerifier,
+	oidcParamRefreshToken,
+	oidcParamDeviceCode,
+}
+
+func rejectDuplicateOIDCTokenParameters(ctx *gin.Context) bool {
+	if ctx == nil || ctx.Request == nil {
+		return false
+	}
+
+	for _, key := range oidcTokenSingleValueParameters {
+		if len(oidcRequestValues(ctx, key)) <= 1 {
+			continue
+		}
+
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidRequest, oidcJSONErrorDescriptionKey: "duplicate parameter: " + key})
+
+		return true
+	}
+
+	return false
+}
+
+func oidcRequestValues(ctx *gin.Context, key string) []string {
+	if ctx == nil || ctx.Request == nil {
+		return nil
+	}
+
+	if ctx.Request.Method == http.MethodGet {
+		return ctx.Request.URL.Query()[key]
+	}
+
+	if err := ctx.Request.ParseForm(); err != nil {
+		return nil
+	}
+
+	return ctx.Request.PostForm[key]
+}
+
 // OIDCHandler handles OIDC protocol requests.
 type OIDCHandler struct {
 	deps        *deps.Deps
@@ -240,8 +316,8 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	}
 
 	// 2. Try Body
-	bClientID := formValue(ctx, "client_id")
-	bClientSecret := formValue(ctx, "client_secret")
+	bClientID := formValue(ctx, oidcParamClientID)
+	bClientSecret := formValue(ctx, oidcParamClientSecret)
 	combinedClientAuthAllowed := false
 
 	if bClientID != "" || bClientSecret != "" {
@@ -268,7 +344,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 					definitions.DbgIdp,
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyMsg, "Accepting combined OIDC client authentication for refresh token compatibility",
-					"client_id", clientID,
+					definitions.LogKeyClientID, clientID,
 					"client_type", clientType,
 				)
 			}
@@ -284,7 +360,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 					"methods", authSource+","+clientauth.MethodClientSecretPost,
 				)
 
-				ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+				ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 				return nil, false
 			}
@@ -299,7 +375,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	}
 
 	if clientID == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
@@ -313,10 +389,10 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			definitions.DbgIdp,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "OIDC client not found",
-			"client_id", clientID,
+			definitions.LogKeyClientID, clientID,
 		)
 
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
@@ -371,12 +447,12 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 				definitions.DbgIdp,
 				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 				definitions.LogKeyMsg, "OIDC client authentication method not allowed",
-				"client_id", clientID,
+				definitions.LogKeyClientID, clientID,
 				"auth_source", authSource,
 				"expected_method", client.TokenEndpointAuthMethod,
 			)
 
-			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+			ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 			return nil, false
 		}
@@ -387,7 +463,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 	}
 
 	if authSource == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
@@ -406,7 +482,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 		keyvals := []any{
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "OIDC client secret mismatch",
-			"client_id", clientID,
+			definitions.LogKeyClientID, clientID,
 			"expected_len", len(expectedSecret),
 			"received_len", len(receivedSecret),
 		}
@@ -427,7 +503,7 @@ func (h *OIDCHandler) authenticateClient(ctx *gin.Context) (*config.OIDCClient, 
 			keyvals...,
 		)
 
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
@@ -447,7 +523,7 @@ func (h *OIDCHandler) allowRefreshGrantCombinedClientAuth(
 		return false
 	}
 
-	if formValue(ctx, "grant_type") != "refresh_token" {
+	if formValue(ctx, oidcParamGrantType) != oidcGrantTypeRefreshToken {
 		return false
 	}
 
@@ -481,9 +557,9 @@ func (h *OIDCHandler) allowRefreshGrantCombinedClientAuth(
 
 // authenticateClientPrivateKeyJWT authenticates a client using the private_key_jwt method (RFC 7523).
 func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config.OIDCClient, bool) {
-	assertionType := formValue(ctx, "client_assertion_type")
-	assertion := formValue(ctx, "client_assertion")
-	clientID := formValue(ctx, "client_id")
+	assertionType := formValue(ctx, oidcParamClientAssertionType)
+	assertion := formValue(ctx, oidcParamClientAssertion)
+	clientID := formValue(ctx, oidcParamClientID)
 
 	if assertionType == "" || assertion == "" {
 		return nil, false
@@ -492,7 +568,7 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 	ctx.Set(definitions.CtxAuthMethodKey, clientauth.MethodPrivateKeyJWT)
 
 	if assertionType != clientauth.AssertionTypeJWTBearer {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client", "error_description": "unsupported client_assertion_type"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient, oidcJSONErrorDescriptionKey: "unsupported client_assertion_type"})
 
 		return nil, false
 	}
@@ -503,20 +579,20 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 	}
 
 	if clientID == "" {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
 
 	client, ok := h.idp.FindClient(clientID)
 	if !ok {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
 
 	if client.TokenEndpointAuthMethod != clientauth.MethodPrivateKeyJWT {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client", "error_description": "client not configured for private_key_jwt"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient, oidcJSONErrorDescriptionKey: "client not configured for private_key_jwt"})
 
 		return nil, false
 	}
@@ -530,11 +606,11 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 			definitions.DbgIdp,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "Failed to build client verifier",
-			"client_id", clientID,
-			"error", err,
+			definitions.LogKeyClientID, clientID,
+			definitions.LogKeyError, err,
 		)
 
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
@@ -557,11 +633,11 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 			definitions.DbgIdp,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "private_key_jwt authentication failed",
-			"client_id", clientID,
-			"error", err,
+			definitions.LogKeyClientID, clientID,
+			definitions.LogKeyError, err,
 		)
 
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_client"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
 		return nil, false
 	}
@@ -659,15 +735,15 @@ func oidcTokenAuthMethod(ctx *gin.Context) string {
 		return clientauth.MethodClientSecretBasic
 	}
 
-	if formValue(ctx, "client_assertion") != "" {
+	if formValue(ctx, oidcParamClientAssertion) != "" {
 		return clientauth.MethodPrivateKeyJWT
 	}
 
-	if formValue(ctx, "client_secret") != "" {
+	if formValue(ctx, oidcParamClientSecret) != "" {
 		return clientauth.MethodClientSecretPost
 	}
 
-	if formValue(ctx, "client_id") != "" {
+	if formValue(ctx, oidcParamClientID) != "" {
 		return "none"
 	}
 
@@ -936,8 +1012,8 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 	keyvals := []any{
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "OIDC Token request completed",
-		"grant_type", util.WithNotAvailable(grantType),
-		"client_id", util.WithNotAvailable(clientID),
+		oidcParamGrantType, util.WithNotAvailable(grantType),
+		definitions.LogKeyClientID, util.WithNotAvailable(clientID),
 		"auth_method", util.WithNotAvailable(authMethod),
 		definitions.LogKeyHTTPStatus, httpStatus,
 		"result", result,
@@ -980,12 +1056,12 @@ func (h *OIDCHandler) logTokenError(ctx *gin.Context, grantType, clientID string
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "OIDC Token issuance failed",
-		"grant_type", grantType,
-		"client_id", clientID,
-		"error", err,
+		oidcParamGrantType, grantType,
+		definitions.LogKeyClientID, clientID,
+		definitions.LogKeyError, err,
 	)
 
-	ctx.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+	ctx.JSON(http.StatusInternalServerError, gin.H{definitions.LogKeyError: oidcErrorServerError})
 }
 
 // sendTokenResponse writes the common OIDC token response JSON.
@@ -1005,7 +1081,7 @@ func (h *OIDCHandler) sendTokenResponse(ctx *gin.Context, clientID, grantType st
 	}
 
 	if resp.refreshToken != "" {
-		result["refresh_token"] = resp.refreshToken
+		result[oidcParamRefreshToken] = resp.refreshToken
 	}
 
 	ctx.JSON(http.StatusOK, result)
@@ -1016,8 +1092,12 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.token")
 	defer sp.End()
 
+	if rejectDuplicateOIDCTokenParameters(ctx) {
+		return
+	}
+
 	startedAt := time.Now()
-	grantType := formValue(ctx, "grant_type")
+	grantType := formValue(ctx, oidcParamGrantType)
 	ctx.Set(definitions.CtxOIDCGrantTypeKey, grantType)
 
 	clientID := oidcTokenRequestClientID(ctx)
@@ -1038,7 +1118,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	var client *config.OIDCClient
 	var ok bool
 
-	if formValue(ctx, "client_assertion") != "" {
+	if formValue(ctx, oidcParamClientAssertion) != "" {
 		client, ok = h.authenticateClientPrivateKeyJWT(ctx)
 	} else {
 		client, ok = h.authenticateClient(ctx)
@@ -1057,25 +1137,25 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		definitions.DbgIdp,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, "OIDC Token request",
-		"grant_type", grantType,
-		"client_id", clientID,
+		oidcParamGrantType, grantType,
+		definitions.LogKeyClientID, clientID,
 	)
 
-	sp.SetAttributes(attribute.String("client_id", clientID))
+	sp.SetAttributes(attribute.String(definitions.LogKeyClientID, clientID))
 
 	switch grantType {
-	case "authorization_code":
+	case definitions.OIDCFlowAuthorizationCode:
 		h.handleAuthorizationCodeTokenExchange(ctx, client, grantType)
 
-	case "refresh_token":
+	case oidcGrantTypeRefreshToken:
 		h.handleRefreshTokenExchange(ctx, client, grantType)
 
-	case "client_credentials":
+	case oidcGrantTypeClientCredentials:
 		h.handleClientCredentialsTokenExchange(ctx, client, grantType)
 
 	case definitions.OIDCGrantTypeDeviceCode:
 		if !client.SupportsGrantType(definitions.OIDCGrantTypeDeviceCode) {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "unauthorized_client"})
+			ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorUnauthorizedClient})
 
 			return
 		}
@@ -1083,7 +1163,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 		h.handleDeviceCodeTokenExchange(ctx, client)
 
 	default:
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_grant_type"})
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: "unsupported_grant_type"})
 	}
 }
 
@@ -1094,7 +1174,7 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 
 	authHeader := ctx.GetHeader("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "missing_token"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: "missing_token"})
 
 		return
 	}
@@ -1104,7 +1184,7 @@ func (h *OIDCHandler) UserInfo(ctx *gin.Context) {
 	// Validate token and retrieve IdTokenClaims for the UserInfo endpoint.
 	claims, err := h.idp.ValidateTokenForUserInfo(ctx.Request.Context(), tokenString)
 	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_token"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: "invalid_token"})
 
 		return
 	}
@@ -1139,7 +1219,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 			definitions.DbgIdp,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "OIDC token introspection failed",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 
 		ctx.JSON(http.StatusOK, gin.H{"active": false})
@@ -1170,7 +1250,7 @@ func (h *OIDCHandler) JWKS(ctx *gin.Context) {
 
 	rsaKeys, err := h.idp.GetKeyManager().GetAllKeys(ctx.Request.Context())
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get keys"})
+		ctx.JSON(http.StatusInternalServerError, gin.H{definitions.LogKeyError: "failed to get keys"})
 
 		return
 	}
@@ -1336,7 +1416,7 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 			definitions.DbgIdp,
 			definitions.LogKeyMsg, "Failed to initialize SAML SLO fanout transaction",
 			"account", util.WithNotAvailable(account),
-			"error", err.Error(),
+			definitions.LogKeyError, err.Error(),
 		)
 
 		return nil
@@ -1350,7 +1430,7 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 			definitions.DbgIdp,
 			definitions.LogKeyMsg, "Failed to transition SAML SLO fanout transaction to local_done",
 			"transaction_id", sloTransaction.TransactionID,
-			"error", err.Error(),
+			definitions.LogKeyError, err.Error(),
 		)
 
 		return nil
@@ -1367,7 +1447,7 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 				definitions.DbgIdp,
 				definitions.LogKeyMsg, "Failed to persist SAML SLO fanout transaction state",
 				"transaction_id", sloTransaction.TransactionID,
-				"error", stateErr.Error(),
+				definitions.LogKeyError, stateErr.Error(),
 			)
 
 			return nil
@@ -1383,7 +1463,7 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 			definitions.LogKeyMsg, "Failed to cleanup SAML SLO participant sessions after fanout planning",
 			"transaction_id", sloTransaction.TransactionID,
 			"account", util.WithNotAvailable(account),
-			"error", cleanupErr.Error(),
+			definitions.LogKeyError, cleanupErr.Error(),
 		)
 	}
 
@@ -1395,7 +1475,7 @@ func (h *OIDCHandler) samlFrontChannelLogoutTasks(ctx context.Context, account s
 			definitions.DbgIdp,
 			definitions.LogKeyMsg, "Failed to orchestrate SAML SLO fanout",
 			"transaction_id", sloTransaction.TransactionID,
-			"error", err.Error(),
+			definitions.LogKeyError, err.Error(),
 		)
 
 		return nil
@@ -1503,9 +1583,9 @@ func (h *OIDCHandler) Logout(ctx *gin.Context) {
 					h.deps.Logger,
 					definitions.DbgIdp,
 					definitions.LogKeyMsg, "Skipping invalid OIDC front-channel logout URI",
-					"client_id", util.WithNotAvailable(cid),
+					definitions.LogKeyClientID, util.WithNotAvailable(cid),
 					"uri", util.WithNotAvailable(c.FrontChannelLogoutURI),
-					"error", parseErr.Error(),
+					definitions.LogKeyError, parseErr.Error(),
 				)
 
 				continue

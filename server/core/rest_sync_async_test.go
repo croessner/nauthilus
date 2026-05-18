@@ -41,6 +41,10 @@ import (
 
 // test helpers
 func setupMinimalTestConfig(t *testing.T) {
+	setupTestConfigWithBackends(t, definitions.BackendCacheName)
+}
+
+func setupTestConfigWithBackends(t *testing.T, backendNames ...string) {
 	t.Helper()
 
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
@@ -53,10 +57,16 @@ func setupMinimalTestConfig(t *testing.T) {
 		},
 	}
 
-	// Ensure a cache backend is present so HandleUserFlush executes cache-specific logic
-	var be config.Backend
-	_ = be.Set("cache")
-	cfg.Server.Backends = []*config.Backend{&be}
+	cfg.Server.Backends = make([]*config.Backend, 0, len(backendNames))
+	for _, backendName := range backendNames {
+		var be config.Backend
+		if err := be.Set(backendName); err != nil {
+			t.Fatalf("failed to configure backend %q: %v", backendName, err)
+		}
+
+		cfg.Server.Backends = append(cfg.Server.Backends, &be)
+	}
+
 	config.SetTestFile(cfg)
 	SetDefaultConfigFile(config.GetFile())
 
@@ -106,7 +116,7 @@ func newTestGinContext() *gin.Context {
 	return ctx
 }
 
-func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
+func setupEngineWithMock(t *testing.T, tokenFlusher ...TokenFlusher) (*gin.Engine, redismock.ClientMock) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -136,14 +146,24 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush+"/async", NewBruteForceFlushAsyncHandler(cfg, logger, redisClient))
 
 	// Cache endpoints
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, NewUserFlushHandler(cfg, logger, redisClient))
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", NewUserFlushAsyncHandler(cfg, logger, redisClient))
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, NewUserFlushHandler(cfg, logger, redisClient, tokenFlusher...))
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", NewUserFlushAsyncHandler(cfg, logger, redisClient, tokenFlusher...))
 
 	// Async job status
 	ag := group.Group("/async")
 	ag.GET("/jobs/:jobId", NewAsyncJobStatusHandler(cfg, logger, redisClient))
 
 	return r, mock
+}
+
+type recordingTokenFlusher struct {
+	users []string
+}
+
+func (f *recordingTokenFlusher) FlushUserTokens(_ context.Context, userID string) error {
+	f.users = append(f.users, userID)
+
+	return nil
 }
 
 // --- Sync endpoint tests ---
@@ -319,6 +339,46 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet redis expectations: %v", err)
+	}
+}
+
+func TestCacheFlushSync_RemoteOnlyBackendFlushesLocalState(t *testing.T) {
+	setupTestConfigWithBackends(t, definitions.BackendRemoteName)
+
+	flusher := &recordingTokenFlusher{}
+	r, mock := setupEngineWithMock(t, flusher)
+
+	user := "edge-user"
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	shardKey := rediscli.GetUserHashKey(prefix, user)
+
+	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
+
+	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
+	mock.ExpectUnlink(pwHistSet).SetVal(1)
+	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
+
+	defaultPos := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
+	mock.ExpectHDel(shardKey, user).SetVal(1)
+	mock.ExpectUnlink(defaultPos).SetVal(1)
+
+	w := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"user":"` + user + `"}`)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/"+definitions.CatCache+"/"+definitions.ServFlush, body)
+	req.Header.Set("Content-Type", "application/json")
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
+	}
+
+	if len(flusher.users) != 1 || flusher.users[0] != user {
+		t.Fatalf("expected token flusher to purge %q, got %v", user, flusher.users)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

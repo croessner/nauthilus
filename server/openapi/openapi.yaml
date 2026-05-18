@@ -1,0 +1,1678 @@
+openapi: 3.1.0
+info:
+  title: Nauthilus Management API
+  version: v1
+  description: >
+    Contract for the stable protected machine-facing HTTP API subset. Dynamic
+    custom hook aliases remain runtime configuration. Public IdP protocol and
+    browser routes are documented by the public IdP contract.
+servers:
+  - url: "{baseUrl}"
+    description: Nauthilus deployment base URL.
+    variables:
+      baseUrl:
+        default: https://nauthilus.example.com
+        description: Absolute base URL of the Nauthilus deployment to call.
+tags:
+  - name: OpenAPI
+    x-displayName: /api/v1/openapi
+    description: Embedded API contract documents.
+  - name: Authentication
+    x-displayName: /api/v1/auth
+    description: Structured authentication and account listing endpoints.
+  - name: BruteForce
+    x-displayName: /api/v1/bruteforce
+    description: Backchannel brute-force administration endpoints.
+  - name: Cache
+    x-displayName: /api/v1/cache
+    description: Backchannel cache administration endpoints.
+  - name: Config
+    x-displayName: /api/v1/config
+    description: Backchannel configuration inspection endpoint.
+  - name: Async
+    x-displayName: /api/v1/async
+    description: Asynchronous backchannel job status endpoint.
+  - name: MFA
+    x-displayName: /api/v1/mfa
+    description: Session-bound MFA management endpoints.
+  - name: OIDCSessions
+    x-displayName: /api/v1/oidc/sessions
+    description: Backchannel OIDC session administration endpoints.
+paths:
+  /api/v1/openapi.yaml:
+    get:
+      tags:
+        - OpenAPI
+      operationId: getOpenAPIYAML
+      summary: Get the OpenAPI document as YAML.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      responses:
+        "200":
+          description: OpenAPI document in YAML format.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /api/v1/openapi.json:
+    get:
+      tags:
+        - OpenAPI
+      operationId: getOpenAPIJSON
+      summary: Get the OpenAPI document as JSON.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      responses:
+        "200":
+          description: OpenAPI document in JSON format.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/v1/auth/json:
+    get:
+      tags:
+        - Authentication
+      operationId: getJSONAuth
+      summary: Run the JSON authentication endpoint without a JSON body.
+      description: >
+        The GET form is primarily used for account listing or no-auth probes via
+        the mode query parameter.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthJSONSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/Error"
+    post:
+      tags:
+        - Authentication
+      operationId: postJSONAuth
+      summary: Authenticate with a strict JSON request body.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthJSONSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/cbor:
+    get:
+      tags:
+        - Authentication
+      operationId: getCBORAuth
+      summary: Run the CBOR authentication endpoint without a CBOR body.
+      description: >
+        The GET form is primarily used for account listing or no-auth probes via
+        the mode query parameter. List-account responses negotiate the response
+        content type from the Accept header.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthCBORSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/Error"
+    post:
+      tags:
+        - Authentication
+      operationId: postCBORAuth
+      summary: Authenticate with a strict CBOR request body.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+      requestBody:
+        required: true
+        content:
+          application/cbor:
+            schema:
+              $ref: "#/components/schemas/AuthRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthCBORSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/header:
+    get:
+      tags:
+        - Authentication
+      operationId: getHeaderAuth
+      summary: Authenticate using configured HTTP request headers.
+      description: >
+        Reads credentials and connection metadata from configured request
+        headers. The default header names are documented as parameters; they can
+        be changed through the Nauthilus runtime configuration.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthHeaderSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AuthHeaderFailure"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Error"
+    post:
+      tags:
+        - Authentication
+      operationId: postHeaderAuth
+      summary: Authenticate using configured HTTP request headers.
+      description: >
+        POST form mirrors the GET form for integrations that submit auth checks
+        with POST while still carrying credentials and metadata in request
+        headers.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthHeaderSuccess"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AuthHeaderFailure"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/nginx:
+    get:
+      tags:
+        - Authentication
+      operationId: getNginxAuth
+      summary: Authenticate an NGINX auth_http request.
+      description: >
+        Reads NGINX mail auth_http-compatible headers and returns the decision
+        through Auth-* response headers. NGINX mode intentionally returns HTTP
+        200 for authentication failures and communicates the result via
+        Auth-Status.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthNginxResult"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags:
+        - Authentication
+      operationId: postNginxAuth
+      summary: Authenticate an NGINX auth_http request.
+      description: >
+        POST form mirrors the GET form for deployments that submit NGINX auth
+        checks with POST while still carrying credentials and metadata in
+        request headers.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AuthMode"
+        - $ref: "#/components/parameters/InMemoryFlag"
+        - $ref: "#/components/parameters/CacheFlag"
+        - $ref: "#/components/parameters/AuthUserHeader"
+        - $ref: "#/components/parameters/AuthPassHeader"
+        - $ref: "#/components/parameters/AuthPasswordEncodedHeader"
+        - $ref: "#/components/parameters/AuthProtocolHeader"
+        - $ref: "#/components/parameters/AuthMethodHeader"
+        - $ref: "#/components/parameters/AuthLoginAttemptHeader"
+        - $ref: "#/components/parameters/ClientIPHeader"
+        - $ref: "#/components/parameters/ClientPortHeader"
+        - $ref: "#/components/parameters/ClientIDHeader"
+        - $ref: "#/components/parameters/ClientHostHeader"
+        - $ref: "#/components/parameters/ExternalSessionIDHeader"
+        - $ref: "#/components/parameters/LocalIPHeader"
+        - $ref: "#/components/parameters/LocalPortHeader"
+        - $ref: "#/components/parameters/OIDCCIDHeader"
+        - $ref: "#/components/parameters/SSLHeader"
+        - $ref: "#/components/parameters/SSLSessionIDHeader"
+        - $ref: "#/components/parameters/SSLClientVerifyHeader"
+        - $ref: "#/components/parameters/SSLClientDNHeader"
+        - $ref: "#/components/parameters/SSLClientCNHeader"
+        - $ref: "#/components/parameters/SSLIssuerHeader"
+        - $ref: "#/components/parameters/SSLClientNotBeforeHeader"
+        - $ref: "#/components/parameters/SSLClientNotAfterHeader"
+        - $ref: "#/components/parameters/SSLSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLClientSubjectDNHeader"
+        - $ref: "#/components/parameters/SSLClientIssuerDNHeader"
+        - $ref: "#/components/parameters/SSLCipherHeader"
+        - $ref: "#/components/parameters/SSLProtocolHeader"
+        - $ref: "#/components/parameters/SSLSerialHeader"
+        - $ref: "#/components/parameters/SSLFingerprintHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthNginxResult"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/bruteforce/list:
+    get:
+      tags:
+        - BruteForce
+      operationId: listBruteForceEntries
+      summary: List active brute-force bans and blocked accounts.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      responses:
+        "200":
+          description: Brute-force list result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BruteForceListResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/Error"
+    post:
+      tags:
+        - BruteForce
+      operationId: listFilteredBruteForceEntries
+      summary: List active brute-force data with optional account and IP filters.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BruteForceFilterRequest"
+      responses:
+        "200":
+          description: Brute-force list result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BruteForceListResult"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/bruteforce/flush:
+    delete:
+      tags:
+        - BruteForce
+      operationId: flushBruteForceRule
+      summary: Flush brute-force data for a configured rule.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BruteForceFlushRequest"
+      responses:
+        "200":
+          description: Brute-force flush result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BruteForceFlushResult"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/bruteforce/flush/async:
+    delete:
+      tags:
+        - BruteForce
+      operationId: enqueueBruteForceRuleFlush
+      summary: Enqueue an asynchronous brute-force rule flush.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BruteForceFlushRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AsyncAccepted"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/cache/flush:
+    delete:
+      tags:
+        - Cache
+      operationId: flushUserCache
+      summary: Flush authentication cache entries for a user.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CacheFlushRequest"
+      responses:
+        "200":
+          description: Cache flush result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheFlushResult"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/cache/flush/async:
+    delete:
+      tags:
+        - Cache
+      operationId: enqueueUserCacheFlush
+      summary: Enqueue an asynchronous user cache flush.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CacheFlushRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AsyncAccepted"
+        "400":
+          $ref: "#/components/responses/JSONValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/config/load:
+    get:
+      tags:
+        - Config
+      operationId: loadRuntimeConfig
+      summary: Return the loaded runtime configuration as JSON text.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      responses:
+        "200":
+          description: Runtime configuration wrapped in the standard result envelope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigLoadResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/async/jobs/{jobId}:
+    get:
+      tags:
+        - Async
+      operationId: getAsyncJobStatus
+      summary: Get the status of an asynchronous backchannel job.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Async job status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsyncJobStatusResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/mfa/totp/setup:
+    get:
+      tags:
+        - MFA
+      operationId: setupTOTP
+      summary: Start TOTP registration for the current session account.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: TOTP registration secret and QR code URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPSetupResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/mfa/totp/register:
+    post:
+      tags:
+        - MFA
+      operationId: registerTOTP
+      summary: Complete TOTP registration for the current session account.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPRegisterRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusMessage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/mfa/totp:
+    delete:
+      tags:
+        - MFA
+      operationId: deleteTOTP
+      summary: Remove TOTP for the current session account.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/mfa/recovery-codes/generate:
+    post:
+      tags:
+        - MFA
+      operationId: generateRecoveryCodes
+      summary: Generate recovery codes for the current session account.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Newly generated recovery codes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/mfa/webauthn/register/begin:
+    get:
+      tags:
+        - MFA
+      operationId: beginWebAuthnRegistration
+      summary: Begin WebAuthn credential registration.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: WebAuthn public key credential creation options.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnOptions"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/mfa/webauthn/register/finish:
+    post:
+      tags:
+        - MFA
+      operationId: finishWebAuthnRegistration
+      summary: Finish WebAuthn credential registration.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnFinishRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusMessage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/mfa/webauthn/{credentialID}:
+    delete:
+      tags:
+        - MFA
+      operationId: deleteWebAuthnCredential
+      summary: Remove a WebAuthn credential for the current session account.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: credentialID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusMessage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/oidc/sessions/{user_id}:
+    get:
+      tags:
+        - OIDCSessions
+      operationId: listOIDCSessions
+      summary: List active OIDC sessions for a user.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Active sessions keyed by token or session identifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCSessions"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags:
+        - OIDCSessions
+      operationId: deleteOIDCSessions
+      summary: Delete all OIDC sessions for a user.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: All sessions were deleted.
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/v1/oidc/sessions/{user_id}/{token}:
+    delete:
+      tags:
+        - OIDCSessions
+      operationId: deleteOIDCSession
+      summary: Delete one OIDC session for a user.
+      security:
+        - backchannelBasic: []
+        - backchannelBearer: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Session was deleted.
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    backchannelBasic:
+      type: http
+      scheme: basic
+      description: Backchannel Basic authentication.
+    backchannelBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Backchannel OIDC bearer token. Some admin endpoints require security or admin scope.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nauthilus_secure_data
+      description: Encrypted browser session cookie used by MFA management routes.
+  parameters:
+    AuthMode:
+      name: mode
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - no-auth
+          - list-accounts
+      description: Optional authentication operation mode.
+    InMemoryFlag:
+      name: in-memory
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - "0"
+      description: Disable in-memory monitoring for this request when set to 0.
+    CacheFlag:
+      name: cache
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - "0"
+      description: Disable cache monitoring for this request when set to 0.
+    AuthUserHeader:
+      name: Auth-User
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Username header. Required for authentication unless mode is no-auth or list-accounts.
+    AuthPassHeader:
+      name: Auth-Pass
+      in: header
+      required: false
+      schema:
+        type: string
+        format: password
+      description: Password header. The configured header is removed from the request after it is read.
+    AuthPasswordEncodedHeader:
+      name: X-Auth-Password-Encoded
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - "1"
+      description: Set to 1 when Auth-Pass carries URL-safe base64 encoded password bytes.
+    AuthProtocolHeader:
+      name: Auth-Protocol
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - smtp
+          - imap
+          - pop3
+      description: Mail protocol of the upstream authentication attempt.
+    AuthMethodHeader:
+      name: Auth-Method
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Authentication mechanism such as LOGIN or PLAIN.
+    AuthLoginAttemptHeader:
+      name: Auth-Login-Attempt
+      in: header
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+      description: One-based login attempt hint from the caller.
+    ClientIPHeader:
+      name: Client-IP
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client source IP address.
+    ClientPortHeader:
+      name: X-Client-Port
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client source TCP port.
+    ClientIDHeader:
+      name: X-Client-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional upstream client identifier.
+    ClientHostHeader:
+      name: X-Client-Host
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional upstream client hostname.
+    ExternalSessionIDHeader:
+      name: X-External-Session-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional upstream session correlation identifier.
+    LocalIPHeader:
+      name: X-Local-IP
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Local listener IP address.
+    LocalPortHeader:
+      name: X-Auth-Port
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Local listener TCP port.
+    OIDCCIDHeader:
+      name: X-OIDC-CID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional OIDC client identifier associated with the request.
+    SSLHeader:
+      name: X-SSL
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL/TLS state hint from the caller.
+    SSLSessionIDHeader:
+      name: X-SSL-Session-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL session identifier.
+    SSLClientVerifyHeader:
+      name: X-SSL-Client-Verify
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate verification status.
+    SSLClientDNHeader:
+      name: X-SSL-Client-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate subject DN.
+    SSLClientCNHeader:
+      name: X-SSL-Client-CN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate common name.
+    SSLIssuerHeader:
+      name: X-SSL-Issuer
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate issuer.
+    SSLClientNotBeforeHeader:
+      name: X-SSL-Client-NotBefore
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate validity start.
+    SSLClientNotAfterHeader:
+      name: X-SSL-Client-NotAfter
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate validity end.
+    SSLSubjectDNHeader:
+      name: X-SSL-Subject-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL subject distinguished name.
+    SSLIssuerDNHeader:
+      name: X-SSL-Issuer-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: SSL issuer distinguished name.
+    SSLClientSubjectDNHeader:
+      name: X-SSL-Client-Subject-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate subject distinguished name.
+    SSLClientIssuerDNHeader:
+      name: X-SSL-Client-Issuer-DN
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate issuer distinguished name.
+    SSLCipherHeader:
+      name: X-SSL-Cipher
+      in: header
+      required: false
+      schema:
+        type: string
+      description: TLS cipher suite.
+    SSLProtocolHeader:
+      name: X-SSL-Protocol
+      in: header
+      required: false
+      schema:
+        type: string
+      description: TLS protocol version.
+    SSLSerialHeader:
+      name: Auth-SSL-Serial
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate serial number.
+    SSLFingerprintHeader:
+      name: Auth-SSL-Fingerprint
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Client certificate fingerprint.
+  responses:
+    AuthHeaderFailure:
+      description: Header-mode authentication failure. The response body is JSON null; Auth-Status carries the status message.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        Auth-Wait:
+          schema:
+            type: string
+        X-Nauthilus-Session:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: "null"
+    AuthHeaderSuccess:
+      description: >
+        Header-mode authentication result. Successful requests return headers
+        such as Auth-Status, Auth-User, X-Nauthilus-Session, and dynamic
+        X-Nauthilus-* attribute headers.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        Auth-User:
+          schema:
+            type: string
+        X-Nauthilus-Memory-Cache:
+          schema:
+            type: string
+            enum:
+              - Hit
+              - Miss
+        X-Nauthilus-Session:
+          schema:
+            type: string
+    AuthNginxResult:
+      description: >
+        NGINX auth_http result. HTTP status is 200 for both success and
+        authentication failure; Auth-Status carries OK or the failure message.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        Auth-User:
+          schema:
+            type: string
+        Auth-Server:
+          schema:
+            type: string
+        Auth-Port:
+          schema:
+            type: string
+        Auth-Wait:
+          schema:
+            type: string
+        Auth-Error-Code:
+          schema:
+            type: string
+        X-Nauthilus-Memory-Cache:
+          schema:
+            type: string
+            enum:
+              - Hit
+              - Miss
+        X-Nauthilus-Session:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: "null"
+    AuthJSONSuccess:
+      description: Authentication result, account list, or no-auth result.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        X-Nauthilus-Session:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/AuthSuccess"
+              - $ref: "#/components/schemas/AuthError"
+              - $ref: "#/components/schemas/AccountList"
+        text/plain:
+          schema:
+            type: string
+        application/x-www-form-urlencoded:
+          schema:
+            type: string
+    AuthCBORSuccess:
+      description: Authentication result, account list, or no-auth result.
+      headers:
+        Auth-Status:
+          schema:
+            type: string
+        X-Nauthilus-Session:
+          schema:
+            type: string
+      content:
+        application/cbor:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/AuthSuccess"
+              - $ref: "#/components/schemas/AuthError"
+              - $ref: "#/components/schemas/AccountList"
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountList"
+        text/plain:
+          schema:
+            type: string
+        application/x-www-form-urlencoded:
+          schema:
+            type: string
+    AsyncAccepted:
+      description: Async job was queued.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AsyncAcceptedResult"
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Request is authenticated but lacks the required scope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    JSONValidationError:
+      description: Invalid JSON or request validation failure.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/ErrorResponse"
+              - $ref: "#/components/schemas/FieldErrorResponse"
+    NotFound:
+      description: Resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    StatusMessage:
+      description: Operation status message.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StatusMessage"
+    Unauthorized:
+      description: Authentication is missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnsupportedMediaType:
+      description: Requested or submitted media type is not supported.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    AccountList:
+      type: array
+      items:
+        type: string
+    AsyncAcceptedPayload:
+      type: object
+      required:
+        - jobId
+        - status
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          description: The initial state returned immediately after the job is accepted.
+          enum:
+            - QUEUED
+          x-enum-varnames:
+            - AsyncAcceptedStatusQueued
+    AsyncAcceptedResult:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            result:
+              $ref: "#/components/schemas/AsyncAcceptedPayload"
+    AsyncJobStatusPayload:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          description: Current async job lifecycle state.
+          enum:
+            - QUEUED
+            - INPROGRESS
+            - DONE
+            - ERROR
+          x-enum-varnames:
+            - AsyncJobStatusQueued
+            - AsyncJobStatusInProgress
+            - AsyncJobStatusDone
+            - AsyncJobStatusError
+        type:
+          type: string
+        createdAt:
+          type: string
+        startedAt:
+          type: string
+        finishedAt:
+          type: string
+        resultCount:
+          type: string
+        error:
+          type: string
+    AsyncJobStatusResult:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            result:
+              $ref: "#/components/schemas/AsyncJobStatusPayload"
+    AttributeMapping:
+      type: object
+      additionalProperties:
+        type: array
+        items: {}
+    AuthError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+    AuthRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - username
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        client_ip:
+          type: string
+        client_port:
+          type: string
+        client_hostname:
+          type: string
+        client_id:
+          type: string
+        external_session_id:
+          type: string
+        user_agent:
+          type: string
+        local_ip:
+          type: string
+        local_port:
+          type: string
+        protocol:
+          type: string
+        method:
+          type: string
+        ssl:
+          type: string
+        ssl_session_id:
+          type: string
+        ssl_client_verify:
+          type: string
+        ssl_client_dn:
+          type: string
+        ssl_client_cn:
+          type: string
+        ssl_issuer:
+          type: string
+        ssl_client_notbefore:
+          type: string
+        ssl_client_notafter:
+          type: string
+        ssl_subject_dn:
+          type: string
+        ssl_issuer_dn:
+          type: string
+        ssl_client_subject_dn:
+          type: string
+        ssl_client_issuer_dn:
+          type: string
+        ssl_protocol:
+          type: string
+        ssl_cipher:
+          type: string
+        ssl_serial:
+          type: string
+        ssl_fingerprint:
+          type: string
+        oidc_cid:
+          type: string
+        auth_login_attempt:
+          type: integer
+          minimum: 0
+    AuthSuccess:
+      type: object
+      required:
+        - ok
+        - account_field
+        - backend
+        - attributes
+      properties:
+        ok:
+          type: boolean
+        account_field:
+          type: string
+        totp_secret_field:
+          type: string
+        backend:
+          type: integer
+        attributes:
+          $ref: "#/components/schemas/AttributeMapping"
+    BruteForceBanEntry:
+      type: object
+      properties:
+        network:
+          type: string
+        bucket:
+          type: string
+        ban_time:
+          type: integer
+          format: int64
+        ttl:
+          type: integer
+          format: int64
+        banned_at:
+          type: string
+          format: date-time
+    BruteForceBlockedAccounts:
+      type: object
+      required:
+        - accounts
+      properties:
+        accounts:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        error:
+          type:
+            - string
+            - "null"
+    BruteForceBlockedIPAddresses:
+      type: object
+      required:
+        - entries
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/BruteForceBanEntry"
+        error:
+          type:
+            - string
+            - "null"
+    BruteForceFilterRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        accounts:
+          type: array
+          items:
+            type: string
+        ip_addresses:
+          type: array
+          items:
+            type: string
+    BruteForceFlushPayload:
+      type: object
+      properties:
+        ip_address:
+          type: string
+        rule_name:
+          type: string
+        protocol:
+          type: string
+        oidc_cid:
+          type: string
+        removed_keys:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+    BruteForceFlushRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - ip_address
+        - rule_name
+      properties:
+        ip_address:
+          type: string
+        rule_name:
+          type: string
+        protocol:
+          type: string
+        oidc_cid:
+          type: string
+    BruteForceFlushResult:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            result:
+              $ref: "#/components/schemas/BruteForceFlushPayload"
+    BruteForceListResult:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            result:
+              type: array
+              prefixItems:
+                - $ref: "#/components/schemas/BruteForceBlockedIPAddresses"
+                - $ref: "#/components/schemas/BruteForceBlockedAccounts"
+    CacheFlushPayload:
+      type: object
+      properties:
+        user:
+          type: string
+        removed_keys:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+    CacheFlushRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - user
+      properties:
+        user:
+          type: string
+    CacheFlushResult:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            result:
+              $ref: "#/components/schemas/CacheFlushPayload"
+    ConfigLoadResult:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            result:
+              type: string
+              description: JSON-encoded runtime configuration.
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+    FieldError:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    FieldErrorResponse:
+      type: object
+      required:
+        - errors
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+    OIDCSessions:
+      type: object
+      additionalProperties: true
+    RecoveryCodesResponse:
+      type: object
+      required:
+        - codes
+      properties:
+        codes:
+          type: array
+          items:
+            type: string
+    ResultEnvelope:
+      type: object
+      required:
+        - session
+        - object
+        - operation
+        - result
+      properties:
+        session:
+          type: string
+        object:
+          type: string
+        operation:
+          type: string
+        result: {}
+    StatusMessage:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+    TOTPRegisterRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+      properties:
+        code:
+          type: string
+    TOTPSetupResponse:
+      type: object
+      required:
+        - secret
+        - qr_code_url
+      properties:
+        secret:
+          type: string
+        qr_code_url:
+          type: string
+    WebAuthnFinishRequest:
+      type: object
+      required:
+        - name
+        - credential
+      properties:
+        name:
+          type: string
+        credential:
+          type: object
+          additionalProperties: true
+    WebAuthnOptions:
+      type: object
+      additionalProperties: true

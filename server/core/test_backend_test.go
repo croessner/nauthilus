@@ -17,10 +17,13 @@ package core
 
 import (
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func TestTestBackendPassDBReturnsAccountAttribute(t *testing.T) {
@@ -46,5 +49,134 @@ func TestTestBackendPassDBReturnsAccountAttribute(t *testing.T) {
 
 	if len(values) != 1 || values[0] != auth.Request.Username {
 		t.Fatalf("expected account attribute %q, got %#v", auth.Request.Username, values)
+	}
+}
+
+func TestTestBackendPassDBRejectsChangedPassword(t *testing.T) {
+	setupMinimalTestConfig(t)
+	util.SetDefaultConfigFile(config.GetFile())
+	util.SetDefaultEnvironment(config.GetEnvironment())
+
+	manager := NewTestBackendManager("test_backend_password_contract", AuthDeps{})
+	username := "password-contract@example.test"
+
+	firstResult, err := manager.PassDB(newTestBackendPasswordAuth(username, "original-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !firstResult.Authenticated {
+		t.Fatal("first password authentication should seed and authenticate the test account")
+	}
+
+	wrongResult, err := manager.PassDB(newTestBackendPasswordAuth(username, "changed-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if wrongResult.Authenticated {
+		t.Fatal("changed password must not authenticate an existing test account")
+	}
+
+	retryResult, err := manager.PassDB(newTestBackendPasswordAuth(username, "original-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !retryResult.Authenticated {
+		t.Fatal("original password must remain valid after a failed changed-password attempt")
+	}
+}
+
+func TestTestBackendWebAuthnCredentialPersistenceContract(t *testing.T) {
+	setupMinimalTestConfig(t)
+	util.SetDefaultConfigFile(config.GetFile())
+	util.SetDefaultEnvironment(config.GetEnvironment())
+
+	manager := NewTestBackendManager("baseline_webauthn_contract", AuthDeps{})
+	auth := &AuthState{}
+	auth.Request.Username = "baseline-webauthn@example.test"
+	auth.Request.Protocol = config.NewProtocol("idp")
+
+	lastUsed := time.Date(2026, time.May, 12, 11, 0, 0, 0, time.UTC)
+	original := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("credential-a"),
+			Authenticator: webauthn.Authenticator{
+				SignCount: 3,
+			},
+		},
+		Name: "Original device",
+	}
+	updated := &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID: []byte("credential-a"),
+			Authenticator: webauthn.Authenticator{
+				SignCount: 9,
+			},
+		},
+		Name:     "Renamed device",
+		LastUsed: lastUsed,
+	}
+
+	if err := manager.SaveWebAuthnCredential(auth, original); err != nil {
+		t.Fatalf("SaveWebAuthnCredential returned error: %v", err)
+	}
+
+	assertStoredWebAuthnCredentials(t, manager, auth, []mfa.PersistentCredential{*original})
+
+	if err := manager.UpdateWebAuthnCredential(auth, original, updated); err != nil {
+		t.Fatalf("UpdateWebAuthnCredential returned error: %v", err)
+	}
+
+	assertStoredWebAuthnCredentials(t, manager, auth, []mfa.PersistentCredential{*updated})
+
+	if err := manager.DeleteWebAuthnCredential(auth, updated); err != nil {
+		t.Fatalf("DeleteWebAuthnCredential returned error: %v", err)
+	}
+
+	assertStoredWebAuthnCredentials(t, manager, auth, nil)
+}
+
+func newTestBackendPasswordAuth(username, password string) *AuthState {
+	auth := &AuthState{}
+	auth.Request.Username = username
+	auth.Request.Password = secret.New(password)
+	auth.Request.Protocol = config.NewProtocol("idp")
+
+	return auth
+}
+
+func assertStoredWebAuthnCredentials(t *testing.T, manager BackendManager, auth *AuthState, expected []mfa.PersistentCredential) {
+	t.Helper()
+
+	credentials, err := manager.GetWebAuthnCredentials(auth)
+	if err != nil {
+		t.Fatalf("GetWebAuthnCredentials returned error: %v", err)
+	}
+
+	if len(credentials) != len(expected) {
+		t.Fatalf("stored credential count = %d, want %d", len(credentials), len(expected))
+	}
+
+	for index := range expected {
+		got := credentials[index]
+		want := expected[index]
+
+		if string(got.ID) != string(want.ID) {
+			t.Fatalf("credential %d ID = %q, want %q", index, got.ID, want.ID)
+		}
+
+		if got.Name != want.Name {
+			t.Fatalf("credential %d name = %q, want %q", index, got.Name, want.Name)
+		}
+
+		if got.Authenticator.SignCount != want.Authenticator.SignCount {
+			t.Fatalf("credential %d sign count = %d, want %d", index, got.Authenticator.SignCount, want.Authenticator.SignCount)
+		}
+
+		if !got.LastUsed.Equal(want.LastUsed) {
+			t.Fatalf("credential %d last_used = %s, want %s", index, got.LastUsed, want.LastUsed)
+		}
 	}
 }

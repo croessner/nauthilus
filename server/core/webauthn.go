@@ -64,6 +64,8 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 	protocolName := ""
 
+	a.restoreRemoteBackendRefFromSession(mgr)
+
 	if a.Request.HTTPClientContext != nil {
 		protocolName = a.Request.HTTPClientContext.Query("protocol")
 	}
@@ -192,6 +194,80 @@ func resolveWebAuthnDisplayName(mgr cookie.Manager, userName string) (string, bo
 	return userName, true
 }
 
+func webAuthnRegistrationUserName(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	userName := mgr.GetString(definitions.SessionKeyAccount, "")
+	if userName != "" {
+		return userName
+	}
+
+	return mgr.GetString(definitions.SessionKeyUsername, "")
+}
+
+func restoreWebAuthnRegistrationIdentityFromFlow(ctx *gin.Context, deps AuthDeps, mgr cookie.Manager) {
+	if ctx == nil || deps.Cfg == nil || deps.Redis == nil || deps.Redis.GetWriteHandle() == nil || mgr == nil {
+		return
+	}
+
+	flowID := webAuthnRegistrationFlowIDFromSession(mgr)
+	if flowID == "" {
+		return
+	}
+
+	store := flow.NewRedisStore(deps.Redis.GetWriteHandle(), deps.Cfg.GetServer().GetRedis().GetPrefix()+"idp:flow", 0)
+
+	state, err := store.Load(ctx.Request.Context(), flowID)
+	if err != nil {
+		return
+	}
+
+	restoreWebAuthnRegistrationIdentityFromState(mgr, state)
+}
+
+func webAuthnRegistrationFlowIDFromSession(mgr cookie.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+
+	flowID := mgr.GetString(definitions.SessionKeyIdPFlowID, "")
+	if flowID != "" {
+		return flowID
+	}
+
+	if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
+		return flow.FlowIDRequireMFA
+	}
+
+	return ""
+}
+
+func restoreWebAuthnRegistrationIdentityFromState(mgr cookie.Manager, state *flow.State) {
+	if mgr == nil || state == nil || state.FlowType != flow.FlowTypeRequireMFA || state.Metadata == nil {
+		return
+	}
+
+	if mgr.GetString(definitions.SessionKeyAccount, "") == "" {
+		if account := state.Metadata[flow.FlowMetadataAccount]; account != "" {
+			mgr.Set(definitions.SessionKeyAccount, account)
+		}
+	}
+
+	if mgr.GetString(definitions.SessionKeyUniqueUserID, "") == "" {
+		if uniqueUserID := state.Metadata[flow.FlowMetadataUniqueUserID]; uniqueUserID != "" {
+			mgr.Set(definitions.SessionKeyUniqueUserID, uniqueUserID)
+		}
+	}
+
+	if mgr.GetString(definitions.SessionKeyDisplayName, "") == "" {
+		if displayName := state.Metadata[flow.FlowMetadataDisplayName]; displayName != "" {
+			mgr.Set(definitions.SessionKeyDisplayName, displayName)
+		}
+	}
+}
+
 // BeginRegistration Page: '/mfa/webauthn/register/begin'
 func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 	tracer := monittrace.New("nauthilus/core/webauthn")
@@ -223,8 +299,10 @@ func BeginRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
+		restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
+
 		// We use the account name as username!
-		userName = mgr.GetString(definitions.SessionKeyAccount, "")
+		userName = webAuthnRegistrationUserName(mgr)
 		if userName == "" {
 			ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
 			SessionCleaner(ctx)
@@ -352,11 +430,9 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		userName = mgr.GetString(definitions.SessionKeyAccount, "")
-		if userName == "" {
-			userName = mgr.GetString(definitions.SessionKeyUsername, "")
-		}
+		restoreWebAuthnRegistrationIdentityFromFlow(ctx, deps, mgr)
 
+		userName = webAuthnRegistrationUserName(mgr)
 		if userName == "" {
 			ctx.JSON(http.StatusBadRequest, errors.ErrNotLoggedIn.Error())
 
@@ -488,7 +564,9 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		auth.(*AuthState).updateUser(user)
+		if shouldPersistWebAuthnCache(auth.(*AuthState)) {
+			auth.(*AuthState).updateUser(user)
+		}
 
 		auth.PurgeCacheFor(userName)
 
@@ -498,10 +576,7 @@ func FinishRegistration(deps AuthDeps) gin.HandlerFunc {
 		// that ContinueRequiredMFARegistration can advance to the next method or
 		// resume the IdP flow.
 		if mgr.GetBool(definitions.SessionKeyRequireMFAFlow, false) {
-			pending := mgr.GetString(definitions.SessionKeyRequireMFAPending, "")
-			remaining := util.RemoveFromCommaSeparatedList(pending, definitions.MFAMethodWebAuthn)
-
-			mgr.Set(definitions.SessionKeyRequireMFAPending, remaining)
+			flow.RemoveRequireMFAPendingMethod(mgr, definitions.MFAMethodWebAuthn)
 		}
 
 		if err = mgr.Save(ctx); err != nil {
@@ -711,10 +786,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		signCountZero := newSignCount == 0
 		signCountMonotonic := true
 		if oldSignCount != nil {
-			oldValue := *oldSignCount
-			if newSignCount <= oldValue && (newSignCount != 0 || oldValue != 0) {
-				signCountMonotonic = false
-			}
+			signCountMonotonic = isWebAuthnSignCountMonotonic(*oldSignCount, newSignCount)
 		}
 
 		sp.SetAttributes(
@@ -786,6 +858,14 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			level.Warn(authState.Logger()).Log(warnKeyvals...)
 		}
 
+		if oldSignCount != nil && !signCountMonotonic {
+			LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, "WebAuthn sign count rollback detected", false)
+			stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
+			ctx.JSON(http.StatusBadRequest, "WebAuthn sign count rollback detected")
+
+			return
+		}
+
 		oldCredential, newPersistentCredential := updateWebAuthnCredentialAfterLogin(
 			existingCredentials,
 			credential,
@@ -793,15 +873,18 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		)
 
 		if oldCredential != nil {
-			// Update the credential in the backend
-			_ = auth.UpdateWebAuthnCredential(oldCredential, newPersistentCredential)
+			if err = persistWebAuthnLoginUpdate(auth, user, oldCredential, newPersistentCredential); err != nil {
+				LogIDPMFAuthResult(ctx, deps, user.Name, definitions.MFAMethodWebAuthn, err.Error(), false)
+				stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("login", "webauthn", "fail").Inc()
 
-			// Also update in user object for cache
-			for i, c := range user.Credentials {
-				if bytes.Equal(c.ID, credential.ID) {
-					user.Credentials[i] = *newPersistentCredential
-					break
-				}
+				_ = level.Error(authState.Logger()).Log(
+					definitions.LogKeyGUID, authState.Runtime.GUID,
+					definitions.LogKeyMsg, "Failed to persist WebAuthn login credential update",
+					definitions.LogKeyError, err,
+				)
+				ctx.JSON(http.StatusInternalServerError, err.Error())
+
+				return
 			}
 		}
 
@@ -814,8 +897,9 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		ctx.SetCookie("last_mfa_method", "webauthn", 365*24*60*60, "/", "", secure, true)
 
-		// Persist the updated user to Redis (cache)
-		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
+		if shouldPersistWebAuthnCache(authState) {
+			_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), authState.Logger(), authState.Cfg(), authState.Redis(), user, authState.Cfg().GetServer().GetTimeouts().GetRedisWrite())
+		}
 
 		if mgr != nil {
 			// Check if the original password authentication was successful (delayed response case).
@@ -952,6 +1036,10 @@ func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, 
 		return nil, nil
 	}
 
+	if !isWebAuthnSignCountMonotonic(oldCredential.Authenticator.SignCount, credential.Authenticator.SignCount) {
+		return nil, nil
+	}
+
 	newCredential := &mfa.PersistentCredential{
 		Credential: *credential,
 		Name:       oldCredential.Name,
@@ -959,6 +1047,60 @@ func updateWebAuthnCredentialAfterLogin(credentials []mfa.PersistentCredential, 
 	}
 
 	return oldCredential, newCredential
+}
+
+func isWebAuthnSignCountMonotonic(oldSignCount uint32, newSignCount uint32) bool {
+	if newSignCount == 0 && oldSignCount == 0 {
+		return true
+	}
+
+	return newSignCount > oldSignCount
+}
+
+type webAuthnCredentialUpdater interface {
+	UpdateWebAuthnCredential(oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) error
+}
+
+func persistWebAuthnLoginUpdate(
+	updater webAuthnCredentialUpdater,
+	user *backend.User,
+	oldCredential *mfa.PersistentCredential,
+	newCredential *mfa.PersistentCredential,
+) error {
+	if updater == nil || user == nil || oldCredential == nil || newCredential == nil {
+		return nil
+	}
+
+	if err := updater.UpdateWebAuthnCredential(oldCredential, newCredential); err != nil {
+		return err
+	}
+
+	for index, credential := range user.Credentials {
+		if bytes.Equal(credential.ID, newCredential.ID) {
+			user.Credentials[index] = *newCredential
+
+			break
+		}
+	}
+
+	return nil
+}
+
+func shouldPersistWebAuthnCache(auth *AuthState) bool {
+	if auth == nil {
+		return true
+	}
+
+	if !auth.Runtime.RemoteBackendRef.IsZero() {
+		return false
+	}
+
+	mgr := cookie.GetManager(auth.Request.HTTPClientContext)
+	if mgr == nil {
+		return true
+	}
+
+	return definitions.Backend(mgr.GetUint8(definitions.SessionKeyUserBackend, 0)) != definitions.BackendRemote
 }
 
 func hashCredentialID(credentialID []byte) string {

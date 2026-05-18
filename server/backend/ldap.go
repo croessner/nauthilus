@@ -516,7 +516,7 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 
 // extractAttributes extracts string attributes from a Lua table and returns them as a slice of strings.
 func extractAttributes(attrTable *lua.LTable) []string {
-	attributes := make([]string, attrTable.Len())
+	attributes := make([]string, 0, attrTable.Len())
 	attrTable.ForEach(func(index lua.LValue, value lua.LValue) {
 		attributes = append(attributes, value.String())
 	})

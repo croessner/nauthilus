@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/asyncjobs"
 	"github.com/croessner/nauthilus/server/handler/auth"
 	"github.com/croessner/nauthilus/server/handler/bruteforce"
@@ -36,11 +37,18 @@ import (
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
 	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
+	mdopenapivalidation "github.com/croessner/nauthilus/server/middleware/openapivalidation"
+	approuter "github.com/croessner/nauthilus/server/router"
 
 	"github.com/gin-gonic/gin"
 )
 
 var errBackchannelAuthNotConfigured = errors.New("backchannel setup requires at least one configured authentication method: auth.backchannel.basic_auth.enabled=true or auth.backchannel.oidc_bearer.enabled=true")
+
+const (
+	openAPICategory = "openapi"
+	openAPIService  = "spec"
+)
 
 func ensureBackchannelAuthConfigured(cfg config.File, developerMode bool) error {
 	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
@@ -91,6 +99,18 @@ func backchannelAuthMiddleware(
 	return func(ctx *gin.Context) {
 		if !authorizeBackchannelRequest(ctx, cfg, validator, logger) {
 			return
+		}
+
+		ctx.Next()
+	}
+}
+
+func openAPIContextMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		switch ctx.Request.URL.Path {
+		case "/api/v1/openapi.yaml", "/api/v1/openapi.json":
+			ctx.Set(definitions.CtxCategoryKey, openAPICategory)
+			ctx.Set(definitions.CtxServiceKey, openAPIService)
 		}
 
 		ctx.Next()
@@ -171,6 +191,7 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 
 	if hasBackchannelProtectedRouteAuth(cfg, developerMode) {
 		authenticatedGroup = router.Group("/api/v1")
+		authenticatedGroup.Use(openAPIContextMiddleware())
 
 		// OIDC Bearer token middleware (replaces the legacy JWT mechanism).
 		// Uses the IdP's ValidateToken to verify RS256-signed tokens from client_credentials grant.
@@ -184,6 +205,20 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 		}
 
 		authenticatedGroup.Use(mdlua.LuaContextMiddleware())
+
+		openAPIValidationMiddleware, err := mdopenapivalidation.NewManagementMiddleware(
+			cfg.GetServer().GetOpenAPIValidation(),
+			deps.Logger,
+		)
+		if err != nil {
+			return err
+		}
+
+		if openAPIValidationMiddleware != nil {
+			authenticatedGroup.Use(openAPIValidationMiddleware)
+		}
+
+		approuter.RegisterManagementOpenAPI(authenticatedGroup)
 
 		// Register modules (require mandatory authentication)
 		auth.New(deps).Register(authenticatedGroup)

@@ -1,0 +1,111 @@
+scenarios:
+  - grpc-authenticate
+  - grpc-lookup-identity
+  - grpc-list-accounts
+  - grpc-resolve-user
+  - openapi-management-cache-flush-async-status
+  - oidc-authorization-code
+  - oidc-device-code
+  - oidc-authorize-invalid-response-type
+  - oidc-authorize-invalid-client
+  - oidc-authorize-invalid-redirect-uri
+  - oidc-authorize-protocol-relative-redirect-uri
+  - oidc-authorize-encoded-redirect-smuggling-rejected
+  - oidc-authorize-double-encoded-redirect-rejected
+  - oidc-authorize-backslash-redirect-rejected
+  - oidc-authorize-mixed-case-host-redirect-rejected
+  - oidc-authorize-trailing-dot-host-redirect-rejected
+  - oidc-authorize-userinfo-redirect-rejected
+  - oidc-authorize-dot-segment-redirect-rejected
+  - oidc-authorize-duplicate-redirect-uri-rejected
+  - oidc-authorize-response-type-mix-rejected
+  - oidc-authorize-response-type-none-rejected
+  - oidc-authorize-response-type-id-token-rejected
+  - oidc-authorize-pkce-plain-rejected
+  - oidc-authorize-prompt-none-login-required
+  - oidc-login-direct-access-rejected
+  - oidc-login-invalid-password
+  - oidc-consent-denied
+  - oidc-login-csrf-missing-rejected
+  - oidc-login-csrf-foreign-token-rejected
+  - oidc-consent-csrf-missing-rejected
+  - oidc-consent-csrf-foreign-token-rejected
+  - oidc-session-tampered-cookie-rejected
+  - oidc-session-fixation-cookie-ignored
+  - oidc-flow-replay-after-callback-rejected
+  - oidc-cross-edge-flow-replay-after-callback-rejected
+  - oidc-token-invalid-client-secret
+  - oidc-token-invalid-code
+  - oidc-token-unsupported-grant
+  - oidc-token-json-body-rejected
+  - oidc-token-duplicate-client-id-rejected
+  - oidc-token-duplicate-code-rejected
+  - oidc-token-duplicate-redirect-uri-rejected
+  - oidc-token-combined-client-auth-rejected
+  - oidc-token-redirect-mismatch-rejected
+  - oidc-token-pkce-missing-verifier-rejected
+  - oidc-token-pkce-wrong-verifier-rejected
+  - oidc-token-code-client-confusion-rejected
+  - oidc-token-code-reuse-rejected
+  - oidc-token-refresh-client-mismatch-rejected
+  - oidc-token-refresh-reuse-rejected
+  - oidc-token-refresh-after-logout-rejected
+  - oidc-introspect-invalid-client-secret
+  - oidc-introspect-alg-none-token-inactive
+  - oidc-introspect-unknown-kid-token-inactive
+  - oidc-revoke-endpoint-not-exposed
+  - oidc-discovery-metadata-consistent
+  - oidc-userinfo-missing-token
+  - oidc-userinfo-invalid-token
+  - oidc-device-missing-client
+  - oidc-device-invalid-client
+  - oidc-device-unsupported-client
+  - oidc-device-token-authorization-pending
+  - oidc-device-token-slow-down
+  - oidc-device-token-expired-code
+  - oidc-device-token-client-mismatch-rejected
+  - oidc-device-invalid-user-code
+  - oidc-device-unicode-user-code-rejected
+  - oidc-device-user-code-bruteforce-rejected
+  - oidc-device-token-consent-denied
+  - oidc-device-consent-denied
+  - oidc-device-token-reuse-rejected
+  - oidc-totp-invalid-code
+  - oidc-recovery-invalid-code
+  - oidc-recovery-code-reuse-rejected
+  - oidc-webauthn-missing-credential
+  - oidc-webauthn-tampered-assertion
+  - oidc-webauthn-wrong-challenge
+  - oidc-webauthn-wrong-origin
+  - oidc-webauthn-unknown-credential
+  - oidc-webauthn-replay-assertion
+  - oidc-webauthn-sign-count-rollback
+  - saml-sso
+  - totp-registration-login
+  - recovery-code-generation-consumption
+  - webauthn-registration-login
+  - authority-webauthn-sign-count
+  - multi-edge-oidc-continuity
+  - multi-edge-webauthn-continuity
+  - edge-no-local-credentials
+  - redis-network-separation
+  - missing-caller-auth
+  - missing-scope
+  - expired-backend-ref
+  - authority-unavailable
+  - idempotency-replay
+
+commands:
+  profile-check: "GOEXPERIMENT=runtimesecret go test ./contrib/identity-proxy-e2e"
+  stack-up: "contrib/identity-proxy-e2e/scripts/run.sh up"
+  grpc-smoke: "contrib/identity-proxy-e2e/scripts/run.sh rpc"
+  redis-check: "contrib/identity-proxy-e2e/scripts/run.sh redis-check"
+  smoke: "contrib/identity-proxy-e2e/scripts/run.sh smoke"
+  browser: "npm --prefix contrib/identity-proxy-e2e run browser"
+  stack-down: "contrib/identity-proxy-e2e/scripts/run.sh down"
+
+notes:
+  - "The profile check is intentionally local and fast; it asserts the split Redis, remote-only edge, mTLS, bearer scopes, and virtual authenticator harness."
+  - "The Go smoke uses the supported generated OpenAPI management client against the live authority management API."
+  - "The browser smoke uses Playwright and must create a CDP virtual authenticator before WebAuthn registration or login."
+  - "The Compose topology keeps authority Redis and edge Redis on separate internal networks so neither Nauthilus role can address the other role's Redis."

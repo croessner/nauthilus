@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:generate ../../../../scripts/generate-grpc-auth-proto.sh
+//go:generate ../../../../scripts/generate-grpc-proto.sh
 
 // Package authv1 contains the versioned gRPC auth service contract.
 package authv1

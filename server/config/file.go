@@ -466,6 +466,47 @@ func (f *FileSettings) GetLDAP() *LDAPSection {
 	return f.LDAP
 }
 
+// GetNauthilusAuthorityClients returns outbound authority client configs.
+func (f *FileSettings) GetNauthilusAuthorityClients() map[string]*NauthilusAuthorityClientSection {
+	if f == nil || f.Runtime == nil || f.Runtime.Clients.GRPC.NauthilusAuthorities == nil {
+		return map[string]*NauthilusAuthorityClientSection{}
+	}
+
+	return f.Runtime.Clients.GRPC.NauthilusAuthorities
+}
+
+// GetNauthilusAuthorityClient returns one outbound authority client config by name.
+func (f *FileSettings) GetNauthilusAuthorityClient(name string) (*NauthilusAuthorityClientSection, bool) {
+	clients := f.GetNauthilusAuthorityClients()
+	client, ok := clients[name]
+
+	return client, ok
+}
+
+// GetRemoteBackend returns one remote backend config by name.
+func (f *FileSettings) GetRemoteBackend(name string) (*RemoteBackendSection, bool) {
+	if f == nil || f.Auth == nil || f.Auth.Backends.Remote == nil {
+		return nil, false
+	}
+
+	if name == "" || name == definitions.DefaultBackendName {
+		name = RemoteBackendDefaultName
+	}
+
+	backend, ok := f.Auth.Backends.Remote[name]
+
+	return backend, ok
+}
+
+// HaveRemoteBackend reports whether any remote backend is configured.
+func (f *FileSettings) HaveRemoteBackend() bool {
+	if f == nil || f.Auth == nil {
+		return false
+	}
+
+	return len(f.Auth.Backends.Remote) > 0
+}
+
 /*
  * Backend server monitoring
  */
@@ -2380,7 +2421,10 @@ func (f *FileSettings) validate() (err error) {
 		f.validatePassDBBackends,
 		f.validateAddress,
 		f.validateTLSSettings,
+		f.validateRemoteAuthorityClients,
+		f.validateRemoteBackends,
 		f.validateGRPCAuthServer,
+		f.validateOpenAPIValidation,
 
 		// Without errors, but fixing things
 		f.setDefaultInstanceName,
@@ -2423,6 +2467,62 @@ func (f *FileSettings) validateGRPCAuthServer() error {
 	return ValidateGRPCAuthServerConfig(f)
 }
 
+func (f *FileSettings) validateOpenAPIValidation() error {
+	validation := f.GetServer().GetOpenAPIValidation()
+	if validation == nil {
+		return nil
+	}
+
+	if err := validateOpenAPIValidationMode(validation); err != nil {
+		return err
+	}
+
+	return validateOpenAPIValidationOperations(validation)
+}
+
+func validateOpenAPIValidationMode(validation *OpenAPIValidation) error {
+	if validation.Enforce && !validation.Enabled {
+		return fmt.Errorf("runtime.servers.http.openapi_validation.enabled must be true when enforce=true")
+	}
+
+	if validation.Enabled && !validation.Enforce {
+		return fmt.Errorf("runtime.servers.http.openapi_validation.enforce must be true when enabled=true; warn-only runtime validation is not supported")
+	}
+
+	if !validation.Enabled && len(validation.Operations) == 0 {
+		return nil
+	}
+
+	if validation.Enabled && len(validation.Operations) == 0 {
+		return fmt.Errorf("runtime.servers.http.openapi_validation.operations must contain at least one operation when enabled=true")
+	}
+
+	return nil
+}
+
+func validateOpenAPIValidationOperations(validation *OpenAPIValidation) error {
+	seen := make(map[string]struct{}, len(validation.Operations))
+	allowedOperations := AllowedOpenAPIValidationOperations()
+
+	for _, operation := range validation.Operations {
+		if strings.TrimSpace(operation) != operation || operation == "" {
+			return fmt.Errorf("runtime.servers.http.openapi_validation.operations contains an empty or whitespace-padded operation")
+		}
+
+		if !IsOpenAPIValidationOperationAllowed(operation) {
+			return fmt.Errorf("runtime.servers.http.openapi_validation.operations contains unsupported operation %q; allowed operations: %s", operation, strings.Join(allowedOperations, ", "))
+		}
+
+		if _, exists := seen[operation]; exists {
+			return fmt.Errorf("runtime.servers.http.openapi_validation.operations contains duplicate operation %q", operation)
+		}
+
+		seen[operation] = struct{}{}
+	}
+
+	return nil
+}
+
 func (f *FileSettings) validateTLSSettings() error {
 	server := f.GetServer()
 	if err := ValidateTLSCipherSuites(
@@ -2438,6 +2538,215 @@ func (f *FileSettings) validateTLSSettings() error {
 		server.GetHTTPClient().GetTLS().GetMinTLSVersion(),
 		server.GetHTTPClient().GetTLS().GetCipherSuites(),
 	)
+}
+
+func (f *FileSettings) validateRemoteAuthorityClients() error {
+	if f == nil {
+		return nil
+	}
+
+	for name, authority := range f.GetNauthilusAuthorityClients() {
+		path := "runtime.clients.grpc.nauthilus_authorities." + name
+		if authority == nil {
+			return fmt.Errorf("%s is empty", path)
+		}
+
+		if strings.TrimSpace(authority.GetAddress()) == "" {
+			return fmt.Errorf("%s.address is required", path)
+		}
+
+		if err := checkAddress(authority.GetAddress()); err != nil {
+			return fmt.Errorf("%s.address: %w", path, err)
+		}
+
+		if err := validateRemoteAuthorityCallerAuth(path, authority.GetCallerAuth()); err != nil {
+			return err
+		}
+
+		if err := validateRemoteAuthorityTLS(path, authority); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateRemoteAuthorityCallerAuth(path string, callerAuth *AuthorityCallerAuthSection) error {
+	if callerAuth == nil || !callerAuth.HasCallerAuth() {
+		return fmt.Errorf("%s.caller_auth requires caller auth for authority RPCs", path)
+	}
+
+	if err := validateRemoteAuthorityBasicAuth(path, callerAuth); err != nil {
+		return err
+	}
+
+	oidc := &callerAuth.OIDCBearer
+	if err := validateRemoteAuthorityOIDC(path, oidc); err != nil {
+		return err
+	}
+
+	if oidc.GetStaticTokenFile() != "" && !viper.GetBool("developer_mode") && !oidc.StaticTokenAllowed() {
+		return fmt.Errorf("%s.caller_auth.oidc_bearer.static_token_file requires developer_mode=true or static_token_emergency_mode=true", path)
+	}
+
+	return nil
+}
+
+func validateRemoteAuthorityBasicAuth(path string, callerAuth *AuthorityCallerAuthSection) error {
+	if callerAuth == nil || !callerAuth.BasicAuth.IsEnabled() {
+		return nil
+	}
+
+	if strings.TrimSpace(callerAuth.BasicAuth.GetUsername()) == "" {
+		return fmt.Errorf("%s.caller_auth.basic_auth.username is required when basic_auth is enabled", path)
+	}
+
+	if callerAuth.BasicAuth.GetPassword().IsZero() {
+		return fmt.Errorf("%s.caller_auth.basic_auth.password is required when basic_auth is enabled", path)
+	}
+
+	return nil
+}
+
+func validateRemoteAuthorityOIDC(path string, oidc *AuthorityOIDCBearerSection) error {
+	if oidc == nil || !oidc.IsEnabled() {
+		return nil
+	}
+
+	if oidc.GetMode() != AuthorityClientCredentialsMode {
+		return fmt.Errorf("%s.caller_auth.oidc_bearer.mode must be %s", path, AuthorityClientCredentialsMode)
+	}
+
+	if strings.TrimSpace(oidc.GetTokenEndpoint()) == "" {
+		return fmt.Errorf("%s.caller_auth.oidc_bearer.token_endpoint is required", path)
+	}
+
+	if strings.TrimSpace(oidc.GetClientID()) == "" {
+		return fmt.Errorf("%s.caller_auth.oidc_bearer.client_id is required", path)
+	}
+
+	return validateRemoteAuthorityOIDCMethod(path, oidc)
+}
+
+func validateRemoteAuthorityOIDCMethod(path string, oidc *AuthorityOIDCBearerSection) error {
+	switch oidc.GetTokenEndpointAuthMethod() {
+	case AuthorityClientSecretBasicAuth, AuthorityClientSecretPostAuth:
+		if oidc.GetClientSecret().IsZero() {
+			return fmt.Errorf("%s.caller_auth.oidc_bearer.client_secret is required for %s", path, oidc.GetTokenEndpointAuthMethod())
+		}
+	case AuthorityPrivateKeyJWTAuth:
+		if strings.TrimSpace(oidc.ClientPrivateKeyFile) == "" {
+			return fmt.Errorf("%s.caller_auth.oidc_bearer.client_private_key_file is required for %s", path, AuthorityPrivateKeyJWTAuth)
+		}
+	default:
+		return fmt.Errorf("%s.caller_auth.oidc_bearer.token_endpoint_auth_method is required", path)
+	}
+
+	return nil
+}
+
+func validateRemoteAuthorityTLS(path string, authority *NauthilusAuthorityClientSection) error {
+	if authority == nil {
+		return nil
+	}
+
+	tlsConfig := authority.GetTLS()
+	if !tlsConfig.IsEnabled() && !isLoopbackListenAddress(authority.GetAddress()) {
+		return fmt.Errorf("%s.address %q requires TLS; plaintext authority gRPC is only allowed on loopback targets", path, authority.GetAddress())
+	}
+
+	if !tlsConfig.IsEnabled() {
+		return nil
+	}
+
+	if tlsConfig.GetMinTLSVersion() != defaultTLSMinVersion && tlsConfig.GetMinTLSVersion() != TLSVersion13 {
+		return fmt.Errorf("%s.tls.min_tls_version must be TLS1.2 or TLS1.3", path)
+	}
+
+	if !isLoopbackListenAddress(authority.GetAddress()) {
+		if tlsConfig.CA == "" || tlsConfig.Cert == "" || tlsConfig.Key == "" {
+			return fmt.Errorf("%s.tls requires mTLS ca, cert, and key for split-deployment authority targets", path)
+		}
+	}
+
+	if (tlsConfig.Cert == "") != (tlsConfig.Key == "") {
+		return fmt.Errorf("%s.tls.cert and %s.tls.key must be configured together", path, path)
+	}
+
+	return nil
+}
+
+func (f *FileSettings) validateRemoteBackends() error {
+	if f == nil || f.Auth == nil {
+		return nil
+	}
+
+	authorities := f.GetNauthilusAuthorityClients()
+	for name, backend := range f.Auth.Backends.Remote {
+		if err := validateRemoteBackendDefinition(name, backend, authorities); err != nil {
+			return err
+		}
+	}
+
+	return f.validateRemoteBackendOrder()
+}
+
+func validateRemoteBackendDefinition(
+	name string,
+	backend *RemoteBackendSection,
+	authorities map[string]*NauthilusAuthorityClientSection,
+) error {
+	path := "auth.backends.remote." + name
+	if backend == nil {
+		return fmt.Errorf("%s is empty", path)
+	}
+
+	if backend.GetAuthority() == "" {
+		return fmt.Errorf("%s.authority is required", path)
+	}
+
+	if _, ok := authorities[backend.GetAuthority()]; !ok {
+		return fmt.Errorf("%s.authority references unknown authority %q", path, backend.GetAuthority())
+	}
+
+	if backend.GetMode() != RemoteBackendModeNauthilus {
+		return fmt.Errorf("%s.mode must be %q", path, RemoteBackendModeNauthilus)
+	}
+
+	return validateRemoteBackendOperations(path, backend.GetAllowedOperations())
+}
+
+func validateRemoteBackendOperations(path string, operations []string) error {
+	if len(operations) == 0 {
+		return fmt.Errorf("%s.allowed_operations must contain at least one operation", path)
+	}
+
+	for index, operation := range operations {
+		if _, ok := validRemoteBackendOperations[operation]; !ok {
+			return fmt.Errorf("%s.allowed_operations[%d] contains unsupported operation %q", path, index, operation)
+		}
+	}
+
+	return nil
+}
+
+func (f *FileSettings) validateRemoteBackendOrder() error {
+	for _, backend := range f.GetServer().GetBackends() {
+		if backend.Get() != definitions.BackendRemote {
+			continue
+		}
+
+		name := backend.GetName()
+		if name == "" || name == definitions.DefaultBackendName {
+			name = RemoteBackendDefaultName
+		}
+
+		if _, ok := f.GetRemoteBackend(name); !ok {
+			return fmt.Errorf("auth.backends.order references remote backend %q but auth.backends.remote.%s is missing", name, name)
+		}
+	}
+
+	return nil
 }
 
 // RuntimeGRPCAuthServerProvider exposes the gRPC authority listener settings.
@@ -3488,6 +3797,15 @@ func bindEnvs(i any, parts ...string) error {
 			if err != nil {
 				return err
 			}
+		} else if t.Type.Kind() == reflect.Map {
+			key := strings.Join(append(parts, tag), ".")
+			if err := viper.BindEnv(key); err != nil {
+				return fmt.Errorf("failed to bind %q: %w", key, err)
+			}
+
+			if err := bindMapElementEnvs(t.Type, append(parts, tag)...); err != nil {
+				return err
+			}
 		} else if v.Kind() == reflect.Struct && !isSecret && !isSecurityHeaderValue {
 			err := bindEnvs(v.Addr().Interface(), append(parts, tag)...)
 			if err != nil {
@@ -3504,6 +3822,144 @@ func bindEnvs(i any, parts ...string) error {
 	}
 
 	return nil
+}
+
+func bindMapElementEnvs(mapType reflect.Type, parts ...string) error {
+	if mapType.Kind() != reflect.Map {
+		return nil
+	}
+
+	elementType := dereferenceConfigType(mapType.Elem())
+	if elementType == nil || elementType.Kind() != reflect.Struct {
+		return nil
+	}
+
+	leafPaths := configLeafPathsForEnv(elementType)
+	if len(leafPaths) == 0 {
+		return nil
+	}
+
+	envPrefix := "NAUTHILUS_" + strings.ToUpper(strings.ReplaceAll(strings.Join(parts, "_"), ".", "_")) + "_"
+	for _, entry := range os.Environ() {
+		if err := bindMapElementEnvEntry(entry, envPrefix, parts, leafPaths); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func bindMapElementEnvEntry(entry string, envPrefix string, parts []string, leafPaths []string) error {
+	envName, envValue, ok := strings.Cut(entry, "=")
+	if !ok || !strings.HasPrefix(envName, envPrefix) {
+		return nil
+	}
+
+	remainder := strings.TrimPrefix(envName, envPrefix)
+	for _, leafPath := range leafPaths {
+		bound, err := bindMapLeafEnv(remainder, envValue, parts, leafPath)
+		if err != nil {
+			return err
+		}
+
+		if bound {
+			return nil
+		}
+	}
+
+	return nil
+}
+
+func bindMapLeafEnv(remainder string, envValue string, parts []string, leafPath string) (bool, error) {
+	leafEnv := strings.ToUpper(strings.ReplaceAll(leafPath, ".", "_"))
+	if remainder == leafEnv || !strings.HasSuffix(remainder, "_"+leafEnv) {
+		return false, nil
+	}
+
+	mapKeyEnv := strings.TrimSuffix(remainder, "_"+leafEnv)
+	if mapKeyEnv == "" {
+		return false, nil
+	}
+
+	mapKey := strings.ToLower(mapKeyEnv)
+	configParts := append(append(parts, mapKey), strings.Split(leafPath, ".")...)
+
+	configKey := strings.Join(configParts, ".")
+	if err := viper.BindEnv(configKey); err != nil {
+		return false, fmt.Errorf("failed to bind %q: %w", configKey, err)
+	}
+
+	viper.Set(configKey, envValue)
+
+	return true, nil
+}
+
+func configLeafPathsForEnv(typ reflect.Type) []string {
+	var paths []string
+	collectConfigLeafPaths(typ, "", &paths, make(map[reflect.Type]struct{}))
+
+	return paths
+}
+
+func collectConfigLeafPaths(typ reflect.Type, prefix string, paths *[]string, seen map[reflect.Type]struct{}) {
+	typ = dereferenceConfigType(typ)
+	if typ == nil {
+		return
+	}
+
+	if appendConfigLeafPath(typ, prefix, paths) {
+		return
+	}
+
+	if _, ok := seen[typ]; ok {
+		if prefix != "" {
+			*paths = append(*paths, prefix)
+		}
+
+		return
+	}
+
+	seen[typ] = struct{}{}
+	defer delete(seen, typ)
+
+	collectConfigStructLeafPaths(typ, prefix, paths, seen)
+}
+
+func appendConfigLeafPath(typ reflect.Type, prefix string, paths *[]string) bool {
+	if isConfigScalarType(typ) || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Map {
+		*paths = append(*paths, prefix)
+
+		return true
+	}
+
+	if typ.Kind() != reflect.Struct {
+		*paths = append(*paths, prefix)
+
+		return true
+	}
+
+	return false
+}
+
+func collectConfigStructLeafPaths(typ reflect.Type, prefix string, paths *[]string, seen map[reflect.Type]struct{}) {
+	for field := range typ.NumField() {
+		structField := typ.Field(field)
+		if !structField.IsExported() {
+			continue
+		}
+
+		tagName, tagOptions, err := parseMapstructureTag(structField)
+		if err != nil || tagName == "-" || slices.Contains(tagOptions, "remain") {
+			continue
+		}
+
+		next := tagName
+		if prefix != "" {
+			next = prefix + "." + tagName
+		}
+
+		collectConfigLeafPaths(structField.Type, next, paths, seen)
+	}
 }
 
 // NewFile is the constructor for a ConfigFile object.

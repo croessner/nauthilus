@@ -25,6 +25,16 @@ type UserBackendData struct {
 	AuthState        *core.AuthState
 }
 
+// UsesRemoteWebAuthnAuthority reports whether WebAuthn writes must stay authority-owned.
+func (d *UserBackendData) UsesRemoteWebAuthnAuthority() bool {
+	if d == nil || d.AuthState == nil {
+		return false
+	}
+
+	return d.AuthState.Runtime.UsedPassDBBackend == definitions.BackendRemote ||
+		!d.AuthState.Runtime.RemoteBackendRef.IsZero()
+}
+
 type webAuthnCredentialProvider interface {
 	GetWebAuthnCredentials() ([]mfa.PersistentCredential, error)
 }
@@ -82,17 +92,88 @@ func (h *FrontendHandler) GetUserBackendData(ctx *gin.Context) (*UserBackendData
 			data.UniqueUserID = uniqueID
 		}
 
-		if secret, ok := authState.GetTOTPSecretOk(); ok && secret != "" {
-			data.HaveTOTP = true
+		loadedPublicMFA, err := h.applyPublicMFAState(ctx, data, authState)
+		if err != nil {
+			return nil, err
 		}
 
-		codes := authState.GetTOTPRecoveryCodes()
-		data.NumRecoveryCodes = len(codes)
+		if !loadedPublicMFA {
+			if secret, ok := authState.GetTOTPSecretOk(); ok && secret != "" {
+				data.HaveTOTP = true
+			}
 
-		h.resolveWebAuthnUser(ctx, mgr, data, authState)
+			codes := authState.GetTOTPRecoveryCodes()
+			data.NumRecoveryCodes = len(codes)
+
+			h.resolveWebAuthnUser(ctx, mgr, data, authState)
+		}
 	}
 
 	return data, nil
+}
+
+func (h *FrontendHandler) applyPublicMFAState(ctx *gin.Context, data *UserBackendData, authState *core.AuthState) (bool, error) {
+	if h == nil || data == nil || authState == nil {
+		return false, nil
+	}
+
+	provider, ok := h.publicMFAStateProvider(authState)
+	if !ok {
+		return false, nil
+	}
+
+	state, err := provider.GetPublicMFAState(authState, true)
+	if err != nil {
+		return true, err
+	}
+
+	data.HaveTOTP = state.HasTOTP
+	data.NumRecoveryCodes = state.RecoveryCodeCount
+	data.HaveWebAuthn = state.HasWebAuthn && len(state.WebAuthnCredentials) > 0
+
+	if data.HaveWebAuthn {
+		user := &backend.User{
+			Id:          data.UniqueUserID,
+			Name:        data.Username,
+			DisplayName: data.DisplayName,
+			Credentials: state.WebAuthnCredentials,
+		}
+		data.WebAuthnUser = user
+
+		if data.UniqueUserID != "" {
+			return true, backend.SaveWebAuthnToRedis(
+				ctx.Request.Context(),
+				h.deps.Logger,
+				h.deps.Cfg,
+				h.deps.Redis,
+				user,
+				h.deps.Cfg.GetServer().GetRedis().GetPosCacheTTL(),
+			)
+		}
+
+		return true, nil
+	}
+
+	if data.UniqueUserID != "" {
+		return true, backend.DeleteWebAuthnFromRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, data.UniqueUserID)
+	}
+
+	return true, nil
+}
+
+func (h *FrontendHandler) publicMFAStateProvider(authState *core.AuthState) (core.PublicMFAStateProvider, bool) {
+	if authState == nil {
+		return nil, false
+	}
+
+	manager := authState.GetBackendManager(authState.Runtime.UsedPassDBBackend, authState.Runtime.BackendName)
+	if manager == nil {
+		return nil, false
+	}
+
+	provider, ok := manager.(core.PublicMFAStateProvider)
+
+	return provider, ok
 }
 
 func (h *FrontendHandler) resolveWebAuthnUser(ctx *gin.Context, mgr cookie.Manager, data *UserBackendData, provider webAuthnCredentialProvider) {

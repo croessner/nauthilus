@@ -16,9 +16,11 @@
 package core
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/model/mfa"
@@ -138,6 +140,46 @@ func TestDelayedResponseWithCorrectCredentialsAllowAfterMFA(t *testing.T) {
 	assert.True(t, isValid, "User with correct initial credentials must be allowed after MFA")
 }
 
+func TestPersistWebAuthnLoginUpdateFailsClosedOnRejectedPersistence(t *testing.T) {
+	persistenceErr := errors.New("authority rejected WebAuthn update")
+	user := &backend.User{
+		Id:   "uid-123",
+		Name: "testuser-closed",
+		Credentials: []mfa.PersistentCredential{
+			{
+				Credential: webauthn.Credential{
+					ID: []byte("device-a"),
+					Authenticator: webauthn.Authenticator{
+						SignCount: 3,
+					},
+				},
+				Name: "Security key",
+			},
+		},
+	}
+	oldCredential := user.Credentials[0]
+	newCredential := oldCredential
+	newCredential.Authenticator.SignCount = 4
+	store := failingWebAuthnCredentialUpdater{err: persistenceErr}
+
+	err := persistWebAuthnLoginUpdate(store, user, &oldCredential, &newCredential)
+	if !errors.Is(err, persistenceErr) {
+		t.Fatalf("persistWebAuthnLoginUpdate() error = %v, want %v", err, persistenceErr)
+	}
+
+	if got := user.Credentials[0].Authenticator.SignCount; got != 3 {
+		t.Fatalf("cached credential sign count = %d, want unchanged 3", got)
+	}
+}
+
+type failingWebAuthnCredentialUpdater struct {
+	err error
+}
+
+func (u failingWebAuthnCredentialUpdater) UpdateWebAuthnCredential(*mfa.PersistentCredential, *mfa.PersistentCredential) error {
+	return u.err
+}
+
 func TestUpdateWebAuthnCredentialAfterLoginKeepsDeviceData(t *testing.T) {
 	now := time.Date(2026, time.January, 30, 12, 0, 0, 0, time.UTC)
 
@@ -180,4 +222,31 @@ func TestUpdateWebAuthnCredentialAfterLoginKeepsDeviceData(t *testing.T) {
 		assert.Equal(t, now, updatedCredential.LastUsed)
 		assert.Equal(t, []byte("device-b"), updatedCredential.ID)
 	}
+}
+
+func TestUpdateWebAuthnCredentialAfterLoginRejectsStaleSignCount(t *testing.T) {
+	now := time.Date(2026, time.January, 30, 12, 0, 0, 0, time.UTC)
+	credentials := []mfa.PersistentCredential{
+		{
+			Credential: webauthn.Credential{
+				ID: []byte("device-a"),
+				Authenticator: webauthn.Authenticator{
+					SignCount: 7,
+				},
+			},
+			Name:     "Security key",
+			LastUsed: time.Date(2026, time.January, 29, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	loginCredential := &webauthn.Credential{
+		ID: []byte("device-a"),
+		Authenticator: webauthn.Authenticator{
+			SignCount: 7,
+		},
+	}
+
+	oldCredential, updatedCredential := updateWebAuthnCredentialAfterLogin(credentials, loginCredential, now)
+
+	assert.Nil(t, oldCredential)
+	assert.Nil(t, updatedCredential)
 }

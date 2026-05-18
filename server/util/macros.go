@@ -22,6 +22,11 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 )
 
+const (
+	macroCaptureGroupCapacity = 3
+	emailAddressPartCount     = 2
+)
+
 // MacroSource holds all values that might be used in macros.
 type MacroSource struct {
 	Username    string
@@ -75,7 +80,7 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 		remoteIP string
 	)
 
-	macroResult := make([]string, 0, 3) //nolint:gomnd // Preallocate three
+	macroResult := make([]string, 0, macroCaptureGroupCapacity)
 	pattern := `%([LURT]*)?\{([^\}]*)\}`
 	regObj := regexp.MustCompile(pattern)
 
@@ -105,8 +110,7 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 	splitUsername := func() []string {
 		if strings.Contains(m.Username, "@") {
 			split := strings.Split(m.Username, "@")
-			//nolint:gomnd // E-mail address format
-			if len(split) <= 2 {
+			if len(split) <= emailAddressPartCount {
 				return split
 			}
 		}
@@ -144,8 +148,7 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 		dest = replaceFirst(user)
 	case "username":
 		split := splitUsername()
-		//nolint:gomnd // E-mail address format
-		if len(split) == 2 {
+		if len(split) == emailAddressPartCount {
 			username = split[0]
 		} else {
 			username = m.Username
@@ -156,8 +159,7 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 		dest = replaceFirst(username)
 	case "domain":
 		split := splitUsername()
-		//nolint:gomnd // E-mail address format
-		if len(split) == 2 {
+		if len(split) == emailAddressPartCount {
 			domain = split[1]
 		}
 

@@ -768,6 +768,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),
 		attribute.Int("scripts", plannedCount),
+		attribute.String("mode", mode),
 	)
 	if err != nil {
 		pspan.RecordError(err)
@@ -813,6 +814,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		pstartCtx, pstart := tr.Start(fctx, "subject_sources.parallel.start",
 			attribute.Int("runnable", len(level)),
 			attribute.Int("level", levelIndex),
+			attribute.String("mode", mode),
 		)
 		_ = pstartCtx
 
@@ -825,12 +827,21 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				sCtx, sSpan := tr.Start(fctx, "subject_sources.script",
 					attribute.String("name", sc.Name),
 					attribute.String("mode", mode),
+					attribute.Int("level", levelIndex),
 				)
 				_ = sCtx
+				scriptTrace := lualib.NewLuaScriptTrace(lualib.LuaScriptTraceOptions{
+					Kind:       lualib.LuaScriptKindSubject,
+					ScriptName: sc.Name,
+					Mode:       mode,
+					Level:      levelIndex,
+				})
 
 				// Per-subject-source state from bounded vmpool
 				actx, asp := tr.Start(egCtx, "subject_sources.vm.acquire",
 					attribute.String("name", sc.Name),
+					attribute.String("mode", mode),
+					attribute.Int("level", levelIndex),
 				)
 				Llocal, acqErr := pool.Acquire(actx)
 				asp.End()
@@ -903,6 +914,8 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				// Environment preparation span
 				envCtx, envSpan := tr.Start(fctx, "subject_sources.env.prepare",
 					attribute.String("name", sc.Name),
+					attribute.String("mode", mode),
+					attribute.Int("level", levelIndex),
 				)
 				_ = envCtx
 
@@ -959,7 +972,11 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				Llocal.SetContext(luaCtx)
 
 				// Prepare per-request environment so that request-local globals and module bindings are visible
-				_, mspan := tr.Start(envCtx, "subject_sources.env.modules")
+				_, mspan := tr.Start(envCtx, "subject_sources.env.modules",
+					attribute.String("name", sc.Name),
+					attribute.String("mode", mode),
+					attribute.Int("level", levelIndex),
+				)
 				luapool.PrepareRequestEnv(Llocal)
 
 				// Bind request-scoped modules into reqEnv so that require() resolves correctly.
@@ -1115,11 +1132,15 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				// Execute script
 				execCtx, execSpan := tr.Start(fctx, "subject_sources.execute",
 					attribute.String("name", sc.Name),
+					attribute.String("mode", mode),
+					attribute.Int("level", levelIndex),
 				)
-				_ = execCtx
 
+				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.package_path")
 				if e := lualib.PackagePath(Llocal, cfg); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
+					packagePathSpan.RecordError(e)
+					packagePathSpan.End()
 					execSpan.RecordError(e)
 					execSpan.End()
 					r.recordSubjectScriptResult(egCtx, sc.Name, false, subjectStatusText(localStatus), time.Since(scriptStarted), e)
@@ -1127,8 +1148,13 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					return e
 				}
 
+				packagePathSpan.End()
+
+				_, loadSpan := scriptTrace.Start(execCtx, "lua.script.load_chunk")
 				if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
+					loadSpan.RecordError(e)
+					loadSpan.End()
 					execSpan.RecordError(e)
 					execSpan.End()
 					r.recordSubjectScriptResult(egCtx, sc.Name, false, subjectStatusText(localStatus), time.Since(scriptStarted), e)
@@ -1136,7 +1162,12 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					return e
 				}
 
+				loadSpan.End()
+
 				// Call subject source function (reqEnv-first lookup)
+				_, lookupSpan := scriptTrace.Start(execCtx, "lua.script.lookup_entrypoint",
+					attribute.String("lua.entrypoint", definitions.LuaFnCallSubject),
+				)
 				subjectFunc := lua.LNil
 				if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
 					if fn := Llocal.GetField(v, definitions.LuaFnCallSubject); fn != nil {
@@ -1151,6 +1182,9 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 				if subjectFunc.Type() != lua.LTFunction {
 					e := fmt.Errorf("entry function '%s' is not defined in Lua subject source %s", definitions.LuaFnCallSubject, sc.Name)
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
+					lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", false))
+					lookupSpan.RecordError(e)
+					lookupSpan.End()
 					execSpan.RecordError(e)
 					execSpan.End()
 					r.recordSubjectScriptResult(egCtx, sc.Name, false, subjectStatusText(localStatus), time.Since(scriptStarted), e)
@@ -1158,8 +1192,16 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					return e
 				}
 
+				lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", true))
+				lookupSpan.End()
+
+				_, callSpan := scriptTrace.Start(execCtx, "lua.script.call",
+					attribute.String("lua.entrypoint", definitions.LuaFnCallSubject),
+				)
 				if e := Llocal.CallByParam(lua.P{Fn: subjectFunc, NRet: 2, Protect: true}, request); e != nil {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
+					callSpan.RecordError(e)
+					callSpan.End()
 					execSpan.RecordError(e)
 					execSpan.End()
 					r.recordSubjectScriptResult(egCtx, sc.Name, false, subjectStatusText(localStatus), time.Since(scriptStarted), e)
@@ -1167,6 +1209,9 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					return e
 				}
 
+				callSpan.End()
+
+				_, decodeSpan := scriptTrace.Start(execCtx, "lua.script.decode_result")
 				ret := Llocal.ToInt(-1)
 				Llocal.Pop(1)
 				takeAction := Llocal.ToBool(-1)
@@ -1178,6 +1223,11 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.Int("result", ret),
 					attribute.Bool("action", takeAction),
 				)
+				decodeSpan.SetAttributes(
+					attribute.Int("lua.result", ret),
+					attribute.Bool("lua.action", takeAction),
+				)
+				decodeSpan.End()
 
 				execSpan.End()
 
@@ -1241,7 +1291,11 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		pstart.End()
 
 		// Wait span to cover synchronization
-		wctx, wspan := tr.Start(fctx, "subject_sources.parallel.wait")
+		wctx, wspan := tr.Start(fctx, "subject_sources.parallel.wait",
+			attribute.Int("level", levelIndex),
+			attribute.Int("runnable", len(level)),
+			attribute.String("mode", mode),
+		)
 		_ = wctx
 
 		if e := g.Wait(); e != nil {
@@ -1261,6 +1315,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		mctx, mspan := tr.Start(fctx, "subject_sources.level.merge",
 			attribute.Int("level", levelIndex),
 			attribute.Int("scripts", len(levelResults)),
+			attribute.String("mode", mode),
 		)
 		_ = mctx
 
@@ -1395,14 +1450,7 @@ func countSubjectSourcesForMode(sources []*LuaSubjectSource, mode pipeline.ModeM
 }
 
 func subjectModeText(mode pipeline.ModeMask) string {
-	switch mode {
-	case pipeline.ModeNoAuth:
-		return "no_auth"
-	case pipeline.ModeAuthenticated:
-		return "authenticated"
-	default:
-		return "unauthenticated"
-	}
+	return pipeline.ModeText(mode)
 }
 
 func requestPolicyAuthState(r *Request) policycollection.AuthState {

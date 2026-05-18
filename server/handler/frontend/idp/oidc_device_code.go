@@ -329,8 +329,13 @@ func (h *OIDCHandler) backfillDeviceRequestSnapshot(ctx *gin.Context, request *i
 		candidates = append(candidates, request.UserID)
 	}
 
+	client, ok := h.idp.FindClient(request.ClientID)
+	if !ok {
+		return fmt.Errorf("oidc client is not configured")
+	}
+
 	for _, candidate := range candidates {
-		user, err := h.idp.GetUserByUsername(ctx, candidate, request.ClientID, "")
+		user, err := h.idp.GetUserByUsernameForOIDCClaims(ctx, candidate, client, request.Scopes)
 		if err != nil || user == nil {
 			continue
 		}
@@ -495,6 +500,13 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		return
 	}
 
+	client, ok := h.idp.FindClient(request.ClientID)
+	if !ok {
+		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
+
+		return
+	}
+
 	// Authenticate the user.
 	// For delayed_response clients, mirror the authorization-code behavior:
 	// if password auth fails but MFA is available, continue with MFA and defer
@@ -508,7 +520,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		user = nil
 
 		if idpAuthFailureAllowsDelayedResponse(err) && h.idp.IsDelayedResponse(request.ClientID, "") {
-			if delayedUser, userErr := h.idp.GetUserByUsername(ctx, username, request.ClientID, ""); userErr == nil && delayedUser != nil {
+			if delayedUser, userErr := h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes); userErr == nil && delayedUser != nil {
 				protocol := definitions.ProtoOIDC
 				availability := h.frontend.getMFAAvailability(ctx, delayedUser, protocol, cookie.GetManager(ctx))
 				if availability.count > 0 {
@@ -531,8 +543,8 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		}
 	}
 
-	client, ok := h.idp.FindClient(request.ClientID)
-	if !ok {
+	user, err = h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes)
+	if err != nil {
 		h.renderDeviceVerifyError(ctx, userCode, "Internal server error")
 
 		return

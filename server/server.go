@@ -38,7 +38,7 @@ import (
 	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	handleridp "github.com/croessner/nauthilus/server/handler/frontend/idp"
-	handlergrpcauth "github.com/croessner/nauthilus/server/handler/grpcauth"
+	handlerauthority "github.com/croessner/nauthilus/server/handler/grpcauthority"
 	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
 	"github.com/croessner/nauthilus/server/idp"
@@ -89,8 +89,8 @@ type contextStore struct {
 	// signals holds server lifecycle channels via the interface (no globals)
 	signals core.ServerSignals
 
-	// grpcAuthDone signals completion of the optional gRPC AuthService server.
-	grpcAuthDone <-chan struct{}
+	// grpcAuthorityDone signals completion of the optional gRPC authority server.
+	grpcAuthorityDone <-chan struct{}
 
 	// langManager is the injected language manager.
 	langManager language.Manager
@@ -306,19 +306,19 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 	return fmt.Errorf("failed to establish Redis connections after max retries")
 }
 
-type grpcAuthStarter func(context.Context, handlergrpcauth.ServerDeps) (<-chan struct{}, error)
+type grpcAuthorityStarter func(context.Context, handlerauthority.ServerDeps) (<-chan struct{}, error)
 
 type httpServerStartOptions struct {
-	grpcAuthStarter             grpcAuthStarter
-	continueHTTPOnGRPCAuthError bool
+	grpcAuthorityStarter             grpcAuthorityStarter
+	continueHTTPOnGRPCAuthorityError bool
 }
 
-func (o httpServerStartOptions) effectiveGRPCAuthStarter() grpcAuthStarter {
-	if o.grpcAuthStarter != nil {
-		return o.grpcAuthStarter
+func (o httpServerStartOptions) effectiveGRPCAuthorityStarter() grpcAuthorityStarter {
+	if o.grpcAuthorityStarter != nil {
+		return o.grpcAuthorityStarter
 	}
 
-	return handlergrpcauth.StartServer
+	return handlerauthority.StartServer
 }
 
 // startHTTPServer starts the HTTP server by initializing the context, setting up channels, and launching the HTTP application.
@@ -356,7 +356,7 @@ func startHTTPServerWithOptions(ctx context.Context, store *contextStore, option
 		AccountCache: runtime.store.accountCache,
 	})
 
-	if err := startGRPCAuthForHTTP(runtime.store.server.ctx, runtime.store, runtime.cfg, runtime.env, runtime.logger, options); err != nil {
+	if err := startGRPCAuthorityForHTTP(runtime.store.server.ctx, runtime.store, runtime.cfg, runtime.env, runtime.logger, options); err != nil {
 		return err
 	}
 
@@ -591,7 +591,7 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 	}
 }
 
-func startGRPCAuthForHTTP(
+func startGRPCAuthorityForHTTP(
 	ctx context.Context,
 	store *contextStore,
 	cfg config.File,
@@ -599,7 +599,7 @@ func startGRPCAuthForHTTP(
 	logger *slog.Logger,
 	options httpServerStartOptions,
 ) error {
-	grpcAuthDone, err := options.effectiveGRPCAuthStarter()(ctx, handlergrpcauth.ServerDeps{
+	grpcAuthorityDone, err := options.effectiveGRPCAuthorityStarter()(ctx, handlerauthority.ServerDeps{
 		Cfg:             cfg,
 		Env:             env,
 		Logger:          logger,
@@ -609,8 +609,9 @@ func startGRPCAuthForHTTP(
 		MessageResolver: newDefaultPolicyMessageResolver(cfg),
 	})
 	if err != nil {
-		store.grpcAuthDone = nil
-		if options.continueHTTPOnGRPCAuthError {
+		store.grpcAuthorityDone = nil
+
+		if options.continueHTTPOnGRPCAuthorityError {
 			_ = level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to start gRPC authority server; continuing HTTP startup", definitions.LogKeyError, err)
 
 			return nil
@@ -619,7 +620,7 @@ func startGRPCAuthForHTTP(
 		return fmt.Errorf("start gRPC authority server: %w", err)
 	}
 
-	store.grpcAuthDone = grpcAuthDone
+	store.grpcAuthorityDone = grpcAuthorityDone
 
 	return nil
 }

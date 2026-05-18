@@ -28,14 +28,25 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/cookie"
 	corelang "github.com/croessner/nauthilus/server/core/language"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
+	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/text/language"
+)
+
+const (
+	frontendRecoveryRegisterPath = "/mfa/recovery/register"
+	frontendTOTPRegisterPath     = "/mfa/totp/register"
+	frontendTestAccount          = "testuser"
+	frontendTestDisplayName      = "Test User"
+	frontendTestUniqueUserID     = "uid-123"
+	frontendTestUser             = "test-user"
 )
 
 type mockLangManager struct {
@@ -686,36 +697,79 @@ func TestCheckRequireMFARegistrationAndRedirectClearsStaleSessionState(t *testin
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }
 
-func TestHasRecoveryCodesForRequireMFASessionSavedFlag(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+func TestHasCompletedMethodForRequireMFA(t *testing.T) {
+	testCases := []struct {
+		name  string
+		path  string
+		data  map[string]any
+		check func(*FrontendHandler, *gin.Context, *mockCookieManager, *backend.User) bool
+		want  bool
+	}{
+		{
+			name: "recovery codes session saved flag",
+			path: frontendRecoveryRegisterPath,
+			data: map[string]any{
+				definitions.SessionKeyRecoveryCodesSaved: true,
+			},
+			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
+				return h.hasRecoveryCodesForRequireMFA(ctx, mgr, user)
+			},
+			want: true,
+		},
+		{
+			name: "recovery codes no data",
+			path: frontendRecoveryRegisterPath,
+			data: map[string]any{},
+			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
+				return h.hasRecoveryCodesForRequireMFA(ctx, mgr, user)
+			},
+			want: false,
+		},
+		{
+			name: "TOTP session flag",
+			path: frontendTOTPRegisterPath,
+			data: map[string]any{
+				definitions.SessionKeyHaveTOTP: true,
+			},
+			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
+				return h.hasTOTPForRequireMFA(ctx, mgr, user)
+			},
+			want: true,
+		},
+		{
+			name: "TOTP no session or attribute data",
+			path: frontendTOTPRegisterPath,
+			data: map[string]any{},
+			check: func(h *FrontendHandler, ctx *gin.Context, mgr *mockCookieManager, user *backend.User) bool {
+				return h.hasTOTPForRequireMFA(ctx, mgr, user)
+			},
+			want: false,
+		},
+	}
 
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/recovery/register", nil)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newFrontendTestContext(tc.path)
+			h := &FrontendHandler{}
+			mgr := &mockCookieManager{data: tc.data}
 
-	h := &FrontendHandler{}
-	mgr := &mockCookieManager{data: map[string]any{
-		definitions.SessionKeyRecoveryCodesSaved: true,
-	}}
-
-	user := backend.NewUser("test-user", "", "uid-123")
-
-	assert.True(t, h.hasRecoveryCodesForRequireMFA(ctx, mgr, user))
+			assert.Equal(t, tc.want, tc.check(h, ctx, mgr, newFrontendTestUser()))
+		})
+	}
 }
 
-func TestHasRecoveryCodesForRequireMFANoRecoveryData(t *testing.T) {
+func newFrontendTestContext(path string) *gin.Context {
 	gin.SetMode(gin.TestMode)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/mfa/recovery/register", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, path, nil)
 
-	h := &FrontendHandler{}
-	mgr := &mockCookieManager{data: map[string]any{}}
+	return ctx
+}
 
-	user := backend.NewUser("test-user", "", "uid-123")
-
-	assert.False(t, h.hasRecoveryCodesForRequireMFA(ctx, mgr, user))
+func newFrontendTestUser() *backend.User {
+	return backend.NewUser(frontendTestUser, "", frontendTestUniqueUserID)
 }
 
 func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
@@ -782,6 +836,51 @@ func TestLoginMFAViewsDoNotExpose2FAHomeMenuBeforeMFACompletion(t *testing.T) {
 			assert.NotContains(t, resp.Body.String(), "2FA Verwaltung")
 		})
 	}
+}
+
+func TestDelayedResponseFirstFactorLatchSurvivesTOTPCompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUsername: "alice",
+	}}
+	cookie.SetAuthResult(mgr, "alice", definitions.AuthResultFail)
+
+	h := &FrontendHandler{
+		deps: &deps.Deps{
+			Cfg:         &mockFrontendCfg{},
+			Env:         config.NewTestEnvironmentConfig(),
+			LangManager: &mockLangManager{},
+			Logger:      slog.Default(),
+		},
+	}
+
+	tmpl := template.Must(template.New("login-template").Parse(`
+{{ define "idp_login.html" }}{{ if .HaveError }}latched failure{{ end }}{{ end }}
+`))
+
+	r := gin.New()
+	r.SetHTMLTemplate(tmpl)
+	r.POST("/login/totp", func(c *gin.Context) {
+		localizer := i18n.NewLocalizer((&mockLangManager{}).GetBundle(), "en")
+		c.Set(definitions.CtxLocalizedKey, localizer)
+		c.Set(definitions.CtxSecureDataKey, mgr)
+
+		handled := h.handleDelayedResponseFailure(c, &mfaSessionState{
+			mgr:      mgr,
+			username: "alice",
+		}, definitions.MFAMethodTOTP)
+
+		assert.True(t, handled)
+	})
+
+	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/login/totp", nil)
+
+	r.ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.Contains(t, resp.Body.String(), "latched failure")
 }
 
 func loadMFASelectTemplate(t *testing.T) *template.Template {
@@ -892,8 +991,8 @@ func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
 		c.Set(definitions.CtxLocalizedKey, localizer)
 
 		mgr := &mockCookieManager{data: map[string]any{
-			definitions.SessionKeyUniqueUserID: "uid-123",
-			definitions.SessionKeyAccount:      "testuser",
+			definitions.SessionKeyUniqueUserID: frontendTestUniqueUserID,
+			definitions.SessionKeyAccount:      frontendTestAccount,
 		}}
 		c.Set(definitions.CtxSecureDataKey, mgr)
 
@@ -905,6 +1004,34 @@ func TestRegisterWebAuthnAllowsExistingSession(t *testing.T) {
 	r.ServeHTTP(resp, req)
 
 	assert.Equal(t, http.StatusOK, resp.Code)
+}
+
+func TestRestoreRequireMFAIdentityContextFromFlowState(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUniqueUserID: "uid-before",
+	}}
+	state := &flowdomain.State{
+		FlowType: flowdomain.FlowTypeRequireMFA,
+		Metadata: map[string]string{
+			flowdomain.FlowMetadataAccount:      frontendTestAccount,
+			flowdomain.FlowMetadataUniqueUserID: "uid-after",
+			flowdomain.FlowMetadataDisplayName:  frontendTestDisplayName,
+		},
+	}
+
+	restoreRequireMFAIdentityContext(mgr, state)
+
+	assert.Equal(t, frontendTestAccount, mgr.GetString(definitions.SessionKeyAccount, ""))
+	assert.Equal(t, "uid-before", mgr.GetString(definitions.SessionKeyUniqueUserID, ""))
+	assert.Equal(t, frontendTestDisplayName, mgr.GetString(definitions.SessionKeyDisplayName, ""))
+}
+
+func TestRequireMFAFlowIDFallsBackToRequiredMFAReference(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyRequireMFAFlow: true,
+	}}
+
+	assert.Equal(t, requireMFAFlowID, requireMFAFlowIDFromSession(mgr))
 }
 
 func TestRegisterWebAuthnRedirectsWithoutSession(t *testing.T) {
