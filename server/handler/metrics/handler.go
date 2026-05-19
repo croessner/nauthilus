@@ -21,7 +21,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
@@ -31,7 +30,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Handler registers the metrics endpoint with identical auth semantics as before.
+// Handler registers the metrics endpoint.
 type Handler struct {
 	cfg    config.File
 	logger *slog.Logger
@@ -44,33 +43,46 @@ func New(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
 
 func (h *Handler) Register(router gin.IRouter) {
 	router.GET("/metrics", func(ctx *gin.Context) {
-		cfg := h.cfg
-
-		// If OIDC Bearer token is present, allow only tokens with ScopeSecurity
-		claims := oidcbearer.GetClaimsFromContext(ctx)
-
-		if claims != nil {
-			if oidcbearer.HasScope(claims, definitions.ScopeSecurity) {
-				promhttp.HandlerFor(
-					prometheus.DefaultGatherer,
-					promhttp.HandlerOpts{DisableCompression: true},
-				).ServeHTTP(ctx.Writer, ctx.Request)
-
-				return
-			}
-		}
-
-		// Fallback to Basic Auth if enabled
-		if mdauth.CheckAndRequireBasicAuth(ctx, cfg) {
-			promhttp.HandlerFor(
-				prometheus.DefaultGatherer,
-				promhttp.HandlerOpts{DisableCompression: true},
-			).ServeHTTP(ctx.Writer, ctx.Request)
-
+		if !h.authorize(ctx) {
 			return
 		}
 
-		// If neither auth allowed request, return 401 to be safe
-		ctx.AbortWithStatus(http.StatusUnauthorized)
+		servePrometheusMetrics(ctx)
 	})
+}
+
+func (h *Handler) authorize(ctx *gin.Context) bool {
+	basicAuth := metricsEndpointBasicAuth(h.cfg)
+	if !basicAuth.IsEnabled() {
+		return true
+	}
+
+	username, password, ok := ctx.Request.BasicAuth()
+	if ok && mdauth.ValidateBasicAuthCredentials(basicAuth, username, password) {
+		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+		ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
+
+		return true
+	}
+
+	mdauth.ApplyAuthBackoffOnFailure(ctx)
+	ctx.Header("WWW-Authenticate", "Basic realm=\"metrics\", charset=\"UTF-8\"")
+	ctx.AbortWithStatus(http.StatusUnauthorized)
+
+	return false
+}
+
+func metricsEndpointBasicAuth(cfg config.File) *config.BasicAuth {
+	if cfg == nil {
+		return &config.BasicAuth{}
+	}
+
+	return cfg.GetServer().GetMetricsEndpointAuth().GetBasicAuth()
+}
+
+func servePrometheusMetrics(ctx *gin.Context) {
+	promhttp.HandlerFor(
+		prometheus.DefaultGatherer,
+		promhttp.HandlerOpts{DisableCompression: true},
+	).ServeHTTP(ctx.Writer, ctx.Request)
 }

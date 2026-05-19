@@ -48,8 +48,13 @@ func ValidateBasicCredentials(cfg config.File, username, password string) bool {
 		return false
 	}
 
-	basicAuth := cfg.GetServer().GetBasicAuth()
-	if !basicAuth.IsEnabled() {
+	return ValidateBasicAuthCredentials(cfg.GetServer().GetBasicAuth(), username, password)
+}
+
+// ValidateBasicAuthCredentials compares submitted Basic credentials with the
+// provided BasicAuth settings.
+func ValidateBasicAuthCredentials(basicAuth *config.BasicAuth, username, password string) bool {
+	if basicAuth == nil || !basicAuth.IsEnabled() {
 		return false
 	}
 
