@@ -488,8 +488,9 @@ type ObservabilityToggle struct {
 
 // ObservabilityMetrics configures metrics-related runtime behavior.
 type ObservabilityMetrics struct {
-	MonitorConnections bool            `mapstructure:"monitor_connections"`
-	PrometheusTimer    PrometheusTimer `mapstructure:"prometheus_timer" validate:"omitempty"`
+	MonitorConnections bool                `mapstructure:"monitor_connections"`
+	PrometheusTimer    PrometheusTimer     `mapstructure:"prometheus_timer" validate:"omitempty"`
+	EndpointAuth       MetricsEndpointAuth `mapstructure:"endpoint_auth" validate:"omitempty"`
 }
 
 // StorageSection groups persistence and caching backends.
@@ -1189,6 +1190,7 @@ func (f *FileSettings) applyObservabilitySection(server *ServerSection) {
 	server.Insights.MonitorConnections = observability.Metrics.MonitorConnections
 	server.Insights.Tracing = observability.Tracing
 	server.PrometheusTimer = observability.Metrics.PrometheusTimer
+	server.MetricsEndpointAuth = observability.Metrics.EndpointAuth
 }
 
 func (f *FileSettings) applyStorageSection(server *ServerSection) {

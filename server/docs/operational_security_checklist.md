@@ -21,7 +21,20 @@ Evidence:
 - [ ] Config snapshot attached
 - [ ] Network policy / firewall rule attached
 
-## 2. OIDC Token Endpoint Hardening
+## 2. Metrics Endpoint Access Control
+
+- [ ] **Production**: If `/metrics` is exposed beyond a private scrape network, dedicated metrics Basic Auth is enabled:
+    - `observability.metrics.endpoint_auth.basic.enabled=true`
+- [ ] **Staging**: `/metrics` exposure is documented and protected when it crosses trust boundaries.
+- [ ] Prometheus uses dedicated metrics credentials, not backchannel API credentials.
+- [ ] Bearer/OIDC authentication is not used for `/metrics`.
+
+Evidence:
+
+- [ ] Metrics scrape config attached
+- [ ] Network policy / firewall rule attached
+
+## 3. OIDC Token Endpoint Hardening
 
 - [ ] **Production**: `identity.oidc.tokens.token_endpoint_allow_get=false`
 - [ ] **Staging**: `identity.oidc.tokens.token_endpoint_allow_get=false`
@@ -32,7 +45,7 @@ Evidence:
 - [ ] Config diff attached
 - [ ] Exception ticket (if applicable)
 
-## 3. Configuration Endpoint Exposure
+## 4. Configuration Endpoint Exposure
 
 - [ ] **Production**: `runtime.servers.http.disabled_endpoints.configuration=true` unless explicitly required.
 - [ ] **Staging**: Configuration endpoint exposure is justified and documented.
@@ -43,7 +56,7 @@ Evidence:
 - [ ] Endpoint accessibility test attached
 - [ ] Audit log sample attached
 
-## 4. CSP and Security Headers
+## 5. CSP and Security Headers
 
 - [ ] **Production**: CSP keeps default `form-action 'self' https:` unless `form_action_optional_uris` is intentionally
   used.
@@ -55,7 +68,7 @@ Evidence:
 - [ ] Response header capture attached
 - [ ] Config snippet attached
 
-## 5. Developer Mode Controls
+## 6. Developer Mode Controls
 
 - [ ] **Production**: `NAUTHILUS_DEVELOPER_MODE=false`
 - [ ] **Staging**: `NAUTHILUS_DEVELOPER_MODE=false` unless explicitly needed for a short test window.
@@ -66,7 +79,7 @@ Evidence:
 - [ ] Deployment env vars attached
 - [ ] Startup log excerpt attached
 
-## 6. Network and Redis Hardening
+## 7. Network and Redis Hardening
 
 - [ ] Redis is not publicly reachable.
 - [ ] Redis authentication and TLS are configured where applicable.
@@ -78,7 +91,7 @@ Evidence:
 - [ ] Redis bind/ACL config attached
 - [ ] Proxy trust config attached
 
-## 7. Secrets and Key Management
+## 8. Secrets and Key Management
 
 - [ ] No secrets in repository or plaintext deployment artifacts.
 - [ ] OIDC signing keys have a rotation process and owner.
@@ -89,7 +102,7 @@ Evidence:
 - [ ] Secret management policy attached
 - [ ] Rotation record attached
 
-## 8. Runtime Hardening
+## 9. Runtime Hardening
 
 - [ ] Service runs non-root (`run_as_user`, `run_as_group`) where supported.
 - [ ] Optional debug endpoints (for example pprof) are disabled in production.
@@ -100,7 +113,7 @@ Evidence:
 - [ ] Runtime/service config attached
 - [ ] Endpoint inventory attached
 
-## 9. Logging, Detection, and Alerting
+## 10. Logging, Detection, and Alerting
 
 - [ ] Security-relevant logs are centralized.
 - [ ] Alerts exist for:
@@ -114,7 +127,7 @@ Evidence:
 - [ ] Alert rule export attached
 - [ ] Recent alert test attached
 
-## 10. CI/CD Security Gates
+## 11. CI/CD Security Gates
 
 - [ ] `govulncheck` is mandatory for merges to `main`.
 - [ ] Dependency update policy is active (scheduled updates, review owner).
@@ -125,7 +138,7 @@ Evidence:
 - [ ] CI workflow link attached
 - [ ] Last successful run attached
 
-## 11. Backup and Recovery
+## 12. Backup and Recovery
 
 - [ ] Backup/restore procedures exist for config, keys, and stateful dependencies.
 - [ ] Restore drills are executed on a schedule.
@@ -136,7 +149,7 @@ Evidence:
 - [ ] Drill report attached
 - [ ] Recovery runbook attached
 
-## 12. Independent Validation
+## 13. Independent Validation
 
 - [ ] External security assessment (pentest/blackbox) is planned or completed.
 - [ ] Findings are tracked to closure.

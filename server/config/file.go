@@ -2424,6 +2424,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateRemoteAuthorityClients,
 		f.validateRemoteBackends,
 		f.validateGRPCAuthServer,
+		f.validateMetricsEndpointAuth,
 		f.validateOpenAPIValidation,
 
 		// Without errors, but fixing things
@@ -2465,6 +2466,28 @@ func (f *FileSettings) validate() (err error) {
 
 func (f *FileSettings) validateGRPCAuthServer() error {
 	return ValidateGRPCAuthServerConfig(f)
+}
+
+func (f *FileSettings) validateMetricsEndpointAuth() error {
+	basic := f.GetServer().GetMetricsEndpointAuth().GetBasicAuth()
+	if !basic.IsEnabled() {
+		return nil
+	}
+
+	var problems []string
+	if strings.TrimSpace(basic.GetUsername()) == "" {
+		problems = append(problems, "observability.metrics.endpoint_auth.basic.username")
+	}
+
+	if basic.GetPassword().IsZero() {
+		problems = append(problems, "observability.metrics.endpoint_auth.basic.password")
+	}
+
+	if len(problems) > 0 {
+		return fmt.Errorf("%s are required when observability.metrics.endpoint_auth.basic.enabled=true", strings.Join(problems, " and "))
+	}
+
+	return nil
 }
 
 func (f *FileSettings) validateOpenAPIValidation() error {

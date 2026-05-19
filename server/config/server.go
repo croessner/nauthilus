@@ -70,6 +70,7 @@ type ServerSection struct {
 	CORS                      CORS                     `mapstructure:"cors" validate:"omitempty"`
 	Dedup                     Dedup                    `mapstructure:"dedup" validate:"omitempty"`
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
+	MetricsEndpointAuth       MetricsEndpointAuth      `mapstructure:"metrics_endpoint_auth" validate:"omitempty"`
 	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"request_headers" validate:"omitempty"`
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
 	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
@@ -888,6 +889,16 @@ func (s *ServerSection) GetPrometheusTimer() *PrometheusTimer {
 	}
 
 	return &s.PrometheusTimer
+}
+
+// GetMetricsEndpointAuth retrieves the authentication settings for the /metrics endpoint.
+// Returns an empty MetricsEndpointAuth struct if the ServerSection is nil.
+func (s *ServerSection) GetMetricsEndpointAuth() *MetricsEndpointAuth {
+	if s == nil {
+		return &MetricsEndpointAuth{}
+	}
+
+	return &s.MetricsEndpointAuth
 }
 
 // GetDefaultHTTPRequestHeader retrieves a pointer to the DefaultHTTPRequestHeader configuration from the ServerSection instance.
@@ -2829,6 +2840,20 @@ func (p *PrometheusTimer) GetLabels() []string {
 	}
 
 	return p.Labels
+}
+
+// MetricsEndpointAuth configures authentication for the Prometheus /metrics endpoint.
+type MetricsEndpointAuth struct {
+	Basic BasicAuth `mapstructure:"basic" validate:"omitempty"`
+}
+
+// GetBasicAuth returns the HTTP Basic authentication settings for the metrics endpoint.
+func (m *MetricsEndpointAuth) GetBasicAuth() *BasicAuth {
+	if m == nil {
+		return &BasicAuth{}
+	}
+
+	return &m.Basic
 }
 
 // DefaultHTTPRequestHeader represents the default headers to include in every HTTP request.

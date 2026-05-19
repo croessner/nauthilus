@@ -307,11 +307,25 @@ The following tasks are still pending:
 
 ### Metrics Endpoint Authentication
 
-The metrics endpoint (`/metrics`) is now secured with authentication to prevent unauthorized access to sensitive monitoring data. The following authentication methods are supported:
+The metrics endpoint (`/metrics`) can be protected with dedicated HTTP Basic authentication to prevent unauthorized access to sensitive monitoring data.
+This protection is independent of `auth.backchannel.basic_auth` and `auth.backchannel.oidc_bearer`.
 
-1. **JWT Authentication**: If JWT authentication is enabled, users must have the "security" role to access the metrics endpoint.
-2. **Basic Authentication**: If Basic Authentication is enabled, users must provide valid credentials to access the metrics endpoint.
-3. **No Authentication**: If neither JWT nor Basic Authentication is enabled, the metrics endpoint is accessible without authentication.
+The following modes are supported:
+
+1. **Dedicated Basic Authentication**: If `observability.metrics.endpoint_auth.basic.enabled=true`, clients must provide the configured metrics credentials.
+2. **No Authentication**: If metrics endpoint Basic authentication is disabled or omitted, `/metrics` is accessible without authentication.
+
+Bearer or OIDC authentication is not accepted for `/metrics`.
+
+```yaml
+observability:
+  metrics:
+    endpoint_auth:
+      basic:
+        enabled: true
+        username: prometheus
+        password: your-dedicated-metrics-password
+```
 
 #### Configuring Prometheus to Access Secured Metrics
 
@@ -329,29 +343,6 @@ scrape_configs:
     static_configs:
       - targets: ['nauthilus:8080']
 ```
-
-##### Bearer Token Authentication (JWT)
-
-```yaml
-scrape_configs:
-  - job_name: 'nauthilus'
-    metrics_path: '/metrics'
-    authorization:
-      type: Bearer
-      credentials: 'your_jwt_token'
-    static_configs:
-      - targets: ['nauthilus:8080']
-```
-
-You can generate a JWT token with the "security" role using the `/api/v1/jwt/token` endpoint:
-
-```bash
-curl -X POST http://nauthilus:8080/api/v1/jwt/token \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"your_password"}'
-```
-
-The response will include a token that you can use in the Prometheus configuration.
 
 ## Integration Guide
 

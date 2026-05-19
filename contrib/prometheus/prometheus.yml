@@ -8,7 +8,10 @@ scrape_configs:
       - targets: ['localhost:9090']
   - job_name: nauthilus
     metrics_path: /metrics
+    # Enable this block when observability.metrics.endpoint_auth.basic.enabled=true.
+    # basic_auth:
+    #   username: prometheus
+    #   password: your-dedicated-metrics-password
     static_configs:
       - targets:
         - localhost:80
-
