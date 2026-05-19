@@ -47,6 +47,8 @@ import (
 var (
 	// RequestChan is a buffered channel of type `*Action` used to send action requests to a worker.
 	RequestChan chan *Action
+
+	errLuaActionScriptFailed = errors.New("lua action script failed")
 )
 
 // Done is an empty struct that can be used to signal the completion of a task or operation.
@@ -300,7 +302,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		Config: aw.cfg,
 	})
 
-	L, acqErr := pool.Acquire(actx)
+	lease, acqErr := pool.AcquireLease(actx)
 	if acqErr != nil {
 		if aw.isCanceledHTTPRequest(httpRequest, "acquire.lua_post_action") {
 			return
@@ -309,18 +311,11 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		return
 	}
 
-	replaceVM := false
-	defer func() {
-		if r := recover(); r != nil {
-			replaceVM = true
-		}
+	L := lease.State()
 
-		if replaceVM {
-			pool.Replace(L)
-		} else {
-			pool.Release(L)
-		}
-	}()
+	var leaseErr error
+
+	defer lease.ReleaseRecoveringOnError(&leaseErr)
 
 	// Grouping span for all post/async actions belonging to the originating request.
 	// This gives you a stable, queryable node like "post_actions" under "POST /...".
@@ -373,7 +368,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 		ret := aw.runScript(reqCtx, index, L, request, logs, httpRequest)
 		if ret < 0 {
-			replaceVM = true
+			leaseErr = errLuaActionScriptFailed
 		}
 
 		logs.Set(aw.actionScripts[index].ScriptPath, aw.createResultLogMessage(ret))

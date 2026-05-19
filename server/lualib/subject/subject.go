@@ -821,7 +821,8 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 		for _, planned := range level {
 			idx := planned.Index
 			sc := planned.Value.(*LuaSubjectSource)
-			g.Go(func() error {
+
+			g.Go(func() (err error) {
 				scriptStarted := time.Now()
 				// Per-script span
 				sCtx, sSpan := tr.Start(fctx, "subject_sources.script",
@@ -843,7 +844,7 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.String("mode", mode),
 					attribute.Int("level", levelIndex),
 				)
-				Llocal, acqErr := pool.Acquire(actx)
+				lease, acqErr := pool.AcquireLease(actx)
 				asp.End()
 
 				if acqErr != nil {
@@ -854,20 +855,10 @@ func (r *Request) CallSubjectLua(ctx *gin.Context, cfg config.File, logger *slog
 					return acqErr
 				}
 
-				replaceVM := false
-				defer func() {
-					if r := recover(); r != nil {
-						replaceVM = true
-					}
+				Llocal := lease.State()
 
-					if replaceVM {
-						pool.Replace(Llocal)
-					} else {
-						pool.Release(Llocal)
-					}
-
-					sSpan.End()
-				}()
+				defer sSpan.End()
+				defer lease.ReleaseRecoveringOnError(&err)
 
 				localContext := r.Clone()
 				contextBefore := localContext.Snapshot()
