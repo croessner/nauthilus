@@ -354,7 +354,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 			idx := planned.Index
 			source := planned.Value.(*LuaEnvironmentSource)
 
-			g.Go(func() error {
+			g.Go(func() (err error) {
 				scriptStarted := time.Now()
 				sCtx, sSpan := tr.Start(traceCtx, "environment_sources.script",
 					attribute.String("name", source.Name),
@@ -380,7 +380,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					attribute.String("mode", modeText),
 					attribute.Int("level", levelIndex),
 				)
-				Llocal, acqErr := pool.Acquire(actx)
+				lease, acqErr := pool.AcquireLease(actx)
 
 				asp.End()
 
@@ -392,20 +392,10 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 					return acqErr
 				}
 
-				replaceVM := false
-				defer func() {
-					if r := recover(); r != nil {
-						replaceVM = true
-					}
+				Llocal := lease.State()
 
-					if replaceVM {
-						pool.Replace(Llocal)
-					} else {
-						pool.Release(Llocal)
-					}
-
-					sSpan.End()
-				}()
+				defer sSpan.End()
+				defer lease.ReleaseRecoveringOnError(&err)
 
 				localContext := r.Clone()
 				contextBefore := localContext.Snapshot()

@@ -84,7 +84,7 @@ func compileScript(scriptPath string) (*lua.FunctionProto, error) {
 // It passes the user information as a request table and returns additional Redis keys
 // and an optional account name from the script.
 // If no script is configured, it returns nil (no-op).
-func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, user string, guid string) (*Result, error) {
+func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, user string, guid string) (result *Result, err error) {
 	scriptPath := cfg.GetLuaCacheFlushScriptPath()
 	if scriptPath == "" {
 		return nil, nil
@@ -103,24 +103,13 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 		Config: cfg,
 	})
 
-	L, acqErr := pool.Acquire(luaCtx)
+	lease, acqErr := pool.AcquireLease(luaCtx)
 	if acqErr != nil {
 		return nil, fmt.Errorf("acquiring Lua VM for cache flush script: %w", acqErr)
 	}
 
-	replaceVM := false
-
-	defer func() {
-		if r := recover(); r != nil {
-			replaceVM = true
-		}
-
-		if replaceVM {
-			pool.Replace(L)
-		} else {
-			pool.Release(L)
-		}
-	}()
+	L := lease.State()
+	defer lease.ReleaseRecoveringOnError(&err)
 
 	L.SetContext(luaCtx)
 

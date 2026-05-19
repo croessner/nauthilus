@@ -497,7 +497,7 @@ func PreCompileLuaHooks(cfg config.File) error {
 // runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
 // Returns an error if the script is not found or if execution fails.
-func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string, i18nRuntime *lualib.I18NRuntime) error {
+func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string, i18nRuntime *lualib.I18NRuntime) (err error) {
 	tr := monittrace.New("nauthilus/hooks")
 	cctx, csp := tr.Start(ctx, "hooks.execute_common",
 		attribute.String("hook", hook),
@@ -527,23 +527,13 @@ func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logg
 		Config: cfg,
 	})
 
-	L, acqErr := pool.Acquire(luaCtx)
+	lease, acqErr := pool.AcquireLease(luaCtx)
 	if acqErr != nil {
 		return acqErr
 	}
 
-	replaceVM := false
-	defer func() {
-		if r := recover(); r != nil {
-			replaceVM = true
-		}
-
-		if replaceVM {
-			pool.Replace(L)
-		} else {
-			pool.Release(L)
-		}
-	}()
+	L := lease.State()
+	defer lease.ReleaseRecoveringOnError(&err)
 
 	L.SetContext(luaCtx)
 
@@ -604,7 +594,7 @@ func prepareCommonLuaRequest(L *lua.LState, cfg config.File) (*lua.LTable, *lual
 
 // runLuaCustomWrapper executes a precompiled Lua script and returns its result or any occurring error.
 // It retrieves the script based on the HTTP request context and dynamically registers Lua libraries before execution.
-func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) (gin.H, error) {
+func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) (result gin.H, err error) {
 	tr := monittrace.New("nauthilus/hooks")
 	xctx, xsp := tr.Start(ctx.Request.Context(), "hooks.execute_custom",
 		attribute.String("path", ResolveRequestHook(ctx)),
@@ -616,11 +606,48 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 
 	defer xsp.End()
 
-	var script *PrecompiledLuaScript
-
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	hook := ResolveRequestHook(ctx)
 
+	script := resolveCustomLuaScript(ctx, cfg, logger, guid, hook)
+	if script == nil {
+		return nil, nil
+	}
+
+	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
+
+	defer luaCancel()
+
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{
+		MaxVMs: cfg.GetLuaHookVMPoolSize(),
+		Config: cfg,
+	})
+
+	lease, acqErr := pool.AcquireLease(luaCtx)
+	if acqErr != nil {
+		return nil, acqErr
+	}
+
+	L := lease.State()
+	defer lease.ReleaseRecoveringOnError(&err)
+
+	L.SetContext(luaCtx)
+	bindCustomLuaModules(luaCtx, ctx, cfg, logger, redis, L)
+
+	requestTable, cr := prepareCustomLuaRequest(ctx, cfg, L, guid)
+	defer lualib.PutCommonRequest(cr)
+
+	result, err = executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
+	if err != nil {
+		xsp.RecordError(err)
+	}
+
+	logCustomLuaExecutionResult(ctx, cfg, logger, guid, hook, err)
+
+	return result, err
+}
+
+func resolveCustomLuaScript(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string, hook string) *PrecompiledLuaScript {
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		cfg,
@@ -630,7 +657,8 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 		definitions.LogKeyMsg, fmt.Sprintf("Looking for script for hook: %s, method: %s", hook, ctx.Request.Method),
 	)
 
-	if script = customLocation.GetScript(hook, ctx.Request.Method); script == nil {
+	script := customLocation.GetScript(hook, ctx.Request.Method)
+	if script == nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			cfg,
@@ -641,7 +669,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 		)
 		ctx.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "lua script for location '" + hook + "' not found", "guid": guid})
 
-		return nil, nil
+		return nil
 	}
 
 	util.DebugModuleWithCfg(
@@ -653,36 +681,10 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 		definitions.LogKeyMsg, fmt.Sprintf("Script found for hook: %s, method: %s", hook, ctx.Request.Method),
 	)
 
-	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
+	return script
+}
 
-	defer luaCancel()
-
-	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{
-		MaxVMs: cfg.GetLuaHookVMPoolSize(),
-		Config: cfg,
-	})
-
-	L, acqErr := pool.Acquire(luaCtx)
-	if acqErr != nil {
-		return nil, acqErr
-	}
-
-	replaceVM := false
-	defer func() {
-		if r := recover(); r != nil {
-			replaceVM = true
-		}
-
-		if replaceVM {
-			pool.Replace(L)
-		} else {
-			pool.Release(L)
-		}
-	}()
-
-	L.SetContext(luaCtx)
-
-	// Prepare per-request environment so that request-local globals and module bindings are visible
+func bindCustomLuaModules(luaCtx context.Context, ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, L *lua.LState) {
 	luapool.PrepareRequestEnv(L)
 
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redis)
@@ -691,37 +693,39 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(ctx.Request))
 	modManager.BindHTTPResponse(L, ctx)
 	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
+}
 
+func logCustomLuaExecutionResult(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string, hook string, err error) {
+	if err != nil {
+		_ = level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Error executing script for hook: %s, method: %s", hook, ctx.Request.Method),
+			definitions.LogKeyError, err,
+		)
+
+		return
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Script executed successfully for hook: %s, method: %s", hook, ctx.Request.Method),
+	)
+}
+
+func prepareCustomLuaRequest(ctx *gin.Context, cfg config.File, L *lua.LState, guid string) (*lua.LTable, *lualib.CommonRequest) {
 	requestTable := L.NewTable()
 	cr := lualib.GetCommonRequest()
-
-	defer lualib.PutCommonRequest(cr)
 
 	cr.Session = guid
 	cr.ExternalSessionID = externalSessionIDFromRequest(ctx, cfg)
 	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
 	cr.SetupRequest(L, cfg, requestTable)
 
-	result, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), L, hook, requestTable)
-	if err != nil {
-		xsp.RecordError(err)
-		level.Error(logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Error executing script for hook: %s, method: %s", hook, ctx.Request.Method),
-			definitions.LogKeyError, err,
-		)
-	} else {
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			cfg,
-			logger,
-			definitions.DbgLua,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Script executed successfully for hook: %s, method: %s", hook, ctx.Request.Method),
-		)
-	}
-
-	return result, err
+	return requestTable, cr
 }
 
 func externalSessionIDFromRequest(ctx *gin.Context, cfg config.File) string {
@@ -767,10 +771,14 @@ func RunLuaInitWithI18NRuntime(ctx context.Context, cfg config.File, logger *slo
 func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, L *lua.LState, hook string, requestTable *lua.LTable) (result gin.H, err error) {
 	if err = lualib.PackagePath(L, cfg); err != nil {
 		processError(logger, err, hook)
+
+		return nil, err
 	}
 
 	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
 		processError(logger, err, hook)
+
+		return nil, err
 	}
 
 	// Resolve the entry function nauthilus_run_hook from the request env first, then fall back to _G.
@@ -798,6 +806,8 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 		Protect: true,
 	}, requestTable); err != nil {
 		processError(logger, err, hook)
+
+		return nil, err
 	}
 
 	// Interpret the Lua return value correctly:

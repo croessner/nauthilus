@@ -209,25 +209,18 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	defer luaCancel()
 
-	L, acqErr := vmPool.Acquire(luaCtx)
+	lease, acqErr := vmPool.AcquireLease(luaCtx)
 	if acqErr != nil {
 		level.Warn(logger).Log(definitions.LogKeyMsg, "lua_vm_acquire_failed", "err", acqErr)
 
 		return
 	}
 
-	replaceVM := false
-	defer func() {
-		if r := recover(); r != nil {
-			replaceVM = true
-		}
+	L := lease.State()
 
-		if replaceVM {
-			vmPool.Replace(L)
-		} else {
-			vmPool.Release(L)
-		}
-	}()
+	var leaseErr error
+
+	defer lease.ReleaseRecoveringOnError(&leaseErr)
 
 	L.SetContext(luaCtx)
 
@@ -262,9 +255,12 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	err := executeAndHandleError(cfg, logger, compiledScript, luaCommand, luaRequest, L, request, nret, logs)
 
-	// Decide whether to replace VM on hard error/timeout
-	if err != nil || luaCtx.Err() != nil {
-		replaceVM = true
+	if err != nil {
+		leaseErr = err
+	}
+
+	if luaCtx.Err() != nil {
+		leaseErr = luaCtx.Err()
 	}
 
 	// Handle the specific return types
@@ -350,10 +346,14 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 
 	if err = lualib.PackagePath(L, cfg); err != nil {
 		processError(cfg, logger, err, luaRequest, logs)
+
+		return err
 	}
 
 	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
 		processError(cfg, logger, err, luaRequest, logs)
+
+		return err
 	}
 
 	var commandFunc = lua.LNil
@@ -375,6 +375,8 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript 
 			Protect: true,
 		}, request); err != nil {
 			processError(cfg, logger, err, luaRequest, logs)
+
+			return err
 		}
 	}
 

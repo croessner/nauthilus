@@ -58,6 +58,14 @@ type Pool struct {
 	inUse int64
 }
 
+// Lease owns a single Lua VM checked out from a Pool.
+type Lease struct {
+	pool    *Pool
+	state   *lua.LState
+	replace bool
+	closed  bool
+}
+
 func newPool(key PoolKey, opts PoolOptions) *Pool {
 	if opts.MaxVMs <= 0 {
 		opts.MaxVMs = 8
@@ -112,6 +120,61 @@ func (p *Pool) Acquire(ctx context.Context) (*lua.LState, error) {
 
 		return st, nil
 	}
+}
+
+// AcquireLease borrows a VM and wraps release/replace handling in a single guard.
+func (p *Pool) AcquireLease(ctx context.Context) (*Lease, error) {
+	L, err := p.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Lease{pool: p, state: L}, nil
+}
+
+// State returns the borrowed Lua VM.
+func (l *Lease) State() *lua.LState {
+	if l == nil {
+		return nil
+	}
+
+	return l.state
+}
+
+func (l *Lease) markCorrupt() {
+	if l == nil {
+		return
+	}
+
+	l.replace = true
+}
+
+// Release returns the VM to the pool or replaces it when it was marked unsafe.
+func (l *Lease) Release() {
+	if l == nil || l.closed {
+		return
+	}
+
+	l.closed = true
+
+	if l.replace {
+		l.pool.Replace(l.state)
+	} else {
+		l.pool.Release(l.state)
+	}
+}
+
+// ReleaseRecoveringOnError replaces the VM when the caller returns an error or panics.
+func (l *Lease) ReleaseRecoveringOnError(errp *error) {
+	if recovered := recover(); recovered != nil {
+		l.markCorrupt()
+	}
+
+	if errp != nil && *errp != nil {
+		l.markCorrupt()
+	}
+
+	l.Release()
 }
 
 // Release returns the VM to the pool after a lightweight reset to avoid residue.
