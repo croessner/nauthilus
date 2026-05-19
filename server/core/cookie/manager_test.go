@@ -320,6 +320,41 @@ func TestSecureManager_LoadInvalidCookie(t *testing.T) {
 	assert.Len(t, mgr.data, 0)
 }
 
+func TestSecureManager_LoadDuplicateCookieUsesFirstValidValue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	util.SetDefaultEnvironment(&testEnv{devMode: true})
+
+	mgr1 := NewSecureManager(testSecret, "secure_data", nil, &testEnv{devMode: true})
+	mgr1.Set("account", "user@example.com")
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	err := mgr1.Save(ctx)
+	assert.NoError(t, err)
+
+	cookies := w.Result().Cookies()
+	if !assert.Len(t, cookies, 1) {
+		return
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  "secure_data",
+		Value: "invalid-garbage-data",
+	})
+	req.AddCookie(cookies[0])
+
+	mgr2 := NewSecureManager(testSecret, "secure_data", nil, &testEnv{devMode: true})
+	ctx2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx2.Request = req
+
+	err = mgr2.Load(ctx2)
+	assert.NoError(t, err)
+	assert.Equal(t, "user@example.com", mgr2.GetString("account", ""))
+}
+
 func TestSecureManager_HasKey(t *testing.T) {
 	mgr := newTestManager("test_cookie", false)
 
