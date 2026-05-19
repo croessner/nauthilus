@@ -217,8 +217,8 @@ func (m *SecureManager) Save(ctx *gin.Context) error {
 
 // Load reads and decrypts the cookie from the request.
 func (m *SecureManager) Load(ctx *gin.Context) error {
-	cookie, err := ctx.Request.Cookie(m.cookieName)
-	if err != nil {
+	cookies := ctx.Request.CookiesNamed(m.cookieName)
+	if len(cookies) == 0 {
 		m.hadCookie = false
 		// No cookie exists, start with empty data.
 		m.data = make(map[string]any)
@@ -227,17 +227,21 @@ func (m *SecureManager) Load(ctx *gin.Context) error {
 	}
 	m.hadCookie = true
 
-	var data map[string]any
+	for _, cookie := range cookies {
+		var data map[string]any
 
-	if err := m.codec.Decode(m.cookieName, cookie.Value, &data); err != nil {
-		// Cookie is invalid, tampered, or expired - start fresh.
-		m.data = make(map[string]any)
+		if err := m.codec.Decode(m.cookieName, cookie.Value, &data); err != nil {
+			continue
+		}
+
+		m.data = data
+		m.restoreCookieMeta()
 
 		return nil
 	}
 
-	m.data = data
-	m.restoreCookieMeta()
+	// All matching cookies are invalid, tampered, or expired; start fresh.
+	m.data = make(map[string]any)
 
 	return nil
 }
