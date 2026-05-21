@@ -2492,6 +2492,20 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 			definitions.LogKeyMsg, "Error adding account to the affected accounts set",
 			definitions.LogKeyError, err,
 		)
+
+		return
+	}
+
+	indexKey := rediscli.GetAffectedAccountsIndexKey(bm.cfg().GetServer().GetRedis().GetPrefix())
+	if err := bm.redis().GetWriteHandle().ZAddNX(dCtx, indexKey, redis.Z{
+		Score:  float64(time.Now().Unix()),
+		Member: accountName,
+	}).Err(); err != nil {
+		_ = level.Error(logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Error adding account to the affected accounts index",
+			definitions.LogKeyError, err,
+		)
 	}
 }
 

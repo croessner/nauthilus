@@ -8,10 +8,41 @@ It assumes a standalone ClickHouse server is running inside your Kubernetes clus
 
 - Database: `nauthilus`
 - Table: `nauthilus.logins`
-  - Column schema: all fields are `String` for schema stability and match exactly what the Lua plugin inserts via `FORMAT JSONEachRow`.
+  - Column schema: `ts` is `DateTime64(3, 'UTC')`, repeated low-cardinality dimensions use `LowCardinality(String)`, counters use nullable numeric types, and boolean flags use nullable booleans.
   - Engine: `MergeTree` with `ORDER BY (ts)`.
 
 Schema file: `schema.sql`
+
+## Grafana dashboard
+
+The ClickHouse login analytics dashboard is available as:
+
+- `nauthilus-logins-grafana-dashboard.json`
+
+It is built for the official Grafana ClickHouse data source (`grafana-clickhouse-datasource`) and queries `nauthilus.logins` directly. The dashboard includes:
+
+- Executive login KPIs: attempts, success/failure counts, success rate, unique users, unique source IPs, p95 latency, and defense-event volume.
+- Outcome and performance trends by time bucket, HTTP status class, protocol, and authentication method.
+- Identity and source-risk views for failed identities, source IPs, a country outcome world map, country rankings, known-vs-unknown users, and user agents.
+- Defense-signal views for decision sources, account protection, dynamic response, brute-force buckets, repeat/replay markers, and OIDC/SAML client activity.
+- Investigation tables for recent high-risk events and the recent login stream.
+
+Import it through Grafana's dashboard import flow and select the ClickHouse data source that can read the `nauthilus` database when Grafana asks for `ClickHouse datasource`. The selected data source pre-fills the dashboard's data-source variable, which remains visible for later switching. The dashboard exposes filters for service, protocol, method, status message, country, and a ClickHouse-native exclude-identities filter. The exclude filter defaults to `zabbix_mail`; clear it to include every identity. Multiple exact identities can be excluded as a comma-separated list.
+
+The large raw-event tables (`Recent high-risk events` and `Recent login stream`) use server-side ClickHouse pagination through the `Rows/page` and `Table page` variables. Changing those variables changes the SQL `LIMIT` and `OFFSET`, so Grafana only receives the selected slice instead of loading the full result set and paging it in the browser. The aggregated Top-N tables stay capped by their own small `LIMIT` values.
+
+If the dashboard imports but initially shows no rows, check the dashboard variables first. The service, protocol, method, status message, and country variables should start at `All`; selecting unrelated concrete values across those independent filters can produce an empty intersection even when the table contains data.
+
+For a read-only Grafana user, keep the grants limited to `SELECT`, but allow Grafana to adjust the safe query settings used by the ClickHouse data source. `additional_table_filters` is only required if you enable Grafana's generic ad-hoc filters manually:
+
+```sql
+ALTER USER grafana_ro SETTINGS
+  readonly = 1,
+  max_execution_time CHANGEABLE_IN_READONLY,
+  additional_table_filters CHANGEABLE_IN_READONLY;
+```
+
+Grafana's generic ad-hoc regex operators such as `!~` are intentionally not used by this dashboard because ClickHouse does not support that operator syntax directly. Use the dashboard's `Exclude identities` textbox instead.
 
 ## Apply in Kubernetes
 

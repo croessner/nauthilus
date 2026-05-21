@@ -203,6 +203,12 @@ type ResultEnvelope struct {
 	Session   string      `json:"session"`
 }
 
+// PageLimit defines model for PageLimit.
+type PageLimit = int
+
+// PageOffset defines model for PageOffset.
+type PageOffset = int
+
 // AsyncAccepted defines model for AsyncAccepted.
 type AsyncAccepted = AsyncAcceptedResult
 
@@ -231,6 +237,24 @@ type backchannelBearerContextKey string
 
 // sessionCookieContextKey is the context key for sessionCookie security scheme
 type sessionCookieContextKey string
+
+// ListBruteForceEntriesParams defines parameters for ListBruteForceEntries.
+type ListBruteForceEntriesParams struct {
+	// Limit Maximum number of records to return per brute-force list section.
+	Limit *PageLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Zero-based offset for brute-force list paging.
+	Offset *PageOffset `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListFilteredBruteForceEntriesParams defines parameters for ListFilteredBruteForceEntries.
+type ListFilteredBruteForceEntriesParams struct {
+	// Limit Maximum number of records to return per brute-force list section.
+	Limit *PageLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Zero-based offset for brute-force list paging.
+	Offset *PageOffset `form:"offset,omitempty" json:"offset,omitempty"`
+}
 
 // FlushBruteForceRuleJSONRequestBody defines body for FlushBruteForceRule for application/json ContentType.
 type FlushBruteForceRuleJSONRequestBody = BruteForceFlushRequest
@@ -396,12 +420,12 @@ type ClientInterface interface {
 	EnqueueBruteForceRuleFlush(ctx context.Context, body EnqueueBruteForceRuleFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListBruteForceEntries request
-	ListBruteForceEntries(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListBruteForceEntries(ctx context.Context, params *ListBruteForceEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListFilteredBruteForceEntriesWithBody request with any body
-	ListFilteredBruteForceEntriesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListFilteredBruteForceEntriesWithBody(ctx context.Context, params *ListFilteredBruteForceEntriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	ListFilteredBruteForceEntries(ctx context.Context, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListFilteredBruteForceEntries(ctx context.Context, params *ListFilteredBruteForceEntriesParams, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// FlushUserCacheWithBody request with any body
 	FlushUserCacheWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -492,8 +516,8 @@ func (c *Client) EnqueueBruteForceRuleFlush(ctx context.Context, body EnqueueBru
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListBruteForceEntries(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListBruteForceEntriesRequest(c.Server)
+func (c *Client) ListBruteForceEntries(ctx context.Context, params *ListBruteForceEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBruteForceEntriesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -504,8 +528,8 @@ func (c *Client) ListBruteForceEntries(ctx context.Context, reqEditors ...Reques
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListFilteredBruteForceEntriesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListFilteredBruteForceEntriesRequestWithBody(c.Server, contentType, body)
+func (c *Client) ListFilteredBruteForceEntriesWithBody(ctx context.Context, params *ListFilteredBruteForceEntriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListFilteredBruteForceEntriesRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -516,8 +540,8 @@ func (c *Client) ListFilteredBruteForceEntriesWithBody(ctx context.Context, cont
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListFilteredBruteForceEntries(ctx context.Context, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListFilteredBruteForceEntriesRequest(c.Server, body)
+func (c *Client) ListFilteredBruteForceEntries(ctx context.Context, params *ListFilteredBruteForceEntriesParams, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListFilteredBruteForceEntriesRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -763,7 +787,7 @@ func NewEnqueueBruteForceRuleFlushRequestWithBody(server string, contentType str
 }
 
 // NewListBruteForceEntriesRequest generates requests for ListBruteForceEntries
-func NewListBruteForceEntriesRequest(server string) (*http.Request, error) {
+func NewListBruteForceEntriesRequest(server string, params *ListBruteForceEntriesParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -779,6 +803,45 @@ func NewListBruteForceEntriesRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -790,18 +853,18 @@ func NewListBruteForceEntriesRequest(server string) (*http.Request, error) {
 }
 
 // NewListFilteredBruteForceEntriesRequest calls the generic ListFilteredBruteForceEntries builder with application/json body
-func NewListFilteredBruteForceEntriesRequest(server string, body ListFilteredBruteForceEntriesJSONRequestBody) (*http.Request, error) {
+func NewListFilteredBruteForceEntriesRequest(server string, params *ListFilteredBruteForceEntriesParams, body ListFilteredBruteForceEntriesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewListFilteredBruteForceEntriesRequestWithBody(server, "application/json", bodyReader)
+	return NewListFilteredBruteForceEntriesRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewListFilteredBruteForceEntriesRequestWithBody generates requests for ListFilteredBruteForceEntries with any type of body
-func NewListFilteredBruteForceEntriesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewListFilteredBruteForceEntriesRequestWithBody(server string, params *ListFilteredBruteForceEntriesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -817,6 +880,45 @@ func NewListFilteredBruteForceEntriesRequestWithBody(server string, contentType 
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
@@ -1156,12 +1258,12 @@ type ClientWithResponsesInterface interface {
 	EnqueueBruteForceRuleFlushWithResponse(ctx context.Context, body EnqueueBruteForceRuleFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*EnqueueBruteForceRuleFlushResponse, error)
 
 	// ListBruteForceEntriesWithResponse request
-	ListBruteForceEntriesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBruteForceEntriesResponse, error)
+	ListBruteForceEntriesWithResponse(ctx context.Context, params *ListBruteForceEntriesParams, reqEditors ...RequestEditorFn) (*ListBruteForceEntriesResponse, error)
 
 	// ListFilteredBruteForceEntriesWithBodyWithResponse request with any body
-	ListFilteredBruteForceEntriesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error)
+	ListFilteredBruteForceEntriesWithBodyWithResponse(ctx context.Context, params *ListFilteredBruteForceEntriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error)
 
-	ListFilteredBruteForceEntriesWithResponse(ctx context.Context, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error)
+	ListFilteredBruteForceEntriesWithResponse(ctx context.Context, params *ListFilteredBruteForceEntriesParams, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error)
 
 	// FlushUserCacheWithBodyWithResponse request with any body
 	FlushUserCacheWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FlushUserCacheResponse, error)
@@ -1660,8 +1762,8 @@ func (c *ClientWithResponses) EnqueueBruteForceRuleFlushWithResponse(ctx context
 }
 
 // ListBruteForceEntriesWithResponse request returning *ListBruteForceEntriesResponse
-func (c *ClientWithResponses) ListBruteForceEntriesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBruteForceEntriesResponse, error) {
-	rsp, err := c.ListBruteForceEntries(ctx, reqEditors...)
+func (c *ClientWithResponses) ListBruteForceEntriesWithResponse(ctx context.Context, params *ListBruteForceEntriesParams, reqEditors ...RequestEditorFn) (*ListBruteForceEntriesResponse, error) {
+	rsp, err := c.ListBruteForceEntries(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -1669,16 +1771,16 @@ func (c *ClientWithResponses) ListBruteForceEntriesWithResponse(ctx context.Cont
 }
 
 // ListFilteredBruteForceEntriesWithBodyWithResponse request with arbitrary body returning *ListFilteredBruteForceEntriesResponse
-func (c *ClientWithResponses) ListFilteredBruteForceEntriesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error) {
-	rsp, err := c.ListFilteredBruteForceEntriesWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ListFilteredBruteForceEntriesWithBodyWithResponse(ctx context.Context, params *ListFilteredBruteForceEntriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error) {
+	rsp, err := c.ListFilteredBruteForceEntriesWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseListFilteredBruteForceEntriesResponse(rsp)
 }
 
-func (c *ClientWithResponses) ListFilteredBruteForceEntriesWithResponse(ctx context.Context, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error) {
-	rsp, err := c.ListFilteredBruteForceEntries(ctx, body, reqEditors...)
+func (c *ClientWithResponses) ListFilteredBruteForceEntriesWithResponse(ctx context.Context, params *ListFilteredBruteForceEntriesParams, body ListFilteredBruteForceEntriesJSONRequestBody, reqEditors ...RequestEditorFn) (*ListFilteredBruteForceEntriesResponse, error) {
+	rsp, err := c.ListFilteredBruteForceEntries(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

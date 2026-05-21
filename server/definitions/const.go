@@ -899,6 +899,9 @@ const (
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
 	RedisAffectedAccountsKey = "affected_accounts"
 
+	// RedisAffectedAccountsIndexKey represents the sorted index used for paged affected-account listings.
+	RedisAffectedAccountsIndexKey = "affected_accounts:index"
+
 	// RedisBFTolerationPrefix represents the prefix used for toleration buckets in Redis.
 	RedisBFTolerationPrefix = "bf:tr:"
 

@@ -41,8 +41,19 @@ type SupportedManagementClient interface {
 		context.Context,
 		...management.RequestEditorFn,
 	) (*management.ListBruteForceEntriesResponse, error)
+	ListBruteForceEntriesWithParams(
+		context.Context,
+		*management.ListBruteForceEntriesParams,
+		...management.RequestEditorFn,
+	) (*management.ListBruteForceEntriesResponse, error)
 	ListFilteredBruteForceEntries(
 		context.Context,
+		management.ListFilteredBruteForceEntriesJSONRequestBody,
+		...management.RequestEditorFn,
+	) (*management.ListFilteredBruteForceEntriesResponse, error)
+	ListFilteredBruteForceEntriesWithParams(
+		context.Context,
+		*management.ListFilteredBruteForceEntriesParams,
 		management.ListFilteredBruteForceEntriesJSONRequestBody,
 		...management.RequestEditorFn,
 	) (*management.ListFilteredBruteForceEntriesResponse, error)
@@ -182,7 +193,22 @@ func (client *ManagementClient) ListBruteForceEntries(
 		return nil, err
 	}
 
-	return generated.ListBruteForceEntriesWithResponse(ctx, requestEditors...)
+	return generated.ListBruteForceEntriesWithResponse(ctx, nil, requestEditors...)
+}
+
+// ListBruteForceEntriesWithParams lists brute-force entries with optional paging
+// parameters using generated response types from the management OpenAPI contract.
+func (client *ManagementClient) ListBruteForceEntriesWithParams(
+	ctx context.Context,
+	params *management.ListBruteForceEntriesParams,
+	requestEditors ...management.RequestEditorFn,
+) (*management.ListBruteForceEntriesResponse, error) {
+	generated, err := client.generatedClient()
+	if err != nil {
+		return nil, err
+	}
+
+	return generated.ListBruteForceEntriesWithResponse(ctx, params, requestEditors...)
 }
 
 // ListFilteredBruteForceEntries lists filtered brute-force entries using
@@ -197,7 +223,23 @@ func (client *ManagementClient) ListFilteredBruteForceEntries(
 		return nil, err
 	}
 
-	return generated.ListFilteredBruteForceEntriesWithResponse(ctx, body, requestEditors...)
+	return generated.ListFilteredBruteForceEntriesWithResponse(ctx, nil, body, requestEditors...)
+}
+
+// ListFilteredBruteForceEntriesWithParams lists filtered brute-force entries
+// with optional paging parameters using generated request and response types.
+func (client *ManagementClient) ListFilteredBruteForceEntriesWithParams(
+	ctx context.Context,
+	params *management.ListFilteredBruteForceEntriesParams,
+	body management.ListFilteredBruteForceEntriesJSONRequestBody,
+	requestEditors ...management.RequestEditorFn,
+) (*management.ListFilteredBruteForceEntriesResponse, error) {
+	generated, err := client.generatedClient()
+	if err != nil {
+		return nil, err
+	}
+
+	return generated.ListFilteredBruteForceEntriesWithResponse(ctx, params, body, requestEditors...)
 }
 
 // FlushBruteForceRule flushes one brute-force rule using generated request and
