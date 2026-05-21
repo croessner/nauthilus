@@ -1,0 +1,3540 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_CLICKHOUSE",
+      "label": "ClickHouse datasource",
+      "description": "ClickHouse data source that can read the nauthilus.logins table.",
+      "type": "datasource",
+      "pluginId": "grafana-clickhouse-datasource",
+      "pluginName": "ClickHouse"
+    }
+  ],
+  "__elements": [],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "11.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "grafana-clickhouse-datasource",
+      "name": "ClickHouse",
+      "version": "4.17.0"
+    },
+    {
+      "type": "panel",
+      "id": "barchart",
+      "name": "Bar chart",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "geomap",
+      "name": "Geomap",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "piechart",
+      "name": "Pie chart",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Nauthilus login analytics directly from the ClickHouse logins table: outcome, identity risk, source reputation, protocol mix, latency, and defense signals.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Executive overview",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT count() AS \"Attempts\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Attempts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(authenticated = 1) AS \"Successful\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Successful",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 25
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(authenticated = 0) AS \"Failed\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT if(count() = 0, 0, round(100 * countIf(authenticated = 1) / count(), 2)) AS \"Success rate\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Success rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 1
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT uniqExactIf(if(username != '', username, account), username != '' OR account != '') AS \"Unique users\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Unique users",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 1
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT uniqExactIf(client_ip, client_ip != '') AS \"Unique IPs\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Unique IPs",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 250
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT if(count() = 0, 0, quantileTDigest(0.95)(latency)) AS \"P95 latency\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "P95 latency",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 25
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(decision_sources != '' OR prot_active = 1 OR dyn_threat > 0 OR brute_force_counter > 0 OR failed_login_count > 0 OR repeating = 1 OR rwp = 1) AS \"Defense events\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account)))",
+          "refId": "A"
+        }
+      ],
+      "title": "Defense events",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Traffic and outcome",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 55,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT time, outcome, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, outcome) ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Authentication outcome over time",
+      "type": "timeseries",
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": {
+            "format": "many"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p99"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, quantileTDigest(0.50)(latency) AS p50, quantileTDigest(0.95)(latency) AS p95, quantileTDigest(0.99)(latency) AS p99 FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Latency percentiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT $__timeInterval_ms(ts) AS time, if(count() = 0, 0, round(100 * countIf(authenticated = 1) / count(), 2)) AS \"success_rate\" FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Success rate over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 55,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT time, status_class, requests FROM (SELECT $__timeInterval_ms(ts) AS time, if(http_status = 0, 'none', concat(toString(intDiv(http_status, 100)), 'xx')) AS status_class, count() AS requests FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, status_class) ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP status classes",
+      "type": "timeseries",
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": {
+            "format": "many"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "id": 15,
+      "options": {
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT concat(if(proto = '', 'unknown', proto), ' / ', if(method = '', 'unknown', method)) AS slice, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY slice ORDER BY attempts DESC LIMIT 12",
+          "refId": "A"
+        }
+      ],
+      "title": "Protocol and method mix",
+      "type": "piechart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 20,
+      "panels": [],
+      "title": "Identity and source risk",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "id": 21,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT if(username = '', if(account = '', 'unknown', account), username) AS identity, count() AS failures, uniqExactIf(client_ip, client_ip != '') AS source_ips, max(failed_login_count) AS max_failed_count, max(failed_login_rank) AS best_failed_rank, argMax(status_msg, ts) AS latest_status FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND authenticated = 0 GROUP BY identity ORDER BY failures DESC LIMIT 25",
+          "refId": "A"
+        }
+      ],
+      "title": "Top failed identities",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "id": 22,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT client_ip, argMax(geoip_country, ts) AS country, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(username, username != '') AS identities, max(dyn_threat) AS max_threat, max(prot_delay_ms) AS max_delay_ms FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND client_ip != '' GROUP BY client_ip ORDER BY failures DESC, attempts DESC LIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "Top source IPs",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Country-level login outcome map. Marker size follows total attempts; marker color uses a colorblind-friendly blue/yellow/orange/purple scale for failed-login percentage.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#F0E442",
+                "value": 25
+              },
+              {
+                "color": "#E69F00",
+                "value": 50
+              },
+              {
+                "color": "#CC79A7",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Failure rate"
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#0072B2",
+                      "value": null
+                    },
+                    {
+                      "color": "#F0E442",
+                      "value": 25
+                    },
+                    {
+                      "color": "#E69F00",
+                      "value": 50
+                    },
+                    {
+                      "color": "#CC79A7",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "successful"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Successful"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Failed"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "attempts"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Attempts"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 16,
+        "x": 0,
+        "y": 31
+      },
+      "id": 26,
+      "options": {
+        "basemap": {
+          "config": {},
+          "name": "Layer 0",
+          "type": "default"
+        },
+        "controls": {
+          "mouseWheelZoom": true,
+          "showAttribution": true,
+          "showDebug": false,
+          "showMeasure": false,
+          "showScale": false,
+          "showZoom": true
+        },
+        "layers": [
+          {
+            "config": {
+              "showLegend": true,
+              "style": {
+                "color": {
+                  "field": "failure_rate",
+                  "fixed": "#CC79A7"
+                },
+                "opacity": 0.78,
+                "rotation": {
+                  "fixed": 0,
+                  "max": 360,
+                  "min": -360,
+                  "mode": "mod"
+                },
+                "size": {
+                  "field": "attempts",
+                  "fixed": 8,
+                  "max": 44,
+                  "min": 7
+                },
+                "symbol": {
+                  "fixed": "img/icons/marker/circle.svg",
+                  "mode": "fixed"
+                },
+                "symbolAlign": {
+                  "horizontal": "center",
+                  "vertical": "center"
+                },
+                "text": {
+                  "field": "lookup",
+                  "fixed": "",
+                  "mode": "field"
+                },
+                "textConfig": {
+                  "fontSize": 12,
+                  "offsetX": 0,
+                  "offsetY": 0,
+                  "textAlign": "center",
+                  "textBaseline": "middle"
+                }
+              }
+            },
+            "filterData": {
+              "id": "byRefId",
+              "options": "A"
+            },
+            "location": {
+              "gazetteer": "public/gazetteer/countries.json",
+              "lookup": "lookup",
+              "mode": "lookup"
+            },
+            "name": "Country outcome",
+            "tooltip": true,
+            "type": "markers"
+          }
+        ],
+        "tooltip": {
+          "mode": "details"
+        },
+        "view": {
+          "id": "zero",
+          "lat": 5,
+          "lon": 10,
+          "zoom": 0.55
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT geoip_country AS lookup, geoip_country AS country, count() AS attempts, countIf(authenticated = 1) AS successful, countIf(authenticated = 0) AS failed, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(client_ip, client_ip != '') AS source_ips, uniqExactIf(if(username != '', username, account), username != '' OR account != '') AS identities, max(dyn_threat) AS max_threat FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_country != '' GROUP BY geoip_country ORDER BY failed DESC, attempts DESC LIMIT 250",
+          "refId": "A"
+        }
+      ],
+      "title": "Country outcome world map",
+      "type": "geomap"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 75,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "attempts"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Attempts"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failures"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Failures"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 16,
+        "y": 31
+      },
+      "id": 23,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.72,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT if(geoip_country = '', 'unknown', geoip_country) AS country, count() AS attempts, countIf(authenticated = 0) AS failures FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY country ORDER BY attempts DESC LIMIT 30",
+          "refId": "A"
+        }
+      ],
+      "title": "Countries by attempts and failures",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 55,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT time, user_state, attempts FROM (SELECT $__timeInterval_ms(ts) AS time, multiIf(user_found = 1, 'known user', user_found = 0, 'unknown user', 'not reported') AS user_state, count() AS attempts FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time, user_state) ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Known vs unknown users",
+      "type": "timeseries",
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": {
+            "format": "many"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "id": 25,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT if(user_agent = '', 'unknown', user_agent) AS user_agent, count() AS attempts, countIf(authenticated = 0) AS failures, round(100 * countIf(authenticated = 0) / count(), 2) AS failure_rate, uniqExactIf(client_ip, client_ip != '') AS source_ips FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY user_agent ORDER BY attempts DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "User agents",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "id": 30,
+      "panels": [],
+      "title": "Defense and policy signals",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 55,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT time, source, events FROM (SELECT $__timeInterval_ms(ts) AS time, arrayJoin(arrayFilter(x -> x != '', splitByChar(',', decision_sources))) AS source, count() AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND decision_sources != '' GROUP BY time, source) ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Decision sources over time",
+      "type": "timeseries",
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": {
+            "format": "many"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 55,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 2,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT time, signal, events FROM (SELECT $__timeInterval_ms(ts) AS time, 'account protection' AS signal, countIf(prot_active = 1) AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'dynamic response' AS signal, countIf(dyn_threat > 0 OR dyn_response != '') AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'brute force' AS signal, countIf(brute_force_counter > 0 OR failed_login_count > 0 OR brute_force_bucket != '') AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time UNION ALL SELECT $__timeInterval_ms(ts) AS time, 'repeat/replay' AS signal, countIf(repeating = 1 OR rwp = 1) AS events FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) GROUP BY time) WHERE events > 0 ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Defense activity",
+      "type": "timeseries",
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": {
+            "format": "many"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 58
+      },
+      "id": 33,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT if(brute_force_bucket = '', 'none', brute_force_bucket) AS bucket, count() AS attempts, countIf(authenticated = 0) AS failures, max(brute_force_counter) AS max_counter, max(failed_login_count) AS max_failed_count, uniqExactIf(client_ip, client_ip != '') AS source_ips, uniqExactIf(username, username != '') AS identities FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (brute_force_bucket != '' OR brute_force_counter > 0 OR failed_login_count > 0) GROUP BY bucket ORDER BY failures DESC, attempts DESC LIMIT 30",
+          "refId": "A"
+        }
+      ],
+      "title": "Brute-force buckets",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 58
+      },
+      "id": 34,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT if(dyn_response = '', 'none', dyn_response) AS response, if(prot_reason = '', 'none', prot_reason) AS protection_reason, count() AS events, max(dyn_threat) AS max_threat, uniqExactIf(client_ip, client_ip != '') AS source_ips, quantileTDigest(0.95)(prot_delay_ms) AS p95_delay_ms FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (dyn_threat > 0 OR dyn_response != '' OR prot_active = 1) GROUP BY response, protection_reason ORDER BY events DESC LIMIT 30",
+          "refId": "A"
+        }
+      ],
+      "title": "Dynamic response and protection",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 58
+      },
+      "id": 35,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT multiIf(oidc_cid != '', concat('oidc:', oidc_cid), saml_entity_id != '', concat('saml:', saml_entity_id), 'none') AS client, if(grant_type = '', 'n/a', grant_type) AS grant_type, if(mfa_method = '', 'none', mfa_method) AS mfa_method, count() AS attempts, countIf(authenticated = 1) AS successful, countIf(authenticated = 0) AS failed, uniqExactIf(username, username != '') AS users FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (oidc_cid != '' OR saml_entity_id != '' OR grant_type != '' OR mfa_method != '') GROUP BY client, grant_type, mfa_method ORDER BY attempts DESC LIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "OIDC and SAML clients",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 40,
+      "panels": [],
+      "title": "Investigations",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "id": 41,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT ts AS time, service, proto, method, if(username = '', account, username) AS identity, client_ip, geoip_country AS country, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, http_status, status_msg, latency, decision_sources, brute_force_counter, failed_login_count, dyn_threat, prot_reason, prot_delay_ms, rwp, repeating, session FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND (authenticated = 0 OR decision_sources != '' OR dyn_threat > 0 OR prot_active = 1 OR brute_force_counter > 0 OR failed_login_count > 0 OR rwp = 1 OR repeating = 1) ORDER BY ts DESC LIMIT ${table_page_size:raw} OFFSET (${table_page:raw} - 1) * ${table_page_size:raw}",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent high-risk events",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_delay_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failure_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "id": 42,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "fields": [],
+            "limit": 1000,
+            "mode": "list"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "format": 1,
+          "meta": {
+            "builderOptions": {
+              "fields": [],
+              "limit": 1000,
+              "mode": "list"
+            }
+          },
+          "queryType": "sql",
+          "rawSql": "SELECT ts AS time, service, proto, method, if(username = '', account, username) AS identity, client_ip, geoip_country AS country, multiIf(authenticated = 1, 'success', authenticated = 0, 'failed', 'unknown') AS outcome, http_status, status_msg, latency, decision_sources, user_agent FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND $__conditionalAll(service IN (${service:singlequote}), $service) AND $__conditionalAll(proto IN (${proto:singlequote}), $proto) AND $__conditionalAll(method IN (${method:singlequote}), $method) AND $__conditionalAll(status_msg IN (${status_msg:singlequote}), $status_msg) AND $__conditionalAll(geoip_country IN (${geoip_country:singlequote}), $geoip_country) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) ORDER BY ts DESC LIMIT ${table_page_size:raw} OFFSET (${table_page:raw} - 1) * ${table_page_size:raw}",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent login stream",
+      "type": "table"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 40,
+  "style": "dark",
+  "tags": [
+    "nauthilus",
+    "clickhouse",
+    "logins",
+    "security"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "${DS_CLICKHOUSE}",
+          "value": "${DS_CLICKHOUSE}"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "ClickHouse datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "grafana-clickhouse-datasource",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "nauthilus.logins",
+          "value": "nauthilus.logins"
+        },
+        "hide": 0,
+        "label": "Logins table",
+        "name": "log_table",
+        "query": "nauthilus.logins",
+        "skipUrlSync": false,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "100",
+          "value": "100"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Rows/page",
+        "multi": false,
+        "name": "table_page_size",
+        "options": [
+          {
+            "selected": false,
+            "text": "50",
+            "value": "50"
+          },
+          {
+            "selected": true,
+            "text": "100",
+            "value": "100"
+          },
+          {
+            "selected": false,
+            "text": "250",
+            "value": "250"
+          },
+          {
+            "selected": false,
+            "text": "500",
+            "value": "500"
+          },
+          {
+            "selected": false,
+            "text": "1000",
+            "value": "1000"
+          }
+        ],
+        "query": "50,100,250,500,1000",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "1",
+          "value": "1"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Table page",
+        "multi": false,
+        "name": "table_page",
+        "options": [
+          {
+            "selected": true,
+            "text": "1",
+            "value": "1"
+          },
+          {
+            "selected": false,
+            "text": "2",
+            "value": "2"
+          },
+          {
+            "selected": false,
+            "text": "3",
+            "value": "3"
+          },
+          {
+            "selected": false,
+            "text": "4",
+            "value": "4"
+          },
+          {
+            "selected": false,
+            "text": "5",
+            "value": "5"
+          },
+          {
+            "selected": false,
+            "text": "6",
+            "value": "6"
+          },
+          {
+            "selected": false,
+            "text": "7",
+            "value": "7"
+          },
+          {
+            "selected": false,
+            "text": "8",
+            "value": "8"
+          },
+          {
+            "selected": false,
+            "text": "9",
+            "value": "9"
+          },
+          {
+            "selected": false,
+            "text": "10",
+            "value": "10"
+          },
+          {
+            "selected": false,
+            "text": "20",
+            "value": "20"
+          },
+          {
+            "selected": false,
+            "text": "50",
+            "value": "50"
+          },
+          {
+            "selected": false,
+            "text": "100",
+            "value": "100"
+          }
+        ],
+        "query": "1,2,3,4,5,6,7,8,9,10,20,50,100",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "zabbix_mail",
+          "value": "zabbix_mail"
+        },
+        "hide": 0,
+        "label": "Exclude identities",
+        "name": "exclude_identities",
+        "options": [],
+        "query": "zabbix_mail",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT service FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND service != '' GROUP BY service ORDER BY service",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": "SELECT service FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND service != '' GROUP BY service ORDER BY service",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT proto FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND proto != '' GROUP BY proto ORDER BY proto",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Protocol",
+        "multi": true,
+        "name": "proto",
+        "options": [],
+        "query": "SELECT proto FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND proto != '' GROUP BY proto ORDER BY proto",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT method FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND method != '' GROUP BY method ORDER BY method",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Method",
+        "multi": true,
+        "name": "method",
+        "options": [],
+        "query": "SELECT method FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND method != '' GROUP BY method ORDER BY method",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT status_msg FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND status_msg != '' GROUP BY status_msg ORDER BY count() DESC LIMIT 100",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Status message",
+        "multi": true,
+        "name": "status_msg",
+        "options": [],
+        "query": "SELECT status_msg FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND status_msg != '' GROUP BY status_msg ORDER BY count() DESC LIMIT 100",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT geoip_country FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_country != '' GROUP BY geoip_country ORDER BY geoip_country",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Country",
+        "multi": true,
+        "name": "geoip_country",
+        "options": [],
+        "query": "SELECT geoip_country FROM ${log_table:raw} WHERE $__timeFilter_ms(ts) AND (${exclude_identities:singlequote} = '' OR NOT has(splitByChar(',', ${exclude_identities:singlequote}), if(username != '', username, account))) AND geoip_country != '' GROUP BY geoip_country ORDER BY geoip_country",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "1h"
+    ],
+    "time_options": [
+      "1h",
+      "6h",
+      "12h",
+      "24h",
+      "2d",
+      "7d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "Nauthilus ClickHouse Login Command Center",
+  "uid": "nauthilus-clickhouse-logins",
+  "version": 1,
+  "weekStart": ""
+}

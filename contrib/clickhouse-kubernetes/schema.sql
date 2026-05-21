@@ -68,9 +68,12 @@ TTL ts + INTERVAL 1 WEEK DELETE
 SETTINGS index_granularity = 8192;
 
 /*
-Legacy upgrade guide (run online, one by one). Safe to repeat.
+Legacy upgrade guide (run online, one by one). Most statements are safe to repeat.
+Run the features compatibility ADD only on tables that still have the legacy features column.
 
 ALTER TABLE nauthilus.logins MODIFY COLUMN service            LowCardinality(String) CODEC(ZSTD(3));
+-- Older installations used features for the same source list that is now stored as decision_sources.
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS decision_sources LowCardinality(String) DEFAULT features CODEC(ZSTD(3)) AFTER features;
 ALTER TABLE nauthilus.logins MODIFY COLUMN decision_sources   LowCardinality(String) CODEC(ZSTD(3));
 ALTER TABLE nauthilus.logins MODIFY COLUMN client_net         LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN client_id          LowCardinality(String);
