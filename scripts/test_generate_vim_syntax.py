@@ -56,6 +56,31 @@ class GenerateVimSyntaxTest(unittest.TestCase):
         self.assertIn(r"\zsname\ze:", generated)
         self.assertIn(r"\zsmappings\ze:", generated)
 
+    def test_generator_highlights_config_env_placeholders_distinctly(self) -> None:
+        """Environment placeholders must be distinct from Nauthilus macros."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "nauthilus.vim"
+            subprocess.run(
+                [
+                    "python3",
+                    "scripts/generate-vim-syntax.py",
+                    "--output",
+                    str(output_path),
+                ],
+                cwd=ROOT_DIR,
+                check=True,
+            )
+
+            generated = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("nauthilusEnvVariable", generated)
+        self.assertIn(r"\$\@<!\${[A-Za-z_][A-Za-z0-9_]*}", generated)
+        self.assertIn(
+            "contains=nauthilusEnvVariable,nauthilusMacro",
+            generated,
+        )
+        self.assertIn("hi def link nauthilusEnvVariable", generated)
+
 
 if __name__ == "__main__":
     unittest.main()
