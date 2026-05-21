@@ -324,6 +324,7 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 	// processUserCmd: UNLINK PW_HIST_IPS set, SREM affected accounts
 	mock.ExpectUnlink(pwHistSet).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
+	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user).SetVal(1)
 
 	// removeUserFromCache pipeline: HDEL USER hash field and UNLINK default positive cache key
 	defaultPos := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
@@ -361,6 +362,7 @@ func TestCacheFlushSync_RemoteOnlyBackendFlushesLocalState(t *testing.T) {
 	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
 	mock.ExpectUnlink(pwHistSet).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
+	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user).SetVal(1)
 
 	defaultPos := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
 	mock.ExpectHDel(shardKey, user).SetVal(1)
@@ -408,6 +410,7 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 
 	affectedKey := prefix + definitions.RedisAffectedAccountsKey
 	mock.ExpectSRem(affectedKey, user, mappedAccount).SetVal(2)
+	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user, mappedAccount).SetVal(2)
 
 	// removeUserFromCache pipeline: HDEL USER hash fields and UNLINK default positive cache keys
 	defaultPosUser := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user

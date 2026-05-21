@@ -94,8 +94,24 @@ func TestBruteForceListResponseBridgesGeneratedEnvelope(t *testing.T) {
 		Object:    definitions.CatBruteForce,
 		Operation: definitions.ServList,
 		Result: []any{
-			model.BlockedIPAddresses{Entries: []model.BanEntry{}},
-			model.BlockedAccounts{Accounts: map[string][]string{}},
+			model.BlockedIPAddresses{
+				Entries: []model.BanEntry{},
+				Page: &model.PageInfo{
+					Limit:      100,
+					Offset:     0,
+					NextOffset: 100,
+					HasMore:    false,
+				},
+			},
+			model.BlockedAccounts{
+				Accounts: map[string][]string{},
+				Page: &model.PageInfo{
+					Limit:      100,
+					Offset:     0,
+					NextOffset: 100,
+					HasMore:    false,
+				},
+			},
 		},
 	}
 	generated := management.BruteForceListResult{}
@@ -107,6 +123,9 @@ func TestBruteForceListResponseBridgesGeneratedEnvelope(t *testing.T) {
 	if len(generated.Result) != 2 {
 		t.Fatalf("result has %d entries, want 2", len(generated.Result))
 	}
+
+	assertBruteForceListPageMetadata(t, generated.Result[0])
+	assertBruteForceListPageMetadata(t, generated.Result[1])
 }
 
 func assertBruteForceFilterRequestBridge(t testing.TB, current model.FilterCmd) {
@@ -145,6 +164,24 @@ func assertBruteForceFlushPayloadBridge(t testing.TB, generated management.Brute
 	requesttest.RequireStringPointer(t, "result.oidc_cid", generated.OidcCid, bruteForceTypedBoundaryOIDCCID)
 	requesttest.RequireStringPointer(t, "result.status", generated.Status, bruteForceTypedBoundaryStatus)
 	requesttest.RequireStringSlicePointer(t, "result.removed_keys", generated.RemovedKeys, removedKeys)
+}
+
+func assertBruteForceListPageMetadata(t testing.TB, result any) {
+	t.Helper()
+
+	payload, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("list result payload type = %T, want map[string]any", result)
+	}
+
+	page, ok := payload["page"].(map[string]any)
+	if !ok {
+		t.Fatalf("list result page type = %T, want map[string]any", payload["page"])
+	}
+
+	if page["limit"] != float64(100) || page["offset"] != float64(0) || page["next_offset"] != float64(100) || page["has_more"] != false {
+		t.Fatalf("list result page = %#v, want limit=100 offset=0 next_offset=100 has_more=false", page)
+	}
 }
 
 func assertBruteForceTypedBoundaryEnvelope(t testing.TB, object string, operation string, session string) {

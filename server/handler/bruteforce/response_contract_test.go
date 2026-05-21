@@ -34,8 +34,7 @@ import (
 )
 
 const (
-	bruteForceContractBanScanCount int64 = 500
-	bruteForceContractRedisPrefix        = "t:"
+	bruteForceContractRedisPrefix = "t:"
 )
 
 func TestBruteForceListResponseMatchesOpenAPIContract(t *testing.T) {
@@ -48,7 +47,6 @@ func TestBruteForceListResponseMatchesOpenAPIContract(t *testing.T) {
 		mock.ExpectZRangeWithScores(key, 0, -1).SetVal([]redis.Z{})
 	}
 
-	mock.ExpectScan(0, rediscli.GetBruteForceBanKeyPattern(bruteForceContractRedisPrefix), bruteForceContractBanScanCount).SetVal([]string{}, 0)
 	mock.ExpectSMembers(bruteForceContractRedisPrefix + definitions.RedisAffectedAccountsKey).SetVal([]string{})
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/bruteforce/list", nil)

@@ -40,6 +40,9 @@ type BlockedIPAddresses struct {
 	// Entries contains all active ban entries.
 	Entries []BanEntry `json:"entries"`
 
+	// Page contains optional pagination metadata for the current entries slice.
+	Page *PageInfo `json:"page,omitempty"`
+
 	// Error holds any error encountered during the retrieval process.
 	Error *string `json:"error,omitempty"`
 }
@@ -49,8 +52,26 @@ type BlockedAccounts struct {
 	// Accounts represents a list of user accounts.
 	Accounts map[string][]string `json:"accounts"`
 
+	// Page contains optional pagination metadata for the current account slice.
+	Page *PageInfo `json:"page,omitempty"`
+
 	// Error represents the error message, if any, encountered during the account retrieval process.
 	Error *string `json:"error"`
+}
+
+// PageInfo describes a server-side page returned by a list endpoint.
+type PageInfo struct {
+	// Limit is the maximum number of records requested for this page.
+	Limit int `json:"limit"`
+
+	// Offset is the zero-based offset used for this page.
+	Offset int `json:"offset"`
+
+	// NextOffset is the offset a client can use for the following page.
+	NextOffset int `json:"next_offset"`
+
+	// HasMore reports whether the current section has more records after this page.
+	HasMore bool `json:"has_more"`
 }
 
 // FilterCmd defines a struct for command filters with optional fields for Accounts and IP Address.

@@ -433,6 +433,9 @@ paths:
       security:
         - backchannelBasic: []
         - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: Brute-force list result.
@@ -454,6 +457,9 @@ paths:
       security:
         - backchannelBasic: []
         - backchannelBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       requestBody:
         required: false
         content:
@@ -1003,6 +1009,23 @@ components:
       schema:
         type: string
       description: Optional OIDC client identifier associated with the request.
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+      description: Maximum number of records to return per brute-force list section.
+    PageOffset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+      description: Zero-based offset for brute-force list paging.
     SSLHeader:
       name: X-SSL
       in: header
@@ -1479,6 +1502,8 @@ components:
           type:
             - string
             - "null"
+        page:
+          $ref: "#/components/schemas/PageInfo"
     BruteForceBlockedIPAddresses:
       type: object
       required:
@@ -1492,6 +1517,8 @@ components:
           type:
             - string
             - "null"
+        page:
+          $ref: "#/components/schemas/PageInfo"
     BruteForceFilterRequest:
       type: object
       additionalProperties: false
@@ -1613,6 +1640,22 @@ components:
     OIDCSessions:
       type: object
       additionalProperties: true
+    PageInfo:
+      type: object
+      required:
+        - limit
+        - offset
+        - next_offset
+        - has_more
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        next_offset:
+          type: integer
+        has_more:
+          type: boolean
     RecoveryCodesResponse:
       type: object
       required:

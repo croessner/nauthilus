@@ -16,16 +16,19 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,7 +82,53 @@ type restAdminDeps struct {
 	TokenFlusher TokenFlusher
 }
 
-const bruteForceBanScanCount int64 = 500
+const (
+	bruteForceListDefaultLimit int64 = 100
+	bruteForceListMaxLimit     int64 = 1000
+	bruteForceListNoPageOffset int64 = 0
+	bruteForceListNoPageLimit  int64 = 0
+	bruteForceListOffsetParam        = "offset"
+	bruteForceListLimitParam         = "limit"
+)
+
+type bruteForceListPageQuery struct {
+	limit   int64
+	offset  int64
+	enabled bool
+}
+
+type bruteForceBanIndexEntry struct {
+	network  string
+	bannedAt float64
+}
+
+// Enabled reports whether the caller requested a paged brute-force list.
+func (query bruteForceListPageQuery) Enabled() bool {
+	return query.enabled
+}
+
+// Stop returns the inclusive Redis range stop used to overfetch one item.
+func (query bruteForceListPageQuery) Stop() int64 {
+	if !query.Enabled() {
+		return -1
+	}
+
+	return query.offset + query.limit
+}
+
+// PageInfo converts this query and has-more state into response metadata.
+func (query bruteForceListPageQuery) PageInfo(hasMore bool) *bf.PageInfo {
+	if !query.Enabled() {
+		return nil
+	}
+
+	return &bf.PageInfo{
+		Limit:      int(query.limit),
+		Offset:     int(query.offset),
+		NextOffset: int(query.offset + query.limit),
+		HasMore:    hasMore,
+	}
+}
 
 func (deps restAdminDeps) effectiveLogger() *slog.Logger {
 	return deps.Logger
@@ -107,6 +156,95 @@ func NewBruteForceListHandler(cfg config.File, logger *slog.Logger, redisClient 
 
 		handleBruteForceList(ctx, deps)
 	}
+}
+
+// parseBruteForceListPageQuery parses optional paging controls shared by GET and POST list requests.
+func parseBruteForceListPageQuery(ctx *gin.Context) (bruteForceListPageQuery, error) {
+	hasLimit, hasOffset := bruteForceListPagingFlags(ctx)
+	if !hasLimit && !hasOffset {
+		return bruteForceListPageQuery{
+			limit:  bruteForceListNoPageLimit,
+			offset: bruteForceListNoPageOffset,
+		}, nil
+	}
+
+	limit, err := parseBruteForceListLimit(ctx, hasLimit)
+	if err != nil {
+		return bruteForceListPageQuery{}, err
+	}
+
+	offset, err := parseBruteForceListOffset(ctx, hasOffset)
+	if err != nil {
+		return bruteForceListPageQuery{}, err
+	}
+
+	return bruteForceListPageQuery{
+		limit:   limit,
+		offset:  offset,
+		enabled: true,
+	}, nil
+}
+
+// bruteForceListPagingFlags reports which paging controls are present.
+func bruteForceListPagingFlags(ctx *gin.Context) (bool, bool) {
+	_, hasLimit := ctx.GetQuery(bruteForceListLimitParam)
+	_, hasOffset := ctx.GetQuery(bruteForceListOffsetParam)
+
+	return hasLimit, hasOffset
+}
+
+// parseBruteForceListLimit parses the optional limit control.
+func parseBruteForceListLimit(ctx *gin.Context, hasLimit bool) (int64, error) {
+	limit := bruteForceListDefaultLimit
+
+	if hasLimit {
+		parsedLimit, err := parseBruteForceListNonNegativeInt(ctx.Query(bruteForceListLimitParam), bruteForceListLimitParam)
+		if err != nil {
+			return 0, err
+		}
+
+		if parsedLimit == 0 {
+			return 0, fmt.Errorf("query parameter %q must be greater than zero", bruteForceListLimitParam)
+		}
+
+		if parsedLimit > bruteForceListMaxLimit {
+			return 0, fmt.Errorf("query parameter %q must not exceed %d", bruteForceListLimitParam, bruteForceListMaxLimit)
+		}
+
+		limit = parsedLimit
+	}
+
+	return limit, nil
+}
+
+// parseBruteForceListOffset parses the optional offset control.
+func parseBruteForceListOffset(ctx *gin.Context, hasOffset bool) (int64, error) {
+	offset := bruteForceListNoPageOffset
+
+	if hasOffset {
+		parsedOffset, err := parseBruteForceListNonNegativeInt(ctx.Query(bruteForceListOffsetParam), bruteForceListOffsetParam)
+		if err != nil {
+			return 0, err
+		}
+
+		offset = parsedOffset
+	}
+
+	return offset, nil
+}
+
+// parseBruteForceListNonNegativeInt parses a non-negative query parameter value.
+func parseBruteForceListNonNegativeInt(rawValue string, name string) (int64, error) {
+	value, err := strconv.ParseInt(rawValue, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("query parameter %q must be a non-negative integer", name)
+	}
+
+	if value < 0 {
+		return 0, fmt.Errorf("query parameter %q must be a non-negative integer", name)
+	}
+
+	return value, nil
 }
 
 // NewBruteForceFlushHandler constructs a Gin handler for the BruteForce flush endpoint
@@ -539,7 +677,47 @@ func (a *AuthState) applyPasswordFSMOutcome(ctx *gin.Context, nextState authFSMS
 
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis using the
 // sharded ZSET ban index and per-network ban keys with TTL.
-func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedIPAddresses, error) {
+func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, pageQuery bruteForceListPageQuery, guid string) (*bf.BlockedIPAddresses, error) {
+	blockedIPAddresses, err := validateBlockedIPListDeps(deps)
+	if err != nil {
+		return blockedIPAddresses, err
+	}
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	cfg := deps.effectiveCfg()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
+	ruleMap := bruteForceBanTimeByBucket(cfg)
+
+	if filterCmd != nil && len(filterCmd.IPAddress) > 0 {
+		entries := collectFilteredBruteForceBanIndexEntries(ctx, deps, filterCmd.IPAddress, guid)
+		hasMore := false
+
+		if pageQuery.Enabled() {
+			entries, hasMore = pageBruteForceBanIndexEntries(entries, pageQuery)
+		}
+
+		return buildBlockedIPAddressesFromIndexEntries(ctx, deps, prefix, ruleMap, entries, pageQuery, hasMore, guid)
+	}
+
+	entries, err := readBruteForceBanIndexEntries(ctx, deps, pageQuery, guid)
+	if err != nil {
+		errMsg := err.Error()
+		blockedIPAddresses.Error = &errMsg
+
+		return blockedIPAddresses, err
+	}
+
+	var hasMore bool
+	if pageQuery.Enabled() {
+		entries, hasMore = pageBruteForceBanIndexEntries(entries, pageQuery)
+	}
+
+	return buildBlockedIPAddressesFromIndexEntries(ctx, deps, prefix, ruleMap, entries, pageQuery, hasMore, guid)
+}
+
+// validateBlockedIPListDeps prepares the response object and validates required dependencies.
+func validateBlockedIPListDeps(deps restAdminDeps) (*bf.BlockedIPAddresses, error) {
 	blockedIPAddresses := &bf.BlockedIPAddresses{}
 
 	if deps.Cfg == nil {
@@ -558,13 +736,11 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 		return blockedIPAddresses, err
 	}
 
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+	return blockedIPAddresses, nil
+}
 
-	logger := deps.effectiveLogger()
-	cfg := deps.effectiveCfg()
-	prefix := cfg.GetServer().GetRedis().GetPrefix()
-
-	// Build a lookup map: bucket name → configured ban time
+// bruteForceBanTimeByBucket builds a lookup map from bucket name to configured ban time.
+func bruteForceBanTimeByBucket(cfg config.File) map[string]time.Duration {
 	ruleMap := make(map[string]time.Duration)
 	if bfCfg := cfg.GetBruteForce(); bfCfg != nil {
 		for i := range bfCfg.Buckets {
@@ -572,7 +748,19 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 		}
 	}
 
-	// Step 1: Query all 16 ZSET shards via pipeline
+	return ruleMap
+}
+
+// readBruteForceBanIndexEntries reads bounded candidate entries from all ban-index shards.
+func readBruteForceBanIndexEntries(
+	ctx context.Context,
+	deps restAdminDeps,
+	pageQuery bruteForceListPageQuery,
+	guid string,
+) ([]bruteForceBanIndexEntry, error) {
+	cfg := deps.effectiveCfg()
+	logger := deps.effectiveLogger()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
 	indexKeys := rediscli.GetAllBruteForceBanIndexKeys(prefix)
 
 	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
@@ -582,30 +770,26 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 	rangeCmds := make([]*redis.ZSliceCmd, len(indexKeys))
 
 	for i, key := range indexKeys {
-		rangeCmds[i] = pipe.ZRangeWithScores(dCtxR, key, 0, -1)
+		rangeCmds[i] = pipe.ZRangeWithScores(dCtxR, key, 0, pageQuery.Stop())
 	}
 
 	_, err := pipe.Exec(dCtxR)
 	if err != nil && !stderrors.Is(err, redis.Nil) {
-		level.Error(logger).Log(
+		_ = level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "Error reading ban index shards",
 			definitions.LogKeyError, err,
 		)
 
-		errMsg := err.Error()
-		blockedIPAddresses.Error = &errMsg
-
-		return blockedIPAddresses, err
+		return nil, err
 	}
 
-	// Parse ZSET results from all shards
-	type indexEntry struct {
-		network  string
-		bannedAt float64
-	}
+	return decodeBruteForceBanIndexEntries(rangeCmds), nil
+}
 
-	entries := make([]indexEntry, 0)
+// decodeBruteForceBanIndexEntries normalizes Redis ZSET members into ban-index entries.
+func decodeBruteForceBanIndexEntries(rangeCmds []*redis.ZSliceCmd) []bruteForceBanIndexEntry {
+	entries := make([]bruteForceBanIndexEntry, 0)
 	seenNetworks := make(map[string]struct{})
 
 	for _, cmd := range rangeCmds {
@@ -635,160 +819,275 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 
 			seenNetworks[networkStr] = struct{}{}
 
-			entries = append(entries, indexEntry{network: networkStr, bannedAt: z.Score})
+			entries = append(entries, bruteForceBanIndexEntry{network: networkStr, bannedAt: z.Score})
 		}
 	}
 
-	// Step 1b: Scan ban keys to repair missing index entries
-	dCtxRScan, cancelRScan := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-	defer cancelRScan()
+	return entries
+}
 
-	scanPattern := rediscli.GetBruteForceBanKeyPattern(prefix)
-	var cursor uint64
+// collectFilteredBruteForceBanIndexEntries derives candidate ban networks from explicit IP filters.
+func collectFilteredBruteForceBanIndexEntries(
+	ctx context.Context,
+	deps restAdminDeps,
+	ipAddresses []string,
+	guid string,
+) []bruteForceBanIndexEntry {
+	cfg := deps.effectiveCfg()
+	entries := make([]bruteForceBanIndexEntry, 0)
+	seenNetworks := make(map[string]struct{})
 
-	for {
-		keys, nextCursor, scanErr := deps.Redis.GetReadHandle().Scan(dCtxRScan, cursor, scanPattern, bruteForceBanScanCount).Result()
-		if scanErr != nil && !stderrors.Is(scanErr, redis.Nil) {
-			level.Warn(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Error scanning brute force ban keys",
-				definitions.LogKeyError, scanErr,
-			)
-
-			break
+	for _, ipAddress := range uniqueStrings(ipAddresses) {
+		parsedIP := net.ParseIP(ipAddress)
+		if parsedIP == nil {
+			continue
 		}
 
-		for _, key := range keys {
-			networkStr, ok := rediscli.ParseBruteForceBanKey(prefix, key)
-			if !ok {
+		bm := createBucketManager(ctx, deps, guid, ipAddress, "", "")
+		isIPv4 := parsedIP.To4() != nil
+
+		for _, rule := range cfg.GetBruteForceRules() {
+			if rule.IPv4 != isIPv4 {
 				continue
 			}
 
-			if _, exists := seenNetworks[networkStr]; exists {
+			_, network, err := bm.GetBruteForceBanRedisKey(&rule)
+			if err != nil || network == "" {
 				continue
 			}
 
-			seenNetworks[networkStr] = struct{}{}
-			entries = append(entries, indexEntry{network: networkStr})
-		}
+			if _, exists := seenNetworks[network]; exists {
+				continue
+			}
 
-		cursor = nextCursor
-		if cursor == 0 {
-			break
+			seenNetworks[network] = struct{}{}
+			entries = append(entries, bruteForceBanIndexEntry{network: network})
 		}
 	}
 
+	return entries
+}
+
+// buildBlockedIPAddressesFromIndexEntries hydrates candidate networks into response entries.
+func buildBlockedIPAddressesFromIndexEntries(
+	ctx context.Context,
+	deps restAdminDeps,
+	prefix string,
+	ruleMap map[string]time.Duration,
+	entries []bruteForceBanIndexEntry,
+	pageQuery bruteForceListPageQuery,
+	hasMore bool,
+	guid string,
+) (*bf.BlockedIPAddresses, error) {
+	blockedIPAddresses := &bf.BlockedIPAddresses{}
 	if len(entries) == 0 {
 		blockedIPAddresses.Entries = []bf.BanEntry{}
+		blockedIPAddresses.Page = pageQuery.PageInfo(false)
 
 		return blockedIPAddresses, nil
 	}
 
-	// Step 2: Pipeline GET + TTL for each ban key
-	dCtxR2, cancelR2 := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
-	defer cancelR2()
+	logger := deps.effectiveLogger()
 
-	pipe2 := deps.Redis.GetReadHandle().Pipeline()
+	getCmds, ttlCmds, err := queueBruteForceBanDetailReads(ctx, deps, prefix, entries)
+	if err != nil {
+		_ = level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error hydrating brute-force ban entries",
+			definitions.LogKeyError, err,
+		)
+
+		errMsg := err.Error()
+		blockedIPAddresses.Error = &errMsg
+
+		return blockedIPAddresses, err
+	}
+
+	banEntries, cleanupNetworks := buildHydratedBruteForceBanEntries(time.Now(), ruleMap, entries, getCmds, ttlCmds)
+
+	cleanupStaleBruteForceBanIndexEntries(deps, prefix, cleanupNetworks, guid, logger)
+
+	blockedIPAddresses.Entries = banEntries
+	blockedIPAddresses.Page = pageQuery.PageInfo(hasMore)
+
+	return blockedIPAddresses, nil
+}
+
+// queueBruteForceBanDetailReads queues per-network bucket and TTL reads.
+func queueBruteForceBanDetailReads(
+	ctx context.Context,
+	deps restAdminDeps,
+	prefix string,
+	entries []bruteForceBanIndexEntry,
+) ([]*redis.StringCmd, []*redis.DurationCmd, error) {
+	cfg := deps.effectiveCfg()
+
+	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
+	defer cancelR()
+
+	pipe := deps.Redis.GetReadHandle().Pipeline()
 	getCmds := make([]*redis.StringCmd, len(entries))
 	ttlCmds := make([]*redis.DurationCmd, len(entries))
 
-	for i, e := range entries {
-		banKey := rediscli.GetBruteForceBanKey(prefix, e.network)
-		getCmds[i] = pipe2.Get(dCtxR2, banKey)
-		ttlCmds[i] = pipe2.TTL(dCtxR2, banKey)
+	for i, entry := range entries {
+		banKey := rediscli.GetBruteForceBanKey(prefix, entry.network)
+		getCmds[i] = pipe.Get(dCtxR, banKey)
+		ttlCmds[i] = pipe.TTL(dCtxR, banKey)
 	}
 
-	_, _ = pipe2.Exec(dCtxR2)
+	_, err := pipe.Exec(dCtxR)
+	if err != nil && !stderrors.Is(err, redis.Nil) {
+		return nil, nil, err
+	}
 
-	// Step 3: Build result entries + lazy cleanup for expired bans
-	now := time.Now()
-	var cleanupNetworks []string
+	return getCmds, ttlCmds, nil
+}
+
+// buildHydratedBruteForceBanEntries converts Redis read results into response entries.
+func buildHydratedBruteForceBanEntries(
+	now time.Time,
+	ruleMap map[string]time.Duration,
+	entries []bruteForceBanIndexEntry,
+	getCmds []*redis.StringCmd,
+	ttlCmds []*redis.DurationCmd,
+) ([]bf.BanEntry, []string) {
+	cleanupNetworks := make([]string, 0)
 	banEntries := make([]bf.BanEntry, 0, len(entries))
 
-	for i, e := range entries {
+	for i, entry := range entries {
 		bucket, getErr := getCmds[i].Result()
 		if getErr != nil || bucket == "" {
-			// Ban key expired — schedule lazy cleanup from ZSET index
-			cleanupNetworks = append(cleanupNetworks, e.network)
+			cleanupNetworks = append(cleanupNetworks, entry.network)
 
 			continue
 		}
 
 		ttlVal, ttlErr := ttlCmds[i].Result()
 		if ttlErr != nil || ttlVal < 0 {
-			// Key exists but has no TTL or is expiring — skip
-			cleanupNetworks = append(cleanupNetworks, e.network)
+			cleanupNetworks = append(cleanupNetworks, entry.network)
 
 			continue
 		}
 
-		// Look up configured ban time
 		configuredBanTime := definitions.DefaultBanTime
 		if bt, found := ruleMap[bucket]; found {
 			configuredBanTime = bt
 		}
 
-		// Calculate banned_at: now - (configuredBanTime - remaining TTL)
-		bannedAt := now.Add(-(configuredBanTime - ttlVal))
-
-		entry := bf.BanEntry{
-			Network:  e.network,
+		banEntries = append(banEntries, bf.BanEntry{
+			Network:  entry.network,
 			Bucket:   bucket,
 			BanTime:  configuredBanTime,
 			TTL:      ttlVal,
-			BannedAt: bannedAt,
-		}
-
-		banEntries = append(banEntries, entry)
+			BannedAt: now.Add(-(configuredBanTime - ttlVal)),
+		})
 	}
 
-	// Step 4: Lazy cleanup of stale ZSET entries (best-effort, fire-and-forget)
-	if len(cleanupNetworks) > 0 {
-		go func() {
-			cleanupCtx, cleanupCancel := util.GetCtxWithDeadlineRedisWrite(context.Background(), cfg)
-			defer cleanupCancel()
-
-			cleanupPipe := deps.Redis.GetWriteHandle().Pipeline()
-
-			for _, n := range cleanupNetworks {
-				shard := rediscli.GetBanIndexShard(n)
-				shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, shard)
-				cleanupPipe.ZRem(cleanupCtx, shardKey, n)
-			}
-
-			if _, err := cleanupPipe.Exec(cleanupCtx); err != nil {
-				level.Warn(logger).Log(
-					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, "Lazy cleanup of stale ban index entries failed",
-					definitions.LogKeyError, err,
-				)
-			}
-		}()
-	}
-
-	// Apply IP filter if specified
-	if filterCmd != nil && len(filterCmd.IPAddress) > 0 {
-		filtered := make([]bf.BanEntry, 0)
-
-		for _, entry := range banEntries {
-			for _, filterIPWanted := range filterCmd.IPAddress {
-				if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{entry.Network}, guid, filterIPWanted) {
-					filtered = append(filtered, entry)
-
-					break
-				}
-			}
-		}
-
-		banEntries = filtered
-	}
-
-	blockedIPAddresses.Entries = banEntries
-
-	return blockedIPAddresses, nil
+	return banEntries, cleanupNetworks
 }
 
-func listBlockedAccounts(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedAccounts, error) {
+// cleanupStaleBruteForceBanIndexEntries removes stale ban-index members in the background.
+func cleanupStaleBruteForceBanIndexEntries(
+	deps restAdminDeps,
+	prefix string,
+	networks []string,
+	guid string,
+	logger *slog.Logger,
+) {
+	if len(networks) == 0 {
+		return
+	}
+
+	cfg := deps.effectiveCfg()
+	go func() {
+		cleanupCtx, cleanupCancel := util.GetCtxWithDeadlineRedisWrite(context.Background(), cfg)
+		defer cleanupCancel()
+
+		cleanupPipe := deps.Redis.GetWriteHandle().Pipeline()
+
+		for _, network := range networks {
+			shard := rediscli.GetBanIndexShard(network)
+			shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, shard)
+			cleanupPipe.ZRem(cleanupCtx, shardKey, network)
+		}
+
+		if _, err := cleanupPipe.Exec(cleanupCtx); err != nil {
+			_ = level.Warn(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Lazy cleanup of stale ban index entries failed",
+				definitions.LogKeyError, err,
+			)
+		}
+	}()
+}
+
+// pageBruteForceBanIndexEntries sorts and slices ban-index entries for a page.
+func pageBruteForceBanIndexEntries(entries []bruteForceBanIndexEntry, pageQuery bruteForceListPageQuery) ([]bruteForceBanIndexEntry, bool) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].bannedAt == entries[j].bannedAt {
+			return entries[i].network < entries[j].network
+		}
+
+		return entries[i].bannedAt < entries[j].bannedAt
+	})
+
+	start := pageQuery.offset
+	if start >= int64(len(entries)) {
+		return []bruteForceBanIndexEntry{}, false
+	}
+
+	end := start + pageQuery.limit
+
+	hasMore := int64(len(entries)) > end
+	if end > int64(len(entries)) {
+		end = int64(len(entries))
+	}
+
+	return entries[int(start):int(end)], hasMore
+}
+
+// listBlockedAccounts retrieves affected accounts and their known IP history from Redis.
+func listBlockedAccounts(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, pageQuery bruteForceListPageQuery, guid string) (*bf.BlockedAccounts, error) {
+	blockedAccounts, err := validateBlockedAccountsDeps(deps)
+	if err != nil {
+		return blockedAccounts, err
+	}
+
+	logger := deps.effectiveLogger()
+	cfg := deps.effectiveCfg()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
+	key := prefix + definitions.RedisAffectedAccountsKey
+
+	accounts, hasMore, err := listBlockedAccountNames(ctx, deps, filterCmd, pageQuery, key)
+	if err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			_ = level.Error(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error retrieving accounts from Redis",
+				definitions.LogKeyError, err,
+			)
+
+			errMsg := err.Error()
+			blockedAccounts.Error = &errMsg
+		} else {
+			err = nil
+		}
+
+		return blockedAccounts, err
+	}
+
+	if err = populateBlockedAccountIPHistory(ctx, deps, prefix, accounts, blockedAccounts, guid); err != nil {
+		return blockedAccounts, err
+	}
+
+	blockedAccounts.Error = nil
+	blockedAccounts.Page = pageQuery.PageInfo(hasMore)
+
+	return blockedAccounts, err
+}
+
+// validateBlockedAccountsDeps prepares the response object and validates required dependencies.
+func validateBlockedAccountsDeps(deps restAdminDeps) (*bf.BlockedAccounts, error) {
 	blockedAccounts := &bf.BlockedAccounts{Accounts: make(map[string][]string)}
 
 	if deps.Cfg == nil {
@@ -807,85 +1106,204 @@ func listBlockedAccounts(ctx context.Context, deps restAdminDeps, filterCmd *bf.
 		return blockedAccounts, err
 	}
 
+	return blockedAccounts, nil
+}
+
+// populateBlockedAccountIPHistory attaches known password-history IPs to each account.
+func populateBlockedAccountIPHistory(
+	ctx context.Context,
+	deps restAdminDeps,
+	prefix string,
+	accounts []string,
+	blockedAccounts *bf.BlockedAccounts,
+	guid string,
+) error {
 	logger := deps.effectiveLogger()
-	cfg := deps.effectiveCfg()
-	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
-
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	accounts, err := deps.Redis.GetReadHandle().SMembers(ctx, key).Result()
-	if err != nil {
-		if !stderrors.Is(err, redis.Nil) {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Error retrieving accounts from Redis",
-				definitions.LogKeyError, err,
-			)
-
-			errMsg := err.Error()
-			blockedAccounts.Error = &errMsg
-		} else {
-			err = nil
-		}
-
-		return blockedAccounts, err
-	}
-
-	if filterCmd != nil {
-		var (
-			account          string
-			filteredAccounts []string
-		)
-
-		for _, accountWanted := range filterCmd.Accounts {
-			for _, account = range accounts {
-				if account == accountWanted {
-					break
-				} else {
-					account = ""
-				}
-			}
-
-			if account != "" {
-				filteredAccounts = append(filteredAccounts, account)
-			}
-		}
-
-		accounts = filteredAccounts
-	}
 
 	for _, account := range accounts {
-		var accountIPs []string
+		key := prefix + definitions.RedisPWHistIPsKey + ":" + account
+		accountIPs, err := deps.Redis.GetReadHandle().SMembers(ctx, key).Result()
 
-		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + account
-		if accountIPs, err = deps.Redis.GetReadHandle().SMembers(ctx, key).Result(); err != nil {
-			stats.GetMetrics().GetRedisReadCounter().Inc()
+		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-			if !stderrors.Is(err, redis.Nil) {
-				level.Error(logger).Log(
-					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, "Error retrieving IP addresses for account from Redis",
-					definitions.LogKeyError, err,
-				)
-
-				errMsg := err.Error()
-				blockedAccounts.Error = &errMsg
-
-				break
-			} else {
-				err = nil
-			}
+		if err == nil {
+			blockedAccounts.Accounts[account] = accountIPs
 
 			continue
 		}
 
-		stats.GetMetrics().GetRedisReadCounter().Inc()
-		blockedAccounts.Accounts[account] = accountIPs
+		if stderrors.Is(err, redis.Nil) {
+			continue
+		}
+
+		_ = level.Error(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error retrieving IP addresses for account from Redis",
+			definitions.LogKeyError, err,
+		)
+
+		errMsg := err.Error()
+		blockedAccounts.Error = &errMsg
+
+		return err
 	}
 
-	blockedAccounts.Error = nil
+	return nil
+}
 
-	return blockedAccounts, err
+// listBlockedAccountNames selects account names using filters, the legacy set, or the paged index.
+func listBlockedAccountNames(
+	ctx context.Context,
+	deps restAdminDeps,
+	filterCmd *bf.FilterCmd,
+	pageQuery bruteForceListPageQuery,
+	key string,
+) ([]string, bool, error) {
+	if filterCmd != nil && len(filterCmd.Accounts) > 0 {
+		return listFilteredBlockedAccountNames(ctx, deps, filterCmd.Accounts, key, pageQuery)
+	}
+
+	if pageQuery.Enabled() {
+		return listPagedBlockedAccountNames(ctx, deps, pageQuery)
+	}
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	accounts, err := deps.Redis.GetReadHandle().SMembers(ctx, key).Result()
+
+	return accounts, false, err
+}
+
+// listFilteredBlockedAccountNames checks requested accounts directly against the affected-account set.
+func listFilteredBlockedAccountNames(
+	ctx context.Context,
+	deps restAdminDeps,
+	wantedAccounts []string,
+	key string,
+	pageQuery bruteForceListPageQuery,
+) ([]string, bool, error) {
+	uniqueAccounts := uniqueStrings(wantedAccounts)
+	if len(uniqueAccounts) == 0 {
+		return []string{}, false, nil
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, deps.effectiveCfg())
+	defer cancel()
+
+	pipe := deps.Redis.GetReadHandle().Pipeline()
+	memberCmds := make([]*redis.BoolCmd, len(uniqueAccounts))
+
+	for index, account := range uniqueAccounts {
+		memberCmds[index] = pipe.SIsMember(dCtx, key, account)
+	}
+
+	if _, err := pipe.Exec(dCtx); err != nil && !stderrors.Is(err, redis.Nil) {
+		return nil, false, err
+	}
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	accounts := make([]string, 0, len(uniqueAccounts))
+
+	for index, cmd := range memberCmds {
+		isMember, err := cmd.Result()
+		if err != nil && !stderrors.Is(err, redis.Nil) {
+			return nil, false, err
+		}
+
+		if isMember {
+			accounts = append(accounts, uniqueAccounts[index])
+		}
+	}
+
+	if !pageQuery.Enabled() {
+		return accounts, false, nil
+	}
+
+	return pageStringSlice(accounts, pageQuery)
+}
+
+// listPagedBlockedAccountNames reads a bounded account page from the sorted account index.
+func listPagedBlockedAccountNames(
+	ctx context.Context,
+	deps restAdminDeps,
+	pageQuery bruteForceListPageQuery,
+) ([]string, bool, error) {
+	cfg := deps.effectiveCfg()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
+	indexKey := rediscli.GetAffectedAccountsIndexKey(prefix)
+
+	accounts, err := readPagedBlockedAccountIndex(ctx, deps, indexKey, pageQuery)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return trimOverfetchedStrings(accounts, pageQuery.limit), len(accounts) > int(pageQuery.limit), nil
+}
+
+// readPagedBlockedAccountIndex reads one overfetched account page from the sorted account index.
+func readPagedBlockedAccountIndex(
+	ctx context.Context,
+	deps restAdminDeps,
+	indexKey string,
+	pageQuery bruteForceListPageQuery,
+) ([]string, error) {
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, deps.effectiveCfg())
+	defer cancel()
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	return deps.Redis.GetReadHandle().ZRange(dCtx, indexKey, pageQuery.offset, pageQuery.Stop()).Result()
+}
+
+// pageStringSlice applies page controls to an in-memory string slice.
+func pageStringSlice(values []string, pageQuery bruteForceListPageQuery) ([]string, bool, error) {
+	if !pageQuery.Enabled() {
+		return values, false, nil
+	}
+
+	if pageQuery.offset >= int64(len(values)) {
+		return []string{}, false, nil
+	}
+
+	end := pageQuery.offset + pageQuery.limit
+
+	hasMore := int64(len(values)) > end
+	if end > int64(len(values)) {
+		end = int64(len(values))
+	}
+
+	return values[int(pageQuery.offset):int(end)], hasMore, nil
+}
+
+// trimOverfetchedStrings removes the extra lookahead element from a paged string slice.
+func trimOverfetchedStrings(values []string, limit int64) []string {
+	if int64(len(values)) <= limit {
+		return values
+	}
+
+	return values[:int(limit)]
+}
+
+// uniqueStrings removes duplicate strings while preserving first-seen order.
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+
+		if _, exists := seen[value]; exists {
+			continue
+		}
+
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+
+	return result
 }
 
 func (deps restAdminDeps) effectiveChannel() backend.Channel {
@@ -908,6 +1326,7 @@ func (deps restAdminDeps) validate() error {
 	return nil
 }
 
+// handleBruteForceList renders blocked IP and account data for the management list endpoint.
 func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 	logger := deps.effectiveLogger()
 
@@ -926,22 +1345,28 @@ func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	httpStatusCode := http.StatusOK
 
-	if ctx.Request.Method == http.MethodPost {
-		filterCmd = &bf.FilterCmd{}
+	pageQuery, err := parseBruteForceListPageQuery(ctx)
+	if err != nil {
+		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 
-		if err := ctx.ShouldBindJSON(filterCmd); err != nil {
+		return
+	}
+
+	if ctx.Request.Method == http.MethodPost {
+		filterCmd, err = bindOptionalBruteForceFilter(ctx)
+		if err != nil {
 			HandleJSONError(ctx, err)
 
 			return
 		}
 	}
 
-	blockedIPAddresses, err := listBlockedIPAddresses(ctx, deps, filterCmd, guid)
+	blockedIPAddresses, err := listBlockedIPAddresses(ctx, deps, filterCmd, pageQuery, guid)
 	if err != nil {
 		httpStatusCode = http.StatusInternalServerError
 	}
 
-	blockedAccounts, err := listBlockedAccounts(ctx, deps, filterCmd, guid)
+	blockedAccounts, err := listBlockedAccounts(ctx, deps, filterCmd, pageQuery, guid)
 	if err != nil {
 		httpStatusCode = http.StatusInternalServerError
 	}
@@ -954,6 +1379,31 @@ func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 		Operation: definitions.ServList,
 		Result:    []any{blockedIPAddresses, blockedAccounts},
 	})
+}
+
+// bindOptionalBruteForceFilter binds a POST filter body while allowing an empty optional body.
+func bindOptionalBruteForceFilter(ctx *gin.Context) (*bf.FilterCmd, error) {
+	if ctx.Request.Body == nil {
+		return nil, nil
+	}
+
+	rawBody, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(string(rawBody)) == "" {
+		return nil, nil
+	}
+
+	ctx.Request.Body = io.NopCloser(bytes.NewReader(rawBody))
+
+	filterCmd := &bf.FilterCmd{}
+	if err = ctx.ShouldBindJSON(filterCmd); err != nil {
+		return nil, err
+	}
+
+	return filterCmd, nil
 }
 
 // HandleConfigLoad handles loading the server configuration with strict auth checks.
@@ -1245,15 +1695,26 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 		stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		// Remove accounts from AFFECTED_ACCOUNTS
-		key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
+		prefix := cfg.GetServer().GetRedis().GetPrefix()
+		key := prefix + definitions.RedisAffectedAccountsKey
+
 		if result, err = redisClient.GetWriteHandle().SRem(ctx, key, members...).Result(); err != nil {
-			level.Error(logger).Log(
+			_ = level.Error(logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "Error while flushing AFFECTED_ACCOUNTS",
 				definitions.LogKeyError, err,
 			)
 		} else if result > 0 {
 			removedKeySet.Set(key)
+		}
+
+		indexKey := rediscli.GetAffectedAccountsIndexKey(prefix)
+		if _, err = redisClient.GetWriteHandle().ZRem(ctx, indexKey, members...).Result(); err != nil {
+			_ = level.Error(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error while flushing affected-account index",
+				definitions.LogKeyError, err,
+			)
 		}
 	}
 

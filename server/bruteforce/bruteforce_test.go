@@ -18,6 +18,7 @@ package bruteforce_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -331,6 +332,49 @@ func TestProcessPWHistSkipsWithoutAccountName(t *testing.T) {
 	accountName := bm.ProcessPWHist()
 	assert.Empty(t, accountName)
 
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProcessPWHistIndexesNewAffectedAccount(t *testing.T) {
+	cfg := initTestConfig()
+	mock, tol := setupSubtest(cfg)
+	mock.MatchExpectationsInOrder(false)
+
+	const (
+		accountName = "user1"
+		clientIP    = "1.2.3.4"
+	)
+
+	bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "pw_hist_index", clientIP, bruteforce.BucketManagerDeps{
+		Cfg:      cfg,
+		Logger:   log.GetLogger(),
+		Redis:    rediscli.GetClient(),
+		Tolerate: tol,
+	}).WithAccountName(accountName).WithUsername(accountName).WithProtocol("imap").WithPassword(secret.New("password123")).WithRWPDecision(true)
+
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
+	affectedKey := prefix + definitions.RedisAffectedAccountsKey
+	accountIndexKey := rediscli.GetAffectedAccountsIndexKey(prefix)
+	pwHistKey := bruteforce.GetPWHistIPsRedisKey(accountName, cfg)
+
+	mock.ExpectSIsMember(affectedKey, accountName).SetVal(false)
+	mock.ExpectSAdd(affectedKey, accountName).SetVal(1)
+	mock.CustomMatch(func(_ []interface{}, actual []interface{}) error {
+		if len(actual) != 5 {
+			return fmt.Errorf("unexpected zadd args: %v", actual)
+		}
+
+		if actual[1] != accountIndexKey || actual[2] != "nx" || actual[4] != accountName {
+			return fmt.Errorf("unexpected affected-account index zadd: %v", actual)
+		}
+
+		return nil
+	}).ExpectZAddNX(accountIndexKey, redis.Z{Score: 0, Member: accountName}).SetVal(1)
+	mock.ExpectSIsMember(pwHistKey, clientIP).SetVal(false)
+	mock.ExpectSAdd(pwHistKey, clientIP).SetVal(1)
+	mock.ExpectExpire(pwHistKey, cfg.GetServer().Redis.NegCacheTTL).SetVal(true)
+
+	assert.Equal(t, accountName, bm.ProcessPWHist())
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
