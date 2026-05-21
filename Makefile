@@ -132,5 +132,5 @@ policy-check: ## Validate mandatory policy documents and text markers
 
 guardrails: sync-prompts-check policy-check generate-vim-syntax-check generate-openapi-bindings-check ## Run mandatory local quality gates
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
-	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
+	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused ./...
 	go test -short $$(go list ./... | grep -v /vendor/)
