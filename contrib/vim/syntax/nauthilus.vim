@@ -91,6 +91,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_header\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_idle_pool_size\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_json\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_jwt\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_mechanism\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_method\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_nginx\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsauth_pool_size\ze:/
@@ -632,17 +633,18 @@ syntax match nauthilusIP "\<\%([0-9A-Fa-f]\{1,4}:\)\{0,6}:[0-9A-Fa-f]\{1,4}\%(\/
 syntax match nauthilusIP "\<::\%([0-9A-Fa-f]\{1,4}\)\?\%(\/\d\{1,3}\)\?\>"
 syntax match nauthilusUUID "\<[0-9a-fA-F]\{8\}-[0-9a-fA-F]\{4\}-4[0-9a-fA-F]\{3\}-[89abAB][0-9a-fA-F]\{3\}-[0-9a-fA-F]\{12\}\>"
 syntax match nauthilusDuration "\<-\?\%(\d\+\%(\.\d\+\)\?\%(ns\|us\|µs\|ms\|s\|m\|h\)\)\+\>"
-syntax match nauthilusString  "\".*\"" contains=nauthilusMacro
-syntax match nauthilusString  "'.*'" contains=nauthilusMacro
+syntax match nauthilusString  "\".*\"" contains=nauthilusEnvVariable,nauthilusMacro
+syntax match nauthilusString  "'.*'" contains=nauthilusEnvVariable,nauthilusMacro
 syntax match nauthilusDelimiter ":"
 
 " LDAP Filter highlighting
-syntax region nauthilusLdapFilter start="(" end=")" contains=nauthilusLdapFilter,nauthilusLdapOperator,nauthilusMacro
+syntax region nauthilusLdapFilter start="(" end=")" contains=nauthilusLdapFilter,nauthilusLdapOperator,nauthilusEnvVariable,nauthilusMacro
 syntax match nauthilusLdapOperator "[&|!<>~=:]" contained
 
 " Macros/Variables
+syntax match nauthilusEnvVariable /\$\@<!\${[A-Za-z_][A-Za-z0-9_]*}/
 syntax region nauthilusMacro matchgroup=nauthilusMacroDelimiter start="%[LURT]*{" end="}" contains=nauthilusMacroVar oneline
-syntax region nauthilusMacro matchgroup=nauthilusMacroDelimiter start="\${" end="}" contains=nauthilusMacroVar oneline
+syntax region nauthilusMacro matchgroup=nauthilusMacroDelimiter start="\$\@<!\${\([A-Za-z_][A-Za-z0-9_]*}\)\@!" end="}" contains=nauthilusMacroVar oneline
 syntax match nauthilusMacroVar /[^}]\+/ contained
 
 " --- Highlighting ---
@@ -663,6 +665,7 @@ hi def link nauthilusString String
 hi def link nauthilusDelimiter Delimiter
 hi def link nauthilusLdapFilter Special
 hi def link nauthilusLdapOperator Operator
+hi def link nauthilusEnvVariable Identifier
 hi def link nauthilusMacro Special
 hi def link nauthilusMacroDelimiter Special
 hi def link nauthilusMacroVar Special
@@ -672,6 +675,7 @@ hi nauthilusKeyL1 ctermfg=4 guifg=#000080 gui=bold
 hi nauthilusKeyL2 ctermfg=10 guifg=#00ff00
 hi nauthilusKeyL3 ctermfg=11 guifg=#ffff00
 hi nauthilusHttpMethod ctermfg=208 guifg=#ff8700 gui=bold
+hi nauthilusEnvVariable ctermfg=45 guifg=#00d7ff gui=bold
 hi nauthilusMacro ctermfg=141 guifg=#af87ff gui=bold
 hi nauthilusMacroDelimiter ctermfg=141 guifg=#af87ff gui=bold
 hi nauthilusMacroVar ctermfg=141 guifg=#af87ff gui=bold

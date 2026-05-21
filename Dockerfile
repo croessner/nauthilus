@@ -3,6 +3,8 @@ FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.23 AS builder
 ARG BUILD_TAGS=""
 ARG TARGETOS
 ARG TARGETARCH
+ARG NAUTHILUS_CONF_DIR=/etc/nauthilus
+ARG NAUTHILUS_PLUGINS_DIR=/usr/app/lua-plugins.d
 
 WORKDIR /build
 
@@ -17,7 +19,7 @@ RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     GIT_COMMIT=$(git rev-parse --short HEAD) && echo "commit="${GIT_COMMIT}"" && \
     cd server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo ${BUILD_TAGS}" \
     -trimpath \
-    -ldflags="-s -w -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GIT_TAG}-${GIT_COMMIT}" \
+    -ldflags="-s -w -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GIT_TAG}-${GIT_COMMIT} -X github.com/croessner/nauthilus/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" \
     -o nauthilus . && \
     upx --best --lzma nauthilus
 

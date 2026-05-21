@@ -17,6 +17,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,19 @@ const (
 	defaultBackendHealthCheckInterval          = 10 * time.Second
 	defaultBackendHealthCheckFailureThreshold  = 1
 	defaultBackendHealthCheckRecoveryThreshold = 1
+)
+
+const (
+	// BackendAuthMechanismAuto lets backend health checks select an advertised executable mechanism.
+	BackendAuthMechanismAuto = "auto"
+	// BackendAuthMechanismPlain selects SASL PLAIN.
+	BackendAuthMechanismPlain = "PLAIN"
+	// BackendAuthMechanismLogin selects SASL LOGIN.
+	BackendAuthMechanismLogin = "LOGIN"
+	// BackendAuthMechanismUserPass selects POP3 USER/PASS.
+	BackendAuthMechanismUserPass = "USERPASS"
+	// BackendAuthMechanismBasic selects HTTP Basic authentication.
+	BackendAuthMechanismBasic = "BASIC"
 )
 
 type RelayDomainsSection struct {
@@ -61,8 +75,9 @@ func (r *RelayDomainsSection) GetSoftWhitelist() SoftWhitelist {
 }
 
 type BackendServer struct {
-	Protocol string `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
-	Host     string `mapstructure:"host" validate:"required,hostname_rfc1123_with_opt_trailing_dot|ip"`
+	Protocol      string `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
+	Host          string `mapstructure:"host" validate:"required,hostname_rfc1123_with_opt_trailing_dot|ip"`
+	AuthMechanism string `mapstructure:"auth_mechanism" validate:"omitempty,oneof=auto PLAIN LOGIN USERPASS BASIC"`
 
 	RequestURI   string `mapstructure:"request_uri" validate:"omitempty,url_encoded"`
 	TestUsername string `mapstructure:"test_username" validate:"omitempty,excludesall= "`
@@ -84,8 +99,8 @@ func (n *BackendServer) String() string {
 		return "BackendServer: <nil>"
 	}
 
-	return fmt.Sprintf("BackendServer: {Protocol: %s, Host: %s, RequestURI: %s, TestUsername: %s, TestPassword: <hidden>, Port: %d, TLS: %t, TLSSkipVerify: %t, HAProxyV2: %t}",
-		n.Protocol, n.Host, n.RequestURI, n.TestUsername, n.Port, n.TLS, n.TLSSkipVerify, n.HAProxyV2)
+	return fmt.Sprintf("BackendServer: {Protocol: %s, Host: %s, AuthMechanism: %s, RequestURI: %s, TestUsername: %s, TestPassword: <hidden>, Port: %d, TLS: %t, TLSSkipVerify: %t, HAProxyV2: %t}",
+		n.Protocol, n.Host, n.GetAuthMechanism(), n.RequestURI, n.TestUsername, n.Port, n.TLS, n.TLSSkipVerify, n.HAProxyV2)
 }
 
 // GetProtocol retrieves the protocol value from the BackendServer.
@@ -106,6 +121,34 @@ func (n *BackendServer) GetHost() string {
 	}
 
 	return n.Host
+}
+
+// GetAuthMechanism returns the normalized target-local backend health-check authentication mechanism.
+func (n *BackendServer) GetAuthMechanism() string {
+	if n == nil {
+		return BackendAuthMechanismAuto
+	}
+
+	return NormalizeBackendAuthMechanism(n.AuthMechanism)
+}
+
+// NormalizeBackendAuthMechanism normalizes backend health-check authentication mechanism names.
+func NormalizeBackendAuthMechanism(mechanism string) string {
+	normalized := strings.TrimSpace(mechanism)
+	if normalized == "" || strings.EqualFold(normalized, BackendAuthMechanismAuto) {
+		return BackendAuthMechanismAuto
+	}
+
+	return strings.ToUpper(normalized)
+}
+
+// normalizeAuthMechanism stores the canonical target-local auth mechanism back into the server config.
+func (n *BackendServer) normalizeAuthMechanism() {
+	if n == nil {
+		return
+	}
+
+	n.AuthMechanism = n.GetAuthMechanism()
 }
 
 // IsDeepCheck checks if deep checking is enabled for the BackendServer.

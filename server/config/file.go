@@ -3762,6 +3762,7 @@ func (f *FileSettings) HandleFile() (err error) {
 	return nil
 }
 
+// normalizeConfigAliases canonicalizes configuration aliases and derived values after unmarshalling.
 func (f *FileSettings) normalizeConfigAliases() {
 	if f == nil {
 		return
@@ -3771,6 +3772,38 @@ func (f *FileSettings) normalizeConfigAliases() {
 		f.Server.normalizeConfiguredRuntimeModules()
 	}
 
+	f.normalizeBackendHealthCheckAuthMechanisms()
+}
+
+// normalizeBackendHealthCheckAuthMechanisms canonicalizes target-only health-check auth mechanisms.
+func (f *FileSettings) normalizeBackendHealthCheckAuthMechanisms() {
+	if f == nil {
+		return
+	}
+
+	seen := make(map[*BackendServer]struct{})
+	normalize := func(servers []*BackendServer) {
+		for _, server := range servers {
+			if server == nil {
+				continue
+			}
+
+			if _, exists := seen[server]; exists {
+				continue
+			}
+
+			server.normalizeAuthMechanism()
+			seen[server] = struct{}{}
+		}
+	}
+
+	if f.BackendServerMonitoring != nil {
+		normalize(f.BackendServerMonitoring.BackendServers)
+	}
+
+	if f.Auth != nil && f.Auth.Services.BackendHealthChecks != nil {
+		normalize(f.Auth.Services.BackendHealthChecks.Targets)
+	}
 }
 
 // bindEnvs recursively binds struct fields to environment variables using Viper, constructing keys from struct tags or field names.

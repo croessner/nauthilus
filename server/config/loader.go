@@ -63,12 +63,18 @@ type SettingsMerger interface {
 	Merge(target map[string]any, source map[string]any)
 }
 
+// ValueExpander expands string values in a merged settings tree.
+type ValueExpander interface {
+	Expand(settings map[string]any) error
+}
+
 // ConfigLoader loads a config tree, resolves includes, and applies patches.
 type ConfigLoader struct {
 	reader          ConfigReader    `mapstructure:"-"`
 	includeResolver IncludeResolver `mapstructure:"-"`
 	patchEngine     PatchEngine     `mapstructure:"-"`
 	merger          SettingsMerger  `mapstructure:"-"`
+	valueExpander   ValueExpander   `mapstructure:"-"`
 }
 
 // NewConfigLoader returns a ConfigLoader configured for the given config type.
@@ -78,6 +84,7 @@ func NewConfigLoader(configType string) *ConfigLoader {
 		includeResolver: IncludeResolverFromConfig{},
 		patchEngine:     DefaultPatchEngine{},
 		merger:          MapMerger{},
+		valueExpander:   NewConfigValueExpander(nil),
 	}
 }
 
@@ -100,6 +107,12 @@ func (l *ConfigLoader) Load(path string, settings map[string]any) (map[string]an
 
 	if err := l.patchEngine.Apply(merged, patches); err != nil {
 		return nil, err
+	}
+
+	if l.valueExpander != nil {
+		if err := l.valueExpander.Expand(merged); err != nil {
+			return nil, err
+		}
 	}
 
 	return merged, nil

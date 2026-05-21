@@ -12,6 +12,7 @@ This document captures practical, project-specific details to build, configure, 
 - MUST: Apply DRY strictly; avoid duplicated logic and copy-paste implementations.
 - MUST: Follow OOP-oriented design with small responsibilities, clear boundaries, and composition-first structure.
 - MUST: Write code comments and technical docs in English.
+- MUST: Document newly added or changed non-exported functions and methods with concise English comments that explain responsibility or non-obvious behavior.
 - MUST: Keep numbered rollout-stage terminology out of source code, tests, docs, filenames, branch names, tags, commit subjects, and commit bodies. Use domain-specific names such as `baseline`, `authority`, `identity`, or the concrete feature name instead.
 - MUST (CRITICAL, GO 1.26): ALWAYS prefix Go test commands with `GOEXPERIMENT=runtimesecret`.
     - Required form: `GOEXPERIMENT=runtimesecret go test ...`
@@ -21,6 +22,7 @@ This document captures practical, project-specific details to build, configure, 
     - [ ] DRY check completed; duplicate logic removed or intentionally shared.
     - [ ] OOP structure verified; responsibilities are small and cohesive.
     - [ ] Comments/docs introduced in this change are English-only.
+    - [ ] Newly added or changed non-exported functions/methods have concise English comments.
     - [ ] make guardrails passes locally and in CI.
 
 1. Build and configuration
@@ -107,6 +109,7 @@ We verified this flow by temporarily adding a trivial test under server/util and
 
 - Language for comments and docs
   - Write all code comments and public Go doc comments in English only. This includes inline // ..., block /* ... */, and doc comments above declarations, as well as Lua -- comments and YAML/TOML # comments. User‑facing messages may be localized; internal comments must remain English.
+  - Document non-exported functions and methods introduced or touched by a change as well as exported declarations. Keep these comments concise and focused on responsibility, boundaries, or non-obvious behavior.
   - Prefer English for commit messages and PR descriptions as well, to keep the history consistent.
 - Linting and whitespace (mandatory)
   - Keep code readable — no “pressed” code. The following whitespace/cuddling rules are mandatory and should be enforced locally (see golangci-lint snippet below):
@@ -147,6 +150,7 @@ We verified this flow by temporarily adding a trivial test under server/util and
         - revive      # general lint rules (successor of golint)
         - govet       # vet checks
         - errcheck    # error handling
+        - unused      # unused constants, variables, functions, and types
     linters-settings:
       wsl:
         allow-assign-and-anything: false

@@ -13,6 +13,9 @@ SBOM_SYFT_VERSION ?= v1.16.0
 PROMPT_SOURCE ?= .junie/guidelines.md
 PROMPT_TARGET ?= AGENTS.md
 GOLANGCI_NEW_FROM_REV ?= HEAD
+NAUTHILUS_CONF_DIR ?= /etc/nauthilus
+NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
+CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
 
 export GOEXPERIMENT := runtimesecret
 
@@ -39,7 +42,7 @@ msan:
 	go test -msan -short $$(go list ./... | grep -v /vendor/)
 
 build: fix vet $(OUTPUT)
-	go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) ./server
+	go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT) $(CONFIG_EXPANSION_LDFLAGS)" -o $(OUTPUT) ./server
 
 build-client: $(CLIENT_OUTPUT)
 	go build -mod=vendor -trimpath -v -o $(CLIENT_OUTPUT) ./client
@@ -129,5 +132,5 @@ policy-check: ## Validate mandatory policy documents and text markers
 
 guardrails: sync-prompts-check policy-check generate-vim-syntax-check generate-openapi-bindings-check ## Run mandatory local quality gates
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
-	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
+	golangci-lint run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused ./...
 	go test -short $$(go list ./... | grep -v /vendor/)

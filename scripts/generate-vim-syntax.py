@@ -36,6 +36,8 @@ GENERATED_NOTICE = (
     '" Comment:      Generated from the config schema; do not edit manually'
 )
 DYNAMIC_L3_PATTERNS = ("description_[A-Za-z0-9_-]\\+",)
+ENV_VARIABLE_PATTERN = r"\$\@<!\${[A-Za-z_][A-Za-z0-9_]*}"
+DOLLAR_MACRO_START_PATTERN = r"\$\@<!\${\([A-Za-z_][A-Za-z0-9_]*}\)\@!"
 
 
 def parse_args() -> argparse.Namespace:
@@ -192,17 +194,18 @@ def render_vim_syntax(
             'syntax match nauthilusIP "\\<::\\%([0-9A-Fa-f]\\{1,4}\\)\\?\\%(\\/\\d\\{1,3}\\)\\?\\>"',
             'syntax match nauthilusUUID "\\<[0-9a-fA-F]\\{8\\}-[0-9a-fA-F]\\{4\\}-4[0-9a-fA-F]\\{3\\}-[89abAB][0-9a-fA-F]\\{3\\}-[0-9a-fA-F]\\{12\\}\\>"',
             'syntax match nauthilusDuration "\\<-\\?\\%(\\d\\+\\%(\\.\\d\\+\\)\\?\\%(ns\\|us\\|µs\\|ms\\|s\\|m\\|h\\)\\)\\+\\>"',
-            'syntax match nauthilusString  "\\".*\\"" contains=nauthilusMacro',
-            "syntax match nauthilusString  \"'.*'\" contains=nauthilusMacro",
+            'syntax match nauthilusString  "\\".*\\"" contains=nauthilusEnvVariable,nauthilusMacro',
+            "syntax match nauthilusString  \"'.*'\" contains=nauthilusEnvVariable,nauthilusMacro",
             'syntax match nauthilusDelimiter ":"',
             "",
             '" LDAP Filter highlighting',
-            'syntax region nauthilusLdapFilter start="(" end=")" contains=nauthilusLdapFilter,nauthilusLdapOperator,nauthilusMacro',
+            'syntax region nauthilusLdapFilter start="(" end=")" contains=nauthilusLdapFilter,nauthilusLdapOperator,nauthilusEnvVariable,nauthilusMacro',
             'syntax match nauthilusLdapOperator "[&|!<>~=:]" contained',
             "",
             '" Macros/Variables',
+            f"syntax match nauthilusEnvVariable /{ENV_VARIABLE_PATTERN}/",
             'syntax region nauthilusMacro matchgroup=nauthilusMacroDelimiter start="%[LURT]*{" end="}" contains=nauthilusMacroVar oneline',
-            'syntax region nauthilusMacro matchgroup=nauthilusMacroDelimiter start="\\${" end="}" contains=nauthilusMacroVar oneline',
+            f'syntax region nauthilusMacro matchgroup=nauthilusMacroDelimiter start="{DOLLAR_MACRO_START_PATTERN}" end="}}" contains=nauthilusMacroVar oneline',
             "syntax match nauthilusMacroVar /[^}]\\+/ contained",
             "",
             '" --- Highlighting ---',
@@ -223,6 +226,7 @@ def render_vim_syntax(
             "hi def link nauthilusDelimiter Delimiter",
             "hi def link nauthilusLdapFilter Special",
             "hi def link nauthilusLdapOperator Operator",
+            "hi def link nauthilusEnvVariable Identifier",
             "hi def link nauthilusMacro Special",
             "hi def link nauthilusMacroDelimiter Special",
             "hi def link nauthilusMacroVar Special",
@@ -232,6 +236,7 @@ def render_vim_syntax(
             "hi nauthilusKeyL2 ctermfg=10 guifg=#00ff00",
             "hi nauthilusKeyL3 ctermfg=11 guifg=#ffff00",
             "hi nauthilusHttpMethod ctermfg=208 guifg=#ff8700 gui=bold",
+            "hi nauthilusEnvVariable ctermfg=45 guifg=#00d7ff gui=bold",
             "hi nauthilusMacro ctermfg=141 guifg=#af87ff gui=bold",
             "hi nauthilusMacroDelimiter ctermfg=141 guifg=#af87ff gui=bold",
             "hi nauthilusMacroVar ctermfg=141 guifg=#af87ff gui=bold",
