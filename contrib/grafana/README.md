@@ -61,11 +61,11 @@ The REST admin dashboard is intentionally auth-mode neutral. Configure exactly o
 Recommended data source setup:
 
 1. Leave the Infinity data source Base URL empty.
-2. Add the Nauthilus origin to the Infinity data source Allowed hosts list, for example `https://login.authserv.me`. Do not include `/api/v1` in the allowed host.
+2. Add the Nauthilus origin to the Infinity data source Allowed hosts list, for example `https://nauthilus.example.com`. Do not include `/api/v1` in the allowed host.
 3. If OAuth2 client credentials are used, enter scopes in the format expected by the Infinity UI, for example `openid,nauthilus:authenticate,nauthilus:admin,nauthilus:security`. The resulting token must contain `nauthilus:authenticate` plus either `nauthilus:admin` or `nauthilus:security` in its `scope` claim.
 4. Keep the imported Infinity queries on the UQL parser.
 
-The dashboard uses absolute query URLs such as `https://login.authserv.me/api/v1/bruteforce/list`. It sends `GET` requests for read-only brute-force visibility and avoids stale Grafana dashboard-variable values and relative URLs being checked against the Infinity Allowed hosts list.
+The dashboard uses absolute query URLs such as `https://nauthilus.example.com/api/v1/bruteforce/list`. It sends `GET` requests for read-only brute-force visibility and avoids stale Grafana dashboard-variable values and relative URLs being checked against the Infinity Allowed hosts list.
 
 If Grafana shows `requested URL not allowed`, open the Infinity data source settings and add the Nauthilus origin to Allowed hosts. Infinity requires this when authentication, custom headers, or TLS options are configured.
 
@@ -76,7 +76,7 @@ Mutating operations are intentionally not implemented as Infinity panels. Grafan
 User cache flush:
 
 ```bash
-curl -sS -X DELETE "https://login.authserv.me/api/v1/cache/flush" \
+curl -sS -X DELETE "https://nauthilus.example.com/api/v1/cache/flush" \
   -H "Authorization: Bearer ${NAUTHILUS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"user":"alice@example.test"}'
@@ -85,7 +85,7 @@ curl -sS -X DELETE "https://login.authserv.me/api/v1/cache/flush" \
 Brute-force flush:
 
 ```bash
-curl -sS -X DELETE "https://login.authserv.me/api/v1/bruteforce/flush" \
+curl -sS -X DELETE "https://nauthilus.example.com/api/v1/bruteforce/flush" \
   -H "Authorization: Bearer ${NAUTHILUS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"ip_address":"203.0.113.10","rule_name":"rule-name","protocol":"imap","oidc_cid":""}'

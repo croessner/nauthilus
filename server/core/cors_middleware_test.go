@@ -28,6 +28,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const coreTestCORSOrigin = "https://app.example.com"
+
 // TestDefaultRouterComposer_ApplyCoreMiddlewares_AppliesCORS verifies that the
 // centralized CORS middleware is attached in the core middleware chain.
 func TestDefaultRouterComposer_ApplyCoreMiddlewares_AppliesCORS(t *testing.T) {
@@ -43,7 +45,7 @@ func TestDefaultRouterComposer_ApplyCoreMiddlewares_AppliesCORS(t *testing.T) {
 						Name:         "oidc_discovery",
 						Enabled:      &enabled,
 						PathPrefixes: []string{"/.well-known/"},
-						AllowOrigins: []string{"https://oc.roessner.cloud"},
+						AllowOrigins: []string{coreTestCORSOrigin},
 						AllowMethods: []string{"GET", "OPTIONS"},
 						AllowHeaders: []string{"Authorization", "Content-Type"},
 					},
@@ -64,23 +66,23 @@ func TestDefaultRouterComposer_ApplyCoreMiddlewares_AppliesCORS(t *testing.T) {
 	})
 
 	getReq := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
-	getReq.Header.Set("Origin", "https://oc.roessner.cloud")
+	getReq.Header.Set("Origin", coreTestCORSOrigin)
 
 	getResp := httptest.NewRecorder()
 	r.ServeHTTP(getResp, getReq)
 
 	assert.Equal(t, http.StatusOK, getResp.Code)
-	assert.Equal(t, "https://oc.roessner.cloud", getResp.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, coreTestCORSOrigin, getResp.Header().Get("Access-Control-Allow-Origin"))
 
 	optionsReq := httptest.NewRequest(http.MethodOptions, "/.well-known/openid-configuration", nil)
-	optionsReq.Header.Set("Origin", "https://oc.roessner.cloud")
+	optionsReq.Header.Set("Origin", coreTestCORSOrigin)
 	optionsReq.Header.Set("Access-Control-Request-Method", "GET")
 
 	optionsResp := httptest.NewRecorder()
 	r.ServeHTTP(optionsResp, optionsReq)
 
 	assert.Equal(t, http.StatusNoContent, optionsResp.Code)
-	assert.Equal(t, "https://oc.roessner.cloud", optionsResp.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, coreTestCORSOrigin, optionsResp.Header().Get("Access-Control-Allow-Origin"))
 }
 
 func TestDefaultRouterComposer_RegisterRoutes_RegistersPublicIdPOpenAPISpec(t *testing.T) {

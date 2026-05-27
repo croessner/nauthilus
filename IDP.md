@@ -394,19 +394,20 @@ headers.
 
 ```yaml
 runtime:
-    http:
-        cors:
-            enabled: true
-            policies:
-                - name: "oidc_discovery"
-                  enabled: true
-                  path_prefixes: ["/.well-known/"]
-                  allow_origins: ["https://oc.roessner.cloud"]
-                  allow_methods: ["GET", "OPTIONS"]
-                  allow_headers: ["Authorization", "Content-Type"]
-                  expose_headers: []
-                  allow_credentials: false
-                  max_age: 600
+    servers:
+        http:
+            cors:
+                enabled: true
+                policies:
+                    - name: "oidc_discovery"
+                      enabled: true
+                      path_prefixes: ["/.well-known/"]
+                      allow_origins: ["https://app.example.com"]
+                      allow_methods: ["GET", "OPTIONS"]
+                      allow_headers: ["Authorization", "Content-Type"]
+                      expose_headers: []
+                      allow_credentials: false
+                      max_age: 600
 ```
 
 Policies are evaluated in order; the first active policy whose `path_prefixes` matches the request path is used.
