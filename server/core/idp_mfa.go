@@ -39,6 +39,8 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 		return
 	}
 
+	finalUser := ResolveCompletedIDPMFAUser(mgr, user)
+
 	protocol := mgr.GetString(definitions.SessionKeyProtocol, "")
 	if protocol == "" {
 		protocol = mgr.GetString(definitions.SessionKeyIdPFlowType, definitions.ProtoIDP)
@@ -48,10 +50,10 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 
 	flow.CleanupMFAState(mgr)
 
-	mgr.Set(definitions.SessionKeyAccount, user.Name)
-	mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-	mgr.Set(definitions.SessionKeyDisplayName, user.DisplayName)
-	mgr.Set(definitions.SessionKeySubject, user.Id)
+	mgr.Set(definitions.SessionKeyAccount, finalUser.Name)
+	mgr.Set(definitions.SessionKeyUniqueUserID, finalUser.Id)
+	mgr.Set(definitions.SessionKeyDisplayName, finalUser.DisplayName)
+	mgr.Set(definitions.SessionKeySubject, finalUser.Id)
 	mgr.Set(definitions.SessionKeyProtocol, protocol)
 	mgr.Set(definitions.SessionKeyMFACompleted, true)
 
@@ -63,6 +65,80 @@ func StoreCompletedIDPMFASession(mgr cookie.Manager, user *backend.User, method 
 		mgr.SetMaxAge(rememberMeTTL)
 		mgr.Delete(definitions.SessionKeyRememberTTL)
 	}
+}
+
+// ResolveCompletedIDPMFAUser returns the user identity that should be visible
+// after MFA, falling back to the factor user when no pending target identity exists.
+func ResolveCompletedIDPMFAUser(mgr cookie.Manager, user *backend.User) *backend.User {
+	if user == nil {
+		return nil
+	}
+
+	finalUser := completedIDPMFAUser(mgr, user)
+
+	return &finalUser
+}
+
+// StorePendingIDPMFAIdentity records the canonical user identity that should
+// become the final IdP session after a successful MFA verification.
+func StorePendingIDPMFAIdentity(mgr cookie.Manager, user *backend.User) {
+	storePendingIDPMFAUser(
+		mgr,
+		user,
+		definitions.SessionKeyMFAAccount,
+		definitions.SessionKeyUniqueUserID,
+		definitions.SessionKeyMFADisplayName,
+	)
+}
+
+// StorePendingIDPMFAFactor records the account whose second factor must be verified.
+func StorePendingIDPMFAFactor(mgr cookie.Manager, user *backend.User) {
+	storePendingIDPMFAUser(
+		mgr,
+		user,
+		definitions.SessionKeyMFAFactorAccount,
+		definitions.SessionKeyMFAFactorUniqueUserID,
+		definitions.SessionKeyMFAFactorDisplayName,
+	)
+}
+
+// storePendingIDPMFAUser writes a user identity into the provided MFA session keys.
+func storePendingIDPMFAUser(mgr cookie.Manager, user *backend.User, accountKey string, uniqueUserIDKey string, displayNameKey string) {
+	if mgr == nil || user == nil {
+		return
+	}
+
+	if user.Name != "" {
+		mgr.Set(accountKey, user.Name)
+	}
+
+	if user.Id != "" {
+		mgr.Set(uniqueUserIDKey, user.Id)
+	}
+
+	if user.DisplayName != "" {
+		mgr.Set(displayNameKey, user.DisplayName)
+	}
+}
+
+// completedIDPMFAUser resolves the final session identity from MFA session
+// state while keeping the submitted login available for factor verification.
+func completedIDPMFAUser(mgr cookie.Manager, user *backend.User) backend.User {
+	finalUser := *user
+
+	if account := mgr.GetString(definitions.SessionKeyMFAAccount, ""); account != "" {
+		finalUser.Name = account
+	}
+
+	if uniqueUserID := mgr.GetString(definitions.SessionKeyUniqueUserID, ""); uniqueUserID != "" {
+		finalUser.Id = uniqueUserID
+	}
+
+	if displayName := mgr.GetString(definitions.SessionKeyMFADisplayName, ""); displayName != "" {
+		finalUser.DisplayName = displayName
+	}
+
+	return finalUser
 }
 
 // QueueCompletedIDPMFAPostAction dispatches a dedicated Lua post action after a

@@ -857,26 +857,11 @@ func (n *NauthilusIdP) getUserByUsername(
 		return nil, err
 	}
 
-	auth.SetUsername(username)
-	auth.SetOIDCCID(oidcCID)
-	auth.SetSAMLEntityID(samlEntityID)
-	auth.Runtime.IdentityAttributeRequest = attributeRequest.Clone()
-
 	if ref, ok := core.RemoteBackendRefFromSession(cookie.GetManager(ctx)); ok {
 		auth.Runtime.RemoteBackendRef = ref
 	}
 
-	if oidcCID != "" {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
-	} else if samlEntityID != "" {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
-	} else {
-		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
-	}
-
-	// !!DO NOT CHANGE ORDER!!
-	auth.FinishSetup(ctx)
-	auth.SetNoAuth(true)
+	prepareUserLookupAuthState(ctx, auth, username, oidcCID, samlEntityID, attributeRequest)
 
 	// We use HandlePassword with NoAuth=true which should skip password check but load attributes
 	// depending on how backends handle NoAuth.
@@ -896,6 +881,32 @@ func (n *NauthilusIdP) getUserByUsername(
 	}
 
 	return n.userFromAuthState(auth)
+}
+
+// prepareUserLookupAuthState applies the requested identity lookup inputs before no-auth loading.
+func prepareUserLookupAuthState(
+	ctx *gin.Context,
+	auth *core.AuthState,
+	username string,
+	oidcCID string,
+	samlEntityID string,
+	attributeRequest *core.IdentityAttributeRequest,
+) {
+	auth.FinishSetup(ctx)
+	auth.SetUsername(username)
+	auth.SetOIDCCID(oidcCID)
+	auth.SetSAMLEntityID(samlEntityID)
+	auth.Runtime.IdentityAttributeRequest = attributeRequest.Clone()
+
+	if oidcCID != "" {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoOIDC))
+	} else if samlEntityID != "" {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoSAML))
+	} else {
+		auth.SetProtocol(config.NewProtocol(definitions.ProtoIDP))
+	}
+
+	auth.SetNoAuth(true)
 }
 
 func (n *NauthilusIdP) userFromAuthState(auth *core.AuthState) (*backend.User, error) {

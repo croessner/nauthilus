@@ -23,6 +23,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/core/cookie"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/frontend"
@@ -522,7 +523,13 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		if idpAuthFailureAllowsDelayedResponse(err) && h.idp.IsDelayedResponse(request.ClientID, "") {
 			if delayedUser, userErr := h.idp.GetUserByUsernameForOIDCClaims(ctx, username, client, request.Scopes); userErr == nil && delayedUser != nil {
 				protocol := definitions.ProtoOIDC
-				availability := h.frontend.getMFAAvailability(ctx, delayedUser, protocol, cookie.GetManager(ctx))
+
+				factorUser, _, factorRef, factorErr := h.frontend.resolveMFAFactorUser(ctx, h.idp, username, delayedUser, client.ClientID, "")
+				if factorErr != nil {
+					factorUser = nil
+				}
+
+				availability := h.frontend.getMFAAvailabilityWithBackendRef(ctx, factorUser, protocol, cookie.GetManager(ctx), factorRef)
 				if availability.count > 0 {
 					user = delayedUser
 				}
@@ -570,7 +577,26 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 
 	// Check if user has MFA configured
 	protocol := definitions.ProtoOIDC
-	availability := h.frontend.getMFAAvailability(ctx, user, protocol, cookie.GetManager(ctx))
+
+	factorUser, _, factorRef, factorErr := h.frontend.resolveMFAFactorUser(ctx, h.idp, username, user, client.ClientID, "")
+	if factorErr != nil {
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "Device code verify: failed to load Master-User MFA factor account",
+			"client_id", request.ClientID,
+			"error", factorErr,
+		)
+
+		h.renderDeviceVerifyError(ctx, userCode, "Invalid login or password")
+
+		return
+	}
+
+	availability := h.frontend.getMFAAvailabilityWithBackendRef(ctx, factorUser, protocol, cookie.GetManager(ctx), factorRef)
 
 	if availability.count > 0 {
 		// MFA is required - store session state and redirect to MFA flow
@@ -679,6 +705,9 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 			authResult,
 			availability.count > 1,
 		)
+		core.StorePendingIDPMFAIdentity(mgr, user)
+		core.StorePendingIDPMFAFactor(mgr, factorUser)
+		core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, factorRef)
 
 		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepDeviceVerification)
 		advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
@@ -701,7 +730,7 @@ func (h *OIDCHandler) DeviceVerify(ctx *gin.Context) {
 		redirectTarget := decision.RedirectURI
 
 		// Redirect to the appropriate MFA page
-		if redirectURL, ok := h.frontend.getMFARedirectURLFromCookie(ctx, user); ok {
+		if redirectURL, ok := h.frontend.getMFARedirectURLFromAvailability(availability); ok {
 			redirectTarget = redirectURL
 		}
 

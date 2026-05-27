@@ -353,11 +353,13 @@ func (h *Handler) attachAuthBackendRef(
 		return
 	}
 
+	username := authBackendRefUsername(outcome, input)
 	payload := BackendRefPayload{
 		Type:              outcome.Backend.String(),
 		Name:              definitions.DefaultBackendName,
 		Protocol:          input.Context.Protocol,
-		Username:          input.Credentials.Username,
+		Username:          username,
+		Account:           username,
 		ServicePrincipal:  authorityCallerFromContext(ctx).Principal,
 		EdgeClusterID:     authorityCallerFromContext(ctx).EdgeClusterID,
 		EdgeInstanceID:    authorityCallerFromContext(ctx).EdgeInstanceID,
@@ -370,6 +372,16 @@ func (h *Handler) attachAuthBackendRef(
 	}
 
 	response.BackendRef = ref
+}
+
+// authBackendRefUsername binds successful auth references to the resolved account.
+func authBackendRefUsername(outcome *core.AuthOutcome, input core.AuthInput) string {
+	fallback := input.Credentials.Username
+	if outcome == nil {
+		return fallback
+	}
+
+	return firstAttributeValue(outcome.Attributes, outcome.AccountField, fallback)
 }
 
 func allowedOperationsAfterAuth(operation AuthorityOperation) []AuthorityOperation {

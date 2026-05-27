@@ -73,6 +73,9 @@ auth:
 
   pipeline:
     max_concurrent_requests: 32
+    master_user:
+      enabled: true
+      user_format: "{user}*{master_user}"
 
   backends:
     order: [test]

@@ -28,6 +28,11 @@ const callbackKey = process.env.NAUTHILUS_E2E_CALLBACK_KEY
   || path.join(__dirname, '..', '.work', 'certs', 'edge-http.key');
 const username = process.env.NAUTHILUS_E2E_USERNAME || 'split-user@example.test';
 const password = process.env.NAUTHILUS_E2E_PASSWORD || 'split-password';
+const mfaUsername = `${username}.mfa`;
+const masterUsername = `${username}.master`;
+const masterWithoutMFAUsername = `${username}.master-no-mfa`;
+const masterUserLogin = `${mfaUsername}*${masterUsername}`;
+const masterUserWithoutMFALogin = `${mfaUsername}*${masterWithoutMFAUsername}`;
 const defaultSAMLLoginURL = 'https://localhost:19095/saml/login';
 const samlLoginURL = Object.prototype.hasOwnProperty.call(process.env, 'NAUTHILUS_E2E_SAML_URL')
   ? process.env.NAUTHILUS_E2E_SAML_URL
@@ -45,6 +50,11 @@ const browserClient = {
 const mfaClient = {
   id: 'split-e2e-mfa',
   secret: 'split-e2e-mfa-secret',
+};
+
+const delayedMFAClient = {
+  id: 'split-e2e-mfa-delayed',
+  secret: 'split-e2e-mfa-delayed-secret',
 };
 
 const consentClient = {
@@ -774,11 +784,12 @@ async function runRequiredMFAFlows(browser) {
   const registrationAuthenticator = await installVirtualAuthenticator(page);
 
   let recoveryCodes = [];
+  let totpSecret = '';
   const registration = await withPageState(page, 'required MFA registration', async () =>
     withCallbackServer('required MFA registration', async (redirectURI, callbackPromise) => {
     await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(page, `${username}.mfa`, password);
-    await completeTOTPRegistration(page);
+    await submitPasswordLogin(page, mfaUsername, password);
+    totpSecret = await completeTOTPRegistration(page);
     console.log('ok totp-registration');
     await completeWebAuthnRegistration(page);
     console.log('ok webauthn-registration');
@@ -787,12 +798,32 @@ async function runRequiredMFAFlows(browser) {
     return callbackPromise;
   }));
   assert.ok(registration.code, 'required MFA registration resumed the OIDC flow');
+  assert.ok(totpSecret, 'required MFA registration generated a TOTP secret');
   assert.ok(recoveryCodes.length > 0, 'required MFA registration generated recovery codes');
   console.log('ok recovery-code-generation');
-  const webAuthnCredentials = await exportVirtualAuthenticatorCredentials(registrationAuthenticator);
+  let webAuthnCredentials = await exportVirtualAuthenticatorCredentials(registrationAuthenticator);
   await context.close();
 
+  const masterMFA = await registerMasterUserMFA(browser, webAuthnCredentials);
+  webAuthnCredentials = masterMFA.webAuthnCredentials;
+
   await runNegativeMFAChecks(browser, webAuthnCredentials);
+  await runTOTPLogin(browser, mfaClient, mfaUsername, totpSecret, 'TOTP login', 'oidc-totp-login');
+  await runTOTPLogin(
+    browser,
+    delayedMFAClient,
+    mfaUsername,
+    totpSecret,
+    'Delayed-response TOTP login',
+    'oidc-delayed-response-totp-login',
+  );
+  await runDelayedResponseTOTPFailure(
+    browser,
+    mfaUsername,
+    totpSecret,
+    'Delayed-response TOTP wrong password',
+    'oidc-delayed-response-totp-wrong-password-rejected',
+  );
 
   const webAuthnContext = await newBrowserContext(browser, edgeA);
   const webAuthnPage = await webAuthnContext.newPage();
@@ -801,7 +832,7 @@ async function runRequiredMFAFlows(browser) {
   const webAuthnLogin = await withPageState(webAuthnPage, 'WebAuthn login', async () =>
     withCallbackServer('WebAuthn login', async (redirectURI, callbackPromise) => {
     await webAuthnPage.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(webAuthnPage, `${username}.mfa`, password);
+    await submitPasswordLogin(webAuthnPage, mfaUsername, password);
     await completeWebAuthnLogin(webAuthnPage, edgeA);
 
     return callbackPromise;
@@ -811,6 +842,47 @@ async function runRequiredMFAFlows(browser) {
   let updatedWebAuthnCredentials = await exportVirtualAuthenticatorCredentials(webAuthnAuthenticator);
   await webAuthnContext.close();
 
+  const delayedWebAuthnLogin = await runWebAuthnLogin(
+    browser,
+    delayedMFAClient,
+    mfaUsername,
+    updatedWebAuthnCredentials,
+    'Delayed-response WebAuthn login',
+    'oidc-delayed-response-webauthn-login',
+  );
+  updatedWebAuthnCredentials = delayedWebAuthnLogin.webAuthnCredentials;
+  await runMasterUserTOTPLogin(browser, mfaClient, masterMFA.totpSecret, 'oidc-master-user-totp-login');
+  await runMasterUserTOTPLogin(
+    browser,
+    delayedMFAClient,
+    masterMFA.totpSecret,
+    'oidc-delayed-response-master-user-totp-login',
+  );
+  await runDelayedResponseTOTPFailure(
+    browser,
+    masterUserLogin,
+    masterMFA.totpSecret,
+    'Delayed-response Master-User TOTP wrong password',
+    'oidc-delayed-response-master-user-totp-wrong-password-rejected',
+  );
+  await runMasterUserWithoutMFAAllowed(browser, mfaClient, 'oidc-master-user-without-mfa-login');
+  await runMasterUserWithoutMFAAllowed(
+    browser,
+    delayedMFAClient,
+    'oidc-delayed-response-master-user-without-mfa-login',
+  );
+  updatedWebAuthnCredentials = await runMasterUserWebAuthnLogin(
+    browser,
+    mfaClient,
+    updatedWebAuthnCredentials,
+    'oidc-master-user-webauthn-login',
+  );
+  updatedWebAuthnCredentials = await runMasterUserWebAuthnLogin(
+    browser,
+    delayedMFAClient,
+    updatedWebAuthnCredentials,
+    'oidc-delayed-response-master-user-webauthn-login',
+  );
   updatedWebAuthnCredentials = await runWebAuthnAssertionReplay(browser, updatedWebAuthnCredentials);
   await runWebAuthnSignCountRollback(browser, webAuthnCredentials);
 
@@ -819,7 +891,7 @@ async function runRequiredMFAFlows(browser) {
   const recoveryLogin = await withPageState(recoveryPage, 'recovery-code login', async () =>
     withCallbackServer('recovery-code login', async (redirectURI, callbackPromise) => {
     await recoveryPage.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(recoveryPage, `${username}.mfa`, password);
+    await submitPasswordLogin(recoveryPage, mfaUsername, password);
     await completeRecoveryLogin(recoveryPage, recoveryCodes[0]);
 
     return callbackPromise;
@@ -830,6 +902,152 @@ async function runRequiredMFAFlows(browser) {
   await runRecoveryCodeReuseRejected(browser, recoveryCodes[0]);
 
   return updatedWebAuthnCredentials;
+}
+
+async function registerMasterUserMFA(browser, webAuthnCredentials) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
+
+  let totpSecret = '';
+  const masterRegistration = await withPageState(page, 'Master-User MFA registration', async () =>
+    withCallbackServer('Master-User MFA registration', async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(page, masterUsername, password);
+    totpSecret = await completeTOTPRegistration(page);
+    await completeWebAuthnRegistration(page);
+    await completeRecoveryRegistration(page);
+
+    return callbackPromise;
+  }));
+  assert.ok(masterRegistration.code, 'Master-User MFA registration resumed the OIDC flow');
+  assert.ok(totpSecret, 'Master-User MFA registration generated a TOTP secret');
+  console.log('ok master-user-mfa-registration');
+
+  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
+  await context.close();
+
+  return {
+    webAuthnCredentials: updatedCredentials,
+    totpSecret,
+  };
+}
+
+async function runTOTPLogin(browser, client, user, secret, label, okName) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  const callback = await withPageState(page, label, async () =>
+    withCallbackServer(label, async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(page, user, password);
+    await completeTOTPLogin(page, secret);
+
+    return callbackPromise;
+  }));
+  assert.ok(callback.code, `${label} completed the OIDC flow`);
+  console.log(`ok ${okName}`);
+  await context.close();
+
+  return callback;
+}
+
+async function runMasterUserTOTPLogin(browser, client, secret, okName) {
+  const callback = await runTOTPLogin(
+    browser,
+    client,
+    masterUserLogin,
+    secret,
+    'Master-User TOTP login',
+    okName,
+  );
+
+  const token = await exchangeCode(edgeAAPI, client, callback.code, callback.redirectURI);
+  assert.ok(token.id_token, 'Master-User TOTP login returned an ID token');
+
+  const claims = decodeJWTClaims(token.id_token);
+  assert.equal(claims.preferred_username, mfaUsername, 'Master-User TOTP login must issue the target username');
+  assert.notEqual(claims.preferred_username, masterUserLogin, 'Master-User TOTP login must not leak the formatted login');
+}
+
+async function runDelayedResponseTOTPFailure(browser, user, secret, label, okName) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await withPageState(page, label, async () =>
+    withCallbackServer(label, async (redirectURI) => {
+      await page.goto(buildAuthorizeURL(edgeA, delayedMFAClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, user, `${password}-wrong`);
+      await completeTOTPLogin(page, secret, {expectCallback: false});
+      assert.match(page.url(), /\/login/, `${label} must return to the login flow`);
+      await expectPageText(page, /Invalid login or password/);
+    }));
+
+  console.log(`ok ${okName}`);
+  await context.close();
+}
+
+async function runMasterUserWithoutMFAAllowed(browser, client, okName) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  const callback = await withPageState(page, 'Master-User without MFA login', async () =>
+    withCallbackServer('Master-User without MFA login', async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, masterUserWithoutMFALogin, password);
+
+      return callbackPromise;
+    }));
+  assert.ok(callback.code, 'Master-User without MFA completed the OIDC flow');
+
+  const token = await exchangeCode(edgeAAPI, client, callback.code, callback.redirectURI);
+  assert.ok(token.id_token, 'Master-User without MFA returned an ID token');
+
+  const claims = decodeJWTClaims(token.id_token);
+  assert.equal(claims.preferred_username, mfaUsername, 'Master-User without MFA must issue the target username');
+  assert.notEqual(claims.preferred_username, masterUserWithoutMFALogin, 'Master-User without MFA must not leak the formatted login');
+  console.log(`ok ${okName}`);
+  await context.close();
+}
+
+async function runWebAuthnLogin(browser, client, user, webAuthnCredentials, label, okName) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
+
+  const callback = await withPageState(page, label, async () =>
+    withCallbackServer(label, async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, 'openid profile email'));
+    await submitPasswordLogin(page, user, password);
+    await completeWebAuthnLogin(page, edgeA);
+
+    return callbackPromise;
+  }));
+  assert.ok(callback.code, `${label} completed the OIDC flow`);
+  console.log(`ok ${okName}`);
+
+  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
+  await context.close();
+
+  return {
+    callback,
+    webAuthnCredentials: updatedCredentials,
+  };
+}
+
+async function runMasterUserWebAuthnLogin(browser, client, webAuthnCredentials, okName) {
+  const login = await runWebAuthnLogin(browser, client, masterUserLogin, webAuthnCredentials, 'Master-User WebAuthn login', okName);
+
+  const token = await exchangeCode(edgeAAPI, client, login.callback.code, login.callback.redirectURI);
+  assert.ok(token.id_token, 'Master-User WebAuthn login returned an ID token');
+
+  const claims = decodeJWTClaims(token.id_token);
+  assert.equal(claims.preferred_username, mfaUsername, 'Master-User login must issue the target username');
+  assert.notEqual(claims.preferred_username, masterUserLogin, 'Master-User login must not leak the formatted login');
+
+  return login.webAuthnCredentials;
 }
 
 async function runNegativeMFAChecks(browser, webAuthnCredentials) {
@@ -1122,7 +1340,7 @@ async function runRecoveryCodeReuseRejected(browser, recoveryCode) {
 
 async function startMFAChallenge(page, redirectURI) {
   await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-  await submitPasswordLogin(page, `${username}.mfa`, password);
+  await submitPasswordLogin(page, mfaUsername, password);
   await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/totp|\/login\/recovery/, {timeout: 15000});
 }
 
@@ -1191,7 +1409,7 @@ async function runMultiEdgeWebAuthnContinuity(browser, webAuthnCredentials) {
   const callback = await withPageState(page, 'multi-edge WebAuthn continuity', async () =>
     withCallbackServer('multi-edge WebAuthn continuity', async (redirectURI, callbackPromise) => {
     await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(page, `${username}.mfa`, password);
+    await submitPasswordLogin(page, mfaUsername, password);
     await page.waitForURL(/\/login\/webauthn|\/login\/mfa/, {timeout: 15000});
 
     const edgeBMFALoginURL = page.url().replace(edgeA, edgeB);
@@ -1344,7 +1562,7 @@ async function completeTOTPRegistration(page) {
       await page.waitForLoadState('networkidle').catch(() => undefined);
       await waitForMFARegistrationStep(page);
 
-      return;
+      return secret;
     }
 
     throw new Error(
@@ -1354,6 +1572,53 @@ async function completeTOTPRegistration(page) {
   }
 
   throw new Error(`TOTP registration did not advance from ${page.url()}: ${await visiblePageText(page)}`);
+}
+
+async function completeTOTPLogin(page, secret, options = {}) {
+  const expectCallback = options.expectCallback !== false;
+
+  await page.waitForURL(/\/login\/totp|\/login\/mfa|\/login\/webauthn|\/login\/recovery/, {timeout: 15000});
+  if (!/\/login\/totp/.test(page.url())) {
+    await page.goto(`${edgeA}/login/totp`);
+  }
+
+  const counter = Math.floor(Date.now() / 30000);
+  const codes = [counter, counter - 1, counter + 1].map((value) => totp(secret, value));
+
+  for (const code of codes) {
+    const responsePromise = page.waitForResponse((response) =>
+      response.url().includes('/login/totp') && response.request().method() === 'POST',
+    {timeout: 15000});
+    await page.fill('input[name="code"]', code);
+    await page.click('button[type="submit"]');
+    const response = await responsePromise;
+
+    if (!response.ok() && response.status() !== 302) {
+      throw new Error(
+        `TOTP login failed with status=${response.status()} ` +
+        `body=${await compactResponseText(response)} page=${await visiblePageText(page)}`,
+      );
+    }
+
+    if (expectCallback) {
+      const reachedCallback = await page.waitForURL(/callback/, {timeout: 3000})
+        .then(() => true)
+        .catch(() => false);
+      if (reachedCallback) {
+        return;
+      }
+      continue;
+    }
+
+    const returnedToLogin = await page.waitForURL(/\/login/, {timeout: 3000})
+      .then(() => true)
+      .catch(() => false);
+    if (returnedToLogin) {
+      return;
+    }
+  }
+
+  throw new Error(`TOTP login did not advance from ${page.url()}: ${await visiblePageText(page)}`);
 }
 
 async function completeWebAuthnRegistration(page) {
@@ -1425,11 +1690,12 @@ async function completeRecoveryRegistration(page) {
 }
 
 async function completeWebAuthnLogin(page, base) {
-  await page.waitForURL(/\/login\/webauthn|\/login\/mfa/, {timeout: 15000});
-  if (/\/login\/mfa/.test(page.url())) {
+  await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/totp|\/login\/recovery/, {timeout: 15000});
+  if (!/\/login\/webauthn/.test(page.url())) {
     await page.goto(`${base}/login/webauthn`);
   }
 
+  let finishResponseError;
   const beginResponsePromise = page.waitForResponse((response) =>
     response.url().includes('/login/webauthn/begin') &&
       response.request().method() === 'GET' &&
@@ -1438,11 +1704,17 @@ async function completeWebAuthnLogin(page, base) {
   const finishResponsePromise = page.waitForResponse((response) =>
     response.url().includes('/login/webauthn/finish') &&
       response.request().method() === 'POST',
-  {timeout: 15000});
+  {timeout: 15000}).catch((error) => {
+    finishResponseError = error;
+
+    return undefined;
+  });
 
   await page.click('#login-button');
   const beginResponse = await beginResponsePromise;
   if (!beginResponse.ok()) {
+    await finishResponsePromise;
+
     throw new Error(
       `WebAuthn login begin failed with status=${beginResponse.status()} ` +
       `body=${await compactResponseText(beginResponse)} page=${await visiblePageText(page)}`,
@@ -1450,6 +1722,10 @@ async function completeWebAuthnLogin(page, base) {
   }
 
   const finishResponse = await finishResponsePromise;
+  if (finishResponseError) {
+    throw finishResponseError;
+  }
+
   if (!finishResponse.ok()) {
     throw new Error(
       `WebAuthn login finish failed with status=${finishResponse.status()} ` +
@@ -1755,6 +2031,13 @@ function base64URLJSON(value) {
 
 function unsignedJWT(header, payload) {
   return `${base64URLJSON(header)}.${base64URLJSON(payload)}.`;
+}
+
+function decodeJWTClaims(token) {
+  const parts = token.split('.');
+  assert.equal(parts.length, 3, 'JWT must have three parts');
+
+  return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
 }
 
 function pkceVerifier() {

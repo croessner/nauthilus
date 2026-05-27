@@ -68,6 +68,21 @@ const (
 	// SessionKeyRemoteBackendRefToken stores the opaque authority backend-reference token.
 	SessionKeyRemoteBackendRefToken = "remote_backend_ref_token"
 
+	// SessionKeyMFAFactorRemoteBackendRefType stores the factor account authority-backed backend type echo.
+	SessionKeyMFAFactorRemoteBackendRefType = "mfa_factor_remote_backend_ref_type"
+
+	// SessionKeyMFAFactorRemoteBackendRefName stores the factor account authority-backed backend name echo.
+	SessionKeyMFAFactorRemoteBackendRefName = "mfa_factor_remote_backend_ref_name"
+
+	// SessionKeyMFAFactorRemoteBackendRefProtocol stores the factor account authority-backed backend protocol echo.
+	SessionKeyMFAFactorRemoteBackendRefProtocol = "mfa_factor_remote_backend_ref_protocol"
+
+	// SessionKeyMFAFactorRemoteBackendRefAuthority stores the factor account issuing authority name.
+	SessionKeyMFAFactorRemoteBackendRefAuthority = "mfa_factor_remote_backend_ref_authority"
+
+	// SessionKeyMFAFactorRemoteBackendRefToken stores the factor account opaque authority backend-reference token.
+	SessionKeyMFAFactorRemoteBackendRefToken = "mfa_factor_remote_backend_ref_token"
+
 	// SessionKeyUniqueUserID stores a backend-specific unique user identifier.
 	SessionKeyUniqueUserID = "unique_userid"
 
@@ -80,6 +95,21 @@ const (
 
 	// SessionKeyUsername stores the supplied username during the login flow.
 	SessionKeyUsername = "username"
+
+	// SessionKeyMFAAccount stores the canonical account that becomes the final session after MFA succeeds.
+	SessionKeyMFAAccount = "mfa_account"
+
+	// SessionKeyMFADisplayName stores the canonical display name that becomes the final session after MFA succeeds.
+	SessionKeyMFADisplayName = "mfa_display_name"
+
+	// SessionKeyMFAFactorAccount stores the account whose MFA factor is verified.
+	SessionKeyMFAFactorAccount = "mfa_factor_account"
+
+	// SessionKeyMFAFactorUniqueUserID stores the unique identifier whose WebAuthn factor is verified.
+	SessionKeyMFAFactorUniqueUserID = "mfa_factor_unique_userid"
+
+	// SessionKeyMFAFactorDisplayName stores the display name for the account whose MFA factor is verified.
+	SessionKeyMFAFactorDisplayName = "mfa_factor_display_name"
 
 	// SessionKeyAuthResult stores the authentication outcome (uint8 AuthResult).
 	SessionKeyAuthResult = "auth_result"

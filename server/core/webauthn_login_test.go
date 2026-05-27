@@ -28,6 +28,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	testWebAuthnTargetLogin    = "target@example.test"
+	testWebAuthnMasterLogin    = "master@example.test"
+	testWebAuthnFormattedLogin = testWebAuthnTargetLogin + "*" + testWebAuthnMasterLogin
+	testWebAuthnTargetUniqueID = "target-uid"
+	testWebAuthnMasterUniqueID = "master-uid"
+	testWebAuthnTargetDisplay  = "Target User"
+	testWebAuthnMasterDisplay  = "Master User"
+)
+
 // TestLoginWebAuthnBeginUsesSessionUniqueUserID is skipped as it requires a fully initialized
 // WebAuthn environment. The session handling for WebAuthn is now tested in webauthn_registration_test.go.
 func TestLoginWebAuthnBeginUsesSessionUniqueUserID(t *testing.T) {
@@ -102,6 +112,43 @@ func TestIsMFAAuthResultValid(t *testing.T) {
 func TestIsMFAAuthResultValidNilManager(t *testing.T) {
 	result := isMFAAuthResultValid(nil, "testuser")
 	assert.False(t, result, "Nil manager must deny login (default-deny)")
+}
+
+func TestSessionWebAuthnLoginIdentityPrefersMFAFactorAccount(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUsername:              testWebAuthnFormattedLogin,
+		definitions.SessionKeyUniqueUserID:          testWebAuthnTargetUniqueID,
+		definitions.SessionKeyMFAFactorAccount:      testWebAuthnMasterLogin,
+		definitions.SessionKeyMFAFactorUniqueUserID: testWebAuthnMasterUniqueID,
+		definitions.SessionKeyMFAFactorDisplayName:  testWebAuthnMasterDisplay,
+		definitions.SessionKeyMFAAccount:            testWebAuthnTargetLogin,
+		definitions.SessionKeyMFADisplayName:        testWebAuthnTargetDisplay,
+	}}
+
+	identity := sessionWebAuthnLoginIdentity(mgr)
+
+	assert.Equal(t, testWebAuthnMasterLogin, identity.userName)
+	assert.Equal(t, testWebAuthnMasterUniqueID, identity.uniqueUserID)
+	assert.Equal(t, testWebAuthnMasterDisplay, identity.displayName)
+}
+
+func TestSessionWebAuthnLoginIdentityFallsBackToSubmittedLogin(t *testing.T) {
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyUsername:     "alice@example.test",
+		definitions.SessionKeyUniqueUserID: "alice-uid",
+	}}
+
+	identity := sessionWebAuthnLoginIdentity(mgr)
+
+	assert.Equal(t, "alice@example.test", identity.userName)
+	assert.Equal(t, "alice-uid", identity.uniqueUserID)
+	assert.Empty(t, identity.displayName)
+}
+
+func TestWebAuthnBackendLookupUsernamePrefersAccountName(t *testing.T) {
+	username := webAuthnBackendLookupUsername(testWebAuthnMasterLogin, testWebAuthnMasterUniqueID)
+
+	assert.Equal(t, testWebAuthnMasterLogin, username)
 }
 
 // TestDelayedResponseWithWrongCredentialsRejectAfterMFA documents the expected behavior

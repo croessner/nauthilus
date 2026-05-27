@@ -80,6 +80,8 @@ scenarios:
   - oidc-webauthn-unknown-credential
   - oidc-webauthn-replay-assertion
   - oidc-webauthn-sign-count-rollback
+  - oidc-delayed-response-totp-wrong-password-rejected
+  - oidc-delayed-response-master-user-totp-wrong-password-rejected
   - saml-sso
   - saml-sp-initiated-slo
   - saml-sso-malformed-request-rejected
@@ -87,8 +89,18 @@ scenarios:
   - saml-slo-ambiguous-payload-rejected
   - saml-slo-duplicate-request-rejected
   - totp-registration-login
+  - oidc-totp-login
+  - oidc-delayed-response-totp-login
+  - oidc-delayed-response-webauthn-login
   - recovery-code-generation-consumption
   - webauthn-registration-login
+  - master-user-mfa-registration
+  - oidc-master-user-totp-login
+  - oidc-delayed-response-master-user-totp-login
+  - oidc-master-user-without-mfa-login
+  - oidc-delayed-response-master-user-without-mfa-login
+  - oidc-master-user-webauthn-login
+  - oidc-delayed-response-master-user-webauthn-login
   - authority-webauthn-sign-count
   - multi-edge-oidc-continuity
   - multi-edge-webauthn-continuity

@@ -56,6 +56,11 @@ func SessionCleaner(ctx *gin.Context) {
 	mgr.Delete(definitions.SessionKeyRemoteBackendRefProtocol)
 	mgr.Delete(definitions.SessionKeyRemoteBackendRefAuthority)
 	mgr.Delete(definitions.SessionKeyRemoteBackendRefToken)
+	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefType)
+	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefName)
+	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefProtocol)
+	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefAuthority)
+	mgr.Delete(definitions.SessionKeyMFAFactorRemoteBackendRefToken)
 	mgr.Delete(definitions.SessionKeyUniqueUserID)
 	mgr.Delete(definitions.SessionKeyDisplayName)
 	mgr.Delete(definitions.SessionKeyRegistration)
@@ -75,6 +80,11 @@ func SessionCleaner(ctx *gin.Context) {
 	mgr.Delete(definitions.SessionKeyLoginError)
 
 	// MFA-related keys
+	mgr.Delete(definitions.SessionKeyMFAAccount)
+	mgr.Delete(definitions.SessionKeyMFADisplayName)
+	mgr.Delete(definitions.SessionKeyMFAFactorAccount)
+	mgr.Delete(definitions.SessionKeyMFAFactorUniqueUserID)
+	mgr.Delete(definitions.SessionKeyMFAFactorDisplayName)
 	mgr.Delete(definitions.SessionKeyMFAMulti)
 	mgr.Delete(definitions.SessionKeyMFAMethod)
 	mgr.Delete(definitions.SessionKeyMFACompleted)

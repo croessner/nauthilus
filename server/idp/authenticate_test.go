@@ -18,6 +18,7 @@ package idp
 import (
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/backend/accountcache"
@@ -53,6 +54,37 @@ func setupMockContext(ctx *gin.Context, guid, service string) {
 	ctx.Set(definitions.CtxGUIDKey, guid)
 	ctx.Set(definitions.CtxServiceKey, service)
 	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
+}
+
+func TestPrepareUserLookupAuthStateKeepsExplicitUsername(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	body := strings.NewReader("username=target%40example.test%2Amaster%40example.test&password=secret")
+	ctx.Request = httptest.NewRequest("POST", "/login", body)
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setupMockContext(ctx, "test-lookup-username-guid", definitions.ServIdP)
+
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			Redis: config.Redis{
+				Prefix: testRedisPrefix,
+			},
+		},
+	}
+	db, _ := redismock.NewClientMock()
+	authRaw := core.NewAuthStateFromContextWithDeps(ctx, (&deps.Deps{
+		Cfg:          cfg,
+		Redis:        rediscli.NewTestClient(db),
+		AccountCache: accountcache.NewManager(cfg),
+	}).Auth())
+	authState := authRaw.(*core.AuthState)
+
+	prepareUserLookupAuthState(ctx, authState, "master@example.test", "client1", "", nil)
+
+	assert.Equal(t, "master@example.test", authState.GetUsername())
+	assert.True(t, authState.Request.NoAuth)
 }
 
 func TestNauthilusIdP_Authenticate_Integration(t *testing.T) {

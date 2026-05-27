@@ -51,6 +51,16 @@ var idPFlowStateKeys = [...]string{
 
 var mfaStateKeys = [...]string{
 	definitions.SessionKeyUsername,
+	definitions.SessionKeyMFAAccount,
+	definitions.SessionKeyMFADisplayName,
+	definitions.SessionKeyMFAFactorAccount,
+	definitions.SessionKeyMFAFactorUniqueUserID,
+	definitions.SessionKeyMFAFactorDisplayName,
+	definitions.SessionKeyMFAFactorRemoteBackendRefType,
+	definitions.SessionKeyMFAFactorRemoteBackendRefName,
+	definitions.SessionKeyMFAFactorRemoteBackendRefProtocol,
+	definitions.SessionKeyMFAFactorRemoteBackendRefAuthority,
+	definitions.SessionKeyMFAFactorRemoteBackendRefToken,
 	definitions.SessionKeyUniqueUserID,
 	definitions.SessionKeyAuthResult,
 	definitions.SessionKeyAuthResultHMAC,
