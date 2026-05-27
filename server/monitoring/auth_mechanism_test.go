@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -724,11 +725,5 @@ func readTestLine(reader *bufio.Reader) (string, error) {
 
 // containsTestLine reports whether the scripted transcript contains an exact line.
 func containsTestLine(lines []string, want string) bool {
-	for _, line := range lines {
-		if line == want {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(lines, want)
 }

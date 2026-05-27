@@ -4003,8 +4003,8 @@ func appendConfigLeafPath(typ reflect.Type, prefix string, paths *[]string) bool
 }
 
 func collectConfigStructLeafPaths(typ reflect.Type, prefix string, paths *[]string, seen map[reflect.Type]struct{}) {
-	for field := range typ.NumField() {
-		structField := typ.Field(field)
+	for structField := range typ.Fields() {
+		structField := structField
 		if !structField.IsExported() {
 			continue
 		}

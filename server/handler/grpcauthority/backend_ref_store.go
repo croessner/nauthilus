@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -279,13 +280,7 @@ func (p BackendRefPayload) allows(operation AuthorityOperation) bool {
 		return true
 	}
 
-	for _, allowed := range p.AllowedOperations {
-		if allowed == operation {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(p.AllowedOperations, operation)
 }
 
 func newBackendRefToken() (string, error) {

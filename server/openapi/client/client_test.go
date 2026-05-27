@@ -100,12 +100,12 @@ func TestSupportedManagementClientGetsAsyncJobStatus(t *testing.T) {
 		Object:    definitions.CatCache,
 		Operation: definitions.ServFlush,
 		Result: management.AsyncJobStatusPayload{
-			JobId:       stringPointer(supportedClientCacheJobID),
+			JobId:       new(supportedClientCacheJobID),
 			Status:      asyncJobStatusPointer(management.AsyncJobStatusDone),
 			Type:        stringPointer(definitions.CatCache),
-			StartedAt:   stringPointer(supportedClientJobStartedAt),
-			FinishedAt:  stringPointer(supportedClientJobFinishedAt),
-			ResultCount: stringPointer(supportedClientJobResultCount),
+			StartedAt:   new(supportedClientJobStartedAt),
+			FinishedAt:  new(supportedClientJobFinishedAt),
+			ResultCount: new(supportedClientJobResultCount),
 		},
 	}
 	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
@@ -167,8 +167,8 @@ func TestSupportedManagementClientUsesCacheOperations(t *testing.T) {
 		Object:    definitions.CatCache,
 		Operation: definitions.ServFlush,
 		Result: management.CacheFlushPayload{
-			Status: stringPointer("flushed"),
-			User:   stringPointer(supportedClientCacheUser),
+			Status: new("flushed"),
+			User:   new(supportedClientCacheUser),
 		},
 	}
 	client := newSupportedManagementClient(t, requesttest.ClientSmokeRoute{
@@ -544,7 +544,7 @@ func supportedBruteForceFilterRequest() management.BruteForceFilterRequest {
 func supportedBruteForceFlushRequest() management.BruteForceFlushRequest {
 	return management.BruteForceFlushRequest{
 		IpAddress: supportedClientIPAddress,
-		OidcCid:   stringPointer(supportedClientOIDCCID),
+		OidcCid:   new(supportedClientOIDCCID),
 		Protocol:  stringPointer(definitions.ProtoOIDC),
 		RuleName:  supportedClientBruteForceRuleName,
 	}
@@ -571,9 +571,9 @@ func supportedBruteForceFlushResult() management.BruteForceFlushResult {
 		Object:    definitions.CatBruteForce,
 		Operation: definitions.ServFlush,
 		Result: management.BruteForceFlushPayload{
-			IpAddress: stringPointer(supportedClientIPAddress),
-			RuleName:  stringPointer(supportedClientBruteForceRuleName),
-			Status:    stringPointer("flushed"),
+			IpAddress: new(supportedClientIPAddress),
+			RuleName:  new(supportedClientBruteForceRuleName),
+			Status:    new("flushed"),
 		},
 	}
 }
@@ -835,12 +835,14 @@ func requireJWKSResponse(t testing.TB, response *generatedidp.GetOIDCJWKSRespons
 	}
 }
 
+//go:fix inline
 func stringPointer(value string) *string {
-	return &value
+	return new(value)
 }
 
+//go:fix inline
 func asyncJobStatusPointer(value management.AsyncJobStatusPayloadStatus) *management.AsyncJobStatusPayloadStatus {
-	return &value
+	return new(value)
 }
 
 func requireStringPointer(t testing.TB, field string, got *string, want string) {

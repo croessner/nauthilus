@@ -51,7 +51,7 @@ const (
 type BackendRefPayload struct {
 	IssuedAt           time.Time            `json:"issued_at"`
 	ExpiresAt          time.Time            `json:"expires_at"`
-	LastUsedAt         time.Time            `json:"last_used_at,omitempty"`
+	LastUsedAt         time.Time            `json:"last_used_at"`
 	AllowedOperations  []AuthorityOperation `json:"allowed_operations,omitempty"`
 	Type               string               `json:"type"`
 	Name               string               `json:"name"`

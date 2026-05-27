@@ -17,6 +17,7 @@ package openapi
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -362,11 +363,5 @@ func assertSpecDocumentsOperations(t *testing.T, doc openAPISpec, titleSubstring
 }
 
 func stringSliceContains(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(values, expected)
 }

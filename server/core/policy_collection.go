@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -866,9 +867,7 @@ func masterUserPolicyDetails(
 	identity masterUserIdentity,
 ) map[string]policycollection.DetailValue {
 	details := make(map[string]policycollection.DetailValue, len(base)+2)
-	for key, value := range base {
-		details[key] = value
-	}
+	maps.Copy(details, base)
 
 	if !identity.active {
 		return details

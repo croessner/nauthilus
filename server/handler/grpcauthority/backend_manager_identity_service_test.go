@@ -332,10 +332,8 @@ func useRecoveryCodeConcurrently(
 
 	var wg sync.WaitGroup
 	for range attempts {
-		wg.Add(1)
 
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 
 			<-start
 
@@ -347,7 +345,7 @@ func useRecoveryCodeConcurrently(
 			}
 
 			results <- result
-		}()
+		})
 	}
 
 	close(start)

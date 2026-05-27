@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"time"
 
 	"github.com/croessner/nauthilus/server/secret"
@@ -643,13 +644,7 @@ func (s *RemoteBackendSection) AllowsOperation(operation string) bool {
 		return false
 	}
 
-	for _, allowed := range s.AllowedOperations {
-		if allowed == operation {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(s.AllowedOperations, operation)
 }
 
 // LDAPBackendSection configures LDAP backends and protocol mappings.

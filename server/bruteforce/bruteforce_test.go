@@ -359,7 +359,7 @@ func TestProcessPWHistIndexesNewAffectedAccount(t *testing.T) {
 
 	mock.ExpectSIsMember(affectedKey, accountName).SetVal(false)
 	mock.ExpectSAdd(affectedKey, accountName).SetVal(1)
-	mock.CustomMatch(func(_ []interface{}, actual []interface{}) error {
+	mock.CustomMatch(func(_ []any, actual []any) error {
 		if len(actual) != 5 {
 			return fmt.Errorf("unexpected zadd args: %v", actual)
 		}

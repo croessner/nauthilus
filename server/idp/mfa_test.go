@@ -338,7 +338,7 @@ func mustMarshalFlowState(t *testing.T, state *flowdomain.State) []byte {
 }
 
 func matchFlowSet(key string, fragments ...string) redismock.CustomMatch {
-	return func(_, actual []interface{}) error {
+	return func(_, actual []any) error {
 		if len(actual) < 3 || fmt.Sprint(actual[0]) != "set" || fmt.Sprint(actual[1]) != key {
 			return fmt.Errorf("unexpected SET command: %#v", actual)
 		}
