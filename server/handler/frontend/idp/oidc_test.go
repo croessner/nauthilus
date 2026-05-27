@@ -557,6 +557,7 @@ func TestOIDCHandler_Discovery_EmitsCORSHeaders(t *testing.T) {
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	issuer := "https://auth.example.com"
+	allowedOrigin := "https://app.example.com"
 	headersEnabled := true
 	corsEnabled := true
 
@@ -570,7 +571,7 @@ func TestOIDCHandler_Discovery_EmitsCORSHeaders(t *testing.T) {
 					Name:         "oidc_discovery",
 					Enabled:      &corsEnabled,
 					PathPrefixes: []string{"/.well-known/"},
-					AllowOrigins: []string{"https://oc.roessner.cloud"},
+					AllowOrigins: []string{allowedOrigin},
 					AllowMethods: []string{"GET", "OPTIONS"},
 					AllowHeaders: []string{"Authorization", "Content-Type"},
 					MaxAge:       600,
@@ -582,16 +583,16 @@ func TestOIDCHandler_Discovery_EmitsCORSHeaders(t *testing.T) {
 	r := newOIDCTestRouter(t, cfg, true)
 
 	getReq := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
-	getReq.Header.Set("Origin", "https://oc.roessner.cloud")
+	getReq.Header.Set("Origin", allowedOrigin)
 
 	getResp := httptest.NewRecorder()
 	r.ServeHTTP(getResp, getReq)
 
 	assert.Equal(t, http.StatusOK, getResp.Code)
-	assert.Equal(t, "https://oc.roessner.cloud", getResp.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, allowedOrigin, getResp.Header().Get("Access-Control-Allow-Origin"))
 
 	optionsReq := httptest.NewRequest(http.MethodOptions, "/.well-known/openid-configuration", nil)
-	optionsReq.Header.Set("Origin", "https://oc.roessner.cloud")
+	optionsReq.Header.Set("Origin", allowedOrigin)
 	optionsReq.Header.Set("Access-Control-Request-Method", "GET")
 	optionsReq.Header.Set("Access-Control-Request-Headers", "Authorization")
 
@@ -599,7 +600,7 @@ func TestOIDCHandler_Discovery_EmitsCORSHeaders(t *testing.T) {
 	r.ServeHTTP(optionsResp, optionsReq)
 
 	assert.Equal(t, http.StatusNoContent, optionsResp.Code)
-	assert.Equal(t, "https://oc.roessner.cloud", optionsResp.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, allowedOrigin, optionsResp.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "GET, OPTIONS", optionsResp.Header().Get("Access-Control-Allow-Methods"))
 	assert.Equal(t, "Authorization, Content-Type", optionsResp.Header().Get("Access-Control-Allow-Headers"))
 }

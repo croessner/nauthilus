@@ -2053,16 +2053,16 @@ func (f *FileSettings) setDefaultNegCacheTTL() error {
 	return nil
 }
 
-// setDefaultDelimiter sets the default delimiter for the master user if none has been defined and returns any error.
-func (f *FileSettings) setDefaultDelimiter() error {
+// setDefaultMasterUserFormat sets the default master-user format if none has been defined.
+func (f *FileSettings) setDefaultMasterUserFormat() error {
 	if f == nil || f.Server == nil {
 		return nil
 	}
 
 	masterUser := f.GetServer().GetMasterUser()
 
-	if masterUser.GetDelimiter() == "" {
-		f.Server.MasterUser.Delimiter = "*"
+	if masterUser.GetUserFormat() == "" {
+		f.Server.MasterUser.UserFormat = DefaultMasterUserFormat
 	}
 
 	return nil
@@ -2432,7 +2432,7 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultDnsTimeout,
 		f.setDefaultPosCacheTTL,
 		f.setDefaultNegCacheTTL,
-		f.setDefaultDelimiter,
+		f.setDefaultMasterUserFormat,
 		f.setDefaultHeaders,
 		f.setDefaultMaxConcurrentRequests,
 		f.setDefaultPasswordHistory,
@@ -3735,6 +3735,11 @@ func (f *FileSettings) HandleFile() (err error) {
 	validate.RegisterValidation("scope_token", isScopeToken)
 	validate.RegisterValidation("oidc_claim_name", isOIDCClaimName)
 	validate.RegisterValidation("oidc_claim_type", isOIDCClaimType)
+
+	if err = validate.RegisterValidation("master_user_format", isMasterUserFormat); err != nil {
+		return err
+	}
+
 	// Register custom hostname validator that allows optional trailing dot
 	validate.RegisterValidation("hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot)
 

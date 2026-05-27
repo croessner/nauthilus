@@ -512,6 +512,48 @@ func TestRecordPolicyBackendResultExportsConfiguredSubjectAttributes(t *testing.
 	}
 }
 
+func TestRecordPolicyBackendResultEmitsLDAPMasterUserFact(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.MasterUser = config.MasterUser{Enabled: true, UserFormat: config.DefaultMasterUserFormat}
+
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    80,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.Username = testMasterUserFormattedName
+	passDBResult := &PassDBResult{
+		Authenticated: true,
+		Backend:       definitions.BackendLDAP,
+	}
+
+	auth.recordPolicyBackendResult(ctx, definitions.AuthResultOK, passDBResult, nil)
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	attributeValue, ok := policyCtx.Report().Attributes[policy.AttributeMasterUserActive]
+	if !ok {
+		t.Fatal("missing master-user policy attribute")
+	}
+
+	if got := attributeValue.Value; got != true {
+		t.Fatalf("master-user active = %#v, want true", got)
+	}
+
+	if got := attributeValue.Details["master_user"].Value; got != testMasterUserAdminAccount {
+		t.Fatalf("master_user detail = %#v, want %s", got, testMasterUserAdminAccount)
+	}
+
+	if got := attributeValue.Details["target_user"].Value; got != testMasterUserTargetAccount {
+		t.Fatalf("target_user detail = %#v, want %s", got, testMasterUserTargetAccount)
+	}
+}
+
 func customObserveTLSSnapshot() *policyruntime.Snapshot {
 	return &policyruntime.Snapshot{
 		Generation:    74,

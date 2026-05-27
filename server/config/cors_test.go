@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const customCORSOrigin = "https://app.example.com"
+
 // TestSetDefaultSecuritySettings_CORS verifies that centralized CORS defaults
 // are populated when the section is omitted.
 func TestSetDefaultSecuritySettings_CORS(t *testing.T) {
@@ -64,7 +66,7 @@ func TestSetDefaultSecuritySettings_PreservesCustomCORS(t *testing.T) {
 						Name:             "api",
 						Enabled:          &enabled,
 						PathPrefixes:     []string{"/api/v1/mfa"},
-						AllowOrigins:     []string{"https://oc.roessner.cloud"},
+						AllowOrigins:     []string{customCORSOrigin},
 						AllowMethods:     []string{"GET"},
 						AllowHeaders:     []string{"Authorization"},
 						ExposeHeaders:    []string{"X-Request-ID"},
@@ -91,7 +93,7 @@ func TestSetDefaultSecuritySettings_PreservesCustomCORS(t *testing.T) {
 			assert.True(t, *policy.Enabled)
 		}
 		assert.Equal(t, []string{"/api/v1/mfa"}, policy.PathPrefixes)
-		assert.Equal(t, []string{"https://oc.roessner.cloud"}, policy.AllowOrigins)
+		assert.Equal(t, []string{customCORSOrigin}, policy.AllowOrigins)
 		assert.Equal(t, []string{"GET"}, policy.AllowMethods)
 		assert.Equal(t, []string{"Authorization"}, policy.AllowHeaders)
 		assert.Equal(t, []string{"X-Request-ID"}, policy.ExposeHeaders)

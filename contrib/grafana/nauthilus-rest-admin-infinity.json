@@ -169,7 +169,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| scope \"result.0.entries\"\n| count",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {
@@ -253,7 +253,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| project kv(\"result.1.accounts\")\n| count",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {
@@ -337,7 +337,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| project kv(\"result.1.accounts\")\n| mv-expand \"source_ip\"=\"value\"\n| count",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {
@@ -422,7 +422,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| scope \"result.0.entries\"\n| extend \"ttl_days\"=div(\"ttl\",86400000000000)\n| summarize \"max remaining days\"=max(\"ttl_days\")",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {
@@ -503,7 +503,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| scope \"result.0.entries\"\n| summarize \"active bans\"=count() by \"bucket\"\n| order by \"active bans\" desc",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {
@@ -630,7 +630,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| scope \"result.0.entries\"\n| extend \"ttl_days\"=div(\"ttl\",86400000000000)\n| extend \"ban_duration_days\"=div(\"ban_time\",86400000000000)\n| project \"network\", \"bucket\", \"ttl_days\", \"ban_duration_days\", \"banned_at\"\n| order by \"ttl_days\" desc",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {
@@ -716,7 +716,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| project kv(\"result.1.accounts\")\n| project \"account\"=\"key\", \"source_ips\"=\"value\"\n| order by \"account\" asc",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {
@@ -809,7 +809,7 @@
           "source": "url",
           "type": "json",
           "uql": "parse-json\n| project \"object\", \"operation\", \"session\"",
-          "url": "https://login.authserv.me/api/v1/bruteforce/list",
+          "url": "https://nauthilus.example.com/api/v1/bruteforce/list",
           "url_options": {
             "headers": [
               {

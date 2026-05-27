@@ -74,18 +74,25 @@ func TestBuiltinRequestContextAttributesAreTyped(t *testing.T) {
 	}
 
 	tests := map[string]AttributeType{
-		"request.client.ip":         AttributeTypeIP,
-		"request.client.ip.present": AttributeTypeBool,
-		"request.client.ip.trusted": AttributeTypeBool,
-		"request.client.ip.source":  AttributeTypeString,
-		"request.transport.kind":    AttributeTypeString,
-		"request.listener.name":     AttributeTypeString,
-		"request.connection.tls":    AttributeTypeBool,
-		"request.initiator.kind":    AttributeTypeString,
-		"request.http.route":        AttributeTypeString,
-		"request.grpc.method":       AttributeTypeString,
-		"request.idp.client_id":     AttributeTypeString,
-		"request.saml.sp_entity_id": AttributeTypeString,
+		"request.client.ip":          AttributeTypeIP,
+		"request.client.ip.present":  AttributeTypeBool,
+		"request.client.ip.trusted":  AttributeTypeBool,
+		"request.client.ip.source":   AttributeTypeString,
+		"request.caller.ip":          AttributeTypeIP,
+		"request.caller.ip.present":  AttributeTypeBool,
+		"request.caller.ip.source":   AttributeTypeString,
+		"request.local.ip":           AttributeTypeIP,
+		"request.local.ip.present":   AttributeTypeBool,
+		"request.local.port":         AttributeTypeString,
+		"request.local.port.present": AttributeTypeBool,
+		"request.transport.kind":     AttributeTypeString,
+		"request.listener.name":      AttributeTypeString,
+		"request.connection.tls":     AttributeTypeBool,
+		"request.initiator.kind":     AttributeTypeString,
+		"request.http.route":         AttributeTypeString,
+		"request.grpc.method":        AttributeTypeString,
+		"request.idp.client_id":      AttributeTypeString,
+		"request.saml.sp_entity_id":  AttributeTypeString,
 	}
 
 	for attribute, want := range tests {
@@ -99,5 +106,29 @@ func TestBuiltinRequestContextAttributesAreTyped(t *testing.T) {
 				t.Fatalf("attribute type = %q, want %q", definition.Type, want)
 			}
 		})
+	}
+}
+
+func TestBuiltinMasterUserAttributeIsTyped(t *testing.T) {
+	registry, err := NewBuiltinAttributeRegistry()
+	if err != nil {
+		t.Fatalf("NewBuiltinAttributeRegistry() error = %v", err)
+	}
+
+	definition, ok := registry.Lookup(policy.AttributeMasterUserActive)
+	if !ok {
+		t.Fatalf("missing builtin attribute %s", policy.AttributeMasterUserActive)
+	}
+
+	if definition.Type != AttributeTypeBool {
+		t.Fatalf("attribute type = %q, want %q", definition.Type, AttributeTypeBool)
+	}
+
+	if definition.Stage != policy.StageAuthBackend {
+		t.Fatalf("attribute stage = %q, want %q", definition.Stage, policy.StageAuthBackend)
+	}
+
+	if definition.Details["master_user"].Type != AttributeTypeString {
+		t.Fatalf("master_user detail type = %q, want string", definition.Details["master_user"].Type)
 	}
 }

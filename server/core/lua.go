@@ -152,6 +152,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		LuaReplyChan:      luaReplyChan,
 		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
+		PolicyContext:     auth.requestPolicyContext(auth.Request.HTTPClientContext),
 		CommonRequest:     commonRequest,
 	}
 

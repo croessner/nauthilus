@@ -1932,23 +1932,10 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 	}
 }
 
-// IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the GetFile().
-// It returns true if MasterUser is enabled and the number of occurrences of the delimiter in the Username is equal to 1, otherwise it returns false.
+// IsMasterUser checks whether the current user matches the configured master-user login format.
+// It returns true only when master-user mode is enabled and the configured format can be parsed unambiguously.
 func (a *AuthState) IsMasterUser() bool {
-	cfg := a.cfg()
-	mu := cfg.GetServer().GetMasterUser()
-
-	if mu.IsEnabled() {
-		delim := mu.GetDelimiter()
-		if strings.Count(a.Request.Username, delim) == 1 {
-			parts := strings.Split(a.Request.Username, delim)
-			if len(parts[0]) > 0 && len(parts[1]) > 0 {
-				return true
-			}
-		}
-	}
-
-	return false
+	return a.masterUserIdentity().active
 }
 
 // IsInNetwork checks an IP address against a network and returns true if it matches.

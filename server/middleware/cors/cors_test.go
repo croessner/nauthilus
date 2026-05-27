@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const testCORSOrigin = "https://app.example.com"
+
 // TestMiddleware_AddsCORSHeadersForAllowedOrigin verifies that an allowed origin
 // receives the expected CORS response headers on a normal request.
 func TestMiddleware_AddsCORSHeadersForAllowedOrigin(t *testing.T) {
@@ -40,13 +42,13 @@ func TestMiddleware_AddsCORSHeadersForAllowedOrigin(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
-	req.Header.Set("Origin", "https://oc.roessner.cloud")
+	req.Header.Set("Origin", testCORSOrigin)
 
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 
 	assert.Equal(t, http.StatusOK, resp.Code)
-	assert.Equal(t, "https://oc.roessner.cloud", resp.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, testCORSOrigin, resp.Header().Get("Access-Control-Allow-Origin"))
 }
 
 // TestMiddleware_HandlesPreflightWithoutRoute verifies that preflight requests are
@@ -61,7 +63,7 @@ func TestMiddleware_HandlesPreflightWithoutRoute(t *testing.T) {
 	r.Use(mw.Handler())
 
 	req := httptest.NewRequest(http.MethodOptions, "/.well-known/openid-configuration", nil)
-	req.Header.Set("Origin", "https://oc.roessner.cloud")
+	req.Header.Set("Origin", testCORSOrigin)
 	req.Header.Set("Access-Control-Request-Method", "GET")
 	req.Header.Set("Access-Control-Request-Headers", "Authorization")
 
@@ -69,7 +71,7 @@ func TestMiddleware_HandlesPreflightWithoutRoute(t *testing.T) {
 	r.ServeHTTP(resp, req)
 
 	assert.Equal(t, http.StatusNoContent, resp.Code)
-	assert.Equal(t, "https://oc.roessner.cloud", resp.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, testCORSOrigin, resp.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "GET, OPTIONS", resp.Header().Get("Access-Control-Allow-Methods"))
 	assert.Equal(t, "Authorization, Content-Type", resp.Header().Get("Access-Control-Allow-Headers"))
 }
@@ -107,7 +109,7 @@ func testConfig() *config.FileSettings {
 					{
 						Name:         "oidc_discovery",
 						PathPrefixes: []string{"/.well-known/"},
-						AllowOrigins: []string{"https://oc.roessner.cloud"},
+						AllowOrigins: []string{testCORSOrigin},
 						AllowMethods: []string{"GET", "OPTIONS"},
 						AllowHeaders: []string{"Authorization", "Content-Type"},
 						MaxAge:       600,

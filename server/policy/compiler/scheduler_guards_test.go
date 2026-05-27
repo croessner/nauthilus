@@ -32,7 +32,10 @@ const (
 	testPolicyCheckTLSEncryptionConfigRef = "auth.controls.tls_encryption"
 	testPolicyCheckTLSEncryptionName      = "tls_encryption"
 	testSchedulerGuardBusinessWindow      = "business_window"
+	testSchedulerGuardLocalEndpoint       = "local_endpoint"
+	testSchedulerGuardLocalEndpointPath   = "auth.policy.scheduler_guards.local_endpoint.if"
 	testSchedulerGuardTrustedSource       = "trusted_source"
+	testTrustedClientsNetworkSetRef       = "@network.trusted_clients"
 )
 
 func TestCompilerAcceptsNetworkSchedulerGuard(t *testing.T) {
@@ -175,6 +178,51 @@ func TestCompilerRejectsUserControlledOnlySchedulerGuard(t *testing.T) {
 	}
 }
 
+func TestCompilerRejectsLocalEndpointOnlySchedulerGuard(t *testing.T) {
+	cfg := schedulerGuardCompilerConfig()
+	cfg.Auth.Policy.SchedulerGuards = map[string]config.PolicySchedulerGuardConfig{
+		testSchedulerGuardLocalEndpoint: {
+			If: config.PolicyConditionConfig{
+				Attribute:    policy.AttributeRequestLocalIP,
+				CIDRContains: testTrustedClientsNetworkSetRef,
+			},
+		},
+	}
+
+	_, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err == nil {
+		t.Fatal("Compile() error = nil, want local endpoint only guard rejection")
+	}
+
+	if !strings.Contains(err.Error(), testSchedulerGuardLocalEndpointPath) {
+		t.Fatalf("Compile() error = %q, want scheduler guard condition path", err)
+	}
+}
+
+func TestCompilerAcceptsLocalEndpointGuardWithCallerCriterion(t *testing.T) {
+	cfg := schedulerGuardCompilerConfig()
+	cfg.Auth.Policy.SchedulerGuards = map[string]config.PolicySchedulerGuardConfig{
+		testSchedulerGuardLocalEndpoint: {
+			If: config.PolicyConditionConfig{
+				All: []config.PolicyConditionConfig{
+					{Attribute: policy.AttributeRequestCallerIPPresent, Is: true},
+					{Attribute: policy.AttributeRequestCallerIP, CIDRContains: testTrustedClientsNetworkSetRef},
+					{Attribute: policy.AttributeRequestLocalIP, CIDRContains: testTrustedClientsNetworkSetRef},
+				},
+			},
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	if _, ok := snapshot.SchedulerGuards[testSchedulerGuardLocalEndpoint]; !ok {
+		t.Fatal("compiled local endpoint scheduler guard missing")
+	}
+}
+
 func TestCompilerRejectsAfterGuardMismatch(t *testing.T) {
 	cfg := schedulerGuardCompilerConfig()
 	cfg.Auth.Policy.SchedulerGuards = map[string]config.PolicySchedulerGuardConfig{
@@ -249,7 +297,7 @@ func networkSchedulerGuardConfig() config.PolicySchedulerGuardConfig {
 			All: []config.PolicyConditionConfig{
 				{Attribute: policy.AttributeRequestClientIPPresent, Is: true},
 				{Attribute: policy.AttributeRequestClientIPTrusted, Is: true},
-				{Attribute: policy.AttributeRequestClientIP, CIDRContains: "@network.trusted_clients"},
+				{Attribute: policy.AttributeRequestClientIP, CIDRContains: testTrustedClientsNetworkSetRef},
 			},
 		},
 	}

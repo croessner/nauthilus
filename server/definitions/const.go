@@ -1864,6 +1864,9 @@ const (
 	// LuaFnPolicyEmitAttribute records a Lua-owned custom policy attribute.
 	LuaFnPolicyEmitAttribute = "emit_attribute"
 
+	// LuaFnPolicyEmitMasterUser records the canonical master-user policy attribute.
+	LuaFnPolicyEmitMasterUser = "emit_master_user"
+
 	// LuaFnI18NGetLocalized resolves a localized response message candidate.
 	LuaFnI18NGetLocalized = "get_localized"
 

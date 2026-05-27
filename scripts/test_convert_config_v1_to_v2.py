@@ -189,6 +189,51 @@ server:
             self.assertNotIn("server.keep_alive.enabled", report)
             self.assertNotIn("server.oidc_auth.enabled", report)
 
+    def test_convert_legacy_master_user_delimiter_to_user_format(self) -> None:
+        env = os.environ.copy()
+        env.setdefault("GOEXPERIMENT", "runtimesecret")
+        legacy = """\
+server:
+  master_user:
+    enabled: true
+    delimiter: "#"
+"""
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_path = Path(tmp_dir) / "legacy.yml"
+            output_path = Path(tmp_dir) / "converted.yml"
+            report_path = Path(tmp_dir) / "conversion-report.txt"
+            input_path.write_text(legacy, encoding="utf-8")
+
+            result = subprocess.run(
+                (
+                    "python3",
+                    str(SCRIPT_PATH),
+                    str(input_path),
+                    "--output",
+                    str(output_path),
+                    "--report",
+                    str(report_path),
+                    "--validate",
+                ),
+                cwd=ROOT_DIR,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual("", result.stdout)
+
+            converted = output_path.read_text(encoding="utf-8")
+            report = report_path.read_text(encoding="utf-8")
+
+            self.assertIn("master_user:", converted)
+            self.assertIn("enabled: true", converted)
+            self.assertIn('user_format: "{user}#{master_user}"', converted)
+            self.assertNotIn("delimiter:", converted)
+            self.assertIn("validation passed", report)
+
     def test_semantic_auto_enable_does_not_duplicate_named_controls(self) -> None:
         env = os.environ.copy()
         env.setdefault("GOEXPERIMENT", "runtimesecret")
