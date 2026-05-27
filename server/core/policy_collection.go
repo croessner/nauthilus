@@ -799,6 +799,7 @@ func backendPolicyDetails(name string) map[string]policycollection.DetailValue {
 	}
 }
 
+// backendOutcomeAttributes returns built-in policy facts derived from the backend result.
 func backendOutcomeAttributes(
 	auth *AuthState,
 	authResult definitions.AuthResult,
@@ -816,6 +817,7 @@ func backendOutcomeAttributes(
 			policycollection.BoolAttribute(policy.AttributeBackendEmptyPassword, policy.StageAuthBackend, operation, authResult == definitions.AuthResultEmptyPassword, nil),
 			policycollection.BoolAttribute(policy.AttributeAuthenticated, policy.StageAuthBackend, operation, authenticated, details),
 		)
+		attributes = append(attributes, ldapMasterUserPolicyAttribute(auth, passDBResult, details)...)
 
 		return attributes
 	}
@@ -824,6 +826,58 @@ func backendOutcomeAttributes(
 	attributes = append(attributes, policycollection.BoolAttribute(policy.AttributeIdentityFound, policy.StageAuthBackend, operation, found, details))
 
 	return attributes
+}
+
+// ldapMasterUserPolicyAttribute emits the Go-owned master-user fact for LDAP results.
+func ldapMasterUserPolicyAttribute(
+	auth *AuthState,
+	passDBResult *PassDBResult,
+	details map[string]policycollection.DetailValue,
+) []policycollection.AttributeValue {
+	if auth == nil || passDBResult == nil {
+		return nil
+	}
+
+	backendType := passDBResult.Backend
+	if backendType == definitions.BackendUnknown {
+		backendType = auth.Runtime.UsedPassDBBackend
+	}
+
+	if backendType != definitions.BackendLDAP {
+		return nil
+	}
+
+	identity := auth.masterUserIdentity()
+
+	return []policycollection.AttributeValue{
+		policycollection.BoolAttribute(
+			policy.AttributeMasterUserActive,
+			policy.StageAuthBackend,
+			auth.policyOperation(),
+			identity.active,
+			masterUserPolicyDetails(details, identity),
+		),
+	}
+}
+
+// masterUserPolicyDetails attaches parsed identity data when master-user mode is active.
+func masterUserPolicyDetails(
+	base map[string]policycollection.DetailValue,
+	identity masterUserIdentity,
+) map[string]policycollection.DetailValue {
+	details := make(map[string]policycollection.DetailValue, len(base)+2)
+	for key, value := range base {
+		details[key] = value
+	}
+
+	if !identity.active {
+		return details
+	}
+
+	details["master_user"] = policycollection.InternalDetail(identity.masterUser)
+	details["target_user"] = policycollection.InternalDetail(identity.targetUser)
+
+	return details
 }
 
 type authPolicyConfigProvider interface {

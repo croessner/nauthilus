@@ -197,6 +197,13 @@ Recommended request facts:
 | `request.client.ip.present` |     bool | server-derived                                     | Fail closed when no stable IP exists.                                                                         |
 | `request.client.ip.trusted` |     bool | server-derived                                     | Prevent untrusted headers or metadata from skipping checks.                                                   |
 | `request.client.ip.source`  |   string | server-derived                                     | Explain whether the IP came from peer, PROXY protocol, trusted proxy header, gRPC peer, metadata, or unknown. |
+| `request.caller.ip`         |       ip | transport-derived                                  | Authorize the system that connected to Nauthilus, for example an allowed Dovecot caller.                      |
+| `request.caller.ip.present` |     bool | server-derived                                     | Fail closed when Nauthilus cannot parse the caller peer IP.                                                   |
+| `request.caller.ip.source`  |   string | server-derived                                     | Explain whether the caller IP came from the direct peer or gRPC peer.                                         |
+| `request.local.ip`          |       ip | caller-supplied, validate with caller facts        | Match the local endpoint where the caller accepted the client connection.                                      |
+| `request.local.ip.present`  |     bool | derived from caller-supplied data                  | Fail closed when the supplied local endpoint IP is empty or invalid.                                          |
+| `request.local.port`        |   string | caller-supplied, validate with caller facts        | Match the local endpoint port where the caller accepted the client connection.                                |
+| `request.local.port.present` |    bool | derived from caller-supplied data                  | Fail closed when no local endpoint port was supplied.                                                         |
 | `request.transport.kind`    |   string | server-derived                                     | Distinguish HTTP, gRPC, mail protocol, IdP, hook, or internal execution.                                      |
 | `request.listener.name`     |   string | configured listener identity                       | Prefer listener identity over IP when deployments have separate internal/external listeners.                  |
 | `request.connection.tls`    |     bool | transport-derived                                  | Allow guards to depend on already-known transport security, not on a check result.                            |
@@ -211,6 +218,11 @@ attributes, but they must not become trusted scheduler facts by default. A guard
 that uses a user-controlled request value must combine it with a trusted
 server-derived fact, or the compiler should reject it in the first
 implementation.
+
+The `request.local.*` values describe what the caller reports as its local
+endpoint. Use them together with `request.caller.*` when the decision depends on
+whether a trusted caller, such as Dovecot, accepted the client connection on an
+allowed endpoint.
 
 Do not expose these values as scheduler-guard inputs in the first slice:
 

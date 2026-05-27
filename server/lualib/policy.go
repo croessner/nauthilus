@@ -31,6 +31,13 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+const (
+	luaPolicyDetailBackend    = "backend"
+	luaPolicyDetailMasterUser = "master_user"
+	luaPolicyDetailTargetUser = "target_user"
+	luaPolicyBackendLua       = "lua_backend"
+)
+
 // PolicyEmitter records Lua-owned attributes into the request-local policy context.
 type PolicyEmitter struct {
 	ctx   *policycollection.DecisionContext
@@ -42,7 +49,8 @@ func LoaderModPolicy(ctx *policycollection.DecisionContext, stage policy.Stage) 
 	return func(L *lua.LState) int {
 		emitter := &PolicyEmitter{ctx: ctx, stage: stage}
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnPolicyEmitAttribute: emitter.emitAttribute,
+			definitions.LuaFnPolicyEmitAttribute:  emitter.emitAttribute,
+			definitions.LuaFnPolicyEmitMasterUser: emitter.emitMasterUser,
 		})
 		L.Push(mod)
 
@@ -55,6 +63,11 @@ func LoaderPolicyStateless() lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnPolicyEmitAttribute: func(L *lua.LState) int {
+				L.RaiseError("nauthilus_policy emitter is not available in this Lua runtime")
+
+				return 0
+			},
+			definitions.LuaFnPolicyEmitMasterUser: func(L *lua.LState) int {
 				L.RaiseError("nauthilus_policy emitter is not available in this Lua runtime")
 
 				return 0
@@ -111,19 +124,84 @@ func (e *PolicyEmitter) emitAttribute(L *lua.LState) int {
 	return 0
 }
 
+// emitMasterUser records the canonical master-user fact for Lua backends.
+func (e *PolicyEmitter) emitMasterUser(L *lua.LState) int {
+	if e == nil || e.ctx == nil {
+		L.RaiseError("nauthilus_policy emitter is not available in this Lua runtime")
+
+		return 0
+	}
+
+	table := L.CheckTable(1)
+
+	definition, operation, ok := e.validateBuiltinEmissionTarget(L, policy.AttributeMasterUserActive)
+	if !ok {
+		return 0
+	}
+
+	active, err := luaPolicyOptionalBoolField(table, "active", true, policy.AttributeMasterUserActive)
+	if err != nil {
+		L.RaiseError("%s", err.Error())
+
+		return 0
+	}
+
+	e.ctx.RecordAttribute(policycollection.AttributeValue{
+		ID:        policy.AttributeMasterUserActive,
+		Stage:     definition.Stage,
+		Operation: operation,
+		Value:     active,
+		Details:   luaPolicyMasterUserDetails(table),
+	})
+
+	return 0
+}
+
+// validateEmissionTarget accepts registered Lua-owned attributes for the current stage.
 func (e *PolicyEmitter) validateEmissionTarget(
+	L *lua.LState,
+	id string,
+) (policyregistry.AttributeDefinition, policy.Operation, bool) {
+	return e.validateEmissionTargetSource(L, id, policyregistry.SourceLua, "Lua-owned")
+}
+
+// validateBuiltinEmissionTarget accepts a narrow built-in attribute emitted through a dedicated Lua API.
+func (e *PolicyEmitter) validateBuiltinEmissionTarget(
+	L *lua.LState,
+	id string,
+) (policyregistry.AttributeDefinition, policy.Operation, bool) {
+	return e.validateEmissionTargetSource(L, id, policyregistry.SourceBuiltin, "built-in")
+}
+
+// validateEmissionTargetSource checks the registered source ownership for a policy attribute.
+func (e *PolicyEmitter) validateEmissionTargetSource(
+	L *lua.LState,
+	id string,
+	source policyregistry.AttributeSource,
+	label string,
+) (policyregistry.AttributeDefinition, policy.Operation, bool) {
+	definition, operation, ok := e.validateRegisteredEmissionTarget(L, id)
+	if !ok {
+		return policyregistry.AttributeDefinition{}, "", false
+	}
+
+	if definition.Source != source {
+		L.RaiseError("policy attribute %q is not %s", id, label)
+
+		return policyregistry.AttributeDefinition{}, "", false
+	}
+
+	return definition, operation, true
+}
+
+// validateRegisteredEmissionTarget checks stage and operation constraints for a policy attribute.
+func (e *PolicyEmitter) validateRegisteredEmissionTarget(
 	L *lua.LState,
 	id string,
 ) (policyregistry.AttributeDefinition, policy.Operation, bool) {
 	definition, ok := e.lookupAttribute(id)
 	if !ok {
 		L.RaiseError("policy attribute %q is not registered", id)
-
-		return policyregistry.AttributeDefinition{}, "", false
-	}
-
-	if definition.Source != policyregistry.SourceLua {
-		L.RaiseError("policy attribute %q is not Lua-owned", id)
 
 		return policyregistry.AttributeDefinition{}, "", false
 	}
@@ -169,6 +247,38 @@ func luaPolicyStringField(table *lua.LTable, name string) string {
 	}
 
 	return ""
+}
+
+// luaPolicyOptionalBoolField reads an optional boolean field from an emission table.
+func luaPolicyOptionalBoolField(table *lua.LTable, name string, defaultValue bool, id string) (bool, error) {
+	value := table.RawGetString(name)
+	if value == lua.LNil {
+		return defaultValue, nil
+	}
+
+	boolValue, ok := value.(lua.LBool)
+	if !ok {
+		return false, fmt.Errorf("policy attribute %q %s must be a boolean", id, name)
+	}
+
+	return bool(boolValue), nil
+}
+
+// luaPolicyMasterUserDetails maps Lua master-user fields to internal policy details.
+func luaPolicyMasterUserDetails(table *lua.LTable) map[string]policycollection.DetailValue {
+	details := map[string]policycollection.DetailValue{
+		luaPolicyDetailBackend: policycollection.InternalDetail(luaPolicyBackendLua),
+	}
+
+	if masterUser := strings.TrimSpace(luaPolicyStringField(table, luaPolicyDetailMasterUser)); masterUser != "" {
+		details[luaPolicyDetailMasterUser] = policycollection.InternalDetail(masterUser)
+	}
+
+	if targetUser := strings.TrimSpace(luaPolicyStringField(table, luaPolicyDetailTargetUser)); targetUser != "" {
+		details[luaPolicyDetailTargetUser] = policycollection.InternalDetail(targetUser)
+	}
+
+	return details
 }
 
 func luaPolicyTypedValue(value lua.LValue, valueType policyregistry.AttributeType, id string) (any, error) {

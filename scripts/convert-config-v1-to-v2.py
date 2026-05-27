@@ -861,6 +861,10 @@ class LegacyConfigConverter:
             if isinstance(value, str) and value:
                 value = [value]
 
+        if tuple(updated) == ("auth", "pipeline", "master_user", "delimiter"):
+            updated[-1] = "user_format"
+            value = f"{{user}}{value}{{master_user}}" if value else "{user}*{master_user}"
+
         return tuple(updated), value
 
     def _set_result_value(self, path: tuple[Any, ...], value: Any, source_path: tuple[Any, ...]) -> None:

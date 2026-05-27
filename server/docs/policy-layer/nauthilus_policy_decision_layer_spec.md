@@ -69,6 +69,8 @@ auth:
     password_history:
       max_entries:
     master_user:
+      enabled:
+      user_format:
 
   backends:
     order:
@@ -3939,7 +3941,7 @@ The check-type registry is built into Go. Lua registry scripts may register attr
 | `lua.subject` | `subject_analysis` | default `authenticate`, explicit opt-in allowed | one named `auth.policy.attribute_sources.lua.subject.<name>` entry | `auth.lua.subject.<name>.rejected`, `auth.lua.subject.<name>.error`, plus registered Lua attributes | false | Arbitrary Lua may have side effects and may depend on `lualib.Context`. |
 | `backend.account_provider` | `account_provider` | `list_accounts` | account-provider config under `auth.backends` | `auth.account_provider.completed`, `auth.account_provider.tempfail` | false | Performs backend I/O; the account list is response data and must not become a policy attribute. |
 
-Implicit request-context emitters are not configured as checks. They populate request-scoped attributes such as `request.operation`, `request.time.now`, `request.client.ip`, `request.protocol`, and `auth.tls.secure` before policy evaluation reaches the relevant stage.
+Implicit request-context emitters are not configured as checks. They populate request-scoped attributes such as `request.operation`, `request.time.now`, `request.client.ip`, `request.caller.ip`, `request.local.ip`, `request.protocol`, and `auth.tls.secure` before policy evaluation reaches the relevant stage.
 
 ### 17.2 Minimum Built-In Attribute Registry
 
@@ -3950,6 +3952,13 @@ The Go built-in registry must include at least these attributes. Lua-generated s
 | `request.operation` | `pre_auth` | all | string enum | none | request context |
 | `request.time.now` | `pre_auth` | all | datetime | none | request context |
 | `request.client.ip` | `pre_auth` | all | ip | none | request context |
+| `request.caller.ip` | `pre_auth` | all | ip | none | transport peer context |
+| `request.caller.ip.present` | `pre_auth` | all | bool | none | transport peer context |
+| `request.caller.ip.source` | `pre_auth` | all | string enum | none | transport peer context |
+| `request.local.ip` | `pre_auth` | all | ip | none | caller-supplied request context |
+| `request.local.ip.present` | `pre_auth` | all | bool | none | caller-supplied request context |
+| `request.local.port` | `pre_auth` | all | string | none | caller-supplied request context |
+| `request.local.port.present` | `pre_auth` | all | bool | none | caller-supplied request context |
 | `request.protocol` | `pre_auth` | all | string enum | none | request context |
 | `auth.brute_force.triggered` | `pre_auth` | `authenticate` | bool | `rule`, `client_net`, `repeating` | `builtin.brute_force` |
 | `auth.brute_force.error` | `pre_auth` | `authenticate` | bool | `reason_code`, `retryable` | `builtin.brute_force` |

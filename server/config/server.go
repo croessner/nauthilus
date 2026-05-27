@@ -2334,10 +2334,10 @@ func (c *Cluster) GetWriteTimeout() time.Duration {
 	return c.WriteTimeout
 }
 
-// MasterUser represents a user configuration with flags for enabling and setting delimiters.
+// MasterUser represents the optional master-user login format.
 type MasterUser struct {
-	Enabled   bool   `mapstructure:"enabled"`
-	Delimiter string `mapstructure:"delimiter" validate:"omitempty,len=1,printascii"`
+	UserFormat string `mapstructure:"user_format" validate:"omitempty,printascii,master_user_format"`
+	Enabled    bool   `mapstructure:"enabled"`
 }
 
 // IsEnabled determines if the MasterUser is enabled by checking the Enabled field.
@@ -2350,14 +2350,14 @@ func (m *MasterUser) IsEnabled() bool {
 	return m.Enabled
 }
 
-// GetDelimiter retrieves the delimiter value associated with the MasterUser configuration.
+// GetUserFormat retrieves the master-user login format.
 // Returns an empty string if the MasterUser is nil.
-func (m *MasterUser) GetDelimiter() string {
+func (m *MasterUser) GetUserFormat() string {
 	if m == nil {
 		return ""
 	}
 
-	return m.Delimiter
+	return m.UserFormat
 }
 
 // Frontend represents configuration options for the frontend of the application.

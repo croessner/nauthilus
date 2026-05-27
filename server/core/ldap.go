@@ -671,11 +671,13 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	// We need to do a second user lookup, to retrieve correct data from LDAP.
 	if auth.Runtime.MasterUserMode {
+		previousNoAuth := auth.Request.NoAuth
 		auth.Request.NoAuth = true
 
 		PutPassDBResultToPool(passDBResult)
 
 		passDBResult, err = lm.PassDB(auth)
+		auth.Request.NoAuth = previousNoAuth
 
 		restoreMasterUserTOTPSecret(passDBResult, totpSecretPre, protocol.TOTPSecretField)
 	}

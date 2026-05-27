@@ -55,11 +55,21 @@ const (
 
 type requestGRPCMethodContextKey struct{}
 
-type requestClientIPFacts struct {
-	addr    netip.Addr
+type requestIPFacts struct {
 	source  string
+	addr    netip.Addr
 	present bool
+}
+
+type requestClientIPFacts struct {
+	requestIPFacts
 	trusted bool
+}
+
+type requestLocalEndpointFacts struct {
+	ip          requestIPFacts
+	port        string
+	portPresent bool
 }
 
 // ContextWithGRPCMethod stores a server-derived gRPC method for request policy facts.
@@ -86,9 +96,19 @@ func (a *AuthState) recordRequestContextFacts(
 	}
 
 	clientIP := a.requestClientIPFacts(ctx)
+	callerIP := a.requestCallerIPFacts(ctx)
+	localEndpoint := a.requestLocalEndpointFacts()
 	transportKind := a.requestTransportKind()
 
 	clientIP.record(policyCtx, operation)
+	callerIP.record(
+		policyCtx,
+		operation,
+		policy.AttributeRequestCallerIP,
+		policy.AttributeRequestCallerIPPresent,
+		policy.AttributeRequestCallerIPSource,
+	)
+	localEndpoint.record(policyCtx, operation)
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestTransportKind, policy.StagePreAuth, operation, transportKind))
 	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestListenerName, policy.StagePreAuth, operation, a.requestListenerName()))
 	policyCtx.RecordAttribute(policycollection.BoolAttribute(policy.AttributeRequestConnectionTLS, policy.StagePreAuth, operation, requestConnectionTLS(ctx), nil))
@@ -111,24 +131,63 @@ func (a *AuthState) recordRequestContextFacts(
 	}
 }
 
-func (f requestClientIPFacts) record(policyCtx *policycollection.DecisionContext, operation policy.Operation) {
+// record stores the request IP fact with a fail-closed presence marker.
+func (f requestIPFacts) record(
+	policyCtx *policycollection.DecisionContext,
+	operation policy.Operation,
+	ipAttribute string,
+	presentAttribute string,
+	sourceAttribute string,
+) {
 	if f.source == "" {
 		f.source = requestPolicyClientIPSourceUnknown
 	}
 
 	if f.present {
-		policyCtx.RecordAttribute(policycollection.IPAttribute(policy.AttributeRequestClientIP, policy.StagePreAuth, operation, f.addr))
+		policyCtx.RecordAttribute(policycollection.IPAttribute(ipAttribute, policy.StagePreAuth, operation, f.addr))
 	}
 
-	policyCtx.RecordAttribute(policycollection.BoolAttribute(policy.AttributeRequestClientIPPresent, policy.StagePreAuth, operation, f.present, nil))
-	policyCtx.RecordAttribute(policycollection.BoolAttribute(policy.AttributeRequestClientIPTrusted, policy.StagePreAuth, operation, f.trusted, nil))
-	policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestClientIPSource, policy.StagePreAuth, operation, f.source))
+	policyCtx.RecordAttribute(policycollection.BoolAttribute(presentAttribute, policy.StagePreAuth, operation, f.present, nil))
+
+	if sourceAttribute != "" {
+		policyCtx.RecordAttribute(policycollection.StringAttribute(sourceAttribute, policy.StagePreAuth, operation, f.source))
+	}
 }
 
+// record stores client-IP facts, including source trust metadata.
+func (f requestClientIPFacts) record(policyCtx *policycollection.DecisionContext, operation policy.Operation) {
+	f.requestIPFacts.record(
+		policyCtx,
+		operation,
+		policy.AttributeRequestClientIP,
+		policy.AttributeRequestClientIPPresent,
+		policy.AttributeRequestClientIPSource,
+	)
+	policyCtx.RecordAttribute(policycollection.BoolAttribute(policy.AttributeRequestClientIPTrusted, policy.StagePreAuth, operation, f.trusted, nil))
+}
+
+// record stores the caller-supplied local endpoint facts.
+func (f requestLocalEndpointFacts) record(policyCtx *policycollection.DecisionContext, operation policy.Operation) {
+	f.ip.record(
+		policyCtx,
+		operation,
+		policy.AttributeRequestLocalIP,
+		policy.AttributeRequestLocalIPPresent,
+		"",
+	)
+
+	if f.portPresent {
+		policyCtx.RecordAttribute(policycollection.StringAttribute(policy.AttributeRequestLocalPort, policy.StagePreAuth, operation, f.port))
+	}
+
+	policyCtx.RecordAttribute(policycollection.BoolAttribute(policy.AttributeRequestLocalPortPresent, policy.StagePreAuth, operation, f.portPresent, nil))
+}
+
+// requestClientIPFacts resolves the end-client IP and labels whether that source is trusted.
 func (a *AuthState) requestClientIPFacts(ctx *gin.Context) requestClientIPFacts {
 	source := requestPolicyClientIPSourceUnknown
 	if a == nil {
-		return requestClientIPFacts{source: source}
+		return requestClientIPFacts{requestIPFacts: requestIPFacts{source: source}}
 	}
 
 	candidate := strings.TrimSpace(a.Request.ClientIP)
@@ -139,24 +198,82 @@ func (a *AuthState) requestClientIPFacts(ctx *gin.Context) requestClientIPFacts 
 	}
 
 	if candidate == "" {
-		return requestClientIPFacts{source: source}
+		return requestClientIPFacts{requestIPFacts: requestIPFacts{source: source}}
+	}
+
+	facts := parseRequestIPFacts(candidate, source)
+	if !facts.present {
+		return requestClientIPFacts{requestIPFacts: facts}
+	}
+
+	source, trusted := a.requestClientIPTrust(ctx, candidate, source)
+	facts.source = source
+
+	return requestClientIPFacts{
+		requestIPFacts: facts,
+		trusted:        trusted,
+	}
+}
+
+// requestCallerIPFacts resolves the peer that connected to Nauthilus.
+func (a *AuthState) requestCallerIPFacts(ctx *gin.Context) requestIPFacts {
+	if a != nil && a.Request.Service == definitions.ServGRPC {
+		return requestGRPCCallerIPFacts(ctx)
+	}
+
+	return parseRequestIPFacts(directPeerIP(ctx), requestPolicyClientIPSourceDirectPeer)
+}
+
+// requestGRPCCallerIPFacts prefers gRPC peer metadata and falls back to the direct peer.
+func requestGRPCCallerIPFacts(ctx *gin.Context) requestIPFacts {
+	candidate := grpcPeerIP(contextFromGin(ctx))
+	if candidate != "" {
+		return parseRequestIPFacts(candidate, requestPolicyClientIPSourceGRPCPeer)
+	}
+
+	return parseRequestIPFacts(directPeerIP(ctx), requestPolicyClientIPSourceDirectPeer)
+}
+
+// requestLocalEndpointFacts parses the local endpoint values supplied by the caller.
+func (a *AuthState) requestLocalEndpointFacts() requestLocalEndpointFacts {
+	if a == nil {
+		return requestLocalEndpointFacts{}
+	}
+
+	port := strings.TrimSpace(a.Request.XPort)
+
+	return requestLocalEndpointFacts{
+		ip:          parseRequestIPFacts(a.Request.XLocalIP, requestPolicyClientIPSourceUnknown),
+		port:        port,
+		portPresent: port != "",
+	}
+}
+
+// parseRequestIPFacts keeps invalid or empty IP values absent while preserving source context.
+func parseRequestIPFacts(candidate string, source string) requestIPFacts {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = requestPolicyClientIPSourceUnknown
+	}
+
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return requestIPFacts{source: source}
 	}
 
 	addr, err := netip.ParseAddr(candidate)
 	if err != nil {
-		return requestClientIPFacts{source: source}
+		return requestIPFacts{source: source}
 	}
 
-	source, trusted := a.requestClientIPTrust(ctx, candidate, source)
-
-	return requestClientIPFacts{
-		addr:    addr,
+	return requestIPFacts{
 		source:  source,
+		addr:    addr,
 		present: true,
-		trusted: trusted,
 	}
 }
 
+// requestClientIPTrust classifies whether the selected client IP source can be trusted.
 func (a *AuthState) requestClientIPTrust(ctx *gin.Context, candidate string, fallbackSource string) (string, bool) {
 	if a == nil {
 		return requestPolicyClientIPSourceUnknown, false

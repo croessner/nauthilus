@@ -281,6 +281,7 @@ func combineSchedulerGuardCriterionPaths(
 
 func schedulerGuardUserControlledAttribute(attributeID string) bool {
 	return strings.HasPrefix(attributeID, "request.header.") ||
+		strings.HasPrefix(attributeID, "request.local.") ||
 		strings.HasPrefix(attributeID, "request.metadata.") ||
 		attributeID == policy.AttributeRequestIDPClientID ||
 		attributeID == policy.AttributeRequestSAMLServiceProviderID

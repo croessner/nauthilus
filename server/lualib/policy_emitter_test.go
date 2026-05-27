@@ -138,6 +138,59 @@ policy.emit_attribute({
 	}
 }
 
+func TestPolicyEmitterRecordsMasterUserAttribute(t *testing.T) {
+	policyCtx := policyEmitterTestContext(map[string]policyregistry.AttributeDefinition{
+		policy.AttributeMasterUserActive: {
+			ID:         policy.AttributeMasterUserActive,
+			Stage:      policy.StageAuthBackend,
+			Operations: []policy.Operation{policy.OperationAuthenticate},
+			Type:       policyregistry.AttributeTypeBool,
+			Source:     policyregistry.SourceBuiltin,
+			Details: map[string]policyregistry.DetailDefinition{
+				luaPolicyDetailBackend:    {Type: policyregistry.AttributeTypeString},
+				luaPolicyDetailMasterUser: {Type: policyregistry.AttributeTypeString},
+				luaPolicyDetailTargetUser: {Type: policyregistry.AttributeTypeString},
+			},
+		},
+	})
+
+	L := lua.NewState()
+	defer L.Close()
+
+	L.PreloadModule(definitions.LuaModPolicy, LoaderModPolicy(policyCtx, policy.StageAuthBackend))
+
+	if err := L.DoString(`
+local policy = require("nauthilus_policy")
+policy.emit_master_user({
+  master_user = "admin@example.test",
+  target_user = "alice@example.test",
+})
+`); err != nil {
+		t.Fatalf("master-user policy emission failed: %v", err)
+	}
+
+	attributeValue, ok := policyCtx.Report().Attributes[policy.AttributeMasterUserActive]
+	if !ok {
+		t.Fatal("master-user attribute missing")
+	}
+
+	if attributeValue.Value != true {
+		t.Fatalf("master-user attribute value = %#v, want true", attributeValue.Value)
+	}
+
+	if got := attributeValue.Details[luaPolicyDetailBackend].Value; got != luaPolicyBackendLua {
+		t.Fatalf("backend detail = %#v, want %s", got, luaPolicyBackendLua)
+	}
+
+	if got := attributeValue.Details[luaPolicyDetailMasterUser].Value; got != "admin@example.test" {
+		t.Fatalf("master_user detail = %#v, want admin@example.test", got)
+	}
+
+	if got := attributeValue.Details[luaPolicyDetailTargetUser].Value; got != "alice@example.test" {
+		t.Fatalf("target_user detail = %#v, want alice@example.test", got)
+	}
+}
+
 func policyEmitterTestContext(definitions map[string]policyregistry.AttributeDefinition) *policycollection.DecisionContext {
 	if definitions == nil {
 		definitions = map[string]policyregistry.AttributeDefinition{}

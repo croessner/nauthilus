@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
+	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 )
 
 // LuaRequest is a subset from the Authentication struct.
@@ -67,6 +68,9 @@ type LuaRequest struct {
 
 	// HTTPClientContext carries cancellation/deadline for this Lua backend request.
 	HTTPClientContext context.Context
+
+	// PolicyContext carries the request-local policy collector for backend emissions.
+	PolicyContext *policycollection.DecisionContext
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *lualib.LuaBackendResult

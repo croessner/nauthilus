@@ -36,6 +36,10 @@ const (
 	requestClientIPPresentAttribute   = "request.client.ip.present"
 	requestClientIPTrustedAttribute   = "request.client.ip.trusted"
 	requestClientIPSourceAttribute    = "request.client.ip.source"
+	requestCallerIPPresentAttribute   = "request.caller.ip.present"
+	requestCallerIPSourceAttribute    = "request.caller.ip.source"
+	requestLocalIPPresentAttribute    = "request.local.ip.present"
+	requestLocalPortPresentAttribute  = "request.local.port.present"
 	requestTransportKindAttribute     = "request.transport.kind"
 	requestListenerNameAttribute      = "request.listener.name"
 	requestConnectionTLSAttribute     = "request.connection.tls"
@@ -48,6 +52,10 @@ const (
 	requestClientIPSourceTrustedProxy = "trusted_proxy_header"
 	requestClientIPSourceMetadata     = "metadata"
 	requestContextDirectPeerIP        = "203.0.113.10"
+	requestContextCallerIP            = "198.51.100.25"
+	requestContextLocalIP             = "10.0.0.25"
+	requestContextLocalPort           = "993"
+	requestContextLocalEndpointPolicy = "deny_local_endpoint"
 	requestContextLoopbackIP          = "127.0.0.1"
 	requestContextClientIPHeader      = "Client-IP"
 	requestContextOIDCClientID        = "oidc-client"
@@ -191,6 +199,66 @@ func TestRequestContextGRPCMetadataCandidateIsNotTrusted(t *testing.T) {
 	assertRequestContextValue(t, policyReport, requestClientIPSourceAttribute, requestClientIPSourceMetadata)
 	assertRequestContextValue(t, policyReport, requestTransportKindAttribute, "grpc")
 	assertRequestContextValue(t, policyReport, requestListenerNameAttribute, "grpc.authority")
+}
+
+func TestRequestContextEmitsCallerAndLocalEndpointFacts(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.ClientIP = "203.0.113.50"
+	auth.Request.XLocalIP = requestContextLocalIP
+	auth.Request.XPort = requestContextLocalPort
+	ctx.Request.RemoteAddr = requestContextCallerIP + ":44321"
+
+	policyReport := requestContextReport(t, auth, ctx)
+
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestCallerIP, netip.MustParseAddr(requestContextCallerIP))
+	assertRequestContextValue(t, policyReport, requestCallerIPPresentAttribute, true)
+	assertRequestContextValue(t, policyReport, requestCallerIPSourceAttribute, requestClientIPSourceDirectPeer)
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestLocalIP, netip.MustParseAddr(requestContextLocalIP))
+	assertRequestContextValue(t, policyReport, requestLocalIPPresentAttribute, true)
+	assertRequestContextValue(t, policyReport, policy.AttributeRequestLocalPort, requestContextLocalPort)
+	assertRequestContextValue(t, policyReport, requestLocalPortPresentAttribute, true)
+}
+
+func TestRequestContextInvalidLocalEndpointFailsClosed(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, requestContextSnapshotForTest())
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.ClientIP = "203.0.113.51"
+	auth.Request.XLocalIP = "not-an-ip"
+	auth.Request.XPort = ""
+	ctx.Request.RemoteAddr = requestContextCallerIP + ":44322"
+
+	policyReport := requestContextReport(t, auth, ctx)
+
+	assertRequestContextMissing(t, policyReport, policy.AttributeRequestLocalIP)
+	assertRequestContextValue(t, policyReport, requestLocalIPPresentAttribute, false)
+	assertRequestContextMissing(t, policyReport, policy.AttributeRequestLocalPort)
+	assertRequestContextValue(t, policyReport, requestLocalPortPresentAttribute, false)
+}
+
+func TestRequestContextCallerAndLocalEndpointDriveAuthDecisionPolicy(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, compileCallerLocalEndpointPolicySnapshotForTest(t, cfg))
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	auth.Request.ClientIP = "203.0.113.52"
+	auth.Request.XLocalIP = requestContextLocalIP
+	auth.Request.XPort = requestContextLocalPort
+	ctx.Request.RemoteAddr = requestContextCallerIP + ":44323"
+	recordFailedBackendForRequestAttributeTest(t, auth, ctx)
+
+	final, authoritative := auth.configuredPolicyAuthDecision(ctx)
+	if !authoritative {
+		t.Fatal("configured auth policy should be authoritative for this test")
+	}
+
+	if final == nil || final.PolicyName != requestContextLocalEndpointPolicy {
+		t.Fatalf("policy decision = %#v, want %s", final, requestContextLocalEndpointPolicy)
+	}
 }
 
 func TestRequestContextHTTPRouteIsEmittedWhenAvailable(t *testing.T) {
@@ -375,6 +443,45 @@ func compileRequestContextSnapshotForTest(t *testing.T, cfg *config.FileSettings
 	}
 
 	return snapshot
+}
+
+// compileCallerLocalEndpointPolicySnapshotForTest builds an auth-decision policy using caller and local endpoint facts.
+func compileCallerLocalEndpointPolicySnapshotForTest(t *testing.T, cfg *config.FileSettings) *policyruntime.Snapshot {
+	t.Helper()
+
+	cfg.Auth = &config.AuthSection{
+		Policy: config.AuthPolicySection{
+			Mode:          policyModeEnforce,
+			DefaultPolicy: policy.BuiltinDefaultSet,
+			Sets: config.PolicySetsConfig{
+				Networks: map[string][]string{
+					"dovecot_callers":        {requestContextCallerIP + "/32"},
+					"dovecot_local_endpoint": {"10.0.0.0/8"},
+				},
+			},
+			Policies: []config.PolicyRuleConfig{
+				{
+					Name:  requestContextLocalEndpointPolicy,
+					Stage: string(policy.StageAuthDecision),
+					If: config.PolicyConditionConfig{
+						All: []config.PolicyConditionConfig{
+							{Attribute: policy.AttributeRequestCallerIPPresent, Is: true},
+							{Attribute: policy.AttributeRequestCallerIP, CIDRContains: "@network.dovecot_callers"},
+							{Attribute: policy.AttributeRequestLocalIPPresent, Is: true},
+							{Attribute: policy.AttributeRequestLocalIP, CIDRContains: "@network.dovecot_local_endpoint"},
+							{Attribute: policy.AttributeRequestLocalPort, Eq: requestContextLocalPort},
+						},
+					},
+					Then: config.PolicyThenConfig{
+						Decision:       string(policy.DecisionDeny),
+						ResponseMarker: policy.ResponseMarkerFail,
+					},
+				},
+			},
+		},
+	}
+
+	return compileRequestContextSnapshotForTest(t, cfg)
 }
 
 func assertRequestContextValue(t *testing.T, policyReport *report.DecisionReport, attribute string, want any) {

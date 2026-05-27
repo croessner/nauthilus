@@ -98,6 +98,27 @@ const (
 	// AttributeRequestClientIPSource stores the selected client IP source.
 	AttributeRequestClientIPSource = "request.client.ip.source"
 
+	// AttributeRequestCallerIP stores the Nauthilus caller IP.
+	AttributeRequestCallerIP = "request.caller.ip"
+
+	// AttributeRequestCallerIPPresent stores whether the Nauthilus caller IP parsed successfully.
+	AttributeRequestCallerIPPresent = "request.caller.ip.present"
+
+	// AttributeRequestCallerIPSource stores the server-derived caller IP source.
+	AttributeRequestCallerIPSource = "request.caller.ip.source"
+
+	// AttributeRequestLocalIP stores the caller-supplied local endpoint IP.
+	AttributeRequestLocalIP = "request.local.ip"
+
+	// AttributeRequestLocalIPPresent stores whether the caller-supplied local endpoint IP parsed successfully.
+	AttributeRequestLocalIPPresent = "request.local.ip.present"
+
+	// AttributeRequestLocalPort stores the caller-supplied local endpoint port.
+	AttributeRequestLocalPort = "request.local.port"
+
+	// AttributeRequestLocalPortPresent stores whether the caller supplied a local endpoint port.
+	AttributeRequestLocalPortPresent = "request.local.port.present"
+
 	// AttributeRequestProtocol stores the request protocol.
 	AttributeRequestProtocol = "request.protocol"
 
@@ -244,6 +265,9 @@ const (
 
 	// AttributeIdentityFound stores identity lookup success.
 	AttributeIdentityFound = "auth.identity.found"
+
+	// AttributeMasterUserActive stores whether authentication used master-user mode.
+	AttributeMasterUserActive = "auth.master_user.active"
 
 	// AttributeBackendTempFail stores a modeled backend temporary failure.
 	AttributeBackendTempFail = "auth.backend.tempfail"

@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luamod"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/policy"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -236,6 +237,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	}
 
 	modManager.BindLDAP(L, LoaderModLDAP(luaCtx, cfg))
+	modManager.BindModule(L, definitions.LuaModPolicy, lualib.LoaderModPolicy(luaRequest.PolicyContext, policy.StageAuthBackend))
 
 	lualib.LoaderModBackendResult(ctx, cfg, logger)(L)
 

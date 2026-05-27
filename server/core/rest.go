@@ -279,23 +279,43 @@ func NewConfigLoadHandler(cfg config.File, logger *slog.Logger, redisClient redi
 
 // For brief documentation of this file please have a look at the Markdown document REST-API.md.
 
-func (a *AuthState) handleMasterUserMode() string {
-	cfg := a.deps.Cfg
-	if !cfg.GetServer().GetMasterUser().IsEnabled() {
-		return a.Request.Username
+type masterUserIdentity struct {
+	targetUser string
+	masterUser string
+	active     bool
+}
+
+// parseMasterUserIdentity validates the configured master-user login syntax.
+func parseMasterUserIdentity(username string, masterUser *config.MasterUser) masterUserIdentity {
+	if !masterUser.IsEnabled() {
+		return masterUserIdentity{}
 	}
 
-	delimiter := cfg.GetServer().GetMasterUser().GetDelimiter()
-	if delimiter == "" {
-		return a.Request.Username
-	}
-
-	left, right, ok := strings.Cut(a.Request.Username, delimiter)
+	targetUser, masterUserName, ok := config.ParseMasterUserLogin(username, masterUser.GetUserFormat())
 	if !ok {
-		return a.Request.Username
+		return masterUserIdentity{}
 	}
 
-	if left == "" || right == "" || strings.Contains(right, delimiter) {
+	return masterUserIdentity{
+		targetUser: targetUser,
+		masterUser: masterUserName,
+		active:     true,
+	}
+}
+
+// masterUserIdentity returns the parsed master-user request identity.
+func (a *AuthState) masterUserIdentity() masterUserIdentity {
+	if a == nil || a.deps.Cfg == nil {
+		return masterUserIdentity{}
+	}
+
+	return parseMasterUserIdentity(a.Request.Username, a.deps.Cfg.GetServer().GetMasterUser())
+}
+
+// handleMasterUserMode switches between master and target identity lookups for one request.
+func (a *AuthState) handleMasterUserMode() string {
+	identity := a.masterUserIdentity()
+	if !identity.active {
 		return a.Request.Username
 	}
 
@@ -303,13 +323,13 @@ func (a *AuthState) handleMasterUserMode() string {
 		a.Runtime.MasterUserMode = false
 
 		// Return real user
-		return left
+		return identity.targetUser
 	}
 
 	a.Runtime.MasterUserMode = true
 
 	// Return master user
-	return right
+	return identity.masterUser
 }
 
 // HandleAuthentication handles the authentication logic based on the selected service type.

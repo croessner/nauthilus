@@ -59,7 +59,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Legal characters for IMAP username based on RFC 9051: Any character except "(", ")", "{", SP, CTL, "%", "\"", "\"". The "*" might be used as master separator.
+// Legal characters for IMAP username based on RFC 9051: Any character except "(", ")", "{", SP, CTL, "%", "\"", "\"". Master-user formats can reserve additional literal separators.
 var usernamePattern = regexp.MustCompile(`^[^\x00-\x1F\x7F(){}%"\\ ]+$`)
 
 // RedisLogger implements the interface redis.Logging
