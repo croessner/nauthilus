@@ -108,6 +108,9 @@ auth:
 
   pipeline:
     max_concurrent_requests: 32
+    master_user:
+      enabled: true
+      user_format: "{user}*{master_user}"
 
   backends:
     order: [remote]
@@ -237,6 +240,36 @@ identity:
           - authorization_code
         token_endpoint_auth_method: "client_secret_post"
         skip_consent: true
+        require_mfa:
+          - totp
+          - webauthn
+          - recovery_codes
+        supported_mfa:
+          - totp
+          - webauthn
+          - recovery_codes
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        id_token_claims:
+          mappings:
+            - claim: "email"
+              attribute: "uid"
+            - claim: "name"
+              attribute: "displayName"
+
+      - name: "Split Delayed MFA Browser Client"
+        client_id: "split-e2e-mfa-delayed"
+        client_secret: "split-e2e-mfa-delayed-secret"
+        redirect_uris:
+          - "https://split.example.test:19094/callback"
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: "client_secret_post"
+        skip_consent: true
+        delayed_response: true
         require_mfa:
           - totp
           - webauthn

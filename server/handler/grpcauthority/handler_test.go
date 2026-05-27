@@ -36,6 +36,7 @@ const (
 	grpcI18NLockedText    = "Login failed because the account is locked."
 	grpcI18NLockedGerman  = "Anmeldung abgelehnt."
 	grpcI18NLockedEnglish = "Login denied."
+	grpcResolvedTarget    = "target@example.test"
 )
 
 func TestHandlerAuthenticateConsumesApplicationService(t *testing.T) {
@@ -274,6 +275,37 @@ func TestAllowedOperationsAfterAuthenticateIncludesResolveUser(t *testing.T) {
 	operations := allowedOperationsAfterAuth(AuthorityOperationAuthenticate)
 	if !authorityOperationSet(operations)[AuthorityOperationResolveUser] {
 		t.Fatalf("authenticate backend reference operations = %v, want resolve_user", operations)
+	}
+}
+
+func TestHandlerAuthenticateBackendRefUsesResolvedAccount(t *testing.T) {
+	refStore := newRecordingBackendRefStore()
+	service := &recordingService{
+		authOutcome: &core.AuthOutcome{
+			Attributes: bktype.AttributeMapping{
+				"uid": []any{grpcResolvedTarget},
+			},
+			Decision:     core.AuthDecisionOK,
+			Session:      "session-master",
+			AccountField: "uid",
+			Backend:      definitions.BackendTest,
+			HTTPStatus:   200,
+		},
+	}
+	handler := NewWithServices(service, nil, nil, refStore)
+
+	_, err := handler.Authenticate(context.Background(), &authv1.AuthRequest{
+		Username: grpcResolvedTarget + "*master@example.test",
+		Password: "secret",
+		ClientIp: "203.0.113.20",
+		Protocol: "idp",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+
+	if refStore.payload.Username != grpcResolvedTarget {
+		t.Fatalf("backend ref username = %q, want %s", refStore.payload.Username, grpcResolvedTarget)
 	}
 }
 

@@ -26,6 +26,12 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
+const (
+	testBackendMasterTargetLogin = "target@example.test"
+	testBackendMasterAdminLogin  = "master@example.test"
+	testBackendMasterFormatted   = testBackendMasterTargetLogin + "*" + testBackendMasterAdminLogin
+)
+
 func TestTestBackendPassDBReturnsAccountAttribute(t *testing.T) {
 	setupMinimalTestConfig(t)
 	util.SetDefaultConfigFile(config.GetFile())
@@ -85,6 +91,56 @@ func TestTestBackendPassDBRejectsChangedPassword(t *testing.T) {
 
 	if !retryResult.Authenticated {
 		t.Fatal("original password must remain valid after a failed changed-password attempt")
+	}
+}
+
+func TestTestBackendPassDBResolvesMasterUserToTargetAccount(t *testing.T) {
+	setupMinimalTestConfig(t)
+	util.SetDefaultConfigFile(config.GetFile())
+	util.SetDefaultEnvironment(config.GetEnvironment())
+
+	cfg, ok := config.GetFile().(*config.FileSettings)
+	if !ok {
+		t.Fatalf("unexpected config type %T", config.GetFile())
+	}
+
+	cfg.Server.MasterUser = config.MasterUser{
+		Enabled:    true,
+		UserFormat: config.DefaultMasterUserFormat,
+	}
+
+	manager := NewTestBackendManager("test_backend_master_user_contract", AuthDeps{})
+	targetAuth := newTestBackendPasswordAuth(testBackendMasterTargetLogin, "target-secret")
+	targetAuth.deps = AuthDeps{Cfg: config.GetFile()}
+	masterAuth := newTestBackendPasswordAuth(testBackendMasterAdminLogin, "master-secret")
+	masterAuth.deps = AuthDeps{Cfg: config.GetFile()}
+	loginAuth := newTestBackendPasswordAuth(testBackendMasterFormatted, "master-secret")
+	loginAuth.deps = AuthDeps{Cfg: config.GetFile()}
+
+	if _, err := manager.PassDB(targetAuth); err != nil {
+		t.Fatalf("target seed PassDB returned error: %v", err)
+	}
+
+	if _, err := manager.PassDB(masterAuth); err != nil {
+		t.Fatalf("master seed PassDB returned error: %v", err)
+	}
+
+	result, err := manager.PassDB(loginAuth)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.Authenticated {
+		t.Fatal("master password should authenticate the target account")
+	}
+
+	if result.Account != testBackendMasterTargetLogin {
+		t.Fatalf("account = %q, want %s", result.Account, testBackendMasterTargetLogin)
+	}
+
+	values := result.Attributes[result.AccountField]
+	if len(values) != 1 || values[0] != testBackendMasterTargetLogin {
+		t.Fatalf("account attribute = %#v, want %s", values, testBackendMasterTargetLogin)
 	}
 }
 

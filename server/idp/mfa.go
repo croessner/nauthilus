@@ -382,7 +382,7 @@ func (s *MFAService) getAuthState(ctx *gin.Context, username string) (*core.Auth
 			authState.SetProtocol(config.NewProtocol(protocol))
 		}
 
-		if ref, ok := core.RemoteBackendRefFromSession(mgr); ok {
+		if ref, ok := core.RemoteBackendRefForAuthSession(authState, mgr); ok {
 			authState.Runtime.RemoteBackendRef = ref
 		}
 	}

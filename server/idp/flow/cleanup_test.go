@@ -37,14 +37,24 @@ func TestCleanupMFAState(t *testing.T) {
 
 	t.Run("deletes all MFA state keys", func(t *testing.T) {
 		mgr := &mockKeyManager{data: map[string]bool{
-			definitions.SessionKeyUsername:       true,
-			definitions.SessionKeyUniqueUserID:   true,
-			definitions.SessionKeyAuthResult:     true,
-			definitions.SessionKeyAuthResultHMAC: true,
-			definitions.SessionKeyMFAMulti:       true,
-			definitions.SessionKeyMFAMethod:      true,
-			definitions.SessionKeyMFACompleted:   true,
-			definitions.SessionKeyRegistration:   true,
+			definitions.SessionKeyUsername:                           true,
+			definitions.SessionKeyMFAAccount:                         true,
+			definitions.SessionKeyMFADisplayName:                     true,
+			definitions.SessionKeyMFAFactorAccount:                   true,
+			definitions.SessionKeyMFAFactorUniqueUserID:              true,
+			definitions.SessionKeyMFAFactorDisplayName:               true,
+			definitions.SessionKeyMFAFactorRemoteBackendRefType:      true,
+			definitions.SessionKeyMFAFactorRemoteBackendRefName:      true,
+			definitions.SessionKeyMFAFactorRemoteBackendRefProtocol:  true,
+			definitions.SessionKeyMFAFactorRemoteBackendRefAuthority: true,
+			definitions.SessionKeyMFAFactorRemoteBackendRefToken:     true,
+			definitions.SessionKeyUniqueUserID:                       true,
+			definitions.SessionKeyAuthResult:                         true,
+			definitions.SessionKeyAuthResultHMAC:                     true,
+			definitions.SessionKeyMFAMulti:                           true,
+			definitions.SessionKeyMFAMethod:                          true,
+			definitions.SessionKeyMFACompleted:                       true,
+			definitions.SessionKeyRegistration:                       true,
 			// Non-MFA key that should survive cleanup.
 			definitions.SessionKeyAccount: true,
 		}}
@@ -52,6 +62,16 @@ func TestCleanupMFAState(t *testing.T) {
 		CleanupMFAState(mgr)
 
 		assert.False(t, mgr.data[definitions.SessionKeyUsername])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAAccount])
+		assert.False(t, mgr.data[definitions.SessionKeyMFADisplayName])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorAccount])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorUniqueUserID])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorDisplayName])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorRemoteBackendRefType])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorRemoteBackendRefName])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorRemoteBackendRefProtocol])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorRemoteBackendRefAuthority])
+		assert.False(t, mgr.data[definitions.SessionKeyMFAFactorRemoteBackendRefToken])
 		assert.False(t, mgr.data[definitions.SessionKeyUniqueUserID])
 		assert.False(t, mgr.data[definitions.SessionKeyAuthResult])
 		assert.False(t, mgr.data[definitions.SessionKeyAuthResultHMAC])

@@ -859,6 +859,142 @@ func (h *FrontendHandler) resetDelayedResponseFailureForRetry(ctx *gin.Context, 
 	return resetFlowAuthOutcomeForRetry(ctx.Request.Context(), mgr, redisClient, redisPrefix)
 }
 
+// renderPostLoginFailure renders the IdP login form with a generic authentication error.
+func (h *FrontendHandler) renderPostLoginFailure(ctx *gin.Context, oidcCID string, samlEntityID string, message string) {
+	data := h.basePageData(ctx)
+	data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
+	data["UsernameLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Username")
+	data["UsernamePlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address")
+	data["PasswordLabel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Password")
+	data["PasswordPlaceholder"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your password")
+	data["Submit"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit")
+	data["LoginWithWebAuthn"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login with WebAuthn")
+	data["Or"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "or")
+	data["WebAuthnLoginURL"] = h.getMFAURLFromCookie(ctx, "webauthn")
+	data["CSRFToken"] = csrf.Token(ctx)
+	data["PostLoginEndpoint"] = ctx.Request.URL.Path
+	data["HaveError"] = true
+	data["ErrorMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, message)
+
+	h.setLoginRememberData(ctx, data, oidcCID, samlEntityID)
+
+	ctx.HTML(http.StatusOK, "idp_login.html", data)
+}
+
+// preAuthMFASessionOptions carries the identity and flow state required before MFA verification starts.
+type preAuthMFASessionOptions struct {
+	user          *backend.User
+	factorUser    *backend.User
+	username      string
+	protocol      string
+	authResult    definitions.AuthResult
+	authOutcome   flowdomain.AuthOutcome
+	factorRef     core.RemoteBackendRef
+	rememberMeTTL int
+	redisPrefix   string
+	debugMessage  string
+}
+
+// storePreAuthMFASession stores the submitted login for factor checks and the canonical identity for finalization.
+func (h *FrontendHandler) storePreAuthMFASession(ctx *gin.Context, mgr cookie.Manager, options preAuthMFASessionOptions) {
+	if mgr == nil || options.user == nil {
+		return
+	}
+
+	mgr.Set(definitions.SessionKeyUsername, options.username)
+	core.StorePendingIDPMFAIdentity(mgr, options.user)
+	core.StorePendingIDPMFAFactor(mgr, options.mfaFactorUser())
+	core.StorePendingIDPMFAFactorRemoteBackendRef(mgr, options.factorRef)
+	cookie.SetAuthResult(mgr, options.username, options.authResult)
+	mgr.Set(definitions.SessionKeyProtocol, options.protocol)
+	_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, options.redisPrefix, options.authOutcome)
+
+	if options.rememberMeTTL > 0 {
+		mgr.Set(definitions.SessionKeyRememberTTL, options.rememberMeTTL)
+	}
+
+	mgr.Debug(ctx, h.deps.Logger, options.debugMessage)
+}
+
+// mfaFactorUser returns the account whose second factor should be verified.
+func (o preAuthMFASessionOptions) mfaFactorUser() *backend.User {
+	if o.factorUser != nil {
+		return o.factorUser
+	}
+
+	return o.user
+}
+
+// parseSubmittedMasterUser resolves the target and master account from a submitted login.
+func (h *FrontendHandler) parseSubmittedMasterUser(submittedUsername string, targetUser *backend.User) (string, string, bool) {
+	if h != nil && h.deps != nil && h.deps.Cfg != nil && h.deps.Cfg.GetServer() != nil {
+		masterUser := h.deps.Cfg.GetServer().GetMasterUser()
+		if masterUser.IsEnabled() {
+			return config.ParseMasterUserLogin(submittedUsername, masterUser.GetUserFormat())
+		}
+	}
+
+	if targetUser == nil || targetUser.Name == "" || submittedUsername == targetUser.Name {
+		return "", "", false
+	}
+
+	targetUsername, masterUsername, ok := config.ParseMasterUserLogin(submittedUsername, config.DefaultMasterUserFormat)
+	if !ok || targetUsername != targetUser.Name {
+		return "", "", false
+	}
+
+	return targetUsername, masterUsername, true
+}
+
+// resolveMFAFactorUser loads the Master-User account when the submitted login uses master mode.
+func (h *FrontendHandler) resolveMFAFactorUser(
+	ctx *gin.Context,
+	idpInstance *idp.NauthilusIdP,
+	submittedUsername string,
+	targetUser *backend.User,
+	oidcCID string,
+	samlEntityID string,
+) (*backend.User, bool, core.RemoteBackendRef, error) {
+	if h == nil || h.deps == nil || h.deps.Cfg == nil || h.deps.Cfg.GetServer() == nil {
+		return targetUser, false, core.RemoteBackendRef{}, nil
+	}
+
+	_, masterUsername, ok := h.parseSubmittedMasterUser(submittedUsername, targetUser)
+	if !ok {
+		return targetUser, false, core.RemoteBackendRef{}, nil
+	}
+
+	if idpInstance == nil {
+		return nil, true, core.RemoteBackendRef{}, stderrors.New("missing IdP instance")
+	}
+
+	mgr := cookie.GetManager(ctx)
+	targetRef, haveTargetRef := core.RemoteBackendRefFromSession(mgr)
+
+	if mgr != nil {
+		core.ClearRemoteBackendRef(mgr)
+
+		defer func() {
+			if haveTargetRef {
+				core.StoreRemoteBackendRef(mgr, targetRef)
+
+				return
+			}
+
+			core.ClearRemoteBackendRef(mgr)
+		}()
+	}
+
+	factorUser, err := idpInstance.GetUserByUsername(ctx, masterUsername, oidcCID, samlEntityID)
+	if err != nil {
+		return nil, true, core.RemoteBackendRef{}, err
+	}
+
+	factorRef, _ := core.RemoteBackendRefFromSession(mgr)
+
+	return factorUser, true, factorRef, nil
+}
+
 // PostLogin handles the login submission.
 // This endpoint is ONLY for IdP flows (OIDC/SAML2). Direct access without a proper flow is rejected.
 // All flow state is read from the secure encrypted cookie - no form parameters for flow state.
@@ -952,24 +1088,33 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 		// Check for Delayed Response
 		if idpAuthFailureAllowsDelayedResponse(err) && idpInstance.IsDelayedResponse(oidcCID, samlEntityID) {
 			if user, _ := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID); user != nil {
-				if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
+				factorUser, _, factorRef, factorErr := h.resolveMFAFactorUser(ctx, idpInstance, username, user, oidcCID, samlEntityID)
+				if factorErr != nil {
+					sp.RecordError(factorErr)
+
+					factorUser = nil
+				}
+
+				availability := h.getMFAAvailabilityWithBackendRef(ctx, factorUser, protocol, mgr, factorRef)
+				if availability.count > 0 {
 					if mgr != nil {
-						mgr.Set(definitions.SessionKeyUsername, username)
-						mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-						cookie.SetAuthResult(mgr, username, definitions.AuthResultFail)
-						mgr.Set(definitions.SessionKeyProtocol, protocol)
-						_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeFailLatched)
+						h.storePreAuthMFASession(ctx, mgr, preAuthMFASessionOptions{
+							user:          user,
+							factorUser:    factorUser,
+							username:      username,
+							protocol:      protocol,
+							authResult:    definitions.AuthResultFail,
+							authOutcome:   flowdomain.AuthOutcomeFailLatched,
+							factorRef:     factorRef,
+							rememberMeTTL: rememberMeTTL,
+							redisPrefix:   redisPrefix,
+							debugMessage:  "MFA required - pre-auth session data stored (delayed response)",
+						})
 						storeIDPAuthStatusBridgeFromError(mgr, err)
-
-						if rememberMeTTL > 0 {
-							mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
-						}
-
-						mgr.Debug(ctx, h.deps.Logger, "MFA required - pre-auth session data stored (delayed response)")
 					}
 
 					// If user has only one MFA option, redirect directly to it
-					if redirectURL, ok := h.getMFARedirectURLFromCookie(ctx, user); ok {
+					if redirectURL, ok := h.getMFARedirectURLFromAvailability(availability); ok {
 						ctx.Redirect(http.StatusFound, redirectURL)
 
 						return
@@ -1007,26 +1152,37 @@ func (h *FrontendHandler) PostLogin(ctx *gin.Context) {
 	}
 
 	// Check if user has MFA
-	if h.hasTOTP(user) || h.hasWebAuthn(ctx, user, protocol) {
+	factorUser, _, factorRef, factorErr := h.resolveMFAFactorUser(ctx, idpInstance, username, user, oidcCID, samlEntityID)
+	if factorErr != nil {
+		sp.RecordError(factorErr)
+		stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
+		h.renderPostLoginFailure(ctx, oidcCID, samlEntityID, "Invalid login or password")
+
+		return
+	}
+
+	availability := h.getMFAAvailabilityWithBackendRef(ctx, factorUser, protocol, mgr, factorRef)
+	if availability.count > 0 {
 		if mgr != nil {
-			mgr.Set(definitions.SessionKeyUsername, username)
-			mgr.Set(definitions.SessionKeyUniqueUserID, user.Id)
-			cookie.SetAuthResult(mgr, username, definitions.AuthResultOK)
-			mgr.Set(definitions.SessionKeyProtocol, protocol)
-			_ = setFlowAuthOutcome(ctx.Request.Context(), mgr, h.deps.Redis, redisPrefix, flowdomain.AuthOutcomeOK)
-
-			if rememberMeTTL > 0 {
-				mgr.Set(definitions.SessionKeyRememberTTL, rememberMeTTL)
-			}
-
-			mgr.Debug(ctx, h.deps.Logger, "MFA required - pre-auth session data stored")
+			h.storePreAuthMFASession(ctx, mgr, preAuthMFASessionOptions{
+				user:          user,
+				factorUser:    factorUser,
+				username:      username,
+				protocol:      protocol,
+				authResult:    definitions.AuthResultOK,
+				authOutcome:   flowdomain.AuthOutcomeOK,
+				factorRef:     factorRef,
+				rememberMeTTL: rememberMeTTL,
+				redisPrefix:   redisPrefix,
+				debugMessage:  "MFA required - pre-auth session data stored",
+			})
 
 			advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepLogin)
 			advanceFlow(ctx.Request.Context(), mgr, h.deps.Redis, h.deps.Cfg.GetServer().GetRedis().GetPrefix(), flowdomain.FlowStepMFA)
 		}
 
 		// If user has only one MFA option, redirect directly to it
-		if redirectURL, ok := h.getMFARedirectURLFromCookie(ctx, user); ok {
+		if redirectURL, ok := h.getMFARedirectURLFromAvailability(availability); ok {
 			ctx.Redirect(http.StatusFound, redirectURL)
 
 			return
@@ -1087,11 +1243,23 @@ func (h *FrontendHandler) hasTOTP(user *backend.User) bool {
 	return false
 }
 
+// hasWebAuthn reports whether the user has any registered WebAuthn credential.
 func (h *FrontendHandler) hasWebAuthn(ctx *gin.Context, user *backend.User, protocolName string) bool {
-	return h.hasWebAuthnWithProvider(ctx, user, protocolName, nil)
+	return h.hasWebAuthnWithBackendRef(ctx, user, protocolName, core.RemoteBackendRef{})
 }
 
+// hasWebAuthnWithBackendRef binds credential lookups to an explicit authority backend reference when present.
+func (h *FrontendHandler) hasWebAuthnWithBackendRef(ctx *gin.Context, user *backend.User, protocolName string, backendRef core.RemoteBackendRef) bool {
+	return h.hasWebAuthnWithProviderAndBackendRef(ctx, user, protocolName, nil, backendRef)
+}
+
+// hasWebAuthnWithProvider checks credentials through the supplied provider or a session-derived AuthState.
 func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backend.User, protocolName string, provider webAuthnCredentialProvider) bool {
+	return h.hasWebAuthnWithProviderAndBackendRef(ctx, user, protocolName, provider, core.RemoteBackendRef{})
+}
+
+// hasWebAuthnWithProviderAndBackendRef resolves WebAuthn credentials while preserving the selected backend authority.
+func (h *FrontendHandler) hasWebAuthnWithProviderAndBackendRef(ctx *gin.Context, user *backend.User, protocolName string, provider webAuthnCredentialProvider, backendRef core.RemoteBackendRef) bool {
 	if ctx == nil || user == nil {
 		return false
 	}
@@ -1118,6 +1286,12 @@ func (h *FrontendHandler) hasWebAuthnWithProvider(ctx *gin.Context, user *backen
 		authState.SetUsername(user.Name)
 		authState.SetProtocol(config.NewProtocol(resolvedProtocol))
 		authState.SetNoAuth(true)
+
+		if !backendRef.IsZero() {
+			authState.Runtime.RemoteBackendRef = backendRef
+		} else if ref, ok := core.RemoteBackendRefForAuthSession(authState, mgr); ok {
+			authState.Runtime.RemoteBackendRef = ref
+		}
 
 		provider = authState
 	}
@@ -1168,6 +1342,9 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 
 	if mgr != nil {
 		username = mgr.GetString(definitions.SessionKeyUsername, "")
+		if factorUser := mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""); factorUser != "" {
+			username = factorUser
+		}
 		protocol = mgr.GetString(definitions.SessionKeyIdPFlowType, "")
 	}
 
@@ -1285,6 +1462,7 @@ func (h *FrontendHandler) LoginRecovery(ctx *gin.Context) {
 type mfaSessionState struct {
 	mgr          cookie.Manager
 	username     string
+	factorUser   string
 	oidcCID      string
 	samlEntityID string
 }
@@ -1297,6 +1475,7 @@ func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessio
 
 	var (
 		username      string
+		factorUser    string
 		hasAuthResult bool
 		oidcCID       string
 		samlEntityID  string
@@ -1304,6 +1483,7 @@ func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessio
 
 	if mgr != nil {
 		username = mgr.GetString(definitions.SessionKeyUsername, "")
+		factorUser = mgr.GetString(definitions.SessionKeyMFAFactorAccount, "")
 		hasAuthResult = mgr.HasKey(definitions.SessionKeyAuthResult)
 
 		flowType := mgr.GetString(definitions.SessionKeyIdPFlowType, "")
@@ -1327,23 +1507,46 @@ func (h *FrontendHandler) extractMFASessionAndUser(ctx *gin.Context) (*mfaSessio
 		return nil, nil, ""
 	}
 
-	idpInstance := idp.NewNauthilusIdP(h.deps)
-	user, err := idpInstance.GetUserByUsername(ctx, username, oidcCID, samlEntityID)
-
-	if err != nil {
-		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
-
-		return nil, nil, ""
+	if factorUser == "" {
+		factorUser = username
 	}
 
 	state := &mfaSessionState{
 		mgr:          mgr,
 		username:     username,
+		factorUser:   factorUser,
 		oidcCID:      oidcCID,
 		samlEntityID: samlEntityID,
 	}
 
+	user := &backend.User{
+		Name:        mgr.GetString(definitions.SessionKeyMFAAccount, username),
+		Id:          mgr.GetString(definitions.SessionKeyUniqueUserID, ""),
+		DisplayName: mgr.GetString(definitions.SessionKeyMFADisplayName, ""),
+	}
+
 	return state, user, code
+}
+
+// loadCompletedMFAUser refreshes the target account after factor verification succeeded.
+func (h *FrontendHandler) loadCompletedMFAUser(ctx *gin.Context, sess *mfaSessionState, fallback *backend.User) (*backend.User, error) {
+	if sess == nil || sess.mgr == nil {
+		return fallback, nil
+	}
+
+	username := sess.mgr.GetString(definitions.SessionKeyMFAAccount, sess.username)
+	if username == "" {
+		return fallback, nil
+	}
+
+	idpInstance := idp.NewNauthilusIdP(h.deps)
+
+	user, err := idpInstance.GetUserByUsername(ctx, username, sess.oidcCID, sess.samlEntityID)
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
 }
 
 // PostLoginRecovery handles the recovery code verification during login.
@@ -1370,7 +1573,7 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 		sourceBackend = sess.mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
-	success, err := h.mfa.UseRecoveryCode(ctx, sess.username, code, sourceBackend)
+	success, err := h.mfa.UseRecoveryCode(ctx, sess.factorUser, code, sourceBackend)
 
 	if err != nil {
 		h.deps.Logger.Error("Failed to use recovery code", "error", err)
@@ -1382,7 +1585,7 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 			statusMessage = err.Error()
 		}
 
-		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodRecoveryCodes, statusMessage, false)
+		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.factorUser, definitions.MFAMethodRecoveryCodes, statusMessage, false)
 
 		data := h.basePageData(ctx)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "2FA Verification")
@@ -1402,7 +1605,7 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 		return
 	}
 
-	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodRecoveryCodes, "", true)
+	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.factorUser, definitions.MFAMethodRecoveryCodes, "", true)
 
 	// MFA OK. Now check if the original password was OK (delayed response case).
 	if h.handleDelayedResponseFailure(ctx, sess, "recovery") {
@@ -1411,6 +1614,15 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 
 	// All OK!
 	h.setLastMFAMethod(ctx, "recovery")
+
+	user, err = h.loadCompletedMFAUser(ctx, sess, user)
+	if err != nil {
+		sp.RecordError(err)
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+
+		return
+	}
+
 	h.finalizeMFALogin(ctx, user)
 }
 
@@ -1425,8 +1637,13 @@ func (h *FrontendHandler) setLastMFAMethod(ctx *gin.Context, method string) {
 }
 
 func (h *FrontendHandler) getMFAAvailability(ctx *gin.Context, user *backend.User, protocolParam string, mgr cookie.Manager) mfaAvailability {
+	return h.getMFAAvailabilityWithBackendRef(ctx, user, protocolParam, mgr, core.RemoteBackendRef{})
+}
+
+// getMFAAvailabilityWithBackendRef evaluates active MFA methods against the selected backend identity.
+func (h *FrontendHandler) getMFAAvailabilityWithBackendRef(ctx *gin.Context, user *backend.User, protocolParam string, mgr cookie.Manager, backendRef core.RemoteBackendRef) mfaAvailability {
 	haveTOTP := h.hasTOTP(user)
-	haveWebAuthn := h.hasWebAuthn(ctx, user, protocolParam)
+	haveWebAuthn := h.hasWebAuthnWithBackendRef(ctx, user, protocolParam, backendRef)
 	haveRecoveryCodes := h.hasRecoveryCodes(user)
 
 	if !h.isMFAMethodSupported(mgr, definitions.MFAMethodTOTP) {
@@ -1475,6 +1692,11 @@ func (h *FrontendHandler) getMFARedirectURLFromCookie(ctx *gin.Context, user *ba
 
 	availability := h.getMFAAvailability(ctx, user, protocolParam, mgr)
 
+	return h.getMFARedirectURLFromAvailability(availability)
+}
+
+// getMFARedirectURLFromAvailability returns the direct challenge URL when exactly one method is available.
+func (h *FrontendHandler) getMFARedirectURLFromAvailability(availability mfaAvailability) (string, bool) {
 	if availability.count > 1 {
 		return "", false
 	}
@@ -1634,7 +1856,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		sourceBackend = sess.mgr.GetUint8(definitions.SessionKeyUserBackend, uint8(definitions.BackendLDAP))
 	}
 
-	valid, err := h.mfa.VerifyTOTP(ctx, sess.username, code, sourceBackend)
+	valid, err := h.mfa.VerifyTOTP(ctx, sess.factorUser, code, sourceBackend)
 	if err != nil || !valid {
 		if err != nil {
 			sp.RecordError(err)
@@ -1647,7 +1869,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 			statusMessage = err.Error()
 		}
 
-		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodTOTP, statusMessage, false)
+		core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.factorUser, definitions.MFAMethodTOTP, statusMessage, false)
 
 		data := h.basePageData(ctx)
 		data["Title"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login")
@@ -1666,7 +1888,7 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 		return
 	}
 
-	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.username, definitions.MFAMethodTOTP, "", true)
+	core.LogIDPMFAuthResult(ctx, h.deps.Auth(), sess.factorUser, definitions.MFAMethodTOTP, "", true)
 
 	// MFA OK. Now check if the original password was OK (delayed response case).
 	if h.handleDelayedResponseFailure(ctx, sess, "totp") {
@@ -1675,6 +1897,15 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 
 	// All OK!
 	h.setLastMFAMethod(ctx, "totp")
+
+	user, err = h.loadCompletedMFAUser(ctx, sess, user)
+	if err != nil {
+		sp.RecordError(err)
+		ctx.Redirect(http.StatusFound, h.getLoginPath(ctx))
+
+		return
+	}
+
 	h.finalizeMFALogin(ctx, user)
 }
 

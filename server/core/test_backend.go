@@ -188,7 +188,7 @@ func NewTestBackendManager(backendName string, deps AuthDeps) BackendManager {
 
 // PassDB populates account data and verifies credentials against in-memory values.
 func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
-	username := strings.TrimSpace(auth.Request.Username)
+	username := strings.TrimSpace(testBackendPassDBUsername(auth))
 	passDBResult = GetPassDBResultFromPool()
 
 	if username == "" {
@@ -229,18 +229,53 @@ func (tm *testBackendManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBR
 	if auth.Request.NoAuth {
 		passDBResult.Authenticated = true
 
-		return passDBResult, nil
+		return tm.completeMasterUserPassDB(auth, passDBResult)
 	}
 
 	if user.PasswordHash == "" {
 		passDBResult.Authenticated = password == ""
 
-		return passDBResult, nil
+		return tm.completeMasterUserPassDB(auth, passDBResult)
 	}
 
 	passDBResult.Authenticated = util.GetHash(util.PreparePassword(password)) == user.PasswordHash
 
-	return passDBResult, nil
+	return tm.completeMasterUserPassDB(auth, passDBResult)
+}
+
+// testBackendPassDBUsername resolves the effective account used by the in-memory backend lookup.
+func testBackendPassDBUsername(auth *AuthState) string {
+	if auth == nil {
+		return ""
+	}
+
+	username := strings.TrimSpace(auth.Request.Username)
+	if auth.deps.Cfg == nil || auth.deps.Cfg.GetServer() == nil {
+		return username
+	}
+
+	if !auth.deps.Cfg.GetServer().GetMasterUser().IsEnabled() {
+		return username
+	}
+
+	return auth.handleMasterUserMode()
+}
+
+// completeMasterUserPassDB reloads target account data after authenticating the master account.
+func (tm *testBackendManagerImpl) completeMasterUserPassDB(auth *AuthState, passDBResult *PassDBResult) (*PassDBResult, error) {
+	if auth == nil || !auth.Runtime.MasterUserMode || passDBResult == nil || !passDBResult.Authenticated {
+		return passDBResult, nil
+	}
+
+	previousNoAuth := auth.Request.NoAuth
+	auth.Request.NoAuth = true
+
+	PutPassDBResultToPool(passDBResult)
+
+	targetResult, err := tm.PassDB(auth)
+	auth.Request.NoAuth = previousNoAuth
+
+	return targetResult, err
 }
 
 // AccountDB lists all known usernames stored in the test backend.

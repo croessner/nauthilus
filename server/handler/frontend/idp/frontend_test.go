@@ -77,6 +77,26 @@ func (m *mockFrontendCfg) GetServer() *config.ServerSection {
 	}
 }
 
+func TestParseSubmittedMasterUserFallsBackToCanonicalizedDefaultFormat(t *testing.T) {
+	handler := &FrontendHandler{}
+	targetUser := &backend.User{Name: "target@example.test"}
+
+	target, master, ok := handler.parseSubmittedMasterUser("target@example.test*master@example.test", targetUser)
+
+	assert.True(t, ok)
+	assert.Equal(t, "target@example.test", target)
+	assert.Equal(t, "master@example.test", master)
+}
+
+func TestParseSubmittedMasterUserRejectsUncanonicalizedDefaultFormat(t *testing.T) {
+	handler := &FrontendHandler{}
+	targetUser := &backend.User{Name: "someone@example.test"}
+
+	_, _, ok := handler.parseSubmittedMasterUser("target@example.test*master@example.test", targetUser)
+
+	assert.False(t, ok)
+}
+
 func TestBasePageData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &mockFrontendCfg{}

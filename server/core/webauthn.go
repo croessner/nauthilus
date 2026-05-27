@@ -50,6 +50,45 @@ var webAuthn *webauthn.WebAuthn
 // jsonIter is a package-level variable for jsoniter with standard configuration
 var jsonIter = jsoniter.ConfigFastest
 
+// webAuthnLoginIdentity carries the account identity used for login assertions.
+type webAuthnLoginIdentity struct {
+	userName     string
+	uniqueUserID string
+	displayName  string
+}
+
+// sessionWebAuthnLoginIdentity resolves the MFA factor identity for WebAuthn login.
+func sessionWebAuthnLoginIdentity(mgr cookie.Manager) webAuthnLoginIdentity {
+	if mgr == nil {
+		return webAuthnLoginIdentity{}
+	}
+
+	identity := webAuthnLoginIdentity{
+		userName:     mgr.GetString(definitions.SessionKeyMFAFactorAccount, ""),
+		uniqueUserID: mgr.GetString(definitions.SessionKeyMFAFactorUniqueUserID, ""),
+		displayName:  mgr.GetString(definitions.SessionKeyMFAFactorDisplayName, ""),
+	}
+
+	if identity.userName == "" {
+		identity.userName = mgr.GetString(definitions.SessionKeyUsername, "")
+	}
+
+	if identity.uniqueUserID == "" {
+		identity.uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+	}
+
+	return identity
+}
+
+// webAuthnBackendLookupUsername selects the identity used for backend credential operations.
+func webAuthnBackendLookupUsername(userName string, uniqueUserID string) string {
+	if userName != "" {
+		return userName
+	}
+
+	return uniqueUserID
+}
+
 // getUser retrieves a User object with all their current credentials. This is Database depended. Which backend was used
 // can be gotten from the session cookie.
 func (a *AuthState) getUser(userName string, uniqueUserID string, displayName string) (*backend.User, error) {
@@ -63,8 +102,6 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 
 	mgr := cookie.GetManager(a.Request.HTTPClientContext)
 	protocolName := ""
-
-	a.restoreRemoteBackendRefFromSession(mgr)
 
 	if a.Request.HTTPClientContext != nil {
 		protocolName = a.Request.HTTPClientContext.Query("protocol")
@@ -84,11 +121,9 @@ func (a *AuthState) getUser(userName string, uniqueUserID string, displayName st
 		a.Request.Protocol.Set(protocolName)
 	}
 
-	if uniqueUserID != "" {
-		a.Request.Username = uniqueUserID
-	} else if userName != "" {
-		a.Request.Username = userName
-	}
+	a.Request.Username = webAuthnBackendLookupUsername(userName, uniqueUserID)
+
+	a.restoreRemoteBackendRefFromSession(mgr)
 
 	util.DebugModuleWithCfg(
 		a.Ctx(),
@@ -601,13 +636,16 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 		var (
 			userName     string
 			uniqueUserID string
+			displayName  string
 		)
 
 		mgr := cookie.GetManager(ctx)
 
 		if mgr != nil {
-			userName = mgr.GetString(definitions.SessionKeyUsername, "")
-			uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+			identity := sessionWebAuthnLoginIdentity(mgr)
+			userName = identity.userName
+			uniqueUserID = identity.uniqueUserID
+			displayName = identity.displayName
 		}
 
 		var user *backend.User
@@ -616,7 +654,7 @@ func LoginWebAuthnBegin(deps AuthDeps) gin.HandlerFunc {
 			auth := NewAuthStateFromContextWithDeps(ctx, deps)
 			var err error
 
-			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, "")
+			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
 			if err != nil {
 				ctx.JSON(http.StatusInternalServerError, err.Error())
 
@@ -680,14 +718,17 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 		var (
 			userName     string
 			uniqueUserID string
+			displayName  string
 			sessionData  *webauthn.SessionData
 		)
 
 		mgr := cookie.GetManager(ctx)
 
 		if mgr != nil {
-			userName = mgr.GetString(definitions.SessionKeyUsername, "")
-			uniqueUserID = mgr.GetString(definitions.SessionKeyUniqueUserID, "")
+			identity := sessionWebAuthnLoginIdentity(mgr)
+			userName = identity.userName
+			uniqueUserID = identity.uniqueUserID
+			displayName = identity.displayName
 
 			cookieValue := mgr.GetBytes(definitions.SessionKeyRegistration, nil)
 			if cookieValue != nil {
@@ -714,7 +755,8 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 		if userName != "" {
 			var err error
-			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, "")
+
+			user, err = auth.(*AuthState).getUser(userName, uniqueUserID, displayName)
 			if err != nil {
 				LogIDPMFAuthResult(ctx, deps, userName, definitions.MFAMethodWebAuthn, err.Error(), false)
 				ctx.JSON(http.StatusInternalServerError, err.Error())
@@ -906,7 +948,8 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 			// If the initial credentials were wrong, we must reject the login even if MFA succeeded.
 			// This implements "Fall B Punkt 1" from the IdP login flow specification:
 			// User is redirected back to /login/:languageTag with error message, session is reset.
-			if !isMFAAuthResultValid(mgr, user.Name) {
+			submittedUsername := mgr.GetString(definitions.SessionKeyUsername, user.Name)
+			if !isMFAAuthResultValid(mgr, submittedUsername) {
 				stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
 				util.DebugModuleWithCfg(
@@ -917,7 +960,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyMsg, "Delayed-response login rejected after MFA",
 					"mfa_method", "webauthn",
-					"username", user.Name,
+					"username", submittedUsername,
 				)
 
 				// Ensure no stale authenticated session survives this failure path.
@@ -952,6 +995,7 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 				return
 			}
 
+			finalUser := ResolveCompletedIDPMFAUser(mgr, user)
 			StoreCompletedIDPMFASession(mgr, user, "webauthn")
 
 			if err = mgr.Save(ctx); err != nil {
@@ -959,6 +1003,8 @@ func LoginWebAuthnFinish(deps AuthDeps) gin.HandlerFunc {
 
 				return
 			}
+
+			user = finalUser
 		}
 
 		QueueCompletedIDPMFAPostAction(ctx, authState.deps, user)
