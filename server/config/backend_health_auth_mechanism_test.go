@@ -17,6 +17,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,11 +171,5 @@ func setBackendHealthChecksAuthMechanismTestConfig(targets []any) {
 
 // containsString reports whether a generated syntax-key slice includes the expected key.
 func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(values, want)
 }

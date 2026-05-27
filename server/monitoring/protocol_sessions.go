@@ -527,8 +527,8 @@ func ParseIMAPAuthCapabilities(lines []string) AuthCapabilities {
 	capabilities := newAuthCapabilitiesWithRaw("imap capability", lines)
 
 	for _, line := range lines {
-		fields := strings.Fields(line)
-		for _, field := range fields {
+		fields := strings.FieldsSeq(line)
+		for field := range fields {
 			if strings.EqualFold(field, "SASL-IR") {
 				capabilities.SASLIR = true
 			}
@@ -536,8 +536,8 @@ func ParseIMAPAuthCapabilities(lines []string) AuthCapabilities {
 	}
 
 	for _, line := range lines {
-		fields := strings.Fields(line)
-		for _, field := range fields {
+		fields := strings.FieldsSeq(line)
+		for field := range fields {
 			mechanism, ok := strings.CutPrefix(strings.ToUpper(field), "AUTH=")
 			if !ok {
 				continue
@@ -1036,7 +1036,7 @@ func ParseSieveAuthCapabilities(lines []string) AuthCapabilities {
 			continue
 		}
 
-		for _, token := range strings.Fields(strings.Join(tokens[1:], " ")) {
+		for token := range strings.FieldsSeq(strings.Join(tokens[1:], " ")) {
 			normalized, ok := normalizeAdvertisedAuthMechanism(token)
 			if !ok || normalized == HealthAuthMechanismBasic || normalized == HealthAuthMechanismUserPass {
 				continue
