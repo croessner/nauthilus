@@ -2,6 +2,7 @@ OUTPUT := nauthilus/bin/nauthilus
 CLIENT_OUTPUT := nauthilus/bin/nauthilus-client
 OIDCTESTCLIENT_OUTPUT := nauthilus/bin/oidctestclient
 SAML2TESTCLIENT_OUTPUT := nauthilus/bin/saml2testclient
+ENCRYPTION_SECRET_DECODER_OUTPUT := nauthilus/bin/encryption-secret-decoder
 HEALTHCHECK_OUTPUT := nauthilus/bin/nauthilus-healthcheck
 GIT_TAG=$(shell git describe --tags --abbrev=0)
 GIT_COMMIT=$(shell git rev-parse --short HEAD)
@@ -19,9 +20,9 @@ CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/server/config.naut
 
 export GOEXPERIMENT := runtimesecret
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e guardrails
 
-all: build build-client build-oidctestclient build-saml2testclient build-healthcheck
+all: build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck
 
 fix: ## Run go fix to apply automated code migrations
 	go fix ./...
@@ -29,7 +30,7 @@ fix: ## Run go fix to apply automated code migrations
 vet: ## Run go vet for static analysis
 	go vet ./...
 
-$(OUTPUT) $(CLIENT_OUTPUT) $(OIDCTESTCLIENT_OUTPUT) $(SAML2TESTCLIENT_OUTPUT) $(HEALTHCHECK_OUTPUT):
+$(OUTPUT) $(CLIENT_OUTPUT) $(OIDCTESTCLIENT_OUTPUT) $(SAML2TESTCLIENT_OUTPUT) $(ENCRYPTION_SECRET_DECODER_OUTPUT) $(HEALTHCHECK_OUTPUT):
 	mkdir -p $(dir $@)
 
 test:
@@ -53,6 +54,9 @@ build-oidctestclient: $(OIDCTESTCLIENT_OUTPUT)
 build-saml2testclient: $(SAML2TESTCLIENT_OUTPUT)
 	go build -mod=vendor -trimpath -v -o $(SAML2TESTCLIENT_OUTPUT) ./contrib/saml2testclient
 
+build-encryption-secret-decoder: $(ENCRYPTION_SECRET_DECODER_OUTPUT)
+	go build -mod=vendor -trimpath -v -o $(ENCRYPTION_SECRET_DECODER_OUTPUT) ./contrib/encryption-secret-decoder
+
 build-healthcheck: $(HEALTHCHECK_OUTPUT)
 	go build -mod=vendor -trimpath -v -o $(HEALTHCHECK_OUTPUT) ./docker-healthcheck
 
@@ -70,6 +74,7 @@ clean: ## Remove previous build
 	[ -x $(CLIENT_OUTPUT) ] && rm -f $(CLIENT_OUTPUT) || true
 	[ -x $(OIDCTESTCLIENT_OUTPUT) ] && rm -f $(OIDCTESTCLIENT_OUTPUT) || true
 	[ -x $(SAML2TESTCLIENT_OUTPUT) ] && rm -f $(SAML2TESTCLIENT_OUTPUT) || true
+	[ -x $(ENCRYPTION_SECRET_DECODER_OUTPUT) ] && rm -f $(ENCRYPTION_SECRET_DECODER_OUTPUT) || true
 	[ -x $(HEALTHCHECK_OUTPUT) ] && rm -f $(HEALTHCHECK_OUTPUT) || true
 
 install: build ## Install nauthilus binary and systemd service
