@@ -778,6 +778,7 @@ async function withPageState(page, label, run) {
   }
 }
 
+// runRequiredMFAFlows exercises required MFA enrollment and all browser-visible MFA login variants.
 async function runRequiredMFAFlows(browser) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
@@ -886,30 +887,42 @@ async function runRequiredMFAFlows(browser) {
   updatedWebAuthnCredentials = await runWebAuthnAssertionReplay(browser, updatedWebAuthnCredentials);
   await runWebAuthnSignCountRollback(browser, webAuthnCredentials);
 
-  const recoveryContext = await newBrowserContext(browser, edgeA);
-  const recoveryPage = await recoveryContext.newPage();
-  const recoveryLogin = await withPageState(recoveryPage, 'recovery-code login', async () =>
-    withCallbackServer('recovery-code login', async (redirectURI, callbackPromise) => {
-    await recoveryPage.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-    await submitPasswordLogin(recoveryPage, mfaUsername, password);
-    await completeRecoveryLogin(recoveryPage, recoveryCodes[0]);
-
-    return callbackPromise;
-  }));
-  assert.ok(recoveryLogin.code, 'recovery-code login completed the OIDC flow');
-  console.log('ok recovery-code-login');
-  await recoveryContext.close();
-  await runRecoveryCodeReuseRejected(browser, recoveryCodes[0]);
+  await runRecoveryCodeMatrix(browser, {
+    label: 'user recovery-code',
+    login: mfaUsername,
+    codes: recoveryCodes,
+    normalLoginOK: 'oidc-recovery-code-login',
+    delayedLoginOK: 'oidc-delayed-response-recovery-code-login',
+    normalInvalidOK: 'oidc-recovery-invalid-code',
+    delayedInvalidOK: 'oidc-delayed-response-recovery-invalid-code',
+    delayedWrongPasswordOK: 'oidc-delayed-response-recovery-wrong-password-rejected',
+    reuseOK: 'oidc-recovery-code-reuse-rejected',
+  });
+  await runRecoveryCodeMatrix(browser, {
+    label: 'Master-User recovery-code',
+    login: masterUserLogin,
+    codes: masterMFA.recoveryCodes,
+    expectedPreferredUsername: mfaUsername,
+    forbiddenPreferredUsername: masterUserLogin,
+    normalLoginOK: 'oidc-master-user-recovery-code-login',
+    delayedLoginOK: 'oidc-delayed-response-master-user-recovery-code-login',
+    normalInvalidOK: 'oidc-master-user-recovery-invalid-code',
+    delayedInvalidOK: 'oidc-delayed-response-master-user-recovery-invalid-code',
+    delayedWrongPasswordOK: 'oidc-delayed-response-master-user-recovery-wrong-password-rejected',
+    reuseOK: 'oidc-master-user-recovery-code-reuse-rejected',
+  });
 
   return updatedWebAuthnCredentials;
 }
 
+// registerMasterUserMFA enrolls all MFA factors used by formatted Master-User logins.
 async function registerMasterUserMFA(browser, webAuthnCredentials) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
   const authenticator = await installVirtualAuthenticator(page);
   await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
 
+  let recoveryCodes = [];
   let totpSecret = '';
   const masterRegistration = await withPageState(page, 'Master-User MFA registration', async () =>
     withCallbackServer('Master-User MFA registration', async (redirectURI, callbackPromise) => {
@@ -917,12 +930,13 @@ async function registerMasterUserMFA(browser, webAuthnCredentials) {
     await submitPasswordLogin(page, masterUsername, password);
     totpSecret = await completeTOTPRegistration(page);
     await completeWebAuthnRegistration(page);
-    await completeRecoveryRegistration(page);
+    recoveryCodes = await completeRecoveryRegistration(page);
 
     return callbackPromise;
   }));
   assert.ok(masterRegistration.code, 'Master-User MFA registration resumed the OIDC flow');
   assert.ok(totpSecret, 'Master-User MFA registration generated a TOTP secret');
+  assert.ok(recoveryCodes.length > 0, 'Master-User MFA registration generated recovery codes');
   console.log('ok master-user-mfa-registration');
 
   const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
@@ -930,6 +944,7 @@ async function registerMasterUserMFA(browser, webAuthnCredentials) {
 
   return {
     webAuthnCredentials: updatedCredentials,
+    recoveryCodes,
     totpSecret,
   };
 }
@@ -1057,7 +1072,6 @@ async function runNegativeMFAChecks(browser, webAuthnCredentials) {
   await runWebAuthnWrongOrigin(browser, webAuthnCredentials);
   await runWebAuthnUnknownCredential(browser, webAuthnCredentials);
   await runInvalidTOTPCode(browser);
-  await runInvalidRecoveryCode(browser);
 }
 
 async function runWebAuthnMissingCredential(browser) {
@@ -1286,13 +1300,18 @@ async function runInvalidTOTPCode(browser) {
   await context.close();
 }
 
-async function runInvalidRecoveryCode(browser) {
+// runInvalidRecoveryCode verifies that a malformed recovery code never advances the active MFA flow.
+async function runInvalidRecoveryCode(browser, options = {}) {
+  const client = options.client || mfaClient;
+  const user = options.user || mfaUsername;
+  const okName = options.okName || 'oidc-recovery-invalid-code';
+  const label = options.label || 'invalid recovery code check';
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
 
-  await withPageState(page, 'invalid recovery code check', async () =>
-    withCallbackServer('invalid recovery code check', async (redirectURI) => {
-      await startMFAChallenge(page, redirectURI);
+  await withPageState(page, label, async () =>
+    withCallbackServer(label, async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI, {client, user});
       if (!/\/login\/recovery/.test(page.url())) {
         await page.goto(`${edgeA}/login/recovery`);
       }
@@ -1308,17 +1327,124 @@ async function runInvalidRecoveryCode(browser) {
       await expectPageText(page, /Invalid recovery code/);
     }));
 
-  console.log('ok oidc-recovery-invalid-code');
+  console.log(`ok ${okName}`);
   await context.close();
 }
 
-async function runRecoveryCodeReuseRejected(browser, recoveryCode) {
+// runRecoveryCodeMatrix covers normal and delayed recovery-code logins for one principal.
+async function runRecoveryCodeMatrix(browser, profile) {
+  assertRecoveryCodes(profile.label, profile.codes, 3);
+  await runInvalidRecoveryCode(browser, {
+    user: profile.login,
+    client: mfaClient,
+    label: `${profile.label} invalid recovery code`,
+    okName: profile.normalInvalidOK,
+  });
+  await runRecoveryCodeLogin(browser, {
+    user: profile.login,
+    client: mfaClient,
+    code: profile.codes[0],
+    label: `${profile.label} login`,
+    okName: profile.normalLoginOK,
+    expectedPreferredUsername: profile.expectedPreferredUsername,
+    forbiddenPreferredUsername: profile.forbiddenPreferredUsername,
+  });
+  await runInvalidRecoveryCode(browser, {
+    user: profile.login,
+    client: delayedMFAClient,
+    label: `delayed-response ${profile.label} invalid recovery code`,
+    okName: profile.delayedInvalidOK,
+  });
+  await runRecoveryCodeLogin(browser, {
+    user: profile.login,
+    client: delayedMFAClient,
+    code: profile.codes[1],
+    label: `delayed-response ${profile.label} login`,
+    okName: profile.delayedLoginOK,
+    expectedPreferredUsername: profile.expectedPreferredUsername,
+    forbiddenPreferredUsername: profile.forbiddenPreferredUsername,
+  });
+  await runDelayedResponseRecoveryFailure(browser, {
+    user: profile.login,
+    code: profile.codes[2],
+    label: `delayed-response ${profile.label} wrong password`,
+    okName: profile.delayedWrongPasswordOK,
+  });
+  await runRecoveryCodeReuseRejected(browser, {
+    user: profile.login,
+    code: profile.codes[0],
+    label: `${profile.label} recovery-code reuse check`,
+    okName: profile.reuseOK,
+  });
+}
+
+// assertRecoveryCodes validates that a registration produced enough unique one-time codes for the matrix.
+function assertRecoveryCodes(label, codes, minCount) {
+  assert.ok(Array.isArray(codes), `${label} recovery codes must be an array`);
+  assert.ok(codes.length >= minCount, `${label} needs at least ${minCount} recovery codes`);
+  assert.equal(new Set(codes).size, codes.length, `${label} recovery codes must be unique`);
+}
+
+// runRecoveryCodeLogin completes an OIDC flow by submitting one valid recovery code.
+async function runRecoveryCodeLogin(browser, options) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const label = options.label || 'recovery-code login';
+  const client = options.client || mfaClient;
+
+  const callback = await withPageState(page, label, async () =>
+    withCallbackServer(label, async (redirectURI, callbackPromise) => {
+      await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, options.user, password);
+      await completeRecoveryLogin(page, options.code);
+
+      return callbackPromise;
+    }));
+  assert.ok(callback.code, `${label} completed the OIDC flow`);
+
+  if (options.expectedPreferredUsername) {
+    const token = await exchangeCode(edgeAAPI, client, callback.code, callback.redirectURI);
+    assert.ok(token.id_token, `${label} returned an ID token`);
+
+    const claims = decodeJWTClaims(token.id_token);
+    assert.equal(claims.preferred_username, options.expectedPreferredUsername, `${label} must issue the target username`);
+    assert.notEqual(claims.preferred_username, options.forbiddenPreferredUsername, `${label} must not leak the formatted login`);
+  }
+
+  console.log(`ok ${options.okName}`);
+  await context.close();
+
+  return callback;
+}
+
+// runDelayedResponseRecoveryFailure proves that delayed_response defers primary auth failure until after recovery MFA.
+async function runDelayedResponseRecoveryFailure(browser, options) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
 
-  await withPageState(page, 'recovery-code reuse check', async () =>
-    withCallbackServer('recovery-code reuse check', async (redirectURI) => {
-      await startMFAChallenge(page, redirectURI);
+  await withPageState(page, options.label, async () =>
+    withCallbackServer(options.label, async (redirectURI) => {
+      await page.goto(buildAuthorizeURL(edgeA, delayedMFAClient.id, redirectURI, 'openid profile email'));
+      await submitPasswordLogin(page, options.user, `${password}-wrong`);
+      await completeRecoveryLogin(page, options.code, {expectCallback: false});
+      assert.match(page.url(), /\/login/, `${options.label} must return to the login flow`);
+      await expectPageText(page, /Invalid login or password/);
+    }));
+
+  console.log(`ok ${options.okName}`);
+  await context.close();
+}
+
+// runRecoveryCodeReuseRejected verifies one-time recovery-code semantics for the selected principal.
+async function runRecoveryCodeReuseRejected(browser, options) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  const label = options.label || 'recovery-code reuse check';
+  const okName = options.okName || 'oidc-recovery-code-reuse-rejected';
+
+  await withPageState(page, label, async () =>
+    withCallbackServer(label, async (redirectURI) => {
+      await startMFAChallenge(page, redirectURI, {user: options.user});
       if (!/\/login\/recovery/.test(page.url())) {
         await page.goto(`${edgeA}/login/recovery`);
       }
@@ -1326,7 +1452,7 @@ async function runRecoveryCodeReuseRejected(browser, recoveryCode) {
       const responsePromise = page.waitForResponse((response) =>
         response.url().includes('/login/recovery') && response.request().method() === 'POST',
       {timeout: 15000});
-      await page.fill('input[name="code"]', recoveryCode);
+      await page.fill('input[name="code"]', options.code);
       await page.click('button[type="submit"]');
       const response = await responsePromise;
 
@@ -1334,13 +1460,18 @@ async function runRecoveryCodeReuseRejected(browser, recoveryCode) {
       await expectPageText(page, /Invalid recovery code/);
     }));
 
-  console.log('ok oidc-recovery-code-reuse-rejected');
+  console.log(`ok ${okName}`);
   await context.close();
 }
 
-async function startMFAChallenge(page, redirectURI) {
-  await page.goto(buildAuthorizeURL(edgeA, mfaClient.id, redirectURI, 'openid profile email'));
-  await submitPasswordLogin(page, mfaUsername, password);
+// startMFAChallenge opens an OIDC flow and stops once the selected principal reaches an MFA choice.
+async function startMFAChallenge(page, redirectURI, options = {}) {
+  const client = options.client || mfaClient;
+  const user = options.user || mfaUsername;
+  const secret = options.password || password;
+
+  await page.goto(buildAuthorizeURL(edgeA, client.id, redirectURI, 'openid profile email'));
+  await submitPasswordLogin(page, user, secret);
   await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/totp|\/login\/recovery/, {timeout: 15000});
 }
 
@@ -1736,15 +1867,31 @@ async function completeWebAuthnLogin(page, base) {
   await page.waitForURL(/callback/, {timeout: 15000});
 }
 
-async function completeRecoveryLogin(page, code) {
+// completeRecoveryLogin submits a recovery code and waits for either callback or fail-back to login.
+async function completeRecoveryLogin(page, code, options = {}) {
+  const expectCallback = options.expectCallback !== false;
+
   await page.waitForURL(/\/login\/webauthn|\/login\/mfa|\/login\/recovery/, {timeout: 15000});
   if (!/\/login\/recovery/.test(page.url())) {
     await page.goto(`${edgeA}/login/recovery`);
   }
 
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().includes('/login/recovery') && response.request().method() === 'POST',
+  {timeout: 15000});
   await page.fill('input[name="code"]', code);
   await page.click('button[type="submit"]');
-  await page.waitForURL(/callback/, {timeout: 15000});
+  const response = await responsePromise;
+
+  if (expectCallback) {
+    await page.waitForURL(/callback/, {timeout: 15000});
+
+    return response;
+  }
+
+  await page.waitForURL(/\/login/, {timeout: 15000});
+
+  return response;
 }
 
 function buildAuthorizeURL(base, clientID, redirectURI, scope, overrides = {}) {
