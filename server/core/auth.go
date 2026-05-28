@@ -4271,7 +4271,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	a.ApplyContextData(NewAuthContext(WithExternalSessionID(getDecodedHeader(ctx, cfg.GetExternalSessionID()))))
 
 	if a.Request.ClientIP == "" {
-		a.Request.ClientIP = util.RequestClientIP(ctx)
+		a.Request.ClientIP = util.RequestClientIPWithConfig(ctx, cfg, a.Logger())
 
 		if a.Request.ClientIP == "" && cfg.GetServer().IsHAproxyProtocolEnabled() && ctx.Request != nil {
 			a.Request.ClientIP, a.Request.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)

@@ -5,7 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
@@ -15,6 +17,7 @@ import (
 // IPRateLimiter manages rate limiters for individual IP addresses.
 type IPRateLimiter struct {
 	ips *cache.Cache
+	cfg config.File
 	mu  sync.RWMutex
 	r   rate.Limit
 	b   int
@@ -24,8 +27,15 @@ type IPRateLimiter struct {
 // r: Number of tokens per second.
 // b: Maximum burst size.
 func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
+	return NewIPRateLimiterWithConfig(r, b, nil)
+}
+
+// NewIPRateLimiterWithConfig creates an IP rate limiter using the shared
+// trusted proxy configuration for client IP resolution.
+func NewIPRateLimiterWithConfig(r rate.Limit, b int, cfg config.File) *IPRateLimiter {
 	return &IPRateLimiter{
 		ips: cache.New(5*time.Minute, 10*time.Minute),
+		cfg: cfg,
 		r:   r,
 		b:   b,
 	}
@@ -67,7 +77,7 @@ func (i *IPRateLimiter) Middleware() gin.HandlerFunc {
 			return
 		}
 
-		ip := ctx.ClientIP()
+		ip := util.RequestClientIPWithConfig(ctx, i.cfg, nil)
 		limiter := i.GetLimiter(ip)
 
 		if !limiter.Allow() {

@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
@@ -32,7 +33,7 @@ func (h *OIDCHandler) logIncomingOIDCFlowRequest(ctx *gin.Context, flow string, 
 		return
 	}
 
-	logIncomingIDPFlowRequest(ctx, h.deps.Logger, "oidc", flow, clientID, "", grantType)
+	logIncomingIDPFlowRequest(ctx, h.deps.Cfg, h.deps.Logger, "oidc", flow, clientID, "", grantType)
 }
 
 func (h *SAMLHandler) logIncomingSAMLFlowRequest(ctx *gin.Context, flow string, entityID string) {
@@ -40,7 +41,7 @@ func (h *SAMLHandler) logIncomingSAMLFlowRequest(ctx *gin.Context, flow string, 
 		return
 	}
 
-	logIncomingIDPFlowRequest(ctx, h.deps.Logger, "saml", flow, "", entityID, "")
+	logIncomingIDPFlowRequest(ctx, h.deps.Cfg, h.deps.Logger, "saml", flow, "", entityID, "")
 }
 
 func (h *OIDCHandler) logCompletedOIDCFlowRequest(ctx *gin.Context, flow string, grantType string, clientID string) {
@@ -48,7 +49,7 @@ func (h *OIDCHandler) logCompletedOIDCFlowRequest(ctx *gin.Context, flow string,
 		return
 	}
 
-	logCompletedIDPFlowRequest(ctx, h.deps.Logger, "oidc", flow, clientID, "", grantType)
+	logCompletedIDPFlowRequest(ctx, h.deps.Cfg, h.deps.Logger, "oidc", flow, clientID, "", grantType)
 }
 
 func (h *SAMLHandler) logCompletedSAMLFlowRequest(ctx *gin.Context, flow string, entityID string) {
@@ -56,11 +57,13 @@ func (h *SAMLHandler) logCompletedSAMLFlowRequest(ctx *gin.Context, flow string,
 		return
 	}
 
-	logCompletedIDPFlowRequest(ctx, h.deps.Logger, "saml", flow, "", entityID, "")
+	logCompletedIDPFlowRequest(ctx, h.deps.Cfg, h.deps.Logger, "saml", flow, "", entityID, "")
 }
 
+// logIncomingIDPFlowRequest emits the start notice for an IdP protocol flow.
 func logIncomingIDPFlowRequest(
 	ctx *gin.Context,
+	cfg config.File,
 	logger *slog.Logger,
 	protocol string,
 	flow string,
@@ -72,14 +75,16 @@ func logIncomingIDPFlowRequest(
 		return
 	}
 
-	keyvals := idpFlowNoticeFields(ctx, protocol, flow, clientID, samlEntityID, grantType)
+	keyvals := idpFlowNoticeFields(ctx, cfg, logger, protocol, flow, clientID, samlEntityID, grantType)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Processing incoming request")
 
 	_ = level.Notice(logger).WithContext(ctx).Log(keyvals...)
 }
 
+// logCompletedIDPFlowRequest emits the completion notice for an IdP protocol flow.
 func logCompletedIDPFlowRequest(
 	ctx *gin.Context,
+	cfg config.File,
 	logger *slog.Logger,
 	protocol string,
 	flow string,
@@ -93,7 +98,7 @@ func logCompletedIDPFlowRequest(
 
 	httpStatus, result, message := idpFlowCompletionResult(ctx)
 
-	keyvals := idpFlowNoticeFields(ctx, protocol, flow, clientID, samlEntityID, grantType)
+	keyvals := idpFlowNoticeFields(ctx, cfg, logger, protocol, flow, clientID, samlEntityID, grantType)
 	keyvals = append(
 		keyvals,
 		definitions.LogKeyHTTPStatus, httpStatus,
@@ -109,8 +114,11 @@ func logCompletedIDPFlowRequest(
 	_ = level.Notice(logger).WithContext(ctx).Log(keyvals...)
 }
 
+// idpFlowNoticeFields builds shared structured fields for IdP flow notices.
 func idpFlowNoticeFields(
 	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
 	protocol string,
 	flow string,
 	clientID string,
@@ -121,7 +129,7 @@ func idpFlowNoticeFields(
 		definitions.LogKeyGUID, util.WithNotAvailable(ctx.GetString(definitions.CtxGUIDKey)),
 		definitions.LogKeyProtocol, util.WithNotAvailable(strings.TrimSpace(protocol)),
 		definitions.LogKeyMethod, util.WithNotAvailable(strings.TrimSpace(ctx.Request.Method)),
-		definitions.LogKeyClientIP, util.WithNotAvailable(strings.TrimSpace(util.RequestClientIP(ctx))),
+		definitions.LogKeyClientIP, util.WithNotAvailable(strings.TrimSpace(util.RequestClientIPWithConfig(ctx, cfg, logger))),
 		definitions.LogKeyUriPath, util.WithNotAvailable(strings.TrimSpace(ctx.Request.URL.Path)),
 		"idp_flow", util.WithNotAvailable(strings.TrimSpace(flow)),
 		definitions.LogKeyOIDCCID, util.WithNotAvailable(strings.TrimSpace(clientID)),

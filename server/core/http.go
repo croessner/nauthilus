@@ -131,9 +131,10 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	}
 
 	if mw.IsRateEnabled() {
-		rateLimiter := mdlimit.NewIPRateLimiter(
+		rateLimiter := mdlimit.NewIPRateLimiterWithConfig(
 			mdlimit.Rate(c.cfg.GetServer().GetRateLimitPerSecond()),
 			c.cfg.GetServer().GetRateLimitBurst(),
+			c.cfg,
 		)
 
 		r.Use(rateLimiter.Middleware())
@@ -171,7 +172,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	}
 
 	if mw.IsLoggingEnabled() {
-		r.Use(mdlog.LoggerMiddleware(c.logger))
+		r.Use(mdlog.LoggerMiddlewareWithConfig(c.logger, c.cfg))
 	}
 }
 

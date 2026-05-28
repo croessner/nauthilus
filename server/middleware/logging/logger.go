@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
@@ -35,105 +36,133 @@ import (
 // HTTP stack should not rely on `log.Logger` globals.
 // Call sites that are already DI-based should pass an injected `*slog.Logger`.
 func LoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		var (
-			logWrapper func(logger *slog.Logger) level.Logger
-		)
+	return LoggerMiddlewareWithConfig(logger, nil)
+}
 
+// LoggerMiddlewareWithConfig logs each HTTP request using the configured
+// trusted proxy rules when resolving the client IP.
+func LoggerMiddlewareWithConfig(logger *slog.Logger, cfg config.File) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
 		guid := ksuid.New().String()
 		ctx.Set(definitions.CtxGUIDKey, guid)
 		ctx.Set(definitions.CtxLocalCacheAuthKey, false)
 
-		// Start timer
 		start := time.Now()
-
-		// Process request
 		ctx.Next()
 
 		err := ctx.Errors.Last()
+		activeLogger := loggerWithDefault(logger)
+		keyvals := requestLogFields(ctx, cfg, activeLogger, guid, time.Since(start), err)
 
-		// Decide which logger to use
-		status := ctx.Writer.Status()
-		if err != nil {
-			logWrapper = level.Error
-		} else if status == http.StatusTooManyRequests {
-			logWrapper = level.Warn
-		} else {
-			logWrapper = level.Info
-		}
-
-		// Stop timer
-		end := time.Now()
-		latency := end.Sub(start)
-
-		negotiatedProtocol := definitions.NotAvailable
-		cipherSuiteName := definitions.NotAvailable
-
-		if ctx.Request.TLS != nil {
-			negotiatedProtocol = tls.VersionName(ctx.Request.TLS.Version)
-			cipherSuiteName = tls.CipherSuiteName(ctx.Request.TLS.CipherSuite)
-		}
-
-		// Determine authentication information.
-		authType := "none"
-
-		// Allow handlers to override with protocol-specific auth semantics
-		// (e.g. OIDC client_secret_basic/client_secret_post/private_key_jwt).
-		if authMethod, exists := ctx.Get(definitions.CtxAuthMethodKey); exists {
-			if method, ok := authMethod.(string); ok && method != "" {
-				authType = method
-			}
-		} else if ctx.Request.Header.Get("Authorization") != "" {
-			// Fallback: infer from Authorization header if no explicit override exists.
-			if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Basic ") {
-				authType = "basic"
-			} else if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Bearer ") {
-				authType = "bearer"
-			} else {
-				authType = "other"
-			}
-		}
-
-		// Fall back to process default logger if caller passed nil.
-		if logger == nil {
-			logger = slog.Default()
-		}
-
-		keyvals := []any{
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyClientIP, ctx.ClientIP(),
-			definitions.LogKeyMethod, ctx.Request.Method,
-			definitions.LogKeyProtocol, ctx.Request.Proto,
-			definitions.LogKeyHTTPStatus, ctx.Writer.Status(),
-			definitions.LogKeyLatency, util.FormatDurationMs(latency),
-			definitions.LogKeyUserAgent, func() string {
-				if ctx.Request.UserAgent() != "" {
-					return ctx.Request.UserAgent()
-				}
-
-				return definitions.NotAvailable
-			}(),
-			definitions.LogKeyTLSSecure, negotiatedProtocol,
-			definitions.LogKeyTLSCipher, cipherSuiteName,
-			definitions.LogKeyUriPath, ctx.Request.URL.Path,
-			definitions.LogKeyAuthMethod, authType,
-			definitions.LogKeyMsg, func() string {
-				if err != nil {
-					return err.Error()
-				}
-
-				return "HTTP request"
-			}(),
-		}
-
-		if reason, exists := ctx.Get(definitions.CtxRateLimitReasonKey); exists {
-			keyvals = append(keyvals, definitions.LogKeyRateLimitReason, reason)
-		}
-
-		if externalSessionID := strings.TrimSpace(ctx.GetString(definitions.CtxExternalSessionKey)); externalSessionID != "" {
-			keyvals = append(keyvals, definitions.LogKeyExternalSession, externalSessionID)
-		}
-
-		logWrapper(logger).Log(keyvals...)
+		_ = requestLogWrapper(ctx.Writer.Status(), err)(activeLogger).Log(keyvals...)
 	}
+}
+
+// loggerWithDefault returns the process default logger when no logger was injected.
+func loggerWithDefault(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.Default()
+	}
+
+	return logger
+}
+
+// requestLogWrapper selects the log level wrapper for the completed request.
+func requestLogWrapper(status int, err *gin.Error) func(logger *slog.Logger) level.Logger {
+	if err != nil {
+		return level.Error
+	}
+
+	if status == http.StatusTooManyRequests {
+		return level.Warn
+	}
+
+	return level.Info
+}
+
+// requestLogFields builds the structured access-log attributes for a request.
+func requestLogFields(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	guid string,
+	latency time.Duration,
+	err *gin.Error,
+) []any {
+	negotiatedProtocol, cipherSuiteName := requestTLSInfo(ctx)
+	keyvals := []any{
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyClientIP, util.RequestClientIPWithConfig(ctx, cfg, logger),
+		definitions.LogKeyMethod, ctx.Request.Method,
+		definitions.LogKeyProtocol, ctx.Request.Proto,
+		definitions.LogKeyHTTPStatus, ctx.Writer.Status(),
+		definitions.LogKeyLatency, util.FormatDurationMs(latency),
+		definitions.LogKeyUserAgent, requestUserAgent(ctx),
+		definitions.LogKeyTLSSecure, negotiatedProtocol,
+		definitions.LogKeyTLSCipher, cipherSuiteName,
+		definitions.LogKeyUriPath, ctx.Request.URL.Path,
+		definitions.LogKeyAuthMethod, requestAuthType(ctx),
+		definitions.LogKeyMsg, requestLogMessage(err),
+	}
+
+	if reason, exists := ctx.Get(definitions.CtxRateLimitReasonKey); exists {
+		keyvals = append(keyvals, definitions.LogKeyRateLimitReason, reason)
+	}
+
+	if externalSessionID := strings.TrimSpace(ctx.GetString(definitions.CtxExternalSessionKey)); externalSessionID != "" {
+		keyvals = append(keyvals, definitions.LogKeyExternalSession, externalSessionID)
+	}
+
+	return keyvals
+}
+
+// requestTLSInfo returns the negotiated TLS protocol and cipher names.
+func requestTLSInfo(ctx *gin.Context) (string, string) {
+	if ctx.Request.TLS == nil {
+		return definitions.NotAvailable, definitions.NotAvailable
+	}
+
+	return tls.VersionName(ctx.Request.TLS.Version), tls.CipherSuiteName(ctx.Request.TLS.CipherSuite)
+}
+
+// requestAuthType resolves the access-log authentication method.
+func requestAuthType(ctx *gin.Context) string {
+	if authMethod, exists := ctx.Get(definitions.CtxAuthMethodKey); exists {
+		if method, ok := authMethod.(string); ok && method != "" {
+			return method
+		}
+	}
+
+	authHeader := ctx.Request.Header.Get("Authorization")
+	if authHeader == "" {
+		return "none"
+	}
+
+	if strings.HasPrefix(authHeader, "Basic ") {
+		return "basic"
+	}
+
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return "bearer"
+	}
+
+	return "other"
+}
+
+// requestUserAgent returns a stable fallback for empty User-Agent headers.
+func requestUserAgent(ctx *gin.Context) string {
+	if ctx.Request.UserAgent() == "" {
+		return definitions.NotAvailable
+	}
+
+	return ctx.Request.UserAgent()
+}
+
+// requestLogMessage returns the access-log message for success or failure.
+func requestLogMessage(err *gin.Error) string {
+	if err != nil {
+		return err.Error()
+	}
+
+	return "HTTP request"
 }

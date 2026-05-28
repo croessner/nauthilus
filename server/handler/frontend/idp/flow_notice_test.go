@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-gonic/gin"
 )
@@ -92,12 +93,12 @@ func TestLogIncomingIDPFlowRequestIncludesClientIP(t *testing.T) {
 			wantClientIP: "203.0.113.10",
 		},
 		{
-			name:       "forwarded ip without trusted proxies",
+			name:       "forwarded ip without trusted proxies uses direct peer",
 			remoteAddr: "127.0.0.1:44321",
 			headers: map[string]string{
 				"X-Forwarded-For": "203.0.113.10",
 			},
-			wantClientIP: "203.0.113.10",
+			wantClientIP: "127.0.0.1",
 		},
 	}
 
@@ -113,9 +114,9 @@ func TestLogIncomingIDPFlowRequestIncludesClientIP(t *testing.T) {
 func assertIncomingNoticeClientIP(t *testing.T, testCase incomingNoticeTestCase) {
 	t.Helper()
 
-	logger, handler, ctx := newNoticeTestLoggerContext(t, testCase.remoteAddr, testCase.trustedProxies, testCase.headers)
+	logger, handler, ctx, cfg := newNoticeTestLoggerContext(t, testCase.remoteAddr, testCase.trustedProxies, testCase.headers)
 
-	logIncomingIDPFlowRequest(ctx, logger, "oidc", "token", "client-1", "", "client_credentials")
+	logIncomingIDPFlowRequest(ctx, cfg, logger, "oidc", "token", "client-1", "", "client_credentials")
 
 	record := requireSingleNoticeRecord(t, handler)
 
@@ -151,13 +152,13 @@ func TestLogCompletedIDPFlowRequestIncludesResultAndClientIP(t *testing.T) {
 			wantMessage:  "IdP request has failed",
 		},
 		{
-			name:       "successful forwarded request without trusted proxies",
+			name:       "successful forwarded request without trusted proxies uses direct peer",
 			remoteAddr: "127.0.0.1:44321",
 			headers: map[string]string{
 				"X-Forwarded-For": "203.0.113.10",
 			},
 			httpStatus:   http.StatusOK,
-			wantClientIP: "203.0.113.10",
+			wantClientIP: "127.0.0.1",
 			wantResult:   "ok",
 			wantMessage:  "IdP request was successful",
 		},
@@ -175,10 +176,10 @@ func TestLogCompletedIDPFlowRequestIncludesResultAndClientIP(t *testing.T) {
 func assertCompletedNoticeResult(t *testing.T, testCase completedNoticeTestCase) {
 	t.Helper()
 
-	logger, handler, ctx := newNoticeTestLoggerContext(t, testCase.remoteAddr, testCase.trustedProxies, testCase.headers)
+	logger, handler, ctx, cfg := newNoticeTestLoggerContext(t, testCase.remoteAddr, testCase.trustedProxies, testCase.headers)
 	ctx.Status(testCase.httpStatus)
 
-	logCompletedIDPFlowRequest(ctx, logger, "oidc", "token", "client-1", "", "client_credentials")
+	logCompletedIDPFlowRequest(ctx, cfg, logger, "oidc", "token", "client-1", "", "client_credentials")
 
 	record := requireSingleNoticeRecord(t, handler)
 
@@ -199,21 +200,27 @@ func assertCompletedNoticeResult(t *testing.T, testCase completedNoticeTestCase)
 	}
 }
 
+// newNoticeTestLoggerContext builds an IdP notice context and matching proxy config.
 func newNoticeTestLoggerContext(
 	t *testing.T,
 	remoteAddr string,
 	trustedProxies []string,
 	headers map[string]string,
-) (*slog.Logger, *noticeCaptureHandler, *gin.Context) {
+) (*slog.Logger, *noticeCaptureHandler, *gin.Context, config.File) {
 	t.Helper()
 
 	handler := &noticeCaptureHandler{}
 	logger := slog.New(handler)
+	cfg := &config.FileSettings{
+		Server: &config.ServerSection{
+			TrustedProxies: trustedProxies,
+		},
+	}
 
 	recorder := httptest.NewRecorder()
 	ctx, engine := gin.CreateTestContext(recorder)
 
-	if err := engine.SetTrustedProxies(trustedProxies); err != nil {
+	if err := engine.SetTrustedProxies(nil); err != nil {
 		t.Fatalf("SetTrustedProxies() failed: %v", err)
 	}
 
@@ -227,7 +234,7 @@ func newNoticeTestLoggerContext(
 	ctx.Request = request
 	ctx.Set(definitions.CtxGUIDKey, "guid-1")
 
-	return logger, handler, ctx
+	return logger, handler, ctx, cfg
 }
 
 func requireSingleNoticeRecord(t *testing.T, handler *noticeCaptureHandler) capturedNoticeRecord {

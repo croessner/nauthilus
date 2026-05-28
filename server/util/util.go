@@ -638,28 +638,41 @@ func ProcessXForwardedFor(ctx *gin.Context, cfg config.File, logger *slog.Logger
 	}
 }
 
-// RequestClientIP resolves the best available client IP from the request headers.
-// It prefers forwarded headers so logs can report the real origin instead of the
-// immediate load balancer or proxy address.
+// RequestClientIP resolves the client IP using Gin's configured trust model.
 func RequestClientIP(ctx *gin.Context) string {
 	if ctx == nil || ctx.Request == nil {
 		return ""
-	}
-
-	if forwarded := strings.TrimSpace(ctx.GetHeader("X-Forwarded-For")); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-
-		return strings.TrimSpace(parts[0])
-	}
-
-	if realIP := strings.TrimSpace(ctx.GetHeader("X-Real-IP")); realIP != "" {
-		return realIP
 	}
 
 	if clientIP := strings.TrimSpace(ctx.ClientIP()); clientIP != "" {
 		return clientIP
 	}
 
+	return directRequestClientIP(ctx)
+}
+
+// RequestClientIPWithConfig resolves the client IP from trusted forwarding
+// headers using the Nauthilus proxy configuration before falling back to the
+// direct peer address.
+func RequestClientIPWithConfig(ctx *gin.Context, cfg config.File, logger *slog.Logger) string {
+	if ctx == nil || ctx.Request == nil {
+		return ""
+	}
+
+	if cfg == nil || cfg.GetServer() == nil {
+		return RequestClientIP(ctx)
+	}
+
+	if clientIP := trustedForwardedClientIP(ctx, cfg, logger); clientIP != "" {
+		return clientIP
+	}
+
+	return directRequestClientIP(ctx)
+}
+
+// directRequestClientIP returns the immediate peer address without consulting
+// forwarding headers.
+func directRequestClientIP(ctx *gin.Context) string {
 	if remoteAddr := strings.TrimSpace(ctx.Request.RemoteAddr); remoteAddr != "" {
 		host, _, err := net.SplitHostPort(remoteAddr)
 		if err == nil {
@@ -670,6 +683,69 @@ func RequestClientIP(ctx *gin.Context) string {
 	}
 
 	return ""
+}
+
+// trustedForwardedClientIP returns a forwarded client IP only when the direct
+// peer matches runtime.servers.http.trusted_proxies.
+func trustedForwardedClientIP(ctx *gin.Context, cfg config.File, logger *slog.Logger) string {
+	remoteIP := directRequestClientIP(ctx)
+	if remoteIP == "" {
+		return ""
+	}
+
+	var (
+		guid           = ctx.GetString(definitions.CtxGUIDKey)
+		trustedProxies = cfg.GetServer().GetTrustedProxies()
+	)
+
+	if !IsInNetworkWithCfg(ctx.Request.Context(), cfg, logger, trustedProxies, guid, remoteIP) {
+		return ""
+	}
+
+	if clientIP := trustedForwardedForClientIP(ctx.GetHeader("X-Forwarded-For"), ctx, cfg, logger, guid); clientIP != "" {
+		return clientIP
+	}
+
+	return parseForwardedHeaderIP(ctx.GetHeader("X-Real-IP"))
+}
+
+// trustedForwardedForClientIP walks X-Forwarded-For from right to left and
+// returns the first untrusted hop, matching Gin's trusted proxy semantics.
+func trustedForwardedForClientIP(header string, ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string) string {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return ""
+	}
+
+	items := strings.Split(header, ",")
+	trustedProxies := cfg.GetServer().GetTrustedProxies()
+
+	for index := len(items) - 1; index >= 0; index-- {
+		clientIP := parseForwardedHeaderIP(items[index])
+		if clientIP == "" {
+			return ""
+		}
+
+		if index == 0 {
+			return clientIP
+		}
+
+		if !IsInNetworkWithCfg(ctx.Request.Context(), cfg, logger, trustedProxies, guid, clientIP) {
+			return clientIP
+		}
+	}
+
+	return ""
+}
+
+// parseForwardedHeaderIP validates and normalizes a single forwarded IP value.
+func parseForwardedHeaderIP(value string) string {
+	clientIP := strings.TrimSpace(value)
+	if net.ParseIP(clientIP) == nil {
+		return ""
+	}
+
+	return clientIP
 }
 
 // ComparePasswords takes a plain password and creates a hash. Then it compares the hashed passwords and returns true, if

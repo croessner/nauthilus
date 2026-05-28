@@ -886,6 +886,8 @@ func oidcTokenPostActionSubjectFromContext(ctx *gin.Context) (*oidcTokenPostActi
 	return subject, true
 }
 
+// buildOIDCTokenPostActionRequest creates the Lua request snapshot for OIDC
+// token endpoint post-actions without exposing token secrets.
 func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	ctx *gin.Context,
 	auth *core.AuthState,
@@ -914,7 +916,7 @@ func (h *OIDCHandler) buildOIDCTokenPostActionRequest(
 	request.UserFound = false
 	request.Service = service
 	request.Session = ctx.GetString(definitions.CtxGUIDKey)
-	request.ClientIP = ctx.ClientIP()
+	request.ClientIP = util.RequestClientIPWithConfig(ctx, h.deps.Cfg, h.deps.Logger)
 	request.ClientPort = oidcTokenClientPort(ctx.Request.RemoteAddr)
 	request.ClientID = clientID
 	request.UserAgent = ctx.Request.UserAgent()

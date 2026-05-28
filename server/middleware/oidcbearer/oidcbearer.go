@@ -102,7 +102,7 @@ func EnforceBearerScopeAuth(
 				return nil, false
 			}
 
-			mdauth.ApplyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailureWithCfg(ctx, cfg)
 		}
 
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid authorization header"})
@@ -147,7 +147,7 @@ func ValidateAndStoreClaims(ctx *gin.Context, validator TokenValidator, cfg conf
 			return nil
 		}
 
-		mdauth.ApplyAuthBackoffOnFailure(ctx)
+		mdauth.ApplyAuthBackoffOnFailureWithCfg(ctx, cfg)
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 
 		return nil
