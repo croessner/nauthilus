@@ -72,7 +72,11 @@ scenarios:
   - oidc-device-token-reuse-rejected
   - oidc-totp-invalid-code
   - oidc-recovery-invalid-code
+  - oidc-delayed-response-recovery-invalid-code
+  - oidc-master-user-recovery-invalid-code
+  - oidc-delayed-response-master-user-recovery-invalid-code
   - oidc-recovery-code-reuse-rejected
+  - oidc-master-user-recovery-code-reuse-rejected
   - oidc-webauthn-missing-credential
   - oidc-webauthn-tampered-assertion
   - oidc-webauthn-wrong-challenge
@@ -81,7 +85,9 @@ scenarios:
   - oidc-webauthn-replay-assertion
   - oidc-webauthn-sign-count-rollback
   - oidc-delayed-response-totp-wrong-password-rejected
+  - oidc-delayed-response-recovery-wrong-password-rejected
   - oidc-delayed-response-master-user-totp-wrong-password-rejected
+  - oidc-delayed-response-master-user-recovery-wrong-password-rejected
   - saml-sso
   - saml-sp-initiated-slo
   - saml-sso-malformed-request-rejected
@@ -92,11 +98,15 @@ scenarios:
   - oidc-totp-login
   - oidc-delayed-response-totp-login
   - oidc-delayed-response-webauthn-login
+  - oidc-recovery-code-login
+  - oidc-delayed-response-recovery-code-login
   - recovery-code-generation-consumption
   - webauthn-registration-login
   - master-user-mfa-registration
   - oidc-master-user-totp-login
   - oidc-delayed-response-master-user-totp-login
+  - oidc-master-user-recovery-code-login
+  - oidc-delayed-response-master-user-recovery-code-login
   - oidc-master-user-without-mfa-login
   - oidc-delayed-response-master-user-without-mfa-login
   - oidc-master-user-webauthn-login

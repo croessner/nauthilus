@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const idpMFALogTrustedProxyIP = "198.51.100.10"
+
 func TestLogIDPMFAuthResult_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -59,7 +61,7 @@ func newIDPMFALogContext(t *testing.T) (*gin.Context, *bytes.Buffer) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodPost, "/login/totp", bytes.NewBufferString(`{"credential":"ok"}`))
-	req.RemoteAddr = "198.51.100.10:54321"
+	req.RemoteAddr = idpMFALogTrustedProxyIP + ":54321"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "mfa-log-test")
 	req.Header.Set("X-Forwarded-For", "203.0.113.10")
@@ -76,10 +78,12 @@ func newIDPMFALogContext(t *testing.T) (*gin.Context, *bytes.Buffer) {
 	return ctx, logBuf
 }
 
+// newIDPMFALogConfig provides the proxy trust needed by the MFA logging tests.
 func newIDPMFALogConfig() config.File {
 	return &config.FileSettings{
 		Server: &config.ServerSection{
-			Log: config.Log{},
+			Log:            config.Log{},
+			TrustedProxies: []string{idpMFALogTrustedProxyIP},
 		},
 	}
 }

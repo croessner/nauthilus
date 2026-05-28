@@ -82,10 +82,12 @@ func TestHeaderBasedAuth_DecodesConfiguredRequestHeaders(t *testing.T) {
 	assert.Equal(t, "CN=alice,O=Example", state.Request.XSSLClientDN)
 }
 
-func TestHeaderBasedAuth_UsesForwardedClientIPWhenConfiguredHeaderIsMissing(t *testing.T) {
+func TestHeaderBasedAuth_UsesTrustedForwardedClientIPWhenConfiguredHeaderIsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := newHeaderDecodeTestConfig()
+	cfg.Server.TrustedProxies = []string{requestContextLoopbackIP}
+
 	SetDefaultConfigFile(cfg)
 	t.Cleanup(func() {
 		SetDefaultConfigFile(nil)
@@ -94,7 +96,7 @@ func TestHeaderBasedAuth_UsesForwardedClientIPWhenConfiguredHeaderIsMissing(t *t
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-	ctx.Request.RemoteAddr = "127.0.0.1:54321"
+	ctx.Request.RemoteAddr = requestContextLoopbackIP + ":54321"
 	ctx.Request.Header.Set("X-Forwarded-For", "203.0.113.10")
 
 	auth := NewAuthStateFromContextWithDeps(ctx, AuthDeps{Cfg: cfg})

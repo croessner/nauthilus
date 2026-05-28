@@ -238,6 +238,8 @@ func normalizeMFAMethodForLogging(method string) string {
 	}
 }
 
+// newCompletedIDPMFAPostActionAuth builds the authenticated request state used
+// by Lua post-actions after a successful IdP MFA challenge.
 func newCompletedIDPMFAPostActionAuth(ctx *gin.Context, deps AuthDeps, user *backend.User) *AuthState {
 	authRaw := NewAuthStateFromContextWithDeps(ctx, deps)
 	auth, ok := authRaw.(*AuthState)
@@ -253,9 +255,13 @@ func newCompletedIDPMFAPostActionAuth(ctx *gin.Context, deps AuthDeps, user *bac
 	protocolName, oidcClientID, samlEntityID := idpPostActionSessionState(ctx)
 
 	auth.Request.Service = service
-	auth.Request.ClientIP = ctx.ClientIP()
-	auth.Request.UserAgent = ctx.Request.UserAgent()
-	auth.Request.XClientPort = detachedRequestPort(ctx.Request.RemoteAddr)
+	auth.WithClientInfo(ctx)
+	auth.WithUserAgent(ctx)
+
+	if auth.Request.XClientPort == "" {
+		auth.Request.XClientPort = detachedRequestPort(ctx.Request.RemoteAddr)
+	}
+
 	auth.Runtime.GUID = ctx.GetString(definitions.CtxGUIDKey)
 	auth.Runtime.Context = idpPostActionLuaContext(ctx)
 	auth.Runtime.Authenticated = true

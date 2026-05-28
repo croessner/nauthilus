@@ -17,9 +17,19 @@ package util
 
 import (
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/gin-gonic/gin"
+)
+
+const (
+	requestClientIPForwardedHeader = "X-Forwarded-For"
+	requestClientIPForwarded       = "203.0.113.10"
+	requestClientIPProxy           = "192.168.0.5"
 )
 
 // helper to generate encoded payload for given algorithm and option
@@ -243,6 +253,77 @@ func TestComparePasswords(t *testing.T) {
 				t.Errorf("Expected outcome '%v' but got '%v' for the test case: %s", testCase.ExpectedOutcome, outcome, testCase.Name)
 			}
 		}
+	}
+}
+
+func TestRequestClientIPWithConfigUsesTrustedForwardedFor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := newRequestClientIPTestContext(t, requestClientIPProxy+":44321", map[string]string{
+		requestClientIPForwardedHeader: requestClientIPForwarded,
+	})
+	cfg := newRequestClientIPTestConfig(requestClientIPProxy)
+
+	if got := RequestClientIPWithConfig(ctx, cfg, nil); got != requestClientIPForwarded {
+		t.Fatalf("client IP mismatch: want %q got %q", requestClientIPForwarded, got)
+	}
+}
+
+func TestRequestClientIPWithConfigIgnoresUntrustedForwardedFor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := newRequestClientIPTestContext(t, requestClientIPProxy+":44321", map[string]string{
+		requestClientIPForwardedHeader: requestClientIPForwarded,
+	})
+	cfg := newRequestClientIPTestConfig("198.51.100.1")
+
+	if got := RequestClientIPWithConfig(ctx, cfg, nil); got != requestClientIPProxy {
+		t.Fatalf("client IP mismatch: want %q got %q", requestClientIPProxy, got)
+	}
+}
+
+func TestRequestClientIPWithConfigStopsAtUntrustedForwardedHop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := newRequestClientIPTestContext(t, requestClientIPProxy+":44321", map[string]string{
+		requestClientIPForwardedHeader: requestClientIPForwarded + ", 198.51.100.9",
+	})
+	cfg := newRequestClientIPTestConfig(requestClientIPProxy)
+
+	if got := RequestClientIPWithConfig(ctx, cfg, nil); got != "198.51.100.9" {
+		t.Fatalf("client IP mismatch: want %q got %q", "198.51.100.9", got)
+	}
+}
+
+// newRequestClientIPTestContext builds a Gin context without Gin-level proxy trust.
+func newRequestClientIPTestContext(t *testing.T, remoteAddr string, headers map[string]string) *gin.Context {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	ctx, engine := gin.CreateTestContext(recorder)
+
+	if err := engine.SetTrustedProxies(nil); err != nil {
+		t.Fatalf("SetTrustedProxies() failed: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/test", nil)
+	request.RemoteAddr = remoteAddr
+
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+
+	ctx.Request = request
+
+	return ctx
+}
+
+// newRequestClientIPTestConfig returns the proxy trust configuration under test.
+func newRequestClientIPTestConfig(trustedProxies ...string) config.File {
+	return &config.FileSettings{
+		Server: &config.ServerSection{
+			TrustedProxies: trustedProxies,
+		},
 	}
 }
 

@@ -61,6 +61,7 @@ type mockOIDCCfg struct {
 	clients               []config.OIDCClient
 	tokenEndpointAllowGET bool
 	cors                  config.CORS
+	trustedProxies        []string
 }
 
 func (m *mockOIDCCfg) GetIdP() *config.IdPSection {
@@ -322,7 +323,8 @@ func (m *mockOIDCCfg) GetServer() *config.ServerSection {
 		DNS: config.DNS{
 			ResolveClientIP: false,
 		},
-		CORS: m.cors,
+		CORS:           m.cors,
+		TrustedProxies: m.trustedProxies,
 	}
 }
 

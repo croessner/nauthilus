@@ -781,7 +781,8 @@ func (h *SAMLHandler) SLO(ctx *gin.Context) {
 		return
 	}
 
-	if !h.allowSLORequest(ctx.ClientIP()) {
+	clientIP := util.RequestClientIPWithConfig(ctx, h.deps.Cfg, h.deps.Logger)
+	if !h.allowSLORequest(clientIP) {
 		recordSLOAbuseRejection(sloAbuseReasonRateLimit, binding)
 		recordSLOValidationError(sloValidationStageAbuseGuard, messageType, binding)
 		h.auditSLOEvent(
@@ -792,7 +793,7 @@ func (h *SAMLHandler) SLO(ctx *gin.Context) {
 			"",
 			"binding", binding,
 			"reason", sloAbuseReasonRateLimit,
-			"client_ip", util.WithNotAvailable(strings.TrimSpace(ctx.ClientIP())),
+			"client_ip", util.WithNotAvailable(strings.TrimSpace(clientIP)),
 		)
 		ctx.Header("Retry-After", "1")
 		ctx.String(http.StatusTooManyRequests, "SAML SLO rate limit exceeded")

@@ -53,11 +53,17 @@ func newMFACompletionDeps() *deps.Deps {
 	}
 }
 
+// newMFAPostActionTestContext builds an MFA request context without Gin-level proxy trust.
 func newMFAPostActionTestContext(t *testing.T, mgr *mockCookieManager) *gin.Context {
 	t.Helper()
 
 	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
+	ctx, engine := gin.CreateTestContext(w)
+
+	if err := engine.SetTrustedProxies(nil); err != nil {
+		t.Fatalf("SetTrustedProxies() failed: %v", err)
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "/login/mfa", nil)
 	req.RemoteAddr = "192.0.2.10:12345"
 	req.Header.Set("User-Agent", "mfa-post-action-test")
@@ -105,6 +111,7 @@ func TestFinalizeMFALoginPreservesMFAMethodAndQueuesPostAction(t *testing.T) {
 	requestChan := make(chan *action.Action, 1)
 	originalRequestChan := action.RequestChan
 	action.RequestChan = requestChan
+
 	t.Cleanup(func() {
 		action.RequestChan = originalRequestChan
 	})
@@ -197,4 +204,42 @@ func TestQueueCompletedIdPMFAPostActionUsesCurrentProtocolState(t *testing.T) {
 			act.FinishedChan <- action.Done{}
 		})
 	}
+}
+
+func TestQueueCompletedIdPMFAPostActionUsesTrustedForwardedClientIP(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	requestChan := make(chan *action.Action, 1)
+	originalRequestChan := action.RequestChan
+	action.RequestChan = requestChan
+
+	t.Cleanup(func() {
+		action.RequestChan = originalRequestChan
+	})
+
+	d := newMFACompletionDeps()
+	cfg := d.Cfg.(*mockOIDCPostActionCfg)
+	cfg.trustedProxies = []string{"192.168.0.5"}
+
+	mgr := &mockCookieManager{data: map[string]any{
+		definitions.SessionKeyProtocol:     definitions.ProtoOIDC,
+		definitions.SessionKeyIdPFlowType:  definitions.ProtoOIDC,
+		definitions.SessionKeyMFAMethod:    definitions.MFAMethodTOTP,
+		definitions.SessionKeyMFACompleted: true,
+		definitions.SessionKeyIdPClientID:  "test-client",
+	}}
+	ctx := newMFAPostActionTestContext(t, mgr)
+	ctx.Request.RemoteAddr = "192.168.0.5:44321"
+	ctx.Request.Header.Set("X-Forwarded-For", "203.0.113.10")
+
+	user := backend.NewUser("alice", "Alice Example", "uid-1")
+
+	if !corepkg.QueueCompletedIDPMFAPostAction(ctx, d.Auth(), user) {
+		t.Fatal("expected MFA post action to be queued")
+	}
+
+	act := waitForQueuedPostAction(t, requestChan)
+	assert.Equal(t, "203.0.113.10", act.ClientIP)
+
+	act.FinishedChan <- action.Done{}
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
@@ -189,7 +190,7 @@ func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
 		return false
 	}
 
-	ip := ctx.ClientIP()
+	ip := requestClientIP(ctx, cfg)
 	exceeded, remaining := MaybeThrottleAuthByIPValue(ip, cfg)
 	if exceeded {
 		ctx.Set(definitions.CtxRateLimitReasonKey, "brute-force")
@@ -230,13 +231,19 @@ func ApplyAuthBackoffOnFailureForIP(ip string) {
 
 // ApplyAuthBackoffOnFailure notes a failure for this IP and sleeps a short duration.
 func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
+	ApplyAuthBackoffOnFailureWithCfg(ctx, nil)
+}
+
+// ApplyAuthBackoffOnFailureWithCfg notes a failure for the trusted client IP
+// resolved from the request and sleeps a short duration.
+func ApplyAuthBackoffOnFailureWithCfg(ctx *gin.Context, cfg config.File) {
 	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
 		time.Sleep(bfSleepOnFail)
 
 		return
 	}
 
-	ip := ctx.ClientIP()
+	ip := requestClientIP(ctx, cfg)
 	ApplyAuthBackoffOnFailureForIP(ip)
 }
 
@@ -270,7 +277,7 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	}
 
 	// Failure: count + small fixed delay, then respond uniformly
-	ApplyAuthBackoffOnFailure(ctx)
+	ApplyAuthBackoffOnFailureWithCfg(ctx, cfg)
 
 	ctx.Header("WWW-Authenticate", "Basic realm=\"restricted\", charset=\"UTF-8\"")
 	ctx.AbortWithStatus(http.StatusUnauthorized)
@@ -330,6 +337,11 @@ func AuthorizeBasicAuthWithDeps(ctx *gin.Context, cfg config.File, logger *slog.
 	}
 
 	return CheckAndRequireBasicAuthWithCfg(ctx, cfg)
+}
+
+// requestClientIP resolves the request IP through the shared trusted proxy helper.
+func requestClientIP(ctx *gin.Context, cfg config.File) string {
+	return util.RequestClientIPWithConfig(ctx, cfg, nil)
 }
 
 // BasicAuthMiddlewareWithDeps returns a Gin middleware that enforces the
