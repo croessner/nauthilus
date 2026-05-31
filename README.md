@@ -23,6 +23,7 @@ Nauthilus is an authentication and identity platform written in Go. It combines 
 - [Build and Test](#build-and-test)
 - [Documentation](#documentation)
 - [Community](#community)
+- [Support Nauthilus](#support-nauthilus)
 - [Commercial Support](#commercial-support)
 - [License](#license)
 
@@ -111,11 +112,20 @@ Mailing lists are available at:
 
 [https://lists.nauthilus.org](https://lists.nauthilus.org)
 
+## Support Nauthilus
+
+Nauthilus is maintained as an open source project. If it saves you time or runs in your infrastructure, you can support ongoing development through:
+
+- GitHub Sponsors: [one-time or recurring sponsorships](https://github.com/sponsors/croessner)
+- PayPal: [one-time or recurring donations](https://www.paypal.com/donate/?hosted_button_id=3XLD5KEJD7AQ8)
+
+Sponsorships and donations are appreciated, but never required to use Nauthilus under the GPLv3 license.
+
 ## Commercial Support
 
-Commercial support for Nauthilus is available for integration, customization, and troubleshooting.
+Commercial support for Nauthilus is available for integration, customization, deployment guidance, and production troubleshooting.
 
-Further information is available at [https://nauthilus.org](https://nauthilus.org).
+For commercial inquiries, contact [support@nauthilus.com](mailto:support@nauthilus.com) or visit [https://nauthilus.org](https://nauthilus.org).
 
 ## License
 
