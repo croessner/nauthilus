@@ -36,7 +36,10 @@ This document captures practical, project-specific details to build, configure, 
   - make test: runs unit tests in short mode across all packages (excludes vendor).
   - make race: runs tests with -race in short mode.
   - make msan: runs tests with -msan in short mode (requires platform support).
+  - make govulncheck: runs Go vulnerability analysis across all packages (requires `govulncheck` in PATH).
+  - make release-guardrails: runs the normal guardrails plus `govulncheck`; use this before publishing `main` or version tags.
   - make install|uninstall: manages /usr/local/sbin/nauthilus and systemd unit.
+  - make install-hooks: installs the repository Git hooks; the pre-push hook runs `make govulncheck` before pushing `main` or `v*` tags.
 - Direct build (without Make)
   - go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(git describe --tags --abbrev=0)-$(git rev-parse --short HEAD)" -o nauthilus/bin/nauthilus ./server
 - Runtime configuration
@@ -212,6 +215,9 @@ We verified this flow by temporarily adding a trivial test under server/util and
   - Some packages do not have tests (handlers, router); create tests at the boundary with httptest and fake config states.
 - CI expectations
   - The repository includes a GitHub Actions workflow for stable builds. Aim for `go test -short ./...` to pass without external services.
+  - `govulncheck` is a release-sensitive gate. Before pushing `main` or any `v*` version tag, run `make release-guardrails` or use hooks installed by `make install-hooks`.
+  - Release-sensitive pushes must be made from a clean checkout whose `HEAD` is the pushed `main` or version-tag commit, so local `govulncheck` analyzes the exact content being published.
+  - Treat `govulncheck` findings as publish blockers for `main` and version tags unless a documented maintainer exception is made.
 
 4. Quick commands reference
 

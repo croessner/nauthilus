@@ -43,7 +43,9 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/idp/clientauth"
 	flowdomain "github.com/croessner/nauthilus/server/idp/flow"
+	"github.com/croessner/nauthilus/server/idp/signing"
 	slodomain "github.com/croessner/nauthilus/server/idp/slo"
 	mdcors "github.com/croessner/nauthilus/server/middleware/cors"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -51,6 +53,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -301,6 +304,51 @@ func generateTestKey() string {
 	return string(pemData)
 }
 
+const oidcTestJWTClaimSubject = "sub"
+
+// generateTestClientKeyPair creates an RSA key pair for private_key_jwt handler tests.
+func generateTestClientKeyPair(t testing.TB) (*rsa.PrivateKey, string) {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+
+	publicKey, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal client public key: %v", err)
+	}
+
+	publicPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: publicKey,
+	})
+
+	return key, string(publicPEM)
+}
+
+// signTestClientAssertion signs a private_key_jwt assertion for the given audience.
+func signTestClientAssertion(t testing.TB, key *rsa.PrivateKey, clientID string, audience string) string {
+	t.Helper()
+
+	signer := signing.NewRS256Signer(key, "test-client-kid")
+
+	assertion, err := signer.Sign(jwt.MapClaims{
+		"iss":                   clientID,
+		oidcTestJWTClaimSubject: clientID,
+		"aud":                   audience,
+		"exp":                   time.Now().Add(5 * time.Minute).Unix(),
+		"iat":                   time.Now().Unix(),
+		"jti":                   "test-client-assertion",
+	})
+	if err != nil {
+		t.Fatalf("sign client assertion: %v", err)
+	}
+
+	return assertion
+}
+
 func (m *mockOIDCCfg) GetServer() *config.ServerSection {
 	var log config.Log
 	_ = log.Level.Set("debug")
@@ -522,8 +570,12 @@ func TestOIDCHandler_Discovery(t *testing.T) {
 	introspectionAuthMethods := resp["introspection_endpoint_auth_methods_supported"].([]any)
 	assert.Contains(t, introspectionAuthMethods, "client_secret_basic")
 	assert.Contains(t, introspectionAuthMethods, "client_secret_post")
-	assert.NotContains(t, introspectionAuthMethods, "private_key_jwt")
+	assert.Contains(t, introspectionAuthMethods, "private_key_jwt")
 	assert.NotContains(t, introspectionAuthMethods, "none")
+
+	introspectionAuthSigningAlgs := resp["introspection_endpoint_auth_signing_alg_values_supported"].([]any)
+	assert.Contains(t, introspectionAuthSigningAlgs, "RS256")
+	assert.Contains(t, introspectionAuthSigningAlgs, "EdDSA")
 	codeChallengeMethods := resp["code_challenge_methods_supported"].([]any)
 	assert.Contains(t, codeChallengeMethods, "S256")
 	assert.NotContains(t, codeChallengeMethods, "plain")
@@ -1390,15 +1442,22 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	issuer := "https://auth.example.com"
 	signingKey := secret.New(generateTestKey())
+	clientAssertionKey, clientPublicKey := generateTestClientKeyPair(t)
 	client := config.OIDCClient{
 		ClientID:     "test-client",
 		ClientSecret: secret.New("test-secret"),
+	}
+	privateKeyJWTClient := config.OIDCClient{
+		ClientID:                 "jwt-client",
+		TokenEndpointAuthMethod:  clientauth.MethodPrivateKeyJWT,
+		ClientPublicKey:          clientPublicKey,
+		ClientPublicKeyAlgorithm: signing.AlgorithmRS256,
 	}
 
 	cfg := &mockOIDCCfg{
 		issuer:     issuer,
 		signingKey: signingKey,
-		clients:    []config.OIDCClient{client},
+		clients:    []config.OIDCClient{client, privateKeyJWTClient},
 	}
 
 	db, mock := redismock.NewClientMock()
@@ -1420,6 +1479,12 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 		AuthTime: time.Now(),
 		Scopes:   []string{"openid", "profile"},
 	})
+	privateKeyJWTAccessToken, _, _, _, _ := idpInstance.IssueTokens(context.Background(), &idp.OIDCSession{
+		ClientID: privateKeyJWTClient.ClientID,
+		UserID:   "jwt-user",
+		AuthTime: time.Now(),
+		Scopes:   []string{"openid", "profile"},
+	})
 
 	t.Run("Valid token introspection", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -1432,13 +1497,44 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 
 		h.Introspect(ctx)
 
-		assert.Equal(t, http.StatusOK, w.Code)
+		if !assert.Equal(t, http.StatusOK, w.Code) {
+			return
+		}
+
 		var resp map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.True(t, resp["active"].(bool))
 		assert.Equal(t, "user123", resp["sub"])
 		assert.Equal(t, "test-client", resp["aud"])
+	})
+
+	t.Run("Private key JWT token introspection", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(w)
+
+		assertion := signTestClientAssertion(t, clientAssertionKey, privateKeyJWTClient.ClientID, issuer+"/oidc/introspect")
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/introspect", nil)
+		ctx.Request.PostForm = url.Values{
+			"token":                      {privateKeyJWTAccessToken},
+			oidcParamClientID:            {privateKeyJWTClient.ClientID},
+			oidcParamClientAssertionType: {clientauth.AssertionTypeJWTBearer},
+			oidcParamClientAssertion:     {assertion},
+		}
+
+		h.Introspect(ctx)
+
+		if !assert.Equal(t, http.StatusOK, w.Code) {
+			return
+		}
+
+		var resp map[string]any
+
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.True(t, resp["active"].(bool))
+		assert.Equal(t, "jwt-user", resp[oidcTestJWTClaimSubject])
+		assert.Equal(t, privateKeyJWTClient.ClientID, resp["aud"])
 	})
 
 	t.Run("Invalid token introspection", func(t *testing.T) {

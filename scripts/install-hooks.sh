@@ -89,10 +89,36 @@ HOOKEOF
 
 chmod +x "${HOOKS_DIR}/pre-commit"
 
-echo "✓ Pre-commit hook installed successfully"
+# Create pre-push hook
+cat > "${HOOKS_DIR}/pre-push" << 'HOOKEOF'
+#!/bin/bash
+# Pre-push hook for Nauthilus
+# This hook runs govulncheck before publishing main or version tags.
+#
+# Installation:
+#   Run: ./scripts/install-hooks.sh
+#
+# To bypass this hook temporarily (not recommended):
+#   git push --no-verify
+
+set -e
+
+GIT_ROOT=$(git rev-parse --show-toplevel)
+
+exec "${GIT_ROOT}/scripts/pre-push-govulncheck.sh" "$@"
+HOOKEOF
+
+chmod +x "${HOOKS_DIR}/pre-push"
+chmod +x "${PROJECT_ROOT}/scripts/pre-push-govulncheck.sh"
+
+echo "✓ Git hooks installed successfully"
 echo ""
 echo "The following hooks are now active:"
 echo "  - pre-commit: Validates policy/prompt guardrails and staged Go HTML templates"
+echo "  - pre-push: Runs govulncheck before pushing main or version tags"
 echo ""
 echo "To manually validate all templates, run:"
 echo "  ./scripts/validate-templates.sh"
+echo ""
+echo "To manually validate release-sensitive pushes, run:"
+echo "  make release-guardrails"

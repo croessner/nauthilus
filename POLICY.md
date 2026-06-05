@@ -28,6 +28,13 @@ A task is incomplete if any mandatory rule is not satisfied.
   validation, operator-facing, packaging, or dependency details.
 - MUST: Split unrelated work into separate commits when no single approved
   prefix and headline describes the change cleanly.
+- MUST: Before pushing `main` or any `v*` version tag, run
+  `make release-guardrails` or use the pre-push hook installed by
+  `make install-hooks`.
+- MUST: Push release-sensitive refs only from a clean checkout whose `HEAD`
+  is the pushed `main` or version-tag commit.
+- MUST: Treat `govulncheck` findings as publish blockers for `main` and
+  version tags unless a documented maintainer exception is made.
 
 ## Definition Of Done (Required)
 
@@ -39,3 +46,5 @@ A task is incomplete if any mandatory rule is not satisfied.
 - [ ] `golangci-lint` findings are fixed or intentionally documented.
 - [ ] Commit messages use the approved prefix, headline, and bullet-list body
       format.
+- [ ] Release-sensitive pushes to `main` or `v*` tags are covered by
+      `make release-guardrails` or the installed pre-push hook.

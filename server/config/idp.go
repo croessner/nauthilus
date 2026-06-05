@@ -471,7 +471,18 @@ func (o *OIDCConfig) GetTokenEndpointAuthSigningAlgValuesSupported() []string {
 // GetIntrospectionEndpointAuthMethodsSupported returns the client
 // authentication methods accepted by the introspection endpoint.
 func (o *OIDCConfig) GetIntrospectionEndpointAuthMethodsSupported() []string {
-	return []string{"client_secret_post", "client_secret_basic"}
+	return []string{"client_secret_post", "client_secret_basic", "private_key_jwt"}
+}
+
+// GetIntrospectionEndpointAuthSigningAlgValuesSupported returns the signing
+// algorithms supported for private_key_jwt client authentication at the
+// introspection endpoint.
+func (o *OIDCConfig) GetIntrospectionEndpointAuthSigningAlgValuesSupported() []string {
+	if slices.Contains(o.GetIntrospectionEndpointAuthMethodsSupported(), "private_key_jwt") {
+		return []string{"RS256", "EdDSA"}
+	}
+
+	return nil
 }
 
 // GetCodeChallengeMethodsSupported returns the supported PKCE code challenge methods.

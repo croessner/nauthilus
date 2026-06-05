@@ -664,6 +664,18 @@ components:
           type: string
         token_type_hint:
           type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          format: password
+        client_assertion_type:
+          type: string
+          enum:
+            - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+        client_assertion:
+          type: string
+          description: JWT client assertion for private_key_jwt introspection endpoint authentication.
     IntrospectionResponse:
       type: object
       required:
@@ -725,6 +737,22 @@ components:
         jwks_uri:
           type: string
           format: uri
+        token_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+        token_endpoint_auth_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        introspection_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+        introspection_endpoint_auth_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
       additionalProperties: true
     TokenRequest:
       type: object
