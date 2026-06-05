@@ -90,6 +90,8 @@ const (
 	oidcParamPrompt                = "prompt"
 	oidcParamCodeChallenge         = "code_challenge"
 	oidcParamCodeChallengeMethod   = "code_challenge_method"
+	oidcEndpointPathToken          = "/oidc/token"
+	oidcEndpointPathIntrospect     = "/oidc/introspect"
 	oidcGrantTypeRefreshToken      = oidcParamRefreshToken
 	oidcGrantTypeClientCredentials = "client_credentials"
 	oidcResponseTypeCode           = oidcParamCode
@@ -258,8 +260,8 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 	discoveryDocument := gin.H{
 		"issuer":                                        issuer,
 		"authorization_endpoint":                        issuer + "/oidc/authorize",
-		"token_endpoint":                                issuer + "/oidc/token",
-		"introspection_endpoint":                        issuer + "/oidc/introspect",
+		"token_endpoint":                                issuer + oidcEndpointPathToken,
+		"introspection_endpoint":                        issuer + oidcEndpointPathIntrospect,
 		"userinfo_endpoint":                             issuer + "/oidc/userinfo",
 		"jwks_uri":                                      issuer + "/oidc/jwks",
 		"end_session_endpoint":                          issuer + "/oidc/logout",
@@ -287,6 +289,10 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 
 	if signingAlgs := oidcCfg.GetTokenEndpointAuthSigningAlgValuesSupported(); len(signingAlgs) > 0 {
 		discoveryDocument["token_endpoint_auth_signing_alg_values_supported"] = signingAlgs
+	}
+
+	if signingAlgs := oidcCfg.GetIntrospectionEndpointAuthSigningAlgValuesSupported(); len(signingAlgs) > 0 {
+		discoveryDocument["introspection_endpoint_auth_signing_alg_values_supported"] = signingAlgs
 	}
 
 	ctx.JSON(http.StatusOK, discoveryDocument)
@@ -555,14 +561,39 @@ func (h *OIDCHandler) allowRefreshGrantCombinedClientAuth(
 	return headerClientSecret == bodyClientSecret
 }
 
-// authenticateClientPrivateKeyJWT authenticates a client using the private_key_jwt method (RFC 7523).
-func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config.OIDCClient, bool) {
+// privateKeyJWTClientAuthRequest carries the resolved client assertion context.
+type privateKeyJWTClientAuthRequest struct {
+	client        *config.OIDCClient
+	assertionType string
+	assertion     string
+	clientID      string
+	audience      string
+}
+
+// authenticateClientPrivateKeyJWT authenticates a client assertion for an endpoint audience.
+func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context, audience string) (*config.OIDCClient, bool) {
+	request, ok := h.parsePrivateKeyJWTClientAuthRequest(ctx, audience)
+	if !ok {
+		return nil, false
+	}
+
+	if !h.verifyPrivateKeyJWTClientAssertion(ctx, request) {
+		return nil, false
+	}
+
+	return request.client, true
+}
+
+// parsePrivateKeyJWTClientAuthRequest resolves and validates the client assertion envelope.
+func (h *OIDCHandler) parsePrivateKeyJWTClientAuthRequest(ctx *gin.Context, audience string) (privateKeyJWTClientAuthRequest, bool) {
+	var request privateKeyJWTClientAuthRequest
+
 	assertionType := formValue(ctx, oidcParamClientAssertionType)
 	assertion := formValue(ctx, oidcParamClientAssertion)
 	clientID := formValue(ctx, oidcParamClientID)
 
 	if assertionType == "" || assertion == "" {
-		return nil, false
+		return request, false
 	}
 
 	ctx.Set(definitions.CtxAuthMethodKey, clientauth.MethodPrivateKeyJWT)
@@ -570,10 +601,10 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 	if assertionType != clientauth.AssertionTypeJWTBearer {
 		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient, oidcJSONErrorDescriptionKey: "unsupported client_assertion_type"})
 
-		return nil, false
+		return request, false
 	}
 
-	// If client_id not in form, try to extract from the assertion's iss claim
+	// If client_id not in form, try to extract from the assertion's iss claim.
 	if clientID == "" {
 		clientID = extractIssFromJWT(assertion)
 	}
@@ -581,23 +612,34 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 	if clientID == "" {
 		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
-		return nil, false
+		return request, false
 	}
 
 	client, ok := h.idp.FindClient(clientID)
 	if !ok {
 		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
-		return nil, false
+		return request, false
 	}
 
 	if client.TokenEndpointAuthMethod != clientauth.MethodPrivateKeyJWT {
 		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient, oidcJSONErrorDescriptionKey: "client not configured for private_key_jwt"})
 
-		return nil, false
+		return request, false
 	}
 
-	verifier, err := h.buildClientVerifier(client)
+	return privateKeyJWTClientAuthRequest{
+		client:        client,
+		assertionType: assertionType,
+		assertion:     assertion,
+		clientID:      clientID,
+		audience:      audience,
+	}, true
+}
+
+// verifyPrivateKeyJWTClientAssertion verifies the assertion signature, issuer, subject, audience, and expiry.
+func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, request privateKeyJWTClientAuthRequest) bool {
+	verifier, err := h.buildClientVerifier(request.client)
 	if err != nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -606,23 +648,22 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 			definitions.DbgIdp,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "Failed to build client verifier",
-			definitions.LogKeyClientID, clientID,
+			definitions.LogKeyClientID, request.clientID,
 			definitions.LogKeyError, err,
 		)
 
 		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
-		return nil, false
+		return false
 	}
 
-	tokenEndpoint := h.deps.Cfg.GetIdP().OIDC.Issuer + "/oidc/token"
-	auth := clientauth.NewPrivateKeyJWTAuthenticator(verifier, clientID, tokenEndpoint)
+	auth := clientauth.NewPrivateKeyJWTAuthenticator(verifier, request.clientID, request.audience)
 
 	err = auth.Authenticate(&clientauth.AuthRequest{
-		ClientID:            clientID,
-		ClientAssertionType: assertionType,
-		ClientAssertion:     assertion,
-		TokenEndpointURL:    tokenEndpoint,
+		ClientID:            request.clientID,
+		ClientAssertionType: request.assertionType,
+		ClientAssertion:     request.assertion,
+		TokenEndpointURL:    request.audience,
 	})
 
 	if err != nil {
@@ -633,16 +674,21 @@ func (h *OIDCHandler) authenticateClientPrivateKeyJWT(ctx *gin.Context) (*config
 			definitions.DbgIdp,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "private_key_jwt authentication failed",
-			definitions.LogKeyClientID, clientID,
+			definitions.LogKeyClientID, request.clientID,
 			definitions.LogKeyError, err,
 		)
 
 		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
 
-		return nil, false
+		return false
 	}
 
-	return client, true
+	return true
+}
+
+// oidcEndpointURL builds a public endpoint URL from the configured issuer.
+func (h *OIDCHandler) oidcEndpointURL(path string) string {
+	return h.deps.Cfg.GetIdP().OIDC.Issuer + path
 }
 
 // buildClientVerifier creates a signing.Verifier for the client's public key.
@@ -1121,7 +1167,7 @@ func (h *OIDCHandler) Token(ctx *gin.Context) {
 	var ok bool
 
 	if formValue(ctx, oidcParamClientAssertion) != "" {
-		client, ok = h.authenticateClientPrivateKeyJWT(ctx)
+		client, ok = h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathToken))
 	} else {
 		client, ok = h.authenticateClient(ctx)
 	}
@@ -1200,7 +1246,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 	_, sp := h.tracer.Start(ctx.Request.Context(), "oidc.introspect")
 	defer sp.End()
 
-	client, ok := h.authenticateClient(ctx)
+	client, ok := h.authenticateIntrospectionClient(ctx)
 	if !ok {
 		return
 	}
@@ -1244,6 +1290,15 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 	maps.Copy(response, claims)
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+// authenticateIntrospectionClient selects the configured client authentication path for introspection.
+func (h *OIDCHandler) authenticateIntrospectionClient(ctx *gin.Context) (*config.OIDCClient, bool) {
+	if formValue(ctx, oidcParamClientAssertion) != "" {
+		return h.authenticateClientPrivateKeyJWT(ctx, h.oidcEndpointURL(oidcEndpointPathIntrospect))
+	}
+
+	return h.authenticateClient(ctx)
 }
 
 // JWKS handles the OIDC JWKS request.

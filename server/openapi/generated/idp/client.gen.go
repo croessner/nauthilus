@@ -23,13 +23,17 @@ type JWKS struct {
 
 // OIDCDiscovery defines model for OIDCDiscovery.
 type OIDCDiscovery struct {
-	AuthorizationEndpoint string                 `json:"authorization_endpoint"`
-	IntrospectionEndpoint *string                `json:"introspection_endpoint,omitempty"`
-	Issuer                string                 `json:"issuer"`
-	JwksUri               string                 `json:"jwks_uri"`
-	TokenEndpoint         string                 `json:"token_endpoint"`
-	UserinfoEndpoint      *string                `json:"userinfo_endpoint,omitempty"`
-	AdditionalProperties  map[string]interface{} `json:"-"`
+	AuthorizationEndpoint                              string                 `json:"authorization_endpoint"`
+	IntrospectionEndpoint                              *string                `json:"introspection_endpoint,omitempty"`
+	IntrospectionEndpointAuthMethodsSupported          *[]string              `json:"introspection_endpoint_auth_methods_supported,omitempty"`
+	IntrospectionEndpointAuthSigningAlgValuesSupported *[]string              `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
+	Issuer                                             string                 `json:"issuer"`
+	JwksUri                                            string                 `json:"jwks_uri"`
+	TokenEndpoint                                      string                 `json:"token_endpoint"`
+	TokenEndpointAuthMethodsSupported                  *[]string              `json:"token_endpoint_auth_methods_supported,omitempty"`
+	TokenEndpointAuthSigningAlgValuesSupported         *[]string              `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+	UserinfoEndpoint                                   *string                `json:"userinfo_endpoint,omitempty"`
+	AdditionalProperties                               map[string]interface{} `json:"-"`
 }
 
 // bearerTokenContextKey is the context key for bearerToken security scheme
@@ -85,6 +89,22 @@ func (a *OIDCDiscovery) UnmarshalJSON(b []byte) error {
 		delete(object, "introspection_endpoint")
 	}
 
+	if raw, found := object["introspection_endpoint_auth_methods_supported"]; found {
+		err = json.Unmarshal(raw, &a.IntrospectionEndpointAuthMethodsSupported)
+		if err != nil {
+			return fmt.Errorf("error reading 'introspection_endpoint_auth_methods_supported': %w", err)
+		}
+		delete(object, "introspection_endpoint_auth_methods_supported")
+	}
+
+	if raw, found := object["introspection_endpoint_auth_signing_alg_values_supported"]; found {
+		err = json.Unmarshal(raw, &a.IntrospectionEndpointAuthSigningAlgValuesSupported)
+		if err != nil {
+			return fmt.Errorf("error reading 'introspection_endpoint_auth_signing_alg_values_supported': %w", err)
+		}
+		delete(object, "introspection_endpoint_auth_signing_alg_values_supported")
+	}
+
 	if raw, found := object["issuer"]; found {
 		err = json.Unmarshal(raw, &a.Issuer)
 		if err != nil {
@@ -107,6 +127,22 @@ func (a *OIDCDiscovery) UnmarshalJSON(b []byte) error {
 			return fmt.Errorf("error reading 'token_endpoint': %w", err)
 		}
 		delete(object, "token_endpoint")
+	}
+
+	if raw, found := object["token_endpoint_auth_methods_supported"]; found {
+		err = json.Unmarshal(raw, &a.TokenEndpointAuthMethodsSupported)
+		if err != nil {
+			return fmt.Errorf("error reading 'token_endpoint_auth_methods_supported': %w", err)
+		}
+		delete(object, "token_endpoint_auth_methods_supported")
+	}
+
+	if raw, found := object["token_endpoint_auth_signing_alg_values_supported"]; found {
+		err = json.Unmarshal(raw, &a.TokenEndpointAuthSigningAlgValuesSupported)
+		if err != nil {
+			return fmt.Errorf("error reading 'token_endpoint_auth_signing_alg_values_supported': %w", err)
+		}
+		delete(object, "token_endpoint_auth_signing_alg_values_supported")
 	}
 
 	if raw, found := object["userinfo_endpoint"]; found {
@@ -148,6 +184,20 @@ func (a OIDCDiscovery) MarshalJSON() ([]byte, error) {
 		}
 	}
 
+	if a.IntrospectionEndpointAuthMethodsSupported != nil {
+		object["introspection_endpoint_auth_methods_supported"], err = json.Marshal(a.IntrospectionEndpointAuthMethodsSupported)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'introspection_endpoint_auth_methods_supported': %w", err)
+		}
+	}
+
+	if a.IntrospectionEndpointAuthSigningAlgValuesSupported != nil {
+		object["introspection_endpoint_auth_signing_alg_values_supported"], err = json.Marshal(a.IntrospectionEndpointAuthSigningAlgValuesSupported)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'introspection_endpoint_auth_signing_alg_values_supported': %w", err)
+		}
+	}
+
 	object["issuer"], err = json.Marshal(a.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling 'issuer': %w", err)
@@ -161,6 +211,20 @@ func (a OIDCDiscovery) MarshalJSON() ([]byte, error) {
 	object["token_endpoint"], err = json.Marshal(a.TokenEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling 'token_endpoint': %w", err)
+	}
+
+	if a.TokenEndpointAuthMethodsSupported != nil {
+		object["token_endpoint_auth_methods_supported"], err = json.Marshal(a.TokenEndpointAuthMethodsSupported)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'token_endpoint_auth_methods_supported': %w", err)
+		}
+	}
+
+	if a.TokenEndpointAuthSigningAlgValuesSupported != nil {
+		object["token_endpoint_auth_signing_alg_values_supported"], err = json.Marshal(a.TokenEndpointAuthSigningAlgValuesSupported)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'token_endpoint_auth_signing_alg_values_supported': %w", err)
+		}
 	}
 
 	if a.UserinfoEndpoint != nil {

@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package clientauth provides OOP abstractions for OIDC client authentication methods.
+// Package clientauth provides OOP abstractions for OIDC client authentication endpoints.
 // It supports client_secret_basic, client_secret_post, and private_key_jwt (RFC 7523).
 package clientauth
 
@@ -39,7 +39,7 @@ const (
 	AssertionTypeJWTBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 )
 
-// ClientAuthenticator defines the interface for authenticating OIDC clients at the token endpoint.
+// ClientAuthenticator defines the interface for authenticating OIDC clients at protocol endpoints.
 type ClientAuthenticator interface {
 	// Authenticate verifies the client credentials and returns nil on success.
 	Authenticate(request *AuthRequest) error
@@ -48,7 +48,7 @@ type ClientAuthenticator interface {
 	Method() string
 }
 
-// AuthRequest encapsulates the data needed to authenticate a client at the token endpoint.
+// AuthRequest encapsulates the data needed to authenticate a client at an OIDC protocol endpoint.
 type AuthRequest struct {
 	// ClientID is the client identifier.
 	ClientID string
@@ -62,7 +62,7 @@ type AuthRequest struct {
 	// ClientAssertionType is the assertion type (for private_key_jwt).
 	ClientAssertionType string
 
-	// TokenEndpointURL is the URL of the token endpoint (audience for private_key_jwt).
+	// TokenEndpointURL is the endpoint URL used as the private_key_jwt audience.
 	TokenEndpointURL string
 }
 
@@ -132,7 +132,7 @@ type PrivateKeyJWTAuthenticator struct {
 
 // NewPrivateKeyJWTAuthenticator creates a new PrivateKeyJWTAuthenticator.
 // The verifier is used to verify the client's JWT assertion.
-// The issuer should match the client_id, and audience should be the token endpoint URL.
+// The issuer should match the client_id, and audience should match the target endpoint URL.
 func NewPrivateKeyJWTAuthenticator(verifier signing.Verifier, issuer string, audience string) *PrivateKeyJWTAuthenticator {
 	return &PrivateKeyJWTAuthenticator{
 		verifier: verifier,

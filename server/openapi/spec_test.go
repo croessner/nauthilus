@@ -151,6 +151,28 @@ func TestIDPSpecDocumentsClientCredentialsGrant(t *testing.T) {
 	if _, ok := tokenRequest.Properties["client_assertion"]; !ok {
 		t.Fatal("TokenRequest.properties.client_assertion missing for private_key_jwt client authentication")
 	}
+
+	introspectionRequest, ok := doc.Components.Schemas["IntrospectionRequest"]
+	if !ok {
+		t.Fatal("components.schemas.IntrospectionRequest missing")
+	}
+
+	if _, ok := introspectionRequest.Properties["client_assertion"]; !ok {
+		t.Fatal("IntrospectionRequest.properties.client_assertion missing for private_key_jwt client authentication")
+	}
+
+	oidcDiscovery, ok := doc.Components.Schemas["OIDCDiscovery"]
+	if !ok {
+		t.Fatal("components.schemas.OIDCDiscovery missing")
+	}
+
+	if _, ok := oidcDiscovery.Properties["introspection_endpoint_auth_methods_supported"]; !ok {
+		t.Fatal("OIDCDiscovery.properties.introspection_endpoint_auth_methods_supported missing")
+	}
+
+	if _, ok := oidcDiscovery.Properties["introspection_endpoint_auth_signing_alg_values_supported"]; !ok {
+		t.Fatal("OIDCDiscovery.properties.introspection_endpoint_auth_signing_alg_values_supported missing")
+	}
 }
 
 func TestManagementSpecDocumentsAsyncJobStatusLifecycle(t *testing.T) {
