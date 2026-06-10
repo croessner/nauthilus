@@ -1290,38 +1290,55 @@ auth:
             totp_recovery_object_class: "nauthilusMfaAccount"
 ```
 
-## 8. Client Credentials Grant (RFC 6749 §4.4)
+## 8. Token Endpoint Client Authentication and Client Credentials Grant
 
-The Client Credentials Grant allows machine-to-machine (M2M) authentication where the client itself is the resource
-owner. Unlike the Authorization Code Grant, **no user interaction** is involved and **only an access token** is returned
-(no ID token, no refresh token).
+OIDC token requests have two separate layers:
 
-Nauthilus supports two authentication methods for the Client Credentials Grant:
+1. **Client authentication** proves which configured OIDC client is calling the endpoint.
+2. **Grant processing** handles the requested `grant_type` after the client has been authenticated.
 
-1. **`client_secret`** — The client authenticates using a shared secret (via Basic Auth or POST body).
-2. **`private_key_jwt`** (RFC 7523) — The client authenticates using a signed JWT assertion with its private key.
+Nauthilus authenticates the client at `/oidc/token` before dispatching by `grant_type`. Therefore
+`client_secret_basic`, `client_secret_post`, `private_key_jwt`, and `none` are token endpoint client authentication
+methods. They are not specific to the Client Credentials Grant. The same authentication layer is used before
+`authorization_code`, `refresh_token`, `client_credentials`, and device-code token handling.
+
+The Client Credentials Grant (RFC 6749 §4.4) is one grant handled after successful client authentication. It allows
+machine-to-machine (M2M) authentication where the client itself is the resource owner. Unlike the Authorization Code
+Grant, no user interaction is involved and only an access token is returned (no ID token, no refresh token).
 
 ### 8.1 Architecture Overview
 
 ```mermaid
 sequenceDiagram
-    participant C as Client (M2M)
+    participant C as Client
     participant T as Token Endpoint
     participant I as NauthilusIdP
 
-    C ->> T: POST /oidc/token<br/>grant_type=client_credentials<br/>+ authentication
-    T ->> T: Authenticate client<br/>(client_secret or private_key_jwt)
-    T ->> I: IssueClientCredentialsToken(clientID, scopes)
-    I ->> I: Validate grant_type support
-    I ->> I: Build access token (JWT or opaque)
-    I -->> T: access_token + expires_in
-    T -->> C: {"access_token": "...", "token_type": "Bearer", "expires_in": 3600}
+    C ->> T: POST /oidc/token<br/>grant_type=...<br/>+ client authentication
+    T ->> T: Authenticate client<br/>(client_secret, private_key_jwt, or none)
+    T ->> T: Dispatch by grant_type
+    alt authorization_code
+        T ->> I: IssueTokens(session)
+        I -->> T: id_token + access_token + optional refresh_token
+    else refresh_token
+        T ->> I: ExchangeRefreshToken(refresh_token, clientID)
+        I -->> T: refreshed tokens
+    else client_credentials
+        T ->> I: IssueClientCredentialsToken(clientID, scopes)
+        I -->> T: access_token + expires_in
+    else device_code
+        T ->> I: Issue device-code tokens after user authorization
+        I -->> T: id_token + access_token
+    end
+    T -->> C: Token response or OAuth error
 ```
 
 ### 8.2 Signing Abstraction
 
 Token signing uses an OOP abstraction (`server/idp/signing`) that supports multiple algorithms via the `Signer` and
-`Verifier` interfaces. Both the Client Credentials Grant and the Authorization Code Grant share this abstraction.
+`Verifier` interfaces. Token issuance and `private_key_jwt` client assertion verification share this abstraction, but
+they use different keys and directions: Nauthilus signs issued tokens with its IdP signing key, while it verifies client
+assertions with each client's configured public key.
 
 **Supported algorithms:**
 
@@ -1364,6 +1381,8 @@ type ClientAuthenticator interface {
 #### 8.3.1 client_secret_basic / client_secret_post
 
 The client sends its `client_id` and `client_secret` either via HTTP Basic Authentication or as POST form parameters.
+The examples below use `client_credentials`, but the same authentication envelope is valid for other token endpoint
+grants supported by the configured client.
 
 ```bash
 # Basic Auth
@@ -1382,23 +1401,39 @@ curl -X POST https://issuer.example.com/oidc/token \
 
 #### 8.3.2 private_key_jwt (RFC 7523)
 
-The client signs a JWT assertion with its private key and sends it as `client_assertion`. The server verifies the
-assertion using the client's pre-registered public key. This method does **not** use mTLS.
+The client signs a JWT assertion with its private key and sends it as `client_assertion`. Nauthilus verifies the
+assertion using the client's pre-registered public key before it processes the requested grant. This method does not use
+mTLS and does not require a shared client secret to be stored by the server.
 
 **JWT assertion requirements (per RFC 7523):**
 
-| Claim | Value                                  |
-|-------|----------------------------------------|
-| `iss` | Must match the `client_id`             |
-| `sub` | Must match the `client_id`             |
-| `aud` | Must be the token endpoint URL         |
-| `exp` | Expiration time (short-lived, e.g. 5m) |
-| `jti` | Unique identifier (replay prevention)  |
+| Claim | Value                                                                                         |
+|-------|-----------------------------------------------------------------------------------------------|
+| `iss` | Must match the `client_id`                                                                    |
+| `sub` | Must match the `client_id`                                                                    |
+| `aud` | Must be the endpoint URL that receives the assertion (`/oidc/token` or `/oidc/introspect`)    |
+| `exp` | Expiration time; assertions should be short-lived, for example one to five minutes            |
+| `jti` | Unique assertion identifier; include it for replay protection and interoperability with RFC 7523 clients |
+
+Nauthilus currently validates the assertion signature, `iss`, `sub`, `aud`, and `exp`. Full one-time `jti` reservation
+requires Redis-backed replay state in addition to claim validation.
+
+```bash
+curl -X POST https://issuer.example.com/oidc/token \
+  -d "grant_type=authorization_code" \
+  -d "code=SplxlOBeZQQYbYS6WxSbIA" \
+  -d "redirect_uri=https://app.example.com/callback" \
+  -d "client_id=my-client" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=eyJhbGciOiJSUzI1NiIs..."
+```
+
+For M2M clients the same authentication method can be used with the Client Credentials Grant:
 
 ```bash
 curl -X POST https://issuer.example.com/oidc/token \
   -d "grant_type=client_credentials" \
-  -d "client_id=my-client" \
+  -d "client_id=m2m-service-pki" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
   -d "client_assertion=eyJhbGciOiJSUzI1NiIs..." \
   -d "scope=api.read"
@@ -1406,7 +1441,7 @@ curl -X POST https://issuer.example.com/oidc/token \
 
 ### 8.4 Configuration
 
-#### Client with client_secret authentication
+#### Client with client_secret authentication for client_credentials
 
 ```yaml
 oidc:
@@ -1422,16 +1457,21 @@ oidc:
       token_endpoint_auth_method: client_secret_basic
 ```
 
-#### Client with private_key_jwt authentication (RS256)
+#### Authorization Code client with private_key_jwt authentication (RS256)
 
 ```yaml
 oidc:
   clients:
-    - client_id: "m2m-service-pki"
+    - client_id: "web-app-pki"
       grant_types:
-        - client_credentials
+        - authorization_code
+        - refresh_token
+      redirect_uris:
+        - "https://app.example.com/callback"
       scopes:
-        - api.read
+        - openid
+        - profile
+        - email
       access_token_lifetime: 1h
       token_endpoint_auth_method: private_key_jwt
       client_public_key_algorithm: RS256
@@ -1441,7 +1481,7 @@ oidc:
         -----END PUBLIC KEY-----
 ```
 
-#### Client with private_key_jwt authentication (EdDSA / Ed25519)
+#### Client Credentials client with private_key_jwt authentication (EdDSA / Ed25519)
 
 ```yaml
 oidc:
