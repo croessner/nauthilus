@@ -332,6 +332,13 @@ func generateTestClientKeyPair(t testing.TB) (*rsa.PrivateKey, string) {
 func signTestClientAssertion(t testing.TB, key *rsa.PrivateKey, clientID string, audience string) string {
 	t.Helper()
 
+	return signTestClientAssertionWithJWTID(t, key, clientID, audience, "test-client-assertion")
+}
+
+// signTestClientAssertionWithJWTID signs a private_key_jwt assertion with a caller-provided jti.
+func signTestClientAssertionWithJWTID(t testing.TB, key *rsa.PrivateKey, clientID string, audience string, jwtID string) string {
+	t.Helper()
+
 	signer := signing.NewRS256Signer(key, "test-client-kid")
 
 	assertion, err := signer.Sign(jwt.MapClaims{
@@ -340,13 +347,72 @@ func signTestClientAssertion(t testing.TB, key *rsa.PrivateKey, clientID string,
 		"aud":                   audience,
 		"exp":                   time.Now().Add(5 * time.Minute).Unix(),
 		"iat":                   time.Now().Unix(),
-		"jti":                   "test-client-assertion",
+		"jti":                   jwtID,
 	})
 	if err != nil {
 		t.Fatalf("sign client assertion: %v", err)
 	}
 
 	return assertion
+}
+
+// expectedOIDCClientAssertionReplayKey mirrors the Redis replay key scope.
+func expectedOIDCClientAssertionReplayKey(clientID string, audience string, jwtID string) string {
+	replayScope := clientID + "\x1f" + audience + "\x1f" + jwtID
+	sum := sha256.Sum256([]byte(replayScope))
+
+	return "test:oidc:client_assertion:replay:" + fmt.Sprintf("%x", sum[:])
+}
+
+// expectOIDCClientAssertionReplayReservation matches private_key_jwt replay reservations.
+func expectOIDCClientAssertionReplayReservation(t testing.TB, mock redismock.ClientMock, key string, stored bool) {
+	t.Helper()
+
+	mock.CustomMatch(func(_ []any, actual []any) error {
+		if len(actual) != 6 {
+			return fmt.Errorf("unexpected Redis command args: %v", actual)
+		}
+
+		actualKey, ok := actual[1].(string)
+		if !ok {
+			return fmt.Errorf("unexpected replay key type %T", actual[1])
+		}
+
+		if actual[0] != "set" || actualKey != key || !isLowerHexSuffix(actualKey, 64) ||
+			actual[2] != "1" || actual[3] != "px" || actual[5] != "nx" {
+			return fmt.Errorf("unexpected Redis SETNX command args: %v", actual)
+		}
+
+		ttlMillis, ok := actual[4].(int64)
+		if !ok {
+			return fmt.Errorf("unexpected Redis TTL type %T", actual[4])
+		}
+
+		ttl := time.Duration(ttlMillis) * time.Millisecond
+		if ttl < 5*time.Minute+20*time.Second || ttl > 5*time.Minute+31*time.Second {
+			return fmt.Errorf("unexpected Redis TTL %s", ttl)
+		}
+
+		return nil
+	}).ExpectSetNX(key, "1", time.Minute).SetVal(stored)
+}
+
+// isLowerHexSuffix reports whether the key ends with a fixed-width lower-case hex digest.
+func isLowerHexSuffix(key string, width int) bool {
+	if len(key) < width {
+		return false
+	}
+
+	suffix := key[len(key)-width:]
+	for _, char := range suffix {
+		if (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') {
+			continue
+		}
+
+		return false
+	}
+
+	return true
 }
 
 func (m *mockOIDCCfg) GetServer() *config.ServerSection {
@@ -1522,6 +1588,13 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 			oidcParamClientAssertion:     {assertion},
 		}
 
+		expectOIDCClientAssertionReplayReservation(
+			t,
+			mock,
+			expectedOIDCClientAssertionReplayKey(privateKeyJWTClient.ClientID, issuer+"/oidc/introspect", "test-client-assertion"),
+			true,
+		)
+
 		h.Introspect(ctx)
 
 		if !assert.Equal(t, http.StatusOK, w.Code) {
@@ -1570,6 +1643,229 @@ func TestOIDCHandler_Introspect(t *testing.T) {
 	})
 
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOIDCHandler_PrivateKeyJWTTokenReplayProtection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fixture := newPrivateKeyJWTReplayOIDCTest(t)
+	audience := fixture.issuer + oidcEndpointPathToken
+	jwtID := "token-replay-jti"
+	assertion := signTestClientAssertionWithJWTID(t, fixture.clientKey, fixture.client.ClientID, audience, jwtID)
+	replayKey := expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, audience, jwtID)
+
+	expectOIDCClientAssertionReplayReservation(t, fixture.mock, replayKey, true)
+	fixture.mock.ExpectGet("test:oidc:code:token-code-1").SetVal(fixture.authorizationCodeSessionJSON(t))
+	fixture.mock.ExpectDel("test:oidc:code:token-code-1").SetVal(1)
+
+	first := fixture.postPrivateKeyJWTToken(t, "token-code-1", assertion)
+	assert.Equal(t, http.StatusOK, first.Code)
+
+	expectOIDCClientAssertionReplayReservation(t, fixture.mock, replayKey, false)
+
+	replay := fixture.postPrivateKeyJWTToken(t, "token-code-2", assertion)
+	assertInvalidClientResponse(t, replay)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestOIDCHandler_PrivateKeyJWTIntrospectionReplayProtection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fixture := newPrivateKeyJWTReplayOIDCTest(t)
+	audience := fixture.issuer + oidcEndpointPathIntrospect
+	jwtID := "introspection-replay-jti"
+	assertion := signTestClientAssertionWithJWTID(t, fixture.clientKey, fixture.client.ClientID, audience, jwtID)
+	replayKey := expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, audience, jwtID)
+	accessToken := fixture.issuePrivateKeyJWTAccessToken(t)
+
+	expectOIDCClientAssertionReplayReservation(t, fixture.mock, replayKey, true)
+	fixture.mock.ExpectGet("test:oidc:denied_access_token:" + accessToken).RedisNil()
+
+	first := fixture.postPrivateKeyJWTIntrospection(t, accessToken, assertion)
+	assert.Equal(t, http.StatusOK, first.Code)
+
+	expectOIDCClientAssertionReplayReservation(t, fixture.mock, replayKey, false)
+
+	replay := fixture.postPrivateKeyJWTIntrospection(t, accessToken, assertion)
+	assertInvalidClientResponse(t, replay)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+func TestOIDCHandler_PrivateKeyJWTReplayScopeIncludesEndpointAudience(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fixture := newPrivateKeyJWTReplayOIDCTest(t)
+	jwtID := "shared-endpoint-jti"
+	tokenAudience := fixture.issuer + oidcEndpointPathToken
+	introspectionAudience := fixture.issuer + oidcEndpointPathIntrospect
+	tokenAssertion := signTestClientAssertionWithJWTID(t, fixture.clientKey, fixture.client.ClientID, tokenAudience, jwtID)
+	introspectionAssertion := signTestClientAssertionWithJWTID(t, fixture.clientKey, fixture.client.ClientID, introspectionAudience, jwtID)
+	accessToken := fixture.issuePrivateKeyJWTAccessToken(t)
+
+	expectOIDCClientAssertionReplayReservation(
+		t,
+		fixture.mock,
+		expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, tokenAudience, jwtID),
+		true,
+	)
+	fixture.mock.ExpectGet("test:oidc:code:audience-code").SetVal(fixture.authorizationCodeSessionJSON(t))
+	fixture.mock.ExpectDel("test:oidc:code:audience-code").SetVal(1)
+
+	tokenResponse := fixture.postPrivateKeyJWTToken(t, "audience-code", tokenAssertion)
+	assert.Equal(t, http.StatusOK, tokenResponse.Code)
+
+	expectOIDCClientAssertionReplayReservation(
+		t,
+		fixture.mock,
+		expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, introspectionAudience, jwtID),
+		true,
+	)
+	fixture.mock.ExpectGet("test:oidc:denied_access_token:" + accessToken).RedisNil()
+
+	introspectionResponse := fixture.postPrivateKeyJWTIntrospection(t, accessToken, introspectionAssertion)
+	assert.Equal(t, http.StatusOK, introspectionResponse.Code)
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+type privateKeyJWTReplayOIDCTest struct {
+	handler   *OIDCHandler
+	issuerID  *idp.NauthilusIdP
+	mock      redismock.ClientMock
+	clientKey *rsa.PrivateKey
+	client    config.OIDCClient
+	issuer    string
+}
+
+// newPrivateKeyJWTReplayOIDCTest builds an isolated OIDC handler with one private_key_jwt client.
+func newPrivateKeyJWTReplayOIDCTest(t testing.TB) *privateKeyJWTReplayOIDCTest {
+	t.Helper()
+
+	issuer := "https://auth.example.com"
+	signingKey := secret.New(generateTestKey())
+	clientKey, clientPublicKey := generateTestClientKeyPair(t)
+	client := config.OIDCClient{
+		ClientID:                 "jwt-client",
+		RedirectURIs:             []string{"https://app.example.com/callback"},
+		TokenEndpointAuthMethod:  clientauth.MethodPrivateKeyJWT,
+		ClientPublicKey:          clientPublicKey,
+		ClientPublicKeyAlgorithm: signing.AlgorithmRS256,
+	}
+	cfg := &mockOIDCCfg{
+		issuer:     issuer,
+		signingKey: signingKey,
+		clients:    []config.OIDCClient{client},
+	}
+
+	db, mock := redismock.NewClientMock()
+	redisClient := rediscli.NewTestClient(db)
+	dependencies := &deps.Deps{
+		Cfg:    cfg,
+		Redis:  redisClient,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	issuerID := idp.NewNauthilusIdP(dependencies)
+
+	return &privateKeyJWTReplayOIDCTest{
+		handler:   NewOIDCHandler(dependencies, issuerID, nil),
+		issuerID:  issuerID,
+		mock:      mock,
+		clientKey: clientKey,
+		client:    client,
+		issuer:    issuer,
+	}
+}
+
+// authorizationCodeSessionJSON serializes a stored authorization-code session.
+func (f *privateKeyJWTReplayOIDCTest) authorizationCodeSessionJSON(t testing.TB) string {
+	t.Helper()
+
+	session := &idp.OIDCSession{
+		ClientID:    f.client.ClientID,
+		UserID:      "jwt-user",
+		Scopes:      []string{definitions.ScopeOpenId},
+		RedirectURI: "https://app.example.com/callback",
+		AuthTime:    time.Now(),
+	}
+	sessionData, err := json.Marshal(session)
+	assert.NoError(t, err)
+
+	return string(sessionData)
+}
+
+// issuePrivateKeyJWTAccessToken issues a JWT access token for introspection replay tests.
+func (f *privateKeyJWTReplayOIDCTest) issuePrivateKeyJWTAccessToken(t testing.TB) string {
+	t.Helper()
+
+	_, accessToken, _, _, err := f.issuerID.IssueTokens(context.Background(), &idp.OIDCSession{
+		ClientID: f.client.ClientID,
+		UserID:   "jwt-user",
+		AuthTime: time.Now(),
+		Scopes:   []string{definitions.ScopeOpenId, "profile"},
+	})
+	assert.NoError(t, err)
+
+	return accessToken
+}
+
+// postPrivateKeyJWTToken submits an authorization-code token request with a client assertion.
+func (f *privateKeyJWTReplayOIDCTest) postPrivateKeyJWTToken(t testing.TB, code string, assertion string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	form := url.Values{}
+	form.Add(oidcParamGrantType, definitions.OIDCFlowAuthorizationCode)
+	form.Add(oidcParamCode, code)
+	form.Add(oidcParamRedirectURI, "https://app.example.com/callback")
+	form.Add(oidcParamClientID, f.client.ClientID)
+	form.Add(oidcParamClientAssertionType, clientauth.AssertionTypeJWTBearer)
+	form.Add(oidcParamClientAssertion, assertion)
+
+	req, _ := http.NewRequest(http.MethodPost, "/oidc/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx.Request = req
+
+	f.handler.Token(ctx)
+
+	return recorder
+}
+
+// postPrivateKeyJWTIntrospection submits an introspection request with a client assertion.
+func (f *privateKeyJWTReplayOIDCTest) postPrivateKeyJWTIntrospection(
+	t testing.TB,
+	token string,
+	assertion string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	form := url.Values{}
+	form.Add("token", token)
+	form.Add(oidcParamClientID, f.client.ClientID)
+	form.Add(oidcParamClientAssertionType, clientauth.AssertionTypeJWTBearer)
+	form.Add(oidcParamClientAssertion, assertion)
+
+	req, _ := http.NewRequest(http.MethodPost, "/oidc/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx.Request = req
+
+	f.handler.Introspect(ctx)
+
+	return recorder
+}
+
+// assertInvalidClientResponse verifies the OAuth invalid_client error shape.
+func assertInvalidClientResponse(t testing.TB, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+
+	var response map[string]any
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, oidcErrorInvalidClient, response[definitions.LogKeyError])
 }
 
 func TestOIDCHandler_Token(t *testing.T) {

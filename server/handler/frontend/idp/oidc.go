@@ -637,7 +637,7 @@ func (h *OIDCHandler) parsePrivateKeyJWTClientAuthRequest(ctx *gin.Context, audi
 	}, true
 }
 
-// verifyPrivateKeyJWTClientAssertion verifies the assertion signature, issuer, subject, audience, and expiry.
+// verifyPrivateKeyJWTClientAssertion verifies the assertion and reserves its scoped jti.
 func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, request privateKeyJWTClientAuthRequest) bool {
 	verifier, err := h.buildClientVerifier(request.client)
 	if err != nil {
@@ -659,7 +659,7 @@ func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, reque
 
 	auth := clientauth.NewPrivateKeyJWTAuthenticator(verifier, request.clientID, request.audience)
 
-	err = auth.Authenticate(&clientauth.AuthRequest{
+	claims, err := auth.AuthenticateAssertion(&clientauth.AuthRequest{
 		ClientID:            request.clientID,
 		ClientAssertionType: request.assertionType,
 		ClientAssertion:     request.assertion,
@@ -675,6 +675,35 @@ func (h *OIDCHandler) verifyPrivateKeyJWTClientAssertion(ctx *gin.Context, reque
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "private_key_jwt authentication failed",
 			definitions.LogKeyClientID, request.clientID,
+			definitions.LogKeyError, err,
+		)
+
+		ctx.JSON(http.StatusUnauthorized, gin.H{definitions.LogKeyError: oidcErrorInvalidClient})
+
+		return false
+	}
+
+	if err := h.storage.ReserveClientAssertionJWTID(
+		ctx.Request.Context(),
+		claims.ClientID,
+		claims.Audience,
+		claims.JWTID,
+		claims.ExpiresAt,
+	); err != nil {
+		replayStatus := "unavailable"
+		if errors.Is(err, idp.ErrClientAssertionReplayDetected) {
+			replayStatus = "detected"
+		}
+
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			h.deps.Cfg,
+			h.deps.Logger,
+			definitions.DbgIdp,
+			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+			definitions.LogKeyMsg, "private_key_jwt replay reservation failed",
+			definitions.LogKeyClientID, request.clientID,
+			"replay_status", replayStatus,
 			definitions.LogKeyError, err,
 		)
 

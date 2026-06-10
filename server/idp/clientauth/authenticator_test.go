@@ -28,6 +28,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const privateKeyJWTTestClaimNotBefore = "nbf"
+
 func TestClientSecretAuthenticator_Basic(t *testing.T) {
 	auth := NewClientSecretAuthenticator(secret.New("my-secret"), MethodClientSecretBasic)
 	assert.Equal(t, MethodClientSecretBasic, auth.Method())
@@ -219,6 +221,30 @@ func TestPrivateKeyJWTAuthenticator_RS256(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("recently expired assertion within clock skew", func(t *testing.T) {
+		signer := signing.NewRS256Signer(key, "test-kid")
+		now := time.Now()
+
+		assertion, err := signer.Sign(jwt.MapClaims{
+			"iss": clientID,
+			"sub": clientID,
+			"aud": tokenEndpoint,
+			"exp": now.Add(-defaultPrivateKeyJWTClockSkew / 2).Unix(),
+			"iat": now.Add(-time.Minute).Unix(),
+			"jti": "recently-expired-jti",
+		})
+		if !assert.NoError(t, err) {
+			return
+		}
+
+		err = auth.Authenticate(&AuthRequest{
+			ClientID:            clientID,
+			ClientAssertionType: AssertionTypeJWTBearer,
+			ClientAssertion:     assertion,
+		})
+		assert.NoError(t, err)
+	})
+
 	t.Run("nil request", func(t *testing.T) {
 		err := auth.Authenticate(nil)
 		assert.Error(t, err)
@@ -306,6 +332,8 @@ func TestPrivateKeyJWTAuthenticator_AudienceArray(t *testing.T) {
 		"sub": clientID,
 		"aud": []string{tokenEndpoint, "https://other.local"},
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
+		"iat": time.Now().Unix(),
+		"jti": "audience-array-jti",
 	})
 	if !assert.NoError(t, err) {
 		return
@@ -317,4 +345,119 @@ func TestPrivateKeyJWTAuthenticator_AudienceArray(t *testing.T) {
 		ClientAssertion:     assertion,
 	})
 	assert.NoError(t, err)
+}
+
+func TestPrivateKeyJWTAuthenticator_ReplayClaimRequirements(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientID := "replay-client"
+	tokenEndpoint := "https://issuer.local/idp/oidc/token"
+	verifier := signing.NewRS256Verifier(&key.PublicKey)
+	auth := NewPrivateKeyJWTAuthenticator(verifier, clientID, tokenEndpoint)
+	now := time.Now()
+
+	for _, tc := range privateKeyJWTReplayClaimRequirementCases(clientID, tokenEndpoint, now) {
+		t.Run(tc.name, func(t *testing.T) {
+			assertion := signPrivateKeyJWTTestAssertion(t, key, tc.claims)
+
+			err := auth.Authenticate(&AuthRequest{
+				ClientID:            clientID,
+				ClientAssertionType: AssertionTypeJWTBearer,
+				ClientAssertion:     assertion,
+				TokenEndpointURL:    tokenEndpoint,
+			})
+
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
+}
+
+type privateKeyJWTReplayClaimRequirementCase struct {
+	name        string
+	claims      jwt.MapClaims
+	errContains string
+}
+
+// privateKeyJWTReplayClaimRequirementCases returns invalid replay claim fixtures.
+func privateKeyJWTReplayClaimRequirementCases(clientID string, tokenEndpoint string, now time.Time) []privateKeyJWTReplayClaimRequirementCase {
+	return []privateKeyJWTReplayClaimRequirementCase{
+		{
+			name: "missing jti",
+			claims: privateKeyJWTTestClaims(clientID, tokenEndpoint, now, map[string]any{
+				"jti": nil,
+			}),
+			errContains: "jti",
+		},
+		{
+			name: "empty jti",
+			claims: privateKeyJWTTestClaims(clientID, tokenEndpoint, now, map[string]any{
+				"jti": "   ",
+			}),
+			errContains: "jti",
+		},
+		{
+			name: "assertion lifetime beyond maximum",
+			claims: privateKeyJWTTestClaims(clientID, tokenEndpoint, now, map[string]any{
+				"exp": now.Add(defaultPrivateKeyJWTMaxAssertionLifetime + time.Minute).Unix(),
+			}),
+			errContains: "lifetime",
+		},
+		{
+			name: "iat too far in the future",
+			claims: privateKeyJWTTestClaims(clientID, tokenEndpoint, now, map[string]any{
+				"iat": now.Add(defaultPrivateKeyJWTClockSkew + time.Minute).Unix(),
+				"exp": now.Add(defaultPrivateKeyJWTMaxAssertionLifetime).Unix(),
+			}),
+			errContains: "iat",
+		},
+		{
+			name: "nbf too far in the future",
+			claims: privateKeyJWTTestClaims(clientID, tokenEndpoint, now, map[string]any{
+				privateKeyJWTTestClaimNotBefore: now.Add(defaultPrivateKeyJWTClockSkew + time.Minute).Unix(),
+			}),
+			errContains: privateKeyJWTTestClaimNotBefore,
+		},
+	}
+}
+
+// privateKeyJWTTestClaims builds baseline claims for private_key_jwt tests.
+func privateKeyJWTTestClaims(clientID string, audience string, now time.Time, overrides map[string]any) jwt.MapClaims {
+	claims := jwt.MapClaims{
+		"iss": clientID,
+		"sub": clientID,
+		"aud": audience,
+		"exp": now.Add(time.Minute).Unix(),
+		"iat": now.Unix(),
+		"jti": "test-jti",
+	}
+
+	for key, value := range overrides {
+		if value == nil {
+			delete(claims, key)
+
+			continue
+		}
+
+		claims[key] = value
+	}
+
+	return claims
+}
+
+// signPrivateKeyJWTTestAssertion signs claims with the test RSA key.
+func signPrivateKeyJWTTestAssertion(t testing.TB, key *rsa.PrivateKey, claims jwt.MapClaims) string {
+	t.Helper()
+
+	signer := signing.NewRS256Signer(key, "test-kid")
+
+	assertion, err := signer.Sign(claims)
+	if err != nil {
+		t.Fatalf("sign client assertion: %v", err)
+	}
+
+	return assertion
 }

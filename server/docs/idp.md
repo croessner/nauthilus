@@ -1413,10 +1413,21 @@ mTLS and does not require a shared client secret to be stored by the server.
 | `sub` | Must match the `client_id`                                                                    |
 | `aud` | Must be the endpoint URL that receives the assertion (`/oidc/token` or `/oidc/introspect`)    |
 | `exp` | Expiration time; assertions should be short-lived, for example one to five minutes            |
-| `jti` | Unique assertion identifier; include it for replay protection and interoperability with RFC 7523 clients |
+| `jti` | Unique assertion identifier; required for one-time replay protection                          |
 
-Nauthilus currently validates the assertion signature, `iss`, `sub`, `aud`, and `exp`. Full one-time `jti` reservation
-requires Redis-backed replay state in addition to claim validation.
+Nauthilus validates the assertion signature, `iss`, `sub`, `aud`, `exp`, `iat` and `nbf` when present, and `jti`. Client
+assertions are one-time use within their validity window. Reusing the same `(client_id, audience, jti)` tuple fails as
+`invalid_client`; a token-endpoint assertion and an introspection-endpoint assertion remain independent because the
+endpoint audience is part of the replay scope. Replay markers are stored in Redis under the configured Redis prefix with
+hashed keys, so raw client identifiers, endpoint URLs, and `jti` values are not embedded in Redis key names.
+
+Assertion replay protection fails closed. If Redis is unavailable or the replay marker cannot be written, Nauthilus
+rejects `private_key_jwt` client authentication with `invalid_client`. Assertions must have a short lifetime: the fixed
+maximum is five minutes, with a 30 second clock-skew allowance. If `iat` is omitted, the remaining `exp` lifetime must
+still fit within that bound.
+
+`private_key_jwt` is a client authentication method, not a grant type. It is independent from PKCE; public-client PKCE
+requirements still apply wherever Nauthilus classifies the client as public.
 
 ```bash
 curl -X POST https://issuer.example.com/oidc/token \

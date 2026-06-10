@@ -17,6 +17,10 @@ package idp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,6 +29,8 @@ import (
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )
+
+const redisCommandSet = "set"
 
 func TestRedisTokenStorage(t *testing.T) {
 	db, mock := redismock.NewClientMock()
@@ -218,4 +224,111 @@ func TestRedisTokenStorageUsesConfiguredRedisDeadlines(t *testing.T) {
 
 	assert.True(t, ok, "expected Redis read context to carry a deadline")
 	assert.WithinDuration(t, time.Now().Add(25*time.Millisecond), deadline, 10*time.Millisecond)
+}
+
+func TestRedisTokenStorage_ReserveClientAssertionJWTID(t *testing.T) {
+	const (
+		prefix   = "test:"
+		clientID = "client-a"
+		audience = "https://issuer.example.com/oidc/token"
+		jwtID    = "assertion-1"
+	)
+
+	t.Run("stores first reservation with SETNX", func(t *testing.T) {
+		storage, mock := newClientAssertionReplayStorage(prefix)
+		expiresAt := time.Now().Add(time.Minute)
+		expectedKey := expectedClientAssertionReplayKey(prefix, clientID, audience, jwtID)
+
+		expectClientAssertionReplaySetNX(t, mock, expectedKey, "1", 89*time.Second, 91*time.Second).SetVal(true)
+
+		err := storage.ReserveClientAssertionJWTID(context.Background(), clientID, audience, jwtID, expiresAt)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("detects repeated reservation for same scoped tuple", func(t *testing.T) {
+		storage, mock := newClientAssertionReplayStorage(prefix)
+		expiresAt := time.Now().Add(time.Minute)
+		expectedKey := expectedClientAssertionReplayKey(prefix, clientID, audience, jwtID)
+
+		expectClientAssertionReplaySetNX(t, mock, expectedKey, "1", 89*time.Second, 91*time.Second).SetVal(false)
+
+		err := storage.ReserveClientAssertionJWTID(context.Background(), clientID, audience, jwtID, expiresAt)
+		assert.ErrorIs(t, err, ErrClientAssertionReplayDetected)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("maps Redis write errors to unavailable", func(t *testing.T) {
+		storage, mock := newClientAssertionReplayStorage(prefix)
+		expiresAt := time.Now().Add(time.Minute)
+		expectedKey := expectedClientAssertionReplayKey(prefix, clientID, audience, jwtID)
+
+		expectClientAssertionReplaySetNX(t, mock, expectedKey, "1", 89*time.Second, 91*time.Second).
+			SetErr(errors.New("redis write failed"))
+
+		err := storage.ReserveClientAssertionJWTID(context.Background(), clientID, audience, jwtID, expiresAt)
+		assert.ErrorIs(t, err, ErrClientAssertionReplayUnavailable)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("hashes replay scope instead of embedding raw values", func(t *testing.T) {
+		storage, _ := newClientAssertionReplayStorage(prefix)
+		key := storage.clientAssertionReplayKey(clientID, audience, jwtID)
+
+		assert.Equal(t, expectedClientAssertionReplayKey(prefix, clientID, audience, jwtID), key)
+		assert.NotContains(t, key, clientID)
+		assert.NotContains(t, key, audience)
+		assert.NotContains(t, key, jwtID)
+		assert.Regexp(t, `^test:oidc:client_assertion:replay:[0-9a-f]{64}$`, key)
+	})
+}
+
+// newClientAssertionReplayStorage creates an isolated Redis storage mock for replay tests.
+func newClientAssertionReplayStorage(prefix string) (*RedisTokenStorage, redismock.ClientMock) {
+	db, mock := redismock.NewClientMock()
+	client := rediscli.NewTestClient(db)
+
+	return NewRedisTokenStorage(client, prefix), mock
+}
+
+// expectedClientAssertionReplayKey mirrors the documented replay scope hash.
+func expectedClientAssertionReplayKey(prefix string, clientID string, audience string, jwtID string) string {
+	replayScope := clientID + "\x1f" + audience + "\x1f" + jwtID
+	sum := sha256.Sum256([]byte(replayScope))
+
+	return prefix + "oidc:client_assertion:replay:" + hex.EncodeToString(sum[:])
+}
+
+// expectClientAssertionReplaySetNX matches replay SETNX calls with a tolerant TTL window.
+func expectClientAssertionReplaySetNX(
+	t testing.TB,
+	mock redismock.ClientMock,
+	key string,
+	value string,
+	minTTL time.Duration,
+	maxTTL time.Duration,
+) *redismock.ExpectedBool {
+	t.Helper()
+
+	return mock.CustomMatch(func(_ []any, actual []any) error {
+		if len(actual) != 6 {
+			return fmt.Errorf("unexpected Redis command args: %v", actual)
+		}
+
+		if actual[0] != redisCommandSet || actual[1] != key || actual[2] != value || actual[3] != "px" || actual[5] != "nx" {
+			return fmt.Errorf("unexpected Redis SETNX command args: %v", actual)
+		}
+
+		ttlMillis, ok := actual[4].(int64)
+		if !ok {
+			return fmt.Errorf("unexpected Redis TTL type %T", actual[4])
+		}
+
+		ttl := time.Duration(ttlMillis) * time.Millisecond
+		if ttl < minTTL || ttl > maxTTL {
+			return fmt.Errorf("unexpected Redis TTL %s, want between %s and %s", ttl, minTTL, maxTTL)
+		}
+
+		return nil
+	}).ExpectSetNX(key, value, minTTL)
 }
