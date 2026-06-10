@@ -17,17 +17,33 @@ package idp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/idp/clientauth"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 	jsoniter "github.com/json-iterator/go"
 )
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+var (
+	// ErrClientAssertionReplayUnavailable indicates replay state could not be reserved.
+	ErrClientAssertionReplayUnavailable = stderrors.New("client assertion replay protection is unavailable")
+	// ErrClientAssertionReplayDetected indicates a private_key_jwt assertion was reused.
+	ErrClientAssertionReplayDetected = stderrors.New("client assertion replay detected")
+)
+
+// ClientAssertionReplayStore reserves private_key_jwt assertion identifiers.
+type ClientAssertionReplayStore interface {
+	ReserveClientAssertionJWTID(ctx context.Context, clientID, audience, jwtID string, expiresAt time.Time) error
+}
 
 // OIDCSession represents the data stored in Redis for an OIDC authorization flow.
 type OIDCSession struct {
@@ -71,6 +87,49 @@ func (s *RedisTokenStorage) redisReadContext(ctx context.Context) (context.Conte
 
 func (s *RedisTokenStorage) redisWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return util.GetCtxWithDeadlineRedisWrite(ctx, s.cfg)
+}
+
+// ReserveClientAssertionJWTID atomically stores a scoped private_key_jwt jti replay marker.
+func (s *RedisTokenStorage) ReserveClientAssertionJWTID(ctx context.Context, clientID, audience, jwtID string, expiresAt time.Time) error {
+	clientID = strings.TrimSpace(clientID)
+	audience = strings.TrimSpace(audience)
+	jwtID = strings.TrimSpace(jwtID)
+
+	if s == nil || s.redis == nil || clientID == "" || audience == "" || jwtID == "" || expiresAt.IsZero() {
+		return ErrClientAssertionReplayUnavailable
+	}
+
+	ttl := time.Until(expiresAt) + clientauth.DefaultPrivateKeyJWTClockSkew
+	if ttl <= 0 {
+		return ErrClientAssertionReplayUnavailable
+	}
+
+	handle := s.redis.GetWriteHandle()
+	if handle == nil {
+		return ErrClientAssertionReplayUnavailable
+	}
+
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	stored, err := handle.SetNX(writeCtx, s.clientAssertionReplayKey(clientID, audience, jwtID), "1", ttl).Result()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrClientAssertionReplayUnavailable, err)
+	}
+
+	if !stored {
+		return ErrClientAssertionReplayDetected
+	}
+
+	return nil
+}
+
+// clientAssertionReplayKey returns the bounded Redis key for a scoped assertion jti.
+func (s *RedisTokenStorage) clientAssertionReplayKey(clientID, audience, jwtID string) string {
+	replayScope := strings.TrimSpace(clientID) + "\x1f" + strings.TrimSpace(audience) + "\x1f" + strings.TrimSpace(jwtID)
+	sum := sha256.Sum256([]byte(replayScope))
+
+	return s.prefix + "oidc:client_assertion:replay:" + hex.EncodeToString(sum[:])
 }
 
 // StoreSession stores an OIDC session with a given code and TTL.

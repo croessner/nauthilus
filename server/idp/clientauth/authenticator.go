@@ -20,8 +20,11 @@ package clientauth
 import (
 	"bytes"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/idp/signing"
@@ -37,6 +40,16 @@ const (
 
 	// AssertionTypeJWTBearer is the expected client_assertion_type for private_key_jwt.
 	AssertionTypeJWTBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+)
+
+const (
+	// DefaultPrivateKeyJWTMaxAssertionLifetime bounds accepted private_key_jwt assertion validity.
+	DefaultPrivateKeyJWTMaxAssertionLifetime = 5 * time.Minute
+	// DefaultPrivateKeyJWTClockSkew allows small clock drift for private_key_jwt assertion validation.
+	DefaultPrivateKeyJWTClockSkew = 30 * time.Second
+
+	defaultPrivateKeyJWTMaxAssertionLifetime = DefaultPrivateKeyJWTMaxAssertionLifetime
+	defaultPrivateKeyJWTClockSkew            = DefaultPrivateKeyJWTClockSkew
 )
 
 // ClientAuthenticator defines the interface for authenticating OIDC clients at protocol endpoints.
@@ -64,6 +77,15 @@ type AuthRequest struct {
 
 	// TokenEndpointURL is the endpoint URL used as the private_key_jwt audience.
 	TokenEndpointURL string
+}
+
+// PrivateKeyJWTClaims carries claim data needed after successful private_key_jwt authentication.
+type PrivateKeyJWTClaims struct {
+	ClientID  string
+	Audience  string
+	JWTID     string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
 }
 
 // ClientSecretAuthenticator authenticates clients using a shared secret.
@@ -143,40 +165,66 @@ func NewPrivateKeyJWTAuthenticator(verifier signing.Verifier, issuer string, aud
 
 // Authenticate verifies the client assertion JWT per RFC 7523.
 func (a *PrivateKeyJWTAuthenticator) Authenticate(request *AuthRequest) error {
+	_, err := a.AuthenticateAssertion(request)
+
+	return err
+}
+
+// AuthenticateAssertion verifies the assertion and returns replay-relevant claim data.
+func (a *PrivateKeyJWTAuthenticator) AuthenticateAssertion(request *AuthRequest) (*PrivateKeyJWTClaims, error) {
 	if request == nil {
-		return fmt.Errorf("auth request is nil")
+		return nil, fmt.Errorf("auth request is nil")
 	}
 
 	if request.ClientAssertionType != AssertionTypeJWTBearer {
-		return fmt.Errorf("unsupported client_assertion_type: %s", request.ClientAssertionType)
+		return nil, fmt.Errorf("unsupported client_assertion_type: %s", request.ClientAssertionType)
 	}
 
 	if request.ClientAssertion == "" {
-		return fmt.Errorf("client_assertion is empty")
+		return nil, fmt.Errorf("client_assertion is empty")
+	}
+
+	if a.verifier == nil {
+		return nil, fmt.Errorf("client assertion verifier is not configured")
 	}
 
 	claims, err := a.verifier.Verify(request.ClientAssertion)
 	if err != nil {
-		return fmt.Errorf("client assertion verification failed: %w", err)
+		return nil, fmt.Errorf("client assertion verification failed: %w", err)
 	}
 
 	// Validate issuer (must match client_id)
 	if err := a.validateIssuer(claims); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Validate subject (must match client_id)
 	if err := a.validateSubject(claims); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Validate audience (must contain token endpoint URL)
 	if err := a.validateAudience(claims); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Validate expiry
-	return a.validateExpiry(claims)
+	jwtID, err := a.validateJWTID(claims)
+	if err != nil {
+		return nil, err
+	}
+
+	issuedAt, expiresAt, err := a.validateExpiryAndLifetime(claims, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	return &PrivateKeyJWTClaims{
+		ClientID:  a.issuer,
+		Audience:  a.audience,
+		JWTID:     jwtID,
+		IssuedAt:  issuedAt,
+		ExpiresAt: expiresAt,
+	}, nil
 }
 
 // validateIssuer checks that iss matches the expected client_id.
@@ -228,18 +276,89 @@ func (a *PrivateKeyJWTAuthenticator) validateAudience(claims jwt.MapClaims) erro
 	return nil
 }
 
-// validateExpiry checks that the token is not expired.
-func (a *PrivateKeyJWTAuthenticator) validateExpiry(claims jwt.MapClaims) error {
-	exp, ok := claims["exp"].(float64)
+// validateJWTID checks that jti is present and usable as a replay key component.
+func (a *PrivateKeyJWTAuthenticator) validateJWTID(claims jwt.MapClaims) (string, error) {
+	jwtID, ok := claims["jti"].(string)
+	if !ok || strings.TrimSpace(jwtID) == "" {
+		return "", fmt.Errorf("missing or invalid jti claim")
+	}
+
+	return strings.TrimSpace(jwtID), nil
+}
+
+// validateExpiryAndLifetime checks expiry, issued-at skew, and maximum assertion lifetime.
+func (a *PrivateKeyJWTAuthenticator) validateExpiryAndLifetime(claims jwt.MapClaims, now time.Time) (time.Time, time.Time, error) {
+	expiresAt, ok, err := privateKeyJWTClaimTime(claims, "exp")
+	if err != nil || !ok {
+		return time.Time{}, time.Time{}, fmt.Errorf("missing or invalid exp claim")
+	}
+
+	if !expiresAt.After(now.Add(-defaultPrivateKeyJWTClockSkew)) {
+		return time.Time{}, time.Time{}, fmt.Errorf("client assertion has expired")
+	}
+
+	notBefore, hasNotBefore, err := privateKeyJWTClaimTime(claims, "nbf")
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("missing or invalid nbf claim")
+	}
+
+	if hasNotBefore && notBefore.After(now.Add(defaultPrivateKeyJWTClockSkew)) {
+		return time.Time{}, time.Time{}, fmt.Errorf("nbf claim is too far in the future")
+	}
+
+	issuedAt, hasIssuedAt, err := privateKeyJWTClaimTime(claims, "iat")
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("missing or invalid iat claim")
+	}
+
+	if hasIssuedAt {
+		if issuedAt.After(now.Add(defaultPrivateKeyJWTClockSkew)) {
+			return time.Time{}, time.Time{}, fmt.Errorf("iat claim is too far in the future")
+		}
+
+		if expiresAt.Sub(issuedAt) > defaultPrivateKeyJWTMaxAssertionLifetime {
+			return time.Time{}, time.Time{}, fmt.Errorf("client assertion lifetime exceeds maximum")
+		}
+
+		return issuedAt, expiresAt, nil
+	}
+
+	if expiresAt.Sub(now) > defaultPrivateKeyJWTMaxAssertionLifetime+defaultPrivateKeyJWTClockSkew {
+		return time.Time{}, time.Time{}, fmt.Errorf("client assertion lifetime exceeds maximum")
+	}
+
+	return time.Time{}, expiresAt, nil
+}
+
+// privateKeyJWTClaimTime converts a JWT numeric date claim to a time value.
+func privateKeyJWTClaimTime(claims jwt.MapClaims, name string) (time.Time, bool, error) {
+	value, ok := claims[name]
 	if !ok {
-		return fmt.Errorf("missing or invalid exp claim")
+		return time.Time{}, false, nil
 	}
 
-	if time.Now().Unix() > int64(exp) {
-		return fmt.Errorf("client assertion has expired")
-	}
+	switch typed := value.(type) {
+	case float64:
+		return time.Unix(int64(typed), 0), true, nil
+	case json.Number:
+		seconds, err := typed.Int64()
+		if err == nil {
+			return time.Unix(seconds, 0), true, nil
+		}
 
-	return nil
+		floatSeconds, err := strconv.ParseFloat(typed.String(), 64)
+		if err != nil {
+			return time.Time{}, true, err
+		}
+
+		return time.Unix(int64(floatSeconds), 0), true, nil
+	case int64:
+		return time.Unix(typed, 0), true, nil
+	case int:
+		return time.Unix(int64(typed), 0), true, nil
+	default:
+		return time.Time{}, true, fmt.Errorf("claim %s is not a numeric date", name)
+	}
 }
 
 // Method returns "private_key_jwt".

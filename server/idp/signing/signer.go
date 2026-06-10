@@ -49,9 +49,9 @@ type Signer interface {
 	PublicKey() crypto.PublicKey
 }
 
-// Verifier defines the interface for verifying JWT tokens.
+// Verifier defines the interface for verifying JWT signatures.
 type Verifier interface {
-	// Verify parses and validates a JWT string and returns its claims.
+	// Verify parses a signed JWT string, verifies its signature, and returns its claims.
 	Verify(tokenString string) (jwt.MapClaims, error)
 
 	// Algorithm returns the expected signing algorithm.
@@ -172,7 +172,7 @@ func NewRS256Verifier(key *rsa.PublicKey) *RS256Verifier {
 	return &RS256Verifier{key: key}
 }
 
-// Verify parses and validates an RS256-signed JWT.
+// Verify parses an RS256-signed JWT and verifies its signature.
 func (v *RS256Verifier) Verify(tokenString string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -180,7 +180,7 @@ func (v *RS256Verifier) Verify(tokenString string) (jwt.MapClaims, error) {
 		}
 
 		return v.key, nil
-	})
+	}, jwt.WithoutClaimsValidation())
 
 	if err != nil {
 		return nil, fmt.Errorf("RS256 verification failed: %w", err)
@@ -209,7 +209,7 @@ func NewEdDSAVerifier(key ed25519.PublicKey) *EdDSAVerifier {
 	return &EdDSAVerifier{key: key}
 }
 
-// Verify parses and validates an EdDSA-signed JWT.
+// Verify parses an EdDSA-signed JWT and verifies its signature.
 func (v *EdDSAVerifier) Verify(tokenString string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
@@ -217,7 +217,7 @@ func (v *EdDSAVerifier) Verify(tokenString string) (jwt.MapClaims, error) {
 		}
 
 		return v.key, nil
-	})
+	}, jwt.WithoutClaimsValidation())
 
 	if err != nil {
 		return nil, fmt.Errorf("EdDSA verification failed: %w", err)
