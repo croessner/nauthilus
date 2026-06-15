@@ -20,6 +20,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/luastack"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -85,28 +88,27 @@ func (rm *RedisManager) evaluateRedisScript(ctx context.Context, conn redis.Cmda
 	}
 
 	if uploadScriptName != "" {
-		script = scriptsRepository.Get(uploadScriptName)
-		if script == "" {
+		uploadedScript, found := scriptsRepository.Get(uploadScriptName)
+		if !found {
 			return nil, fmt.Errorf("could not find script with name %s", uploadScriptName)
 		}
 
-		result, err = conn.EvalSha(ctx, script, keys, args...).Result()
+		result, err = conn.EvalSha(ctx, uploadedScript.SHA1, keys, args...).Result()
 
 		// Handle CROSSSLOT errors
-		if err != nil && strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
+		if isCrossSlotError(err) {
 			keys = rediscli.EnsureKeysInSameSlot(keys, defaultHashTag)
-			result, err = conn.EvalSha(ctx, script, keys, args...).Result()
+			result, err = conn.EvalSha(ctx, uploadedScript.SHA1, keys, args...).Result()
 		}
 
-		// Handle NOSCRIPT error by falling back to Eval
-		if err != nil && strings.HasPrefix(err.Error(), "NOSCRIPT") {
-			return nil, err
+		if isNoScriptError(err) {
+			result, err = rm.reuploadAndEvaluateNamedScript(ctx, conn, uploadScriptName, uploadedScript, keys, args...)
 		}
 	} else {
 		result, err = conn.Eval(ctx, script, keys, args...).Result()
 
 		// Handle CROSSSLOT errors
-		if err != nil && strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
+		if isCrossSlotError(err) {
 			keys = rediscli.EnsureKeysInSameSlot(keys, defaultHashTag)
 			result, err = conn.Eval(ctx, script, keys, args...).Result()
 		}
@@ -115,20 +117,63 @@ func (rm *RedisManager) evaluateRedisScript(ctx context.Context, conn redis.Cmda
 	return result, err
 }
 
+// reuploadAndEvaluateNamedScript restores a named custom script after Redis lost its script cache.
+func (rm *RedisManager) reuploadAndEvaluateNamedScript(ctx context.Context, conn redis.Cmdable, uploadScriptName string, uploadedScript UploadedScript, keys []string, args ...any) (any, error) {
+	_ = level.Warn(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Custom Redis Lua script '%s' not found on Redis server, re-uploading", uploadScriptName),
+		"operation", "redis_run_script",
+	)
+
+	sha1, err := rm.uploadRedisScript(ctx, conn, uploadedScript.Source, uploadScriptName)
+	if err != nil {
+		_ = level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to re-upload custom Redis Lua script '%s'", uploadScriptName),
+			definitions.LogKeyError, err,
+			"operation", "redis_run_script",
+		)
+
+		return nil, err
+	}
+
+	scriptsRepository.Set(uploadScriptName, sha1, uploadedScript.Source)
+
+	result, err := conn.EvalSha(ctx, sha1, keys, args...).Result()
+	if err != nil {
+		_ = level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to execute custom Redis Lua script '%s' after re-upload", uploadScriptName),
+			definitions.LogKeyError, err,
+			"operation", "redis_run_script",
+		)
+
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// isNoScriptError reports whether Redis returned any NOSCRIPT variant.
+func isNoScriptError(err error) bool {
+	return err != nil && strings.HasPrefix(strings.ToUpper(err.Error()), "NOSCRIPT")
+}
+
+// isCrossSlotError reports whether Redis rejected script keys for spanning slots.
+func isCrossSlotError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot")
+}
+
 // RedisUploadScript uploads a Lua script to the Redis server and returns its SHA1 hash.
 func (rm *RedisManager) RedisUploadScript(L *lua.LState) int {
 	return rm.ExecuteWrite(L, func(ctx context.Context, conn redis.Cmdable, stack *luastack.Manager) int {
 		script := stack.CheckString(2)
 		uploadScriptName := stack.OptString(3, "")
 
-		result, err := rm.uploadRedisScript(ctx, conn, script)
+		sha1, err := rm.uploadRedisScript(ctx, conn, script, uploadScriptName)
 		if err != nil {
 			return stack.PushError(err)
 		}
 
-		sha1, ok := result.(string)
-		if ok && uploadScriptName != "" {
-			scriptsRepository.Set(uploadScriptName, sha1)
+		if uploadScriptName != "" {
+			scriptsRepository.Set(uploadScriptName, sha1, script)
 		}
 
 		return stack.PushResults(lua.LString(sha1), lua.LNil)
@@ -137,15 +182,21 @@ func (rm *RedisManager) RedisUploadScript(L *lua.LState) int {
 
 // uploadRedisScript uploads a Lua script to the primary Redis handle and then
 // distributes it to all read handles so that EvalSha works on replicas as well.
-func (rm *RedisManager) uploadRedisScript(ctx context.Context, conn redis.Cmdable, script string) (any, error) {
+func (rm *RedisManager) uploadRedisScript(ctx context.Context, conn redis.Cmdable, script string, uploadScriptName string) (string, error) {
 	sha1, err := conn.ScriptLoad(ctx, script).Result()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	// Distribute to all read handles (replicas / read-only cluster nodes)
 	for _, rh := range rm.client.GetReadHandles() {
-		rh.ScriptLoad(ctx, script)
+		if _, err = rh.ScriptLoad(ctx, script).Result(); err != nil {
+			_ = level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload custom Redis Lua script '%s' to read handle (non-fatal)", uploadScriptName),
+				definitions.LogKeyError, err,
+				"operation", "redis_upload_script",
+			)
+		}
 	}
 
 	return sha1, nil

@@ -19,40 +19,54 @@ import (
 	"sync"
 )
 
-// Uploads is a concurrency-safe type for managing script uploads, utilizing a map to store key-value pairs securely.
+// UploadedScript stores the Redis SHA and original Lua source for a named custom script.
+type UploadedScript struct {
+	// Source is the Lua source used to restore Redis script-cache state after NOSCRIPT.
+	Source string
+
+	// SHA1 is the Redis script hash returned by SCRIPT LOAD.
+	SHA1 string
+}
+
+// Uploads is a concurrency-safe registry for named custom Redis Lua scripts.
 type Uploads struct {
-	// scripts stores key-value pairs where the key is the name of the upload script, and the value is its associated SHA-1 hash.
-	scripts map[string]string
+	// scripts stores upload-script names with their associated SHA-1 hash and source.
+	scripts map[string]UploadedScript
 
 	// mu provides mutual exclusion to ensure that concurrent access to the scripts map is synchronized.
-	mu sync.Mutex
+	mu sync.RWMutex
 }
 
-// Set stores the provided SHA-1 hash associated with the given upload script name in a concurrency-safe manner.
-func (u *Uploads) Set(uploadScriptName string, sha1 string) {
-	u.mu.Lock()
-
-	defer u.mu.Unlock()
-
-	u.scripts[uploadScriptName] = sha1
-}
-
-// Get retrieves the SHA-1 hash associated with the given upload script name in a concurrency-safe manner.
-func (u *Uploads) Get(uploadScriptName string) string {
-	u.mu.Lock()
-
-	defer u.mu.Unlock()
-
-	if sha1, okay := u.scripts[uploadScriptName]; okay {
-		return sha1
+// Set stores the script metadata for a named upload in a concurrency-safe manner.
+func (u *Uploads) Set(uploadScriptName string, sha1 string, source string) {
+	if uploadScriptName == "" || sha1 == "" || source == "" {
+		return
 	}
 
-	return ""
+	u.mu.Lock()
+
+	defer u.mu.Unlock()
+
+	u.scripts[uploadScriptName] = UploadedScript{
+		Source: source,
+		SHA1:   sha1,
+	}
 }
 
-// scriptsRepository is an instance of the Uploads struct that manages script uploads with their associated SHA-1 hashes.
+// Get retrieves script metadata associated with the given upload script name.
+func (u *Uploads) Get(uploadScriptName string) (UploadedScript, bool) {
+	u.mu.RLock()
+
+	defer u.mu.RUnlock()
+
+	uploadedScript, okay := u.scripts[uploadScriptName]
+
+	return uploadedScript, okay
+}
+
+// scriptsRepository manages custom script uploads with their associated SHA-1 hashes and sources.
 var scriptsRepository = &Uploads{
-	scripts: make(map[string]string),
+	scripts: make(map[string]UploadedScript),
 }
 
 // defaultHashTag is the default hash tag used for Redis Cluster keys in Lua scripts
