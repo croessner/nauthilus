@@ -23,6 +23,12 @@ import (
 	"github.com/croessner/nauthilus/server/model/mfa"
 )
 
+const (
+	// PassDBAdditionalAttributePluginFacts stores validated policy facts emitted
+	// by a native plugin backend result.
+	PassDBAdditionalAttributePluginFacts = "plugin_policy_facts"
+)
+
 // Done is the value for channels to finish workers
 type Done struct{}
 

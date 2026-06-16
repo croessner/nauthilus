@@ -29,8 +29,12 @@ import (
 
 var aliasDispatcher = struct {
 	sync.RWMutex
-	handler gin.HandlerFunc
+	handler       gin.HandlerFunc
+	nativeAliases map[string]string
 }{}
+
+// Option customizes custom hook handler registration.
+type Option func(*Handler)
 
 // Handler registers custom Lua hook endpoint(s).
 type Handler struct {
@@ -38,22 +42,40 @@ type Handler struct {
 	logger      *slog.Logger
 	redis       rediscli.Client
 	validator   oidcbearer.TokenValidator
+	nativeHooks []NativeHook
 }
 
 // New creates a Handler with explicit dependencies.
 // The validator may be nil when OIDC authentication is not configured.
-func New(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) *Handler {
-	return &Handler{cfgProvider: cfgProvider, logger: logger, redis: redis, validator: validator}
+func New(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator, options ...Option) *Handler {
+	handler := &Handler{cfgProvider: cfgProvider, logger: logger, redis: redis, validator: validator}
+
+	for _, option := range options {
+		if option != nil {
+			option(handler)
+		}
+	}
+
+	return handler
+}
+
+// WithNativeHooks registers native plugin hook bindings in the custom handler.
+func WithNativeHooks(hooks []NativeHook) Option {
+	return func(handler *Handler) {
+		handler.nativeHooks = append([]NativeHook(nil), hooks...)
+	}
 }
 
 // Register registers the custom hook route on the given router.
 func (h *Handler) Register(r gin.IRouter) {
-	handler := CustomRequestHandler(h.cfgProvider, h.logger, h.redis, h.validator)
+	nativeHooks := newNativeHookIndex(h.nativeHooks)
+	handler := RequestHandlerWithNative(h.cfgProvider, h.logger, h.redis, h.validator, nativeHooks)
 
 	r.Any("/custom/*hook", handler)
 
 	aliasDispatcher.Lock()
 	aliasDispatcher.handler = handler
+	aliasDispatcher.nativeAliases = nativeHooks.aliasMap()
 	aliasDispatcher.Unlock()
 }
 
@@ -66,7 +88,10 @@ func DispatchAlias(ctx *gin.Context) bool {
 
 	canonicalHook, found := hook.ResolveAliasLocation(ctx.Request.URL.Path, ctx.Request.Method)
 	if !found {
-		return false
+		canonicalHook, found = resolveNativeAliasLocation(ctx.Request.URL.Path, ctx.Request.Method)
+		if !found {
+			return false
+		}
 	}
 
 	aliasDispatcher.RLock()
@@ -80,4 +105,18 @@ func DispatchAlias(ctx *gin.Context) bool {
 	handler(ctx)
 
 	return true
+}
+
+// resolveNativeAliasLocation returns the canonical native hook path for an alias.
+func resolveNativeAliasLocation(location string, method string) (string, bool) {
+	aliasDispatcher.RLock()
+	defer aliasDispatcher.RUnlock()
+
+	if len(aliasDispatcher.nativeAliases) == 0 {
+		return "", false
+	}
+
+	canonicalLocation, found := aliasDispatcher.nativeAliases[nativeHookKey(location, method)]
+
+	return canonicalLocation, found
 }

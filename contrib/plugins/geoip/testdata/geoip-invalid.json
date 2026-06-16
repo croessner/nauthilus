@@ -1,0 +1,8 @@
+{
+  "records": [
+    {
+      "cidr": "not-a-cidr",
+      "country_iso": "ZZ"
+    }
+  ]
+}

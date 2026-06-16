@@ -82,6 +82,9 @@ const (
 
 	// SourceLua identifies Lua-registered attributes.
 	SourceLua AttributeSource = "lua"
+
+	// SourcePlugin identifies native Go plugin-registered attributes.
+	SourcePlugin AttributeSource = "plugin"
 )
 
 const (

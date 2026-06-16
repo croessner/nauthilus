@@ -80,6 +80,10 @@ func (m *mockOIDCCfg) GetIdP() *config.IdPSection {
 	}
 }
 
+func (m *mockOIDCCfg) GetPlugins() *config.PluginsSection {
+	return &config.PluginsSection{}
+}
+
 func TestFormValue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

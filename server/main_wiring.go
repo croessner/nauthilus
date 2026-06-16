@@ -42,6 +42,8 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/monitoring"
+	"github.com/croessner/nauthilus/server/pluginloader"
+	"github.com/croessner/nauthilus/server/pluginruntime"
 	"github.com/croessner/nauthilus/server/privilege"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
@@ -193,6 +195,8 @@ type runtimeLifecycleParams struct {
 // stops long-running services, performs time-bounded waits, and shuts down process-wide
 // resources.
 func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
+	var pluginRunner *pluginruntime.Runner
+
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
 			snap := p.Store.cfgProvider.Current()
@@ -202,6 +206,31 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			bootfx.InitializeInstanceInfo(snap.File, version)
 			bootfx.DebugLoadableConfig(snap.File, p.Store.logger)
+
+			pluginState, ok := pluginloader.DefaultState()
+			if !ok {
+				var err error
+
+				pluginState, err = bootfx.SetupGoPlugins(snap.File, p.Store.logger)
+				if err != nil {
+					return err
+				}
+			}
+
+			pluginRunner = pluginruntime.NewRunner(
+				pluginState,
+				pluginruntime.WithHost(pluginruntime.NewHost(
+					pluginruntime.WithServiceContext(p.Ctx),
+					pluginruntime.WithLogger(p.Store.logger),
+				)),
+				pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(p.Store.logger)),
+				pluginruntime.WithPluginConfig(snap.File.GetPlugins()),
+			)
+			pluginruntime.SetDefaultRunner(pluginRunner)
+
+			if err := pluginRunner.Start(p.Ctx); err != nil {
+				return err
+			}
 
 			if err := bootfx.SetupLuaScripts(snap.File, p.Store.logger); err != nil {
 				stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
@@ -302,6 +331,12 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			p.Cancel()
 
 			snap := p.Store.cfgProvider.Current()
+
+			if pluginRunner != nil {
+				if err := pluginRunner.Stop(stopCtx); err != nil {
+					stdlog.Printf("Unable to stop native plugin runtime. Error: %v", err)
+				}
+			}
 
 			if err := p.StatsSvc.Stop(stopCtx); err != nil {
 				stdlog.Printf("Unable to stop stats service. Error: %v", err)

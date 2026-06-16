@@ -1,0 +1,5 @@
+This is not a real MaxMind DB file.
+
+It is a path fixture used by unit tests that inject a fake database loader. The
+GeoIP plugin README explains why the repository does not include licensed
+MaxMind database contents.

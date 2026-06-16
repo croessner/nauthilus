@@ -350,6 +350,9 @@ func registerGeneratedLuaAttributes(check policyruntime.CompiledCheck, registry 
 	case checkTypeLuaSubjectSource:
 		name := normalizeIdentifierFromConfigRef("auth.policy.attribute_sources.lua.subject.", check.ConfigRef, check.Name)
 		return registerLuaSubjectSourceAttributes(name, check, registry)
+	case checkTypePluginSubject:
+		name := normalizeIdentifierFromConfigRef(pluginModuleConfigRefRoot, check.ConfigRef, check.Name)
+		return registerPluginSubjectSourceAttributes(name, check, registry)
 	default:
 		return nil
 	}
@@ -386,6 +389,51 @@ func registerLuaSubjectSourceAttributes(
 	})
 }
 
+func registerPluginSubjectSourceAttributes(
+	name string,
+	check policyruntime.CompiledCheck,
+	registry *policyregistry.AttributeRegistry,
+) error {
+	if name == "" {
+		return configPathError("auth.policy.checks."+check.Name+".config_ref", "must identify a named plugin subject source")
+	}
+
+	return registerGeneratedAttributes(registry, []policyregistry.AttributeDefinition{
+		generatedPluginSubjectAttribute(fmt.Sprintf("auth.plugin.subject.%s.rejected", name), check, true),
+		generatedPluginSubjectAttribute(fmt.Sprintf("auth.plugin.subject.%s.error", name), check, false),
+	})
+}
+
+func generatedPluginSubjectAttribute(
+	id string,
+	check policyruntime.CompiledCheck,
+	withStatusMessage bool,
+) policyregistry.AttributeDefinition {
+	definition := policyregistry.AttributeDefinition{
+		ID:            id,
+		Description:   id,
+		Stage:         policy.StageSubjectAnalysis,
+		Operations:    append([]policy.Operation(nil), check.Operations...),
+		ProducerCheck: check.Name,
+		Category:      policyregistry.AttributeCategorySubject,
+		Type:          policyregistry.AttributeTypeBool,
+		Source:        policyregistry.SourceBuiltin,
+	}
+
+	if withStatusMessage {
+		definition.Details = map[string]policyregistry.DetailDefinition{
+			detailStatusMessage: {
+				Type:        policyregistry.AttributeTypeString,
+				Sensitivity: policyregistry.DetailSensitivityPublic,
+				Purpose:     policyregistry.DetailPurposeResponseMessage,
+				MaxLength:   256,
+			},
+		}
+	}
+
+	return definition
+}
+
 func generatedLuaAttribute(
 	id string,
 	stage policy.Stage,
@@ -405,7 +453,7 @@ func generatedLuaAttribute(
 
 	if withStatusMessage {
 		definition.Details = map[string]policyregistry.DetailDefinition{
-			"status_message": {
+			detailStatusMessage: {
 				Type:        policyregistry.AttributeTypeString,
 				Sensitivity: policyregistry.DetailSensitivityPublic,
 				Purpose:     policyregistry.DetailPurposeResponseMessage,

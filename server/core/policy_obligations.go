@@ -106,7 +106,16 @@ func (e policyObligationExecutor) executeOne(ctx *gin.Context, obligation report
 	case policy.ObligationLuaPostActionEnqueue:
 		e.handlers.enqueuePost(ctx)
 	default:
-		result = observability.ResultError
+		handled, ok := e.executePluginEffect(ctx, obligation)
+		if !handled {
+			result = observability.ResultError
+
+			break
+		}
+
+		if !ok {
+			result = observability.ResultFailure
+		}
 	}
 
 	e.record(ctx, obligation.ID, time.Since(started), result)
@@ -137,6 +146,15 @@ func (e policyObligationExecutor) record(
 		"obligation", id,
 		"result", string(result),
 	)
+}
+
+func (e policyObligationExecutor) executePluginEffect(ctx *gin.Context, obligation report.EffectRequest) (bool, bool) {
+	bridge := getPluginEffectBridge()
+	if bridge == nil || e.auth == nil {
+		return false, false
+	}
+
+	return bridge.ExecutePolicyEffect(ctx, e.auth.View(), obligation)
 }
 
 func policyObligationsEnabled(ctx *gin.Context) bool {

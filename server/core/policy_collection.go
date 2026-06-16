@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
@@ -694,6 +695,7 @@ func (a *AuthState) recordPolicyBackendResult(ctx *gin.Context, authResult defin
 	}
 
 	attributes = append(attributes, backendOutcomeAttributes(a, authResult, passDBResult, details)...)
+	attributes = append(attributes, pluginBackendPolicyAttributes(a, passDBResult, details)...)
 	attributes = append(attributes, subjectAttributePolicyAttributes(a, passDBResult)...)
 
 	check := a.beginPolicyCheck(ctx, policycollection.CheckSelector{
@@ -789,6 +791,13 @@ func backendPolicySelector(runtimeBackend definitions.Backend, passDBResult *Pas
 	switch backendType {
 	case definitions.BackendLua:
 		return policy.CheckTypeLuaBackend, "lua_backend", "auth.backends.lua.backend"
+	case definitions.BackendPlugin:
+		name := definitions.BackendPluginName
+		if passDBResult != nil && passDBResult.BackendName != "" {
+			name = passDBResult.BackendName
+		}
+
+		return policy.CheckTypePluginBackend, name, "auth.backends.order"
 	default:
 		return policy.CheckTypeLDAPBackend, "ldap_backend", "auth.backends.ldap"
 	}
@@ -825,6 +834,41 @@ func backendOutcomeAttributes(
 
 	found := passDBResult != nil && passDBResult.UserFound
 	attributes = append(attributes, policycollection.BoolAttribute(policy.AttributeIdentityFound, policy.StageAuthBackend, operation, found, details))
+
+	return attributes
+}
+
+// pluginBackendPolicyAttributes emits policy facts returned by native plugin backends.
+func pluginBackendPolicyAttributes(
+	auth *AuthState,
+	passDBResult *PassDBResult,
+	details map[string]policycollection.DetailValue,
+) []policycollection.AttributeValue {
+	if auth == nil || passDBResult == nil || passDBResult.Backend != definitions.BackendPlugin {
+		return nil
+	}
+
+	facts, ok := passDBResult.AdditionalAttributes[PassDBAdditionalAttributePluginFacts].([]pluginapi.PolicyFact)
+	if !ok || len(facts) == 0 {
+		return nil
+	}
+
+	operation := auth.policyOperation()
+	attributes := make([]policycollection.AttributeValue, 0, len(facts))
+
+	for _, fact := range facts {
+		if fact.Attribute == "" {
+			continue
+		}
+
+		attributes = append(attributes, policycollection.AttributeValue{
+			ID:        fact.Attribute,
+			Stage:     policy.StageAuthBackend,
+			Operation: operation,
+			Value:     fact.Value,
+			Details:   details,
+		})
+	}
 
 	return attributes
 }

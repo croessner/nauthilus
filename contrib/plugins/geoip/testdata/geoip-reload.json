@@ -1,0 +1,12 @@
+{
+  "records": [
+    {
+      "cidr": "203.0.113.0/24",
+      "country_iso": "US",
+      "country_name": "United States",
+      "city_name": "New York",
+      "asn": 64510,
+      "asn_org": "Example Reloaded Network"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# Required native plugin with checksum verification.
+plugins:
+  verification_policy: checksum_required
+  allowed_dirs:
+    - /usr/lib/nauthilus/plugins
+  modules:
+    - name: geoip
+      type: go
+      path: /usr/lib/nauthilus/plugins/geoip.so
+      checksum: sha256:replace-with-artifact-sha256
+      optional: false
+      config:
+        database_path: /var/lib/nauthilus/geoip.json
+        refresh_interval: 1h
+        lookup_timeout: 50ms

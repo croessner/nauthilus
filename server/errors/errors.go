@@ -155,6 +155,9 @@ var (
 	// connection timed out). Callers should treat this as a temporary failure and
 	// avoid mapping it to "user not found".
 	ErrLDAPPoolExhausted = NewDetailedError("ldap_pool_exhausted")
+	// ErrBackendTemporaryFailure indicates that a backend could not make an auth
+	// decision because of a temporary technical failure.
+	ErrBackendTemporaryFailure = NewDetailedError("backend_temporary_failure")
 )
 
 // lua.

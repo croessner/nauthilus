@@ -33,6 +33,7 @@ import (
 const (
 	policyAuthorityTestI18NKey      = "auth.policy.company.account_blocked"
 	policyAuthorityTestI18NFallback = "Login failed because the account is locked."
+	policyAuthorityPluginEffectID   = "customer.sync_obligation"
 )
 
 func TestAuthBoundaryDefaultSetSelectsPreAuthDecisionDuringEnvironmentHandling(t *testing.T) {
@@ -453,6 +454,70 @@ func TestPolicyObligationExecutorSkipsMutableEffectsWithoutPolicyContext(t *test
 	}
 }
 
+func TestPolicyObligationExecutorRunsPluginEffectBridge(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    108,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	_ = auth.requestPolicyContext(ctx)
+
+	bridge := &recordingPluginEffectBridge{ok: true}
+	previous := getPluginEffectBridge()
+
+	RegisterPluginEffectBridge(bridge)
+
+	t.Cleanup(func() {
+		RegisterPluginEffectBridge(previous)
+	})
+
+	newPolicyObligationExecutor(auth).Execute(ctx, &report.FinalDecision{
+		Obligations: []report.EffectRequest{
+			{ID: policyAuthorityPluginEffectID, Args: map[string]any{"message": "hello"}},
+		},
+	})
+
+	if bridge.calls != 1 {
+		t.Fatalf("plugin effect calls = %d, want 1", bridge.calls)
+	}
+
+	if bridge.last.ID != policyAuthorityPluginEffectID {
+		t.Fatalf("plugin effect = %q, want %s", bridge.last.ID, policyAuthorityPluginEffectID)
+	}
+}
+
+func TestPolicyObligationExecutorRecordsPluginEffectFailure(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    109,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+	_ = auth.requestPolicyContext(ctx)
+
+	bridge := &recordingPluginEffectBridge{ok: false}
+	previous := getPluginEffectBridge()
+
+	RegisterPluginEffectBridge(bridge)
+
+	t.Cleanup(func() {
+		RegisterPluginEffectBridge(previous)
+	})
+
+	newPolicyObligationExecutor(auth).Execute(ctx, &report.FinalDecision{
+		Obligations: []report.EffectRequest{{ID: policyAuthorityPluginEffectID}},
+	})
+
+	if bridge.calls != 1 {
+		t.Fatalf("plugin effect calls = %d, want 1", bridge.calls)
+	}
+}
+
 func TestPolicyBruteForceLuaActionPreservesCommonRequestShape(t *testing.T) {
 	const ruleName = "existing_block"
 
@@ -604,6 +669,19 @@ type recordedActionDispatch struct {
 	common      recordedCommonRequest
 	environment string
 	action      definitions.LuaAction
+}
+
+type recordingPluginEffectBridge struct {
+	last  report.EffectRequest
+	calls int
+	ok    bool
+}
+
+func (b *recordingPluginEffectBridge) ExecutePolicyEffect(_ *gin.Context, _ *StateView, effect report.EffectRequest) (bool, bool) {
+	b.calls++
+	b.last = effect
+
+	return true, b.ok
 }
 
 type recordedCommonRequest struct {

@@ -55,14 +55,23 @@ const (
 	// CheckTypeLuaEnvironment identifies one named Lua environment attribute source.
 	CheckTypeLuaEnvironment = "lua.environment"
 
+	// CheckTypePluginEnvironment identifies one named native plugin environment attribute source.
+	CheckTypePluginEnvironment = "plugin.environment"
+
 	// CheckTypeLDAPBackend identifies LDAP backend evaluation.
 	CheckTypeLDAPBackend = "backend.ldap"
 
 	// CheckTypeLuaBackend identifies Lua backend evaluation.
 	CheckTypeLuaBackend = "backend.lua"
 
+	// CheckTypePluginBackend identifies native plugin backend evaluation.
+	CheckTypePluginBackend = "backend.plugin"
+
 	// CheckTypeLuaSubjectSource identifies one named Lua subject attribute source.
 	CheckTypeLuaSubjectSource = "lua.subject"
+
+	// CheckTypePluginSubjectSource identifies one named native plugin subject attribute source.
+	CheckTypePluginSubjectSource = "plugin.subject"
 
 	// CheckTypeAccountProvider identifies account-provider evaluation.
 	CheckTypeAccountProvider = "backend.account_provider"

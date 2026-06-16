@@ -34,90 +34,153 @@ import (
 // CustomRequestHandler mirrors the original logic for executing custom Lua hooks.
 // The validator may be nil when OIDC authentication is not configured.
 func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client, validator oidcbearer.TokenValidator) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		guid := ctx.GetString(definitions.CtxGUIDKey)
-		snap := cfgProvider.Current()
+	return RequestHandlerWithNative(cfgProvider, logger, redis, validator, nil)
+}
 
-		// Check if custom hooks are enabled
-		if snap.File.GetServer().GetEndpoint().IsCustomHooksDisabled() {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				snap.File,
-				logger,
-				definitions.DbgHTTP,
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Custom hooks are disabled",
-			)
-			ctx.AbortWithStatus(http.StatusNotFound)
+// RequestHandlerWithNative executes native plugin hooks before falling
+// back to the existing Lua custom hook implementation.
+func RequestHandlerWithNative(
+	cfgProvider configfx.Provider,
+	logger *slog.Logger,
+	redis rediscli.Client,
+	validator oidcbearer.TokenValidator,
+	nativeHooks *nativeHookIndex,
+) gin.HandlerFunc {
+	handler := customRequestHandler{
+		cfgProvider: cfgProvider,
+		logger:      logger,
+		redis:       redis,
+		validator:   validator,
+		nativeHooks: nativeHooks,
+	}
 
-			return
-		}
+	return handler.serve
+}
 
-		// Get the canonical hook name and method from the request.
-		hookName := hook.ResolveRequestHook(ctx)
-		hookMethod := ctx.Request.Method
+type customRequestHandler struct {
+	cfgProvider configfx.Provider
+	logger      *slog.Logger
+	redis       rediscli.Client
+	validator   oidcbearer.TokenValidator
+	nativeHooks *nativeHookIndex
+}
 
+// serve dispatches one custom hook request through native plugins or Lua.
+func (h customRequestHandler) serve(ctx *gin.Context) {
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+	snap := h.cfgProvider.Current()
+
+	if h.customHooksDisabled(ctx, snap, guid) {
+		return
+	}
+
+	hookName := hook.ResolveRequestHook(ctx)
+	hookMethod := ctx.Request.Method
+
+	h.logHookProcessing(ctx, snap, guid, hookName, hookMethod)
+
+	if h.nativeHooks.serve(ctx, snap.File, h.logger, h.validator, hookName, hookMethod) {
+		return
+	}
+
+	if !hook.HasRequiredScopes(ctx, snap.File, h.logger, h.validator, hookName, hookMethod) {
+		return
+	}
+
+	h.logHookAuthorized(ctx, snap, guid, hookName, hookMethod)
+	h.runLuaHook(ctx, snap, guid, hookName, hookMethod)
+}
+
+// customHooksDisabled aborts requests when the endpoint is disabled.
+func (h customRequestHandler) customHooksDisabled(ctx *gin.Context, snap configfx.Snapshot, guid string) bool {
+	if !snap.File.GetServer().GetEndpoint().IsCustomHooksDisabled() {
+		return false
+	}
+
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		snap.File,
+		h.logger,
+		definitions.DbgHTTP,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "Custom hooks are disabled",
+	)
+	ctx.AbortWithStatus(http.StatusNotFound)
+
+	return true
+}
+
+// logHookProcessing records the selected custom hook before dispatch.
+func (h customRequestHandler) logHookProcessing(ctx *gin.Context, snap configfx.Snapshot, guid string, hookName string, hookMethod string) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		snap.File,
+		h.logger,
+		definitions.DbgHTTP,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Processing custom hook: %s %s", hookMethod, hookName),
+	)
+}
+
+// logHookAuthorized records that scope checks allowed Lua hook execution.
+func (h customRequestHandler) logHookAuthorized(ctx *gin.Context, snap configfx.Snapshot, guid string, hookName string, hookMethod string) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		snap.File,
+		h.logger,
+		definitions.DbgHTTP,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("User has required scopes for hook: %s %s, executing hook", hookMethod, hookName),
+	)
+}
+
+// runLuaHook executes the Lua hook and writes the legacy JSON response when needed.
+func (h customRequestHandler) runLuaHook(ctx *gin.Context, snap configfx.Snapshot, guid string, hookName string, hookMethod string) {
+	result, err := hook.RunLuaHook(ctx, snap.File, h.logger, h.redis)
+	if err != nil {
+		_ = level.Error(h.logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Error executing hook: %s %s", hookMethod, hookName),
+			definitions.LogKeyError, err,
+		)
+		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
+
+		return
+	}
+
+	if result == nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
 			snap.File,
-			logger,
+			h.logger,
 			definitions.DbgHTTP,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Processing custom hook: %s %s", hookMethod, hookName),
+			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d written: %t encoding: %s",
+				hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size(), ctx.Writer.Written(), ctx.Writer.Header().Get("Content-Encoding")),
 		)
 
-		// Check if the user has the required scopes for this hook.
-		// HasRequiredScopes handles the full auth flow (token extraction, validation,
-		// scope checking) and aborts the request with the appropriate status on denial.
-		if !hook.HasRequiredScopes(ctx, snap.File, logger, validator, hookName, hookMethod) {
-			return
-		}
+		return
+	}
 
-		util.DebugModuleWithCfg(
-			ctx.Request.Context(),
-			snap.File,
-			logger,
-			definitions.DbgHTTP,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("User has required scopes for hook: %s %s, executing hook", hookMethod, hookName),
-		)
+	h.writeLuaHookResult(ctx, snap, guid, hookName, hookMethod, result)
+}
 
-		// Execute the hook
-		if result, err := hook.RunLuaHook(ctx, snap.File, logger, redis); err != nil {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Error executing hook: %s %s", hookMethod, hookName),
-				definitions.LogKeyError, err,
-			)
-			ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
-		} else if result != nil {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				snap.File,
-				logger,
-				definitions.DbgHTTP,
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
-			)
+// writeLuaHookResult writes the JSON response unless Lua already wrote one.
+func (h customRequestHandler) writeLuaHookResult(ctx *gin.Context, snap configfx.Snapshot, guid string, hookName string, hookMethod string, result any) {
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		snap.File,
+		h.logger,
+		definitions.DbgHTTP,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
+	)
 
-			// If Lua already wrote the response, do not override with JSON
-			if ctx.GetBool(definitions.CtxResponseWrittenKey) || ctx.Writer.Written() {
-				return
-			}
+	if ctx.GetBool(definitions.CtxResponseWrittenKey) || ctx.Writer.Written() {
+		return
+	}
 
-			if ctx.Writer != nil {
-				ctx.JSON(http.StatusOK, result)
-			}
-		} else {
-			util.DebugModuleWithCfg(
-				ctx.Request.Context(),
-				snap.File,
-				logger,
-				definitions.DbgHTTP,
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d written: %t encoding: %s",
-					hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size(), ctx.Writer.Written(), ctx.Writer.Header().Get("Content-Encoding")),
-			)
-		}
+	if ctx.Writer != nil {
+		ctx.JSON(http.StatusOK, result)
 	}
 }

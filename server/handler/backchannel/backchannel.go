@@ -18,9 +18,11 @@ package backchannel
 import (
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 
+	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/asyncjobs"
@@ -33,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/devui"
 	"github.com/croessner/nauthilus/server/handler/mfa_backchannel"
 	"github.com/croessner/nauthilus/server/idp"
+	"github.com/croessner/nauthilus/server/pluginruntime"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
@@ -240,11 +243,70 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	hookGroup := router.Group("/api/v1")
 	hookGroup.Use(mdlua.LuaContextMiddleware())
 
-	custom.New(deps.CfgProvider, deps.Logger, deps.Redis, nauthilusIdP).Register(hookGroup)
+	custom.New(
+		deps.CfgProvider,
+		deps.Logger,
+		deps.Redis,
+		nauthilusIdP,
+		custom.WithNativeHooks(nativeHookBindings()),
+	).Register(hookGroup)
 
 	if deps.Env != nil && deps.Env.GetDevMode() && authenticatedGroup != nil {
 		devui.New(deps).Register(authenticatedGroup)
 	}
 
 	return nil
+}
+
+// nativeHookBindings adapts registered native plugin hooks into custom routes.
+func nativeHookBindings() []custom.NativeHook {
+	runner, ok := pluginruntime.DefaultRunner()
+	if !ok {
+		return nil
+	}
+
+	components := runner.Hooks()
+	if len(components) == 0 {
+		return nil
+	}
+
+	hooks := make([]custom.NativeHook, 0, len(components))
+	for _, component := range components {
+		hooks = append(hooks, custom.NativeHook{
+			Runner:        runner,
+			BuildRequest:  nativeHookRequest,
+			Descriptor:    component.HookDescriptor,
+			QualifiedName: component.QualifiedName,
+			ModuleName:    component.ModuleName,
+			ComponentName: component.LocalName,
+		})
+	}
+
+	return hooks
+}
+
+// nativeHookRequest builds the public plugin hook request from the Gin boundary.
+func nativeHookRequest(
+	ctx *gin.Context,
+	cfg config.File,
+	_ pluginapi.HookDescriptor,
+	caller custom.NativeHookCaller,
+	body []byte,
+) (pluginapi.HookRequest, error) {
+	clientPort := ""
+	if ctx != nil && ctx.Request != nil {
+		_, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
+	}
+
+	return pluginruntime.NewHookRequestFromHTTPRequest(ctx.Request, body, pluginruntime.HookRequestMetadata{
+		Session:       ctx.GetString(definitions.CtxGUIDKey),
+		Service:       "custom_hook",
+		Protocol:      "http",
+		Username:      caller.Subject,
+		ClientIP:      ctx.ClientIP(),
+		ClientPort:    clientPort,
+		ClientHost:    ctx.Request.Host,
+		OIDCCID:       caller.ClientID,
+		Authenticated: caller.Authenticated,
+	}, pluginruntime.WithSnapshotConfig(cfg)), nil
 }

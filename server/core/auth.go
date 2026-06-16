@@ -1561,6 +1561,22 @@ func (a *AuthState) SetAttributeIfAbsent(name string, value any) {
 	a.Attributes.attributesMu.Unlock()
 }
 
+// SetAttributeValues replaces one attribute with a defensive copy of values.
+func (a *AuthState) SetAttributeValues(name string, values []any) {
+	if a == nil || name == "" {
+		return
+	}
+
+	a.Attributes.attributesMu.Lock()
+	defer a.Attributes.attributesMu.Unlock()
+
+	if a.Attributes.Attributes == nil {
+		a.Attributes.Attributes = make(bktype.AttributeMapping)
+	}
+
+	a.Attributes.Attributes[name] = append([]any(nil), values...)
+}
+
 // ReplaceAllAttributes replaces the entire Attributes map with a deep copy of the provided map, under write lock.
 // Passing nil will set Attributes to nil.
 func (a *AuthState) ReplaceAllAttributes(m bktype.AttributeMapping) {
@@ -2893,6 +2909,8 @@ func (a *AuthState) appendConfiguredBackend(plan *backendExecutionPlan, backendT
 		a.appendTestBackend(plan, backendType.GetName())
 	case definitions.BackendRemote:
 		a.appendRemoteBackend(plan, backendType.GetName())
+	case definitions.BackendPlugin:
+		a.appendPluginBackend(plan, backendType.GetName())
 	case definitions.BackendUnknown:
 	case definitions.BackendLocalCache:
 	}
@@ -2933,6 +2951,16 @@ func (a *AuthState) appendRemoteBackend(plan *backendExecutionPlan, name string)
 	}
 
 	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendRemote, mgr.PassDB)
+}
+
+// appendPluginBackend appends a registered native plugin backend manager.
+func (a *AuthState) appendPluginBackend(plan *backendExecutionPlan, name string) {
+	mgr := a.GetBackendManager(definitions.BackendPlugin, name)
+	if mgr == nil {
+		return
+	}
+
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendPlugin, mgr.PassDB)
 }
 
 // appendBackend appends a new PassDBMap object to the passDBs slice.
@@ -3105,7 +3133,7 @@ type backendExecutionPlan struct {
 }
 
 func (p backendExecutionPlan) positivePasswordCacheEnabled(usedBackend definitions.Backend) bool {
-	if !p.hasPositivePasswordCache || usedBackend == definitions.BackendRemote {
+	if !p.hasPositivePasswordCache || usedBackend == definitions.BackendRemote || usedBackend == definitions.BackendPlugin {
 		return false
 	}
 
@@ -3373,6 +3401,12 @@ func (a *AuthState) SubjectLua(ctx *gin.Context, passDBResult *PassDBResult) def
 
 	if lf := getLuaSubject(); lf != nil {
 		res := lf.Analyze(ctx, a.View(), passDBResult)
+		if bridge := getPluginSubjectSourceBridge(); bridge != nil {
+			if next, handled := bridge.Analyze(ctx, a.View(), passDBResult, res); handled {
+				res = next
+			}
+		}
+
 		lspan.SetAttributes(attribute.String("result", string(res)))
 
 		return res

@@ -347,6 +347,9 @@ type File interface {
 
 	// GetIdP returns the IdPSection object containing configuration for the internal Identity Provider.
 	GetIdP() *IdPSection
+
+	// GetPlugins returns native plugin loader configuration.
+	GetPlugins() *PluginsSection
 }
 
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
@@ -357,6 +360,7 @@ type FileSettings struct {
 	Storage       *StorageSection       `mapstructure:"storage" validate:"omitempty"`
 	Auth          *AuthSection          `mapstructure:"auth" validate:"omitempty"`
 	Identity      *IdentitySection      `mapstructure:"identity" validate:"omitempty"`
+	Plugins       *PluginsSection       `mapstructure:"plugins" validate:"omitempty"`
 
 	Server                  *ServerSection           `mapstructure:"-" validate:"-"`
 	RBLs                    *RBLSection              `mapstructure:"-" validate:"-"`
@@ -464,6 +468,15 @@ func (f *FileSettings) GetLDAP() *LDAPSection {
 	}
 
 	return f.LDAP
+}
+
+// GetPlugins returns the native plugin loader configuration.
+func (f *FileSettings) GetPlugins() *PluginsSection {
+	if f == nil || f.Plugins == nil {
+		return &PluginsSection{}
+	}
+
+	return f.Plugins
 }
 
 // GetNauthilusAuthorityClients returns outbound authority client configs.
@@ -2423,6 +2436,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateTLSSettings,
 		f.validateRemoteAuthorityClients,
 		f.validateRemoteBackends,
+		f.validatePlugins,
 		f.validateGRPCAuthServer,
 		f.validateMetricsEndpointAuth,
 		f.validateOpenAPIValidation,
@@ -2466,6 +2480,15 @@ func (f *FileSettings) validate() (err error) {
 
 func (f *FileSettings) validateGRPCAuthServer() error {
 	return ValidateGRPCAuthServerConfig(f)
+}
+
+// validatePlugins validates native plugin loader configuration.
+func (f *FileSettings) validatePlugins() error {
+	if f == nil {
+		return nil
+	}
+
+	return ValidatePlugins(f.Plugins)
 }
 
 func (f *FileSettings) validateMetricsEndpointAuth() error {

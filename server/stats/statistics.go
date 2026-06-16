@@ -130,6 +130,13 @@ var (
 	initMetrics sync.Once
 )
 
+const (
+	metricMethodLabel           = "method"
+	pluginCallMetricResultLabel = "result"
+)
+
+var pluginCallMetricLabels = []string{"module", "component", "extension_point", metricMethodLabel, pluginCallMetricResultLabel}
+
 // Metrics ist ein Interface, das alle Getter-Methoden für Metriken definiert.
 type Metrics interface {
 	// GetInstanceInfo provides metrics about the version information using a GaugeVec with a "version" label.
@@ -299,6 +306,12 @@ type Metrics interface {
 
 	// GetAuthFSMTransitionsTotal tracks auth FSM transitions labeled by from/event/to.
 	GetAuthFSMTransitionsTotal() *prometheus.CounterVec
+
+	// GetPluginCallsTotal tracks host-invoked native plugin calls with bounded component labels.
+	GetPluginCallsTotal() *prometheus.CounterVec
+
+	// GetPluginCallDurationSeconds tracks native plugin call duration with bounded component labels.
+	GetPluginCallDurationSeconds() *prometheus.HistogramVec
 }
 
 type metricsImpl struct {
@@ -359,6 +372,8 @@ type metricsImpl struct {
 	idpConsentTotal           *prometheus.CounterVec
 	idpMfaOperationsTotal     *prometheus.CounterVec
 	authFSMTransitionsTotal   *prometheus.CounterVec
+	pluginCallsTotal          *prometheus.CounterVec
+	pluginCallDurationSeconds *prometheus.HistogramVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -639,6 +654,16 @@ func (m *metricsImpl) GetIdpMfaOperationsTotal() *prometheus.CounterVec {
 // GetAuthFSMTransitionsTotal returns the authFSMTransitionsTotal field.
 func (m *metricsImpl) GetAuthFSMTransitionsTotal() *prometheus.CounterVec {
 	return m.authFSMTransitionsTotal
+}
+
+// GetPluginCallsTotal returns the native plugin call counter.
+func (m *metricsImpl) GetPluginCallsTotal() *prometheus.CounterVec {
+	return m.pluginCallsTotal
+}
+
+// GetPluginCallDurationSeconds returns the native plugin call duration histogram.
+func (m *metricsImpl) GetPluginCallDurationSeconds() *prometheus.HistogramVec {
+	return m.pluginCallDurationSeconds
 }
 
 func NewMetrics() Metrics {
@@ -989,7 +1014,7 @@ func NewMetrics() Metrics {
 			prometheus.CounterOpts{
 				Name: "idp_mfa_operations_total",
 				Help: "The total number of IdP MFA operations",
-			}, []string{"type", "method", "status"},
+			}, []string{"type", metricMethodLabel, "status"},
 		),
 		authFSMTransitionsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
@@ -997,6 +1022,21 @@ func NewMetrics() Metrics {
 				Help: "Total number of auth FSM transitions",
 			},
 			[]string{"from", "event", "to"},
+		),
+		pluginCallsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "plugin_calls_total",
+				Help: "Total number of host-invoked native plugin calls",
+			},
+			pluginCallMetricLabels,
+		),
+		pluginCallDurationSeconds: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "plugin_call_duration_seconds",
+				Help:    "Duration of host-invoked native plugin calls",
+				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
+			},
+			pluginCallMetricLabels,
 		),
 	}
 }

@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/environment"
 	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/lualib/subject"
+	"github.com/croessner/nauthilus/server/pluginloader"
 	"github.com/croessner/nauthilus/server/policy/compiler"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -227,13 +228,6 @@ func SetupConfiguration() error {
 		return fmt.Errorf("unable to load config file: %w", err)
 	}
 
-	if err := compiler.CompileAndActivate(context.Background(), policyruntime.DefaultStore(), compiler.NewCompiler(), compiler.Input{
-		Config:     file,
-		Generation: 1,
-	}); err != nil {
-		return fmt.Errorf("unable to build policy snapshot: %w", err)
-	}
-
 	log.SetupLogging(
 		file.GetServer().GetLog().GetLogLevel(),
 		file.GetServer().GetLog().IsLogFormatJSON(),
@@ -247,7 +241,44 @@ func SetupConfiguration() error {
 
 	stdlog.SetOutput(&slogStdWriter{logger: log.GetLogger()})
 
+	if _, err := SetupGoPlugins(file, log.GetLogger()); err != nil {
+		return err
+	}
+
+	if err := compiler.CompileAndActivate(context.Background(), policyruntime.DefaultStore(), compiler.NewCompiler(), compiler.Input{
+		Config:     file,
+		Generation: 1,
+	}); err != nil {
+		return fmt.Errorf("unable to build policy snapshot: %w", err)
+	}
+
 	return nil
+}
+
+// SetupGoPlugins verifies native plugin artifacts and registers module descriptors.
+func SetupGoPlugins(cfg config.File, logger *slog.Logger) (*pluginloader.State, error) {
+	var plugins *config.PluginsSection
+	if cfg != nil {
+		plugins = cfg.GetPlugins()
+	}
+
+	verified, err := pluginloader.NewVerifier(pluginloader.WithVerificationLogger(logger)).Verify(plugins)
+	if err != nil {
+		return nil, fmt.Errorf("verify native plugin artifacts: %w", err)
+	}
+
+	state, err := pluginloader.NewLoader(pluginloader.WithLogger(logger)).Load(verified)
+	if err != nil {
+		return state, fmt.Errorf("load native plugin modules: %w", err)
+	}
+
+	if err := pluginloader.ValidateOrderedPluginBackends(cfg, state); err != nil {
+		return state, fmt.Errorf("validate native plugin backend references: %w", err)
+	}
+
+	pluginloader.SetDefaultState(state)
+
+	return state, nil
 }
 
 // SetupLuaScripts pre-compiles Lua scripts for environment sources, subject sources, init scripts, and hooks.

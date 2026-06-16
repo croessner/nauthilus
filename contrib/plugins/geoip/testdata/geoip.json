@@ -1,0 +1,20 @@
+{
+  "records": [
+    {
+      "cidr": "203.0.113.0/24",
+      "country_iso": "DE",
+      "country_name": "Germany",
+      "city_name": "Berlin",
+      "asn": 64500,
+      "asn_org": "Example Access GmbH"
+    },
+    {
+      "cidr": "2001:db8:100::/48",
+      "country_iso": "NL",
+      "country_name": "Netherlands",
+      "city_name": "Amsterdam",
+      "asn": 64520,
+      "asn_org": "Example IPv6 Network"
+    }
+  ]
+}

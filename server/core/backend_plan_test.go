@@ -117,6 +117,17 @@ func backendExecutionPlanPositivePasswordCacheCases() []backendExecutionPlanPosi
 			usedBackend: definitions.BackendRemote,
 		},
 		{
+			name: "disabled for plugin backend",
+			plan: backendExecutionPlan{
+				positions: map[definitions.Backend]int{
+					definitions.BackendCache:  0,
+					definitions.BackendPlugin: 1,
+				},
+				hasPositivePasswordCache: true,
+			},
+			usedBackend: definitions.BackendPlugin,
+		},
+		{
 			name: "disabled for backend missing from plan",
 			plan: backendExecutionPlan{
 				positions: map[definitions.Backend]int{

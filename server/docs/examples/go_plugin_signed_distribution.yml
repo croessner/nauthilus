@@ -1,0 +1,22 @@
+# Signed distribution plugin metadata.
+#
+# The signature is verified before plugin.Open using the trusted signer public key.
+plugins:
+  verification_policy: signature_required
+  allowed_dirs:
+    - /usr/lib/nauthilus/plugins
+  trust:
+    signers:
+      - id: nauthilus-plugin-build-key-2026
+        format: minisign
+        public_key_file: /usr/share/nauthilus/plugin-keys/build-2026.pub
+  modules:
+    - name: geoip
+      type: go
+      path: /usr/lib/nauthilus/plugins/geoip.so
+      signature: minisign:/usr/lib/nauthilus/plugins/geoip.so.minisig
+      signer: nauthilus-plugin-build-key-2026
+      optional: false
+      config:
+        database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
+        database_format: mmdb

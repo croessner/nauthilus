@@ -1,0 +1,542 @@
+package custom
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
+	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/middleware/oidcbearer"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
+	"golang.org/x/net/http/httpguts"
+)
+
+const (
+	defaultNativeHookMaxBodyBytes int64 = 1 << 20
+	nativeHookErrorField               = "error"
+	nativeHookHeaderConnection         = "Connection"
+	nativeHookHeaderCSP                = "Content-Security-Policy"
+	nativeHookBodyTooLarge             = "hook request body too large"
+)
+
+var nativeHookHopByHopHeaders = map[string]struct{}{
+	nativeHookHeaderConnection: {},
+	"Keep-Alive":          {},
+	"Proxy-Authenticate":  {},
+	"Proxy-Authorization": {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+}
+
+var nativeHookHostOwnedHeaders = map[string]struct{}{
+	"Access-Control-Allow-Credentials":    {},
+	"Access-Control-Allow-Headers":        {},
+	"Access-Control-Allow-Methods":        {},
+	"Access-Control-Allow-Origin":         {},
+	"Access-Control-Expose-Headers":       {},
+	"Access-Control-Max-Age":              {},
+	"Alt-Svc":                             {},
+	"Content-Length":                      {},
+	nativeHookHeaderCSP:                   {},
+	"Content-Security-Policy-Report-Only": {},
+	"Cross-Origin-Embedder-Policy":        {},
+	"Cross-Origin-Opener-Policy":          {},
+	"Cross-Origin-Resource-Policy":        {},
+	"Date":                                {},
+	"Permissions-Policy":                  {},
+	"Referrer-Policy":                     {},
+	"Server":                              {},
+	"Strict-Transport-Security":           {},
+	"X-Content-Type-Options":              {},
+	"X-Dns-Prefetch-Control":              {},
+	"X-Frame-Options":                     {},
+	"X-Permitted-Cross-Domain-Policies":   {},
+}
+
+// NativeHookRunner invokes one native plugin hook through the runtime boundary.
+type NativeHookRunner interface {
+	ServeHook(context.Context, string, pluginapi.HookRequest) (pluginapi.HookResponse, error)
+}
+
+// NativeHookRequestBuilder builds the public hook request after host validation.
+type NativeHookRequestBuilder func(*gin.Context, config.File, pluginapi.HookDescriptor, NativeHookCaller, []byte) (pluginapi.HookRequest, error)
+
+// NativeHookCaller contains authenticated caller metadata for request building.
+type NativeHookCaller struct {
+	Subject       string
+	ClientID      string
+	Authenticated bool
+}
+
+// NativeHook binds one registered plugin hook to the custom HTTP handler.
+type NativeHook struct {
+	Runner        NativeHookRunner
+	BuildRequest  NativeHookRequestBuilder
+	Descriptor    pluginapi.HookDescriptor
+	QualifiedName string
+	ModuleName    string
+	ComponentName string
+}
+
+type nativeHookIndex struct {
+	hooks   map[string]NativeHook
+	aliases map[string]string
+}
+
+// newNativeHookIndex indexes valid native hook bindings by method and path.
+func newNativeHookIndex(hooks []NativeHook) *nativeHookIndex {
+	index := &nativeHookIndex{
+		hooks:   make(map[string]NativeHook, len(hooks)),
+		aliases: make(map[string]string),
+	}
+
+	for _, hook := range hooks {
+		if hook.Runner == nil || hook.BuildRequest == nil || hook.QualifiedName == "" {
+			continue
+		}
+
+		path := normalizeNativeHookPath(hook.Descriptor.Path)
+		if path == "" || strings.TrimSpace(hook.Descriptor.Method) == "" {
+			continue
+		}
+
+		hook.Descriptor.Path = path
+		key := nativeHookKey(path, hook.Descriptor.Method)
+		index.hooks[key] = hook
+
+		if alias := normalizeNativeHookPath(hook.Descriptor.Alias); alias != "" {
+			index.aliases[nativeHookKey(alias, hook.Descriptor.Method)] = path
+		}
+	}
+
+	return index
+}
+
+// aliasMap returns a detached copy of native hook aliases.
+func (i *nativeHookIndex) aliasMap() map[string]string {
+	if i == nil || len(i.aliases) == 0 {
+		return nil
+	}
+
+	aliases := make(map[string]string, len(i.aliases))
+	for key, value := range i.aliases {
+		aliases[key] = value
+	}
+
+	return aliases
+}
+
+// serve executes a matching native hook and reports whether the request was handled.
+func (i *nativeHookIndex) serve(
+	ctx *gin.Context,
+	cfg config.File,
+	logger *slog.Logger,
+	validator oidcbearer.TokenValidator,
+	location string,
+	method string,
+) bool {
+	hook, found := i.lookup(location, method)
+	if !found {
+		return false
+	}
+
+	traceCtx, span := startNativeHookSpan(ctx, hook)
+	ctx.Request = ctx.Request.WithContext(traceCtx)
+
+	defer span.End()
+
+	if !authorizeNativeHook(ctx, cfg, validator, hook.Descriptor) {
+		span.SetAttributes(attribute.Int("http.status_code", ctx.Writer.Status()))
+
+		return true
+	}
+
+	body, ok := readNativeHookBody(ctx, hook.Descriptor.MaxBodyBytes)
+	if !ok {
+		span.SetAttributes(attribute.Int("http.status_code", ctx.Writer.Status()))
+
+		return true
+	}
+
+	request, err := hook.BuildRequest(ctx, cfg, hook.Descriptor, nativeHookCaller(ctx), body)
+	if err != nil {
+		recordNativeHookFailure(ctx, logger, hook, span, "native plugin hook request build failed", http.StatusInternalServerError)
+
+		return true
+	}
+
+	callCtx, cancel := nativeHookCallContext(ctx.Request.Context(), hook.Descriptor.Timeout)
+	defer cancel()
+
+	response, err := hook.Runner.ServeHook(callCtx, hook.QualifiedName, request)
+	if err != nil {
+		status := nativeHookErrorStatus(err)
+		recordNativeHookFailure(ctx, logger, hook, span, "native plugin hook failed", status)
+
+		return true
+	}
+
+	if err := writeNativeHookResponse(ctx, response); err != nil {
+		recordNativeHookFailure(ctx, logger, hook, span, "native plugin hook response rejected", http.StatusBadGateway)
+
+		return true
+	}
+
+	span.SetAttributes(attribute.Int("http.status_code", nativeHookStatusCode(response.StatusCode)))
+
+	return true
+}
+
+// lookup returns a native hook by normalized method and location.
+func (i *nativeHookIndex) lookup(location string, method string) (NativeHook, bool) {
+	if i == nil || len(i.hooks) == 0 {
+		return NativeHook{}, false
+	}
+
+	hook, found := i.hooks[nativeHookKey(location, method)]
+
+	return hook, found
+}
+
+// startNativeHookSpan starts a host-owned span for native hook execution.
+func startNativeHookSpan(ctx *gin.Context, hook NativeHook) (context.Context, oteltrace.Span) {
+	requestCtx := context.Background()
+	if ctx != nil && ctx.Request != nil {
+		requestCtx = ctx.Request.Context()
+	}
+
+	tracer := monittrace.New("nauthilus/plugin/hooks")
+	nextCtx, span := tracer.Start(requestCtx, "plugin.hook.serve",
+		attribute.String("plugin.module", hook.ModuleName),
+		attribute.String("plugin.component", hook.ComponentName),
+		attribute.String("plugin.hook", hook.QualifiedName),
+	)
+
+	return nextCtx, span
+}
+
+// authorizeNativeHook enforces descriptor auth and scope before plugin invocation.
+func authorizeNativeHook(
+	ctx *gin.Context,
+	cfg config.File,
+	validator oidcbearer.TokenValidator,
+	descriptor pluginapi.HookDescriptor,
+) bool {
+	requiredScopes := nativeHookRequiredScopes(descriptor.Scope)
+
+	switch descriptor.Auth {
+	case pluginapi.HookAuthNone:
+		if len(requiredScopes) > 0 {
+			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{nativeHookErrorField: "hook scope requires authentication"})
+
+			return false
+		}
+
+		return true
+	case pluginapi.HookAuthToken:
+		return enforceNativeHookToken(ctx, cfg, validator, requiredScopes)
+	case pluginapi.HookAuthAdmin:
+		return enforceNativeHookToken(ctx, cfg, validator, addNativeHookScope(requiredScopes, definitions.ScopeAdmin))
+	case pluginapi.HookAuthSession:
+		if ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
+			return true
+		}
+
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{nativeHookErrorField: "session authentication required"})
+
+		return false
+	default:
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return false
+	}
+}
+
+// enforceNativeHookToken validates bearer auth and required hook scopes.
+func enforceNativeHookToken(
+	ctx *gin.Context,
+	cfg config.File,
+	validator oidcbearer.TokenValidator,
+	requiredScopes []string,
+) bool {
+	if validator == nil {
+		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{nativeHookErrorField: "authentication required but not configured"})
+
+		return false
+	}
+
+	_, ok := oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
+		RequiredScopes:         requiredScopes,
+		MissingScopeMessage:    "insufficient permissions",
+		ThrottleOnMissingToken: false,
+	})
+
+	return ok
+}
+
+// nativeHookRequiredScopes maps public hook scope to Nauthilus control-plane scopes.
+func nativeHookRequiredScopes(scope pluginapi.HookScope) []string {
+	switch scope {
+	case pluginapi.HookScopePublic:
+		return nil
+	case pluginapi.HookScopeInternal:
+		return []string{definitions.ScopeAuthenticate}
+	case pluginapi.HookScopeAdmin:
+		return []string{definitions.ScopeAdmin}
+	default:
+		return []string{definitions.ScopeAdmin}
+	}
+}
+
+// addNativeHookScope appends a scope once.
+func addNativeHookScope(scopes []string, scope string) []string {
+	if scope == "" || slices.Contains(scopes, scope) {
+		return scopes
+	}
+
+	return append(scopes, scope)
+}
+
+// readNativeHookBody enforces the bounded v1 hook body model.
+func readNativeHookBody(ctx *gin.Context, limit int64) ([]byte, bool) {
+	limit = effectiveNativeHookBodyLimit(limit)
+	if limit < 0 {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return nil, false
+	}
+
+	if ctx.Request == nil || ctx.Request.Body == nil || ctx.Request.Body == http.NoBody {
+		return nil, true
+	}
+
+	if ctx.Request.ContentLength > limit {
+		ctx.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{nativeHookErrorField: nativeHookBodyTooLarge})
+
+		return nil, false
+	}
+
+	body, err := io.ReadAll(io.LimitReader(ctx.Request.Body, limit+1))
+	if err != nil {
+		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{nativeHookErrorField: "invalid hook request body"})
+
+		return nil, false
+	}
+
+	if int64(len(body)) > limit {
+		ctx.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{nativeHookErrorField: nativeHookBodyTooLarge})
+
+		return nil, false
+	}
+
+	return body, true
+}
+
+// effectiveNativeHookBodyLimit applies the global default when a hook omits a limit.
+func effectiveNativeHookBodyLimit(limit int64) int64 {
+	if limit == 0 {
+		return defaultNativeHookMaxBodyBytes
+	}
+
+	return limit
+}
+
+// nativeHookCallContext applies a hook-specific timeout when configured.
+func nativeHookCallContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+
+	return context.WithTimeout(ctx, timeout)
+}
+
+// nativeHookErrorStatus maps runtime failures to secret-safe HTTP status codes.
+func nativeHookErrorStatus(err error) int {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout
+	}
+
+	return http.StatusInternalServerError
+}
+
+// recordNativeHookFailure writes a secret-safe log entry and HTTP error.
+func recordNativeHookFailure(
+	ctx *gin.Context,
+	logger *slog.Logger,
+	hook NativeHook,
+	span oteltrace.Span,
+	message string,
+	status int,
+) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	if span != nil {
+		span.RecordError(fmt.Errorf("%s", message))
+		span.SetAttributes(attribute.Int("http.status_code", status))
+	}
+
+	_ = level.Error(logger).Log(
+		definitions.LogKeyMsg, message,
+		"module", hook.ModuleName,
+		"component", hook.ComponentName,
+		"hook", hook.QualifiedName,
+	)
+
+	switch status {
+	case http.StatusGatewayTimeout:
+		ctx.AbortWithStatusJSON(status, gin.H{nativeHookErrorField: "plugin hook timeout"})
+	case http.StatusBadGateway:
+		ctx.AbortWithStatusJSON(status, gin.H{nativeHookErrorField: "plugin hook response rejected"})
+	default:
+		ctx.AbortWithStatusJSON(status, gin.H{nativeHookErrorField: "plugin hook failed"})
+	}
+}
+
+// writeNativeHookResponse filters headers and writes the plugin response.
+func writeNativeHookResponse(ctx *gin.Context, response pluginapi.HookResponse) error {
+	headers, err := safeNativeHookResponseHeaders(response.Headers)
+	if err != nil {
+		return err
+	}
+
+	statusCode := nativeHookStatusCode(response.StatusCode)
+	if statusCode == http.StatusBadGateway && response.StatusCode != 0 {
+		return fmt.Errorf("invalid hook response status code %d", response.StatusCode)
+	}
+
+	for key, values := range headers {
+		for _, value := range values {
+			ctx.Writer.Header().Add(key, value)
+		}
+	}
+
+	ctx.Status(statusCode)
+
+	if len(response.Body) == 0 {
+		return nil
+	}
+
+	_, err = ctx.Writer.Write(response.Body)
+
+	return err
+}
+
+// safeNativeHookResponseHeaders rejects unsafe plugin-controlled response headers.
+func safeNativeHookResponseHeaders(headers map[string][]string) (http.Header, error) {
+	if len(headers) == 0 {
+		return http.Header{}, nil
+	}
+
+	output := make(http.Header, len(headers))
+	for key, values := range headers {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))
+		if canonical == "" || !httpguts.ValidHeaderFieldName(canonical) {
+			return nil, fmt.Errorf("invalid hook response header name %q", key)
+		}
+
+		if nativeHookHeaderDenied(canonical) {
+			return nil, fmt.Errorf("hook response header %q is host-owned", canonical)
+		}
+
+		for _, value := range values {
+			if !httpguts.ValidHeaderFieldValue(value) {
+				return nil, fmt.Errorf("invalid hook response header value for %q", canonical)
+			}
+
+			output.Add(canonical, value)
+		}
+	}
+
+	return output, nil
+}
+
+// nativeHookHeaderDenied reports whether a response header is host-owned or hop-by-hop.
+func nativeHookHeaderDenied(header string) bool {
+	if _, denied := nativeHookHopByHopHeaders[header]; denied {
+		return true
+	}
+
+	_, denied := nativeHookHostOwnedHeaders[header]
+
+	return denied
+}
+
+// nativeHookStatusCode validates and defaults plugin response status codes.
+func nativeHookStatusCode(statusCode int) int {
+	if statusCode == 0 {
+		return http.StatusOK
+	}
+
+	if statusCode < 100 || statusCode > 599 {
+		return http.StatusBadGateway
+	}
+
+	return statusCode
+}
+
+// nativeHookCaller extracts validated caller claims from Gin context.
+func nativeHookCaller(ctx *gin.Context) NativeHookCaller {
+	claims := oidcbearer.GetClaimsFromContext(ctx)
+	subject := claimString(claims, "sub")
+	clientID := firstNonEmptyClaim(claims, "client_id", "azp", "sub")
+
+	return NativeHookCaller{
+		Subject:       subject,
+		ClientID:      clientID,
+		Authenticated: len(claims) > 0 || ctx.GetBool(definitions.CtxBasicAuthValidatedKey),
+	}
+}
+
+// firstNonEmptyClaim returns the first non-empty string claim.
+func firstNonEmptyClaim(claims jwt.MapClaims, keys ...string) string {
+	for _, key := range keys {
+		if value := claimString(claims, key); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+// claimString extracts one string claim value.
+func claimString(claims jwt.MapClaims, key string) string {
+	value, ok := claims[key].(string)
+	if !ok {
+		return ""
+	}
+
+	return value
+}
+
+// nativeHookKey returns the map key for one hook location and method.
+func nativeHookKey(location string, method string) string {
+	return normalizeNativeHookPath(location) + ":" + strings.ToUpper(strings.TrimSpace(method))
+}
+
+// normalizeNativeHookPath returns an absolute hook path without normalizing semantics.
+func normalizeNativeHookPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+
+	return "/" + strings.TrimLeft(trimmed, "/")
+}

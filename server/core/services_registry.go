@@ -25,7 +25,9 @@ import (
 
 var (
 	regLuaSubject     LuaSubject
+	regPluginSubject  PluginSubjectSourceBridge
 	regPostAction     PostAction
+	regPluginEffect   PluginEffectBridge
 	regEnvironmentEng EnvironmentEngine
 	regActionDisp     ActionDispatcher
 	regRBLService     RBLService
@@ -37,8 +39,14 @@ var (
 // RegisterLuaSubject registers the active LuaSubject implementation.
 func RegisterLuaSubject(l LuaSubject) { regLuaSubject = l }
 
+// RegisterPluginSubjectSourceBridge registers the native plugin subject-source adapter.
+func RegisterPluginSubjectSourceBridge(b PluginSubjectSourceBridge) { regPluginSubject = b }
+
 // RegisterPostAction registers the active PostAction implementation.
 func RegisterPostAction(p PostAction) { regPostAction = p }
+
+// RegisterPluginEffectBridge registers the native plugin policy effect adapter.
+func RegisterPluginEffectBridge(b PluginEffectBridge) { regPluginEffect = b }
 
 // RegisterEnvironmentEngine registers the active EnvironmentEngine implementation.
 func RegisterEnvironmentEngine(f EnvironmentEngine) { regEnvironmentEng = f }
@@ -55,8 +63,14 @@ func RegisterCacheService(c CacheService) { regCacheService = c }
 // RegisterPasswordVerifier registers the active PasswordVerifier implementation.
 func RegisterPasswordVerifier(v PasswordVerifier) { regPassVerifier = v }
 
-func getLuaSubject() LuaSubject               { return regLuaSubject }
-func getPostAction() PostAction               { return regPostAction }
+func getLuaSubject() LuaSubject { return regLuaSubject }
+func getPluginSubjectSourceBridge() PluginSubjectSourceBridge {
+	return regPluginSubject
+}
+func getPostAction() PostAction { return regPostAction }
+func getPluginEffectBridge() PluginEffectBridge {
+	return regPluginEffect
+}
 func getEnvironmentEngine() EnvironmentEngine { return regEnvironmentEng }
 func getActionDispatcher() ActionDispatcher   { return regActionDisp }
 func getRBLService() RBLService               { return regRBLService }

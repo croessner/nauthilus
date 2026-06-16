@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/pluginloader"
 	"github.com/croessner/nauthilus/server/policy"
 	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
@@ -115,6 +116,10 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 	fsmEvents := builtinFSMEventRegistry()
 	responses := builtinResponseRegistry()
 	obligations := builtinObligationRegistry()
+	if err := registerNativePluginEffects(obligations); err != nil {
+		return compiledSnapshotParts{}, err
+	}
+
 	advice := builtinAdviceRegistry()
 
 	policies, err := compilePolicies(compilePolicyInput{
@@ -151,6 +156,43 @@ func buildSnapshotParts(ctx context.Context, file config.File, policyConfig conf
 	}, nil
 }
 
+// registerNativePluginEffects exposes registered native effect targets to policy compilation.
+func registerNativePluginEffects(obligations map[string]policyruntime.EffectDefinition) error {
+	state, ok := pluginloader.DefaultState()
+	if !ok {
+		return nil
+	}
+
+	for _, component := range state.Registry().ObligationTargets() {
+		if err := registerNativePluginEffect(obligations, component.QualifiedName, effectKindObligation); err != nil {
+			return err
+		}
+	}
+
+	for _, component := range state.Registry().PostActionTargets() {
+		if err := registerNativePluginEffect(obligations, component.QualifiedName, effectKindPostAction); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// registerNativePluginEffect adds one plugin effect id while preserving registry safety.
+func registerNativePluginEffect(obligations map[string]policyruntime.EffectDefinition, id string, kind string) error {
+	if id == "" {
+		return nil
+	}
+
+	if _, exists := obligations[id]; exists {
+		return fmt.Errorf("duplicate policy effect id %q", id)
+	}
+
+	obligations[id] = policyruntime.EffectDefinition{ID: id, Kind: kind}
+
+	return nil
+}
+
 func compileAttributeRegistry(
 	ctx context.Context,
 	file config.File,
@@ -183,12 +225,36 @@ func compileAttributeRegistry(
 		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
+	if err := registerNativePluginAttributes(attributeRegistry); err != nil {
+		return nil, nil, policyruntime.RequestAttributeSettings{}, err
+	}
+
 	requestAttrs, err := registerRequestAttributes(policyConfig, attributeRegistry)
 	if err != nil {
 		return nil, nil, policyruntime.RequestAttributeSettings{}, err
 	}
 
 	return attributeRegistry.Snapshot(), checks, requestAttrs, nil
+}
+
+// registerNativePluginAttributes copies loader-registered native plugin attributes into the policy registry.
+func registerNativePluginAttributes(attributeRegistry *policyregistry.AttributeRegistry) error {
+	if attributeRegistry == nil {
+		return nil
+	}
+
+	state, ok := pluginloader.DefaultState()
+	if !ok {
+		return nil
+	}
+
+	for _, definition := range state.Registry().PolicyAttributes() {
+		if err := attributeRegistry.Register(definition); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (c *SnapshotCompiler) newSnapshot(generation uint64, parts compiledSnapshotParts) *policyruntime.Snapshot {

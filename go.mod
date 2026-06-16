@@ -37,6 +37,7 @@ require (
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/oapi-codegen/oapi-codegen/v2 v2.7.0
 	github.com/oapi-codegen/runtime v1.4.1
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/pires/go-proxyproto v0.12.0

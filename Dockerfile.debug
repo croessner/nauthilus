@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.23 AS builder
+FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.23 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -10,14 +10,15 @@ WORKDIR /usr/app
 COPY . ./
 
 # Set necessarry environment vairables and compile the app
-ENV CGO_ENABLED=0
+ENV CGO_ENABLED=1
 ENV GOEXPERIMENT=runtimesecret
 RUN apk add --no-cache build-base git
 
-RUN cd server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
-RUN cd docker-healthcheck && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s" -o healthcheck .
-RUN cd contrib/smtp-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .
-RUN cd contrib/imap-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s" -o fakeimap .
+RUN cd server && go build -mod=vendor -tags="netgo" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
+RUN mkdir -p /usr/local/lib/nauthilus/plugins && cd contrib/plugins/geoip && go build -mod=vendor -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
+RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s" -o healthcheck .
+RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .
+RUN cd contrib/imap-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakeimap .
 
 FROM alpine:3.23
 
@@ -43,6 +44,7 @@ COPY --from=builder ["/usr/app/contrib/smtp-server/fakesmtp", "./"]
 COPY --from=builder ["/usr/app/contrib/imap-server/fakeimap", "./"]
 COPY --from=builder ["/usr/app/static/", "./static/"]
 COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
+COPY --from=builder ["/usr/local/lib/nauthilus/plugins/", "/usr/local/lib/nauthilus/plugins/"]
 
 RUN ln -s ./server/lua-plugins.d ./lua-plugins.d
 RUN ln -s ./server/resources ./resources

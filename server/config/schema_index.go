@@ -41,6 +41,7 @@ type configSchemaNode struct {
 	element           *configSchemaNode            `mapstructure:"-"`
 	typeInfo          reflect.Type                 `mapstructure:"-"`
 	matchExtraKey     func(string) bool            `mapstructure:"-"`
+	opaque            bool                         `mapstructure:"-"`
 }
 
 type configSchemaIndex struct {
@@ -208,6 +209,7 @@ func addStructFieldSchemaNode(node *configSchemaNode, field reflect.StructField,
 		return err
 	}
 
+	childNode.opaque = isOpaqueConfigField(field)
 	node.fieldByConfigName[tagName] = childNode
 
 	return nil
@@ -267,6 +269,10 @@ func (n *configSchemaNode) collectUnknown(value any, prefix string, out *[]strin
 		return
 	}
 
+	if n.opaque {
+		return
+	}
+
 	switch n.kind {
 	case configSchemaObject:
 		entries, ok := configMapEntries(value)
@@ -310,6 +316,11 @@ func (n *configSchemaNode) collectUnknown(value any, prefix string, out *[]strin
 			n.element.collectUnknown(entry.value, childPath, out, visited)
 		}
 	}
+}
+
+// isOpaqueConfigField reports whether schema traversal should accept but not inspect a field.
+func isOpaqueConfigField(field reflect.StructField) bool {
+	return slices.Contains(strings.Split(field.Tag.Get("configschema"), ","), "opaque")
 }
 
 func (i *configSchemaIndex) configPathFromStructNamespace(namespace string) string {

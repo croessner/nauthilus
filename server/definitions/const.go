@@ -723,6 +723,9 @@ const (
 
 	// BackendRemote represents a remote authority backend
 	BackendRemote
+
+	// BackendPlugin represents a native plugin backend.
+	BackendPlugin
 )
 
 const (
@@ -746,6 +749,9 @@ const (
 
 	// BackendRemoteName refers to a remote authority backend.
 	BackendRemoteName = "remote"
+
+	// BackendPluginName refers to a native plugin backend.
+	BackendPluginName = "plugin"
 )
 
 // Supported auth controls and runtime services.

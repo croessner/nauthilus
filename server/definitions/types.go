@@ -49,6 +49,8 @@ func (b Backend) String() string {
 		return BackendLocalCacheName
 	case BackendRemote:
 		return BackendRemoteName
+	case BackendPlugin:
+		return BackendPluginName
 	default:
 		return BackendUnknownName
 	}

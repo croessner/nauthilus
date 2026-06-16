@@ -28,22 +28,28 @@ import (
 )
 
 const (
-	checkTypeBruteForce       = policy.CheckTypeBruteForce
-	checkTypeTLSEncryption    = policy.CheckTypeTLSEncryption
-	checkTypeRelayDomains     = policy.CheckTypeRelayDomains
-	checkTypeRBL              = policy.CheckTypeRBL
-	checkTypeLuaEnvironment   = policy.CheckTypeLuaEnvironment
-	checkTypeLDAPBackend      = policy.CheckTypeLDAPBackend
-	checkTypeLuaBackend       = policy.CheckTypeLuaBackend
-	checkTypeLuaSubjectSource = policy.CheckTypeLuaSubjectSource
-	checkTypeAccountProvider  = policy.CheckTypeAccountProvider
+	checkTypeBruteForce        = policy.CheckTypeBruteForce
+	checkTypeTLSEncryption     = policy.CheckTypeTLSEncryption
+	checkTypeRelayDomains      = policy.CheckTypeRelayDomains
+	checkTypeRBL               = policy.CheckTypeRBL
+	checkTypeLuaEnvironment    = policy.CheckTypeLuaEnvironment
+	checkTypePluginEnvironment = policy.CheckTypePluginEnvironment
+	checkTypeLDAPBackend       = policy.CheckTypeLDAPBackend
+	checkTypeLuaBackend        = policy.CheckTypeLuaBackend
+	checkTypeLuaSubjectSource  = policy.CheckTypeLuaSubjectSource
+	checkTypePluginSubject     = policy.CheckTypePluginSubjectSource
+	checkTypeAccountProvider   = policy.CheckTypeAccountProvider
 
 	runIfAny             = policy.RunIfAny
 	runIfAuthenticated   = policy.RunIfAuthenticated
 	runIfUnauthenticated = policy.RunIfUnauthenticated
 
 	effectKindObligation = "obligation"
+	effectKindPostAction = "post_action"
 	effectKindAdvice     = "advice"
+
+	detailStatusMessage       = "status_message"
+	pluginModuleConfigRefRoot = "plugins.modules."
 )
 
 var simpleIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -116,6 +122,13 @@ func preAuthCheckTypes() map[string]policyruntime.CheckTypeDefinition {
 			ObserveSafeDefault:         false,
 			AllowsObserveSafeAssertion: true,
 		},
+		checkTypePluginEnvironment: {
+			Stage:                      policy.StagePreAuth,
+			Operations:                 []policy.Operation{policy.OperationAuthenticate, policy.OperationLookupIdentity},
+			ConfigRefPrefix:            pluginModuleConfigRefRoot,
+			ObserveSafeDefault:         false,
+			AllowsObserveSafeAssertion: true,
+		},
 	}
 }
 
@@ -140,6 +153,13 @@ func backendCheckTypes() map[string]policyruntime.CheckTypeDefinition {
 			Stage:                      policy.StageSubjectAnalysis,
 			Operations:                 []policy.Operation{policy.OperationAuthenticate},
 			ConfigRefPrefix:            "auth.policy.attribute_sources.lua.subject.",
+			ObserveSafeDefault:         false,
+			AllowsObserveSafeAssertion: true,
+		},
+		checkTypePluginSubject: {
+			Stage:                      policy.StageSubjectAnalysis,
+			Operations:                 []policy.Operation{policy.OperationAuthenticate},
+			ConfigRefPrefix:            pluginModuleConfigRefRoot,
 			ObserveSafeDefault:         false,
 			AllowsObserveSafeAssertion: true,
 		},

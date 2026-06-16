@@ -110,6 +110,9 @@ bin/*
 contrib/identity-proxy-e2e/.work/
 contrib/identity-proxy-e2e/node_modules/
 temp/*
+
+# Local Codex project skills and assistant-specific state.
+/.codex/skills/
 .cache/
 scripts/__pycache__/
 .venv-grpc-smoke/

@@ -257,6 +257,10 @@ func buildDefaultConfigDumpValue(
 	case configSchemaObject:
 		result := make(map[string]any, len(node.fieldByConfigName))
 		for _, key := range slicesSortedKeys(node.fieldByConfigName) {
+			if shouldOmitConfigDumpNode(node.fieldByConfigName[key]) {
+				continue
+			}
+
 			childPath := joinConfigPath(prefix, key)
 			result[key] = buildDefaultConfigDumpValue(node.fieldByConfigName[key], childPath, defaultProviders)
 		}
@@ -285,6 +289,10 @@ func buildStructuredNonDefaultConfigDumpValue(
 	defaults map[string]string,
 ) (any, bool) {
 	if node == nil || value == nil {
+		return nil, false
+	}
+
+	if shouldOmitConfigDumpNode(node) {
 		return nil, false
 	}
 
@@ -542,6 +550,10 @@ func collectDefaultConfigDumpLines(
 		return
 	}
 
+	if shouldOmitConfigDumpNode(node) {
+		return
+	}
+
 	switch node.kind {
 	case configSchemaObject:
 		keys := slicesSortedKeys(node.fieldByConfigName)
@@ -575,6 +587,10 @@ func collectDefaultConfigDumpLines(
 
 func collectConfiguredConfigDumpValues(node *configSchemaNode, value any, prefix string, out map[string]string) {
 	if node == nil || out == nil || value == nil {
+		return
+	}
+
+	if shouldOmitConfigDumpNode(node) {
 		return
 	}
 
@@ -935,12 +951,28 @@ func configDumpDefaultProviders() map[string]configDumpValueProvider {
 	addConfigDumpDefaultProviders(providers, configDumpRuntimeDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpRedisDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpIdentityDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpPluginDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBruteForceDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBackendHealthCheckDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpLDAPDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpAuthPolicyDefaults())
 
 	return providers
+}
+
+// shouldOmitConfigDumpNode reports whether a schema node is intentionally hidden from dumps.
+func shouldOmitConfigDumpNode(node *configSchemaNode) bool {
+	return node != nil && node.opaque
+}
+
+// configDumpPluginDefaults returns public defaults for plugin loader fields.
+func configDumpPluginDefaults() map[string]configDumpValueProvider {
+	return map[string]configDumpValueProvider{
+		"plugins.allowed_dirs":        func() any { return []string{} },
+		"plugins.modules":             func() any { return []any{} },
+		"plugins.trust.signers":       func() any { return []any{} },
+		"plugins.verification_policy": func() any { return PluginVerificationPolicyDefault },
+	}
 }
 
 func addConfigDumpDefaultProviders(target map[string]configDumpValueProvider, providers map[string]configDumpValueProvider) {

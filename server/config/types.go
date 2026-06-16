@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strings"
 
+	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/go-ldap/ldap/v3"
@@ -266,9 +267,10 @@ func (b *Backend) String() string {
 
 // Set updates the backend of the Backend based on the provided value.
 // It returns an error if the value is not valid.
-// Valid values for the backend are "cache", "ldap", "lua", "test" and "remote".
-// If the value is valid, the backend field of Backend is updated accordingly.
-// An error of type ErrWrongPassDB is returned if the value is not valid.
+// Valid values for the backend are "cache", "ldap", "lua", "test", "remote", and
+// fully qualified "plugin(<module>.<backend>)" selectors. If the value is valid,
+// the backend field of Backend is updated accordingly. An error of type
+// ErrWrongPassDB is returned if the value is not valid.
 func (b *Backend) Set(value string) error {
 	if b == nil {
 		return nil
@@ -277,11 +279,16 @@ func (b *Backend) Set(value string) error {
 	value = strings.TrimSpace(value)
 	b.name = definitions.DefaultBackendName
 
-	regex := regexp.MustCompile(`^(ldap|lua|test|remote)\((.*?)\)$`)
+	regex := regexp.MustCompile(`^(ldap|lua|test|remote|plugin)\((.*?)\)$`)
 
 	if matches := regex.FindStringSubmatch(value); matches != nil {
 		name := strings.TrimSpace(matches[2])
+
 		if name == "default" || name == definitions.DefaultBackendName {
+			return fmt.Errorf(errors.ErrWrongPassDB.Error(), name)
+		}
+
+		if matches[1] == definitions.BackendPluginName && !isQualifiedPluginBackendName(name) {
 			return fmt.Errorf(errors.ErrWrongPassDB.Error(), name)
 		}
 
@@ -300,11 +307,23 @@ func (b *Backend) Set(value string) error {
 		b.backend = definitions.BackendTest
 	case definitions.BackendRemoteName:
 		b.backend = definitions.BackendRemote
+	case definitions.BackendPluginName:
+		if b.name == definitions.DefaultBackendName {
+			return fmt.Errorf(errors.ErrWrongPassDB.Error(), value)
+		}
+
+		b.backend = definitions.BackendPlugin
 	default:
 		return fmt.Errorf(errors.ErrWrongPassDB.Error(), value)
 	}
 
 	return nil
+}
+
+// isQualifiedPluginBackendName verifies that a plugin backend selector carries
+// both the module name and the backend component name.
+func isQualifiedPluginBackendName(name string) bool {
+	return pluginapi.ValidateQualifiedComponentName(name) == nil
 }
 
 // Type returns the name of the type.

@@ -23,7 +23,9 @@ import (
 	"testing"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/pluginloader"
 	"github.com/croessner/nauthilus/server/policy"
 	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
@@ -39,6 +41,11 @@ const (
 	testRequestMetadataKey       = "x-company-domain"
 	testRequestHeaderAttribute   = "request.header.company_domain"
 	testRequestMetadataAttribute = "request.metadata.company_domain"
+	testPluginPolicyModule       = "native_policy"
+	testPluginPolicySubjectCheck = "plugin_subject_native_policy"
+	testPluginPolicyAttribute    = "plugin.native_policy.subject.flag"
+	testPluginObligationID       = testPluginPolicyModule + ".sync_obligation"
+	testPluginPostActionID       = testPluginPolicyModule + ".post_action"
 )
 
 func TestCompilerBuildsSnapshotFromConfiguredPolicy(t *testing.T) {
@@ -757,6 +764,113 @@ func TestCompilerRejectsAttributeWithoutProducingCheck(t *testing.T) {
 	}
 }
 
+func TestCompilerAcceptsPluginEnvironmentCheckType(t *testing.T) {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Policies = nil
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      "plugin_environment_geoip",
+			Type:      policy.CheckTypePluginEnvironment,
+			Stage:     string(policy.StagePreAuth),
+			ConfigRef: "plugins.modules.geoip.environment",
+		},
+	}
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	checks := snapshot.StagePlans[policy.OperationAuthenticate][policy.StagePreAuth].Checks
+	if len(checks) != 1 {
+		t.Fatalf("pre-auth checks = %d, want 1", len(checks))
+	}
+
+	if checks[0].Type != policy.CheckTypePluginEnvironment {
+		t.Fatalf("check type = %q, want %q", checks[0].Type, policy.CheckTypePluginEnvironment)
+	}
+}
+
+func TestCompilerRegistersNativePluginPolicySurface(t *testing.T) {
+	publishCompilerPluginState(t, loadCompilerPluginState(t))
+
+	cfg := nativePluginPolicySurfaceConfig()
+
+	snapshot, err := NewCompiler().Compile(context.Background(), Input{Config: cfg, Generation: 1})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	assertNativePluginPolicySurface(t, snapshot)
+}
+
+// nativePluginPolicySurfaceConfig builds a config that consumes registered plugin policy metadata.
+func nativePluginPolicySurfaceConfig() *config.FileSettings {
+	cfg := policyCompilerTestConfig()
+	cfg.Auth.Policy.Checks = []config.PolicyCheckConfig{
+		{
+			Name:      testPluginPolicySubjectCheck,
+			Type:      policy.CheckTypePluginSubjectSource,
+			Stage:     string(policy.StageSubjectAnalysis),
+			ConfigRef: "plugins.modules." + testPluginPolicyModule + ".subject",
+		},
+	}
+	cfg.Auth.Policy.Policies = []config.PolicyRuleConfig{
+		{
+			Name:  "deny_native_subject_flag",
+			Stage: string(policy.StageAuthDecision),
+			If: config.PolicyConditionConfig{
+				Attribute: testPluginPolicyAttribute,
+				Is:        true,
+			},
+			Then: config.PolicyThenConfig{
+				Decision:       string(policy.DecisionDeny),
+				ResponseMarker: policy.ResponseMarkerFail,
+				Obligations: []config.PolicyEffectConfig{
+					{
+						ID:   testPluginObligationID,
+						Args: map[string]any{"message": "native"},
+					},
+				},
+			},
+		},
+	}
+
+	return cfg
+}
+
+// assertNativePluginPolicySurface verifies plugin attributes, checks, and effects are compiled.
+func assertNativePluginPolicySurface(t *testing.T, snapshot *policyruntime.Snapshot) {
+	t.Helper()
+
+	definition, ok := snapshot.AttributeRegistry[testPluginPolicyAttribute]
+	if !ok {
+		t.Fatal("native plugin policy attribute missing")
+	}
+
+	if definition.Source != policyregistry.SourcePlugin {
+		t.Fatalf("attribute source = %q, want plugin", definition.Source)
+	}
+
+	checks := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageSubjectAnalysis].Checks
+	if len(checks) != 1 || checks[0].Type != policy.CheckTypePluginSubjectSource {
+		t.Fatalf("subject checks = %#v, want one native plugin subject check", checks)
+	}
+
+	if got := snapshot.ObligationRegistry[testPluginObligationID].Kind; got != effectKindObligation {
+		t.Fatalf("obligation kind = %q, want %q", got, effectKindObligation)
+	}
+
+	if got := snapshot.ObligationRegistry[testPluginPostActionID].Kind; got != effectKindPostAction {
+		t.Fatalf("post-action kind = %q, want %q", got, effectKindPostAction)
+	}
+
+	obligations := snapshot.StagePlans[policy.OperationAuthenticate][policy.StageAuthDecision].Policies[0].Then.Obligations
+	if len(obligations) != 1 || obligations[0].ID != testPluginObligationID {
+		t.Fatalf("compiled obligations = %#v, want native obligation", obligations)
+	}
+}
+
 func TestCompilerRejectsRunIfIncompatibleCheckDependency(t *testing.T) {
 	cfg := policyCompilerTestConfig()
 	cfg.Auth.Policy.Policies = nil
@@ -984,4 +1098,147 @@ func tlsTempfailPolicy() config.PolicyRuleConfig {
 			ResponseMarker: "auth.response.tempfail.no_tls",
 		},
 	}
+}
+
+func loadCompilerPluginState(t *testing.T) *pluginloader.State {
+	t.Helper()
+
+	artifact := writeCompilerPluginArtifact(t)
+	opener := compilerPluginOpener{
+		artifact: compilerPluginHandle{
+			symbol: func() (pluginapi.Plugin, error) {
+				return compilerPolicyPlugin{}, nil
+			},
+		},
+	}
+
+	state, err := pluginloader.NewLoader(pluginloader.WithOpener(opener)).Load([]pluginloader.VerifiedModule{
+		{
+			Module: config.PluginModule{
+				Name: testPluginPolicyModule,
+				Type: config.PluginModuleTypeGo,
+				Path: artifact,
+			},
+			ArtifactPath: artifact,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	return state
+}
+
+func publishCompilerPluginState(t *testing.T, state *pluginloader.State) {
+	t.Helper()
+
+	previous, hadPrevious := pluginloader.DefaultState()
+
+	pluginloader.SetDefaultState(state)
+
+	t.Cleanup(func() {
+		if hadPrevious {
+			pluginloader.SetDefaultState(previous)
+
+			return
+		}
+
+		pluginloader.SetDefaultState((*pluginloader.State)(nil))
+	})
+}
+
+func writeCompilerPluginArtifact(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "native_policy.so")
+	if err := os.WriteFile(path, []byte("fake plugin"), 0o600); err != nil {
+		t.Fatalf("write fake plugin artifact: %v", err)
+	}
+
+	return path
+}
+
+type compilerPluginOpener map[string]compilerPluginHandle
+
+func (o compilerPluginOpener) Open(path string) (pluginloader.PluginHandle, error) {
+	handle, ok := o[path]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+
+	return handle, nil
+}
+
+type compilerPluginHandle struct {
+	symbol any
+}
+
+func (h compilerPluginHandle) Lookup(string) (any, error) {
+	return h.symbol, nil
+}
+
+type compilerPolicyPlugin struct{}
+
+func (p compilerPolicyPlugin) Metadata() pluginapi.Metadata {
+	return pluginapi.Metadata{
+		Name:       testPluginPolicyModule,
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+	}
+}
+
+func (p compilerPolicyPlugin) Register(registrar pluginapi.Registrar) error {
+	if err := registrar.RegisterSubjectSource(compilerSubjectSource{}); err != nil {
+		return err
+	}
+
+	if err := registrar.RegisterPolicyAttribute(pluginapi.AttributeDefinition{
+		ID:          testPluginPolicyAttribute,
+		Description: "Native subject flag",
+		Stage:       pluginapi.PolicyStageSubjectAnalysis,
+		Operations:  []pluginapi.PolicyOperation{pluginapi.PolicyOperationAuthenticate},
+		ProducerTypes: []string{
+			policy.CheckTypePluginSubjectSource,
+		},
+		Category: pluginapi.AttributeCategorySubject,
+		Type:     pluginapi.AttributeTypeBool,
+	}); err != nil {
+		return err
+	}
+
+	if err := registrar.RegisterObligationTarget(compilerObligationTarget{}); err != nil {
+		return err
+	}
+
+	return registrar.RegisterPostActionTarget(compilerPostActionTarget{})
+}
+
+type compilerSubjectSource struct{}
+
+func (s compilerSubjectSource) Descriptor() pluginapi.SourceDescriptor {
+	return pluginapi.SourceDescriptor{Name: "subject"}
+}
+
+func (s compilerSubjectSource) Evaluate(context.Context, pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
+	return pluginapi.SubjectResult{}, nil
+}
+
+type compilerObligationTarget struct{}
+
+func (t compilerObligationTarget) Name() string {
+	return "sync_obligation"
+}
+
+func (t compilerObligationTarget) Execute(context.Context, pluginapi.ObligationRequest) (pluginapi.ObligationResult, error) {
+	return pluginapi.ObligationResult{}, nil
+}
+
+type compilerPostActionTarget struct{}
+
+func (t compilerPostActionTarget) Name() string {
+	return "post_action"
+}
+
+func (t compilerPostActionTarget) Enqueue(context.Context, pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
+	return pluginapi.PostActionEnqueueResult{}, nil
 }

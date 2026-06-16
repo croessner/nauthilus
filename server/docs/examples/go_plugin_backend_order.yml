@@ -1,0 +1,26 @@
+# Backend plugin selected through auth.backends.order.
+auth:
+  backends:
+    order:
+      - cache
+      - plugin(customer_sql.passdb)
+      - ldap(primary)
+
+plugins:
+  verification_policy: checksum_required
+  allowed_dirs:
+    - /usr/lib/nauthilus/plugins
+  modules:
+    - name: customer_sql
+      type: go
+      path: /usr/lib/nauthilus/plugins/customer_sql.so
+      checksum: sha256:replace-with-artifact-sha256
+      optional: false
+      allow_capabilities:
+        - credentials
+      config:
+        driver: mysql
+        dsn_file: /etc/nauthilus/secrets/customer-sql.dsn
+        max_open_connections: 50
+        max_idle_connections: 10
+        connection_max_lifetime: 10m

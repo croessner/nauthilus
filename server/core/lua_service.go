@@ -17,6 +17,7 @@ package core
 
 import (
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/policy/report"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,6 +26,13 @@ import (
 //goland:nointerface
 type LuaSubject interface {
 	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
+}
+
+// PluginSubjectSourceBridge adapts native post-backend subject sources without importing pluginruntime.
+//
+//goland:nointerface
+type PluginSubjectSourceBridge interface {
+	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult, current definitions.AuthResult) (definitions.AuthResult, bool)
 }
 
 // PostActionInput aggregates the minimal inputs required for the Lua post action.
@@ -42,6 +50,13 @@ type PostActionInput struct {
 //goland:nointerface
 type PostAction interface {
 	Run(input PostActionInput)
+}
+
+// PluginEffectBridge executes native policy-selected effects without importing pluginruntime.
+//
+//goland:nointerface
+type PluginEffectBridge interface {
+	ExecutePolicyEffect(ctx *gin.Context, view *StateView, effect report.EffectRequest) (handled bool, ok bool)
 }
 
 // EnvironmentEngine encapsulates the evaluation of Lua environment sources.

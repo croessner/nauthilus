@@ -1,0 +1,58 @@
+# Example native GeoIP/ASN environment plugin configuration.
+#
+# Replace paths and checksum values with the artifact produced by:
+#   GOEXPERIMENT=runtimesecret go build -buildmode=plugin -o /usr/lib/nauthilus/plugins/geoip.so ./contrib/plugins/geoip
+
+plugins:
+  verification_policy: when_present
+  allowed_dirs:
+    - /usr/lib/nauthilus/plugins
+  modules:
+    - name: geoip
+      type: go
+      path: /usr/lib/nauthilus/plugins/geoip.so
+      checksum: sha256:replace-with-artifact-sha256
+      optional: false
+      config:
+        database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
+        database_format: mmdb
+        refresh_interval: 1h
+        lookup_timeout: 50ms
+        asn_registry:
+          enabled: true
+          refresh_interval: 720h
+          timeout: 30s
+
+auth:
+  policy:
+    checks:
+      - name: plugin_environment_geoip
+        type: plugin.environment
+        stage: pre_auth
+        operations:
+          - authenticate
+          - lookup_identity
+        config_ref: plugins.modules.geoip.environment
+    policies:
+      - name: deny_unexpected_country
+        stage: pre_auth
+        operations:
+          - authenticate
+        require_checks:
+          - plugin_environment_geoip
+        if:
+          all:
+            - attribute: plugin.environment.geoip.matched
+              is: true
+            - attribute: plugin.environment.geoip.country_iso
+              not_in:
+                - DE
+                - AT
+                - CH
+            - attribute: plugin.environment.geoip.asn_registry
+              not_in:
+                - ripencc
+                - arin
+        then:
+          decision: deny
+          response_marker: auth.response.fail

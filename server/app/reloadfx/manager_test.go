@@ -12,6 +12,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/opsfx"
+	"github.com/croessner/nauthilus/server/config"
 )
 
 type fakeReloader struct {
@@ -20,6 +21,19 @@ type fakeReloader struct {
 	calls   atomic.Int64
 	snap    configfx.Snapshot
 	err     error
+}
+
+type fakePluginRuntime struct {
+	file  any
+	calls atomic.Int64
+	err   error
+}
+
+func (r *fakePluginRuntime) Reconfigure(_ context.Context, file config.File) error {
+	r.calls.Add(1)
+	r.file = file
+
+	return r.err
 }
 
 func (r *fakeReloader) Current() configfx.Snapshot {
@@ -203,5 +217,23 @@ func TestReloadManager_ContinuesOnComponentError(t *testing.T) {
 	got := rec.snapshot()
 	if len(got) != 2 {
 		t.Fatalf("expected both components to be called despite error, got: %v", got)
+	}
+}
+
+func TestPluginReloadable_AppliesSnapshotToRuntime(t *testing.T) {
+	runtime := &fakePluginRuntime{}
+	reloadable := NewPluginReloadableWithRuntime(runtime)
+	snap := configfx.Snapshot{File: &config.FileSettings{}}
+
+	if err := reloadable.ApplyConfig(context.Background(), snap); err != nil {
+		t.Fatalf("ApplyConfig() error = %v", err)
+	}
+
+	if got := runtime.calls.Load(); got != 1 {
+		t.Fatalf("Reconfigure() calls = %d, want 1", got)
+	}
+
+	if runtime.file != snap.File {
+		t.Fatal("runtime did not receive snapshot file")
 	}
 }

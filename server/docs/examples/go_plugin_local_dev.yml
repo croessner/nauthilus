@@ -1,0 +1,14 @@
+# Local development without artifact verification.
+plugins:
+  verification_policy: off
+  allowed_dirs:
+    - /Users/example/nauthilus-plugin-build
+  modules:
+    - name: geoip_dev
+      type: go
+      path: /Users/example/nauthilus-plugin-build/geoip.so
+      optional: false
+      config:
+        database_path: /Users/example/nauthilus-plugin-build/geoip.json
+        refresh_interval: 10s
+        lookup_timeout: 50ms

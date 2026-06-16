@@ -61,7 +61,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 			// Prefer treating pool exhaustion as a tempfail over negative results
 			// from other backends (e.g., cache). We remember it and may return it
 			// at the end if no definitive success/user-found result exists.
-			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) {
+			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) || stderrors.Is(err, errors.ErrBackendTemporaryFailure) {
 				tempfailErr = err
 			}
 

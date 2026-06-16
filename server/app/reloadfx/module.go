@@ -20,5 +20,12 @@ import "go.uber.org/fx"
 func Module() fx.Option {
 	return fx.Options(
 		fx.Provide(NewManager),
+		fx.Provide(
+			fx.Annotate(
+				NewPluginReloadable,
+				fx.As(new(Reloadable)),
+				fx.ResultTags(`group:"reloadables"`),
+			),
+		),
 	)
 }
