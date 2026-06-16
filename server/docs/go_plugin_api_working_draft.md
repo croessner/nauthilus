@@ -252,8 +252,17 @@ plugins:
         - credentials
       config:
         database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
-        reload_interval: 1h
-        fail_mode: soft
+        database_format: mmdb
+        asn_lookup:
+          enabled: true
+          provider_type: rspamd
+          ipv4_zone: asn.rspamd.com
+          ipv6_zone: asn6.rspamd.com
+        refresh_interval: 1h
+        lookup_timeout: 50ms
+        asn_registry:
+          enabled: true
+          refresh_interval: 720h
 ```
 
 Nauthilus should validate the loader fields such as name, type, path, checksum, signature, signer, API version,
@@ -1535,8 +1544,9 @@ Goal: prove the full loader and lifecycle path with a useful but bounded referen
 Deliverables:
 
 - GeoIP/ASN `.so` example plugin with plugin-owned config, signature/checksum support in example config, MaxMind `.mmdb`
-  lookup support, optional delegated RIR ASN registry refresh, `InitTask` for database loading or refresh scheduling,
-  `EnvironmentSource`, `RuntimeDelta`, `PolicyFact` emission, metrics, tracing, and config-only `Reconfigure`.
+  lookup support, Rspamd-compatible DNS ASN lookup zones, optional delegated RIR ASN registry metadata refresh,
+  `InitTask` for database loading or refresh scheduling, `EnvironmentSource`, `RuntimeDelta`, `PolicyFact` emission,
+  metrics, tracing, and config-only `Reconfigure`.
 - Example policy snippets using `plugin.environment` attributes emitted by the reference module.
 - Operational docs for building, signing, configuring, and troubleshooting the reference module.
 
@@ -1545,7 +1555,8 @@ Acceptance checks:
 - The plugin can be built as `.so`, loaded from an allowed directory, and rejected when verification policy fails.
 - A focused auth-request test or integration smoke test proves that the environment source emits expected facts and
   runtime context values.
-- Focused tests cover `.mmdb` config selection with a fake path fixture and delegated ASN registry parsing/enrichment.
+- Focused tests cover `.mmdb` config selection with a fake path fixture, configurable Rspamd-compatible ASN DNS zones,
+  ASN lookup caching, and delegated ASN registry parsing/enrichment.
 - Reload tests prove that database path or refresh config can be reconfigured without changing the `.so` artifact.
 
 ### Backend Integration

@@ -53,6 +53,7 @@ type geoRecord struct {
 	CountryName   string
 	CityName      string
 	ASNOrg        string
+	ASNPrefix     string
 	ASNRegistry   string
 	ASNCountryISO string
 	ASNAllocated  string

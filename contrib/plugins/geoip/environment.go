@@ -29,6 +29,7 @@ const (
 	factASNAllocated  = "plugin.environment.geoip.asn_allocated"
 	factASNCountryISO = "plugin.environment.geoip.asn_country_iso"
 	factASNOrg        = "plugin.environment.geoip.asn_org"
+	factASNPrefix     = "plugin.environment.geoip.asn_prefix"
 	factASNRegistry   = "plugin.environment.geoip.asn_registry"
 	factASNStatus     = "plugin.environment.geoip.asn_status"
 	factCityName      = "plugin.environment.geoip.city_name"
@@ -198,6 +199,7 @@ func matchResult(record geoRecord) pluginapi.EnvironmentResult {
 	addStringFact(&facts, values, factCountryName, "country_name", record.CountryName)
 	addStringFact(&facts, values, factCityName, "city_name", record.CityName)
 	addStringFact(&facts, values, factASNOrg, "asn_org", record.ASNOrg)
+	addStringFact(&facts, values, factASNPrefix, "asn_prefix", record.ASNPrefix)
 	addStringFact(&facts, values, factASNRegistry, "asn_registry", record.ASNRegistry)
 	addStringFact(&facts, values, factASNCountryISO, "asn_country_iso", record.ASNCountryISO)
 	addStringFact(&facts, values, factASNAllocated, "asn_allocated", record.ASNAllocated)
@@ -251,8 +253,9 @@ func geoIPPolicyAttributes() []pluginapi.AttributeDefinition {
 		environmentAttribute(factCountryISO, pluginapi.AttributeTypeString, "ISO 3166 country code from the GeoIP database.", operations),
 		environmentAttribute(factCountryName, pluginapi.AttributeTypeString, "Country name from the GeoIP database.", operations),
 		environmentAttribute(factCityName, pluginapi.AttributeTypeString, "City name from the GeoIP database.", operations),
-		environmentAttribute(factASN, pluginapi.AttributeTypeNumber, "Autonomous system number from the ASN database.", operations),
-		environmentAttribute(factASNOrg, pluginapi.AttributeTypeString, "Autonomous system organization from the ASN database.", operations),
+		environmentAttribute(factASN, pluginapi.AttributeTypeNumber, "Autonomous system number from the GeoIP data or Rspamd-compatible ASN provider.", operations),
+		environmentAttribute(factASNOrg, pluginapi.AttributeTypeString, "Autonomous system organization from the GeoIP data.", operations),
+		environmentAttribute(factASNPrefix, pluginapi.AttributeTypeString, "Network prefix returned by the Rspamd-compatible ASN provider.", operations),
 		environmentAttribute(factASNRegistry, pluginapi.AttributeTypeString, "RIR registry that allocated or assigned the ASN.", operations),
 		environmentAttribute(factASNCountryISO, pluginapi.AttributeTypeString, "Country code from delegated RIR ASN registry data.", operations),
 		environmentAttribute(factASNAllocated, pluginapi.AttributeTypeString, "Allocation date from delegated RIR ASN registry data.", operations),

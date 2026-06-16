@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -36,11 +37,18 @@ import (
 )
 
 const (
+	testASNDNSAnswer       = "64500 | 203.0.113.0/24 | DE | ripencc |"
+	testASNPrefix          = "203.0.113.0/24"
 	testClientIP           = "203.0.113.7"
 	testConfigDatabasePath = "database_path"
+	testCustomASNIPv4Zone  = "asn.example.test"
+	testCustomASNIPv6Zone  = "asn6.example.test"
+	testCustomASNQuery     = "7.113.0.203.asn.example.test"
 	testCountryDE          = "DE"
+	testDefaultASNQuery    = "7.113.0.203.asn.rspamd.com"
 	testProtocolIMAP       = "imap"
 	testRegistryARIN       = "arin"
+	testRegistryRIPENCC    = "ripencc"
 	testRegistrySourceURL  = "https://registry.example.test/delegated"
 	testReloadedASN        = 64510
 	testReloadedCountry    = "US"
@@ -200,6 +208,26 @@ func TestDecodeModuleConfigInfersMMDBAndASNRegistryDefaults(t *testing.T) {
 	}
 }
 
+func TestDecodeModuleConfigEnablesRspamdASNLookupDefaults(t *testing.T) {
+	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		testConfigDatabasePath: testDatabasePath(t, "geoip.json"),
+		"asn_lookup": map[string]any{
+			"enabled": true,
+		},
+	}))
+	if err != nil {
+		t.Fatalf("decodeModuleConfig() error = %v", err)
+	}
+
+	if !config.ASNLookup.Enabled {
+		t.Fatal("ASN lookup should be enabled")
+	}
+
+	if config.ASNLookup.IPv4Zone != defaultASNRspamdIPv4Zone || config.ASNLookup.IPv6Zone != defaultASNRspamdIPv6Zone {
+		t.Fatalf("ASN lookup zones = %q/%q", config.ASNLookup.IPv4Zone, config.ASNLookup.IPv6Zone)
+	}
+}
+
 func TestFakeMMDBFixtureIsNotARealMaxMindDatabase(t *testing.T) {
 	_, err := loadConfiguredDatabase(context.Background(), moduleConfig{
 		DatabasePath:   testDatabasePath(t, "geoip-test.mmdb"),
@@ -247,6 +275,94 @@ func TestPluginSupportsMMDBConfigThroughDatabaseLoader(t *testing.T) {
 
 	assertFact(t, result.Facts, factMatched, true)
 	assertFact(t, result.Facts, factASN, 64500)
+}
+
+func TestASNLookupParsesRspamdTXTAndCachesResult(t *testing.T) {
+	resolver := &fakeASNResolver{
+		answers: map[string][]string{
+			testDefaultASNQuery: {testASNDNSAnswer},
+		},
+	}
+	lookup := newASNLookupService(asnLookupConfig{
+		Enabled:          true,
+		ProviderType:     asnLookupProviderRspamd,
+		IPv4Zone:         defaultASNRspamdIPv4Zone,
+		IPv6Zone:         defaultASNRspamdIPv6Zone,
+		Timeout:          time.Second,
+		CacheTTL:         time.Hour,
+		NegativeCacheTTL: time.Minute,
+	}, resolver)
+
+	addr := netip.MustParseAddr(testClientIP)
+
+	record, ok, err := lookup.Lookup(context.Background(), addr)
+	if err != nil {
+		t.Fatalf("Lookup() error = %v", err)
+	}
+
+	if !ok {
+		t.Fatal("Lookup() did not match Rspamd ASN answer")
+	}
+
+	if record.ASN != 64500 || record.ASNPrefix != testASNPrefix || record.ASNCountryISO != testCountryDE || record.ASNRegistry != testRegistryRIPENCC {
+		t.Fatalf("ASN record = %#v", record)
+	}
+
+	if _, _, err := lookup.Lookup(context.Background(), addr); err != nil {
+		t.Fatalf("second Lookup() error = %v", err)
+	}
+
+	if got := resolver.calls[testDefaultASNQuery]; got != 1 {
+		t.Fatalf("resolver calls = %d, want one cached query", got)
+	}
+}
+
+func TestEnvironmentSourceUsesRspamdASNLookupForRecordsWithoutASN(t *testing.T) {
+	module := testModule(testDatabasePath(t, "geoip-test.mmdb"))
+	module.Config["database_format"] = databaseFormatMMDB
+	module.Config["asn_lookup"] = map[string]any{
+		"enabled":   true,
+		"ipv4_zone": testCustomASNIPv4Zone,
+		"ipv6_zone": testCustomASNIPv6Zone,
+	}
+
+	plugin := NewPlugin()
+	plugin.asnResolver = &fakeASNResolver{
+		answers: map[string][]string{
+			testCustomASNQuery: {testASNDNSAnswer},
+		},
+	}
+	plugin.databaseLoad = func(_ context.Context, config moduleConfig) (geoDatabase, error) {
+		if config.ASNLookup.IPv4Zone != testCustomASNIPv4Zone || config.ASNLookup.IPv6Zone != testCustomASNIPv6Zone {
+			t.Fatalf("ASN lookup zones = %q/%q", config.ASNLookup.IPv4Zone, config.ASNLookup.IPv6Zone)
+		}
+
+		return &fileDatabase{records: []geoRecord{
+			{
+				CountryISO:  testCountryDE,
+				CountryName: "Germany",
+				CityName:    "Berlin",
+				Prefix:      mustPrefix(t, "203.0.113.0/24"),
+			},
+		}}, nil
+	}
+
+	registry, registeredPlugin := registerTestPluginInstance(t, plugin, module)
+
+	runner := newRunnerForPlugin(registry, registeredPlugin, module, nil, nil)
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer stopRunner(t, runner)
+
+	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
+	if err != nil {
+		t.Fatalf("EvaluateEnvironment() error = %v", err)
+	}
+
+	assertFact(t, result.Facts, factASN, 64500)
+	assertFact(t, result.Facts, factASNPrefix, testASNPrefix)
+	assertFact(t, result.Facts, factASNRegistry, testRegistryRIPENCC)
 }
 
 func TestASNRegistrySnapshotParsesDelegatedStats(t *testing.T) {
@@ -696,4 +812,23 @@ func (f fakeASNRegistryFetcher) Fetch(_ context.Context, sourceURL string) ([]by
 	}
 
 	return raw, nil
+}
+
+type fakeASNResolver struct {
+	answers map[string][]string
+	calls   map[string]int
+}
+
+// LookupTXT returns configured Rspamd-compatible ASN TXT fixture answers.
+func (r *fakeASNResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	if r.calls == nil {
+		r.calls = make(map[string]int)
+	}
+
+	r.calls[name]++
+	if answers, ok := r.answers[name]; ok {
+		return answers, nil
+	}
+
+	return nil, &net.DNSError{Err: "not found", Name: name, IsNotFound: true}
 }

@@ -60,8 +60,10 @@ type Plugin struct {
 	logger        pluginapi.Logger
 	tracer        pluginapi.Tracer
 	asnRegistry   *asnRegistrySnapshot
+	asnLookup     *asnLookupService
 	databaseLoad  databaseLoader
 	asnFetch      asnRegistryFetcher
+	asnResolver   asnDNSResolver
 	lookupCounter pluginapi.Counter
 	lookupLatency pluginapi.Histogram
 	recordGauge   pluginapi.Gauge
@@ -89,6 +91,7 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 		DocsURL:     "server/docs/examples/go_plugin_geoip.yml",
 		Features: []pluginapi.Feature{
 			"asn_registry_refresh",
+			"asn_rspamd_dns_lookup",
 			"environment_source",
 			"init_task",
 			"maxmind_mmdb",
@@ -201,6 +204,7 @@ func (p *Plugin) swapDatabase(ctx context.Context, config moduleConfig, database
 
 	p.config = config
 	p.database = database
+	p.asnLookup = newASNLookupService(config.ASNLookup, p.asnResolver)
 
 	if !config.ASNRegistry.Enabled {
 		p.asnRegistry = nil
@@ -233,25 +237,47 @@ func (p *Plugin) currentConfig() (moduleConfig, bool) {
 	return p.config, p.database != nil
 }
 
-// lookupRecord runs a database lookup while protecting the active reader from replacement.
+// lookupRecord runs database and ASN lookups while protecting replaceable readers from replacement.
 func (p *Plugin) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, bool, error) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-
 	if p.database == nil {
+		p.mu.RUnlock()
+
 		return geoRecord{}, false, fmt.Errorf("geoip database is not loaded")
 	}
 
 	record, matched, err := p.database.Lookup(ctx, addr)
-	if err != nil || !matched || record.ASN <= 0 || p.asnRegistry == nil {
+	asnLookup := p.asnLookup
+	asnRegistry := p.asnRegistry
+	p.mu.RUnlock()
+
+	if err != nil || !matched {
 		return record, matched, err
 	}
 
-	if asnRecord, ok := p.asnRegistry.Lookup(record.ASN); ok {
+	if asnLookup != nil {
+		asnRecord, ok, lookupErr := asnLookup.Lookup(ctx, addr)
+		if lookupErr != nil {
+			return record, matched, lookupErr
+		}
+
+		if ok {
+			mergeASNLookupRecord(&record, asnRecord)
+		}
+	}
+
+	if record.ASN <= 0 || asnRegistry == nil {
+		return record, matched, nil
+	}
+
+	if asnRecord, ok := asnRegistry.Lookup(record.ASN); ok {
 		record.ASNRegistry = asnRecord.Registry
 		record.ASNCountryISO = asnRecord.CountryISO
-		record.ASNAllocated = asnRecord.Allocated
 		record.ASNStatus = asnRecord.Status
+
+		if record.ASNAllocated == "" {
+			record.ASNAllocated = asnRecord.Allocated
+		}
 	}
 
 	return record, matched, nil

@@ -129,8 +129,9 @@ Go plugin code cannot be unloaded or replaced after `plugin.Open`; SIGUSR1 does 
 ## Reference Plugin
 
 The GeoIP/ASN reference plugin in `contrib/plugins/geoip` demonstrates an environment source, init-time database loading,
-MaxMind `.mmdb` lookup support, optional delegated ASN registry refresh, runtime facts, bounded metrics/traces, and
-config-only reload. Its example config is available in `server/docs/examples/go_plugin_geoip.yml`.
+MaxMind `.mmdb` lookup support, Rspamd-compatible DNS ASN lookups, optional delegated ASN registry metadata refresh,
+runtime facts, bounded metrics/traces, and config-only reload. Its example config is available in
+`server/docs/examples/go_plugin_geoip.yml`.
 
 GeoIP plugin config highlights:
 
@@ -138,7 +139,14 @@ GeoIP plugin config highlights:
 - `database_format`: optional `auto`, `json`, or `mmdb`; `auto` selects `mmdb` for `.mmdb` paths.
 - `refresh_interval`: optional local database reload interval.
 - `lookup_timeout`: optional request lookup timeout, default `50ms`.
-- `asn_registry.enabled`: opt-in delegated RIR stats refresh.
+- `asn_lookup.enabled`: opt-in request-time ASN DNS lookup.
+- `asn_lookup.provider_type`: optional provider type, currently only `rspamd`.
+- `asn_lookup.ipv4_zone`: optional IPv4 DNS zone, default `asn.rspamd.com`.
+- `asn_lookup.ipv6_zone`: optional IPv6 DNS zone, default `asn6.rspamd.com`.
+- `asn_lookup.timeout`: optional per-query DNS timeout, default `1s`.
+- `asn_lookup.cache_ttl`: optional positive cache TTL, default `12h`.
+- `asn_lookup.negative_cache_ttl`: optional negative cache TTL, default `5m`.
+- `asn_registry.enabled`: opt-in delegated RIR stats refresh for ASN allocation metadata.
 - `asn_registry.refresh_interval`: optional registry refresh interval, default `720h` (30 days).
 - `asn_registry.timeout`: optional per-feed fetch timeout, default `30s`.
 - `asn_registry.source_urls`: optional HTTP(S) delegated stats feeds; when omitted with registry refresh enabled, the

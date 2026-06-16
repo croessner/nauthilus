@@ -26,6 +26,12 @@ import (
 )
 
 const (
+	asnLookupProviderRspamd           = "rspamd"
+	defaultASNRspamdIPv4Zone          = "asn.rspamd.com"
+	defaultASNRspamdIPv6Zone          = "asn6.rspamd.com"
+	defaultASNLookupCacheTTL          = 12 * time.Hour
+	defaultASNLookupNegativeCacheTTL  = 5 * time.Minute
+	defaultASNLookupTimeout           = time.Second
 	defaultASNRegistryRefreshInterval = 30 * 24 * time.Hour
 	defaultASNRegistryTimeout         = 30 * time.Second
 	defaultDatabaseFormat             = "auto"
@@ -37,10 +43,21 @@ const (
 
 type moduleConfig struct {
 	ASNRegistry     asnRegistryConfig `mapstructure:"-"`
+	ASNLookup       asnLookupConfig   `mapstructure:"-"`
 	DatabasePath    string            `mapstructure:"-"`
 	DatabaseFormat  string            `mapstructure:"-"`
 	RefreshInterval time.Duration     `mapstructure:"-"`
 	LookupTimeout   time.Duration     `mapstructure:"-"`
+}
+
+type asnLookupConfig struct {
+	ProviderType     string        `mapstructure:"-"`
+	IPv4Zone         string        `mapstructure:"-"`
+	IPv6Zone         string        `mapstructure:"-"`
+	Timeout          time.Duration `mapstructure:"-"`
+	CacheTTL         time.Duration `mapstructure:"-"`
+	NegativeCacheTTL time.Duration `mapstructure:"-"`
+	Enabled          bool          `mapstructure:"-"`
 }
 
 type asnRegistryConfig struct {
@@ -52,10 +69,21 @@ type asnRegistryConfig struct {
 
 type rawModuleConfig struct {
 	ASNRegistry     rawASNRegistryConfig `mapstructure:"asn_registry"`
+	ASNLookup       rawASNLookupConfig   `mapstructure:"asn_lookup"`
 	DatabasePath    string               `mapstructure:"database_path"`
 	DatabaseFormat  string               `mapstructure:"database_format"`
 	RefreshInterval string               `mapstructure:"refresh_interval"`
 	LookupTimeout   string               `mapstructure:"lookup_timeout"`
+}
+
+type rawASNLookupConfig struct {
+	ProviderType     string `mapstructure:"provider_type"`
+	IPv4Zone         string `mapstructure:"ipv4_zone"`
+	IPv6Zone         string `mapstructure:"ipv6_zone"`
+	Timeout          string `mapstructure:"timeout"`
+	CacheTTL         string `mapstructure:"cache_ttl"`
+	NegativeCacheTTL string `mapstructure:"negative_cache_ttl"`
+	Enabled          bool   `mapstructure:"enabled"`
 }
 
 type rawASNRegistryConfig struct {
@@ -103,8 +131,14 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
+	asnLookup, err := parseASNLookupConfig(raw.ASNLookup)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
 	return moduleConfig{
 		ASNRegistry:     asnRegistry,
+		ASNLookup:       asnLookup,
 		DatabasePath:    databasePath,
 		DatabaseFormat:  databaseFormat,
 		RefreshInterval: refreshInterval,
@@ -131,6 +165,105 @@ func parseDatabaseFormat(value string, databasePath string) (string, error) {
 	default:
 		return "", fmt.Errorf("database_format must be one of auto, json, or mmdb")
 	}
+}
+
+// parseASNLookupConfig applies Rspamd-compatible ASN DNS lookup defaults.
+func parseASNLookupConfig(raw rawASNLookupConfig) (asnLookupConfig, error) {
+	timeout, err := parsePositiveDefaultedDuration("asn_lookup.timeout", raw.Timeout, defaultASNLookupTimeout)
+	if err != nil {
+		return asnLookupConfig{}, err
+	}
+
+	cacheTTL, err := parsePositiveDefaultedDuration("asn_lookup.cache_ttl", raw.CacheTTL, defaultASNLookupCacheTTL)
+	if err != nil {
+		return asnLookupConfig{}, err
+	}
+
+	negativeCacheTTL, err := parsePositiveDefaultedDuration("asn_lookup.negative_cache_ttl", raw.NegativeCacheTTL, defaultASNLookupNegativeCacheTTL)
+	if err != nil {
+		return asnLookupConfig{}, err
+	}
+
+	providerType := strings.TrimSpace(raw.ProviderType)
+	if providerType == "" {
+		providerType = asnLookupProviderRspamd
+	}
+
+	if providerType != asnLookupProviderRspamd {
+		return asnLookupConfig{}, fmt.Errorf("asn_lookup.provider_type must be rspamd")
+	}
+
+	ipv4Zone, err := parseDNSZone("asn_lookup.ipv4_zone", raw.IPv4Zone, defaultASNRspamdIPv4Zone)
+	if err != nil {
+		return asnLookupConfig{}, err
+	}
+
+	ipv6Zone, err := parseDNSZone("asn_lookup.ipv6_zone", raw.IPv6Zone, defaultASNRspamdIPv6Zone)
+	if err != nil {
+		return asnLookupConfig{}, err
+	}
+
+	return asnLookupConfig{
+		ProviderType:     providerType,
+		IPv4Zone:         ipv4Zone,
+		IPv6Zone:         ipv6Zone,
+		Timeout:          timeout,
+		CacheTTL:         cacheTTL,
+		NegativeCacheTTL: negativeCacheTTL,
+		Enabled:          raw.Enabled,
+	}, nil
+}
+
+// parseDNSZone validates a DNS zone used by the Rspamd-compatible ASN provider.
+func parseDNSZone(name string, value string, fallback string) (string, error) {
+	zone := strings.Trim(strings.TrimSpace(value), ".")
+	if zone == "" {
+		zone = fallback
+	}
+
+	if !isDNSZoneName(zone) {
+		return "", fmt.Errorf("%s must be a DNS zone name", name)
+	}
+
+	return zone, nil
+}
+
+// isDNSZoneName checks the restricted hostname form used for lookup zones.
+func isDNSZoneName(value string) bool {
+	if value == "" || len(value) > 253 || strings.Contains(value, "..") {
+		return false
+	}
+
+	for _, label := range strings.Split(value, ".") {
+		if !isDNSLabelName(label) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isDNSLabelName validates one hostname label.
+func isDNSLabelName(label string) bool {
+	if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+		return false
+	}
+
+	for _, char := range label {
+		if !isDNSLabelChar(char) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isDNSLabelChar reports whether a rune is valid inside a DNS label.
+func isDNSLabelChar(char rune) bool {
+	return (char >= 'a' && char <= 'z') ||
+		(char >= 'A' && char <= 'Z') ||
+		(char >= '0' && char <= '9') ||
+		char == '-'
 }
 
 // parseASNRegistryConfig applies registry defaults and validates registry source URLs.

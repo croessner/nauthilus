@@ -18,6 +18,14 @@ plugins:
         database_format: mmdb
         refresh_interval: 1h
         lookup_timeout: 50ms
+        asn_lookup:
+          enabled: true
+          provider_type: rspamd
+          ipv4_zone: asn.rspamd.com
+          ipv6_zone: asn6.rspamd.com
+          timeout: 1s
+          cache_ttl: 12h
+          negative_cache_ttl: 5m
         asn_registry:
           enabled: true
           refresh_interval: 720h
