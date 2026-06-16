@@ -259,7 +259,7 @@ plugins:
           ipv4_zone: asn.rspamd.com
           ipv6_zone: asn6.rspamd.com
         refresh_interval: 1h
-        lookup_timeout: 50ms
+        lookup_timeout: 1500ms
         asn_registry:
           enabled: true
           refresh_interval: 720h

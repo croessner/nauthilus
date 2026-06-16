@@ -42,7 +42,8 @@ The plugin-owned config subtree accepts:
 - `database_path`: absolute path to a local JSON fixture or MaxMind `.mmdb` database.
 - `database_format`: optional `auto`, `json`, or `mmdb`; `auto` is the default and selects `mmdb` for `.mmdb` paths.
 - `refresh_interval`: optional duration for periodic local database reloads, for example `1h`.
-- `lookup_timeout`: optional request-time lookup bound, default `50ms`.
+- `lookup_timeout`: optional request-time lookup bound, default `50ms`. When `asn_lookup.enabled` is true, configure
+  this above `asn_lookup.timeout`; the reference configuration uses `1500ms` for the default `1s` DNS timeout.
 - `asn_lookup.enabled`: optional boolean. When true, request-time ASN data is resolved through a Rspamd-compatible DNS
   TXT provider.
 - `asn_lookup.provider_type`: optional provider type, currently only `rspamd`.

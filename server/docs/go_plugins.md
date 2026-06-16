@@ -138,7 +138,8 @@ GeoIP plugin config highlights:
 - `database_path`: absolute path to a JSON fixture or MaxMind `.mmdb` database.
 - `database_format`: optional `auto`, `json`, or `mmdb`; `auto` selects `mmdb` for `.mmdb` paths.
 - `refresh_interval`: optional local database reload interval.
-- `lookup_timeout`: optional request lookup timeout, default `50ms`.
+- `lookup_timeout`: optional request lookup timeout, default `50ms`. When `asn_lookup.enabled` is true, set this above
+  `asn_lookup.timeout`; the GeoIP reference example uses `1500ms` for the default `1s` DNS timeout.
 - `asn_lookup.enabled`: opt-in request-time ASN DNS lookup.
 - `asn_lookup.provider_type`: optional provider type, currently only `rspamd`.
 - `asn_lookup.ipv4_zone`: optional IPv4 DNS zone, default `asn.rspamd.com`.
