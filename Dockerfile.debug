@@ -15,7 +15,7 @@ ENV GOEXPERIMENT=runtimesecret
 RUN apk add --no-cache build-base git
 
 RUN cd server && go build -mod=vendor -tags="netgo" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
-RUN mkdir -p /usr/local/lib/nauthilus/plugins && cd contrib/plugins/geoip && go build -mod=vendor -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
+RUN mkdir -p /usr/local/lib/nauthilus/plugins && cd contrib/plugins/geoip && go build -mod=vendor -tags="netgo" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
 RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakeimap .
