@@ -151,6 +151,7 @@ func NewRunnerFromInstances(
 	}
 
 	core.RegisterPluginSubjectSourceBridge(NewSubjectSourceBridge(runner))
+	core.RegisterPluginEnvironmentSourceBridge(NewEnvironmentSourceBridge(runner))
 	core.RegisterPluginEffectBridge(NewEffectBridge(runner))
 
 	return runner

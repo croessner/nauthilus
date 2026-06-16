@@ -21,6 +21,7 @@ const (
 	testRuntimeModuleName     = "geoip"
 	testRuntimeNewValue       = "new"
 	testRuntimeOldValue       = "old"
+	testRuntimePluginPath     = "/plugins/geoip.so"
 	testRuntimePluginVersion  = "1.0.0"
 )
 
@@ -192,7 +193,7 @@ func initialRuntimeModule(moduleConfig map[string]any) config.PluginModule {
 		Config: moduleConfig,
 		Name:   testRuntimeModuleName,
 		Type:   config.PluginModuleTypeGo,
-		Path:   "/plugins/geoip.so",
+		Path:   testRuntimePluginPath,
 	}
 }
 

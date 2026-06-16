@@ -27,6 +27,8 @@ import (
 const (
 	pluginSubjectCheckPrefix     = "plugin_subject_"
 	pluginSubjectConfigRefPrefix = "plugins.modules."
+	pluginErrorDetailKey         = "reason_code"
+	pluginErrorReason            = "plugin_error"
 )
 
 var _ core.PluginSubjectSourceBridge = (*SubjectSourceBridge)(nil)
@@ -483,7 +485,7 @@ func recordPluginSubjectResult(
 			policy.StageSubjectAnalysis,
 			policyCtx.Report().Operation,
 			true,
-			map[string]policycollection.DetailValue{"reason_code": policycollection.InternalDetail("plugin_error")},
+			map[string]policycollection.DetailValue{pluginErrorDetailKey: policycollection.InternalDetail(pluginErrorReason)},
 		))
 	}
 
@@ -507,6 +509,15 @@ func recordPluginSubjectResult(
 func pluginPolicyFactAttributes(
 	policyCtx *policycollection.DecisionContext,
 	facts []pluginapi.PolicyFact,
+) ([]policycollection.AttributeValue, error) {
+	return pluginPolicyFactAttributesForStage(policyCtx, facts, policy.StageSubjectAnalysis)
+}
+
+// pluginPolicyFactAttributesForStage validates plugin facts against one policy stage registry.
+func pluginPolicyFactAttributesForStage(
+	policyCtx *policycollection.DecisionContext,
+	facts []pluginapi.PolicyFact,
+	stage policy.Stage,
 ) ([]policycollection.AttributeValue, error) {
 	if len(facts) == 0 {
 		return nil, nil
@@ -535,7 +546,7 @@ func pluginPolicyFactAttributes(
 			return nil, fmt.Errorf("%w: unknown policy fact %q", ErrInvalidRuntimeKey, fact.Attribute)
 		}
 
-		if definition.Stage != policy.StageSubjectAnalysis {
+		if definition.Stage != stage {
 			return nil, fmt.Errorf("%w: policy fact %q has stage %q", ErrInvalidRuntimeKey, fact.Attribute, definition.Stage)
 		}
 
@@ -678,7 +689,7 @@ func pluginSubjectStatus(err error) policy.CheckStatus {
 
 func pluginSubjectReason(err error) string {
 	if err != nil {
-		return "plugin_error"
+		return pluginErrorReason
 	}
 
 	return ""

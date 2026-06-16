@@ -28,12 +28,15 @@ import (
 	"github.com/croessner/nauthilus/server/policy"
 	policycollection "github.com/croessner/nauthilus/server/policy/collection"
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
 	testRBLNameSpamhaus              = "Zen Spamhaus"
 	testProtocolIMAP                 = "imap"
 	testProtocolSMTP                 = "smtp"
+	testPluginEnvironmentConfigRef   = "plugins.modules.geoip.environment"
 	testSchedulerGuardInsecure       = "insecure_connection"
 	testSchedulerGuardInsecureReason = "scheduler_guard:insecure_connection"
 )
@@ -140,6 +143,60 @@ func TestAuthPathObserveSchedulerGuardDoesNotSkipTLSAdapter(t *testing.T) {
 
 	if _, exists := report.Attributes[policy.AttributeTLSSecure]; !exists {
 		t.Fatal("tls adapter did not emit attributes in observe mode")
+	}
+}
+
+func TestAuthPathRunsConfiguredPluginEnvironmentBridge(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	bridge := &recordingPluginEnvironmentBridge{triggered: true}
+	previous := regPluginEnv
+
+	RegisterPluginEnvironmentSourceBridge(bridge)
+	t.Cleanup(func() {
+		RegisterPluginEnvironmentSourceBridge(previous)
+	})
+	activatePolicySnapshotForTest(t, &policyruntime.Snapshot{
+		Generation:    81,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationAuthenticate: {
+				policy.StagePreAuth: {
+					Stage: policy.StagePreAuth,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							Name:       "plugin_environment_geoip",
+							Type:       policy.CheckTypePluginEnvironment,
+							ConfigRef:  testPluginEnvironmentConfigRef,
+							Stage:      policy.StagePreAuth,
+							Operations: []policy.Operation{policy.OperationAuthenticate},
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	auth, ctx, _ := newCurrentBehaviorAuthState(t, cfg)
+
+	got := auth.HandleEnvironment(ctx)
+	if got != definitions.AuthResultLuaEnvironment {
+		t.Fatalf("pre-auth result = %v, want %v", got, definitions.AuthResultLuaEnvironment)
+	}
+
+	if bridge.calls != 1 {
+		t.Fatalf("plugin environment calls = %d, want 1", bridge.calls)
+	}
+
+	policyCtx, ok := policyDecisionContext(ctx)
+	if !ok {
+		t.Fatal("missing policy decision context")
+	}
+
+	check := policyCtx.Report().Checks["plugin_environment_geoip"]
+	if check.Type != policy.CheckTypePluginEnvironment || !check.Matched {
+		t.Fatalf("plugin check = %#v, want matched plugin.environment check", check)
 	}
 }
 
@@ -750,4 +807,41 @@ func policyDecisionContext(ctx interface {
 	policyCtx, ok := value.(*policycollection.DecisionContext)
 
 	return policyCtx, ok
+}
+
+type recordingPluginEnvironmentBridge struct {
+	err       error
+	calls     int
+	triggered bool
+	abort     bool
+}
+
+func (b *recordingPluginEnvironmentBridge) Evaluate(
+	ctx *gin.Context,
+	view *StateView,
+) (triggered bool, abort bool, handled bool, err error) {
+	b.calls++
+	auth := view.Auth()
+	check := auth.beginPolicyCheck(ctx, policycollection.CheckSelector{
+		CheckType: policy.CheckTypePluginEnvironment,
+		Stage:     policy.StagePreAuth,
+		ConfigRef: testPluginEnvironmentConfigRef,
+	})
+	auth.finishPolicyCheck(check, policyCheckResult{
+		Err:          b.err,
+		Status:       policy.CheckStatusOK,
+		Matched:      b.triggered,
+		DecisionHint: policyDecision(b.triggered, policy.DecisionDeny),
+		Attributes: []policycollection.AttributeValue{
+			policycollection.BoolAttribute(
+				"auth.plugin.environment.geoip.environment.triggered",
+				policy.StagePreAuth,
+				auth.policyOperation(),
+				b.triggered,
+				nil,
+			),
+		},
+	})
+
+	return b.triggered, b.abort, true, b.err
 }

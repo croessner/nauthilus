@@ -12,7 +12,6 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/policy"
 	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
-	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 )
 
 const (
@@ -263,7 +262,7 @@ func newSubjectTestBridge(t *testing.T, sources ...*fakeSubjectSource) *SubjectS
 		Path: "/plugins/customer.so",
 	}
 
-	runner := newTestRunnerWithModule(t, &runtimePlugin{}, module, func(registrar pluginapi.Registrar) error {
+	runner := newStartedTestRunnerWithModule(t, &runtimePlugin{}, module, func(registrar pluginapi.Registrar) error {
 		for _, source := range sources {
 			if err := registrar.RegisterSubjectSource(source); err != nil {
 				return err
@@ -272,9 +271,6 @@ func newSubjectTestBridge(t *testing.T, sources ...*fakeSubjectSource) *SubjectS
 
 		return nil
 	})
-	if err := runner.Start(context.Background()); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
 
 	return NewSubjectSourceBridge(runner)
 }
@@ -307,51 +303,14 @@ func newSubjectTestPassDBResult() *core.PassDBResult {
 func activateSubjectPolicySnapshot(t *testing.T, attributes ...string) {
 	t.Helper()
 
-	attributeRegistry := make(map[string]policyregistry.AttributeDefinition)
-	for _, attribute := range attributes {
-		attributeRegistry[attribute] = policyregistry.AttributeDefinition{
-			ID:         attribute,
-			Stage:      policy.StageSubjectAnalysis,
-			Operations: []policy.Operation{policy.OperationAuthenticate},
-			Category:   policyregistry.AttributeCategorySubject,
-			Type:       policyregistry.AttributeTypeNumber,
-			Source:     policyregistry.SourcePlugin,
-		}
-	}
-
-	snapshot := &policyruntime.Snapshot{
-		Generation:        1,
-		Mode:              "enforce",
-		DefaultPolicy:     policy.BuiltinDefaultSet,
-		AttributeRegistry: attributeRegistry,
-		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
-			policy.OperationAuthenticate: {
-				policy.StageSubjectAnalysis: {
-					Stage: policy.StageSubjectAnalysis,
-					Checks: []policyruntime.CompiledCheck{
-						{
-							Name:       subjectCheckName,
-							Type:       policy.CheckTypePluginSubjectSource,
-							Stage:      policy.StageSubjectAnalysis,
-							Operations: []policy.Operation{policy.OperationAuthenticate},
-							ConfigRef:  subjectCheckConfigRef,
-							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	if err := policyruntime.DefaultStore().Activate(snapshot); err != nil {
-		t.Fatalf("activate policy snapshot: %v", err)
-	}
-
-	t.Cleanup(func() {
-		if err := policyruntime.DefaultStore().Activate(&policyruntime.Snapshot{}); err != nil {
-			t.Fatalf("restore policy snapshot: %v", err)
-		}
-	})
+	activatePluginPolicySnapshot(t, pluginPolicySnapshotSpec{
+		stage:         policy.StageSubjectAnalysis,
+		category:      policyregistry.AttributeCategorySubject,
+		attributeType: policyregistry.AttributeTypeNumber,
+		checkName:     subjectCheckName,
+		checkType:     policy.CheckTypePluginSubjectSource,
+		configRef:     subjectCheckConfigRef,
+	}, attributes...)
 }
 
 func firstStringAttributeFromAuth(auth *core.AuthState, name string) string {

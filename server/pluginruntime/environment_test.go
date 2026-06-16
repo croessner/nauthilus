@@ -20,10 +20,22 @@ import (
 	"testing"
 
 	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/pluginregistry"
+	"github.com/croessner/nauthilus/server/policy"
+	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
 )
 
-const testRuntimeEnvironmentFact = "plugin.environment.geoip.matched"
+const (
+	environmentCheckConfigRef  = pluginEnvironmentConfigRefPrefix + testRuntimeModuleName + ".environment"
+	environmentCheckName       = "plugin_environment_geoip"
+	environmentLogKey          = "geoip_marker"
+	environmentLogValue        = "native"
+	environmentRuntimeKey      = "plugin.environment.geoip"
+	environmentRuntimeMatched  = "matched"
+	environmentStatusText      = "native environment ok"
+	testRuntimeEnvironmentFact = "plugin.environment.geoip.matched"
+)
 
 func TestRunner_EnvironmentSourceReturnsFactsRuntimeDeltaAndObservations(t *testing.T) {
 	observer := &recordingObserver{}
@@ -66,6 +78,105 @@ func TestRunner_EnvironmentSourceReturnsFactsRuntimeDeltaAndObservations(t *test
 	if !observer.sawCall(testRuntimeEnvironment, string(pluginregistry.ComponentKindEnvironmentSource), "Evaluate") {
 		t.Fatalf("observer records = %#v, want environment Evaluate call", observer.records)
 	}
+}
+
+func TestEnvironmentSourceBridgeAppliesRuntimeFactsAndObservations(t *testing.T) {
+	result := pluginapi.EnvironmentResult{
+		Status: &pluginapi.StatusMessage{
+			DefaultText: environmentStatusText,
+		},
+		Logs: []pluginapi.LogField{{Key: environmentLogKey, Value: environmentLogValue}},
+		Facts: []pluginapi.PolicyFact{
+			{Attribute: testRuntimeEnvironmentFact, Value: true},
+		},
+		RuntimeDelta: pluginapi.RuntimeDelta{
+			Set: map[string]any{
+				environmentRuntimeKey: map[string]any{environmentRuntimeMatched: true},
+			},
+		},
+		Triggered: true,
+	}
+	bridge := newEnvironmentTestBridge(t, runtimeAdapterEnvironmentSource{result: result})
+	auth := newSubjectTestAuth(t)
+	activateEnvironmentPolicySnapshot(t, testRuntimeEnvironmentFact)
+
+	triggered, abort, handled, err := bridge.Evaluate(auth.Request.HTTPClientContext, auth.View())
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+
+	if !handled || !triggered || abort {
+		t.Fatalf("Evaluate() handled=%t triggered=%t abort=%t, want handled triggered without abort", handled, triggered, abort)
+	}
+
+	assertEnvironmentRuntime(t, auth)
+	assertEnvironmentPolicyReport(t, auth)
+}
+
+func newEnvironmentTestBridge(t *testing.T, sources ...pluginapi.EnvironmentSource) *EnvironmentSourceBridge {
+	t.Helper()
+
+	runner := newStartedTestRunnerWithModule(t, &runtimePlugin{}, initialRuntimeModule(nil), func(registrar pluginapi.Registrar) error {
+		for _, source := range sources {
+			if err := registrar.RegisterEnvironmentSource(source); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	return NewEnvironmentSourceBridge(runner)
+}
+
+func assertEnvironmentRuntime(t *testing.T, auth *core.AuthState) {
+	t.Helper()
+
+	value := auth.Runtime.Context.Get(environmentRuntimeKey)
+	runtimeValues, ok := value.(map[string]any)
+
+	if !ok || runtimeValues[environmentRuntimeMatched] != true {
+		t.Fatalf("runtime value = %#v, want matched GeoIP runtime map", value)
+	}
+
+	if auth.Runtime.StatusMessage != environmentStatusText {
+		t.Fatalf("status = %q, want plugin environment status", auth.Runtime.StatusMessage)
+	}
+
+	for index := 0; index+1 < len(auth.Runtime.AdditionalLogs); index += 2 {
+		if auth.Runtime.AdditionalLogs[index] == environmentLogKey && auth.Runtime.AdditionalLogs[index+1] == environmentLogValue {
+			return
+		}
+	}
+
+	t.Fatalf("additional logs = %#v, want plugin environment log field", auth.Runtime.AdditionalLogs)
+}
+
+func assertEnvironmentPolicyReport(t *testing.T, auth *core.AuthState) {
+	t.Helper()
+
+	report := auth.PolicyDecisionContext(auth.Request.HTTPClientContext).Report()
+	if value := report.Attributes[testRuntimeEnvironmentFact].Value; value != true {
+		t.Fatalf("policy fact = %#v, want true", value)
+	}
+
+	check := report.Checks[environmentCheckName]
+	if check.Type != policy.CheckTypePluginEnvironment || !check.Matched {
+		t.Fatalf("environment check = %#v, want matched plugin environment check", check)
+	}
+}
+
+func activateEnvironmentPolicySnapshot(t *testing.T, attributes ...string) {
+	t.Helper()
+
+	activatePluginPolicySnapshot(t, pluginPolicySnapshotSpec{
+		stage:         policy.StagePreAuth,
+		category:      policyregistry.AttributeCategoryEnvironment,
+		attributeType: policyregistry.AttributeTypeBool,
+		checkName:     environmentCheckName,
+		checkType:     policy.CheckTypePluginEnvironment,
+		configRef:     environmentCheckConfigRef,
+	}, attributes...)
 }
 
 type runtimeAdapterEnvironmentSource struct {

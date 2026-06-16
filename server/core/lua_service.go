@@ -35,6 +35,13 @@ type PluginSubjectSourceBridge interface {
 	Analyze(ctx *gin.Context, view *StateView, result *PassDBResult, current definitions.AuthResult) (definitions.AuthResult, bool)
 }
 
+// PluginEnvironmentSourceBridge adapts native pre-auth environment sources without importing pluginruntime.
+//
+//goland:nointerface
+type PluginEnvironmentSourceBridge interface {
+	Evaluate(ctx *gin.Context, view *StateView) (triggered bool, abort bool, handled bool, err error)
+}
+
 // PostActionInput aggregates the minimal inputs required for the Lua post action.
 // It deliberately reduces dozens of parameters to a compact value object.
 type PostActionInput struct {

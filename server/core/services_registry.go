@@ -26,6 +26,7 @@ import (
 var (
 	regLuaSubject     LuaSubject
 	regPluginSubject  PluginSubjectSourceBridge
+	regPluginEnv      PluginEnvironmentSourceBridge
 	regPostAction     PostAction
 	regPluginEffect   PluginEffectBridge
 	regEnvironmentEng EnvironmentEngine
@@ -41,6 +42,9 @@ func RegisterLuaSubject(l LuaSubject) { regLuaSubject = l }
 
 // RegisterPluginSubjectSourceBridge registers the native plugin subject-source adapter.
 func RegisterPluginSubjectSourceBridge(b PluginSubjectSourceBridge) { regPluginSubject = b }
+
+// RegisterPluginEnvironmentSourceBridge registers the native plugin environment-source adapter.
+func RegisterPluginEnvironmentSourceBridge(b PluginEnvironmentSourceBridge) { regPluginEnv = b }
 
 // RegisterPostAction registers the active PostAction implementation.
 func RegisterPostAction(p PostAction) { regPostAction = p }
@@ -66,6 +70,11 @@ func RegisterPasswordVerifier(v PasswordVerifier) { regPassVerifier = v }
 func getLuaSubject() LuaSubject { return regLuaSubject }
 func getPluginSubjectSourceBridge() PluginSubjectSourceBridge {
 	return regPluginSubject
+}
+
+// getPluginEnvironmentSourceBridge returns the registered native pre-auth environment adapter.
+func getPluginEnvironmentSourceBridge() PluginEnvironmentSourceBridge {
+	return regPluginEnv
 }
 func getPostAction() PostAction { return regPostAction }
 func getPluginEffectBridge() PluginEffectBridge {

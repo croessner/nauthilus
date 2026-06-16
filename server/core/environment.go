@@ -38,6 +38,7 @@ const (
 	environmentDecisionAbort        = "abort_environment"
 	environmentDecisionLua          = "environment_lua"
 	environmentDecisionOK           = "ok"
+	environmentDecisionPlugin       = "environment_plugin"
 	environmentDecisionRBL          = "environment_rbl"
 	environmentDecisionRelayDomains = "environment_relay_domains"
 	environmentDecisionTLS          = "environment_tls"
@@ -571,6 +572,10 @@ func (a *AuthState) HandleEnvironment(ctx *gin.Context) definitions.AuthResult {
 		return result
 	}
 
+	if result, handled := a.handlePluginEnvironmentResult(ctx, fsp); handled {
+		return result
+	}
+
 	if result, handled := a.handleTLSEnvironmentResult(ctx, fsp); handled {
 		return result
 	}
@@ -625,6 +630,57 @@ func (a *AuthState) handleLuaEnvironmentResult(ctx *gin.Context, span trace.Span
 			current:  definitions.AuthResultOK,
 			decision: environmentDecisionAbort,
 		}); handled {
+			return result, true
+		}
+
+		return definitions.AuthResultOK, true
+	}
+
+	return definitions.AuthResultUnset, false
+}
+
+// handlePluginEnvironmentResult executes native environment sources and maps their outcome into pre-auth semantics.
+func (a *AuthState) handlePluginEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
+	bridge := getPluginEnvironmentSourceBridge()
+	if bridge == nil {
+		return definitions.AuthResultUnset, false
+	}
+
+	triggered, abort, handled, err := bridge.Evaluate(ctx, a.View())
+	if !handled {
+		return definitions.AuthResultUnset, false
+	}
+
+	if err != nil {
+		span.RecordError(err)
+
+		if result, resolved := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
+			current:  definitions.AuthResultTempFail,
+			decision: environmentDecisionTempFail,
+		}); resolved {
+			return result, true
+		}
+
+		return definitions.AuthResultOK, true
+	}
+
+	if triggered {
+		if result, resolved := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
+			current:                 definitions.AuthResultLuaEnvironment,
+			decision:                environmentDecisionPlugin,
+			reject:                  true,
+			continuePolicyAuthority: true,
+			markPolicyContinue:      true,
+		}); resolved {
+			return result, true
+		}
+	}
+
+	if abort {
+		if result, resolved := a.resolvePreAuthEnvironmentOutcome(ctx, span, preAuthEnvironmentOutcome{
+			current:  definitions.AuthResultOK,
+			decision: environmentDecisionAbort,
+		}); resolved {
 			return result, true
 		}
 
