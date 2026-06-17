@@ -34,6 +34,25 @@ Configure `auth.policy.registry_scripts` with `lua-plugins.d/policy/registry.lua
 attributes in policy rules. Use `emit_public` only for data that is already safe for normal custom logs. Use `emit` for
 policy material that should not be copied to logs.
 
+### nauthilus_geoip_bridge.lua
+Copies native Go GeoIP runtime data from `plugin.environment.geoip` into the legacy Lua `rt.geoip_info` shape without
+overwriting decisions already produced by `subject/geoip.lua`.
+
+**Functions:**
+- `native()`: Returns the native runtime table, or `nil` when the native plugin did not emit data.
+- `attach()`: Merges native GeoIP and ASN fields into `rt.geoip_info`, refreshes `geoippolicyd_iso_codes_seen` when
+  that legacy context value is missing, and returns the resulting `rt.geoip_info` table.
+
+**Usage:**
+```lua
+local geoip_bridge = require("nauthilus_geoip_bridge")
+local geoip_info = geoip_bridge.attach()
+```
+
+The bridge is intentionally decision-neutral. It preserves `guid`, `status`, and `current_country_code` from the
+GeoIP policy service when they already exist, while adding native fields such as `asn`, `asn_org`, `asn_prefix`, and
+`asn_registry` for logging, analytics, and future reputation scoring.
+
 ### nauthilus_util.lua
 A comprehensive utility module that provides common functions used throughout the Nauthilus plugin system.
 

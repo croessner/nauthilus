@@ -94,6 +94,16 @@ subject_analysis("lua.plugin.geoip.rejected", "bool", "Whether the GeoIP policy 
 subject_analysis("lua.plugin.geoip.error", "bool", "Whether the GeoIP policy service returned an error.")
 subject_analysis("lua.plugin.geoip.status_message", "string", "Client-visible GeoIP message prepared by the plugin.")
 
+subject_analysis("lua.plugin.geoip_reputation.score", "number", "Weighted signed GeoIP reputation score from Redis.")
+subject_analysis("lua.plugin.geoip_reputation.positive_score", "number", "Highest risky GeoIP reputation score across tracked entities.")
+subject_analysis("lua.plugin.geoip_reputation.negative_score", "number", "Highest trusted GeoIP reputation score across tracked entities.")
+subject_analysis("lua.plugin.geoip_reputation.ip_score", "number", "Signed Redis reputation score for the client IP.")
+subject_analysis("lua.plugin.geoip_reputation.asn_score", "number", "Signed Redis reputation score for the client ASN.")
+subject_analysis("lua.plugin.geoip_reputation.country_score", "number", "Signed Redis reputation score for the client country.")
+subject_analysis("lua.plugin.geoip_reputation.asn_country_score", "number", "Signed Redis reputation score for the ASN country.")
+subject_analysis("lua.plugin.geoip_reputation.samples", "number", "Largest sample count among tracked GeoIP reputation entities.")
+subject_analysis("lua.plugin.geoip_reputation.decision", "string", "Decision hint derived from GeoIP reputation scores.")
+
 subject_analysis("lua.plugin.idp_policy.rejected", "bool", "Whether the IdP Lua policy rejected the request.", RESPONSE_MESSAGE_DETAIL)
 subject_analysis("lua.plugin.idp_policy.reason", "string", "Reason returned by the IdP Lua policy.")
 subject_analysis("lua.plugin.idp_policy.oidc_cid", "string", "OIDC client identifier evaluated by the IdP Lua policy.")

@@ -22,6 +22,7 @@ local nauthilus_mail = require("nauthilus_mail")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_otel = require("nauthilus_opentelemetry")
+local geoip_bridge = require("nauthilus_geoip_bridge")
 local time = require("time")
 
 local template = require("template")
@@ -512,7 +513,9 @@ function nauthilus_call_action(request)
     -- Get suspicious regions based on IP geolocation
     local suspicious_regions = {}
 
-    -- Get country code from context (set by geoip.lua)
+    -- Get country code from context (set by geoip.lua or native GeoIP bridge)
+    geoip_bridge.attach()
+
     local iso_codes_seen = nauthilus_context.context_get("geoippolicyd_iso_codes_seen")
     local country_code = ""
 

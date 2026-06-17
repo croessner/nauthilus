@@ -171,16 +171,23 @@ local TEXT_COLS = {
     "display_name","account","username","password_hash",
     "pwnd_info", "brute_force_bucket", "oidc_cid", "saml_entity_id", "grant_type", "mfa_method",
     "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",
+    "geoip_source","geoip_country_name","geoip_city_name","geoip_asn_org","geoip_asn_prefix",
+    "geoip_asn_registry","geoip_asn_country","geoip_asn_allocated","geoip_asn_status",
+    "reputation_source","reputation_decision",
     "dyn_threat", "dyn_response", "xssl_protocol", "xssl_cipher", "ssl_fingerprint", "prot_reason", "status_msg"
 }
 
 local BOOL_COL = {
-    repeating = true, rwp = true, user_found = true, authenticated = true, prot_active = true, failed_login_recognized = true
+    repeating = true, rwp = true, user_found = true, authenticated = true, prot_active = true,
+    failed_login_recognized = true, geoip_matched = true
 }
 
 local NUM_COL = {
     client_port=true, local_port=true, brute_force_counter=true,
     failed_login_count=true, failed_login_rank=true,
+    geoip_asn=true,
+    reputation_ip_score=true, reputation_asn_score=true,
+    reputation_country_score=true, reputation_asn_country_score=true,
     gp_attempts=true, gp_unique_ips=true, gp_unique_users=true, gp_ips_per_user=true,
     prot_backoff = true, prot_delay_ms = true,
     latency = true, http_status = true
@@ -613,6 +620,11 @@ function nauthilus_run_hook(request)
             -- hotspot / geoip / pattern
             "failed_login_count","failed_login_rank","failed_login_recognized",
             "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",
+            "geoip_source","geoip_matched","geoip_country_name","geoip_city_name",
+            "geoip_asn","geoip_asn_org","geoip_asn_prefix","geoip_asn_registry",
+            "geoip_asn_country","geoip_asn_allocated","geoip_asn_status",
+            "reputation_ip_score","reputation_asn_score","reputation_country_score",
+            "reputation_asn_country_score","reputation_source","reputation_decision",
             "gp_attempts","gp_unique_ips","gp_unique_users","gp_ips_per_user",
             -- protection and dynamic response
             "prot_active","prot_reason","prot_backoff","prot_delay_ms",

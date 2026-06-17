@@ -20,6 +20,7 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_password = require("nauthilus_password")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_prometheus = require("nauthilus_prometheus")
+local geoip_bridge = require("nauthilus_geoip_bridge")
 
 local http = require("http")
 local telegram = require("telegram")
@@ -52,6 +53,8 @@ function nauthilus_call_action(request)
     end
 
     -- Get result table
+    geoip_bridge.attach()
+
     local rt = nauthilus_context.context_get("rt")
     if rt == nil then
         rt = {}

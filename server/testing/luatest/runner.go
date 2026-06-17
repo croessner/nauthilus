@@ -295,6 +295,8 @@ func (tr *TestRunner) configureLuaPackagePath(L *lua.LState) {
 		filepath.ToSlash(filepath.Join(scriptDir, "?/init.lua")),
 		filepath.ToSlash(filepath.Join(scriptDir, "lib", "?.lua")),
 		filepath.ToSlash(filepath.Join(scriptDir, "lib", "?/init.lua")),
+		filepath.ToSlash(filepath.Join(scriptDir, "../../../../lua-plugins.d/share", "?.lua")),
+		filepath.ToSlash(filepath.Join(scriptDir, "../../../../lua-plugins.d/share", "?/init.lua")),
 		filepath.ToSlash(filepath.Join("server", "lua-plugins.d", "share", "?.lua")),
 	}
 

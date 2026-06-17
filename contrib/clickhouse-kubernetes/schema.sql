@@ -39,6 +39,23 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   geoip_country        LowCardinality(String),
   geoip_iso_codes      LowCardinality(String),
   geoip_status         LowCardinality(String),
+  geoip_source         LowCardinality(String),
+  geoip_matched        Nullable(Bool),
+  geoip_country_name   LowCardinality(String),
+  geoip_city_name      LowCardinality(String),
+  geoip_asn            Nullable(UInt64),
+  geoip_asn_org        LowCardinality(String),
+  geoip_asn_prefix     LowCardinality(String),
+  geoip_asn_registry   LowCardinality(String),
+  geoip_asn_country    LowCardinality(String),
+  geoip_asn_allocated  LowCardinality(String),
+  geoip_asn_status     LowCardinality(String),
+  reputation_ip_score          Nullable(Float64),
+  reputation_asn_score         Nullable(Float64),
+  reputation_country_score     Nullable(Float64),
+  reputation_asn_country_score Nullable(Float64),
+  reputation_source            LowCardinality(String),
+  reputation_decision          LowCardinality(String),
   gp_attempts          Nullable(UInt64),
   gp_unique_ips        Nullable(UInt64),
   gp_unique_users      Nullable(UInt64),
@@ -94,6 +111,17 @@ ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_guid         LowCardinality(Str
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_country      LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_iso_codes    LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_status       LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_source       LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_country_name LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_city_name    LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_org      LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_prefix   LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_registry LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_country  LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_allocated LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_status   LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN reputation_source  LowCardinality(String);
+ALTER TABLE nauthilus.logins MODIFY COLUMN reputation_decision LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN prot_reason        LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN dyn_response       LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN xssl_protocol      LowCardinality(String);
@@ -107,6 +135,24 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS status_msg  LowCardinality
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS saml_entity_id LowCardinality(String) AFTER oidc_cid;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS grant_type     LowCardinality(String) AFTER saml_entity_id;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS mfa_method     LowCardinality(String) AFTER grant_type;
+
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_source LowCardinality(String) AFTER geoip_status;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_matched Nullable(Bool) AFTER geoip_source;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_country_name LowCardinality(String) AFTER geoip_matched;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_city_name LowCardinality(String) AFTER geoip_country_name;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn Nullable(UInt64) AFTER geoip_city_name;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_org LowCardinality(String) AFTER geoip_asn;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_prefix LowCardinality(String) AFTER geoip_asn_org;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_registry LowCardinality(String) AFTER geoip_asn_prefix;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_country LowCardinality(String) AFTER geoip_asn_registry;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_allocated LowCardinality(String) AFTER geoip_asn_country;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_status LowCardinality(String) AFTER geoip_asn_allocated;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_ip_score Nullable(Float64) AFTER geoip_asn_status;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_asn_score Nullable(Float64) AFTER reputation_ip_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_country_score Nullable(Float64) AFTER reputation_asn_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_asn_country_score Nullable(Float64) AFTER reputation_country_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_source LowCardinality(String) AFTER reputation_asn_country_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_decision LowCardinality(String) AFTER reputation_source;
 
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rwp Nullable(Bool) AFTER repeating;
 

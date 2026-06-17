@@ -36,6 +36,7 @@ local nauthilus_password = require("nauthilus_password")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_cache = require("nauthilus_cache")
 local nauthilus_redis = require("nauthilus_redis")
+local geoip_bridge = require("nauthilus_geoip_bridge")
 local time = require("time")
 
 local json = require("json")
@@ -76,6 +77,18 @@ function nauthilus_call_action(request)
         if n < 0 then return nil end
         if n ~= n then return nil end -- NaN guard (just in case)
         return math.floor(n)
+    end
+
+    local function to_float(value)
+        local n = tonumber(value)
+        if n == nil then return nil end
+        if n ~= n then return nil end -- NaN guard
+        return n
+    end
+
+    local function to_string(value)
+        if value == nil then return "" end
+        return tostring(value)
     end
 
     -- Normalize timestamp strings for ClickHouse DateTime64(3, 'UTC') JSONEachRow input
@@ -121,6 +134,8 @@ function nauthilus_call_action(request)
     local password_hash = ""
 
     -- Get result table
+    geoip_bridge.attach()
+
     local rt = nauthilus_context.context_get("rt") or {}
     local policy_facts = nauthilus_context.context_get("policy_facts") or {}
 
@@ -226,10 +241,33 @@ function nauthilus_call_action(request)
         local geoip_country = ""
         local geoip_iso_codes = ""
         local geoip_status = ""
+        local geoip_source = ""
+        local geoip_matched
+        local geoip_country_name = ""
+        local geoip_city_name = ""
+        local geoip_asn
+        local geoip_asn_org = ""
+        local geoip_asn_prefix = ""
+        local geoip_asn_registry = ""
+        local geoip_asn_country = ""
+        local geoip_asn_allocated = ""
+        local geoip_asn_status = ""
         if rt and rt.geoip_info then
             if rt.geoip_info.guid and rt.geoip_info.guid ~= "" then geoip_guid = rt.geoip_info.guid end
             if rt.geoip_info.current_country_code and rt.geoip_info.current_country_code ~= "" then geoip_country = rt.geoip_info.current_country_code end
             if rt.geoip_info.status and rt.geoip_info.status ~= "" then geoip_status = rt.geoip_info.status end
+            if rt.geoip_info.source and rt.geoip_info.source ~= "" then geoip_source = rt.geoip_info.source end
+            if rt.geoip_info.matched ~= nil then geoip_matched = (rt.geoip_info.matched == true) end
+            if rt.geoip_info.native_matched ~= nil then geoip_matched = (rt.geoip_info.native_matched == true) end
+            geoip_country_name = to_string(rt.geoip_info.country_name)
+            geoip_city_name = to_string(rt.geoip_info.city_name)
+            geoip_asn = to_uint(rt.geoip_info.asn)
+            geoip_asn_org = to_string(rt.geoip_info.asn_org)
+            geoip_asn_prefix = to_string(rt.geoip_info.asn_prefix)
+            geoip_asn_registry = to_string(rt.geoip_info.asn_registry)
+            geoip_asn_country = to_string(rt.geoip_info.asn_country_iso)
+            geoip_asn_allocated = to_string(rt.geoip_info.asn_allocated)
+            geoip_asn_status = to_string(rt.geoip_info.asn_status)
             if rt.geoip_info.iso_codes_seen and type(rt.geoip_info.iso_codes_seen) == "table" then
                 local parts = {}
                 for _, v in ipairs(rt.geoip_info.iso_codes_seen) do
@@ -244,6 +282,23 @@ function nauthilus_call_action(request)
                     geoip_iso_codes = table.concat(parts, ",")
                 end
             end
+        end
+
+        -- Reputation details if present. Producers are intentionally separate
+        -- from GeoIP enrichment so policy can decide on explicit scores.
+        local reputation_ip_score
+        local reputation_asn_score
+        local reputation_country_score
+        local reputation_asn_country_score
+        local reputation_source = ""
+        local reputation_decision = ""
+        if rt and rt.geoip_reputation then
+            reputation_ip_score = to_float(rt.geoip_reputation.ip_score)
+            reputation_asn_score = to_float(rt.geoip_reputation.asn_score)
+            reputation_country_score = to_float(rt.geoip_reputation.country_score)
+            reputation_asn_country_score = to_float(rt.geoip_reputation.asn_country_score)
+            reputation_source = to_string(rt.geoip_reputation.source)
+            reputation_decision = to_string(rt.geoip_reputation.decision)
         end
 
         -- Global pattern details if present
@@ -313,6 +368,23 @@ function nauthilus_call_action(request)
             geoip_country = geoip_country,
             geoip_iso_codes = geoip_iso_codes,
             geoip_status = geoip_status,
+            geoip_source = geoip_source,
+            geoip_matched = geoip_matched,
+            geoip_country_name = geoip_country_name,
+            geoip_city_name = geoip_city_name,
+            geoip_asn = geoip_asn,
+            geoip_asn_org = geoip_asn_org,
+            geoip_asn_prefix = geoip_asn_prefix,
+            geoip_asn_registry = geoip_asn_registry,
+            geoip_asn_country = geoip_asn_country,
+            geoip_asn_allocated = geoip_asn_allocated,
+            geoip_asn_status = geoip_asn_status,
+            reputation_ip_score = reputation_ip_score,
+            reputation_asn_score = reputation_asn_score,
+            reputation_country_score = reputation_country_score,
+            reputation_asn_country_score = reputation_asn_country_score,
+            reputation_source = reputation_source,
+            reputation_decision = reputation_decision,
             gp_attempts = gp_attempts,
             gp_unique_ips = gp_unique_ips,
             gp_unique_users = gp_unique_users,

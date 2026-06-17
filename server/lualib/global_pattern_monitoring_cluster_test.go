@@ -102,19 +102,7 @@ func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 		return 1
 	})
 
-	L.PreloadModule("time", func(L *lua.LState) int {
-		mod := L.NewTable()
-		mod.RawSetString("unix", L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LNumber(1700000000))
-			return 1
-		}))
-		mod.RawSetString("format", L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString("2023-11-14-22"))
-			return 1
-		}))
-		L.Push(mod)
-		return 1
-	})
+	preloadFixedTimeModule(L, "2023-11-14-22")
 
 	builtin := L.NewTable()
 	builtin.RawSetString("ENVIRONMENT_TRIGGER_NO", lua.LNumber(0))

@@ -59,6 +59,23 @@ data:
       geoip_country        LowCardinality(String),
       geoip_iso_codes      LowCardinality(String),
       geoip_status         LowCardinality(String),
+      geoip_source         LowCardinality(String),
+      geoip_matched        Nullable(Bool),
+      geoip_country_name   LowCardinality(String),
+      geoip_city_name      LowCardinality(String),
+      geoip_asn            Nullable(UInt64),
+      geoip_asn_org        LowCardinality(String),
+      geoip_asn_prefix     LowCardinality(String),
+      geoip_asn_registry   LowCardinality(String),
+      geoip_asn_country    LowCardinality(String),
+      geoip_asn_allocated  LowCardinality(String),
+      geoip_asn_status     LowCardinality(String),
+      reputation_ip_score          Nullable(Float64),
+      reputation_asn_score         Nullable(Float64),
+      reputation_country_score     Nullable(Float64),
+      reputation_asn_country_score Nullable(Float64),
+      reputation_source            LowCardinality(String),
+      reputation_decision          LowCardinality(String),
       gp_attempts          Nullable(UInt64),
       gp_unique_ips        Nullable(UInt64),
       gp_unique_users      Nullable(UInt64),
@@ -70,6 +87,7 @@ data:
       dyn_threat           Nullable(UInt64),
       dyn_response         LowCardinality(String),
       repeating            Nullable(Bool),
+      rwp                  Nullable(Bool),
       user_found           Nullable(Bool),
       authenticated        Nullable(Bool),
       xssl_protocol        LowCardinality(String),
@@ -86,6 +104,7 @@ data:
       INDEX idx_client_ip  client_ip  TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64
     ) ENGINE = MergeTree
     ORDER BY (ts)
+    TTL ts + INTERVAL 1 WEEK DELETE
     SETTINGS index_granularity = 8192;
 ---
 apiVersion: batch/v1

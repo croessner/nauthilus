@@ -50,6 +50,42 @@ Configure the plugin through environment variables or Nauthilus configuration:
 
 The plugin connects to the geoip_policyd service to evaluate geographic access policies and determine if authentication should be allowed based on the client's location.
 
+### geoip_reputation.lua
+Learns Redis-backed reputation from successful and failed authentication outcomes per client IP, ASN, country, and ASN
+country. The plugin emits policy attributes only; it does not reject or tempfail requests by itself.
+
+**Scoring:**
+Each entity stores `success` and `failure` counters in Redis. The signed score is calculated as beta-smoothed log-odds,
+bounded by `tanh`, and weighted by observation volume:
+
+```text
+log_odds = ln((failure + alpha) / (success + alpha))
+weight   = 1 - exp(-samples / saturation)
+score    = tanh(log_odds / temperature) * weight
+```
+
+Positive scores indicate risk, negative scores indicate trust. The emitted `decision` value is a policy hint
+(`trusted`, `neutral`, or `suspicious`), not an enforcement result.
+
+**Emitted policy attributes:**
+- `lua.plugin.geoip_reputation.score`
+- `lua.plugin.geoip_reputation.positive_score`
+- `lua.plugin.geoip_reputation.negative_score`
+- `lua.plugin.geoip_reputation.ip_score`
+- `lua.plugin.geoip_reputation.asn_score`
+- `lua.plugin.geoip_reputation.country_score`
+- `lua.plugin.geoip_reputation.asn_country_score`
+- `lua.plugin.geoip_reputation.samples`
+- `lua.plugin.geoip_reputation.decision`
+
+**Configuration:**
+- `GEOIP_REPUTATION_ALPHA`: Beta smoothing factor, default `2`.
+- `GEOIP_REPUTATION_SATURATION`: Sample count where confidence starts saturating, default `20`.
+- `GEOIP_REPUTATION_TEMPERATURE`: Log-odds slope divisor, default `1.5`.
+- `GEOIP_REPUTATION_TTL_SEC`: Redis counter TTL, default `2592000`.
+- `GEOIP_REPUTATION_SUSPICIOUS_THRESHOLD`: Positive-score hint threshold, default `0.65`.
+- `GEOIP_REPUTATION_TRUSTED_THRESHOLD`: Negative-score hint threshold, default `0.65`.
+
 ### monitoring.lua
 Provides comprehensive monitoring of authentication activities, system performance, and security metrics.
 
