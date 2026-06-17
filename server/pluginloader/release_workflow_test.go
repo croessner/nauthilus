@@ -33,4 +33,8 @@ func TestBuildStableReleaseNotesCoverApprovedPrefixes(t *testing.T) {
 			t.Fatalf("build-stable release notes must include %s commits", prefix)
 		}
 	}
+
+	if !strings.Contains(workflow, "--extended-regexp --regexp-ignore-case") {
+		t.Fatalf("build-stable release notes must use extended regular expressions for grouped prefixes")
+	}
 }

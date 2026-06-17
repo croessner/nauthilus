@@ -253,9 +253,9 @@ jobs:
             local log_output
 
             if [ -n "${last_release_tag}" ]; then
-              log_output="$(git log "${last_release_tag}..${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges --regexp-ignore-case --grep="^${grep_pattern}" || true)"
+              log_output="$(git log "${last_release_tag}..${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges --extended-regexp --regexp-ignore-case --grep="^${grep_pattern}" || true)"
             else
-              log_output="$(git log "${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges --regexp-ignore-case --grep="^${grep_pattern}" || true)"
+              log_output="$(git log "${{ github.ref_name }}" --pretty=format:'- %s (%h)' --no-merges --extended-regexp --regexp-ignore-case --grep="^${grep_pattern}" || true)"
             fi
 
             if [ -n "${log_output}" ]; then
