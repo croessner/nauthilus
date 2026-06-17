@@ -22,10 +22,9 @@ The JSON reference database format is intentionally tiny so tests and examples s
 ```
 
 Production deployments should point `database_path` at a real MaxMind DB, such as GeoLite2 City or GeoLite2 Country. ASN
-facts can be resolved through the Rspamd-compatible DNS provider, which returns TXT records such as
-`15169 | 8.8.8.0/24 | US | arin |` from zones backed by registry data. The test fixture `testdata/geoip-test.mmdb` is
-deliberately not a real MaxMind database; it exists only so unit tests can verify `.mmdb` path handling without
-committing licensed database contents.
+facts can also be resolved from a local routing-prefix snapshot that is refreshed by a supervised background job. The
+test fixture `testdata/geoip-test.mmdb` is deliberately not a real MaxMind database; it exists only so unit tests can
+verify `.mmdb` path handling without committing licensed database contents.
 
 ## Build
 
@@ -42,16 +41,13 @@ The plugin-owned config subtree accepts:
 - `database_path`: absolute path to a local JSON fixture or MaxMind `.mmdb` database.
 - `database_format`: optional `auto`, `json`, or `mmdb`; `auto` is the default and selects `mmdb` for `.mmdb` paths.
 - `refresh_interval`: optional duration for periodic local database reloads, for example `1h`.
-- `lookup_timeout`: optional request-time lookup bound, default `50ms`. When `asn_lookup.enabled` is true, configure
-  this above `asn_lookup.timeout`; the reference configuration uses `1500ms` for the default `1s` DNS timeout.
-- `asn_lookup.enabled`: optional boolean. When true, request-time ASN data is resolved through a Rspamd-compatible DNS
-  TXT provider.
-- `asn_lookup.provider_type`: optional provider type, currently only `rspamd`.
-- `asn_lookup.ipv4_zone`: optional IPv4 DNS zone, default `asn.rspamd.com`.
-- `asn_lookup.ipv6_zone`: optional IPv6 DNS zone, default `asn6.rspamd.com`.
-- `asn_lookup.timeout`: optional per-query DNS timeout, default `1s`.
-- `asn_lookup.cache_ttl`: optional positive cache TTL, default `12h`.
-- `asn_lookup.negative_cache_ttl`: optional negative cache TTL, default `5m`.
+- `lookup_timeout`: optional request-time lookup bound, default `50ms`.
+- `asn_lookup.enabled`: optional boolean. When true, ASN data is resolved from a local routing-prefix snapshot.
+- `asn_lookup.refresh_interval`: optional routing snapshot refresh interval, default `720h` (30 days).
+- `asn_lookup.timeout`: optional per-source fetch timeout, default `30s`.
+- `asn_lookup.source_urls`: optional list of HTTP(S) routing snapshot sources. Direct `.pfx2as`/`.pfx2as.gz` files and
+  CAIDA RouteViews `pfx2as-creation.log` files are supported; when omitted with lookup enabled, the plugin uses the
+  CAIDA IPv4 and IPv6 RouteViews creation logs.
 - `asn_registry.enabled`: optional boolean. When true, a supervised background job fetches delegated ASN registry data
   from the worldwide RIR feeds to enrich resolved ASNs with allocation metadata.
 - `asn_registry.refresh_interval`: optional registry refresh interval, default `720h` (30 days).

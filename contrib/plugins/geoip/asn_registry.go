@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"sort"
@@ -60,40 +59,7 @@ type asnRegistryRecord struct {
 
 // Fetch downloads one delegated registry stats document.
 func (f httpASNRegistryFetcher) Fetch(ctx context.Context, sourceURL string) ([]byte, error) {
-	client := f.client
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create ASN registry request: %w", err)
-	}
-
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("fetch ASN registry data: %w", err)
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("fetch ASN registry data: unexpected HTTP status %d", response.StatusCode)
-	}
-
-	limited := io.LimitReader(response.Body, maxASNRegistryResponseBytes+1)
-
-	raw, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, fmt.Errorf("read ASN registry data: %w", err)
-	}
-
-	if len(raw) > maxASNRegistryResponseBytes {
-		return nil, fmt.Errorf("ASN registry data exceeds %d bytes", maxASNRegistryResponseBytes)
-	}
-
-	return raw, nil
+	return fetchHTTPSource(ctx, f.client, sourceURL, maxASNRegistryResponseBytes, "ASN registry")
 }
 
 // fetchASNRegistrySnapshot downloads, parses, and merges all configured registry feeds.
@@ -103,34 +69,12 @@ func fetchASNRegistrySnapshot(
 	sourceURLs []string,
 	timeout time.Duration,
 ) (*asnRegistrySnapshot, error) {
-	if fetcher == nil {
-		return nil, fmt.Errorf("ASN registry fetcher is nil")
-	}
-
-	contents := make([][]byte, 0, len(sourceURLs))
-	for _, sourceURL := range sourceURLs {
-		raw, err := fetchASNRegistrySource(ctx, fetcher, sourceURL, timeout)
-		if err != nil {
-			return nil, err
-		}
-
-		contents = append(contents, raw)
+	contents, err := fetchSourceContents(ctx, fetcher, sourceURLs, timeout, "ASN registry fetcher is nil", fetchSourceWithTimeout)
+	if err != nil {
+		return nil, err
 	}
 
 	return buildASNRegistrySnapshot(contents)
-}
-
-// fetchASNRegistrySource applies a per-source timeout to one registry fetch.
-func fetchASNRegistrySource(
-	ctx context.Context,
-	fetcher asnRegistryFetcher,
-	sourceURL string,
-	timeout time.Duration,
-) ([]byte, error) {
-	sourceCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	return fetcher.Fetch(sourceCtx, sourceURL)
 }
 
 // buildASNRegistrySnapshot merges parsed delegated stats documents into a lookup snapshot.

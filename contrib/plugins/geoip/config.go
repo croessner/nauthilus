@@ -26,12 +26,8 @@ import (
 )
 
 const (
-	asnLookupProviderRspamd           = "rspamd"
-	defaultASNRspamdIPv4Zone          = "asn.rspamd.com"
-	defaultASNRspamdIPv6Zone          = "asn6.rspamd.com"
-	defaultASNLookupCacheTTL          = 12 * time.Hour
-	defaultASNLookupNegativeCacheTTL  = 5 * time.Minute
-	defaultASNLookupTimeout           = time.Second
+	defaultASNLookupRefreshInterval   = 30 * 24 * time.Hour
+	defaultASNLookupTimeout           = 30 * time.Second
 	defaultASNRegistryRefreshInterval = 30 * 24 * time.Hour
 	defaultASNRegistryTimeout         = 30 * time.Second
 	defaultDatabaseFormat             = "auto"
@@ -51,13 +47,10 @@ type moduleConfig struct {
 }
 
 type asnLookupConfig struct {
-	ProviderType     string        `mapstructure:"-"`
-	IPv4Zone         string        `mapstructure:"-"`
-	IPv6Zone         string        `mapstructure:"-"`
-	Timeout          time.Duration `mapstructure:"-"`
-	CacheTTL         time.Duration `mapstructure:"-"`
-	NegativeCacheTTL time.Duration `mapstructure:"-"`
-	Enabled          bool          `mapstructure:"-"`
+	RefreshInterval time.Duration `mapstructure:"-"`
+	Timeout         time.Duration `mapstructure:"-"`
+	SourceURLs      []string      `mapstructure:"-"`
+	Enabled         bool          `mapstructure:"-"`
 }
 
 type asnRegistryConfig struct {
@@ -77,13 +70,10 @@ type rawModuleConfig struct {
 }
 
 type rawASNLookupConfig struct {
-	ProviderType     string `mapstructure:"provider_type"`
-	IPv4Zone         string `mapstructure:"ipv4_zone"`
-	IPv6Zone         string `mapstructure:"ipv6_zone"`
-	Timeout          string `mapstructure:"timeout"`
-	CacheTTL         string `mapstructure:"cache_ttl"`
-	NegativeCacheTTL string `mapstructure:"negative_cache_ttl"`
-	Enabled          bool   `mapstructure:"enabled"`
+	RefreshInterval string   `mapstructure:"refresh_interval"`
+	Timeout         string   `mapstructure:"timeout"`
+	SourceURLs      []string `mapstructure:"source_urls"`
+	Enabled         bool     `mapstructure:"enabled"`
 }
 
 type rawASNRegistryConfig struct {
@@ -167,103 +157,35 @@ func parseDatabaseFormat(value string, databasePath string) (string, error) {
 	}
 }
 
-// parseASNLookupConfig applies Rspamd-compatible ASN DNS lookup defaults.
+// parseASNLookupConfig applies local ASN routing snapshot defaults.
 func parseASNLookupConfig(raw rawASNLookupConfig) (asnLookupConfig, error) {
+	refreshInterval, err := parseDefaultedDuration("asn_lookup.refresh_interval", raw.RefreshInterval, defaultASNLookupRefreshInterval)
+	if err != nil {
+		return asnLookupConfig{}, err
+	}
+
 	timeout, err := parsePositiveDefaultedDuration("asn_lookup.timeout", raw.Timeout, defaultASNLookupTimeout)
 	if err != nil {
 		return asnLookupConfig{}, err
 	}
 
-	cacheTTL, err := parsePositiveDefaultedDuration("asn_lookup.cache_ttl", raw.CacheTTL, defaultASNLookupCacheTTL)
-	if err != nil {
-		return asnLookupConfig{}, err
+	sourceURLs := append([]string{}, raw.SourceURLs...)
+	if raw.Enabled && len(sourceURLs) == 0 {
+		sourceURLs = defaultASNLookupSourceURLs()
 	}
 
-	negativeCacheTTL, err := parsePositiveDefaultedDuration("asn_lookup.negative_cache_ttl", raw.NegativeCacheTTL, defaultASNLookupNegativeCacheTTL)
-	if err != nil {
-		return asnLookupConfig{}, err
-	}
-
-	providerType := strings.TrimSpace(raw.ProviderType)
-	if providerType == "" {
-		providerType = asnLookupProviderRspamd
-	}
-
-	if providerType != asnLookupProviderRspamd {
-		return asnLookupConfig{}, fmt.Errorf("asn_lookup.provider_type must be rspamd")
-	}
-
-	ipv4Zone, err := parseDNSZone("asn_lookup.ipv4_zone", raw.IPv4Zone, defaultASNRspamdIPv4Zone)
-	if err != nil {
-		return asnLookupConfig{}, err
-	}
-
-	ipv6Zone, err := parseDNSZone("asn_lookup.ipv6_zone", raw.IPv6Zone, defaultASNRspamdIPv6Zone)
-	if err != nil {
-		return asnLookupConfig{}, err
+	for index, sourceURL := range sourceURLs {
+		if err := validateHTTPSourceURL(sourceURL); err != nil {
+			return asnLookupConfig{}, fmt.Errorf("asn_lookup.source_urls[%d]: %w", index, err)
+		}
 	}
 
 	return asnLookupConfig{
-		ProviderType:     providerType,
-		IPv4Zone:         ipv4Zone,
-		IPv6Zone:         ipv6Zone,
-		Timeout:          timeout,
-		CacheTTL:         cacheTTL,
-		NegativeCacheTTL: negativeCacheTTL,
-		Enabled:          raw.Enabled,
+		Enabled:         raw.Enabled,
+		RefreshInterval: refreshInterval,
+		Timeout:         timeout,
+		SourceURLs:      sourceURLs,
 	}, nil
-}
-
-// parseDNSZone validates a DNS zone used by the Rspamd-compatible ASN provider.
-func parseDNSZone(name string, value string, fallback string) (string, error) {
-	zone := strings.Trim(strings.TrimSpace(value), ".")
-	if zone == "" {
-		zone = fallback
-	}
-
-	if !isDNSZoneName(zone) {
-		return "", fmt.Errorf("%s must be a DNS zone name", name)
-	}
-
-	return zone, nil
-}
-
-// isDNSZoneName checks the restricted hostname form used for lookup zones.
-func isDNSZoneName(value string) bool {
-	if value == "" || len(value) > 253 || strings.Contains(value, "..") {
-		return false
-	}
-
-	for _, label := range strings.Split(value, ".") {
-		if !isDNSLabelName(label) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// isDNSLabelName validates one hostname label.
-func isDNSLabelName(label string) bool {
-	if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-		return false
-	}
-
-	for _, char := range label {
-		if !isDNSLabelChar(char) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// isDNSLabelChar reports whether a rune is valid inside a DNS label.
-func isDNSLabelChar(char rune) bool {
-	return (char >= 'a' && char <= 'z') ||
-		(char >= 'A' && char <= 'Z') ||
-		(char >= '0' && char <= '9') ||
-		char == '-'
 }
 
 // parseASNRegistryConfig applies registry defaults and validates registry source URLs.
@@ -284,7 +206,7 @@ func parseASNRegistryConfig(raw rawASNRegistryConfig) (asnRegistryConfig, error)
 	}
 
 	for index, sourceURL := range sourceURLs {
-		if err := validateRegistrySourceURL(sourceURL); err != nil {
+		if err := validateHTTPSourceURL(sourceURL); err != nil {
 			return asnRegistryConfig{}, fmt.Errorf("asn_registry.source_urls[%d]: %w", index, err)
 		}
 	}
@@ -330,8 +252,8 @@ func parsePositiveDefaultedDuration(name string, value string, fallback time.Dur
 	return duration, nil
 }
 
-// validateRegistrySourceURL checks that registry fetch sources use HTTP(S).
-func validateRegistrySourceURL(value string) error {
+// validateHTTPSourceURL checks that fetch sources use HTTP(S).
+func validateHTTPSourceURL(value string) error {
 	text := strings.TrimSpace(value)
 	if text == "" {
 		return fmt.Errorf("must not be empty")
@@ -351,6 +273,14 @@ func validateRegistrySourceURL(value string) error {
 	}
 
 	return nil
+}
+
+// defaultASNLookupSourceURLs returns CAIDA RouteViews pfx2as creation logs.
+func defaultASNLookupSourceURLs() []string {
+	return []string{
+		"https://publicdata.caida.org/datasets/routing/routeviews-prefix2as/pfx2as-creation.log",
+		"https://publicdata.caida.org/datasets/routing/routeviews6-prefix2as/pfx2as-creation.log",
+	}
 }
 
 // defaultASNRegistrySourceURLs returns worldwide RIR delegated stats feeds.

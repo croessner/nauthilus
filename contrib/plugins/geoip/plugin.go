@@ -28,6 +28,7 @@ import (
 const (
 	pluginName         = "geoip"
 	pluginVersion      = "0.1.0"
+	componentASNLookup = "asn_lookup"
 	componentDatabase  = "database"
 	componentSource    = "environment"
 	metricLookupTotal  = "geoip_lookup_total"
@@ -40,6 +41,7 @@ const (
 	resultInvalidIP    = "invalid_ip"
 	resultMatched      = "matched"
 	resultMiss         = "miss"
+	logFieldLoadedAt   = "loaded_at"
 	traceAttrComponent = "plugin.component"
 	traceAttrModule    = "plugin.module"
 )
@@ -55,29 +57,31 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 
 // Plugin coordinates lifecycle, state, and environment source registration.
 type Plugin struct {
-	database      geoDatabase
-	host          pluginapi.Host
-	logger        pluginapi.Logger
-	tracer        pluginapi.Tracer
-	asnRegistry   *asnRegistrySnapshot
-	asnLookup     *asnLookupService
-	databaseLoad  databaseLoader
-	asnFetch      asnRegistryFetcher
-	asnResolver   asnDNSResolver
-	lookupCounter pluginapi.Counter
-	lookupLatency pluginapi.Histogram
-	recordGauge   pluginapi.Gauge
-	refreshCancel context.CancelFunc
-	asnCancel     context.CancelFunc
-	config        moduleConfig
-	mu            sync.RWMutex
+	database       geoDatabase
+	host           pluginapi.Host
+	logger         pluginapi.Logger
+	tracer         pluginapi.Tracer
+	asnRegistry    *asnRegistrySnapshot
+	asnLookup      *asnLookupService
+	databaseLoad   databaseLoader
+	asnFetch       asnRegistryFetcher
+	asnRouteFetch  asnRouteFetcher
+	lookupCounter  pluginapi.Counter
+	lookupLatency  pluginapi.Histogram
+	recordGauge    pluginapi.Gauge
+	refreshCancel  context.CancelFunc
+	asnCancel      context.CancelFunc
+	asnRouteCancel context.CancelFunc
+	config         moduleConfig
+	mu             sync.RWMutex
 }
 
 // NewPlugin creates a GeoIP reference plugin instance.
 func NewPlugin() *Plugin {
 	return &Plugin{
-		databaseLoad: loadConfiguredDatabase,
-		asnFetch:     httpASNRegistryFetcher{},
+		databaseLoad:  loadConfiguredDatabase,
+		asnFetch:      httpASNRegistryFetcher{},
+		asnRouteFetch: httpASNRouteFetcher{},
 	}
 }
 
@@ -90,8 +94,8 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 		Description: "Reference GeoIP and ASN environment enrichment plugin.",
 		DocsURL:     "server/docs/examples/go_plugin_geoip.yml",
 		Features: []pluginapi.Feature{
+			"asn_routing_snapshot",
 			"asn_registry_refresh",
-			"asn_rspamd_dns_lookup",
 			"environment_source",
 			"init_task",
 			"maxmind_mmdb",
@@ -204,7 +208,14 @@ func (p *Plugin) swapDatabase(ctx context.Context, config moduleConfig, database
 
 	p.config = config
 	p.database = database
-	p.asnLookup = newASNLookupService(config.ASNLookup, p.asnResolver)
+
+	if config.ASNLookup.Enabled {
+		if p.asnLookup == nil || restartRefresh {
+			p.asnLookup = newASNLookupService()
+		}
+	} else {
+		p.asnLookup = nil
+	}
 
 	if !config.ASNRegistry.Enabled {
 		p.asnRegistry = nil
@@ -287,12 +298,14 @@ func (p *Plugin) lookupRecord(ctx context.Context, addr netip.Addr) (geoRecord, 
 func (p *Plugin) startWorkersLocked() {
 	p.stopWorkersLocked()
 	p.startDatabaseRefreshWorkerLocked()
+	p.startASNLookupWorkerLocked()
 	p.startASNRegistryWorkerLocked()
 }
 
 // stopWorkersLocked cancels all active background workers.
 func (p *Plugin) stopWorkersLocked() {
 	p.stopDatabaseRefreshWorkerLocked()
+	p.stopASNLookupWorkerLocked()
 	p.stopASNRegistryWorkerLocked()
 }
 
@@ -319,6 +332,35 @@ func (p *Plugin) stopDatabaseRefreshWorkerLocked() {
 
 	p.refreshCancel()
 	p.refreshCancel = nil
+}
+
+// startASNLookupWorkerLocked starts the optional routing snapshot refresh worker.
+func (p *Plugin) startASNLookupWorkerLocked() {
+	if p.host == nil || !p.config.ASNLookup.Enabled {
+		return
+	}
+
+	if p.asnLookup == nil {
+		p.asnLookup = newASNLookupService()
+	}
+
+	workerCtx, cancel := context.WithCancel(p.host.ServiceContext())
+	p.asnRouteCancel = cancel
+	config := p.config.ASNLookup
+
+	p.host.Go(workerCtx, "geoip."+componentASNLookup, func(ctx context.Context) error {
+		return p.asnLookupLoop(ctx, config)
+	})
+}
+
+// stopASNLookupWorkerLocked cancels the active routing snapshot worker when one exists.
+func (p *Plugin) stopASNLookupWorkerLocked() {
+	if p.asnRouteCancel == nil {
+		return
+	}
+
+	p.asnRouteCancel()
+	p.asnRouteCancel = nil
 }
 
 // startASNRegistryWorkerLocked starts the optional delegated registry refresh worker.
@@ -361,6 +403,23 @@ func (p *Plugin) refreshLoop(ctx context.Context, interval time.Duration) error 
 	}
 }
 
+// asnLookupLoop refreshes routing prefixes immediately and then periodically.
+func (p *Plugin) asnLookupLoop(ctx context.Context, config asnLookupConfig) error {
+	p.refreshASNLookupOnce(ctx, config)
+
+	ticker := time.NewTicker(config.RefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			p.refreshASNLookupOnce(ctx, config)
+		}
+	}
+}
+
 // asnRegistryLoop refreshes delegated registry data immediately and then periodically.
 func (p *Plugin) asnRegistryLoop(ctx context.Context, config asnRegistryConfig) error {
 	p.refreshASNRegistryOnce(ctx, config)
@@ -396,6 +455,40 @@ func (p *Plugin) refreshOnce(ctx context.Context) {
 	p.swapDatabase(ctx, config, database, false)
 }
 
+// refreshASNLookupOnce fetches and publishes local ASN routing prefixes.
+func (p *Plugin) refreshASNLookupOnce(ctx context.Context, config asnLookupConfig) {
+	snapshot, err := fetchASNLookupSnapshot(ctx, p.asnLookupFetcher(), config.SourceURLs, config.Timeout)
+	if err != nil {
+		p.logError(ctx, "geoip ASN routing refresh failed", err)
+
+		return
+	}
+
+	p.mu.Lock()
+	lookup := p.asnLookup
+
+	if lookup == nil && config.Enabled {
+		lookup = newASNLookupService()
+		p.asnLookup = lookup
+	}
+
+	logger := p.logger
+	p.mu.Unlock()
+
+	if lookup != nil {
+		lookup.Swap(snapshot)
+	}
+
+	if logger != nil {
+		logger.Info(
+			ctx,
+			"geoip ASN routing loaded",
+			pluginapi.LogField{Key: "prefixes", Value: snapshot.Records()},
+			pluginapi.LogField{Key: logFieldLoadedAt, Value: snapshot.loadedAt.Format(time.RFC3339)},
+		)
+	}
+}
+
 // refreshASNRegistryOnce fetches and publishes delegated ASN registry metadata.
 func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryConfig) {
 	snapshot, err := fetchASNRegistrySnapshot(ctx, p.asnRegistryFetcher(), config.SourceURLs, config.Timeout)
@@ -415,7 +508,7 @@ func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryC
 			ctx,
 			"geoip ASN registry loaded",
 			pluginapi.LogField{Key: "ranges", Value: snapshot.Records()},
-			pluginapi.LogField{Key: "loaded_at", Value: snapshot.loadedAt.Format(time.RFC3339)},
+			pluginapi.LogField{Key: logFieldLoadedAt, Value: snapshot.loadedAt.Format(time.RFC3339)},
 		)
 	}
 }
@@ -443,6 +536,15 @@ func (p *Plugin) loadDatabase(ctx context.Context, config moduleConfig) (geoData
 	}
 
 	return loader(ctx, config)
+}
+
+// asnLookupFetcher returns the production or test route fetcher.
+func (p *Plugin) asnLookupFetcher() asnRouteFetcher {
+	if p.asnRouteFetch != nil {
+		return p.asnRouteFetch
+	}
+
+	return httpASNRouteFetcher{}
 }
 
 // asnRegistryFetcher returns the production or test registry fetcher.

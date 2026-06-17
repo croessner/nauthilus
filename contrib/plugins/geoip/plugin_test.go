@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -37,21 +36,20 @@ import (
 )
 
 const (
-	testASNDNSAnswer       = "64500 | 203.0.113.0/24 | DE | ripencc |"
-	testASNPrefix          = "203.0.113.0/24"
-	testClientIP           = "203.0.113.7"
-	testConfigDatabasePath = "database_path"
-	testCustomASNIPv4Zone  = "asn.example.test"
-	testCustomASNIPv6Zone  = "asn6.example.test"
-	testCustomASNQuery     = "7.113.0.203.asn.example.test"
-	testCountryDE          = "DE"
-	testDefaultASNQuery    = "7.113.0.203.asn.rspamd.com"
-	testProtocolIMAP       = "imap"
-	testRegistryARIN       = "arin"
-	testRegistryRIPENCC    = "ripencc"
-	testRegistrySourceURL  = "https://registry.example.test/delegated"
-	testReloadedASN        = 64510
-	testReloadedCountry    = "US"
+	testASNLookupLogURL      = "https://routing.example.test/routeviews-prefix2as/pfx2as-creation.log"
+	testASNLookupSnapshotURL = "https://routing.example.test/routeviews-prefix2as/2026/06/routeviews-rv2-20260615-1200.pfx2as.gz"
+	testASNLookupSourceURL   = "https://routing.example.test/pfx2as"
+	testASNPrefix            = "203.0.113.0/24"
+	testClientIP             = "203.0.113.7"
+	testConfigDatabasePath   = "database_path"
+	testCountryDE            = "DE"
+	testCountryUS            = "US"
+	testProtocolIMAP         = "imap"
+	testRegistryARIN         = "arin"
+	testRegistryRIPENCC      = "ripencc"
+	testRegistrySourceURL    = "https://registry.example.test/delegated"
+	testReloadedASN          = 64510
+	testReloadedCountry      = "US"
 )
 
 func TestPluginMetadataAndAPIVersion(t *testing.T) {
@@ -208,7 +206,7 @@ func TestDecodeModuleConfigInfersMMDBAndASNRegistryDefaults(t *testing.T) {
 	}
 }
 
-func TestDecodeModuleConfigEnablesRspamdASNLookupDefaults(t *testing.T) {
+func TestDecodeModuleConfigEnablesASNLookupRoutingDefaults(t *testing.T) {
 	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
 		testConfigDatabasePath: testDatabasePath(t, "geoip.json"),
 		"asn_lookup": map[string]any{
@@ -223,8 +221,16 @@ func TestDecodeModuleConfigEnablesRspamdASNLookupDefaults(t *testing.T) {
 		t.Fatal("ASN lookup should be enabled")
 	}
 
-	if config.ASNLookup.IPv4Zone != defaultASNRspamdIPv4Zone || config.ASNLookup.IPv6Zone != defaultASNRspamdIPv6Zone {
-		t.Fatalf("ASN lookup zones = %q/%q", config.ASNLookup.IPv4Zone, config.ASNLookup.IPv6Zone)
+	if config.ASNLookup.RefreshInterval != defaultASNLookupRefreshInterval {
+		t.Fatalf("ASN lookup refresh interval = %s, want %s", config.ASNLookup.RefreshInterval, defaultASNLookupRefreshInterval)
+	}
+
+	if config.ASNLookup.Timeout != defaultASNLookupTimeout {
+		t.Fatalf("ASN lookup timeout = %s, want %s", config.ASNLookup.Timeout, defaultASNLookupTimeout)
+	}
+
+	if len(config.ASNLookup.SourceURLs) != len(defaultASNLookupSourceURLs()) {
+		t.Fatalf("ASN lookup sources = %d, want defaults", len(config.ASNLookup.SourceURLs))
 	}
 }
 
@@ -277,64 +283,75 @@ func TestPluginSupportsMMDBConfigThroughDatabaseLoader(t *testing.T) {
 	assertFact(t, result.Facts, factASN, 64500)
 }
 
-func TestASNLookupParsesRspamdTXTAndCachesResult(t *testing.T) {
-	resolver := &fakeASNResolver{
-		answers: map[string][]string{
-			testDefaultASNQuery: {testASNDNSAnswer},
-		},
+func TestASNLookupUsesLocalRoutingSnapshotLongestPrefix(t *testing.T) {
+	snapshot, err := buildASNLookupSnapshot([][]byte{[]byte(
+		"203.0.113.0/24 64500 DE ripencc 20240101\n" +
+			"203.0.113.0/25 64510 US arin 20240202\n",
+	)})
+	if err != nil {
+		t.Fatalf("buildASNLookupSnapshot() error = %v", err)
 	}
-	lookup := newASNLookupService(asnLookupConfig{
-		Enabled:          true,
-		ProviderType:     asnLookupProviderRspamd,
-		IPv4Zone:         defaultASNRspamdIPv4Zone,
-		IPv6Zone:         defaultASNRspamdIPv6Zone,
-		Timeout:          time.Second,
-		CacheTTL:         time.Hour,
-		NegativeCacheTTL: time.Minute,
-	}, resolver)
 
-	addr := netip.MustParseAddr(testClientIP)
+	lookup := newASNLookupService()
+	lookup.Swap(snapshot)
 
-	record, ok, err := lookup.Lookup(context.Background(), addr)
+	record, ok, err := lookup.Lookup(context.Background(), netip.MustParseAddr(testClientIP))
 	if err != nil {
 		t.Fatalf("Lookup() error = %v", err)
 	}
 
 	if !ok {
-		t.Fatal("Lookup() did not match Rspamd ASN answer")
+		t.Fatal("Lookup() did not match local ASN routing snapshot")
 	}
 
-	if record.ASN != 64500 || record.ASNPrefix != testASNPrefix || record.ASNCountryISO != testCountryDE || record.ASNRegistry != testRegistryRIPENCC {
+	if record.ASN != 64510 || record.ASNPrefix != "203.0.113.0/25" || record.ASNCountryISO != testCountryUS || record.ASNRegistry != testRegistryARIN {
 		t.Fatalf("ASN record = %#v", record)
-	}
-
-	if _, _, err := lookup.Lookup(context.Background(), addr); err != nil {
-		t.Fatalf("second Lookup() error = %v", err)
-	}
-
-	if got := resolver.calls[testDefaultASNQuery]; got != 1 {
-		t.Fatalf("resolver calls = %d, want one cached query", got)
 	}
 }
 
-func TestEnvironmentSourceUsesRspamdASNLookupForRecordsWithoutASN(t *testing.T) {
+func TestASNLookupFetchesLatestCreationLogSnapshot(t *testing.T) {
+	fetcher := fakeASNRouteFetcher{
+		data: map[string][]byte{
+			testASNLookupLogURL: []byte(
+				"# Fields: seqnum timestamp path\n" +
+					"6648\t1781540054\t2026/06/routeviews-rv2-20260614-1200.pfx2as.gz\n" +
+					"6649\t1781626448\t2026/06/routeviews-rv2-20260615-1200.pfx2as.gz\n",
+			),
+			testASNLookupSnapshotURL: []byte("203.0.113.0\t24\t64500\n"),
+		},
+	}
+
+	snapshot, err := fetchASNLookupSnapshot(context.Background(), fetcher, []string{testASNLookupLogURL}, time.Second)
+	if err != nil {
+		t.Fatalf("fetchASNLookupSnapshot() error = %v", err)
+	}
+
+	record, ok := snapshot.Lookup(netip.MustParseAddr(testClientIP))
+
+	if !ok || record.ASN != 64500 || record.ASNPrefix != testASNPrefix {
+		t.Fatalf("snapshot lookup = %#v/%v, want ASN 64500 prefix %s", record, ok, testASNPrefix)
+	}
+}
+
+func TestEnvironmentSourceUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.T) {
 	module := testModule(testDatabasePath(t, "geoip-test.mmdb"))
 	module.Config["database_format"] = databaseFormatMMDB
 	module.Config["asn_lookup"] = map[string]any{
-		"enabled":   true,
-		"ipv4_zone": testCustomASNIPv4Zone,
-		"ipv6_zone": testCustomASNIPv6Zone,
+		"enabled":          true,
+		"refresh_interval": "1h",
+		"source_urls":      []string{testASNLookupSourceURL},
+		"timeout":          "1s",
 	}
 
 	plugin := NewPlugin()
-	plugin.asnResolver = &fakeASNResolver{
-		answers: map[string][]string{
-			testCustomASNQuery: {testASNDNSAnswer},
+	plugin.asnRouteFetch = fakeASNRouteFetcher{
+		data: map[string][]byte{
+			testASNLookupSourceURL: []byte("203.0.113.0/24 64500 DE ripencc 20240101\n"),
 		},
 	}
 	plugin.databaseLoad = func(_ context.Context, config moduleConfig) (geoDatabase, error) {
-		if config.ASNLookup.IPv4Zone != testCustomASNIPv4Zone || config.ASNLookup.IPv6Zone != testCustomASNIPv6Zone {
-			t.Fatalf("ASN lookup zones = %q/%q", config.ASNLookup.IPv4Zone, config.ASNLookup.IPv6Zone)
+		if len(config.ASNLookup.SourceURLs) != 1 || config.ASNLookup.SourceURLs[0] != testASNLookupSourceURL {
+			t.Fatalf("ASN lookup sources = %#v", config.ASNLookup.SourceURLs)
 		}
 
 		return &fileDatabase{records: []geoRecord{
@@ -354,6 +371,9 @@ func TestEnvironmentSourceUsesRspamdASNLookupForRecordsWithoutASN(t *testing.T) 
 		t.Fatalf("Start() error = %v", err)
 	}
 	defer stopRunner(t, runner)
+
+	config, _ := plugin.currentConfig()
+	plugin.refreshASNLookupOnce(context.Background(), config.ASNLookup)
 
 	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
 	if err != nil {
@@ -378,7 +398,7 @@ func TestASNRegistrySnapshotParsesDelegatedStats(t *testing.T) {
 		t.Fatal("Lookup(64502) did not match delegated ASN range")
 	}
 
-	if record.Registry != testRegistryARIN || record.CountryISO != "US" || record.Allocated != "20240101" {
+	if record.Registry != testRegistryARIN || record.CountryISO != testCountryUS || record.Allocated != "20240101" {
 		t.Fatalf("Lookup(64502) = %#v, want ARIN US allocation", record)
 	}
 
@@ -399,7 +419,7 @@ func TestEnvironmentSourceEmitsASNRegistryFacts(t *testing.T) {
 	defer stopRunner(t, runner)
 
 	plugin.mu.Lock()
-	plugin.asnRegistry = mustASNRegistrySnapshot(t, []byte(testRegistryARIN+"|US|asn|64500|1|20240101|allocated\n"))
+	plugin.asnRegistry = mustASNRegistrySnapshot(t, []byte(testRegistryARIN+"|"+testCountryUS+"|asn|64500|1|20240101|allocated\n"))
 	plugin.mu.Unlock()
 
 	result, err := runner.EvaluateEnvironment(context.Background(), "geoip.environment", environmentRequest(testClientIP))
@@ -408,7 +428,7 @@ func TestEnvironmentSourceEmitsASNRegistryFacts(t *testing.T) {
 	}
 
 	assertFact(t, result.Facts, factASNRegistry, testRegistryARIN)
-	assertFact(t, result.Facts, factASNCountryISO, "US")
+	assertFact(t, result.Facts, factASNCountryISO, testCountryUS)
 	assertFact(t, result.Facts, factASNAllocated, "20240101")
 }
 
@@ -416,7 +436,7 @@ func TestASNRegistryRefreshPublishesSnapshot(t *testing.T) {
 	plugin := NewPlugin()
 	plugin.asnFetch = fakeASNRegistryFetcher{
 		data: map[string][]byte{
-			testRegistrySourceURL: []byte(testRegistryARIN + "|US|asn|64500|1|20240101|allocated\n"),
+			testRegistrySourceURL: []byte(testRegistryARIN + "|" + testCountryUS + "|asn|64500|1|20240101|allocated\n"),
 		},
 	}
 
@@ -814,21 +834,16 @@ func (f fakeASNRegistryFetcher) Fetch(_ context.Context, sourceURL string) ([]by
 	return raw, nil
 }
 
-type fakeASNResolver struct {
-	answers map[string][]string
-	calls   map[string]int
+type fakeASNRouteFetcher struct {
+	data map[string][]byte
 }
 
-// LookupTXT returns configured Rspamd-compatible ASN TXT fixture answers.
-func (r *fakeASNResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
-	if r.calls == nil {
-		r.calls = make(map[string]int)
+// Fetch returns configured fixture data for one routing URL.
+func (f fakeASNRouteFetcher) Fetch(_ context.Context, sourceURL string) ([]byte, error) {
+	raw, ok := f.data[sourceURL]
+	if !ok {
+		return nil, errors.New("ASN routing fixture missing")
 	}
 
-	r.calls[name]++
-	if answers, ok := r.answers[name]; ok {
-		return answers, nil
-	}
-
-	return nil, &net.DNSError{Err: "not found", Name: name, IsNotFound: true}
+	return raw, nil
 }
