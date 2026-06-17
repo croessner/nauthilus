@@ -38,6 +38,11 @@ RUN --mount=type=secret,id=plugin_signing_private_key \
         --private-key-file /run/secrets/plugin_signing_private_key; \
     fi
 
+RUN chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so && \
+    if [ -f /usr/local/lib/nauthilus/plugins/geoip.so.minisig ]; then \
+      chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so.minisig; \
+    fi
+
 RUN cd client && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client . && upx --best --lzma nauthilus-client
 RUN cd contrib/oidctestclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient . && upx --best --lzma oidctestclient
 RUN cd contrib/saml2testclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient . && upx --best --lzma saml2testclient

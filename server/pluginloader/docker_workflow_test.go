@@ -61,3 +61,24 @@ func TestDockerStableBuildRequiresSignedPlugins(t *testing.T) {
 		}
 	}
 }
+
+// TestDockerFeaturesBuildRequiresSignedPlugins keeps the debug image verifier-compatible.
+func TestDockerFeaturesBuildRequiresSignedPlugins(t *testing.T) {
+	content, err := os.ReadFile("../../.github/workflows/docker-features.yaml")
+	if err != nil {
+		t.Fatalf("read docker-features workflow: %v", err)
+	}
+
+	workflow := string(content)
+	expectedSnippets := map[string]string{
+		"dockerfile_path: Dockerfile.debug": "debug Dockerfile selection",
+		"build_args: |":                     "debug build args",
+		"REQUIRE_PLUGIN_SIGNATURE=true":     "debug signature enforcement build arg",
+	}
+
+	for expected, label := range expectedSnippets {
+		if !strings.Contains(workflow, expected) {
+			t.Fatalf("docker-features workflow must include %s", label)
+		}
+	}
+}

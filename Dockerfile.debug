@@ -1,5 +1,8 @@
+# syntax=docker/dockerfile:1.7
+
 FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder
 
+ARG REQUIRE_PLUGIN_SIGNATURE=false
 ARG TARGETOS
 ARG TARGETARCH
 ARG NAUTHILUS_CONF_DIR=/etc/nauthilus
@@ -16,6 +19,21 @@ RUN apk add --no-cache build-base git
 
 RUN cd server && go build -mod=vendor -tags="netgo" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
 RUN mkdir -p /usr/local/lib/nauthilus/plugins && cd contrib/plugins/geoip && go build -mod=vendor -tags="netgo" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
+
+RUN --mount=type=secret,id=plugin_signing_private_key \
+    if [ "${REQUIRE_PLUGIN_SIGNATURE}" = "true" ]; then \
+      test -s /run/secrets/plugin_signing_private_key && \
+      go run -mod=vendor ./server/pluginloader/cmd/nauthilus-plugin-sign sign \
+        --artifact /usr/local/lib/nauthilus/plugins/geoip.so \
+        --signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig \
+        --private-key-file /run/secrets/plugin_signing_private_key; \
+    fi
+
+RUN chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so && \
+    if [ -f /usr/local/lib/nauthilus/plugins/geoip.so.minisig ]; then \
+      chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so.minisig; \
+    fi
+
 RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakeimap .

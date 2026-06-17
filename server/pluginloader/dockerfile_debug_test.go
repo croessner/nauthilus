@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+const (
+	dockerfilePluginSignatureBuildArg        = "ARG REQUIRE_PLUGIN_SIGNATURE=false"
+	dockerfilePluginSigningSecretMount       = "--mount=type=secret,id=plugin_signing_private_key"
+	dockerfilePluginSigningSecretCheck       = "test -s /run/secrets/plugin_signing_private_key"
+	dockerfilePluginSigningCommand           = "./server/pluginloader/cmd/nauthilus-plugin-sign sign"
+	dockerfileGeoIPSignatureOutput           = "--signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig"
+	dockerfileReadableGeoIPPluginArtifact    = "chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so"
+	dockerfileReadableGeoIPPluginSignature   = "chmod 0644 /usr/local/lib/nauthilus/plugins/geoip.so.minisig"
+	dockerfileSignatureEnforcementBuildArg   = "signature enforcement build arg"
+	dockerfileBuildKitSigningSecretMount     = "BuildKit signing secret mount"
+	dockerfileRequiredPluginSigningSecret    = "required secret check"
+	dockerfileRepoOwnedPluginSigner          = "repo-owned plugin signer"
+	dockerfileGeoIPSignatureOutputLabel      = "GeoIP signature output"
+	dockerfileRuntimeReadablePluginArtifact  = "runtime-readable GeoIP plugin artifact"
+	dockerfileRuntimeReadablePluginSignature = "runtime-readable GeoIP plugin signature"
+)
+
 // TestDockerfileDebugBuildsPluginsWithServerTags prevents debug image plugin ABI drift.
 func TestDockerfileDebugBuildsPluginsWithServerTags(t *testing.T) {
 	content, err := os.ReadFile("../../Dockerfile.debug")
@@ -14,6 +31,10 @@ func TestDockerfileDebugBuildsPluginsWithServerTags(t *testing.T) {
 	}
 
 	dockerfile := string(content)
+	if !strings.Contains(dockerfile, `# syntax=docker/dockerfile:1.7`) {
+		t.Fatalf("Dockerfile.debug must opt into BuildKit syntax for secret-mounted plugin signing")
+	}
+
 	if !strings.Contains(dockerfile, `cd server && go build -mod=vendor -tags="netgo"`) {
 		t.Fatalf("Dockerfile.debug server build must use the netgo tag")
 	}
@@ -21,6 +42,22 @@ func TestDockerfileDebugBuildsPluginsWithServerTags(t *testing.T) {
 	pluginBuild := `cd contrib/plugins/geoip && go build -mod=vendor -tags="netgo" -buildmode=plugin`
 	if !strings.Contains(dockerfile, pluginBuild) {
 		t.Fatalf("Dockerfile.debug GeoIP plugin build must use the same netgo tag as the server build")
+	}
+
+	expectedSigningSnippets := map[string]string{
+		dockerfilePluginSignatureBuildArg:      dockerfileSignatureEnforcementBuildArg,
+		dockerfilePluginSigningSecretMount:     dockerfileBuildKitSigningSecretMount,
+		dockerfilePluginSigningSecretCheck:     dockerfileRequiredPluginSigningSecret,
+		dockerfilePluginSigningCommand:         dockerfileRepoOwnedPluginSigner,
+		dockerfileGeoIPSignatureOutput:         dockerfileGeoIPSignatureOutputLabel,
+		dockerfileReadableGeoIPPluginArtifact:  dockerfileRuntimeReadablePluginArtifact,
+		dockerfileReadableGeoIPPluginSignature: dockerfileRuntimeReadablePluginSignature,
+	}
+
+	for expected, label := range expectedSigningSnippets {
+		if !strings.Contains(dockerfile, expected) {
+			t.Fatalf("Dockerfile.debug must include %s", label)
+		}
 	}
 }
 
@@ -59,11 +96,13 @@ func TestDockerfileStableBuildsPluginCapableImage(t *testing.T) {
 	}
 
 	expectedSigningSnippets := map[string]string{
-		"ARG REQUIRE_PLUGIN_SIGNATURE=false":                            "signature enforcement build arg",
-		"--mount=type=secret,id=plugin_signing_private_key":             "BuildKit signing secret mount",
-		"test -s /run/secrets/plugin_signing_private_key":               "required secret check",
-		"./server/pluginloader/cmd/nauthilus-plugin-sign sign":          "repo-owned plugin signer",
-		"--signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig": "GeoIP signature output",
+		dockerfilePluginSignatureBuildArg:      dockerfileSignatureEnforcementBuildArg,
+		dockerfilePluginSigningSecretMount:     dockerfileBuildKitSigningSecretMount,
+		dockerfilePluginSigningSecretCheck:     dockerfileRequiredPluginSigningSecret,
+		dockerfilePluginSigningCommand:         dockerfileRepoOwnedPluginSigner,
+		dockerfileGeoIPSignatureOutput:         dockerfileGeoIPSignatureOutputLabel,
+		dockerfileReadableGeoIPPluginArtifact:  dockerfileRuntimeReadablePluginArtifact,
+		dockerfileReadableGeoIPPluginSignature: dockerfileRuntimeReadablePluginSignature,
 	}
 
 	for expected, label := range expectedSigningSnippets {

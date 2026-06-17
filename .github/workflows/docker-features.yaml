@@ -19,6 +19,8 @@ jobs:
       tags: |
         ghcr.io/${{ github.repository_owner }}/nauthilus:dev
         ghcr.io/${{ github.repository_owner }}/nauthilus:dev-dbg
+      build_args: |
+        REQUIRE_PLUGIN_SIGNATURE=true
       annotations: >-
         index,manifest:org.opencontainers.image.description=Authentication
         and identity platform with OIDC, SAML, MFA, LDAP, Lua, and mail
