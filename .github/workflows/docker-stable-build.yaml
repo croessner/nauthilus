@@ -18,6 +18,11 @@ name: Stable Docker Build Reusable
         required: false
         default: tag-push
         type: string
+    secrets:
+      GHCR_TOKEN:
+        required: true
+      NAUTHILUS_PLUGIN_SIGNING_KEY_B64:
+        required: true
 
 permissions:
   contents: read
@@ -144,6 +149,8 @@ jobs:
       dockerfile_path: Dockerfile
       sbom: true
       tags: ${{ needs.prepare.outputs.tags }}
+      build_args: |
+        REQUIRE_PLUGIN_SIGNATURE=true
       annotations: ${{ needs.prepare.outputs.annotations }}
       labels: ${{ needs.prepare.outputs.labels }}
     secrets: inherit

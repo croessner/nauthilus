@@ -4,7 +4,7 @@
 plugins:
   verification_policy: signature_required
   allowed_dirs:
-    - /usr/lib/nauthilus/plugins
+    - /usr/local/lib/nauthilus/plugins
   trust:
     signers:
       - id: nauthilus-plugin-build-key-2026
@@ -13,8 +13,8 @@ plugins:
   modules:
     - name: geoip
       type: go
-      path: /usr/lib/nauthilus/plugins/geoip.so
-      signature: minisign:/usr/lib/nauthilus/plugins/geoip.so.minisig
+      path: /usr/local/lib/nauthilus/plugins/geoip.so
+      signature: minisign:/usr/local/lib/nauthilus/plugins/geoip.so.minisig
       signer: nauthilus-plugin-build-key-2026
       optional: false
       config:

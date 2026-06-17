@@ -32,6 +32,10 @@ func TestDockerfileStableBuildsPluginCapableImage(t *testing.T) {
 	}
 
 	dockerfile := string(content)
+	if !strings.Contains(dockerfile, `# syntax=docker/dockerfile:1.7`) {
+		t.Fatalf("Dockerfile must opt into BuildKit syntax for secret-mounted plugin signing")
+	}
+
 	if !strings.Contains(dockerfile, `FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder`) {
 		t.Fatalf("Dockerfile builder must run on the target platform so CGO plugin builds are native")
 	}
@@ -52,6 +56,20 @@ func TestDockerfileStableBuildsPluginCapableImage(t *testing.T) {
 	pluginBuild := `cd contrib/plugins/geoip && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin`
 	if !strings.Contains(dockerfile, pluginBuild) {
 		t.Fatalf("Dockerfile GeoIP plugin build must use the same tag set as the server build")
+	}
+
+	expectedSigningSnippets := map[string]string{
+		"ARG REQUIRE_PLUGIN_SIGNATURE=false":                            "signature enforcement build arg",
+		"--mount=type=secret,id=plugin_signing_private_key":             "BuildKit signing secret mount",
+		"test -s /run/secrets/plugin_signing_private_key":               "required secret check",
+		"./server/pluginloader/cmd/nauthilus-plugin-sign sign":          "repo-owned plugin signer",
+		"--signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig": "GeoIP signature output",
+	}
+
+	for expected, label := range expectedSigningSnippets {
+		if !strings.Contains(dockerfile, expected) {
+			t.Fatalf("Dockerfile must include %s", label)
+		}
 	}
 
 	if !strings.Contains(dockerfile, `COPY --from=builder ["/usr/local/lib/nauthilus/plugins/", "/usr/local/lib/nauthilus/plugins/"]`) {

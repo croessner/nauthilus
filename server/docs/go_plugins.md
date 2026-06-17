@@ -64,6 +64,46 @@ signature file, signer reference, signer format, signer key ID, and trusted sign
 `public_key_file`. Minisign signatures also verify the trusted-comment signature. Signatures are operational provenance
 checks for trusted in-process code; they do not sandbox plugin behavior.
 
+## Release Image Signing
+
+The stable Docker build can sign bundled native plugins during the image build. The build uses the repo-owned
+`nauthilus-plugin-sign` helper and a BuildKit secret so the Ed25519 signing seed is not written into image layers. Stable
+release builds set `REQUIRE_PLUGIN_SIGNATURE=true`; when that flag is enabled, the Docker build fails unless the
+`NAUTHILUS_PLUGIN_SIGNING_KEY_B64` GitHub Actions secret is available.
+
+Generate the CI signing material once:
+
+```sh
+GOEXPERIMENT=runtimesecret go run ./server/pluginloader/cmd/nauthilus-plugin-sign keygen --comment "nauthilus plugin build key 2026"
+```
+
+Store the printed `NAUTHILUS_PLUGIN_SIGNING_KEY_B64` value as a GitHub Actions repository secret. The printed public key
+is not secret; configure it as a trusted signer and point the module at the bundled detached signature:
+
+```yaml
+plugins:
+  verification_policy: signature_required
+  allowed_dirs:
+    - /usr/local/lib/nauthilus/plugins
+  trust:
+    signers:
+      - id: nauthilus-plugin-build-key-2026
+        format: minisign
+        public_key: |
+          untrusted comment: nauthilus plugin build key 2026
+          replace-with-generated-public-key-payload
+  modules:
+    - name: geoip
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/geoip.so
+      signature: minisign:/usr/local/lib/nauthilus/plugins/geoip.so.minisig
+      signer: nauthilus-plugin-build-key-2026
+```
+
+For multi-architecture images, prefer signature verification for bundled plugins instead of one static SHA-256 checksum:
+Go plugin artifacts are architecture-specific, so their checksums differ by platform while the trusted signer stays the
+same.
+
 ## Capabilities
 
 Plugins declare possible capabilities in metadata and request instance-required capabilities during `Register`.

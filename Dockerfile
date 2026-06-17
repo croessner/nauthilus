@@ -1,6 +1,9 @@
+# syntax=docker/dockerfile:1.7
+
 FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder
 
 ARG BUILD_TAGS=""
+ARG REQUIRE_PLUGIN_SIGNATURE=false
 ARG TARGETOS
 ARG TARGETARCH
 ARG NAUTHILUS_CONF_DIR=/etc/nauthilus
@@ -25,6 +28,15 @@ RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
 
 RUN mkdir -p /usr/local/lib/nauthilus/plugins && \
     cd contrib/plugins/geoip && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
+
+RUN --mount=type=secret,id=plugin_signing_private_key \
+    if [ "${REQUIRE_PLUGIN_SIGNATURE}" = "true" ]; then \
+      test -s /run/secrets/plugin_signing_private_key && \
+      go run -mod=vendor ./server/pluginloader/cmd/nauthilus-plugin-sign sign \
+        --artifact /usr/local/lib/nauthilus/plugins/geoip.so \
+        --signature /usr/local/lib/nauthilus/plugins/geoip.so.minisig \
+        --private-key-file /run/secrets/plugin_signing_private_key; \
+    fi
 
 RUN cd client && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client . && upx --best --lzma nauthilus-client
 RUN cd contrib/oidctestclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient . && upx --best --lzma oidctestclient

@@ -57,6 +57,16 @@ name: Docker Build Push Reusable
         required: false
         default: ''
         type: string
+      build_args:
+        description: Build arguments passed to docker/build-push-action.
+        required: false
+        default: ''
+        type: string
+    secrets:
+      GHCR_TOKEN:
+        required: true
+      NAUTHILUS_PLUGIN_SIGNING_KEY_B64:
+        required: false
 
 permissions:
   contents: read
@@ -121,6 +131,8 @@ jobs:
       - name: Build and push digest
         id: build
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
+        env:
+          PLUGIN_SIGNING_PRIVATE_KEY: ${{ secrets.NAUTHILUS_PLUGIN_SIGNING_KEY_B64 }}
         with:
           context: >-
             ./${{ inputs.checkout_path }}/${{ inputs.context_path }}
@@ -130,6 +142,9 @@ jobs:
           sbom: ${{ inputs.sbom }}
           outputs: >-
             type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          build-args: ${{ inputs.build_args }}
+          secret-envs: |
+            plugin_signing_private_key=PLUGIN_SIGNING_PRIVATE_KEY
           annotations: ${{ inputs.annotations }}
           labels: ${{ inputs.labels }}
 
@@ -263,6 +278,8 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
+        env:
+          PLUGIN_SIGNING_PRIVATE_KEY: ${{ secrets.NAUTHILUS_PLUGIN_SIGNING_KEY_B64 }}
         with:
           context: >-
             ./${{ inputs.checkout_path }}/${{ inputs.context_path }}
@@ -272,5 +289,8 @@ jobs:
           push: ${{ inputs.push }}
           sbom: ${{ inputs.sbom }}
           tags: ${{ inputs.tags }}
+          build-args: ${{ inputs.build_args }}
+          secret-envs: |
+            plugin_signing_private_key=PLUGIN_SIGNING_PRIVATE_KEY
           annotations: ${{ inputs.annotations }}
           labels: ${{ inputs.labels }}

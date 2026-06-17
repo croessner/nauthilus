@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
-	"golang.org/x/crypto/blake2b"
 )
 
 const (
@@ -134,7 +133,7 @@ func TestVerifier_RejectsMissingRequiredVerificationMetadata(t *testing.T) {
 func TestVerifier_VerifiesMinisignDetachedSignature(t *testing.T) {
 	pluginDir := t.TempDir()
 	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, []byte(testPluginContent))
-	keyPath, signature := writeMinisignFixture(t, pluginDir, []byte(testPluginContent))
+	keyPath, signature := writeMinisignFixture(t, pluginDir, artifact)
 
 	verified, err := verifySignedModule(t, pluginDir, artifact, keyPath, signature, config.PluginSignatureFormatMinisign)
 	if err != nil {
@@ -157,7 +156,7 @@ func TestVerifier_VerifiesMinisignDetachedSignature(t *testing.T) {
 func TestVerifier_VerifiesSignifyDetachedSignature(t *testing.T) {
 	pluginDir := t.TempDir()
 	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, []byte(testPluginContent))
-	keyPath, signature := writeSignifyFixture(t, pluginDir, []byte(testPluginContent))
+	keyPath, signature := writeSignifyFixture(t, pluginDir, artifact)
 
 	_, err := verifySignedModule(t, pluginDir, artifact, keyPath, signature, config.PluginSignatureFormatSignify)
 	if err != nil {
@@ -168,7 +167,8 @@ func TestVerifier_VerifiesSignifyDetachedSignature(t *testing.T) {
 func TestVerifier_RejectsInvalidDetachedSignature(t *testing.T) {
 	pluginDir := t.TempDir()
 	artifact := writePluginArtifact(t, pluginDir, testPluginArtifactName, []byte(testPluginContent))
-	keyPath, signature := writeMinisignFixture(t, pluginDir, []byte("different content"))
+	otherArtifact := writePluginArtifact(t, pluginDir, "other.so", []byte("different content"))
+	keyPath, signature := writeMinisignFixture(t, pluginDir, otherArtifact)
 
 	_, err := verifySignedModule(t, pluginDir, artifact, keyPath, signature, config.PluginSignatureFormatMinisign)
 	if !errors.Is(err, ErrSignatureVerificationFailed) {
@@ -210,6 +210,7 @@ func verifySignedModule(
 	})
 }
 
+// writePluginArtifact stores a fixture artifact under a temporary plugin directory.
 func writePluginArtifact(t *testing.T, root string, name string, content []byte) string {
 	t.Helper()
 
@@ -221,41 +222,56 @@ func writePluginArtifact(t *testing.T, root string, name string, content []byte)
 	return path
 }
 
-func writeMinisignFixture(t *testing.T, root string, artifact []byte) (string, string) {
+// writeMinisignFixture creates a trusted public key and minisign signature for one artifact.
+func writeMinisignFixture(t *testing.T, root string, artifact string) (string, string) {
 	t.Helper()
 
 	publicKey, privateKey, keyID := generatePluginSigningKey(t)
 	trustedComment := "timestamp:1760000000\tfile:geoip.so\thashed"
-	digest := blake2b.Sum512(artifact)
-	signatureBlob := pluginSignatureBlob("ED", keyID, ed25519.Sign(privateKey, digest[:]))
-	globalSignature := ed25519.Sign(privateKey, append(append([]byte{}, signatureBlob[10:]...), []byte(trustedComment)...))
 
-	keyPath := writePluginArtifact(t, root, "build.pub", publicKeyFile(publicKey, keyID, "minisign public key"))
-	signaturePath := writePluginArtifact(t, root, "geoip.so.minisig", []byte(
-		"untrusted comment: signature from minisign secret key\n"+
-			base64.StdEncoding.EncodeToString(signatureBlob)+"\n"+
-			"trusted comment: "+trustedComment+"\n"+
-			base64.StdEncoding.EncodeToString(globalSignature)+"\n",
-	))
+	publicKeyText, err := FormatPluginPublicKey(publicKey, keyID, "minisign public key")
+	if err != nil {
+		t.Fatalf("format plugin public key: %v", err)
+	}
+
+	keyPath := writePluginArtifact(t, root, "build.pub", publicKeyText)
+
+	signaturePath := filepath.Join(root, "geoip.so.minisig")
+	if err := WriteMinisignSignatureFile(artifact, signaturePath, privateKey, keyID, trustedComment); err != nil {
+		t.Fatalf("write minisign fixture: %v", err)
+	}
 
 	return keyPath, signaturePath
 }
 
-func writeSignifyFixture(t *testing.T, root string, artifact []byte) (string, string) {
+// writeSignifyFixture creates a trusted public key and signify-style signature for one artifact.
+func writeSignifyFixture(t *testing.T, root string, artifact string) (string, string) {
 	t.Helper()
 
 	publicKey, privateKey, keyID := generatePluginSigningKey(t)
-	signatureBlob := pluginSignatureBlob("Ed", keyID, ed25519.Sign(privateKey, artifact))
 
-	keyPath := writePluginArtifact(t, root, "build.pub", publicKeyFile(publicKey, keyID, "signify public key"))
+	content, err := os.ReadFile(artifact)
+	if err != nil {
+		t.Fatalf("read artifact fixture: %v", err)
+	}
+
+	signatureBlob := detachedSignatureBlob("Ed", keyID, ed25519.Sign(privateKey, content))
+
+	publicKeyText, err := FormatPluginPublicKey(publicKey, keyID, "signify public key")
+	if err != nil {
+		t.Fatalf("format plugin public key: %v", err)
+	}
+
+	keyPath := writePluginArtifact(t, root, "build.pub", publicKeyText)
 	signaturePath := writePluginArtifact(t, root, "geoip.so.sig", []byte(
 		"untrusted comment: signify signature\n"+
-			base64.StdEncoding.EncodeToString(signatureBlob)+"\n",
+			base64ForTest(signatureBlob)+"\n",
 	))
 
 	return keyPath, signaturePath
 }
 
+// generatePluginSigningKey creates an Ed25519 key pair and deterministic plugin key id.
 func generatePluginSigningKey(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey, []byte) {
 	t.Helper()
 
@@ -264,29 +280,20 @@ func generatePluginSigningKey(t *testing.T) (ed25519.PublicKey, ed25519.PrivateK
 		t.Fatalf("generate plugin signing key: %v", err)
 	}
 
-	return publicKey, privateKey, []byte{0, 1, 2, 3, 4, 5, 6, 7}
+	keyID, err := DefaultPluginSigningKeyID(publicKey)
+	if err != nil {
+		t.Fatalf("derive plugin signing key id: %v", err)
+	}
+
+	return publicKey, privateKey, keyID
 }
 
-func publicKeyFile(publicKey ed25519.PublicKey, keyID []byte, comment string) []byte {
-	return []byte("untrusted comment: " + comment + "\n" + base64.StdEncoding.EncodeToString(pluginPublicKeyBlob(keyID, publicKey)) + "\n")
+// base64ForTest encodes binary signature payloads for fixture files.
+func base64ForTest(payload []byte) string {
+	return base64.StdEncoding.EncodeToString(payload)
 }
 
-func pluginPublicKeyBlob(keyID []byte, publicKey ed25519.PublicKey) []byte {
-	blob := []byte("Ed")
-	blob = append(blob, keyID...)
-	blob = append(blob, publicKey...)
-
-	return blob
-}
-
-func pluginSignatureBlob(algorithm string, keyID []byte, signature []byte) []byte {
-	blob := []byte(algorithm)
-	blob = append(blob, keyID...)
-	blob = append(blob, signature...)
-
-	return blob
-}
-
+// checksumForBytes returns the configuration checksum reference for fixture content.
 func checksumForBytes(content []byte) string {
 	sum := sha256.Sum256(content)
 
