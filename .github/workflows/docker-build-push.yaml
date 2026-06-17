@@ -205,9 +205,23 @@ jobs:
           done <<< "${TAGS}"
 
           while IFS= read -r annotation; do
-            if [[ -n "${annotation//[[:space:]]/}" ]]; then
-              annotation_args+=("--annotation" "${annotation}")
+            if [[ -z "${annotation//[[:space:]]/}" ]]; then
+              continue
             fi
+
+            case "${annotation}" in
+              index,manifest:*)
+                annotation_args+=("--annotation" "index:${annotation#index,manifest:}")
+                ;;
+              manifest,index:*)
+                annotation_args+=("--annotation" "index:${annotation#manifest,index:}")
+                ;;
+              manifest:*)
+                ;;
+              *)
+                annotation_args+=("--annotation" "${annotation}")
+                ;;
+            esac
           done <<< "${ANNOTATIONS}"
 
           for digest_file in *; do

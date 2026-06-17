@@ -20,6 +20,7 @@ func TestDockerBuildPushUsesNativeRunnersForDefaultMultiarch(t *testing.T) {
 		"platform: linux/amd64":                                        "amd64 platform",
 		"push-by-digest=true":                                          "per-platform digest push",
 		"docker buildx imagetools create":                              "manifest merge",
+		"index:${annotation#index,manifest:}":                           "index-only annotation normalization",
 		"inputs.platforms == 'linux/amd64,linux/arm64'":                "default multiarch guard",
 		"inputs.platforms != 'linux/amd64,linux/arm64'":                "legacy fallback guard",
 		"actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f":   "pinned digest upload",
