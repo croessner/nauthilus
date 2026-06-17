@@ -734,6 +734,8 @@ func (a *AuthState) recordPolicyAccountProvider(ctx *gin.Context, count int, err
 		attributes = append(attributes, policycollection.BoolAttribute(policy.AttributeAccountProviderTempFail, policy.StageAccountProvider, policy.OperationListAccounts, false, nil))
 	}
 
+	attributes = append(attributes, pluginAccountProviderPolicyAttributes(a)...)
+
 	check := a.beginPolicyCheck(ctx, policycollection.CheckSelector{
 		CheckType: policy.CheckTypeAccountProvider,
 		Stage:     policy.StageAccountProvider,
@@ -756,6 +758,29 @@ func usernameDomain(username string) (string, bool) {
 	}
 
 	return domain, true
+}
+
+// pluginAccountProviderPolicyAttributes emits facts returned by native plugin account-list backends.
+func pluginAccountProviderPolicyAttributes(auth *AuthState) []policycollection.AttributeValue {
+	if auth == nil || len(auth.Runtime.AccountProviderPluginFacts) == 0 {
+		return nil
+	}
+
+	attributes := make([]policycollection.AttributeValue, 0, len(auth.Runtime.AccountProviderPluginFacts))
+	for _, fact := range auth.Runtime.AccountProviderPluginFacts {
+		if fact.Attribute == "" {
+			continue
+		}
+
+		attributes = append(attributes, policycollection.AttributeValue{
+			ID:        fact.Attribute,
+			Stage:     policy.StageAccountProvider,
+			Operation: policy.OperationListAccounts,
+			Value:     fact.Value,
+		})
+	}
+
+	return attributes
 }
 
 func policyDecision(matched bool, decision policy.Decision) policy.Decision {

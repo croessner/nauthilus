@@ -35,7 +35,6 @@ type Host struct {
 	serviceContext context.Context
 	logger         *slog.Logger
 	config         pluginapi.ConfigView
-	policy         pluginapi.Policy
 	redis          pluginapi.Redis
 	ldap           pluginapi.LDAP
 	tracerFactory  func(string) pluginapi.Tracer
@@ -49,7 +48,6 @@ func NewHost(options ...HostOption) *Host {
 		serviceContext: context.Background(),
 		logger:         slog.Default(),
 		config:         pluginregistry.NewConfigView(nil),
-		policy:         noopPolicy{},
 		tracerFactory:  func(scope string) pluginapi.Tracer { return NewTracerFacade(scope) },
 		metricsFactory: func(scope string) pluginapi.Metrics { return NewMetricsFacade(scope) },
 	}
@@ -83,15 +81,6 @@ func WithConfig(view pluginapi.ConfigView) HostOption {
 	return func(host *Host) {
 		if view != nil {
 			host.config = view
-		}
-	}
-}
-
-// WithPolicy configures the policy facade exposed to plugins.
-func WithPolicy(policy pluginapi.Policy) HostOption {
-	return func(host *Host) {
-		if policy != nil {
-			host.policy = policy
 		}
 	}
 }
@@ -197,15 +186,6 @@ func (h *Host) LDAP() pluginapi.LDAP {
 	return h.ldap
 }
 
-// Policy returns the configured host policy facade.
-func (h *Host) Policy() pluginapi.Policy {
-	if h == nil || h.policy == nil {
-		return noopPolicy{}
-	}
-
-	return h.policy
-}
-
 // Config returns a host-wide read-only config view.
 func (h *Host) Config() pluginapi.ConfigView {
 	if h == nil || h.config == nil {
@@ -254,6 +234,31 @@ func (h *Host) WaitWorkers() {
 	h.workers.Wait()
 }
 
+// WaitWorkersContext waits for supervised plugin workers until they exit or the context ends.
+func (h *Host) WaitWorkersContext(ctx context.Context) error {
+	if h == nil {
+		return nil
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		h.workers.Wait()
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // cancelWhenDone links a parent context to a worker cancellation function.
 func cancelWhenDone(workerCtx context.Context, parent context.Context, cancel context.CancelFunc) {
 	select {
@@ -300,18 +305,6 @@ func (l scopedLogger) log(ctx context.Context, level slog.Level, message string,
 	}
 
 	l.logger.Log(ctx, level, message, attrs...)
-}
-
-type noopPolicy struct{}
-
-// RegisterAttribute accepts startup declarations when no policy facade is configured.
-func (noopPolicy) RegisterAttribute(pluginapi.AttributeDefinition) error {
-	return nil
-}
-
-// Emit accepts runtime facts when no policy facade is configured.
-func (noopPolicy) Emit(context.Context, pluginapi.PolicyFact) error {
-	return nil
 }
 
 type noopTracer struct{}

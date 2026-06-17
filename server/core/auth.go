@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -468,6 +469,9 @@ type AuthRuntime struct {
 
 	// BruteForceBuckets contains read-only bucket facts collected for policy evaluation.
 	BruteForceBuckets []bruteforce.BucketPolicyFact
+
+	// AccountProviderPluginFacts contains native plugin account-list facts for policy evaluation.
+	AccountProviderPluginFacts []pluginapi.PolicyFact
 
 	// BruteForceToleration contains the request-local toleration fact collected for policy evaluation.
 	BruteForceToleration tolerate.PolicyFact
@@ -3468,6 +3472,13 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 			if mgr := a.GetBackendManager(definitions.BackendRemote, backendType.GetName()); mgr != nil {
 				accounts = append(accounts, &AccountListMap{
 					definitions.BackendRemote,
+					mgr.AccountDB,
+				})
+			}
+		case definitions.BackendPlugin:
+			if mgr := a.GetBackendManager(definitions.BackendPlugin, backendType.GetName()); mgr != nil {
+				accounts = append(accounts, &AccountListMap{
+					definitions.BackendPlugin,
 					mgr.AccountDB,
 				})
 			}

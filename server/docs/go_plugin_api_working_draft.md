@@ -67,8 +67,9 @@ not define a statically linked plugin deployment model or an interpreted Go plug
   registerers, or raw OpenTelemetry providers as the public contract.
 - Make request APIs context-first, cancelable, and deadline-aware.
 - Support background workers through an explicit lifecycle, not through package `init` side effects.
-- Keep host services capability-based and narrow: Redis, LDAP, metrics, tracing, logging, config, HTTP metadata, policy
-  facts, and controlled goroutine supervision.
+- Keep host services capability-based and narrow: Redis, LDAP, metrics, tracing, logging, config, HTTP metadata, and
+  controlled goroutine supervision. Policy attributes are declared through the registrar, and request-time policy facts
+  are returned through extension result values.
 - Keep Lua and Go implementations behind shared internal extension interfaces where possible.
 - Make reload behavior explicit. Loaded Go plugins cannot be unloaded, so removal or binary replacement should normally
   require restart.
@@ -306,7 +307,6 @@ type Host interface {
     Metrics(scope string) Metrics
     Redis() Redis
     LDAP() LDAP
-    Policy() Policy
     Config() ConfigView
     Go(ctx context.Context, name string, fn func(context.Context) error)
 }
@@ -326,7 +326,8 @@ Service notes:
   registration. Raw Prometheus registerers are not part of the public v1 API.
 - `Tracer` should attach spans to the active request context through a Nauthilus-owned facade. Raw OpenTelemetry
   providers are not part of the public v1 API.
-- `Policy` should allow registration of attribute definitions at startup and runtime emission of registered facts.
+- Policy data is not exposed through the process-scoped host. Plugins declare attributes through
+  `Registrar.RegisterPolicyAttribute` during registration and return request-time facts through extension result values.
 - `Go` should start supervised goroutines with panic recovery, logging, tracing, and shutdown coordination.
 
 ```go
@@ -602,8 +603,8 @@ serializable, reportable, and safe to bridge between Lua and Go extension paths.
 The extension point names should be domain-specific and neutral. Lua and Go can be implementations of the same internal
 concept.
 
-Environment and subject sources should feed the same internal dependency scheduler that Lua uses today. Go plugin
-sources provide descriptors; the host maps them into the shared source graph together with Lua sources.
+Environment and subject sources should use the same dependency scheduler semantics that Lua uses today. In v1, Lua and
+Go sources are planned and executed as separate source sets; mixed Lua/Go dependency graphs are not supported.
 
 ```go
 type SourceDescriptor struct {
@@ -616,12 +617,14 @@ type SourceDescriptor struct {
 }
 ```
 
-The scheduler can then execute independent sources in the same dependency level concurrently and merge `RuntimeDelta`
-values in deterministic descriptor order after each level completes.
+Each scheduler can then execute independent sources in the same dependency level concurrently and merge source outputs in
+deterministic descriptor order after each level completes. Go plugin sources return `RuntimeDelta` values; Lua sources
+continue to publish request-context deltas through the existing Lua request context.
 
 Dependency names in `Requires` and `After` are resolved relative to the registering module first. A local component name
-such as `asn` can refer to `geoip.asn` when declared by the `geoip` module. Dependencies outside the module, including
-Lua sources or components from other plugin modules, must use fully qualified names.
+such as `asn` can refer to `geoip.asn` when declared by the `geoip` module. Dependencies outside the module must use
+fully qualified plugin component names. Dependencies on Lua sources are unsupported in v1; use runtime context values to
+consume Lua output from later Go source execution instead of declaring a cross-family dependency.
 
 ### Init
 
@@ -1072,17 +1075,22 @@ configured denied headers such as transport or security headers owned by Nauthil
 Plugins should register policy attributes before policy snapshots compile:
 
 ```go
-type Policy interface {
-    RegisterAttribute(AttributeDefinition) error
-    Emit(context.Context, PolicyFact) error
+type Registrar interface {
+    RegisterPolicyAttribute(AttributeDefinition) error
 }
 ```
 
-The current Lua policy registry has a useful safety rule: runtime emission of unknown attributes fails instead of
-silently creating unplanned facts. Go plugins should follow the same rule.
+Plugin attribute declarations should be made through `Registrar.RegisterPolicyAttribute` during registration so policy
+snapshots can compile a complete registry before request handling begins. Request-time policy facts should be returned
+through extension result `Facts` fields such as `EnvironmentResult.Facts`, `SubjectResult.Facts`,
+`BackendResult.Facts`, or `AccountListResult.Facts`.
+
+The process-scoped lifecycle host does not expose a policy facade in v1. The current Lua policy registry has a useful
+safety rule: runtime emission of unknown attributes fails instead of silently creating unplanned facts. Go plugin result
+facts should follow the same rule.
 
 Decision: native Go plugins must register their policy attributes during `Register`, before policy snapshot compilation.
-Runtime `Emit` of an unknown attribute is an error and should be reported through plugin logs, metrics, and the current
+Returning an unknown result fact is an error and should be reported through plugin logs, metrics, and the current
 extension-point result where applicable.
 
 Check type naming should keep Lua and native plugins semantically distinct:
@@ -1274,8 +1282,9 @@ config
        -> obligation targets
 ```
 
-This keeps scheduling, policy fact emission, observability, context merging, and result aggregation in one place. Lua and
-Go differ only at the leaf execution adapter.
+This keeps registration, policy fact declaration, observability, and result aggregation under one host-owned extension
+model. In v1, Lua and Go source sets still execute through separate adapters and graphs while sharing scheduler semantics
+and deterministic merge rules inside each source family.
 
 ## Process Model
 
@@ -1374,10 +1383,10 @@ rules. Those concerns are useful when isolation is required, but they are not th
   policy data belongs in `PolicyFact` values.
 - A single `.so` plugin may register multiple extension points. Each registered component must still have its own stable
   name, logging scope, metrics scope, and lifecycle status.
-- Go environment and subject sources use the same dependency scheduler as Lua sources. Source descriptors feed a shared
-  graph, allowing mixed Lua and Go sources to run in dependency levels with deterministic delta merging.
+- Go environment and subject sources use the same dependency scheduler semantics as Lua sources, but Lua and Go source
+  graphs are separate in v1; cross-family `Requires` and `After` dependencies are unsupported.
 - Source descriptor dependencies resolve local names inside the registering plugin module and require fully qualified
-  names for dependencies on Lua sources or other modules.
+  names for dependencies on other plugin modules.
 - Native Go plugins must register policy attributes before policy snapshots compile. Runtime emission of unknown
   attributes is an error.
 - `PolicyFact.Value` uses JSON/CBOR-compatible values, matching the runtime context value discipline.

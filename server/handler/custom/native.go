@@ -27,21 +27,21 @@ import (
 
 const (
 	defaultNativeHookMaxBodyBytes int64 = 1 << 20
-	nativeHookErrorField               = "error"
-	nativeHookHeaderConnection         = "Connection"
-	nativeHookHeaderCSP                = "Content-Security-Policy"
-	nativeHookBodyTooLarge             = "hook request body too large"
+	nativeHookErrorField                = "error"
+	nativeHookHeaderConnection          = "Connection"
+	nativeHookHeaderCSP                 = "Content-Security-Policy"
+	nativeHookBodyTooLarge              = "hook request body too large"
 )
 
 var nativeHookHopByHopHeaders = map[string]struct{}{
 	nativeHookHeaderConnection: {},
-	"Keep-Alive":          {},
-	"Proxy-Authenticate":  {},
-	"Proxy-Authorization": {},
-	"Te":                  {},
-	"Trailer":             {},
-	"Transfer-Encoding":   {},
-	"Upgrade":             {},
+	"Keep-Alive":               {},
+	"Proxy-Authenticate":       {},
+	"Proxy-Authorization":      {},
+	"Te":                       {},
+	"Trailer":                  {},
+	"Transfer-Encoding":        {},
+	"Upgrade":                  {},
 }
 
 var nativeHookHostOwnedHeaders = map[string]struct{}{
@@ -95,15 +95,21 @@ type NativeHook struct {
 }
 
 type nativeHookIndex struct {
-	hooks   map[string]NativeHook
-	aliases map[string]string
+	hooks           map[string]NativeHook
+	aliases         map[string]string
+	aliasTargets    map[string]string
+	rejectedHooks   map[string]struct{}
+	rejectedAliases map[string]struct{}
 }
 
 // newNativeHookIndex indexes valid native hook bindings by method and path.
 func newNativeHookIndex(hooks []NativeHook) *nativeHookIndex {
 	index := &nativeHookIndex{
-		hooks:   make(map[string]NativeHook, len(hooks)),
-		aliases: make(map[string]string),
+		hooks:           make(map[string]NativeHook, len(hooks)),
+		aliases:         make(map[string]string),
+		aliasTargets:    make(map[string]string),
+		rejectedHooks:   make(map[string]struct{}),
+		rejectedAliases: make(map[string]struct{}),
 	}
 
 	for _, hook := range hooks {
@@ -118,14 +124,66 @@ func newNativeHookIndex(hooks []NativeHook) *nativeHookIndex {
 
 		hook.Descriptor.Path = path
 		key := nativeHookKey(path, hook.Descriptor.Method)
-		index.hooks[key] = hook
+		if !index.addHookBinding(key, hook) {
+			continue
+		}
 
 		if alias := normalizeNativeHookPath(hook.Descriptor.Alias); alias != "" {
-			index.aliases[nativeHookKey(alias, hook.Descriptor.Method)] = path
+			index.addAliasBinding(nativeHookKey(alias, hook.Descriptor.Method), key, path)
 		}
 	}
 
 	return index
+}
+
+// addHookBinding records one canonical binding and rejects duplicate keys.
+func (i *nativeHookIndex) addHookBinding(key string, hook NativeHook) bool {
+	if _, rejected := i.rejectedHooks[key]; rejected {
+		return false
+	}
+
+	if _, exists := i.hooks[key]; exists {
+		delete(i.hooks, key)
+		i.rejectedHooks[key] = struct{}{}
+		i.removeAliasesForHook(key)
+
+		return false
+	}
+
+	i.hooks[key] = hook
+
+	return true
+}
+
+// addAliasBinding records one alias binding and rejects duplicate alias keys.
+func (i *nativeHookIndex) addAliasBinding(aliasKey string, canonicalKey string, canonicalPath string) {
+	if _, rejected := i.rejectedAliases[aliasKey]; rejected {
+		return
+	}
+
+	if _, exists := i.aliases[aliasKey]; exists {
+		delete(i.aliases, aliasKey)
+		delete(i.aliasTargets, aliasKey)
+		i.rejectedAliases[aliasKey] = struct{}{}
+
+		return
+	}
+
+	i.aliases[aliasKey] = canonicalPath
+	i.aliasTargets[aliasKey] = canonicalKey
+}
+
+// removeAliasesForHook removes aliases that point at an ambiguous canonical hook.
+func (i *nativeHookIndex) removeAliasesForHook(canonicalKey string) {
+	for aliasKey, targetKey := range i.aliasTargets {
+		if targetKey != canonicalKey {
+			continue
+		}
+
+		delete(i.aliases, aliasKey)
+		delete(i.aliasTargets, aliasKey)
+		i.rejectedAliases[aliasKey] = struct{}{}
+	}
 }
 
 // aliasMap returns a detached copy of native hook aliases.

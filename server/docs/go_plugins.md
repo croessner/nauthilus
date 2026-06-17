@@ -84,9 +84,9 @@ as SQL DSNs, should be referenced through files or another plugin-owned secret s
 ## Discovery
 
 The loader state exposes machine-readable discovery through `pluginloader.State.Discovery()`. The discovery document is
-derived from module metadata and registered component descriptors, not from `Metadata.Description` or `Metadata.DocsURL`.
-It includes module status, plugin metadata, required capabilities, and component descriptors while omitting plugin-owned
-`config` values.
+derived from safe module metadata and registered component descriptors. It includes module status, plugin metadata such as
+`Metadata.Description` and `Metadata.DocsURL`, required capabilities, and component descriptors while omitting
+plugin-owned `config` values.
 
 ## Observability
 

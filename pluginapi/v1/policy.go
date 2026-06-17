@@ -15,8 +15,6 @@
 
 package pluginapi
 
-import "context"
-
 // PolicyStage identifies a policy evaluation checkpoint.
 type PolicyStage string
 
@@ -141,10 +139,4 @@ type AttributeDefinition struct {
 	ProducerCheck string
 	Category      AttributeCategory
 	Type          AttributeType
-}
-
-// Policy exposes policy attribute registration and fact emission.
-type Policy interface {
-	RegisterAttribute(AttributeDefinition) error
-	Emit(context.Context, PolicyFact) error
 }

@@ -17,10 +17,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	stdlog "log"
 	"log/slog"
 
+	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/envfx"
@@ -43,6 +45,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/pluginloader"
+	"github.com/croessner/nauthilus/server/pluginregistry"
 	"github.com/croessner/nauthilus/server/pluginruntime"
 	"github.com/croessner/nauthilus/server/privilege"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -217,21 +220,6 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 				}
 			}
 
-			pluginRunner = pluginruntime.NewRunner(
-				pluginState,
-				pluginruntime.WithHost(pluginruntime.NewHost(
-					pluginruntime.WithServiceContext(p.Ctx),
-					pluginruntime.WithLogger(p.Store.logger),
-				)),
-				pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(p.Store.logger)),
-				pluginruntime.WithPluginConfig(snap.File.GetPlugins()),
-			)
-			pluginruntime.SetDefaultRunner(pluginRunner)
-
-			if err := pluginRunner.Start(p.Ctx); err != nil {
-				return err
-			}
-
 			if err := bootfx.SetupLuaScripts(snap.File, p.Store.logger); err != nil {
 				stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
 			}
@@ -294,6 +282,24 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			// Ensure Lua redislib has a configured default client before any Lua code runs.
 			redislib.SetDefaultClient(p.Store.redisClient)
+
+			pluginRunner = pluginruntime.NewRunner(
+				pluginState,
+				pluginruntime.WithHost(newRuntimePluginHost(
+					p.Ctx,
+					p.Store.logger,
+					snap.File,
+					p.Store.redisClient,
+					priorityqueue.LDAPQueue,
+				)),
+				pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(p.Store.logger)),
+				pluginruntime.WithPluginConfig(snap.File.GetPlugins()),
+			)
+			pluginruntime.SetDefaultRunner(pluginRunner)
+
+			if err := pluginRunner.Start(p.Ctx); err != nil {
+				return err
+			}
 
 			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 			core.LoadStatsFromRedis(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
@@ -374,4 +380,62 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			return nil
 		},
 	})
+}
+
+// newRuntimePluginHost builds the production host facade after process services are initialized.
+func newRuntimePluginHost(
+	ctx context.Context,
+	logger *slog.Logger,
+	cfg config.File,
+	redisClient rediscli.Client,
+	ldapQueue pluginruntime.LDAPQueue,
+) *pluginruntime.Host {
+	options := []pluginruntime.HostOption{
+		pluginruntime.WithServiceContext(ctx),
+		pluginruntime.WithLogger(logger),
+		pluginruntime.WithConfig(runtimePluginConfigView(cfg)),
+	}
+
+	if redisClient != nil {
+		options = append(options, pluginruntime.WithRedisClient(redisClient))
+	}
+
+	if ldapQueue != nil {
+		options = append(options, pluginruntime.WithLDAPExecutor(pluginruntime.NewLDAPQueueExecutor(ldapQueue)))
+	}
+
+	return pluginruntime.NewHost(options...)
+}
+
+// runtimePluginConfigView converts the loaded config snapshot into a read-only plugin API view.
+func runtimePluginConfigView(cfg config.File) pluginapi.ConfigView {
+	values, err := runtimePluginConfigMap(cfg)
+	if err != nil {
+		return pluginregistry.NewConfigView(nil)
+	}
+
+	return pluginregistry.NewConfigView(values)
+}
+
+// runtimePluginConfigMap materializes the active file snapshot without exposing raw Viper state.
+func runtimePluginConfigMap(cfg config.File) (map[string]any, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+
+	raw, err := cfg.GetConfigFileAsJSON()
+	if err != nil {
+		return nil, err
+	}
+
+	values := make(map[string]any)
+	if len(raw) == 0 {
+		return values, nil
+	}
+
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, err
+	}
+
+	return values, nil
 }

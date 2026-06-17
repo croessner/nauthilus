@@ -105,7 +105,6 @@ type Host interface {
 	Metrics(scope string) Metrics
 	Redis() Redis
 	LDAP() LDAP
-	Policy() Policy
 	Config() ConfigView
 	Go(ctx context.Context, name string, fn func(context.Context) error)
 }

@@ -29,6 +29,9 @@ const (
 	nativeHookTestClientID  = "client-a"
 	nativeHookClaimScope    = "scope"
 	nativeHookTestXPlugin   = "X-Plugin"
+	nativeHookTestFirst     = "first"
+	nativeHookTestSecond    = "second"
+	nativeHookTestMethodGet = "get"
 )
 
 func TestNativeHookRouteRegistrationAndSuccessResponse(t *testing.T) {
@@ -318,6 +321,66 @@ func TestNativeHookAliasDispatchesThroughCustomHandler(t *testing.T) {
 
 	if runner.calls != 1 {
 		t.Fatalf("runner calls = %d, want one", runner.calls)
+	}
+}
+
+func TestNativeHookIndexOmitsDuplicateCanonicalBindings(t *testing.T) {
+	index := newNativeHookIndex([]NativeHook{
+		nativeHookTestBinding(&nativeHookTestRunner{}, pluginapi.HookDescriptor{
+			Name:         nativeHookTestFirst,
+			Method:       http.MethodGet,
+			Path:         nativeHookTestPath,
+			Scope:        pluginapi.HookScopePublic,
+			Auth:         pluginapi.HookAuthNone,
+			MaxBodyBytes: 32,
+		}),
+		nativeHookTestBinding(&nativeHookTestRunner{}, pluginapi.HookDescriptor{
+			Name:         nativeHookTestSecond,
+			Method:       nativeHookTestMethodGet,
+			Path:         "native",
+			Scope:        pluginapi.HookScopePublic,
+			Auth:         pluginapi.HookAuthNone,
+			MaxBodyBytes: 32,
+		}),
+	})
+
+	if hook, found := index.lookup(nativeHookTestPath, http.MethodGet); found {
+		t.Fatalf("duplicate canonical hook stayed routable as %#v", hook.Descriptor)
+	}
+}
+
+func TestNativeHookIndexOmitsDuplicateAliasBindings(t *testing.T) {
+	index := newNativeHookIndex([]NativeHook{
+		nativeHookTestBinding(&nativeHookTestRunner{}, pluginapi.HookDescriptor{
+			Name:         nativeHookTestFirst,
+			Method:       http.MethodGet,
+			Path:         "/native-first",
+			Alias:        "/native-alias",
+			Scope:        pluginapi.HookScopePublic,
+			Auth:         pluginapi.HookAuthNone,
+			MaxBodyBytes: 32,
+		}),
+		nativeHookTestBinding(&nativeHookTestRunner{}, pluginapi.HookDescriptor{
+			Name:         nativeHookTestSecond,
+			Method:       nativeHookTestMethodGet,
+			Path:         "/native-second",
+			Alias:        "native-alias",
+			Scope:        pluginapi.HookScopePublic,
+			Auth:         pluginapi.HookAuthNone,
+			MaxBodyBytes: 32,
+		}),
+	})
+
+	if _, found := index.lookup("/native-first", http.MethodGet); !found {
+		t.Fatal("first canonical hook was unexpectedly removed")
+	}
+
+	if _, found := index.lookup("/native-second", http.MethodGet); !found {
+		t.Fatal("second canonical hook was unexpectedly removed")
+	}
+
+	if _, found := index.aliasMap()[nativeHookKey("/native-alias", http.MethodGet)]; found {
+		t.Fatal("duplicate alias stayed routable")
 	}
 }
 

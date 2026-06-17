@@ -23,6 +23,8 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/go-redis/redismock/v9"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 const (
@@ -127,6 +129,62 @@ func TestMetricsFacadeRejectsUndeclaredLabels(t *testing.T) {
 	if got := metrics.ObservationCount("lookups"); got != 1 {
 		t.Fatalf("ObservationCount() = %d, want 1 after declared label", got)
 	}
+}
+
+func TestMetricsFacadeExportsPluginCounterToPrometheus(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetricsFacadeWithRegisterer("geoip", registry)
+
+	counter, err := metrics.Counter(pluginapi.MetricDefinition{
+		Name:   "lookup_total",
+		Help:   "plugin lookup count",
+		Labels: []string{facadeMetricResult},
+	})
+	if err != nil {
+		t.Fatalf("Counter() error = %v", err)
+	}
+
+	counter.Add(context.Background(), 2, pluginapi.LabelValue{Name: facadeMetricResult, Value: facadeMetricOK})
+
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+
+	for _, family := range families {
+		if family.GetName() != "nauthilus_plugin_geoip_lookup_total" {
+			continue
+		}
+
+		for _, metric := range family.GetMetric() {
+			if metric.GetCounter().GetValue() != 2 {
+				t.Fatalf("counter value = %f, want 2", metric.GetCounter().GetValue())
+			}
+
+			if !prometheusMetricHasLabel(metric, "plugin_scope", "geoip") {
+				t.Fatalf("counter labels = %#v, want plugin_scope=geoip", metric.GetLabel())
+			}
+
+			if !prometheusMetricHasLabel(metric, facadeMetricResult, facadeMetricOK) {
+				t.Fatalf("counter labels = %#v, want result=ok", metric.GetLabel())
+			}
+
+			return
+		}
+	}
+
+	t.Fatal("exported plugin counter was not gathered")
+}
+
+// prometheusMetricHasLabel reports whether a gathered metric has the expected label pair.
+func prometheusMetricHasLabel(metric *dto.Metric, name string, value string) bool {
+	for _, label := range metric.GetLabel() {
+		if label.GetName() == name && label.GetValue() == value {
+			return true
+		}
+	}
+
+	return false
 }
 
 type recordingLDAPExecutor struct {

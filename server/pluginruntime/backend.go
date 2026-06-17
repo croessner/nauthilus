@@ -121,8 +121,13 @@ func (m *BackendManager) AccountDB(auth *core.AuthState) (core.AccountList, erro
 		return nil, m.temporaryError()
 	}
 
-	if _, err := validatePluginPolicyFacts(result.Facts); err != nil {
+	facts, err := validatePluginPolicyFacts(result.Facts)
+	if err != nil {
 		return nil, m.temporaryError()
+	}
+
+	if len(facts) > 0 {
+		auth.Runtime.AccountProviderPluginFacts = append(auth.Runtime.AccountProviderPluginFacts, facts...)
 	}
 
 	return core.AccountList(slices.Clone(result.Accounts)), nil

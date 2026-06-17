@@ -34,7 +34,9 @@ const (
 	AbortPolicyRequest AbortPolicy = "request"
 )
 
-// SourceDescriptor describes a dependency-scheduled source component.
+// SourceDescriptor describes one dependency-scheduled Go source component.
+// Requires and After can target local or fully qualified plugin source names;
+// Lua source dependencies are not supported in v1.
 type SourceDescriptor struct {
 	Timeout     time.Duration
 	Name        string

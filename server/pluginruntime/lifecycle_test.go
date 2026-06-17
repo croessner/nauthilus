@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/config"
@@ -87,6 +88,87 @@ func TestRunner_PanicBoundaryConvertsPanicToTechnicalError(t *testing.T) {
 
 	if !observer.sawPanic(testRuntimeEnvironment, "Evaluate") {
 		t.Fatalf("observer records = %#v, want panic for environment Evaluate", observer.records)
+	}
+}
+
+func TestRunner_StopAppliesModuleStopTimeout(t *testing.T) {
+	module := initialRuntimeModule(nil)
+	module.StopTimeout = 20 * time.Millisecond
+	runner := newTestRunnerWithModule(t, &blockingStopPlugin{}, module, nil)
+
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	started := time.Now()
+	err := runner.Stop(stopCtx)
+	elapsed := time.Since(started)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop() error = %v, want context deadline exceeded", err)
+	}
+
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("Stop() elapsed = %s, want module timeout to bound shutdown", elapsed)
+	}
+}
+
+func TestRunner_StopWaitsForHostWorkers(t *testing.T) {
+	serviceCtx, cancelService := context.WithCancel(context.Background())
+	host := NewHost(WithServiceContext(serviceCtx))
+	plugin := &workerRuntimePlugin{
+		started: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+	runner := newTestRunner(t, plugin, nil, WithHost(host))
+
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	<-plugin.started
+	cancelService()
+
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), time.Second)
+	defer cancelStop()
+
+	if err := runner.Stop(stopCtx); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	select {
+	case <-plugin.done:
+	default:
+		t.Fatal("Stop() returned before host-supervised worker exited")
+	}
+}
+
+func TestRunner_StopReportsHostWorkerWaitTimeout(t *testing.T) {
+	serviceCtx, cancelService := context.WithCancel(context.Background())
+	defer cancelService()
+
+	host := NewHost(WithServiceContext(serviceCtx))
+	plugin := &workerRuntimePlugin{
+		started: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+	runner := newTestRunner(t, plugin, nil, WithHost(host))
+
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	<-plugin.started
+
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelStop()
+
+	err := runner.Stop(stopCtx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop() error = %v, want context deadline exceeded", err)
 	}
 }
 
@@ -228,6 +310,35 @@ type runtimePlugin struct {
 	events            *[]string
 	reconfigureErr    error
 	reconfigureValues []string
+}
+
+type blockingStopPlugin struct {
+	runtimePlugin
+}
+
+func (p *blockingStopPlugin) Stop(ctx context.Context) error {
+	<-ctx.Done()
+
+	return ctx.Err()
+}
+
+type workerRuntimePlugin struct {
+	runtimePlugin
+	started chan struct{}
+	done    chan struct{}
+}
+
+func (p *workerRuntimePlugin) Start(_ context.Context, host pluginapi.Host) error {
+	host.Go(context.Background(), "worker", func(ctx context.Context) error {
+		close(p.started)
+		<-ctx.Done()
+		time.Sleep(20 * time.Millisecond)
+		close(p.done)
+
+		return nil
+	})
+
+	return nil
 }
 
 func (p *runtimePlugin) Metadata() pluginapi.Metadata {

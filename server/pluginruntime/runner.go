@@ -249,6 +249,10 @@ func (r *Runner) Stop(ctx context.Context) error {
 		}
 	}
 
+	if err := r.waitHostWorkers(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
 	r.startedInitTasks = nil
 	r.startedModules = nil
 
@@ -453,10 +457,45 @@ func (r *Runner) stopModule(ctx context.Context, moduleName string) error {
 		extensionPoint: extensionPointPlugin,
 		method:         "Stop",
 	}
-	if err := r.invoke(ctx, spec, func(callCtx context.Context) error {
+	stopCtx, cancel := moduleStopContext(ctx, instance.Module.StopTimeout)
+
+	defer cancel()
+
+	if err := r.invoke(stopCtx, spec, func(callCtx context.Context) error {
 		return runtimePlugin.Stop(callCtx)
 	}); err != nil {
 		return fmt.Errorf("%w: module %q Stop failed: %w", ErrLifecycleFailed, instance.ModuleName, err)
+	}
+
+	return nil
+}
+
+// moduleStopContext applies the optional module shutdown budget within the outer shutdown context.
+func moduleStopContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+
+	return context.WithTimeout(ctx, timeout)
+}
+
+type hostWorkerWaiter interface {
+	WaitWorkersContext(context.Context) error
+}
+
+// waitHostWorkers coordinates host-supervised workers during plugin runtime shutdown.
+func (r *Runner) waitHostWorkers(ctx context.Context) error {
+	waiter, ok := r.host.(hostWorkerWaiter)
+	if !ok {
+		return nil
+	}
+
+	if err := waiter.WaitWorkersContext(ctx); err != nil {
+		return fmt.Errorf("%w: host worker shutdown failed: %w", ErrLifecycleFailed, err)
 	}
 
 	return nil

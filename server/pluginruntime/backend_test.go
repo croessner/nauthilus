@@ -34,24 +34,28 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/pluginloader"
 	"github.com/croessner/nauthilus/server/pluginregistry"
+	"github.com/croessner/nauthilus/server/policy"
+	policyregistry "github.com/croessner/nauthilus/server/policy/registry"
+	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	backendTestAccount     = "alice"
-	backendTestAccountAttr = "account"
-	backendTestGUID        = "backend-test"
-	backendTestMail        = "alice@example.test"
-	backendTestMailAttr    = "mail"
-	backendTestModuleName  = "customer"
-	backendTestName        = "passdb"
-	backendTestQualified   = backendTestModuleName + "." + backendTestName
-	backendTestPassword    = "s3cret"
-	backendTestRiskAttr    = "plugin.customer.passdb.risk"
-	backendTestStatusKey   = "auth.ok"
-	backendTestStatusText  = "Plugin authenticated"
-	backendTestUIDAttr     = "uid"
+	backendTestAccount      = "alice"
+	backendTestAccountAttr  = "account"
+	backendTestGUID         = "backend-test"
+	backendTestMail         = "alice@example.test"
+	backendTestMailAttr     = "mail"
+	backendTestModuleName   = "customer"
+	backendTestName         = "passdb"
+	backendTestQualified    = backendTestModuleName + "." + backendTestName
+	backendTestPassword     = "s3cret"
+	backendTestProviderAttr = "plugin.customer.passdb.account_provider"
+	backendTestRiskAttr     = "plugin.customer.passdb.risk"
+	backendTestStatusKey    = "auth.ok"
+	backendTestStatusText   = "Plugin authenticated"
+	backendTestUIDAttr      = "uid"
 )
 
 func TestBackendManagerPassDBMapsAuthenticatedResult(t *testing.T) {
@@ -91,6 +95,51 @@ func TestBackendManagerPassDBMapsAuthenticatedResult(t *testing.T) {
 	defer core.PutPassDBResultToPool(result)
 
 	assertAuthenticatedPassDBResult(t, result, auth)
+}
+
+func TestBackendManagerAccountDBPropagatesListAccountFactsToPolicy(t *testing.T) {
+	activateAccountProviderPluginSnapshot(t, backendTestProviderAttr)
+
+	backend := &fakePluginBackend{
+		list: func(context.Context, pluginapi.AccountListRequest) (pluginapi.AccountListResult, error) {
+			return pluginapi.AccountListResult{
+				Accounts: []string{backendTestAccount},
+				Facts: []pluginapi.PolicyFact{
+					{Attribute: backendTestProviderAttr, Value: true},
+				},
+			}, nil
+		},
+	}
+
+	runner := newBackendTestRunner(t, []backendTestModule{
+		{name: backendTestModuleName, backend: backend},
+	})
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	restoreDefaultRunner := replaceDefaultRunnerForTest(runner)
+	defer restoreDefaultRunner()
+
+	auth := newBackendTestAuth(t)
+	auth.Request.ListAccounts = true
+	auth.Cfg().GetServer().Backends = []*config.Backend{mustBackendSelector(t, "plugin("+backendTestQualified+")")}
+
+	accounts := auth.ListUserAccounts()
+	if len(accounts) != 1 || accounts[0] != backendTestAccount {
+		t.Fatalf("ListUserAccounts() = %#v, want plugin account", accounts)
+	}
+
+	report := auth.PolicyDecisionContext(auth.Request.HTTPClientContext).Report()
+
+	attribute, ok := report.Attributes[backendTestProviderAttr]
+	if !ok {
+		t.Fatalf("missing account-provider plugin fact %q", backendTestProviderAttr)
+	}
+
+	if attribute.Value != true {
+		t.Fatalf("plugin fact value = %#v, want true", attribute.Value)
+	}
 }
 
 // assertAuthenticatedPassDBResult verifies the backend result mapping from plugin output.
@@ -529,4 +578,80 @@ var backendTestPoolInit sync.Once
 
 func initBackendTestPools() {
 	backendTestPoolInit.Do(core.InitPassDBResultPool)
+}
+
+// activateAccountProviderPluginSnapshot publishes a minimal snapshot for plugin account-provider facts.
+func activateAccountProviderPluginSnapshot(t *testing.T, attribute string) {
+	t.Helper()
+
+	snapshot := &policyruntime.Snapshot{
+		Generation:    1,
+		Mode:          "enforce",
+		DefaultPolicy: policy.BuiltinDefaultSet,
+		AttributeRegistry: map[string]policyregistry.AttributeDefinition{
+			attribute: {
+				ID:         attribute,
+				Stage:      policy.StageAccountProvider,
+				Operations: []policy.Operation{policy.OperationListAccounts},
+				Category:   policyregistry.AttributeCategoryEnvironment,
+				Type:       policyregistry.AttributeTypeBool,
+				Source:     policyregistry.SourcePlugin,
+			},
+		},
+		StagePlans: map[policy.Operation]map[policy.Stage]policyruntime.CompiledStagePlan{
+			policy.OperationListAccounts: {
+				policy.StageAccountProvider: {
+					Stage: policy.StageAccountProvider,
+					Checks: []policyruntime.CompiledCheck{
+						{
+							RunIf:      policyruntime.RunIfPlan{AuthState: policy.RunIfAny},
+							Name:       "account_provider",
+							Type:       policy.CheckTypeAccountProvider,
+							ConfigRef:  "auth.backends",
+							Stage:      policy.StageAccountProvider,
+							Operations: []policy.Operation{policy.OperationListAccounts},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := policyruntime.DefaultStore().Activate(snapshot); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := policyruntime.DefaultStore().Activate(&policyruntime.Snapshot{}); err != nil {
+			t.Fatalf("restore policy snapshot: %v", err)
+		}
+	})
+}
+
+// mustBackendSelector parses a backend selector and fails the test on invalid syntax.
+func mustBackendSelector(t *testing.T, selector string) *config.Backend {
+	t.Helper()
+
+	backend := &config.Backend{}
+	if err := backend.Set(selector); err != nil {
+		t.Fatalf("backend selector %q error = %v", selector, err)
+	}
+
+	return backend
+}
+
+// replaceDefaultRunnerForTest swaps the process-wide plugin runner for one test.
+func replaceDefaultRunnerForTest(runner *Runner) func() {
+	previous, ok := DefaultRunner()
+
+	SetDefaultRunner(runner)
+
+	return func() {
+		if ok {
+			SetDefaultRunner(previous)
+
+			return
+		}
+
+		SetDefaultRunner(NewRunnerFromInstances(pluginregistry.NewRegistry(), nil))
+	}
 }
