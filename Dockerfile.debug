@@ -1,4 +1,4 @@
-FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.23 AS builder
+FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -20,7 +20,7 @@ RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s" -o hea
 RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -trimpath -ldflags="-s" -o fakeimap .
 
-FROM alpine:3.23
+FROM alpine:3.24
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"

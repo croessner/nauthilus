@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.23 AS builder
+FROM --platform=$TARGETPLATFORM golang:1.26-alpine3.24 AS builder
 
 ARG BUILD_TAGS=""
 ARG TARGETOS
@@ -10,8 +10,8 @@ WORKDIR /build
 
 COPY . ./
 
-# Set necessarry environment vairables and compile the app
-ENV CGO_ENABLED=0
+# Set necessary environment variables and compile the app.
+ENV CGO_ENABLED=1
 ENV GOEXPERIMENT=runtimesecret
 RUN apk add --no-cache build-base git upx
 
@@ -23,6 +23,9 @@ RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     -o nauthilus . && \
     upx --best --lzma nauthilus
 
+RUN mkdir -p /usr/local/lib/nauthilus/plugins && \
+    cd contrib/plugins/geoip && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/geoip.so .
+
 RUN cd client && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client . && upx --best --lzma nauthilus-client
 RUN cd contrib/oidctestclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient . && upx --best --lzma oidctestclient
 RUN cd contrib/saml2testclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient . && upx --best --lzma saml2testclient
@@ -31,18 +34,7 @@ RUN cd docker-healthcheck && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod
 RUN cd contrib/smtp-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
 RUN cd contrib/imap-server && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o fakeimap . && upx --best --lzma fakeimap
 
-FROM alpine:3.23 AS runtime-base
-
-RUN apk --no-cache --upgrade add ca-certificates
-
-RUN mkdir -p /runtime-root/etc/ssl/certs /runtime-root/tmp /runtime-root/usr/app && \
-    cp /etc/ssl/certs/ca-certificates.crt /runtime-root/etc/ssl/certs/ca-certificates.crt && \
-    printf 'hosts: files dns\n' > /runtime-root/etc/nsswitch.conf && \
-    printf 'nauthilus:x:65532:65532:nauthilus:/nonexistent:/sbin/nologin\n' > /runtime-root/etc/passwd && \
-    printf 'nauthilus:x:65532:\n' > /runtime-root/etc/group && \
-    ln -s ./server/lua-plugins.d /runtime-root/usr/app/lua-plugins.d
-
-FROM scratch
+FROM alpine:3.24
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
@@ -52,7 +44,10 @@ LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
 
 WORKDIR /usr/app
 
-COPY --from=runtime-base ["/runtime-root/", "/"]
+RUN addgroup -S -g 65532 nauthilus && \
+    adduser -S -D -H -h /nonexistent -s /sbin/nologin -G nauthilus -u 65532 nauthilus && \
+    apk --no-cache --upgrade add ca-certificates && \
+    printf 'hosts: files dns\n' > /etc/nsswitch.conf
 
 # Copy binary to destination image
 COPY --from=builder ["/build/server/nauthilus", "/build/client/nauthilus-client", "/build/contrib/oidctestclient/oidctestclient", "/build/contrib/saml2testclient/saml2testclient", "./"]
@@ -63,8 +58,12 @@ COPY --from=builder ["/build/docker-healthcheck/healthcheck", "./"]
 COPY --from=builder ["/build/contrib/smtp-server/fakesmtp", "./"]
 COPY --from=builder ["/build/contrib/imap-server/fakeimap", "./"]
 COPY --from=builder ["/build/static/", "./static/"]
+COPY --from=builder ["/usr/local/lib/nauthilus/plugins/", "/usr/local/lib/nauthilus/plugins/"]
 
 COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
+
+RUN ln -s ./server/lua-plugins.d ./lua-plugins.d && \
+    ln -s ./server/resources ./resources
 
 ENV ZONEINFO=/zoneinfo.zip
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt

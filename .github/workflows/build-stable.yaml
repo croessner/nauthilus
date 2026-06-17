@@ -267,10 +267,17 @@ jobs:
             fi
           }
 
-          append_section "Features" "feat:"
-          append_section "Fixes" "fix:"
-          append_section "Documentation" "docs?:"
-          append_section "Chores" "chore:"
+          append_section "Added" "Add:"
+          append_section "Changed" "Change:"
+          append_section "Fixed" "Fix:"
+          append_section "Removed" "Remove:"
+          append_section "Refactored" "Refactor:"
+          append_section "Tests" "Test:"
+          append_section "Documentation" "Docs:"
+          append_section "Build And CI" "(Build|Ci):"
+          append_section "Security" "Security:"
+          append_section "Dependencies" "Vendor:"
+          append_section "Chores" "Chore:"
 
           if ! grep -q '^### ' "${release_prefix_notes_file}"; then
             if [ -n "${last_release_tag}" ]; then

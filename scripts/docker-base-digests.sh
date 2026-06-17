@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-alpine_image="${ALPINE_IMAGE:-alpine:3.23}"
-golang_image="${GOLANG_IMAGE:-golang:1.26-alpine3.23}"
+alpine_image="${ALPINE_IMAGE:-alpine:3.24}"
+golang_image="${GOLANG_IMAGE:-golang:1.26-alpine3.24}"
 
 hash_cmd() {
   if command -v sha256sum >/dev/null 2>&1; then
