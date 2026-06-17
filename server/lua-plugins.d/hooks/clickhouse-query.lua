@@ -186,8 +186,11 @@ local NUM_COL = {
     client_port=true, local_port=true, brute_force_counter=true,
     failed_login_count=true, failed_login_rank=true,
     geoip_asn=true,
+    reputation_score=true, reputation_positive_score=true,
+    reputation_negative_score=true,
     reputation_ip_score=true, reputation_asn_score=true,
     reputation_country_score=true, reputation_asn_country_score=true,
+    reputation_samples=true,
     gp_attempts=true, gp_unique_ips=true, gp_unique_users=true, gp_ips_per_user=true,
     prot_backoff = true, prot_delay_ms = true,
     latency = true, http_status = true
@@ -623,8 +626,9 @@ function nauthilus_run_hook(request)
             "geoip_source","geoip_matched","geoip_country_name","geoip_city_name",
             "geoip_asn","geoip_asn_org","geoip_asn_prefix","geoip_asn_registry",
             "geoip_asn_country","geoip_asn_allocated","geoip_asn_status",
+            "reputation_score","reputation_positive_score","reputation_negative_score",
             "reputation_ip_score","reputation_asn_score","reputation_country_score",
-            "reputation_asn_country_score","reputation_source","reputation_decision",
+            "reputation_asn_country_score","reputation_samples","reputation_source","reputation_decision",
             "gp_attempts","gp_unique_ips","gp_unique_users","gp_ips_per_user",
             -- protection and dynamic response
             "prot_active","prot_reason","prot_backoff","prot_delay_ms",

@@ -286,17 +286,25 @@ function nauthilus_call_action(request)
 
         -- Reputation details if present. Producers are intentionally separate
         -- from GeoIP enrichment so policy can decide on explicit scores.
+        local reputation_score
+        local reputation_positive_score
+        local reputation_negative_score
         local reputation_ip_score
         local reputation_asn_score
         local reputation_country_score
         local reputation_asn_country_score
+        local reputation_samples
         local reputation_source = ""
         local reputation_decision = ""
         if rt and rt.geoip_reputation then
+            reputation_score = to_float(rt.geoip_reputation.score)
+            reputation_positive_score = to_float(rt.geoip_reputation.positive_score)
+            reputation_negative_score = to_float(rt.geoip_reputation.negative_score)
             reputation_ip_score = to_float(rt.geoip_reputation.ip_score)
             reputation_asn_score = to_float(rt.geoip_reputation.asn_score)
             reputation_country_score = to_float(rt.geoip_reputation.country_score)
             reputation_asn_country_score = to_float(rt.geoip_reputation.asn_country_score)
+            reputation_samples = to_uint(rt.geoip_reputation.samples)
             reputation_source = to_string(rt.geoip_reputation.source)
             reputation_decision = to_string(rt.geoip_reputation.decision)
         end
@@ -379,10 +387,14 @@ function nauthilus_call_action(request)
             geoip_asn_country = geoip_asn_country,
             geoip_asn_allocated = geoip_asn_allocated,
             geoip_asn_status = geoip_asn_status,
+            reputation_score = reputation_score,
+            reputation_positive_score = reputation_positive_score,
+            reputation_negative_score = reputation_negative_score,
             reputation_ip_score = reputation_ip_score,
             reputation_asn_score = reputation_asn_score,
             reputation_country_score = reputation_country_score,
             reputation_asn_country_score = reputation_asn_country_score,
+            reputation_samples = reputation_samples,
             reputation_source = reputation_source,
             reputation_decision = reputation_decision,
             gp_attempts = gp_attempts,

@@ -50,10 +50,14 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   geoip_asn_country    LowCardinality(String),
   geoip_asn_allocated  LowCardinality(String),
   geoip_asn_status     LowCardinality(String),
+  reputation_score             Nullable(Float64),
+  reputation_positive_score    Nullable(Float64),
+  reputation_negative_score    Nullable(Float64),
   reputation_ip_score          Nullable(Float64),
   reputation_asn_score         Nullable(Float64),
   reputation_country_score     Nullable(Float64),
   reputation_asn_country_score Nullable(Float64),
+  reputation_samples           Nullable(UInt64),
   reputation_source            LowCardinality(String),
   reputation_decision          LowCardinality(String),
   gp_attempts          Nullable(UInt64),
@@ -147,11 +151,15 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_registry LowCard
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_country LowCardinality(String) AFTER geoip_asn_registry;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_allocated LowCardinality(String) AFTER geoip_asn_country;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_asn_status LowCardinality(String) AFTER geoip_asn_allocated;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_ip_score Nullable(Float64) AFTER geoip_asn_status;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_score Nullable(Float64) AFTER geoip_asn_status;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_positive_score Nullable(Float64) AFTER reputation_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_negative_score Nullable(Float64) AFTER reputation_positive_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_ip_score Nullable(Float64) AFTER reputation_negative_score;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_asn_score Nullable(Float64) AFTER reputation_ip_score;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_country_score Nullable(Float64) AFTER reputation_asn_score;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_asn_country_score Nullable(Float64) AFTER reputation_country_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_source LowCardinality(String) AFTER reputation_asn_country_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_samples Nullable(UInt64) AFTER reputation_asn_country_score;
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_source LowCardinality(String) AFTER reputation_samples;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_decision LowCardinality(String) AFTER reputation_source;
 
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rwp Nullable(Bool) AFTER repeating;

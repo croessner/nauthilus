@@ -24,10 +24,11 @@ It is built for the official Grafana ClickHouse data source (`grafana-clickhouse
 - Executive login KPIs: attempts, success/failure counts, success rate, unique users, unique source IPs, p95 latency, and defense-event volume.
 - Outcome and performance trends by time bucket, HTTP status class, protocol, and authentication method.
 - Identity and source-risk views for failed identities, source IPs, a country outcome world map, country rankings, known-vs-unknown users, and user agents.
+- GeoIP reputation views for reputation decisions over time, score percentiles, hot source IPs, and ASN/country aggregates.
 - Defense-signal views for decision sources, account protection, dynamic response, brute-force buckets, repeat/replay markers, and OIDC/SAML client activity.
 - Investigation tables for recent high-risk events and the recent login stream.
 
-Import it through Grafana's dashboard import flow and select the ClickHouse data source that can read the `nauthilus` database when Grafana asks for `ClickHouse datasource`. The selected data source pre-fills the dashboard's data-source variable, which remains visible for later switching. The dashboard exposes filters for service, protocol, method, status message, country, and a ClickHouse-native exclude-identities filter. The exclude filter defaults to `zabbix_mail`; clear it to include every identity. Multiple exact identities can be excluded as a comma-separated list.
+Import it through Grafana's dashboard import flow and select the ClickHouse data source that can read the `nauthilus` database when Grafana asks for `ClickHouse datasource`. The selected data source pre-fills the dashboard's data-source variable, which remains visible for later switching. The dashboard exposes filters for service, protocol, method, status message, country, ASN, ASN country, reputation decision, and a ClickHouse-native exclude-identities filter. The exclude filter defaults to `zabbix_mail`; clear it to include every identity. Multiple exact identities can be excluded as a comma-separated list.
 
 The large raw-event tables (`Recent high-risk events` and `Recent login stream`) use server-side ClickHouse pagination through the `Rows/page` and `Table page` variables. Changing those variables changes the SQL `LIMIT` and `OFFSET`, so Grafana only receives the selected slice instead of loading the full result set and paging it in the browser. The aggregated Top-N tables stay capped by their own small `LIMIT` values.
 

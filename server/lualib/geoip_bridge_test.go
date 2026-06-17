@@ -322,6 +322,20 @@ ctx_state["plugin.environment.geoip"] = {
   asn_status = "allocated",
 }
 
+ctx_state.rt = {}
+ctx_state.rt.geoip_reputation = {
+  score = 0.375,
+  positive_score = 0.82,
+  negative_score = 0.14,
+  ip_score = 0.71,
+  asn_score = 0.48,
+  country_score = 0.22,
+  asn_country_score = 0.19,
+  samples = 42,
+  source = "redis",
+  decision = "suspicious",
+}
+
 local request = {
   no_auth = false,
   authenticated = false,
@@ -371,6 +385,16 @@ func assertClickHouseGeoIPRow(t *testing.T, row map[string]any) {
 	assertRowValue(t, row, "geoip_asn_country", "DE")
 	assertRowValue(t, row, "geoip_asn_allocated", "2024-01-01")
 	assertRowValue(t, row, "geoip_asn_status", "allocated")
+	assertRowValue(t, row, "reputation_score", 0.375)
+	assertRowValue(t, row, "reputation_positive_score", 0.82)
+	assertRowValue(t, row, "reputation_negative_score", 0.14)
+	assertRowValue(t, row, "reputation_ip_score", 0.71)
+	assertRowValue(t, row, "reputation_asn_score", 0.48)
+	assertRowValue(t, row, "reputation_country_score", 0.22)
+	assertRowValue(t, row, "reputation_asn_country_score", 0.19)
+	assertRowValue(t, row, "reputation_samples", float64(42))
+	assertRowValue(t, row, "reputation_source", "redis")
+	assertRowValue(t, row, "reputation_decision", "suspicious")
 }
 
 func assertLuaString(t *testing.T, value lua.LValue, want string) {
