@@ -2347,6 +2347,7 @@ func (a *AuthState) FillCommonRequest(cr *lualib.CommonRequest) {
 	cr.XSSLCipher = a.Request.XSSLCipher
 	cr.SSLSerial = a.Request.SSLSerial
 	cr.SSLFingerprint = a.Request.SSLFingerprint
+	cr.AuthLoginAttempt = a.Request.AuthLoginAttempt
 	cr.BackendServers = ListBackendServers()
 	cr.UsedBackendAddr = &a.Runtime.UsedBackendIP
 	cr.UsedBackendPort = &a.Runtime.UsedBackendPort

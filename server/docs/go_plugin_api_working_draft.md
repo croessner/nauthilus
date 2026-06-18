@@ -305,7 +305,12 @@ type Host interface {
     Logger(scope string) Logger
     Tracer(scope string) Tracer
     Metrics(scope string) Metrics
+    HTTP(scope string) HTTPClient
+    ConnectionTargets(scope string) ConnectionTargets
+    BackendServers() BackendServers
     Redis() Redis
+    Cache(scope string) (Cache, error)
+    Helpers() DeterministicHelpers
     LDAP() LDAP
     Config() ConfigView
     Go(ctx context.Context, name string, fn func(context.Context) error)
@@ -318,7 +323,12 @@ Service notes:
   component scope, plugin metadata, request IDs when present, and stable operational labels.
 - `Redis` should expose broad, host-owned `go-redis` handles through dependency injection. Plugins can use Redis
   commands directly without Nauthilus reimplementing the Lua Redis module in Go. Nauthilus should not expose internal
-  Redis singletons or mutable Redis security internals as the plugin contract.
+  Redis singletons or mutable Redis security internals as the plugin contract. Host-owned key helpers and the named script
+  registry cover behavior that must remain consistent with Nauthilus prefixing, Redis Cluster slots, and script recovery.
+- `Cache` should expose only process-local module cache semantics: TTL values, delete/exists, list push/pop-all, and clear.
+  Cache contents are isolated by validated module scope and are not durable.
+- `DeterministicHelpers` should hold shared non-secret helper logic used when porting Lua scripts, such as account hash
+  tags, scoped IPs, and routable IP checks.
 - `LDAP` should expose queued, request-aware `Search` and `Modify` methods that package LDAP operations, submit them to
   the existing worker queues, and wait for results. Plugins should not receive raw LDAP queues, pools, or
   `LDAPRequest` internals.
@@ -326,6 +336,15 @@ Service notes:
   registration. Raw Prometheus registerers are not part of the public v1 API.
 - `Tracer` should attach spans to the active request context through a Nauthilus-owned facade. Raw OpenTelemetry
   providers are not part of the public v1 API.
+- `HTTP` exposes host-managed outbound HTTP calls with context deadlines, trace-header injection, bounded plugin metrics,
+  response body limits, and redacted operational logs. Plugins pass API-level request and response values, not raw
+  `*http.Request` or `*http.Response` objects.
+- `ConnectionTargets` registers named `host:port` targets with local/remote direction for generic connection
+  observability. It validates names, addresses, bounded labels, and duplicate registration before delegating to the host
+  connection monitor.
+- `BackendServers` exposes value-only backend candidates from the host monitoring list. Plugins receive defensive
+  copies, not raw `*config.BackendServer` pointers or live monitor objects. Candidate selection still returns through
+  `SubjectResult.SelectedBackend`.
 - Policy data is not exposed through the process-scoped host. Plugins declare attributes through
   `Registrar.RegisterPolicyAttribute` during registration and return request-time facts through extension result values.
 - `Go` should start supervised goroutines with panic recovery, logging, tracing, and shutdown coordination.
@@ -404,12 +423,54 @@ type Redis interface {
     Write() redis.Cmdable
     ReadPipeline() redis.Pipeliner
     WritePipeline() redis.Pipeliner
+    Keys() RedisKeyBuilder
+    Scripts() RedisScriptRegistry
+}
+
+type RedisKeyBuilder interface {
+    Key(string) string
+    Keys(...string) []string
+    SameSlot([]string, string) []string
+}
+
+type RedisScriptRegistry interface {
+    Upload(context.Context, string, string) (string, error)
+    Run(context.Context, string, []string, ...any) (any, error)
+}
+
+type Cache interface {
+    Set(context.Context, string, any, time.Duration)
+    Get(context.Context, string) (any, bool)
+    Delete(context.Context, string) bool
+    Exists(context.Context, string) bool
+    Push(context.Context, string, any) int
+    PopAll(context.Context, string) []any
+    Clear(context.Context)
+}
+
+type DeterministicHelpers interface {
+    AccountTag(string) string
+    ScopedIP(string, string) string
+    IsRoutableIP(string) bool
 }
 ```
 
 Plugins must use the host-provided request, startup, worker, or derived contexts for Redis calls. Redis connection
 timeouts remain centrally configured by Nauthilus; plugins should not create unbounded background contexts for Redis
-operations.
+operations. Redis keys that need the configured Nauthilus prefix or Redis Cluster hash-tag behavior should be built
+through `Redis.Keys()`. Named scripts should be uploaded through `Redis.Scripts().Upload` and run by deterministic name.
+The host stores script source/SHA metadata and retries once after `NOSCRIPT`.
+
+Named Redis pools are intentionally plugin-owned in v1. If a plugin needs an additional Redis deployment, it should
+construct that client from module-owned config, redact connection details in logs and errors, and close or replace it in
+`Stop` and `Reconfigure`.
+
+Process-local cache state should use `Host.Cache(scope)` when init-time and request-time native components of one module
+need a shared in-process buffer. Scope validation prevents accidental cross-module sharing; cross-module cache sharing
+requires an explicit future API.
+
+Deterministic helpers are also available as dependency-light public helpers for code that does not have a live `Host`
+facade. Runtime `Host.Helpers()` applies Nauthilus config and Lua-compatible environment defaults.
 
 LDAP should stay queue-backed but not queue-exposing:
 
@@ -470,6 +531,8 @@ Plugins should see immutable request snapshots plus narrow mutation sinks.
 
 ```go
 type RequestSnapshot struct {
+    Headers           map[string][]string
+    IDP               IDPInfo
     Session           string
     ExternalSessionID string
     HealthCheck       bool
@@ -478,15 +541,71 @@ type RequestSnapshot struct {
     Method            string
     Username          string
     Account           string
+    AccountField      string
+    UniqueUserID      string
+    DisplayName       string
     ClientIP          string
     ClientPort        string
+    ClientNet         string
     ClientHost        string
+    ClientID          string
     UserAgent         string
-    Headers           map[string][]string
+    LocalIP           string
+    LocalPort         string
     OIDCCID           string
     SAMLEntityID      string
+    AuthLoginAttempt  uint
     TLS               TLSInfo
+    Diagnostics       RequestDiagnostics
     Runtime           RuntimeFlags
+}
+
+type IDPInfo struct {
+    RequestedScopes         []string
+    UserGroups              []string
+    AllowedClientScopes     []string
+    AllowedClientGrantTypes []string
+    GrantType               string
+    ClientID                string
+    ClientName              string
+    RedirectURI             string
+    MFAMethod               string
+    MFACompleted            bool
+}
+
+type RequestDiagnostics struct {
+    StatusMessage     string
+    BruteForceName    string
+    EnvironmentName   string
+    LatencyMillis     int64
+    BruteForceCounter uint
+    HTTPStatus        int
+}
+
+type TLSInfo struct {
+    Legacy         TLSLegacyInfo
+    ServerName     string
+    CipherSuite    string
+    PeerCommonName string
+    PeerIssuer     string
+    Version        string
+    VerifiedChains int
+    Enabled        bool
+    Mutual         bool
+}
+
+type RuntimeFlags struct {
+    Debug                    bool
+    LocalRequest             bool
+    NoAuth                   bool
+    UserFound                bool
+    Authenticated            bool
+    Authorized               bool
+    Repeating                bool
+    RWP                      bool
+    EnvironmentRejected      bool
+    EnvironmentStageExpected bool
+    SubjectStageExpected     bool
 }
 
 type RuntimeContext interface {
@@ -506,6 +625,15 @@ be removed or masked before the snapshot reaches plugins.
 
 `RequestSnapshot` should not carry HTTP request bodies. Bodies are available only to HTTP hooks through `HookRequest`,
 after the host has enforced the hook's body limit.
+
+Current implementation note: the Lua surface audit in `server/docs/go_plugin_developer_api.md` is the source of truth for
+Lua-to-native parity. The runtime adapter now populates the safe request snapshot parity set: transport metadata,
+identity fields, IDP/MFA policy inputs, explicit outcome flags, bounded diagnostics, `auth_login_attempt`, redacted
+headers, and lossless safe legacy TLS metadata under `TLS.Legacy`. Backend candidates are exposed through a value-only
+host facade, backend-result account-field mutation is handled through explicit result values, and policy-selected
+effect requests receive validated Lua/native plugin facts from the active decision context. Response header mutations are
+supported through request-time subject and obligation result values. Redis key-prefix helpers remain separate follow-up
+work.
 
 Runtime context values should be limited to JSON/CBOR-compatible data: nil, bool, numbers, strings, lists, and maps with
 string keys. Plugin-specific Go objects should stay in plugin instance state, not in the shared runtime context. The host
@@ -578,11 +706,23 @@ type AttributePatch struct {
     Delete []string
 }
 
+type ResponseHeaderMutation struct {
+    Set    map[string][]string
+    Delete []string
+}
+
+type ResponseMutation struct {
+    Headers      ResponseHeaderMutation
+    StatusHeader bool
+}
+
 type BackendResult struct {
     Authenticated bool
     UserFound     bool
     Account       string
+    AccountField  string
     Attributes    map[string][]string
+    BackendServer *BackendServerRef
     Status        *StatusMessage
     Facts         []PolicyFact
 }
@@ -677,13 +817,28 @@ type SubjectResult struct {
     Logs              []LogField
     Facts             []PolicyFact
     BackendAttributes AttributePatch
+    BackendResultPatch *BackendResultPatch
+    Response          ResponseMutation
     RuntimeDelta      RuntimeDelta
     SelectedBackend   *BackendServerRef
 }
+
+type BackendResultPatch struct {
+    Account         string
+    AccountField    string
+    Authenticated   *bool
+    UserFound       *bool
+    Attributes      AttributePatch
+    SelectedBackend *BackendServerRef
+}
 ```
 
-This maps to Lua subject sources, including backend-result enrichment, attribute removal, group enrichment, backend server
-selection, and policy facts.
+This maps to Lua subject sources, including backend-result enrichment, attribute removal, backend server selection, and
+policy facts. `BackendResultPatch` is explicit and value-only; it supports account, account field,
+user-found/authenticated flags, selected backend, and string attributes without exposing mutable internal backend-result
+pointers or full replacement semantics.
+`Response` supports controlled HTTP response header set/delete operations while the response is still mutable. It does
+not expose response bodies, cookies, streaming, raw `http.ResponseWriter`, or Gin contexts.
 
 ### Backend
 
@@ -726,6 +881,9 @@ type PublicMFAStateBackend interface {
 
 This mirrors the current `core.BackendManager` capabilities while avoiding `*core.AuthState` in the public API. Backends
 that do not implement an optional interface simply do not advertise that capability and should not need stub methods.
+Lua backend request fields such as `totp_secret`, `totp_recovery_codes`, `webauthn_credential`, and
+`webauthn_old_credential` stay out of `RequestSnapshot`; native ports use the typed TOTP, recovery-code, WebAuthn, and
+public MFA request structs instead.
 
 #### Backend Order Integration
 
@@ -990,7 +1148,16 @@ type ObligationTarget interface {
 Obligation targets should mirror the current synchronous Lua action dispatch semantics. They are selected by the winning
 policy decision and execute synchronously as request-time enforcement after the policy decision, before the request
 handling path is considered complete. They should honor the request context and deadline.
-`ObligationRequest` should carry policy arguments as `ArgsView`.
+`ObligationRequest` carries policy arguments as `ArgsView`; built-in Lua compatibility effects include stable `action`
+and `feature` values such as `brute_force`. `ObligationRequest.Facts` carries the current validated Lua and native
+plugin policy facts from the active decision context. `ObligationResult.Facts` may emit additional `auth_decision`
+facts, and the runtime validates them against the active registry before recording them. These facts are recorded after
+policy has selected the effect and do not let the plugin replace the policy decision.
+`ObligationResult.Response` uses the same `ResponseMutation` value object as subject sources for timely header set/delete
+operations. The host filters forbidden and configured secret-bearing headers, applies duplicate canonical names
+deterministically, and ignores mutations when the request is not HTTP-backed or the response has already been written.
+`Response.StatusHeader` may expose the selected plugin status message as `Auth-Status`; direct `Auth-Status` header
+mutation is host-owned and filtered.
 
 Asynchronous post-action enqueueing is a separate concept. The existing Lua post-action path schedules detached worker
 execution, but that should not make `ObligationTarget` itself an async/sync choice in v1.
@@ -1010,7 +1177,10 @@ type PostActionTarget interface {
 Post-action targets mirror the existing Lua post-action enqueue path. They are selected by policy as post-decision
 effects, receive a host-built request snapshot, and enqueue detached worker execution with host-owned deadlines,
 observability, panic recovery, and shutdown coordination. Post-action enqueueing is distinct from synchronous
-`ObligationTarget` execution. `PostActionRequest` should carry policy arguments as `ArgsView`.
+`ObligationTarget` execution. `PostActionRequest` carries policy arguments as `ArgsView` and receives the same
+decision-context facts as obligation requests. Post-action enqueue results are enqueue diagnostics only; v1 does not let
+detached post-actions emit more policy facts into the selected request outcome or mutate an already-selected client
+response.
 
 ### Hooks
 
@@ -1068,7 +1238,11 @@ host has already enforced the hook body limit before invoking the plugin. Go plu
 `HookResponse` value objects. The host should enforce the declared `HookAuth`, `HookScope`, and `MaxBodyBytes` before
 calling `Serve`. If `MaxBodyBytes` is zero, the host should apply the global default.
 The host should filter hook response headers before writing them to the client, rejecting hop-by-hop headers and
-configured denied headers such as transport or security headers owned by Nauthilus.
+configured denied headers such as transport or security headers owned by Nauthilus. Native hooks should return standard
+library `net/http` status constants in `HookResponse.StatusCode`. Lua response helpers such as `string`, `html`, and
+header setters map to returning `HookResponse{StatusCode, Headers, Body}`. For HEAD requests, the host writes status and
+allowed headers but deliberately does not write `HookResponse.Body`, so HEAD behavior is deterministic even when plugin
+code accidentally returns body bytes.
 
 ## Policy Integration
 
@@ -1083,7 +1257,12 @@ type Registrar interface {
 Plugin attribute declarations should be made through `Registrar.RegisterPolicyAttribute` during registration so policy
 snapshots can compile a complete registry before request handling begins. Request-time policy facts should be returned
 through extension result `Facts` fields such as `EnvironmentResult.Facts`, `SubjectResult.Facts`,
-`BackendResult.Facts`, or `AccountListResult.Facts`.
+`BackendResult.Facts`, `AccountListResult.Facts`, or `ObligationResult.Facts`.
+
+Native plugin attribute names should use the `plugin.<extension>.<module_or_feature>.<fact>` convention. The helper
+`pluginapi.PluginPolicyAttributeID(extension, moduleOrFeature, fact)` builds validated names such as
+`plugin.environment.geoip.matched`. Lua migration attributes that already use `lua.plugin.*` may remain registered, but
+new native examples should prefer `plugin.*`.
 
 The process-scoped lifecycle host does not expose a policy facade in v1. The current Lua policy registry has a useful
 safety rule: runtime emission of unknown attributes fails instead of silently creating unplanned facts. Go plugin result
@@ -1092,6 +1271,11 @@ facts should follow the same rule.
 Decision: native Go plugins must register their policy attributes during `Register`, before policy snapshot compilation.
 Returning an unknown result fact is an error and should be reported through plugin logs, metrics, and the current
 extension-point result where applicable.
+
+Policy facts are not public output by themselves. Plugins that intentionally expose a selected value in public logs
+should return `LogField` values directly or build them with `pluginapi.PublicPolicyFactLogField(namespace, key, value)`,
+which uses stable `policy_fact_<namespace>_<key>` keys. Request-time status text is explicit through `StatusMessage`;
+post-action status describes enqueue behavior and does not mutate an already-sent response.
 
 Check type naming should keep Lua and native plugins semantically distinct:
 
@@ -1339,10 +1523,20 @@ rules. Those concerns are useful when isolation is required, but they are not th
 - SIGHUP can apply plugin-owned config-only changes through `Reconfigure`; Go plugin module additions/removals, `.so`
   replacement, loader field changes, verification changes, trust changes, and allowed directory changes require operator
   process restart. SIGUSR1 must not attempt restartless Go plugin code replacement.
-- Redis access uses broad, host-owned `go-redis` handles exposed through dependency injection. LDAP access uses
-  Nauthilus-owned queued `Search` and `Modify` calls that wait for results without exposing raw queue or pool internals.
+- Redis access uses broad, host-owned `go-redis` handles exposed through dependency injection, with host-owned key helpers
+  and named script registry behavior for prefixing, Redis Cluster hash-slot safety, and `NOSCRIPT` recovery. LDAP access
+  uses Nauthilus-owned queued `Search` and `Modify` calls that wait for results without exposing raw queue or pool
+  internals.
 - Plugins must use host-provided or derived contexts for Redis calls. Redis connection timeout configuration remains
   centralized in Nauthilus.
+- Named Redis pools are plugin-owned for now; the host does not expose Lua-style pool registration or lookup.
+- `Host.Cache(scope)` exposes process-local, scope-isolated cache semantics for TTL values and list batching.
+- `Host.Helpers()` exposes deterministic account tag, scoped-IP, and routable-IP helpers; dependency-light equivalents
+  live under `pluginapi/v1/helpers`.
+- `Host.HTTP(scope)` is the native replacement for Lua-style outbound HTTP helpers when host-managed tracing, bounded
+  metrics, timeouts, response body limits, and redacted logs are required.
+- `Host.ConnectionTargets(scope)` is the native replacement for psnet target registration. It is observability-only and
+  does not provide raw socket management.
 - LDAP plugin access is limited to API-level queued `Search` and `Modify` requests. Bind/auth operations, raw queues,
   pools, and go-ldap request structs stay outside the public plugin API.
 - LDAP scopes and modify operations use v1 constants; the host rejects unknown values.
@@ -1360,8 +1554,11 @@ rules. Those concerns are useful when isolation is required, but they are not th
   host-side body limit enforcement.
 - `HookRequest.Body` is `[]byte` in v1. Streaming is out of scope because the host enforces body limits before invoking
   plugin hooks.
-- The host filters `HookResponse.Headers` before writing the HTTP response, rejecting hop-by-hop headers and configured
-  denied headers that Nauthilus owns.
+- The host filters `HookResponse.Headers` before writing the HTTP response, rejecting hop-by-hop headers, auth/cookie
+  headers, configured secret-bearing headers, and denied headers that Nauthilus owns. HEAD responses write status and
+  allowed headers but not `HookResponse.Body`.
+- Subject sources and synchronous obligations may return `ResponseMutation` values for allowed response header set/delete
+  operations while the HTTP response is still mutable. Asynchronous post-actions have no response mutation surface.
 - Environment and subject sources do not mutate the shared runtime context directly. They receive a read-only runtime
   view and return `RuntimeDelta` values that the host merges deterministically.
 - Runtime context values are limited to JSON/CBOR-compatible data. The host validates `RuntimeDelta` values before
@@ -1413,7 +1610,8 @@ rules. Those concerns are useful when isolation is required, but they are not th
 - The plugin API does not provide permissive decode. Flexible plugin config should be handled explicitly through
   `ConfigView` lookup methods.
 - Policy arguments for `ObligationTarget` and `PostActionTarget` use an `ArgsView` with the same read-only,
-  format-neutral, strict-decode behavior as `ConfigView`.
+  format-neutral, strict-decode behavior as `ConfigView`. Built-in Lua action effects include stable `feature` metadata
+  alongside `action`.
 - Plugin configuration lives in the root-level `plugins.modules[]` section. Module `type` is optional, defaults to `go`,
   and unsupported type values are rejected.
 - The configured module name is the instance namespace for all registered plugin components, while `Metadata().Name`
@@ -1424,7 +1622,8 @@ rules. Those concerns are useful when isolation is required, but they are not th
 - The `NauthilusPlugin` factory receives no arguments. It constructs a plugin object only; instance config is available
   during `Register`, and host services are available during `Start`.
 - Plugin results use API-level value objects for status messages, log fields, policy facts, backend results, and
-  attribute patches. The host maps them to internal Nauthilus types.
+  attribute patches. The host maps them to internal Nauthilus types and validates policy facts against the active
+  policy registry before recording them.
 - Plugin `StatusMessage` values are protocol-neutral status signals with code, optional message key, fallback text, and
   temporary/permanent classification. The host maps them to concrete protocol responses and i18n behavior.
 - Plugins log through a Nauthilus `Logger` facade rather than raw `*slog.Logger`; the host attaches module, component,
@@ -1435,6 +1634,33 @@ rules. Those concerns are useful when isolation is required, but they are not th
   and should be guarded against high-cardinality values.
 - The host creates automatic plugin method spans and exposes a small `Tracer` facade for plugin-created child spans
   without exposing raw OpenTelemetry providers.
+- Host-managed plugin HTTP calls use `Host.HTTP(scope)` for trace propagation, bounded metrics, context deadlines,
+  response body limits, and redacted logs. SMTP/LMTP mail and raw TCP/dialer behavior stay plugin-owned in v1; plugins
+  own config validation, lifecycle, TLS/deadline/retry policy, metrics, traces, and redaction for those transports.
+
+## Final v1 Follow-Up State
+
+The current v1 implementation covers the native plugin surfaces needed for production Lua-to-Go ports without importing
+`server/*` from plugin code:
+
+- immutable request snapshots with safe transport, identity, IDP/MFA, TLS compatibility, diagnostics, and outcome
+  fields populated by auth and hook adapters;
+- credential-gated password access plus public `pluginapi/v1/password` helpers shared with the Lua/server password path;
+- backend password and account-list adapters, custom account fields, account-list policy facts, and typed TOTP,
+  recovery-code, WebAuthn, and public MFA operations;
+- host-provided backend candidates plus value-only selected-backend and backend-result patching from subject sources;
+- policy-selected obligations and post-actions with populated args/facts, registered fact validation, explicit public log
+  conventions, status messages, and synchronous response mutation where the response is still mutable;
+- host-managed Redis key/script helpers, module-local process cache, deterministic helper functions, outbound HTTP,
+  bounded metrics/tracing, connection-target observability, and supervised workers;
+- native hook request/response adapters for GET, HEAD, aliases, query/header/body copies, response filtering, and a
+  dynamic textmap-style sample fixture.
+
+Known v1 parity limits are intentional and documented in the developer and operator guides: extra or named Redis pools,
+SMTP/LMTP mail, raw TCP/dialer behavior, SQL/Telegram/template libraries, and the Lua GeoIP bridge remain plugin-owned;
+full mutable backend-result replacement, cross-family Lua/Go source dependencies, raw request bodies in snapshots,
+passwords, cookies, authorization headers, raw WebAuthn credential blobs, raw `*gin.Context`, raw Prometheus
+registerers, raw OpenTelemetry providers, and raw backend-server config pointers stay outside the public API.
 
 ## Implementation Plan
 

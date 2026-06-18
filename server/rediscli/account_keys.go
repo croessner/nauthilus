@@ -18,6 +18,25 @@ package rediscli
 
 import "github.com/croessner/nauthilus/server/definitions"
 
+// BuildKey applies the configured Redis prefix without changing the key body.
+func BuildKey(prefix string, key string) string {
+	return prefix + key
+}
+
+// BuildKeys applies the configured Redis prefix to each key.
+func BuildKeys(prefix string, keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	built := make([]string, len(keys))
+	for index, key := range keys {
+		built[index] = BuildKey(prefix, key)
+	}
+
+	return built
+}
+
 // GetAffectedAccountsIndexKey returns the sorted index key for affected accounts.
 func GetAffectedAccountsIndexKey(prefix string) string {
 	return prefix + definitions.RedisAffectedAccountsIndexKey

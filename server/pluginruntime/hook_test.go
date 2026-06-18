@@ -21,6 +21,10 @@ const (
 	testRuntimeHookPath      = "/" + testRuntimeHookName
 	testRuntimeHookQualified = testRuntimeModuleName + "." + testRuntimeHookName
 	testRuntimeRequestID     = "request-1"
+	testRuntimeHookAPIKey    = "X-Api-Key"
+	testRuntimeHookRepeat    = "X-Repeat"
+	testRuntimeHookSingle    = "X-Single"
+	testRuntimeHookSingleOK  = "single-header-value"
 )
 
 func TestRunner_HooksReturnsRegisteredDescriptors(t *testing.T) {
@@ -134,13 +138,46 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 
 	body := []byte(testRuntimeHookBody)
 	request := NewHookRequestFromHTTPRequest(req, body, HookRequestMetadata{
-		Session:       "guid-test",
-		ClientIP:      "203.0.113.5",
-		ClientPort:    "12345",
-		ClientHost:    "client.example.test",
-		OIDCCID:       testRuntimeHookClientID,
-		Username:      "caller",
-		Authenticated: true,
+		Session:                  "guid-test",
+		ClientIP:                 "203.0.113.5",
+		ClientPort:               "12345",
+		ClientNet:                requestSnapshotClientNet,
+		ClientHost:               requestSnapshotClientHost,
+		ClientID:                 requestSnapshotHookClientID,
+		LocalIP:                  requestSnapshotLocalIP,
+		LocalPort:                requestSnapshotLocalPort,
+		OIDCCID:                  testRuntimeHookClientID,
+		Username:                 "caller",
+		AccountField:             backendTestMailAttr,
+		UniqueUserID:             requestSnapshotHookUniqueUserID,
+		DisplayName:              requestSnapshotHookDisplayName,
+		Authenticated:            true,
+		UserFound:                true,
+		Authorized:               true,
+		NoAuth:                   true,
+		Repeating:                true,
+		RWP:                      true,
+		BruteForceName:           requestSnapshotBruteForceName,
+		BruteForceCounter:        3,
+		EnvironmentName:          testRuntimeModuleName,
+		StatusMessage:            requestSnapshotStatusOK,
+		HTTPStatus:               http.StatusAccepted,
+		EnvironmentRejected:      true,
+		EnvironmentStageExpected: true,
+		SubjectStageExpected:     true,
+		AuthLoginAttempt:         5,
+		IDP: pluginapi.IDPInfo{
+			GrantType:               requestSnapshotGrantTypeAuthCode,
+			ClientID:                testRuntimeHookClientID,
+			ClientName:              requestSnapshotOIDCClientName,
+			RedirectURI:             "https://app.example.test/callback",
+			RequestedScopes:         []string{requestSnapshotScopeOpenID, requestSnapshotScopeProfile},
+			UserGroups:              []string{"admins"},
+			AllowedClientScopes:     []string{requestSnapshotScopeOpenID, requestSnapshotScopeProfile, "email"},
+			AllowedClientGrantTypes: []string{requestSnapshotGrantTypeAuthCode, "refresh_token"},
+			MFACompleted:            true,
+			MFAMethod:               "totp",
+		},
 	}, WithSnapshotSecretHeaders("X-Secret-Header"))
 
 	assertHookRequestSnapshot(t, request)
@@ -164,6 +201,128 @@ func TestNewHookRequestFromHTTPRequestRedactsAndCopiesValues(t *testing.T) {
 
 	if !request.Snapshot.Runtime.Authenticated || request.Snapshot.OIDCCID != testRuntimeHookClientID {
 		t.Fatalf("snapshot caller metadata = %#v, want authenticated client-app", request.Snapshot)
+	}
+
+	if request.Snapshot.ClientNet != requestSnapshotClientNet ||
+		request.Snapshot.ClientID != requestSnapshotHookClientID ||
+		request.Snapshot.LocalIP != requestSnapshotLocalIP ||
+		request.Snapshot.LocalPort != requestSnapshotLocalPort ||
+		request.Snapshot.AuthLoginAttempt != 5 {
+		t.Fatalf("snapshot transport/attempt metadata = %#v, want hook parity values", request.Snapshot)
+	}
+
+	if request.Snapshot.AccountField != backendTestMailAttr ||
+		request.Snapshot.UniqueUserID != requestSnapshotHookUniqueUserID ||
+		request.Snapshot.DisplayName != requestSnapshotHookDisplayName {
+		t.Fatalf("snapshot identity metadata = %#v, want hook identity values", request.Snapshot)
+	}
+
+	if !request.Snapshot.Runtime.NoAuth ||
+		!request.Snapshot.Runtime.UserFound ||
+		!request.Snapshot.Runtime.Authorized ||
+		!request.Snapshot.Runtime.EnvironmentRejected ||
+		!request.Snapshot.Runtime.EnvironmentStageExpected ||
+		!request.Snapshot.Runtime.SubjectStageExpected {
+		t.Fatalf("snapshot runtime flags = %#v, want hook parity flags", request.Snapshot.Runtime)
+	}
+
+	if request.Snapshot.Diagnostics.BruteForceName != requestSnapshotBruteForceName ||
+		request.Snapshot.Diagnostics.BruteForceCounter != 3 ||
+		request.Snapshot.Diagnostics.StatusMessage != requestSnapshotStatusOK ||
+		request.Snapshot.Diagnostics.HTTPStatus != http.StatusAccepted {
+		t.Fatalf("snapshot diagnostics = %#v, want hook diagnostics", request.Snapshot.Diagnostics)
+	}
+
+	if request.Snapshot.IDP.ClientName != requestSnapshotOIDCClientName ||
+		!request.Snapshot.IDP.MFACompleted ||
+		len(request.Snapshot.IDP.RequestedScopes) != 2 {
+		t.Fatalf("snapshot idp = %#v, want hook idp metadata", request.Snapshot.IDP)
+	}
+}
+
+func TestNewHookRequestFromHTTPRequestMapsLuaHookHelperInputs(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		body   []byte
+	}{
+		{name: "get", method: http.MethodGet},
+		{name: "head", method: http.MethodHead, body: []byte("head-input")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "https://nauthilus.example.test/api/v1/custom/textmap?tag=a&tag=b&empty=", strings.NewReader("ignored"))
+			req.Header.Add(testRuntimeHookRepeat, "first")
+			req.Header.Add(testRuntimeHookRepeat, "second")
+			req.Header.Set(testRuntimeHookSingle, testRuntimeHookSingleOK)
+			req.Header.Set(requestHeaderAuthorization, "Bearer secret")
+			req.Header.Set(requestHeaderCookie, "session=secret")
+			req.Header.Set(testRuntimeHookAPIKey, "secret")
+
+			requestBody := append([]byte(nil), tt.body...)
+			hookRequest := NewHookRequestFromHTTPRequest(req, requestBody, HookRequestMetadata{}, WithSnapshotSecretHeaders(testRuntimeHookAPIKey))
+
+			assertHookHelperInputRequest(t, hookRequest, tt.method, requestBody, tt.body)
+		})
+	}
+}
+
+// assertHookHelperInputRequest verifies Lua-style request helpers on HookRequest.
+func assertHookHelperInputRequest(t *testing.T, hookRequest pluginapi.HookRequest, method string, sourceBody []byte, wantBody []byte) {
+	t.Helper()
+
+	if hookRequest.Method != method || hookRequest.Path != "/api/v1/custom/textmap" {
+		t.Fatalf("method/path = %s %s, want %s /api/v1/custom/textmap", hookRequest.Method, hookRequest.Path, method)
+	}
+
+	assertHookHelperQuery(t, hookRequest)
+	assertHookHelperHeaders(t, hookRequest)
+	assertHookHelperBodyClone(t, hookRequest, sourceBody, wantBody)
+}
+
+// assertHookHelperQuery verifies repeated and empty query values.
+func assertHookHelperQuery(t *testing.T, hookRequest pluginapi.HookRequest) {
+	t.Helper()
+
+	if got := hookRequest.Query["tag"]; len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("query tag = %#v, want [a b]", got)
+	}
+
+	if got := hookRequest.Query["empty"]; len(got) != 1 || got[0] != "" {
+		t.Fatalf("query empty = %#v, want one empty value", got)
+	}
+}
+
+// assertHookHelperHeaders verifies repeated headers and secret redaction.
+func assertHookHelperHeaders(t *testing.T, hookRequest pluginapi.HookRequest) {
+	t.Helper()
+
+	if got := hookRequest.Headers[testRuntimeHookRepeat]; len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("%s = %#v, want [first second]", testRuntimeHookRepeat, got)
+	}
+
+	if got := hookRequest.Headers[testRuntimeHookSingle]; len(got) != 1 || got[0] != testRuntimeHookSingleOK {
+		t.Fatalf("%s = %#v, want [%s]", testRuntimeHookSingle, got, testRuntimeHookSingleOK)
+	}
+
+	for _, name := range []string{requestHeaderAuthorization, requestHeaderCookie, testRuntimeHookAPIKey} {
+		assertHookHeaderAbsent(t, hookRequest, name)
+	}
+}
+
+// assertHookHelperBodyClone verifies source body mutations cannot reach plugins.
+func assertHookHelperBodyClone(t *testing.T, hookRequest pluginapi.HookRequest, sourceBody []byte, wantBody []byte) {
+	t.Helper()
+
+	if len(sourceBody) == 0 {
+		return
+	}
+
+	sourceBody[0] = 'X'
+
+	if string(hookRequest.Body) != string(wantBody) {
+		t.Fatalf("body = %q, want immutable clone %q", hookRequest.Body, wantBody)
 	}
 }
 

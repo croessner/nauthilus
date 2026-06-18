@@ -15,6 +15,8 @@
 
 package pluginapi
 
+import "strconv"
+
 // StatusMessage is a protocol-neutral status signal returned by plugins.
 type StatusMessage struct {
 	Code        string
@@ -41,6 +43,18 @@ type AttributePatch struct {
 	Delete []string
 }
 
+// ResponseHeaderMutation describes allowed response header set and delete operations.
+type ResponseHeaderMutation struct {
+	Set    map[string][]string
+	Delete []string
+}
+
+// ResponseMutation carries request-time response changes without exposing server internals.
+type ResponseMutation struct {
+	Headers      ResponseHeaderMutation
+	StatusHeader bool
+}
+
 // BackendServerRef identifies a backend server selected by an extension.
 type BackendServerRef struct {
 	Name      string
@@ -50,12 +64,50 @@ type BackendServerRef struct {
 	Port      string
 }
 
+// BackendServerCandidate describes one host-provided backend target safe for plugin selection logic.
+type BackendServerCandidate struct {
+	Name      string
+	Protocol  string
+	Authority string
+	Address   string
+	Port      int
+	HAProxyV2 bool
+	Alive     bool
+}
+
+// Ref converts the candidate into the value returned through SubjectResult.SelectedBackend.
+func (c BackendServerCandidate) Ref() BackendServerRef {
+	port := ""
+	if c.Port > 0 {
+		port = strconv.Itoa(c.Port)
+	}
+
+	return BackendServerRef{
+		Name:      c.Name,
+		Protocol:  c.Protocol,
+		Authority: c.Authority,
+		Address:   c.Address,
+		Port:      port,
+	}
+}
+
+// BackendResultPatch describes explicit value-only backend result changes from subject sources.
+type BackendResultPatch struct {
+	SelectedBackend *BackendServerRef
+	Attributes      AttributePatch
+	Authenticated   *bool
+	UserFound       *bool
+	Account         string
+	AccountField    string
+}
+
 // BackendResult describes a password verification result from a backend plugin.
 type BackendResult struct {
 	Status        *StatusMessage
 	Attributes    map[string][]string
 	Facts         []PolicyFact
 	Account       string
+	AccountField  string
 	BackendServer *BackendServerRef
 	Authenticated bool
 	UserFound     bool

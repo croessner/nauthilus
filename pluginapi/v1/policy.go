@@ -15,6 +15,16 @@
 
 package pluginapi
 
+import "strings"
+
+const (
+	// PluginPolicyAttributePrefix is the native policy fact namespace prefix.
+	PluginPolicyAttributePrefix = "plugin"
+
+	// PublicPolicyFactLogPrefix marks an intentionally public policy fact log key.
+	PublicPolicyFactLogPrefix = "policy_fact_"
+)
+
 // PolicyStage identifies a policy evaluation checkpoint.
 type PolicyStage string
 
@@ -139,4 +149,37 @@ type AttributeDefinition struct {
 	ProducerCheck string
 	Category      AttributeCategory
 	Type          AttributeType
+}
+
+// PluginPolicyAttributeID builds a validated native policy fact identifier.
+func PluginPolicyAttributeID(extension string, moduleOrFeature string, fact string) (string, error) {
+	if err := ValidateComponentName(extension); err != nil {
+		return "", err
+	}
+
+	if err := ValidateComponentName(moduleOrFeature); err != nil {
+		return "", err
+	}
+
+	if err := ValidateComponentName(fact); err != nil {
+		return "", err
+	}
+
+	return strings.Join([]string{PluginPolicyAttributePrefix, extension, moduleOrFeature, fact}, "."), nil
+}
+
+// PublicPolicyFactLogField builds one intentionally public policy fact log field.
+func PublicPolicyFactLogField(namespace string, key string, value any) (LogField, error) {
+	if err := ValidateComponentName(namespace); err != nil {
+		return LogField{}, err
+	}
+
+	if err := ValidateComponentName(key); err != nil {
+		return LogField{}, err
+	}
+
+	return LogField{
+		Key:   PublicPolicyFactLogPrefix + namespace + "_" + key,
+		Value: value,
+	}, nil
 }

@@ -18,6 +18,7 @@ package core
 import (
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/authdto"
@@ -129,4 +130,21 @@ func TestCommonRequestSetupRequestIncludesExternalSession(t *testing.T) {
 	commonRequest.SetupRequest(L, nil, request)
 
 	assert.Equal(t, lua.LString(testExternalSessionID), request.RawGetString(definitions.LuaRequestExternalSession))
+}
+
+func TestFillCommonRequestIncludesAuthLoginAttempt(t *testing.T) {
+	setupMinimalTestConfig(t)
+
+	auth := &AuthState{
+		deps: setupAuthDeps(),
+		Request: AuthRequest{
+			Protocol: config.NewProtocol("imap"),
+		},
+	}
+	auth.Request.AuthLoginAttempt = 4
+
+	request := &lualib.CommonRequest{}
+	auth.FillCommonRequest(request)
+
+	assert.Equal(t, uint(4), request.AuthLoginAttempt)
 }

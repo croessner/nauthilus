@@ -19,6 +19,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/croessner/nauthilus/pluginapi/v1/password"
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -119,6 +122,69 @@ func TestValidatePassword(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPasswordManagerComparePasswordsMatchesPublicHelper(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	const (
+		hashPassword  = "{SSHA256}9BT0VNzrkTp51/skOYDjOEFoYPN9FoGx/Gd+njZv5tEOgtl6TvODXg=="
+		plainPassword = "bc123"
+	)
+
+	L.Push(lua.LString(hashPassword))
+	L.Push(lua.LString(plainPassword))
+
+	m := NewPasswordManager(context.TODO(), nil, nil)
+
+	m.comparePasswords(L)
+
+	got := L.ToBool(-2)
+
+	errValue := L.Get(-1)
+
+	if errValue != lua.LNil {
+		t.Fatalf("comparePasswords() error = %v", errValue)
+	}
+
+	want, err := password.CompareHashString(hashPassword, plainPassword)
+	if err != nil {
+		t.Fatalf("CompareHashString() error = %v", err)
+	}
+
+	if got != want {
+		t.Fatalf("comparePasswords() = %t, want %t", got, want)
+	}
+}
+
+func TestPasswordManagerGeneratePasswordHashMatchesPublicHelper(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	const plainPassword = "s3cret"
+
+	util.SetDefaultConfigFile(&config.FileSettings{Server: &config.ServerSection{}})
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	L.Push(lua.LString(plainPassword))
+
+	m := NewPasswordManager(context.TODO(), nil, nil)
+
+	m.generatePasswordHash(L)
+
+	got := L.ToString(-2)
+
+	errValue := L.Get(-1)
+
+	if errValue != lua.LNil {
+		t.Fatalf("generatePasswordHash() error = %v", errValue)
+	}
+
+	want := password.GenerateHashString(plainPassword, password.HashOptions{})
+	if got != want {
+		t.Fatalf("generatePasswordHash() = %q, want %q", got, want)
 	}
 }
 

@@ -244,6 +244,25 @@ func TestStandardAuthSelectsLuaStatusMessageAndPlannedObligations(t *testing.T) 
 		t.Fatalf("second obligation = %q, want lua action dispatch", got.Final.Obligations[1].ID)
 	}
 
+	if got := got.Final.Obligations[1].Args["feature"]; got != policy.LuaActionDispatchBruteForce {
+		t.Fatalf("brute-force feature arg = %v, want %s", got, policy.LuaActionDispatchBruteForce)
+	}
+
+	rblReport := standardReport(
+		policy.OperationAuthenticate,
+		check("rbl", policy.CheckTypeRBL, policy.StagePreAuth, policy.CheckStatusOK),
+		boolAttr(policy.AttributeRBLThresholdReached, policy.StagePreAuth, policy.OperationAuthenticate, true, nil),
+	)
+
+	got = EvaluateStandardAuth(rblReport)
+	if len(got.Final.Obligations) != 1 || got.Final.Obligations[0].ID != policy.ObligationLuaActionDispatch {
+		t.Fatalf("rbl obligations = %#v, want lua action dispatch", got.Final.Obligations)
+	}
+
+	if got := got.Final.Obligations[0].Args["feature"]; got != policy.LuaActionDispatchRBL {
+		t.Fatalf("rbl feature arg = %v, want %s", got, policy.LuaActionDispatchRBL)
+	}
+
 	abortReport := standardReport(
 		policy.OperationAuthenticate,
 		check("lua_environment_risk", policy.CheckTypeLuaEnvironment, policy.StagePreAuth, policy.CheckStatusOK),

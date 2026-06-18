@@ -1168,8 +1168,9 @@ func compileEffectRequests(
 	return requests, nil
 }
 
+// compileEffectArgs validates known effect argument shapes and preserves custom effect args.
 func compileEffectArgs(id string, input map[string]any, path string) (map[string]any, error) {
-	if id == policy.ObligationLuaActionDispatch {
+	if id == policy.ObligationLuaActionDispatch || id == policy.ObligationLuaPostActionEnqueue {
 		return compileLuaActionDispatchArgs(input, path)
 	}
 
@@ -1179,6 +1180,7 @@ func compileEffectArgs(id string, input map[string]any, path string) (map[string
 	return args, nil
 }
 
+// compileLuaActionDispatchArgs enforces the bounded Lua compatibility effect argument contract.
 func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string]any, error) {
 	args := make(map[string]any, len(input))
 	for key, value := range input {
@@ -1201,6 +1203,17 @@ func compileLuaActionDispatchArgs(input map[string]any, path string) (map[string
 			}
 
 			args[key] = environmentName
+		case policy.ObligationArgFeature:
+			featureName, ok := value.(string)
+			if !ok {
+				return nil, configPathError(childPath(path, key), "must be a string")
+			}
+
+			if strings.TrimSpace(featureName) == "" {
+				return nil, configPathError(childPath(path, key), "must not be empty")
+			}
+
+			args[key] = featureName
 		case policy.ObligationArgWait:
 			wait, ok := value.(bool)
 			if !ok {

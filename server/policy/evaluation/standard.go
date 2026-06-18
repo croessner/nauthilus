@@ -311,6 +311,7 @@ func bruteForceRules() []standardRule {
 	}
 }
 
+// bruteForceDenyRule builds the default deny decision and follow-up effects for brute-force hits.
 func bruteForceDenyRule() standardRule {
 	rule := ruleWithCheck(
 		"standard_brute_force_deny",
@@ -325,13 +326,14 @@ func bruteForceDenyRule() standardRule {
 	)
 	rule.obligations = []report.EffectRequest{
 		{ID: obligationBruteForceUpdate},
-		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchBruteForce}},
-		{ID: obligationLuaPostActionEnqueue, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchBruteForce}},
+		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchBruteForce, nil)},
+		{ID: obligationLuaPostActionEnqueue, Args: luaActionEffectArgs(policy.LuaActionDispatchBruteForce, nil)},
 	}
 
 	return rule
 }
 
+// tlsRule builds the default temporary-failure decision for requests that require TLS.
 func tlsRule() standardRule {
 	rule := ruleWithCheck(
 		"standard_tls_enforcement",
@@ -345,12 +347,13 @@ func tlsRule() standardRule {
 		attrIsFalse(policy.AttributeTLSSecure),
 	)
 	rule.obligations = []report.EffectRequest{
-		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchTLS}},
+		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchTLS, nil)},
 	}
 
 	return rule
 }
 
+// relayDomainRules builds default relay-domain error and reject decisions.
 func relayDomainRules() []standardRule {
 	errorRule := ruleWithCheck(
 		"standard_relay_domain_error_tempfail",
@@ -375,7 +378,7 @@ func relayDomainRules() []standardRule {
 		unknownRelayDomain,
 	)
 	rejectRule.obligations = []report.EffectRequest{
-		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchRelayDomains}},
+		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchRelayDomains, nil)},
 	}
 
 	return []standardRule{
@@ -384,6 +387,7 @@ func relayDomainRules() []standardRule {
 	}
 }
 
+// rblRules builds default RBL error and reject decisions.
 func rblRules() []standardRule {
 	errorRule := ruleWithCheck(
 		"standard_rbl_error_tempfail",
@@ -408,7 +412,7 @@ func rblRules() []standardRule {
 		attrIsTrue(policy.AttributeRBLThresholdReached),
 	)
 	rejectRule.obligations = []report.EffectRequest{
-		{ID: obligationLuaActionDispatch, Args: map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchRBL}},
+		{ID: obligationLuaActionDispatch, Args: luaActionEffectArgs(policy.LuaActionDispatchRBL, nil)},
 	}
 
 	return []standardRule{
@@ -583,6 +587,7 @@ func unknownRelayDomain(policyReport *report.DecisionReport) bool {
 		attrBool(policyReport, policy.AttributeRelayDomainKnown, false)
 }
 
+// luaEnvironmentRules converts Lua environment check results into default decisions and effects.
 func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {
 	operations := []policy.Operation{operation}
 	rules := make([]standardRule, 0)
@@ -607,10 +612,9 @@ func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.O
 			obligations: []report.EffectRequest{
 				{
 					ID: obligationLuaActionDispatch,
-					Args: map[string]any{
-						policy.ObligationArgAction:      policy.LuaActionDispatchLua,
+					Args: luaActionEffectArgs(policy.LuaActionDispatchLua, map[string]any{
 						policy.ObligationArgEnvironment: checkResult.Name,
-					},
+					}),
 				},
 			},
 		}
@@ -644,6 +648,17 @@ func luaEnvironmentRules(policyReport *report.DecisionReport, operation policy.O
 	}
 
 	return rules
+}
+
+// luaActionEffectArgs attaches stable policy effect metadata to Lua dispatch effects.
+func luaActionEffectArgs(action string, extra map[string]any) map[string]any {
+	args := map[string]any{
+		policy.ObligationArgAction:  action,
+		policy.ObligationArgFeature: action,
+	}
+	maps.Copy(args, extra)
+
+	return args
 }
 
 func luaSubjectRules(policyReport *report.DecisionReport, operation policy.Operation) []standardRule {

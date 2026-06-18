@@ -295,6 +295,31 @@ func TestCommonRequestSetupRequestStageExpectedFlags(t *testing.T) {
 	}
 }
 
+func TestCommonRequestSetupRequestIncludesAuthLoginAttempt(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	cr := &CommonRequest{AuthLoginAttempt: 4}
+	request := L.NewTable()
+
+	cr.SetupRequest(L, nil, request)
+
+	val := request.RawGetString(definitions.LuaRequestAuthLoginAttempt)
+	if val != lua.LNumber(4) {
+		t.Fatalf("expected auth_login_attempt to be 4, got %v", val)
+	}
+}
+
+func TestCommonRequestResetAuthLoginAttempt(t *testing.T) {
+	cr := &CommonRequest{AuthLoginAttempt: 4}
+
+	cr.Reset()
+
+	if cr.AuthLoginAttempt != 0 {
+		t.Fatalf("expected AuthLoginAttempt to be 0 after reset, got %d", cr.AuthLoginAttempt)
+	}
+}
+
 func TestCommonRequestResetStageExpectedFlags(t *testing.T) {
 	cr := &CommonRequest{
 		EnvironmentStageExpected: true,

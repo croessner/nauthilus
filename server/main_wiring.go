@@ -21,6 +21,7 @@ import (
 	"fmt"
 	stdlog "log"
 	"log/slog"
+	"net/http"
 
 	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/app/bootfx"
@@ -390,10 +391,19 @@ func newRuntimePluginHost(
 	redisClient rediscli.Client,
 	ldapQueue pluginruntime.LDAPQueue,
 ) *pluginruntime.Host {
+	redisPrefix := ""
+	if cfg != nil {
+		redisPrefix = cfg.GetServer().GetRedis().GetPrefix()
+	}
+
 	options := []pluginruntime.HostOption{
 		pluginruntime.WithServiceContext(ctx),
 		pluginruntime.WithLogger(logger),
 		pluginruntime.WithConfig(runtimePluginConfigView(cfg)),
+		pluginruntime.WithHTTPClient(&http.Client{Transport: util.NewHTTPClientTransport(cfg)}),
+		pluginruntime.WithConnectionTargets(pluginruntime.NewConnectionTargetFacadeForConfig(cfg)),
+		pluginruntime.WithRedisPrefix(redisPrefix),
+		pluginruntime.WithHelpers(pluginruntime.NewDeterministicHelperFacade(pluginruntime.HelperOptionsFromConfig(cfg))),
 	}
 
 	if redisClient != nil {

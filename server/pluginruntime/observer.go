@@ -32,6 +32,7 @@ const (
 	pluginCallResultPanic    = "panic"
 	pluginCallResultCanceled = "canceled"
 	pluginCallResultTimeout  = "timeout"
+	pluginLogFieldErrorClass = "plugin_error_class"
 )
 
 // OperationalObserver records bounded metrics and secret-safe structured plugin call logs.
@@ -107,7 +108,7 @@ func (o *OperationalObserver) log(record CallRecord, result string) {
 		"duration_ms", durationMilliseconds(record.Duration),
 	}
 	if record.Err != nil {
-		keyvals = append(keyvals, "plugin_error_class", result)
+		keyvals = append(keyvals, pluginLogFieldErrorClass, result)
 	}
 
 	if record.Err != nil || record.Panicked {

@@ -483,10 +483,16 @@ func (m *BackendManager) passDBResult(auth *core.AuthState, result pluginapi.Bac
 		return nil, m.temporaryError()
 	}
 
+	accountField, err := pluginResultAccountField(result)
+	if err != nil {
+		return nil, m.temporaryError()
+	}
+
 	passDBResult := core.GetPassDBResultFromPool()
 	passDBResult.Authenticated = result.Authenticated
 	passDBResult.UserFound = result.UserFound
 	passDBResult.Account = result.Account
+	passDBResult.AccountField = accountField
 	passDBResult.Backend = definitions.BackendPlugin
 	passDBResult.BackendName = m.qualifiedName
 	passDBResult.BackendRef = pluginBackendServerRef(result.BackendServer)
@@ -494,15 +500,35 @@ func (m *BackendManager) passDBResult(auth *core.AuthState, result pluginapi.Bac
 	passDBResult.AdditionalAttributes = pluginAdditionalAttributes(result.Status, facts)
 
 	if passDBResult.Account != "" {
-		passDBResult.AccountField = pluginBackendAccountField
-		if _, ok := passDBResult.Attributes[pluginBackendAccountField]; !ok {
-			passDBResult.Attributes[pluginBackendAccountField] = []any{passDBResult.Account}
+		if passDBResult.Attributes == nil {
+			passDBResult.Attributes = make(bktype.AttributeMapping)
+		}
+
+		if _, ok := passDBResult.Attributes[accountField]; !ok {
+			passDBResult.Attributes[accountField] = []any{passDBResult.Account}
 		}
 	}
 
 	applyPluginBackendServerRef(auth, result.BackendServer)
 
 	return passDBResult, nil
+}
+
+// pluginResultAccountField validates and defaults a plugin backend result account field.
+func pluginResultAccountField(result pluginapi.BackendResult) (string, error) {
+	if result.AccountField == "" {
+		if result.Account == "" {
+			return "", nil
+		}
+
+		return pluginBackendAccountField, nil
+	}
+
+	if err := pluginapi.ValidateBackendAttributeName(result.AccountField); err != nil {
+		return "", err
+	}
+
+	return result.AccountField, nil
 }
 
 // temporaryError returns a secret-safe temporary backend failure.

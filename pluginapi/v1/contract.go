@@ -103,7 +103,12 @@ type Host interface {
 	Logger(scope string) Logger
 	Tracer(scope string) Tracer
 	Metrics(scope string) Metrics
+	HTTP(scope string) HTTPClient
+	ConnectionTargets(scope string) ConnectionTargets
+	BackendServers() BackendServers
 	Redis() Redis
+	Cache(scope string) (Cache, error)
+	Helpers() DeterministicHelpers
 	LDAP() LDAP
 	Config() ConfigView
 	Go(ctx context.Context, name string, fn func(context.Context) error)

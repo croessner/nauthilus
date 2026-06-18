@@ -26,22 +26,36 @@ import (
 )
 
 const (
-	defaultNativeHookMaxBodyBytes int64 = 1 << 20
-	nativeHookErrorField                = "error"
-	nativeHookHeaderConnection          = "Connection"
-	nativeHookHeaderCSP                 = "Content-Security-Policy"
-	nativeHookBodyTooLarge              = "hook request body too large"
+	defaultNativeHookMaxBodyBytes      int64 = 1 << 20
+	nativeHookErrorField                     = "error"
+	nativeHookHeaderAuthorization            = "Authorization"
+	nativeHookHeaderConnection               = "Connection"
+	nativeHookHeaderCookie                   = "Cookie"
+	nativeHookHeaderCSP                      = "Content-Security-Policy"
+	nativeHookHeaderProxyAuthenticate        = "Proxy-Authenticate"
+	nativeHookHeaderProxyAuthorization       = "Proxy-Authorization"
+	nativeHookHeaderSetCookie                = "Set-Cookie"
+	nativeHookBodyTooLarge                   = "hook request body too large"
 )
 
 var nativeHookHopByHopHeaders = map[string]struct{}{
-	nativeHookHeaderConnection: {},
-	"Keep-Alive":               {},
-	"Proxy-Authenticate":       {},
-	"Proxy-Authorization":      {},
-	"Te":                       {},
-	"Trailer":                  {},
-	"Transfer-Encoding":        {},
-	"Upgrade":                  {},
+	nativeHookHeaderConnection:         {},
+	"Keep-Alive":                       {},
+	nativeHookHeaderProxyAuthenticate:  {},
+	nativeHookHeaderProxyAuthorization: {},
+	"Te":                               {},
+	"Trailer":                          {},
+	"Transfer-Encoding":                {},
+	"Upgrade":                          {},
+}
+
+var nativeHookForbiddenResponseHeaders = map[string]struct{}{
+	"Auth-Status":                      {},
+	nativeHookHeaderAuthorization:      {},
+	nativeHookHeaderCookie:             {},
+	nativeHookHeaderProxyAuthenticate:  {},
+	nativeHookHeaderProxyAuthorization: {},
+	nativeHookHeaderSetCookie:          {},
 }
 
 var nativeHookHostOwnedHeaders = map[string]struct{}{
@@ -250,7 +264,7 @@ func (i *nativeHookIndex) serve(
 		return true
 	}
 
-	if err := writeNativeHookResponse(ctx, response); err != nil {
+	if err := writeNativeHookResponse(ctx, cfg, response); err != nil {
 		recordNativeHookFailure(ctx, logger, hook, span, "native plugin hook response rejected", http.StatusBadGateway)
 
 		return true
@@ -469,8 +483,8 @@ func recordNativeHookFailure(
 }
 
 // writeNativeHookResponse filters headers and writes the plugin response.
-func writeNativeHookResponse(ctx *gin.Context, response pluginapi.HookResponse) error {
-	headers, err := safeNativeHookResponseHeaders(response.Headers)
+func writeNativeHookResponse(ctx *gin.Context, cfg config.File, response pluginapi.HookResponse) error {
+	headers, err := safeNativeHookResponseHeaders(response.Headers, cfg)
 	if err != nil {
 		return err
 	}
@@ -488,7 +502,7 @@ func writeNativeHookResponse(ctx *gin.Context, response pluginapi.HookResponse) 
 
 	ctx.Status(statusCode)
 
-	if len(response.Body) == 0 {
+	if !nativeHookCanWriteBody(ctx, response.Body) {
 		return nil
 	}
 
@@ -497,12 +511,26 @@ func writeNativeHookResponse(ctx *gin.Context, response pluginapi.HookResponse) 
 	return err
 }
 
+// nativeHookCanWriteBody keeps HEAD responses header-only at the host boundary.
+func nativeHookCanWriteBody(ctx *gin.Context, body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+
+	if ctx != nil && ctx.Request != nil && ctx.Request.Method == http.MethodHead {
+		return false
+	}
+
+	return true
+}
+
 // safeNativeHookResponseHeaders rejects unsafe plugin-controlled response headers.
-func safeNativeHookResponseHeaders(headers map[string][]string) (http.Header, error) {
+func safeNativeHookResponseHeaders(headers map[string][]string, cfg config.File) (http.Header, error) {
 	if len(headers) == 0 {
 		return http.Header{}, nil
 	}
 
+	secretHeaders := nativeHookResponseSecretHeaders(cfg)
 	output := make(http.Header, len(headers))
 	for key, values := range headers {
 		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))
@@ -510,7 +538,7 @@ func safeNativeHookResponseHeaders(headers map[string][]string) (http.Header, er
 			return nil, fmt.Errorf("invalid hook response header name %q", key)
 		}
 
-		if nativeHookHeaderDenied(canonical) {
+		if nativeHookHeaderDenied(canonical, secretHeaders) {
 			return nil, fmt.Errorf("hook response header %q is host-owned", canonical)
 		}
 
@@ -527,14 +555,42 @@ func safeNativeHookResponseHeaders(headers map[string][]string) (http.Header, er
 }
 
 // nativeHookHeaderDenied reports whether a response header is host-owned or hop-by-hop.
-func nativeHookHeaderDenied(header string) bool {
+func nativeHookHeaderDenied(header string, secretHeaders map[string]struct{}) bool {
+	if _, denied := nativeHookForbiddenResponseHeaders[header]; denied {
+		return true
+	}
+
 	if _, denied := nativeHookHopByHopHeaders[header]; denied {
 		return true
 	}
 
-	_, denied := nativeHookHostOwnedHeaders[header]
+	if _, denied := nativeHookHostOwnedHeaders[header]; denied {
+		return true
+	}
+
+	_, denied := secretHeaders[header]
 
 	return denied
+}
+
+// nativeHookResponseSecretHeaders derives configured password-bearing headers.
+func nativeHookResponseSecretHeaders(cfg config.File) map[string]struct{} {
+	output := make(map[string]struct{}, 2)
+	if cfg == nil || cfg.GetServer() == nil {
+		return output
+	}
+
+	headers := cfg.GetServer().GetDefaultHTTPRequestHeader()
+	for _, name := range []string{headers.GetPassword(), headers.GetPasswordEncoded()} {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(name))
+		if canonical == "" || !httpguts.ValidHeaderFieldName(canonical) {
+			continue
+		}
+
+		output[canonical] = struct{}{}
+	}
+
+	return output
 }
 
 // nativeHookStatusCode validates and defaults plugin response status codes.

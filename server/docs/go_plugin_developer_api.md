@@ -59,7 +59,12 @@ classDiagram
         +Logger(scope string) Logger
         +Tracer(scope string) Tracer
         +Metrics(scope string) Metrics
+        +HTTP(scope string) HTTPClient
+        +ConnectionTargets(scope string) ConnectionTargets
+        +BackendServers() BackendServers
         +Redis() Redis
+        +Cache(scope string) (Cache, error)
+        +Helpers() DeterministicHelpers
         +LDAP() LDAP
         +Config() ConfigView
         +Go(context.Context, string, func(context.Context) error)
@@ -319,10 +324,14 @@ The `Host` interface hides Nauthilus internals behind narrow facades:
 | --- | --- |
 | `Logger(scope)` | Structured plugin logs through the host logger. |
 | `Tracer(scope)` | Child spans from plugin call contexts. |
-| `Metrics(scope)` | Plugin-owned metric handles. See the implementation limits below before relying on export. |
+| `Metrics(scope)` | Plugin-owned metric handles with declared labels and duplicate-safe registration. |
+| `HTTP(scope)` | Host-managed outbound HTTP with trace propagation, bounded metrics, timeouts, response body limits, and redacted operational logs. |
+| `ConnectionTargets(scope)` | Registration for host-owned generic connection observability. |
 | `ServiceContext()` | Process lifetime cancellation signal. |
 | `Go(ctx, name, fn)` | Host-supervised worker launch with panic logging. |
-| `Redis()` | Host-owned Redis command handles. |
+| `Redis()` | Host-owned Redis command handles, key helpers, and named script registry. |
+| `Cache(scope)` | Process-local cache isolated by plugin module scope. |
+| `Helpers()` | Deterministic non-secret helpers shared with Lua-compatible behavior. |
 | `LDAP()` | Host-owned queued LDAP operations. |
 | `Config()` | Host-wide config view. |
 
@@ -330,13 +339,108 @@ Prefer request results for request-scoped facts and runtime changes. For example
 `EnvironmentResult`, `SubjectResult`, `BackendResult`, or `ObligationResult` instead of trying to emit request facts
 out-of-band.
 
-Current production wiring does not supply every facade listed by the type model. See [Current Implementation Limits](#current-implementation-limits).
+Current production wiring supplies the host-owned facades above. Some Lua library families remain plugin-owned by design;
+see [Current Implementation Notes](#current-implementation-notes).
+
+### HTTP, Mail, And Raw Network Calls
+
+Use `Host.HTTP(scope).Do(ctx, request)` for outbound HTTP that should participate in host-managed trace propagation,
+bounded plugin metrics, timeouts, response body limits, and redacted logs. The request is value-oriented: plugins pass a
+method, URL, low-cardinality service label, headers, optional body, timeout, and response body limit. The host injects
+trace headers from the active context and records `host_http_client_*` plugin metrics under the requested scope. HTTP
+logs include service, method, result, status, and duration only; they do not include URLs, query strings, headers,
+bodies, bearer tokens, or raw transport errors.
+
+SMTP and LMTP mail transport is plugin-owned in v1. A native mail plugin must read and validate its own module config,
+own connection and TLS or STARTTLS policy, bind operations to contexts with explicit timeouts, expose low-cardinality
+metrics through `Host.Metrics(scope)`, create spans through `Host.Tracer(scope)`, and redact usernames, passwords,
+recipients, message bodies, server errors, and DSNs from logs and status text.
+
+Raw TCP or dialer behavior is plugin-owned in v1, including HAProxy map update style sockets. A plugin that opens raw
+network connections must own lifecycle, deadlines, retries, backoff, metrics, tracing, and secret-safe logging. Keep
+addresses in module config, never in policy facts, and avoid logging raw commands, map values, request credentials, or
+transport errors.
+
+Use `Host.ConnectionTargets(scope).Register(ctx, target)` when plugin-owned network targets should be visible through
+host generic connection observability. Targets are named, validated `host:port` values with `local` or `remote`
+direction and bounded labels such as `service`, `protocol`, `component`, or `role`. Re-registering the same name,
+address, and direction is idempotent; conflicting duplicates fail closed.
+
+### Redis, Cache, And Deterministic Helpers
+
+Use `Host.Redis().Keys()` for Redis keys that must preserve the configured Nauthilus prefix and Redis Cluster hash-tag
+behavior:
+
+```go
+helpers := host.Helpers()
+keys := host.Redis().Keys()
+
+account := request.Snapshot.Account
+tag := helpers.AccountTag(account)
+locked := keys.SameSlot(keys.Keys("acct:"+tag+":lock", "acct:"+tag+":state"), tag)
+```
+
+`Key` and `Keys` apply the host Redis prefix without rewriting an existing hash tag. `SameSlot` preserves keys that
+already share a tag and rewrites mismatched tags to the requested tag. For account-scoped keys, prefer
+`host.Helpers().AccountTag(account)` so Lua and native components use the same deterministic tag format.
+
+Use `Host.Redis().Scripts()` for host-managed Lua scripts that must be shared between init-time and request-time native
+components:
+
+```go
+sha, err := host.Redis().Scripts().Upload(ctx, "account_protection.bump", source)
+result, err := host.Redis().Scripts().Run(ctx, "account_protection.bump", locked, account)
+```
+
+Script names are deterministic and validated. Upload stores the source and SHA, `Run` executes by name, and a Redis
+`NOSCRIPT` error triggers one host-managed reload and retry. Script operations respect the caller context and receive a
+bounded default timeout when the caller has no deadline.
+
+Named Redis pools are not host-managed in the native contract. A plugin that needs an additional Redis deployment should
+read a module-owned config block, build and close its own client in `Start`, `Stop`, and `Reconfigure`, redact connection
+details in logs/errors, and keep lifecycle ownership inside that plugin module.
+
+Use `Host.Cache(scope)` for module-owned process-local cache state shared by a plugin module's init tasks and request-time
+components. The host validates the scope, isolates cache contents per scope, and supports `Set` with TTL, `Get`, `Exists`,
+`Delete`, list `Push`, `PopAll`, and `Clear`. Cache keys and values remain in process memory; avoid high-cardinality cache
+metrics or logs.
+
+Use `Host.Helpers()` or the dependency-light `pluginapi/v1/helpers` package for deterministic non-secret logic such as
+account hash tags, scoped IPs, and routable IP checks. The runtime facade derives account-tag and IP-scoping options from
+the loaded Nauthilus configuration and Lua-compatible environment knobs.
+
+## Representative Contract Examples
+
+`pluginapi/v1/testdata/sampleplugin` is the compact compile-contract fixture for plugin authors. It deliberately uses
+only public API types and exercises the final v1 surfaces that are easy to keep hermetic:
+
+- request snapshots: backend and environment callbacks read safe listener, client-network, IDP/MFA, TLS, and
+  `AuthLoginAttempt` values from `RequestSnapshot`;
+- backend results: the sample backend returns `Account`, custom `AccountField`, attributes, authentication flags, and a
+  registered backend policy fact;
+- subject sources: the sample subject source reads the current backend result, returns a value-only
+  `BackendResultPatch`, logs a bounded field, and sets an allowed response header through `SubjectResult.Response`;
+- effects: the sample obligation reads policy args/facts, returns a registered `auth_decision` fact, sets explicit logs
+  and status, and uses synchronous response mutation;
+- hooks: the sample registers GET and HEAD dynamic textmap-style hooks, uses standard `net/http` status constants, and
+  returns only `HookResponse` values;
+- host services: the sample `Start` method touches backend candidates, deterministic helpers, host-managed HTTP,
+  connection-target registration, process cache, and Redis key construction without creating real network dependencies.
+
+The GeoIP reference plugin in `contrib/plugins/geoip` remains the fuller lifecycle example: it registers policy
+attributes, starts init work and supervised refresh workers, emits environment facts and runtime deltas, uses bounded
+metrics/tracing, and supports config-only reload.
 
 ## Request Data And Secrets
 
 Plugins receive immutable, redacted request metadata through `RequestSnapshot`. It includes protocol, service, username,
-account, client metadata, selected TLS facts, request headers, and runtime flags. Sensitive headers such as authorization
-and cookie values are redacted by the host.
+account, client transport metadata, identity fields, IDP/MFA policy inputs, selected TLS facts, request headers,
+diagnostics, and runtime flags. Sensitive headers such as authorization and cookie values are redacted by the host.
+
+Legacy Lua `ssl_*` metadata has a lossless native path under `RequestSnapshot.TLS.Legacy`, while normalized TLS values
+remain on `RequestSnapshot.TLS` for common policy checks. `Runtime.LocalRequest` is kept for compatibility and mirrors
+the explicit `Runtime.NoAuth` flag. `Runtime.Authorized` is a native request-outcome flag populated by the host; it has
+no separate legacy Lua request key.
 
 Runtime values are exposed through a read-only `RuntimeContext`:
 
@@ -377,6 +481,167 @@ err := secret.WithBytes(func(password []byte) error {
 ```
 
 Never store the byte slice passed to `WithBytes`, never log it, and clear plugin-owned copies immediately after use.
+For Nauthilus-compatible password verification, import `github.com/croessner/nauthilus/pluginapi/v1/password` and call
+`password.CompareHash(hash, secret)`. The same package exposes `GenerateHash` and `GenerateHashString` for the
+Redis-compatible short hash used by Lua `nauthilus_password.generate_password_hash`; server-side nonce and dev-mode
+selection remain host-owned, so plugin-owned hashes must pass the same `password.HashOptions` when they need exact
+server-context parity.
+
+## Lua Surface Audit
+
+The Lua compatibility audit below is evidence for follow-up API work. It maps the current Lua request table, helper
+modules, backend operations, hooks, policy facts, and init behavior to the native Go plugin API as it exists today.
+Treat public Go fields as exposed only when the runtime adapter actually populates them.
+
+Status meanings:
+
+| Status | Meaning |
+| --- | --- |
+| `exposed` | The native API has a public surface and current runtime wiring populates or applies it. |
+| `credential-gated` | The value is intentionally absent from snapshots and available only through `CredentialProvider` or operation-scoped secret handling. |
+| `helper-facade` | Lua behavior is replaced by a typed result, operation, or host facade instead of a direct request field. |
+| `plugin-owned` | Native plugins must own the dependency, config, lifecycle, timeout, logging, and redaction behavior. |
+| `intentionally excluded` | The native API deliberately does not expose the Lua surface. |
+| `missing` | The Lua surface has no current native equivalent or the public type is not populated by the adapter. |
+
+### CommonRequest Fields
+
+Evidence sources: `server/lualib/request.go`, `server/definitions/const.go`, bundled scripts under
+`server/lua-plugins.d`, `pluginapi/v1`, and `server/pluginruntime`.
+
+| Lua field | Lua key | Native surface today | Status | Audit note |
+| --- | --- | --- | --- | --- |
+| `BackendServers` | none; `nauthilus_backend.get_backend_servers()` | `Host.BackendServers().List(ctx)` returns `BackendServerCandidate` values; `SubjectResult.SelectedBackend` returns the selected target. | `helper-facade` | Native plugins read defensive candidate copies from the same monitored core list used by Lua. |
+| `TOTPRecoveryCodes` | `totp_recovery_codes` | Optional `RecoveryCodeBackend` operations. | `helper-facade` | Native API is operation-scoped and does not expose raw codes on `RequestSnapshot`. |
+| `RequestedScopes` | `requested_scopes` | `RequestSnapshot.IDP.RequestedScopes`. | `exposed` | Populated by auth adapter from IDP session state and by hook metadata. |
+| `UserGroups` | `user_groups` | `RequestSnapshot.IDP.UserGroups`. | `exposed` | Populated from resolved auth groups and by hook metadata. |
+| `AllowedClientScopes` | `allowed_client_scopes` | `RequestSnapshot.IDP.AllowedClientScopes`. | `exposed` | Populated from the configured OIDC client and by hook metadata. |
+| `AllowedClientGrantTypes` | `allowed_client_grant_types` | `RequestSnapshot.IDP.AllowedClientGrantTypes`. | `exposed` | Populated from the configured OIDC client and by hook metadata. |
+| `Service` | `service` | `RequestSnapshot.Service`. | `exposed` | Populated by auth and hook adapters. |
+| `Session` | `session` | `RequestSnapshot.Session`. | `exposed` | Populated from the request GUID or hook metadata. |
+| `ExternalSessionID` | `external_session` | `RequestSnapshot.ExternalSessionID`. | `exposed` | Populated by auth and hook adapters. |
+| `HealthCheck` | `health_check` | `RequestSnapshot.HealthCheck`. | `exposed` | Populated by auth adapter; hook requests do not currently set it. |
+| `ClientIP` | `client_ip` | `RequestSnapshot.ClientIP`. | `exposed` | Populated by auth and hook adapters. |
+| `ClientPort` | `client_port` | `RequestSnapshot.ClientPort`. | `exposed` | Populated from `XClientPort` or hook remote address metadata. |
+| `ClientNet` | `client_net` | `RequestSnapshot.ClientNet`. | `exposed` | Populated from brute-force client-network state or hook metadata. |
+| `ClientHost` | `client_hostname` | `RequestSnapshot.ClientHost`. | `exposed` | Native field name is `ClientHost`; Lua key is `client_hostname`. |
+| `ClientID` | `client_id` | `RequestSnapshot.ClientID`. | `exposed` | Populated from structured/core request metadata and hook metadata. |
+| `UserAgent` | `user_agent` | `RequestSnapshot.UserAgent`. | `exposed` | Populated by auth and hook adapters. |
+| `LocalIP` | `local_ip` | `RequestSnapshot.LocalIP`. | `exposed` | Populated from structured/core request metadata and hook metadata. |
+| `LocalPort` | `local_port` | `RequestSnapshot.LocalPort`. | `exposed` | Populated from structured/core request metadata and hook metadata. |
+| `Username` | `username` | `RequestSnapshot.Username`; backend requests also carry `Username`. | `exposed` | Populated by auth and hook adapters where metadata exists. |
+| `Account` | `account` | `RequestSnapshot.Account`; `BackendResult.Account`. | `exposed` | Populated by auth adapter and backend result mapping. |
+| `AccountField` | `account_field` | `RequestSnapshot.AccountField`; `BackendResult.AccountField`; `SubjectRequest.BackendResult.AccountField`; `BackendResultPatch.AccountField`. | `exposed` | Backend results preserve custom account fields; an empty backend plugin account field defaults to `account`. |
+| `UniqueUserID` | `unique_user_id` | `RequestSnapshot.UniqueUserID`. | `exposed` | Populated by auth adapter from resolved attributes and by hook metadata. |
+| `DisplayName` | `display_name` | `RequestSnapshot.DisplayName`. | `exposed` | Populated by auth adapter from resolved attributes and by hook metadata. |
+| `Password` | `password` | `CredentialProvider.Password(ctx)`. | `credential-gated` | Deliberately absent from `RequestSnapshot`. |
+| `WebAuthnCredential` | `webauthn_credential` | Optional `WebAuthnBackend` operation requests. | `helper-facade` | Native API uses typed credentials instead of serialized JSON request fields. |
+| `WebAuthnOldCredential` | `webauthn_old_credential` | `WebAuthnUpdateRequest.OldCredential`. | `helper-facade` | Native API uses typed credentials instead of serialized JSON request fields. |
+| `Protocol` | `protocol` | `RequestSnapshot.Protocol`. | `exposed` | Populated by auth and hook adapters. |
+| `Method` | `method` | `RequestSnapshot.Method`; `HookRequest.Method`. | `exposed` | Populated by auth and hook adapters. |
+| `OIDCCID` | `oidc_cid` | `RequestSnapshot.OIDCCID`. | `exposed` | Populated by auth and hook adapters where metadata exists. |
+| `SAMLEntityID` | `saml_entity_id` | `RequestSnapshot.SAMLEntityID`. | `exposed` | Populated by auth and hook adapters where metadata exists. |
+| `AuthLoginAttempt` | `auth_login_attempt` | `RequestSnapshot.AuthLoginAttempt`; Lua `CommonRequest.AuthLoginAttempt`. | `exposed` | Populated from structured/core request metadata. |
+| `GrantType` | `grant_type` | `RequestSnapshot.IDP.GrantType`. | `exposed` | Populated from IDP session state, grant-type context, or hook metadata. |
+| `OIDCClientName` | `oidc_client_name` | `RequestSnapshot.IDP.ClientName`. | `exposed` | Populated from configured OIDC client metadata and hook metadata. |
+| `RedirectURI` | `redirect_uri` | `RequestSnapshot.IDP.RedirectURI`. | `exposed` | Populated from IDP session state and hook metadata. |
+| `MFAMethod` | `mfa_method` | `RequestSnapshot.IDP.MFAMethod`. | `exposed` | Populated from IDP session state and hook metadata. |
+| `BruteForceName` | `brute_force_bucket` | `RequestSnapshot.Diagnostics.BruteForceName`. | `exposed` | Populated from auth brute-force state and hook metadata. |
+| `EnvironmentName` | `environment` | `RequestSnapshot.Diagnostics.EnvironmentName`. | `exposed` | Populated from auth runtime state and hook metadata. |
+| `XSSL` | `ssl` | `TLSInfo.Enabled`; `TLSInfo.Legacy.State`. | `exposed` | Native surface has normalized TLS state plus the original safe legacy value. |
+| `XSSLSessionID` | `ssl_session_id` | `TLSInfo.Legacy.SessionID`. | `exposed` | Forwarding and logging use cases can read the compatibility value. |
+| `XSSLClientVerify` | `ssl_client_verify` | `TLSInfo.Mutual` and `TLSInfo.VerifiedChains`. | `exposed` | Native adapter maps `SUCCESS` to verified state. |
+| `XSSLClientDN` | `ssl_client_dn` | `TLSInfo.Legacy.ClientDN`. | `exposed` | Forwarding and logging use cases can read the compatibility value. |
+| `XSSLClientCN` | `ssl_client_cn` | `TLSInfo.PeerCommonName`. | `exposed` | Populated by auth adapter. |
+| `XSSLIssuer` | `ssl_issuer` | `TLSInfo.PeerIssuer`. | `exposed` | Populated by auth adapter. |
+| `XSSLClientNotBefore` | `ssl_client_not_before` | `TLSInfo.Legacy.ClientNotBefore`. | `exposed` | Native API uses the defined Lua key shape; stale no-underscore Lua reads remain documented below. |
+| `XSSLClientNotAfter` | `ssl_client_not_after` | `TLSInfo.Legacy.ClientNotAfter`. | `exposed` | Native API uses the defined Lua key shape; stale no-underscore Lua reads remain documented below. |
+| `XSSLSubjectDN` | `ssl_subject_dn` | `TLSInfo.ServerName`. | `exposed` | Native name is normalized but currently populated from `XSSLSubjectDN`. |
+| `XSSLIssuerDN` | `ssl_issuer_dn` | `TLSInfo.Legacy.IssuerDN`. | `exposed` | Forwarding and logging use cases can read the compatibility value. |
+| `XSSLClientSubjectDN` | `ssl_client_subject_dn` | `TLSInfo.Legacy.ClientSubjectDN`. | `exposed` | Forwarding and logging use cases can read the compatibility value. |
+| `XSSLClientIssuerDN` | `ssl_client_issuer_dn` | `TLSInfo.Legacy.ClientIssuerDN`. | `exposed` | Forwarding and logging use cases can read the compatibility value. |
+| `XSSLProtocol` | `ssl_protocol` | `TLSInfo.Version`. | `exposed` | `actions/clickhouse.lua` also reads stale `xssl_protocol`. |
+| `XSSLCipher` | `ssl_cipher` | `TLSInfo.CipherSuite`. | `exposed` | `actions/clickhouse.lua` also reads stale `xssl_cipher`. |
+| `SSLSerial` | `ssl_serial` | `TLSInfo.Legacy.Serial`. | `exposed` | Forwarding and logging use cases can read the compatibility value. |
+| `SSLFingerprint` | `ssl_fingerprint` | `TLSInfo.Legacy.Fingerprint`. | `exposed` | Forwarding and logging use cases can read the compatibility value. |
+| `RedisPrefix` | `redis_prefix` | `Host.Redis().Keys()` applies the configured prefix. | `helper-facade` | Native snapshots do not carry the raw prefix; plugins build host-prefixed keys through the key helper. |
+| `StatusMessage` | `status_message` | `RequestSnapshot.Diagnostics.StatusMessage`; request-time result `StatusMessage` types. | `exposed` | Snapshots expose current host status; request-time results remain the mutation path. |
+| `UsedBackendAddr` | not written by `SetupRequest` | None as request input; selected backend can be returned. | `missing` | Native snapshots do not expose the already used backend address. |
+| `UsedBackendPort` | not written by `SetupRequest` | None as request input; selected backend can be returned. | `missing` | Native snapshots do not expose the already used backend port. |
+| `Latency` | `latency` | `RequestSnapshot.Diagnostics.LatencyMillis`. | `exposed` | Populated from request start time when available. |
+| `BruteForceCounter` | `brute_force_counter` | `RequestSnapshot.Diagnostics.BruteForceCounter`. | `exposed` | Populated for the active brute-force bucket when available. |
+| `HTTPStatus` | `http_status` | `RequestSnapshot.Diagnostics.HTTPStatus`. | `exposed` | Populated from auth outcome status codes and hook metadata. |
+| `Debug` | `debug` | `RequestSnapshot.Runtime.Debug`. | `exposed` | Populated from effective log level and hook metadata. |
+| `Repeating` | `repeating` | `RequestSnapshot.Runtime.Repeating`. | `exposed` | Populated from brute-force runtime state and hook metadata. |
+| `RWP` | `rwp` | `RequestSnapshot.Runtime.RWP`. | `exposed` | Populated from repeating-wrong-password runtime state and hook metadata. |
+| `UserFound` | `user_found` | `RequestSnapshot.Runtime.UserFound`; `BackendResult.UserFound`. | `exposed` | Populated from auth runtime/account state and hook metadata. |
+| `Authenticated` | `authenticated` | `RequestSnapshot.Runtime.Authenticated`; `BackendResult.Authenticated`. | `exposed` | Populated by auth and hook adapters where metadata exists. |
+| `NoAuth` | `no_auth` | `RequestSnapshot.Runtime.NoAuth`; `RequestSnapshot.Runtime.LocalRequest`. | `exposed` | `LocalRequest` is kept as a compatibility alias for `NoAuth`. |
+| `EnvironmentRejected` | `environment_rejected` | `RequestSnapshot.Runtime.EnvironmentRejected`. | `exposed` | Populated from request context and hook metadata where known. |
+| `EnvironmentStageExpected` | `environment_stage_expected` | `RequestSnapshot.Runtime.EnvironmentStageExpected`. | `exposed` | Populated from configured Lua environment sources and hook metadata. |
+| `SubjectStageExpected` | `subject_stage_expected` | `RequestSnapshot.Runtime.SubjectStageExpected`. | `exposed` | Populated from configured Lua subject sources and hook metadata. |
+| `MFACompleted` | `mfa_completed` | `RequestSnapshot.IDP.MFACompleted`. | `exposed` | Populated from IDP session state and hook metadata. |
+
+### Helper Modules And Script Families
+
+Evidence examples include `backend/proxy_backend.lua`, `subject/idp_policy.lua`, `subject/monitoring.lua`,
+`subject/account_protection_mode.lua`, `actions/clickhouse.lua`, `actions/dynamic_response.lua`,
+`hooks/dynamic-textmap-demo.lua`, `init/init.lua`, `share/nauthilus_policy_facts.lua`, and `policy/registry.lua`.
+
+| Lua surface | Bundled evidence | Native surface today | Status | Audit note |
+| --- | --- | --- | --- | --- |
+| `nauthilus_context` | Policy facts bridge, account protection, dynamic response, clickhouse | `RuntimeContext` plus returned `RuntimeDelta`. | `helper-facade` | Native plugins return deltas instead of mutating request context directly. |
+| `nauthilus_policy` and `nauthilus_policy_facts` | `share/nauthilus_policy_facts.lua`, `policy/registry.lua` | `Registrar.RegisterPolicyAttribute`, result `Facts`, and `pluginapi.PluginPolicyAttributeID`. | `helper-facade` | Attribute declaration and fact emission are exposed. Native facts use the `plugin.*` namespace; migrated Lua names may remain registered separately. |
+| Public custom logs and status helper | `nauthilus_policy_facts.emit_public`, `status_message` | Result `Logs`, `StatusMessage`, and `pluginapi.PublicPolicyFactLogField`. | `helper-facade` | Public visibility is explicit through log fields or status messages; facts alone are private policy evidence. |
+| `nauthilus_backend.get_backend_servers` | `subject/monitoring.lua` | `Host.BackendServers().List(ctx)`. | `helper-facade` | The host returns value-only `BackendServerCandidate` copies with protocol, address, port, HAProxy-v2, and liveness. |
+| `nauthilus_backend.select_backend_server` | `subject/monitoring.lua` | `SubjectResult.SelectedBackend`. | `exposed` | Native subject sources can return a selected backend. |
+| `nauthilus_backend.apply_backend_result` and `nauthilus_backend_result` | `subject/monitoring.lua` | `SubjectResult.BackendResultPatch`, `SubjectResult.BackendAttributes`, and `SubjectRequest.BackendResult`. | `helper-facade` | Native subject sources return an explicit value-only patch for account, account field, auth flags, selected backend, and string attributes. Full mutable backend-result replacement is unsupported. |
+| `nauthilus_http_request` | `subject/monitoring.lua`, `hooks/dynamic-textmap-demo.lua` | `RequestSnapshot.Headers`, `HookRequest.Headers`, `HookRequest.Query`, `HookRequest.Body`, `HookRequest.Path`, `HookRequest.Method`. | `exposed` | Hook parity is close; subject/header access depends on snapshot headers. |
+| `nauthilus_http_response` in hooks | `hooks/dynamic-textmap-demo.lua` | `HookResponse.Headers`, `Body`, and `StatusCode`. | `helper-facade` | Gin-style helpers are replaced by explicit response values. |
+| `nauthilus_http_response` outside hooks | `subject/account_protection_mode.lua`, `actions/bruteforce_header.lua` | `SubjectResult.Response` and `ObligationResult.Response`. | `helper-facade` | Native plugins return value-oriented header mutations. Post-actions do not expose late response mutation. |
+| `nauthilus_redis` command helpers | Monitoring, account protection, dynamic response, init | `Host.Redis()` read/write/pipeline handles plus `Keys()` and `Scripts()`. | `exposed` | Basic Redis access is exposed through go-redis command facades; host-owned helpers cover prefixing and named scripts. |
+| Redis script upload and named execution | `init/init.lua`, account protection, dynamic response | `Host.Redis().Scripts().Upload` and `Run`. | `helper-facade` | Named scripts are validated, stored by source/SHA, context-bounded, and retried once after `NOSCRIPT`. |
+| Named Redis pools | `init/init.lua` | None. | `plugin-owned` | Plugins must own extra pools, redaction, config, and lifecycle for now. |
+| `nauthilus_cache` | Account protection, clickhouse | `Host.Cache(scope)`. | `helper-facade` | Native module caches are isolated by scope and support TTL, get/exists/delete, list push/pop-all, and clear. |
+| Redis key prefix helpers | `nauthilus_util.get_redis_key` | `Host.Redis().Keys()`. | `helper-facade` | The key builder applies the host prefix and preserves or normalizes Redis Cluster hash tags. |
+| Account hash-tag helpers | `nauthilus_keys` | `Host.Helpers().AccountTag` and `pluginapi/v1/helpers.AccountTag`. | `helper-facade` | Account tags share one deterministic helper implementation for Lua-compatible native ports. |
+| Scoped-IP and routable-IP helpers | `nauthilus_misc.scoped_ip`, `nauthilus_util.is_routable_ip` | `Host.Helpers().ScopedIP`, `IsRoutableIP`, and `pluginapi/v1/helpers`. | `helper-facade` | Deterministic utility helpers are public and dependency-light; the runtime facade supplies config-derived scoping. |
+| Password helpers | `nauthilus_password.compare_passwords`, `generate_password_hash` | `pluginapi/v1/password` plus `CredentialProvider`. | `exposed` | Public helpers share the same compare, SSHA parsing, crypt verifier, prepared-byte, and short-hash implementation used by Lua/server utilities. |
+| `nauthilus_prometheus` | Proxy backend, account protection, clickhouse, init | `Host.Metrics()`. | `exposed` | Plugin metrics are exported under the native plugin namespace; gauges support set and add semantics, histograms observe samples, and zero-valued counter series can be touched with `Add(ctx, 0, labels...)`. |
+| `nauthilus_opentelemetry` | Proxy backend, account protection, dynamic response | `Host.Tracer()` and `Host.HTTP()`. | `helper-facade` | Span creation is exposed; host-managed HTTP injects trace headers and records bounded HTTP spans. Lua semantic helpers are not exact native APIs. |
+| `nauthilus_psnet` | `init/init.lua` | `Host.ConnectionTargets(scope).Register(ctx, target)`. | `helper-facade` | Native plugins can register named connection targets for host generic connection observability. |
+| `nauthilus_mail` | `actions/dynamic_response.lua` | None. | `plugin-owned` | SMTP/LMTP mail remains plugin-owned. |
+| Outbound HTTP libraries | Proxy backend, clickhouse, notifications | `Host.HTTP(scope).Do(ctx, request)`. | `helper-facade` | Use the host facade for traced, metered, bounded HTTP calls; plugin-owned clients remain possible when the facade is insufficient and must carry their own observability. |
+| Raw TCP, SQL, Telegram, template, JSON, time, base64, crypto libraries | Actions and shared scripts | Standard Go or plugin dependencies. | `plugin-owned` | Native plugins own dependencies and observability unless the host exposes a specific facade. Raw TCP/dialer behavior remains plugin-owned. |
+| `nauthilus_geoip_bridge` | Clickhouse, dynamic response | Runtime context produced by the GeoIP plugin. | `plugin-owned` | This is a Lua compatibility bridge over plugin-owned runtime facts. |
+
+### Backend Operations
+
+| Lua operation family | Lua evidence | Native surface today | Status | Audit note |
+| --- | --- | --- | --- | --- |
+| Password verification | `backend/proxy_backend.lua` | `Backend.VerifyPassword` with `BackendAuthRequest.Credentials`. | `credential-gated` | Password material stays outside the snapshot. |
+| Account listing | Lua backend account providers | `Backend.ListAccounts` and `AccountListResult.Facts`. | `exposed` | Runtime validates and emits account-provider facts. |
+| Backend result account field | `LuaBackendResult.AccountField` | `BackendResult.AccountField`; `SubjectRequest.BackendResult.AccountField`; `BackendResultPatch.AccountField`. | `exposed` | Runtime maps custom fields into `PassDBResult.AccountField` and keeps the account value under the selected backend attribute. |
+| Backend result attributes | `nauthilus_backend_result` | `BackendResult.Attributes`, `SubjectResult.BackendAttributes`, `BackendResultPatch.Attributes`. | `exposed` | Direct string attribute set/delete is available; full backend-result pointer replacement is unsupported. |
+| Backend result groups and display fields | `LuaBackendResult` fields | No dedicated fields. | `missing` | Can be plugin-owned attributes, but the native contract is not equivalent. |
+| TOTP add/delete/verify flows | `backend/proxy_backend.lua`, backend examples | Optional `TOTPBackend`. | `helper-facade` | Native API uses begin/finish/verify/delete flows instead of raw Lua request fields. |
+| Recovery-code add/use/delete flows | `backend/proxy_backend.lua` | Optional `RecoveryCodeBackend`. | `helper-facade` | Native API generates/uses/deletes codes; arbitrary code injection is not a direct request field. |
+| WebAuthn list/save/update/delete | `backend/proxy_backend.lua` | Optional `WebAuthnBackend`. | `helper-facade` | Native API uses typed `WebAuthnCredential` values. |
+| Public MFA state | Identity edge use cases | Optional `PublicMFAStateBackend`. | `exposed` | Native API has typed public MFA metadata. |
+
+### Init, Hooks, And Stale Lua Expectations
+
+| Surface | Evidence | Native surface today | Status | Audit note |
+| --- | --- | --- | --- | --- |
+| Init task startup | `init/init.lua` | `InitTask.Start` and `InitTask.Stop`. | `exposed` | Native tasks can initialize module state and metrics. |
+| Init-time metric creation | `init/init.lua` | `Host.Metrics()`. | `exposed` | Current host exports plugin metrics. |
+| Init-time Redis script upload | `init/init.lua` | `Host.Redis().Scripts().Upload`. | `helper-facade` | Init tasks can upload named scripts for request-time native components to run by name. |
+| Init-time connection targets | `init/init.lua` | `Host.ConnectionTargets(scope).Register(ctx, target)`. | `helper-facade` | Init tasks can register named targets for host generic connection observability. |
+| Hook request read surface | `hooks/dynamic-textmap-demo.lua` | `HookRequest` headers, query, body, path, and method. | `exposed` | Follow-up tests should pin GET, HEAD, aliases, and body handling. |
+| Hook response write surface | `hooks/dynamic-textmap-demo.lua` | `HookResponse` headers, body, and status code. | `exposed` | Gin helper names are not preserved. |
+| `request.auth_login_attempt` | `backend/proxy_backend.lua` | `CommonRequest.AuthLoginAttempt`; `RequestSnapshot.AuthLoginAttempt`. | `exposed` | Populated from structured/core request metadata for Lua and native adapters. |
+| `request.ssl_client_notbefore` and `request.ssl_client_notafter` | `backend/proxy_backend.lua` | Lua defines `ssl_client_not_before` and `ssl_client_not_after`. | `intentionally excluded` | Stale key names should be cleaned up separately from Go API work. |
+| `request.xssl_protocol` and `request.xssl_cipher` | `actions/clickhouse.lua` | Lua defines `ssl_protocol` and `ssl_cipher`; native maps to `TLSInfo`. | `intentionally excluded` | Stale key names should be cleaned up separately from Go API work. |
 
 ## Extension Points
 
@@ -465,6 +730,91 @@ func (subjectEnricher) Evaluate(ctx context.Context, request pluginapi.SubjectRe
 Subject source results are merged deterministically per dependency level. A rejected subject maps to authentication
 failure.
 
+Subject sources can patch safe backend-result values explicitly. This is the native replacement for Lua's mutable
+backend-result object; plugins return values instead of receiving a pointer to internal host state:
+
+```go
+authenticated := true
+
+return pluginapi.SubjectResult{
+    BackendResultPatch: &pluginapi.BackendResultPatch{
+        Account:       "alice@example.test",
+        AccountField:  "mail",
+        Authenticated: &authenticated,
+        Attributes: pluginapi.AttributePatch{
+            Set: map[string][]string{
+                "mail": []string{"alice@example.test"},
+            },
+        },
+    },
+}, nil
+```
+
+The patch supports account, account field, user-found/authenticated flags, selected backend, and string backend
+attributes. Full backend-result replacement, mutable backend result pointers, group replacement, and arbitrary internal
+status mutation are unsupported.
+
+Subject sources that need monitored backend targets should keep the `Host` facade received by their runtime plugin
+`Start` method and read candidates through `host.BackendServers().List(ctx)`. The host returns defensive value copies
+from the same eligible backend-server list used by Lua `nauthilus_backend.get_backend_servers()`. Candidate fields are
+limited to selection data: protocol, address, port, HAProxy-v2 mode, and liveness. `Name` and `Authority` are present in
+the API but remain empty when the underlying backend-server monitor has no stable values for them.
+
+```go
+func (s *subjectRouter) Evaluate(ctx context.Context, request pluginapi.SubjectRequest) (pluginapi.SubjectResult, error) {
+    for _, candidate := range s.host.BackendServers().List(ctx) {
+        if candidate.Protocol != request.Snapshot.Protocol || !candidate.Alive {
+            continue
+        }
+
+        ref := candidate.Ref()
+
+        return pluginapi.SubjectResult{SelectedBackend: &ref}, nil
+    }
+
+    return pluginapi.SubjectResult{}, errNoBackendCandidate
+}
+```
+
+Returning an error maps to a secret-safe temporary failure. Returning `Rejected: true` maps to authentication failure.
+The host does not auto-select a backend when the candidate list is empty.
+
+### Response Mutations
+
+Subject sources and synchronous obligations can return a value-oriented response mutation while the HTTP response is
+still mutable:
+
+```go
+return pluginapi.SubjectResult{
+    Response: pluginapi.ResponseMutation{
+        Headers: pluginapi.ResponseHeaderMutation{
+            Set: map[string][]string{
+                "X-Nauthilus-Protection": {"stepup"},
+            },
+            Delete: []string{"X-Nauthilus-Protection-Reason"},
+        },
+    },
+}, nil
+```
+
+This is the native path for bundled Lua patterns such as `subject/account_protection_mode.lua` and
+`actions/bruteforce_header.lua`. The host canonicalizes header names, applies deletes before sets, and applies multiple
+timely extension results in deterministic source/effect order. Later sets for the same canonical header replace earlier
+values.
+
+The response mutation surface intentionally supports headers only. It does not expose `http.ResponseWriter`, Gin
+contexts, response bodies, cookies, streaming, or arbitrary HTTP status-code writes. A plugin that needs a full custom
+HTTP response should use a native hook and return `HookResponse`.
+
+The host filters unsafe headers instead of writing them. Forbidden names include `Set-Cookie`, `Cookie`, `Authorization`,
+`Proxy-Authorization`, hop-by-hop headers, `Auth-Status`, and configured password-bearing request header names. To expose
+a client-visible status text, return `Status` and set `Response.StatusHeader` when the current mutable HTTP response
+should receive the selected `Auth-Status` value immediately. Normal auth responses still render the selected status at
+the response boundary.
+
+Post-actions run detached after the policy decision and have no response mutation field. For non-HTTP request paths or
+responses that are already written, response mutations are deterministic no-ops.
+
 ### Backends
 
 A backend plugin implements password verification and account listing:
@@ -482,11 +832,8 @@ func (b *backend) VerifyPassword(ctx context.Context, request pluginapi.BackendA
         return pluginapi.BackendResult{UserFound: true, Authenticated: false}, nil
     }
 
-    matched := false
-    if err := secret.WithBytes(func(password []byte) error {
-        matched = b.verify(request.Username, password)
-        return nil
-    }); err != nil {
+    matched, err := password.CompareHash(b.lookupPasswordHash(request.Username), secret)
+    if err != nil {
         return pluginapi.BackendResult{}, err
     }
 
@@ -494,6 +841,7 @@ func (b *backend) VerifyPassword(ctx context.Context, request pluginapi.BackendA
         UserFound:     true,
         Authenticated: matched,
         Account:       request.Username,
+        AccountField:  "account",
         Attributes: map[string][]string{
             "account": []string{request.Username},
         },
@@ -531,13 +879,33 @@ Optional MFA interfaces are attached to the same backend component:
 | `WebAuthnBackend` | Backend-owned WebAuthn credential list, save, update, and delete. |
 | `PublicMFAStateBackend` | Public MFA metadata for identity edges. |
 
+Lua backend examples pass raw fields such as `totp_secret`, `totp_recovery_codes`, `webauthn_credential`, and
+`webauthn_old_credential` through a serialized request table. Native plugins should not add those blobs to
+`RequestSnapshot`; they use typed operation requests instead:
+
+| Lua backend surface | Native typed request |
+| --- | --- |
+| Password verification with request metadata | `Backend.VerifyPassword(ctx, BackendAuthRequest)` with `CredentialProvider.Password(ctx)`. |
+| Account listing | `Backend.ListAccounts(ctx, AccountListRequest)`. |
+| `totp_secret` registration writes | `TOTPBackend.BeginTOTP` and `FinishTOTP` own setup state and verification. |
+| TOTP verification | `TOTPBackend.VerifyTOTP`. |
+| TOTP deletion | `TOTPBackend.DeleteTOTP`. |
+| `totp_recovery_codes` creation | `RecoveryCodeBackend.GenerateRecoveryCodes`; arbitrary edge-provided code injection is not the native mutation path. |
+| Recovery-code use | `RecoveryCodeBackend.UseRecoveryCode` or the core `ConsumeTOTPRecoveryCode` adapter path. |
+| Recovery-code deletion | `RecoveryCodeBackend.DeleteRecoveryCodes`. |
+| `webauthn_credential` list/save/delete | `WebAuthnListRequest`, `WebAuthnSaveRequest.Credential`, and `WebAuthnDeleteRequest.CredentialID`. |
+| `webauthn_old_credential` plus replacement credential | `WebAuthnUpdateRequest.OldCredential` and `NewCredential`. |
+| Public MFA metadata | `PublicMFAStateRequest` and `PublicMFAStateResult`. |
+
 The host maps backend errors to secret-safe temporary failures. Do not return raw SQL statements, LDAP filters, tokens,
 or password-derived details in errors.
 
 ### Obligation Targets
 
 Obligations run synchronously when policy selects them. They should be fast, bounded, and deterministic because they sit
-on the request path.
+on the request path. The request `Args` view contains the policy-selected effect arguments, including stable built-in
+metadata such as `action: brute_force` and `feature: brute_force` for Lua-action compatibility effects. The request
+`Facts` slice contains currently collected Lua and native plugin policy facts from the active decision context.
 
 ```go
 type denylistObligation struct{}
@@ -557,15 +925,29 @@ func (denylistObligation) Execute(ctx context.Context, request pluginapi.Obligat
         Facts: []pluginapi.PolicyFact{
             {Attribute: "plugin.resource.denylist.applied", Value: true},
         },
+        Logs: []pluginapi.LogField{
+            {Key: "policy_fact_denylist_applied", Value: true},
+        },
         Status: &pluginapi.StatusMessage{DefaultText: args.Reason},
     }, nil
 }
 ```
 
+Obligation result facts are validated against the active `auth_decision` registry before they are recorded. Unknown,
+wrong-stage, or wrong-operation facts fail safely. A status message returned by a request-time obligation can update the
+current client-visible status path; a log field is the explicit way to materialize public custom log values.
+
+When `BackendResult.Account` is non-empty and `AccountField` is empty, the runtime defaults the field to `account`.
+Custom account fields must be valid backend attribute names, for example `mail`, `uid`, or `Proxy-Host`, and the runtime
+stores the account under that selected field in the internal `PassDBResult`.
+
 ### Post-Action Targets
 
 Post-actions enqueue detached work after policy selection. Return as soon as work is accepted or skipped; use
-`Host.Go` for bounded background work when you need host panic logging.
+`Host.Go` for bounded background work when you need host panic logging. `PostActionRequest.Args` and
+`PostActionRequest.Facts` use the same policy decision context as obligations. Post-action results report enqueue
+status only; they do not emit additional policy facts into the already-selected decision and cannot mutate the client
+response.
 
 ```go
 type auditPostAction struct {
@@ -617,10 +999,31 @@ func (healthHook) Serve(ctx context.Context, request pluginapi.HookRequest) (plu
 Hook paths are mounted below the native custom hook route surface. Keep paths stable, narrow, and explicit. Avoid
 overlapping canonical paths or aliases with other plugins until duplicate detection is enforced at startup.
 
+Lua `nauthilus_http_request` helpers map to immutable `HookRequest` values: `request.Method`, `request.Path`,
+`request.Query`, `request.Headers`, and `request.Body`. Header names are canonical Go HTTP names, repeated headers and
+query parameters keep their ordered value slices, and the host redacts `Authorization`, cookies, proxy authorization, and
+configured password-bearing request headers before invocation. The hook body is a bounded clone built after host-side
+`MaxBodyBytes` enforcement; request snapshots still do not carry HTTP bodies.
+
+Lua `nauthilus_http_response` helpers map to returning `pluginapi.HookResponse`. Use standard library constants such as
+`http.StatusOK`, `http.StatusMethodNotAllowed`, and `http.StatusNoContent` for `StatusCode`; set response headers through
+`HookResponse.Headers`; and return text, HTML, JSON, or binary content as `HookResponse.Body`. The host filters unsafe
+response headers before writing them, including hop-by-hop headers, `Set-Cookie`, `Cookie`, `Authorization`,
+`Proxy-Authorization`, `Auth-Status`, Nauthilus-owned transport/security headers, and configured password-bearing header
+names. `Content-Length` is host-owned and should not be returned by plugins.
+
+HEAD hooks are deterministic at the host boundary: status and allowed headers are written from `HookResponse`, but the
+host does not write `HookResponse.Body` for a HEAD request. A plugin may return an empty body for clarity, but the host
+still prevents accidental body leakage. To mirror Lua examples such as `dynamic-textmap-demo.lua`, register separate GET
+and HEAD hook descriptors for the same path and share the implementation that builds cache headers such as
+`Cache-Control`, `ETag`, and `Last-Modified`. The compile-only fixture in `pluginapi/v1/testdata/sampleplugin` includes a
+dynamic textmap-style native hook using this pattern.
+
 ## Policy Attributes And Facts
 
 Plugins must register policy attributes before emitting facts for those attributes. Attribute IDs should be namespaced by
-extension and module or feature:
+extension and module or feature. Native plugins should prefer `plugin.*` names; existing Lua helpers may still produce
+`lua.plugin.*` names during migration when those attributes are explicitly registered:
 
 ```text
 plugin.environment.<module>.<fact>
@@ -628,6 +1031,9 @@ plugin.subject.<module>.<fact>
 plugin.backend.<module>.<fact>
 plugin.resource.<module>.<fact>
 ```
+
+Use `pluginapi.PluginPolicyAttributeID(extension, moduleOrFeature, fact)` when the three path components follow the
+strict native plugin name grammar. This helper returns names such as `plugin.environment.geoip.matched`.
 
 Register attributes during `Register`:
 
@@ -646,9 +1052,12 @@ func registerPolicyAttributes(registrar pluginapi.Registrar) error {
 }
 ```
 
-Facts returned from environment, subject, backend password verification, and obligations are validated against the active
-policy snapshot. Unknown attributes fail safely. Account-list facts are accepted by the API type but are not currently
-propagated into account-provider policy state; see the current implementation limits.
+Facts returned from environment, subject, backend password verification, account-list operations, and obligations are
+validated against the active policy snapshot. Unknown attributes fail safely. Account-list facts are emitted as
+`account_provider` policy attributes after validation. Facts are policy evidence, not public logs. To intentionally
+expose a selected value in request logs, return `LogField` entries directly or use
+`pluginapi.PublicPolicyFactLogField(namespace, key, value)`, which produces stable `policy_fact_<namespace>_<key>` log
+keys.
 
 ## Configuration
 
@@ -751,14 +1160,27 @@ The following implementation notes are visible in the current codebase and shoul
 
 | Area | Current behavior | Developer guidance |
 | --- | --- | --- |
-| Host facades | Production host construction supplies config, Redis, LDAP, logging, tracing, metrics, and supervised workers. Policy data is not exposed through the process-scoped host. | Use `Registrar.RegisterPolicyAttribute` for declarations and extension result `Facts` for request-time policy data. |
+| Host facades | Production host construction supplies config, Redis, LDAP, logging, tracing, metrics, host-managed HTTP, connection-target registration, and supervised workers. Policy data is not exposed through the process-scoped host. | Use `Registrar.RegisterPolicyAttribute` for declarations and extension result `Facts` for request-time policy data. |
+| Request snapshots | Auth and hook adapters populate safe request identity, listener/client metadata, IDP/MFA policy inputs, legacy TLS compatibility values, diagnostics, and outcome flags. | Treat snapshots as immutable and redacted. Use `CredentialProvider` and typed backend operations for secrets and credential-shaped values. |
+| Backend result patching | Subject sources can patch account, account field, auth flags, selected backend, and string attributes through `BackendResultPatch`. Full mutable backend-result replacement is not exposed. | Return explicit value patches and keep plugin-owned state inside the module instance. |
+| Response mutation | Subject sources and synchronous obligations can set or delete allowed response headers while the HTTP response is still mutable. Post-actions have no response mutation field. | Use result-bound `ResponseMutation`; do not expect async work, gRPC paths, already-written responses, or forbidden headers to mutate client output. |
+| Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. |
+| Host-managed HTTP | `Host.HTTP(scope)` validates outbound requests, injects trace headers, applies context timeouts and response body limits, records `host_http_client_*` metrics, and logs only bounded fields. | Prefer this facade for Lua-style outbound HTTP migrations such as blocklist, GeoIP, HIBP, proxy backends, Telegram, and ClickHouse inserts when the value-oriented request shape is sufficient. |
+| Redis keys and scripts | `Host.Redis()` exposes command handles, key construction, and a named script registry with `NOSCRIPT` recovery. | Use host key helpers for prefixed, cluster-safe keys and upload scripts before running them by deterministic name. |
+| Redis named pools | Host-owned named Redis pools are intentionally not exposed. | Build module-owned clients only when the configured host Redis facade is insufficient; close and redact them yourself. |
+| Process cache | `Host.Cache(scope)` returns an in-process cache isolated by validated scope. | Use it for bounded module-local coordination, TTL state, and list batches; do not treat it as durable storage. |
+| Deterministic helpers | `Host.Helpers()` and `pluginapi/v1/helpers` expose account tags, scoped IPs, and routable IP checks. | Prefer these helpers over plugin-local copies when porting Lua logic. |
 | Plugin-defined metrics | `Host.Metrics()` validates definitions, exports Prometheus collectors under `nauthilus_plugin_<scope>_<name>`, and keeps local observation counts for diagnostics. | Declare bounded labels and avoid high-cardinality values. The host-owned `plugin_scope` label is reserved. |
+| Connection targets | `Host.ConnectionTargets(scope)` validates named `host:port` targets, local/remote direction, bounded labels, and idempotent duplicate registration before delegating to generic connection observability. | Use this from init tasks for psnet-style visibility. It is not a raw network dialer and does not manage plugin-owned sockets. |
+| SMTP/LMTP mail and raw TCP | No host-managed mail transport or raw dialer facade is exposed in v1. | Plugins own config validation, lifecycle, TLS/deadline/retry policy, metrics, traces, and redaction for mail, HAProxy map sockets, SQL drivers, and other raw network dependencies. |
 | Module `stop_timeout` | `plugins.modules[].stop_timeout` is applied to each module `Stop` call inside the outer shutdown context. | Keep `Stop` idempotent and bounded by its context. |
 | Host-supervised worker waiting | `Host.Go` launches supervised workers, logs panics, and `Runner.Stop` waits for workers after module stop until the shutdown context expires. | Start long-running plugin workers through `Host.Go` and exit promptly when the worker context is canceled. |
 | Plugin account listing | `plugin(<module>.<backend>)` account-provider configuration dispatches to plugin `Backend.ListAccounts`. | Return stable account names and use `AccountListResult.Facts` for registered account-provider policy facts. |
 | Account-list facts | `AccountListResult.Facts` are validated and emitted as `account_provider` policy attributes. | Register every account-provider fact before policy snapshots compile. |
+| Native hooks | `HookRequest` carries redacted headers, query values, path, method, body, and snapshot values; `HookResponse` maps status, safe headers, and body. HEAD responses write no body. | Keep route ownership in Nauthilus and return only API-level values. Use standard `net/http` status constants. |
 | Hook path collisions | Duplicate native hook canonical method/path keys and duplicate alias keys are rejected while building the native hook index. | Choose globally unique hook paths and aliases; ambiguous bindings are not routable. |
 | Mixed Lua and Go source scheduling | Lua sources and Go sources use the same scheduler semantics but are planned and executed as separate source sets. | Do not express cross-family `Requires` or `After` dependencies. Use runtime context facts when a Go source needs Lua output. |
+| Plugin-owned libraries | SQL drivers, Telegram clients, template engines, broad mail transports, raw sockets, extra Redis pools, and the Lua GeoIP bridge are outside the host-managed v1 facades. | Own config, lifecycle, deadlines, retries, metrics, traces, and redaction inside the plugin module; expose only safe facts, logs, and status values to Nauthilus. |
 
 ## Developer Checklist
 

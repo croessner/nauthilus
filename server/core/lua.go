@@ -118,6 +118,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.Password = auth.passwordBytes()
 	commonRequest.Protocol = auth.Request.Protocol.Get()
 	commonRequest.OIDCCID = auth.Request.OIDCCID
+	commonRequest.AuthLoginAttempt = auth.Request.AuthLoginAttempt
 	commonRequest.BruteForceName = ""  // unavailable
 	commonRequest.EnvironmentName = "" // unavailable
 	commonRequest.StatusMessage = &auth.Runtime.StatusMessage

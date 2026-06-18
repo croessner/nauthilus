@@ -18,10 +18,13 @@ package pluginruntime
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/lualib"
 )
 
 const (
@@ -95,17 +98,24 @@ func NewRequestSnapshotFromAuthState(auth *core.AuthState, options ...SnapshotOp
 		Method:            auth.Request.Method,
 		Username:          auth.Request.Username,
 		Account:           auth.GetAccount(),
+		AccountField:      auth.Runtime.AccountField,
+		UniqueUserID:      auth.GetUniqueUserID(),
+		DisplayName:       auth.GetDisplayName(),
 		ClientIP:          auth.Request.ClientIP,
 		ClientPort:        auth.Request.XClientPort,
+		ClientNet:         auth.Runtime.BFClientNet,
 		ClientHost:        auth.Request.ClientHost,
+		ClientID:          auth.Request.XClientID,
 		UserAgent:         auth.Request.UserAgent,
+		LocalIP:           auth.Request.XLocalIP,
+		LocalPort:         auth.Request.XPort,
 		OIDCCID:           auth.Request.OIDCCID,
 		SAMLEntityID:      auth.Request.SAMLEntityID,
+		AuthLoginAttempt:  auth.Request.AuthLoginAttempt,
+		IDP:               idPInfoFromAuthState(auth),
 		TLS:               tlsInfoFromAuthState(auth),
-		Runtime: pluginapi.RuntimeFlags{
-			LocalRequest:  auth.Request.NoAuth,
-			Authenticated: auth.Runtime.Authenticated,
-		},
+		Diagnostics:       diagnosticsFromAuthState(auth),
+		Runtime:           runtimeFlagsFromAuthState(auth),
 	}
 }
 
@@ -189,6 +199,24 @@ func tlsInfoFromAuthState(auth *core.AuthState) pluginapi.TLSInfo {
 	verified := strings.EqualFold(auth.Request.XSSLClientVerify, "SUCCESS")
 
 	return pluginapi.TLSInfo{
+		Legacy: pluginapi.TLSLegacyInfo{
+			State:            auth.Request.XSSL,
+			SessionID:        auth.Request.XSSLSessionID,
+			ClientVerify:     auth.Request.XSSLClientVerify,
+			ClientDN:         auth.Request.XSSLClientDN,
+			ClientCommonName: auth.Request.XSSLClientCN,
+			Issuer:           auth.Request.XSSLIssuer,
+			ClientNotBefore:  auth.Request.XSSLClientNotBefore,
+			ClientNotAfter:   auth.Request.XSSLClientNotAfter,
+			SubjectDN:        auth.Request.XSSLSubjectDN,
+			IssuerDN:         auth.Request.XSSLIssuerDN,
+			ClientSubjectDN:  auth.Request.XSSLClientSubjectDN,
+			ClientIssuerDN:   auth.Request.XSSLClientIssuerDN,
+			Protocol:         auth.Request.XSSLProtocol,
+			CipherSuite:      auth.Request.XSSLCipher,
+			Serial:           auth.Request.SSLSerial,
+			Fingerprint:      auth.Request.SSLFingerprint,
+		},
 		ServerName:     auth.Request.XSSLSubjectDN,
 		CipherSuite:    auth.Request.XSSLCipher,
 		PeerCommonName: auth.Request.XSSLClientCN,
@@ -207,4 +235,176 @@ func boolToCount(ok bool) int {
 	}
 
 	return 0
+}
+
+// runtimeFlagsFromAuthState maps core outcome flags into the public snapshot.
+func runtimeFlagsFromAuthState(auth *core.AuthState) pluginapi.RuntimeFlags {
+	if auth == nil {
+		return pluginapi.RuntimeFlags{}
+	}
+
+	noAuth := auth.Request.NoAuth
+
+	return pluginapi.RuntimeFlags{
+		Debug:                    debugEnabled(auth),
+		LocalRequest:             noAuth,
+		NoAuth:                   noAuth,
+		UserFound:                auth.Runtime.UserFound || auth.GetAccount() != "",
+		Authenticated:            auth.Runtime.Authenticated,
+		Authorized:               auth.Runtime.Authorized,
+		Repeating:                auth.Runtime.BFRepeating,
+		RWP:                      auth.Runtime.BFRWP,
+		EnvironmentRejected:      environmentRejected(auth),
+		EnvironmentStageExpected: stageExpected(auth, stageEnvironment),
+		SubjectStageExpected:     stageExpected(auth, stageSubject),
+	}
+}
+
+// diagnosticsFromAuthState copies bounded status and diagnostic values.
+func diagnosticsFromAuthState(auth *core.AuthState) pluginapi.RequestDiagnostics {
+	if auth == nil {
+		return pluginapi.RequestDiagnostics{}
+	}
+
+	return pluginapi.RequestDiagnostics{
+		StatusMessage:     auth.Runtime.StatusMessage,
+		BruteForceName:    auth.Security.BruteForceName,
+		EnvironmentName:   auth.Runtime.EnvironmentName,
+		LatencyMillis:     latencyMillis(auth.Runtime.StartTime),
+		BruteForceCounter: bruteForceCounter(auth),
+		HTTPStatus:        httpStatus(auth),
+	}
+}
+
+// idPInfoFromAuthState reuses the core Lua IDP mapper when a config snapshot is available.
+func idPInfoFromAuthState(auth *core.AuthState) pluginapi.IDPInfo {
+	if auth == nil {
+		return pluginapi.IDPInfo{}
+	}
+
+	info := pluginapi.IDPInfo{
+		ClientID:   auth.Request.OIDCCID,
+		UserGroups: cloneStrings(auth.GetGroups()),
+	}
+
+	if auth.Cfg() == nil {
+		return info
+	}
+
+	request := lualib.GetCommonRequest()
+	defer lualib.PutCommonRequest(request)
+
+	auth.FillCommonRequest(request)
+
+	info.RequestedScopes = cloneStrings(request.RequestedScopes)
+	info.UserGroups = cloneStrings(request.UserGroups)
+	info.AllowedClientScopes = cloneStrings(request.AllowedClientScopes)
+	info.AllowedClientGrantTypes = cloneStrings(request.AllowedClientGrantTypes)
+	info.GrantType = request.GrantType
+	info.ClientID = request.OIDCCID
+	info.ClientName = request.OIDCClientName
+	info.RedirectURI = request.RedirectURI
+	info.MFAMethod = request.MFAMethod
+	info.MFACompleted = request.MFACompleted
+
+	return info
+}
+
+// debugEnabled reports whether request diagnostics should include debug mode.
+func debugEnabled(auth *core.AuthState) bool {
+	if auth == nil || auth.Cfg() == nil || auth.Cfg().GetServer() == nil {
+		return false
+	}
+
+	return auth.Cfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+}
+
+// environmentRejected reports whether the request was rejected before subject analysis.
+func environmentRejected(auth *core.AuthState) bool {
+	if auth == nil || auth.Request.HTTPClientContext == nil {
+		return false
+	}
+
+	return auth.Request.HTTPClientContext.GetBool(definitions.CtxEnvironmentRejectedKey)
+}
+
+type requestStage string
+
+const (
+	stageEnvironment requestStage = "environment"
+	stageSubject     requestStage = "subject"
+)
+
+// stageExpected reports whether the configured request path includes a Lua stage.
+func stageExpected(auth *core.AuthState, stage requestStage) bool {
+	if auth == nil || auth.Cfg() == nil {
+		return false
+	}
+
+	switch stage {
+	case stageEnvironment:
+		return auth.Cfg().HaveLuaEnvironmentSources()
+	case stageSubject:
+		return auth.Cfg().HaveLuaSubjectSources()
+	default:
+		return false
+	}
+}
+
+// latencyMillis returns elapsed request time in milliseconds when the start time is known.
+func latencyMillis(start time.Time) int64 {
+	if start.IsZero() {
+		return 0
+	}
+
+	elapsed := time.Since(start).Milliseconds()
+	if elapsed < 0 {
+		return 0
+	}
+
+	return elapsed
+}
+
+// bruteForceCounter returns the counter for the active brute-force bucket.
+func bruteForceCounter(auth *core.AuthState) uint {
+	if auth == nil || auth.Security.BruteForceName == "" {
+		return 0
+	}
+
+	if val, ok := auth.Security.BruteForceCounter[auth.Security.BruteForceName]; ok {
+		return val
+	}
+
+	parts := strings.Split(auth.Security.BruteForceName, ",")
+	if len(parts) == 0 {
+		return 0
+	}
+
+	return auth.Security.BruteForceCounter[parts[0]]
+}
+
+// httpStatus returns the host status code selected for the current outcome.
+func httpStatus(auth *core.AuthState) int {
+	if auth == nil {
+		return 0
+	}
+
+	if auth.Runtime.Authenticated && auth.Runtime.StatusCodeOK > 0 {
+		return auth.Runtime.StatusCodeOK
+	}
+
+	if !auth.Runtime.Authenticated && auth.Runtime.StatusCodeFail > 0 {
+		return auth.Runtime.StatusCodeFail
+	}
+
+	return 0
+}
+
+// cloneStrings returns an immutable copy for public snapshot slices.
+func cloneStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	return append([]string(nil), values...)
 }

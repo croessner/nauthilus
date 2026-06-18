@@ -131,6 +131,69 @@ func TestValidateQualifiedComponentName(t *testing.T) {
 	}
 }
 
+func TestPluginPolicyAttributeID(t *testing.T) {
+	attributeID, err := PluginPolicyAttributeID("environment", "geoip", "matched")
+	if err != nil {
+		t.Fatalf("PluginPolicyAttributeID() error = %v", err)
+	}
+
+	if attributeID != "plugin.environment.geoip.matched" {
+		t.Fatalf("PluginPolicyAttributeID() = %q, want plugin.environment.geoip.matched", attributeID)
+	}
+
+	if _, err := PluginPolicyAttributeID("Environment", "geoip", "matched"); !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("PluginPolicyAttributeID() error = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestPublicPolicyFactLogField(t *testing.T) {
+	field, err := PublicPolicyFactLogField("geoip", "matched", true)
+	if err != nil {
+		t.Fatalf("PublicPolicyFactLogField() error = %v", err)
+	}
+
+	if field.Key != "policy_fact_geoip_matched" || field.Value != true {
+		t.Fatalf("PublicPolicyFactLogField() = %#v, want public geoip marker", field)
+	}
+
+	if _, err := PublicPolicyFactLogField("geoip", "Bad", true); !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("PublicPolicyFactLogField() error = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestValidateBackendAttributeName(t *testing.T) {
+	valid := []string{
+		"account",
+		"mailPrimaryAddress",
+		"Proxy-Host",
+		"ldap.attribute_1",
+	}
+
+	for _, name := range valid {
+		t.Run("valid "+name, func(t *testing.T) {
+			if err := ValidateBackendAttributeName(name); err != nil {
+				t.Fatalf("expected valid backend attribute name, got %v", err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"",
+		"mail primary",
+		"mail\nprimary",
+		string(rune(0x7f)),
+	}
+
+	for _, name := range invalid {
+		t.Run("invalid "+name, func(t *testing.T) {
+			err := ValidateBackendAttributeName(name)
+			if !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("expected ErrInvalidName, got %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateMetadata(t *testing.T) {
 	valid := Metadata{
 		Name:       testPluginName,
@@ -170,5 +233,26 @@ func TestSecretContractIsClosureOnly(t *testing.T) {
 
 	if _, ok := secret.MethodByName("WithString"); ok {
 		t.Fatal("Secret must not expose WithString")
+	}
+}
+
+func TestBackendServerCandidateRef(t *testing.T) {
+	candidate := BackendServerCandidate{
+		Name:      "imap-a",
+		Protocol:  "imap",
+		Authority: "mail",
+		Address:   "192.0.2.10",
+		Port:      993,
+		HAProxyV2: true,
+		Alive:     true,
+	}
+
+	ref := candidate.Ref()
+	if ref.Name != candidate.Name ||
+		ref.Protocol != candidate.Protocol ||
+		ref.Authority != candidate.Authority ||
+		ref.Address != candidate.Address ||
+		ref.Port != "993" {
+		t.Fatalf("Ref() = %#v, want candidate reference", ref)
 	}
 }

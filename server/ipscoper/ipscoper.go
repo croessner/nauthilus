@@ -16,9 +16,9 @@
 package ipscoper
 
 import (
-	"fmt"
 	"net"
 
+	"github.com/croessner/nauthilus/pluginapi/v1/helpers"
 	"github.com/croessner/nauthilus/server/config"
 )
 
@@ -138,19 +138,8 @@ func (s *configurableIPScoper) Scope(ctx ScopeContext, ip string) string {
 	isIPv6 := !isIPv4
 
 	if isIPv6 {
-		if cidr := s.cidrFor(ctx); cidr > 0 && cidr <= 128 {
-			if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, cidr)); err == nil && network != nil {
-				return network.String()
-			}
-		}
-	} else {
-		if v4cidr := s.v4cidrFor(ctx); v4cidr > 0 && v4cidr <= 32 {
-			if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, v4cidr)); err == nil && network != nil {
-				return network.String()
-			}
-		}
+		return helpers.ScopedIP(ip, helpers.IPScopingOptions{IPv6CIDR: int(s.cidrFor(ctx))})
 	}
 
-	// Default: return the exact IP
-	return ip
+	return helpers.ScopedIP(ip, helpers.IPScopingOptions{IPv4CIDR: int(s.v4cidrFor(ctx))})
 }

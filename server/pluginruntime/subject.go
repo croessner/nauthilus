@@ -121,7 +121,7 @@ func (b *SubjectSourceBridge) evaluate(
 			return subjectBridgeOutcome{}, err
 		}
 
-		if err := applySubjectLevelResults(ctx, auth, passDBResult, policyCtx, runtimeValues, backendResult, levelResults, &outcome); err != nil {
+		if err := applySubjectLevelResults(ctx, auth, passDBResult, policyCtx, runtimeValues, &backendResult, levelResults, &outcome); err != nil {
 			return subjectBridgeOutcome{}, err
 		}
 	}
@@ -188,7 +188,7 @@ func applySubjectLevelResults(
 	passDBResult *core.PassDBResult,
 	policyCtx *policycollection.DecisionContext,
 	runtimeValues map[string]any,
-	backendResult pluginapi.BackendResult,
+	backendResult *pluginapi.BackendResult,
 	results []subjectExecutionResult,
 	outcome *subjectBridgeOutcome,
 ) error {
@@ -204,13 +204,18 @@ func applySubjectLevelResults(
 
 		applySubjectStatus(auth, item.result.Status)
 		applySubjectLogs(auth, item.result.Logs)
+		auth.ApplyPluginResponseMutation(ctx, item.result.Response)
 
 		if factErr != nil {
 			return factErr
 		}
 
-		applySubjectAttributePatch(auth, passDBResult, &backendResult, item.result.BackendAttributes)
+		applySubjectAttributePatch(auth, passDBResult, backendResult, item.result.BackendAttributes)
 		applySubjectBackendRef(auth, passDBResult, item.result.SelectedBackend)
+
+		if err := applySubjectBackendResultPatch(auth, passDBResult, backendResult, item.result.BackendResultPatch); err != nil {
+			return err
+		}
 
 		deltas = append(deltas, item.result.RuntimeDelta)
 
@@ -310,6 +315,7 @@ func pluginBackendResultFromPassDB(passDBResult *core.PassDBResult) pluginapi.Ba
 	return pluginapi.BackendResult{
 		Attributes:    pluginAttributesFromMapping(passDBResult.Attributes),
 		Account:       passDBResult.Account,
+		AccountField:  passDBResult.AccountField,
 		Authenticated: passDBResult.Authenticated,
 		UserFound:     passDBResult.UserFound,
 		BackendServer: pluginBackendRefFromCore(passDBResult.BackendRef),
@@ -428,6 +434,130 @@ func applySubjectAttributePatch(
 
 		backendResult.Attributes[name] = append([]string(nil), values...)
 		auth.SetAttributeValues(name, attributeValues)
+	}
+}
+
+// applySubjectBackendResultPatch applies explicit value-only backend result changes from a subject source.
+func applySubjectBackendResultPatch(
+	auth *core.AuthState,
+	passDBResult *core.PassDBResult,
+	backendResult *pluginapi.BackendResult,
+	patch *pluginapi.BackendResultPatch,
+) error {
+	if patch == nil {
+		return nil
+	}
+
+	applySubjectAttributePatch(auth, passDBResult, backendResult, patch.Attributes)
+
+	if err := applySubjectAccountPatch(auth, passDBResult, backendResult, patch); err != nil {
+		return err
+	}
+
+	if patch.Authenticated != nil {
+		passDBResult.Authenticated = *patch.Authenticated
+		backendResult.Authenticated = *patch.Authenticated
+	}
+
+	if patch.UserFound != nil {
+		passDBResult.UserFound = *patch.UserFound
+		backendResult.UserFound = *patch.UserFound
+	}
+
+	applySubjectBackendRef(auth, passDBResult, patch.SelectedBackend)
+
+	if patch.SelectedBackend != nil {
+		backendResult.BackendServer = pluginBackendRefFromCore(passDBResult.BackendRef)
+	}
+
+	return nil
+}
+
+// applySubjectAccountPatch updates account identity fields and keeps the selected attribute materialized.
+func applySubjectAccountPatch(
+	auth *core.AuthState,
+	passDBResult *core.PassDBResult,
+	backendResult *pluginapi.BackendResult,
+	patch *pluginapi.BackendResultPatch,
+) error {
+	if passDBResult == nil || backendResult == nil {
+		return nil
+	}
+
+	accountField, err := subjectPatchAccountField(passDBResult, backendResult, patch)
+	if err != nil {
+		return err
+	}
+
+	if accountField != "" {
+		passDBResult.AccountField = accountField
+		backendResult.AccountField = accountField
+	}
+
+	if patch.Account == "" {
+		return nil
+	}
+
+	passDBResult.Account = patch.Account
+	backendResult.Account = patch.Account
+
+	materializeSubjectAccount(auth, passDBResult, backendResult, accountField, patch.Account)
+
+	return nil
+}
+
+// subjectPatchAccountField determines the account field used by a subject backend-result patch.
+func subjectPatchAccountField(
+	passDBResult *core.PassDBResult,
+	backendResult *pluginapi.BackendResult,
+	patch *pluginapi.BackendResultPatch,
+) (string, error) {
+	switch {
+	case patch == nil:
+		return "", nil
+	case patch.AccountField != "":
+		if err := pluginapi.ValidateBackendAttributeName(patch.AccountField); err != nil {
+			return "", err
+		}
+
+		return patch.AccountField, nil
+	case backendResult != nil && backendResult.AccountField != "":
+		return backendResult.AccountField, nil
+	case passDBResult != nil && passDBResult.AccountField != "":
+		return passDBResult.AccountField, nil
+	case patch.Account != "":
+		return pluginBackendAccountField, nil
+	default:
+		return "", nil
+	}
+}
+
+// materializeSubjectAccount writes the patched account under the selected backend attribute.
+func materializeSubjectAccount(
+	auth *core.AuthState,
+	passDBResult *core.PassDBResult,
+	backendResult *pluginapi.BackendResult,
+	accountField string,
+	account string,
+) {
+	if accountField == "" {
+		return
+	}
+
+	if passDBResult.Attributes == nil {
+		passDBResult.Attributes = make(bktype.AttributeMapping)
+	}
+
+	if backendResult.Attributes == nil {
+		backendResult.Attributes = make(map[string][]string)
+	}
+
+	values := []any{account}
+	passDBResult.Attributes[accountField] = values
+	backendResult.Attributes[accountField] = []string{account}
+
+	if auth != nil {
+		auth.SetAttributeValues(accountField, values)
 	}
 }
 

@@ -17,9 +17,85 @@ package pluginapi
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+var (
+	// ErrInvalidRedisScriptName is returned when a named Redis script uses an unsafe or unstable name.
+	ErrInvalidRedisScriptName = errors.New("invalid redis script name")
+
+	// ErrRedisScriptNotFound is returned when a plugin tries to run a script that was not uploaded.
+	ErrRedisScriptNotFound = errors.New("redis script not found")
+
+	// ErrInvalidHTTPRequest is returned when a host-managed outbound HTTP request is malformed.
+	ErrInvalidHTTPRequest = errors.New("invalid plugin http request")
+
+	// ErrHTTPResponseTooLarge is returned when a host-managed HTTP response exceeds the configured body limit.
+	ErrHTTPResponseTooLarge = errors.New("plugin http response too large")
+
+	// ErrInvalidConnectionTarget is returned when a connection target is unsafe or malformed.
+	ErrInvalidConnectionTarget = errors.New("invalid plugin connection target")
+
+	// ErrConnectionTargetConflict is returned when a duplicate connection target registration is not idempotent.
+	ErrConnectionTargetConflict = errors.New("plugin connection target conflict")
+)
+
+// BackendServers exposes immutable backend candidates from host monitoring state.
+type BackendServers interface {
+	List(context.Context) []BackendServerCandidate
+}
+
+// HTTPClient executes outbound HTTP requests through host-managed instrumentation.
+type HTTPClient interface {
+	Do(context.Context, HTTPRequest) (HTTPResponse, error)
+}
+
+// HTTPRequest describes one host-managed outbound HTTP call without exposing net/http objects.
+type HTTPRequest struct {
+	Headers          map[string][]string
+	Body             []byte
+	Method           string
+	URL              string
+	Service          string
+	Timeout          time.Duration
+	MaxResponseBytes int64
+}
+
+// HTTPResponse contains the bounded response returned by the host HTTP facade.
+type HTTPResponse struct {
+	Headers    map[string][]string
+	Body       []byte
+	StatusCode int
+}
+
+// ConnectionTargetDirection describes which endpoint side should be counted.
+type ConnectionTargetDirection string
+
+const (
+	// ConnectionTargetDirectionLocal counts local listening endpoints.
+	ConnectionTargetDirectionLocal ConnectionTargetDirection = "local"
+
+	// ConnectionTargetDirectionRemote counts remote outbound endpoints.
+	ConnectionTargetDirectionRemote ConnectionTargetDirection = "remote"
+)
+
+// ConnectionTarget describes one named network target for host-owned observability.
+type ConnectionTarget struct {
+	Labels      map[string]string
+	Name        string
+	Address     string
+	Description string
+	Direction   ConnectionTargetDirection
+}
+
+// ConnectionTargets registers network targets for host-owned connection observability.
+type ConnectionTargets interface {
+	Register(context.Context, ConnectionTarget) error
+	Count(context.Context, string) (int, bool)
+}
 
 // Redis exposes host-owned Redis command handles without exposing internal singletons.
 type Redis interface {
@@ -27,6 +103,39 @@ type Redis interface {
 	Write() redis.Cmdable
 	ReadPipeline() redis.Pipeliner
 	WritePipeline() redis.Pipeliner
+	Keys() RedisKeyBuilder
+	Scripts() RedisScriptRegistry
+}
+
+// RedisKeyBuilder builds host-prefixed Redis keys and cluster-safe key groups.
+type RedisKeyBuilder interface {
+	Key(string) string
+	Keys(...string) []string
+	SameSlot([]string, string) []string
+}
+
+// RedisScriptRegistry uploads and runs host-managed named Redis scripts.
+type RedisScriptRegistry interface {
+	Upload(context.Context, string, string) (string, error)
+	Run(context.Context, string, []string, ...any) (any, error)
+}
+
+// Cache exposes a process-local module cache shared by a plugin module's components.
+type Cache interface {
+	Set(context.Context, string, any, time.Duration)
+	Get(context.Context, string) (any, bool)
+	Delete(context.Context, string) bool
+	Exists(context.Context, string) bool
+	Push(context.Context, string, any) int
+	PopAll(context.Context, string) []any
+	Clear(context.Context)
+}
+
+// DeterministicHelpers exposes shared non-secret helper logic used by plugin ports.
+type DeterministicHelpers interface {
+	AccountTag(string) string
+	ScopedIP(string, string) string
+	IsRoutableIP(string) bool
 }
 
 // LDAPScope describes LDAP search scope.

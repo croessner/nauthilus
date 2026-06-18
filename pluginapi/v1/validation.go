@@ -35,6 +35,8 @@ var (
 
 var pluginNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,62}$`)
 
+var backendAttributeNamePattern = regexp.MustCompile(`^[!-~]+$`)
+
 // ValidateAPIVersion checks that version exactly matches this package contract.
 func ValidateAPIVersion(version string) error {
 	if version != APIVersion {
@@ -52,6 +54,15 @@ func ValidateModuleName(name string) error {
 // ValidateComponentName checks a plugin-local component name.
 func ValidateComponentName(name string) error {
 	return validatePluginName("component", name)
+}
+
+// ValidateBackendAttributeName checks a backend attribute name used in backend results.
+func ValidateBackendAttributeName(name string) error {
+	if !backendAttributeNamePattern.MatchString(name) {
+		return fmt.Errorf("%w: backend attribute %q must be printable ASCII without spaces", ErrInvalidName, name)
+	}
+
+	return nil
 }
 
 // ValidateQualifiedComponentName checks a fully qualified module.component name.

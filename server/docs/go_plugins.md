@@ -128,6 +128,29 @@ derived from safe module metadata and registered component descriptors. It inclu
 `Metadata.Description` and `Metadata.DocsURL`, required capabilities, and component descriptors while omitting
 plugin-owned `config` values.
 
+## Runtime Services And Boundaries
+
+Nauthilus supplies host-owned facades to loaded plugins after registration and before request-time execution is enabled:
+logging, tracing, bounded metrics, Redis command handles with key/script helpers, LDAP queues, host-managed outbound
+HTTP, backend-candidate discovery, connection-target observability, deterministic helper functions, and a module-scoped
+process cache. These services do not require additional loader config beyond the normal Nauthilus service config and the
+module's `plugins.modules[]` entry.
+
+Some Lua helper families intentionally remain plugin-owned in the native contract:
+
+- extra or named Redis pools;
+- SMTP and LMTP mail transports;
+- raw TCP sockets, dialers, and HAProxy map update clients;
+- SQL drivers, Telegram clients, template libraries, and other integration-specific packages.
+
+Plugins that own these dependencies must keep their settings in the module `config` subtree, prefer secret references
+such as files over inline credentials, close resources in `Stop`, support `Reconfigure` only when they can swap state
+safely, and redact DSNs, passwords, bearer tokens, message bodies, request credentials, raw SQL, and raw transport errors
+from logs, metrics, traces, policy facts, and status messages.
+
+`Host.ConnectionTargets(scope)` is observability-only. It lets a plugin register named `host:port` targets for generic
+connection visibility, but it does not open sockets or manage plugin-owned network clients.
+
 ## Observability
 
 The runtime emits structured logs for artifact verification, module load and registration, lifecycle start/stop, reload,

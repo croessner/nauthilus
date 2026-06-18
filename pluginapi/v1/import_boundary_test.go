@@ -19,23 +19,19 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestPublicPackageDoesNotImportServerInternals(t *testing.T) {
-	entries, err := os.ReadDir(".")
+	files, err := publicPackageGoFiles(".")
 	if err != nil {
-		t.Fatalf("read package directory: %v", err)
+		t.Fatalf("read public package files: %v", err)
 	}
 
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-
+	for _, name := range files {
 		parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
 		if err != nil {
 			t.Fatalf("parse imports for %s: %v", name, err)
@@ -52,6 +48,37 @@ func TestPublicPackageDoesNotImportServerInternals(t *testing.T) {
 			}
 		}
 	}
+}
+
+// publicPackageGoFiles returns production Go files for pluginapi and public subpackages.
+func publicPackageGoFiles(root string) ([]string, error) {
+	var files []string
+
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if entry.IsDir() {
+			switch entry.Name() {
+			case "testdata", ".git":
+				return filepath.SkipDir
+			default:
+				return nil
+			}
+		}
+
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			files = append(files, path)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
 }
 
 // isForbiddenPublicAPIImport reports whether importPath binds pluginapi to host internals.

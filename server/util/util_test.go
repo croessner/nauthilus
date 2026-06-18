@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/croessner/nauthilus/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-gonic/gin"
@@ -253,6 +254,22 @@ func TestComparePasswords(t *testing.T) {
 				t.Errorf("Expected outcome '%v' but got '%v' for the test case: %s", testCase.ExpectedOutcome, outcome, testCase.Name)
 			}
 		}
+	}
+}
+
+func TestPasswordHashHelpersMatchPublicImplementation(t *testing.T) {
+	const plainPassword = "s3cret"
+
+	SetDefaultConfigFile(&config.FileSettings{Server: &config.ServerSection{}})
+	SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	prepared := PreparePassword(plainPassword)
+	got := GetHash(prepared)
+
+	want := password.GenerateHashString(plainPassword, password.HashOptions{})
+
+	if got != want {
+		t.Fatalf("GetHash(PreparePassword()) = %q, want public helper %q", got, want)
 	}
 }
 

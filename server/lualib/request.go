@@ -134,6 +134,9 @@ type CommonRequest struct {
 	// SAMLEntityID represents the SAML Entity ID used for authentication.
 	SAMLEntityID string
 
+	// AuthLoginAttempt stores the incoming authentication attempt ordinal.
+	AuthLoginAttempt uint
+
 	// GrantType represents the OIDC grant type used for the current flow.
 	GrantType string
 
@@ -289,6 +292,7 @@ func (c *CommonRequest) Reset() {
 	c.Method = ""
 	c.OIDCCID = ""
 	c.SAMLEntityID = ""
+	c.AuthLoginAttempt = 0
 	c.GrantType = ""
 	c.OIDCClientName = ""
 	c.RedirectURI = ""
@@ -398,6 +402,7 @@ func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lu
 	request.RawSetString(definitions.LuaRequestMethod, lua.LString(c.Method))
 	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
 	request.RawSetString(definitions.LuaRequestSAMLEntityID, lua.LString(c.SAMLEntityID))
+	request.RawSetString(definitions.LuaRequestAuthLoginAttempt, lua.LNumber(c.AuthLoginAttempt))
 	request.RawSetString(definitions.LuaRequestGrantType, lua.LString(c.GrantType))
 	request.RawSetString(definitions.LuaRequestOIDCClientName, lua.LString(c.OIDCClientName))
 	request.RawSetString(definitions.LuaRequestRedirectURI, lua.LString(c.RedirectURI))

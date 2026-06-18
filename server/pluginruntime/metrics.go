@@ -221,21 +221,21 @@ type metricHandle struct {
 
 // Add records a counter or gauge delta when labels are valid.
 func (h *metricHandle) Add(ctx context.Context, value float64, labels ...pluginapi.LabelValue) {
-	h.observe(ctx, value, labels...)
+	h.observe(ctx, metricOperationAdd, value, labels...)
 }
 
 // Set records a gauge value when labels are valid.
 func (h *metricHandle) Set(ctx context.Context, value float64, labels ...pluginapi.LabelValue) {
-	h.observe(ctx, value, labels...)
+	h.observe(ctx, metricOperationSet, value, labels...)
 }
 
 // Observe records a histogram or summary sample when labels are valid.
 func (h *metricHandle) Observe(ctx context.Context, value float64, labels ...pluginapi.LabelValue) {
-	h.observe(ctx, value, labels...)
+	h.observe(ctx, metricOperationObserve, value, labels...)
 }
 
 // observe validates labels and records one Prometheus-backed observation.
-func (h *metricHandle) observe(_ context.Context, value float64, labels ...pluginapi.LabelValue) {
+func (h *metricHandle) observe(_ context.Context, operation metricOperation, value float64, labels ...pluginapi.LabelValue) {
 	if h == nil || h.owner == nil {
 		return
 	}
@@ -260,7 +260,7 @@ func (h *metricHandle) observe(_ context.Context, value float64, labels ...plugi
 	h.observations++
 	h.owner.mu.Unlock()
 
-	h.observePrometheus(value, labelValues)
+	h.observePrometheus(operation, value, labelValues)
 }
 
 // validateLabels rejects undeclared, duplicate, empty, and overlong label values.
@@ -307,12 +307,26 @@ func (h *metricHandle) prometheusLabelValues(labels []pluginapi.LabelValue) []st
 	return values
 }
 
-// observePrometheus writes the validated observation to the registered collector.
-func (h *metricHandle) observePrometheus(value float64, labels []string) {
+type metricOperation string
+
+const (
+	metricOperationAdd     metricOperation = "add"
+	metricOperationSet     metricOperation = "set"
+	metricOperationObserve metricOperation = "observe"
+)
+
+// observePrometheus writes the validated operation to the registered collector.
+func (h *metricHandle) observePrometheus(operation metricOperation, value float64, labels []string) {
 	switch h.kind {
 	case metricKindCounter:
 		h.counter.WithLabelValues(labels...).Add(value)
 	case metricKindGauge:
+		if operation == metricOperationAdd {
+			h.gauge.WithLabelValues(labels...).Add(value)
+
+			return
+		}
+
 		h.gauge.WithLabelValues(labels...).Set(value)
 	case metricKindHistogram:
 		h.histogram.WithLabelValues(labels...).Observe(value)

@@ -64,6 +64,7 @@ type HookDescriptor struct {
 }
 
 // HookRequest is the API-level request value passed to hook plugins.
+// Headers and query values are host-built copies; secret-bearing headers are redacted before invocation.
 type HookRequest struct {
 	Snapshot RequestSnapshot
 	Headers  map[string][]string
@@ -74,6 +75,7 @@ type HookRequest struct {
 }
 
 // HookResponse is the API-level response value returned by hook plugins.
+// Use standard net/http status constants for StatusCode; the host filters unsafe headers and keeps HEAD bodies empty.
 type HookResponse struct {
 	Headers    map[string][]string
 	Body       []byte

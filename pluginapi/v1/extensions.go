@@ -92,13 +92,15 @@ type SubjectRequest struct {
 
 // SubjectResult is returned by post-backend subject sources.
 type SubjectResult struct {
-	Status            *StatusMessage
-	SelectedBackend   *BackendServerRef
-	Logs              []LogField
-	Facts             []PolicyFact
-	BackendAttributes AttributePatch
-	RuntimeDelta      RuntimeDelta
-	Rejected          bool
+	Status             *StatusMessage
+	SelectedBackend    *BackendServerRef
+	BackendResultPatch *BackendResultPatch
+	Logs               []LogField
+	Facts              []PolicyFact
+	BackendAttributes  AttributePatch
+	Response           ResponseMutation
+	RuntimeDelta       RuntimeDelta
+	Rejected           bool
 }
 
 // SubjectSource enriches or rejects a subject after backend evaluation.
@@ -120,6 +122,7 @@ type ObligationResult struct {
 	Status       *StatusMessage
 	Logs         []LogField
 	Facts        []PolicyFact
+	Response     ResponseMutation
 	RuntimeDelta RuntimeDelta
 	Applied      bool
 	Temporary    bool

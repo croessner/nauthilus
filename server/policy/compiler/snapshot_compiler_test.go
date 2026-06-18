@@ -647,6 +647,7 @@ func TestCompilerAcceptsLuaActionDispatchObligationArgs(t *testing.T) {
 			Args: map[string]any{
 				policy.ObligationArgAction:      policy.LuaActionDispatchLua,
 				policy.ObligationArgEnvironment: "lua_environment_named_script",
+				policy.ObligationArgFeature:     policy.LuaActionDispatchBruteForce,
 				policy.ObligationArgWait:        true,
 			},
 		},
@@ -664,6 +665,10 @@ func TestCompilerAcceptsLuaActionDispatchObligationArgs(t *testing.T) {
 
 	if got := obligations[0].Args[policy.ObligationArgAction]; got != policy.LuaActionDispatchLua {
 		t.Fatalf("action arg = %v, want %s", got, policy.LuaActionDispatchLua)
+	}
+
+	if got := obligations[0].Args[policy.ObligationArgFeature]; got != policy.LuaActionDispatchBruteForce {
+		t.Fatalf("feature arg = %v, want %s", got, policy.LuaActionDispatchBruteForce)
 	}
 }
 
@@ -692,6 +697,11 @@ func TestCompilerRejectsLuaActionDispatchInvalidArgs(t *testing.T) {
 			name:    "non-boolean wait",
 			args:    map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchLua, policy.ObligationArgWait: "yes"},
 			wantErr: "must be a boolean",
+		},
+		{
+			name:    "non-string feature",
+			args:    map[string]any{policy.ObligationArgAction: policy.LuaActionDispatchLua, "feature": true},
+			wantErr: "must be a string",
 		},
 		{
 			name:    "unknown argument",

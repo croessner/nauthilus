@@ -2151,6 +2151,9 @@ const (
 	// LuaRequestSAMLEntityID represents the SAML Entity ID used for authentication.
 	LuaRequestSAMLEntityID = "saml_entity_id"
 
+	// LuaRequestAuthLoginAttempt represents the incoming authentication attempt ordinal.
+	LuaRequestAuthLoginAttempt = "auth_login_attempt"
+
 	// LuaRequestLatency represents the request latency in milliseconds.
 	LuaRequestLatency = "latency"
 

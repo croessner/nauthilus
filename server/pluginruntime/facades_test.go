@@ -17,9 +17,14 @@ package pluginruntime
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	"github.com/croessner/nauthilus/pluginapi/v1/helpers"
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/go-redis/redismock/v9"
@@ -33,7 +38,82 @@ const (
 	facadeLDAPPoolName = "default"
 	facadeMetricResult = "result"
 	facadeMetricOK     = "ok"
+	facadeIMAPProtocol = "imap"
+	facadeIMAPHost     = "192.0.2.10"
+	facadeSMTPProtocol = "smtp"
+	facadeSMTPHost     = "192.0.2.25"
+	facadeRedisKey     = "key"
 )
+
+type facadeRedisMockError string
+
+// Error returns the Redis mock error text.
+func (err facadeRedisMockError) Error() string {
+	return string(err)
+}
+
+func TestBackendServerFacadeReturnsSafeImmutableCandidates(t *testing.T) {
+	facade := NewBackendServerFacade(func() []*config.BackendServer {
+		return []*config.BackendServer{
+			{
+				Protocol:  facadeIMAPProtocol,
+				Host:      facadeIMAPHost,
+				Port:      993,
+				HAProxyV2: true,
+			},
+			nil,
+		}
+	})
+
+	candidates := facade.List(context.Background())
+	if len(candidates) != 1 {
+		t.Fatalf("List() length = %d, want 1", len(candidates))
+	}
+
+	candidate := candidates[0]
+	if candidate.Protocol != facadeIMAPProtocol ||
+		candidate.Address != facadeIMAPHost ||
+		candidate.Port != 993 ||
+		!candidate.HAProxyV2 ||
+		!candidate.Alive {
+		t.Fatalf("candidate = %#v, want safe backend server fields", candidate)
+	}
+
+	candidates[0].Address = "198.51.100.99"
+	again := facade.List(context.Background())
+
+	if again[0].Address != facadeIMAPHost {
+		t.Fatalf("candidate mutation changed host state: %#v", again[0])
+	}
+}
+
+func TestHostBackendServersUsesCoreCandidateSource(t *testing.T) {
+	previous := core.ListBackendServers()
+
+	core.BackendServers.Update([]*config.BackendServer{
+		{Protocol: facadeSMTPProtocol, Host: facadeSMTPHost, Port: 25},
+	})
+	t.Cleanup(func() {
+		core.BackendServers.Update(previous)
+	})
+
+	host := NewHost()
+
+	candidates := host.BackendServers().List(context.Background())
+	if len(candidates) != 1 {
+		t.Fatalf("BackendServers().List() length = %d, want 1", len(candidates))
+	}
+
+	if candidates[0].Protocol != facadeSMTPProtocol || candidates[0].Address != facadeSMTPHost || candidates[0].Port != 25 {
+		t.Fatalf("candidate = %#v, want core backend server", candidates[0])
+	}
+
+	candidates[0].Address = "198.51.100.25"
+
+	if got := core.ListBackendServers()[0].Host; got != facadeSMTPHost {
+		t.Fatalf("core backend host = %q, want unchanged host", got)
+	}
+}
 
 func TestRedisFacadeUsesInjectedHandles(t *testing.T) {
 	db, mock := redismock.NewClientMock()
@@ -56,6 +136,209 @@ func TestRedisFacadeUsesInjectedHandles(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("Redis expectations were not met: %v", err)
+	}
+}
+
+func TestRedisKeyFacadeBuildsPrefixedClusterSafeKeys(t *testing.T) {
+	db, _ := redismock.NewClientMock()
+	facade := NewRedisFacade(rediscli.NewTestClient(db), RedisFacadePrefix("ntc:"))
+
+	key := facade.Keys().Key("acct:{acm-demo}alice:stepup")
+	if key != "ntc:acct:{acm-demo}alice:stepup" {
+		t.Fatalf("Key() = %q, want prefix with hash tag preserved", key)
+	}
+
+	keys := facade.Keys().Keys("acct:{left}alice:ips", "acct:{right}alice:fails")
+	sameSlot := facade.Keys().SameSlot(keys, "{native}")
+
+	want := []string{"ntc:acct:{native}alice:ips", "ntc:acct:{native}alice:fails"}
+	if len(sameSlot) != len(want) || sameSlot[0] != want[0] || sameSlot[1] != want[1] {
+		t.Fatalf("SameSlot() = %#v, want %#v", sameSlot, want)
+	}
+}
+
+func TestRedisScriptFacadeUploadsAndRunsByName(t *testing.T) {
+	db, mock := redismock.NewClientMock()
+	facade := NewRedisFacade(rediscli.NewTestClient(db))
+	ctx := context.Background()
+
+	mock.ExpectScriptLoad("return ARGV[1]").SetVal("sha-demo")
+
+	sha, err := facade.Scripts().Upload(ctx, "demo_script", "return ARGV[1]")
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+
+	if sha != "sha-demo" {
+		t.Fatalf("Upload() sha = %q, want sha-demo", sha)
+	}
+
+	mock.ExpectEvalSha("sha-demo", []string{facadeRedisKey}, "value").SetVal("value")
+
+	result, err := facade.Scripts().Run(ctx, "demo_script", []string{facadeRedisKey}, "value")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if result != "value" {
+		t.Fatalf("Run() result = %#v, want value", result)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("Redis expectations were not met: %v", err)
+	}
+}
+
+func TestRedisScriptFacadeRecoversNoScriptOnce(t *testing.T) {
+	db, mock := redismock.NewClientMock()
+	facade := NewRedisFacade(rediscli.NewTestClient(db))
+	ctx := context.Background()
+
+	mock.ExpectScriptLoad("return 1").SetVal("sha-old")
+
+	if _, err := facade.Scripts().Upload(ctx, "recover_script", "return 1"); err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+
+	mock.ExpectEvalSha("sha-old", []string{facadeRedisKey}).SetErr(facadeRedisMockError("NOSCRIPT No matching script. Please use EVAL."))
+	mock.ExpectScriptLoad("return 1").SetVal("sha-new")
+	mock.ExpectEvalSha("sha-new", []string{facadeRedisKey}).SetVal(int64(1))
+
+	result, err := facade.Scripts().Run(ctx, "recover_script", []string{facadeRedisKey})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if result != int64(1) {
+		t.Fatalf("Run() result = %#v, want 1", result)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("Redis expectations were not met: %v", err)
+	}
+}
+
+func TestRedisScriptFacadeValidatesNames(t *testing.T) {
+	db, _ := redismock.NewClientMock()
+	facade := NewRedisFacade(rediscli.NewTestClient(db))
+
+	_, err := facade.Scripts().Upload(context.Background(), "bad script", "return 1")
+	if !errors.Is(err, pluginapi.ErrInvalidRedisScriptName) {
+		t.Fatalf("Upload() error = %v, want ErrInvalidRedisScriptName", err)
+	}
+}
+
+func TestHostCacheFacadeTTLAndIsolation(t *testing.T) {
+	host := NewHost()
+	ctx := context.Background()
+
+	cacheA, err := host.Cache("module_a")
+	if err != nil {
+		t.Fatalf("Cache(module_a) error = %v", err)
+	}
+
+	cacheB, err := host.Cache("module_b")
+	if err != nil {
+		t.Fatalf("Cache(module_b) error = %v", err)
+	}
+
+	cacheA.Set(ctx, "short", "value", 20*time.Millisecond)
+
+	if value, ok := cacheA.Get(ctx, "short"); !ok || value != "value" {
+		t.Fatalf("Get(short) = %#v, %v; want value", value, ok)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+
+	if cacheA.Exists(ctx, "short") {
+		t.Fatal("Exists(short) = true after TTL expiry")
+	}
+
+	if cacheB.Exists(ctx, "short") {
+		t.Fatal("module_b saw module_a cache value")
+	}
+}
+
+func TestHostCacheFacadeListBatching(t *testing.T) {
+	cache := mustHostCache(t, "module_a")
+	ctx := context.Background()
+
+	if got := cache.Push(ctx, "batch", "a"); got != 1 {
+		t.Fatalf("Push(batch) = %d, want 1", got)
+	}
+
+	if got := cache.Push(ctx, "batch", "b"); got != 2 {
+		t.Fatalf("Push(batch) = %d, want 2", got)
+	}
+
+	values := cache.PopAll(ctx, "batch")
+	if len(values) != 2 || values[0] != "a" || values[1] != "b" {
+		t.Fatalf("PopAll(batch) = %#v, want [a b]", values)
+	}
+
+	if values := cache.PopAll(ctx, "batch"); len(values) != 0 {
+		t.Fatalf("PopAll(batch) after clear = %#v, want empty", values)
+	}
+}
+
+func TestHostCacheFacadeDeleteAndClear(t *testing.T) {
+	cache := mustHostCache(t, "module_a")
+	ctx := context.Background()
+
+	cache.Set(ctx, "persist", true, 0)
+
+	if !cache.Delete(ctx, "persist") {
+		t.Fatal("Delete(persist) = false, want true")
+	}
+
+	cache.Set(ctx, "clear", true, 0)
+	cache.Clear(ctx)
+
+	if cache.Exists(ctx, "clear") {
+		t.Fatal("Exists(clear) = true after Clear")
+	}
+}
+
+// mustHostCache returns a cache scope or fails the test.
+func mustHostCache(t *testing.T, scope string) pluginapi.Cache {
+	t.Helper()
+
+	cache, err := NewHost().Cache(scope)
+	if err != nil {
+		t.Fatalf("Cache(%s) error = %v", scope, err)
+	}
+
+	return cache
+}
+
+func TestHostCacheFacadeRejectsInvalidScope(t *testing.T) {
+	host := NewHost()
+
+	if _, err := host.Cache("bad-scope"); !errors.Is(err, pluginapi.ErrInvalidName) {
+		t.Fatalf("Cache(bad-scope) error = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestDeterministicHelperFacade(t *testing.T) {
+	helper := NewDeterministicHelperFacade(HelperOptions{
+		AccountTag: helpers.AccountTagOptions{
+			UseHashTags:   true,
+			HashTagPrefix: "acm-",
+		},
+		LuaIPv4CIDR: 24,
+		LuaIPv6CIDR: 64,
+	})
+
+	if tag := helper.AccountTag("alice"); tag != "{acm-6384e2b2184bcbf58eccf10ca7a6563c}" {
+		t.Fatalf("AccountTag() = %q, want Lua-compatible account tag", tag)
+	}
+
+	if scoped := helper.ScopedIP("lua_generic", "203.0.113.42"); scoped != "203.0.113.0/24" {
+		t.Fatalf("ScopedIP() = %q, want /24 network", scoped)
+	}
+
+	if helper.IsRoutableIP("10.0.0.1") {
+		t.Fatal("IsRoutableIP() returned true for private IPv4")
 	}
 }
 

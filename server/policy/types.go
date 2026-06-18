@@ -368,6 +368,9 @@ const (
 	// ObligationArgEnvironment names the optional environment source or control argument for Lua action dispatch.
 	ObligationArgEnvironment = "environment"
 
+	// ObligationArgFeature names the stable policy feature that selected an effect.
+	ObligationArgFeature = "feature"
+
 	// ObligationArgWait names the optional wait argument for Lua action dispatch.
 	ObligationArgWait = "wait"
 )

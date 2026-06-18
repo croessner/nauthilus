@@ -32,6 +32,10 @@ const (
 	nativeHookTestFirst     = "first"
 	nativeHookTestSecond    = "second"
 	nativeHookTestMethodGet = "get"
+	nativeHookTestSecret    = "X-Secret-Password"
+	nativeHookTestAlias     = "/native-alias"
+	nativeHookTestHead      = "head"
+	nativeHookTestRepeat    = "repeat"
 )
 
 func TestNativeHookRouteRegistrationAndSuccessResponse(t *testing.T) {
@@ -76,6 +80,130 @@ func TestNativeHookRouteRegistrationAndSuccessResponse(t *testing.T) {
 	}
 }
 
+func TestNativeHookGETAndHEADResponsesAreDeterministic(t *testing.T) {
+	getRunner := &nativeHookTestRunner{
+		response: pluginapi.HookResponse{
+			StatusCode: http.StatusOK,
+			Headers: map[string][]string{
+				nativeHookTestXPlugin: {nativeHookTestMethodGet, nativeHookTestRepeat},
+			},
+			Body: []byte("textmap\n"),
+		},
+	}
+	headRunner := &nativeHookTestRunner{
+		response: pluginapi.HookResponse{
+			StatusCode: http.StatusOK,
+			Headers: map[string][]string{
+				nativeHookTestXPlugin: {nativeHookTestHead},
+			},
+			Body: []byte("head body must not be written"),
+		},
+	}
+	router := newNativeHookTestRouter(t, nativeHookTestConfig{
+		hooks: []NativeHook{
+			nativeHookTestBinding(getRunner, pluginapi.HookDescriptor{
+				Name:         "native_get",
+				Method:       http.MethodGet,
+				Path:         nativeHookTestPath,
+				Scope:        pluginapi.HookScopePublic,
+				Auth:         pluginapi.HookAuthNone,
+				MaxBodyBytes: 32,
+			}),
+			nativeHookTestBinding(headRunner, pluginapi.HookDescriptor{
+				Name:         "native_head",
+				Method:       http.MethodHead,
+				Path:         nativeHookTestPath,
+				Scope:        pluginapi.HookScopePublic,
+				Auth:         pluginapi.HookAuthNone,
+				MaxBodyBytes: 32,
+			}),
+		},
+	})
+
+	getRec := performNativeHookRequest(router, http.MethodGet, nativeHookTestAPIPath+"?tag=a&tag=b", "", "")
+	assertNativeHookGETTextmapResponse(t, getRec, getRunner.request)
+
+	headRec := performNativeHookRequest(router, http.MethodHead, nativeHookTestAPIPath, "", "")
+	assertNativeHookHEADTextmapResponse(t, headRec, headRunner.request)
+}
+
+// assertNativeHookGETTextmapResponse verifies GET body, headers, and query mapping.
+func assertNativeHookGETTextmapResponse(t *testing.T, rec *httptest.ResponseRecorder, request pluginapi.HookRequest) {
+	t.Helper()
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "textmap\n" {
+		t.Fatalf("GET response = %d %q, want 200 textmap body", rec.Code, rec.Body.String())
+	}
+
+	if values := rec.Header().Values(nativeHookTestXPlugin); len(values) != 2 || values[0] != nativeHookTestMethodGet || values[1] != nativeHookTestRepeat {
+		t.Fatalf("GET X-Plugin values = %#v, want [get repeat]", values)
+	}
+
+	if got := request.Query["tag"]; len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("GET query tag = %#v, want [a b]", got)
+	}
+}
+
+// assertNativeHookHEADTextmapResponse verifies HEAD headers without body leakage.
+func assertNativeHookHEADTextmapResponse(t *testing.T, rec *httptest.ResponseRecorder, request pluginapi.HookRequest) {
+	t.Helper()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HEAD status = %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+
+	if got := rec.Body.String(); got != "" {
+		t.Fatalf("HEAD body = %q, want empty body", got)
+	}
+
+	if got := rec.Header().Get(nativeHookTestXPlugin); got != nativeHookTestHead {
+		t.Fatalf("HEAD X-Plugin = %q, want head", got)
+	}
+
+	if request.Method != http.MethodHead || request.Path != nativeHookTestAPIPath {
+		t.Fatalf("HEAD request metadata = %s %s, want HEAD %s", request.Method, request.Path, nativeHookTestAPIPath)
+	}
+}
+
+func TestNativeHookUnsupportedMethodDoesNotInvokePlugin(t *testing.T) {
+	runner, router := newNativeHookTestRouterForMethod(t, http.MethodGet, 32)
+	rec := performNativeHookRequest(router, http.MethodPost, nativeHookTestAPIPath, "payload", "")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s, want 404 for unsupported method", rec.Code, rec.Body.String())
+	}
+
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want zero for unsupported method", runner.calls)
+	}
+}
+
+func TestNativeHookLowercaseMethodDescriptorDispatchesAlias(t *testing.T) {
+	runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusAccepted}}
+	router := newNativeHookTestRouter(t, nativeHookTestConfig{
+		withAliasNoRoute: true,
+		hook: nativeHookTestBinding(runner, pluginapi.HookDescriptor{
+			Name:         nativeHookTestName,
+			Method:       nativeHookTestMethodGet,
+			Path:         nativeHookTestPath,
+			Alias:        nativeHookTestAlias,
+			Scope:        pluginapi.HookScopePublic,
+			Auth:         pluginapi.HookAuthNone,
+			MaxBodyBytes: 32,
+		}),
+	})
+
+	rec := performNativeHookRequest(router, http.MethodGet, nativeHookTestAlias, "", "")
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s, want 202", rec.Code, rec.Body.String())
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want one", runner.calls)
+	}
+}
+
 func TestNativeHookTokenAuthAllowsMatchingScope(t *testing.T) {
 	runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
 	router := newNativeHookTestRouter(t, nativeHookTestConfig{
@@ -114,18 +242,7 @@ func TestNativeHookTokenAuthRejectsMissingScopeBeforePlugin(t *testing.T) {
 }
 
 func TestNativeHookBodyLimitRejectsBeforePlugin(t *testing.T) {
-	runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
-	router := newNativeHookTestRouter(t, nativeHookTestConfig{
-		hook: nativeHookTestBinding(runner, pluginapi.HookDescriptor{
-			Name:         nativeHookTestName,
-			Method:       http.MethodPost,
-			Path:         nativeHookTestPath,
-			Scope:        pluginapi.HookScopePublic,
-			Auth:         pluginapi.HookAuthNone,
-			MaxBodyBytes: 3,
-		}),
-	})
-
+	runner, router := newNativeHookTestRouterForMethod(t, http.MethodPost, 3)
 	rec := performNativeHookRequest(router, http.MethodPost, nativeHookTestAPIPath, "toolarge", "")
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
@@ -143,6 +260,14 @@ func TestNativeHookRejectsHopByHopResponseHeader(t *testing.T) {
 
 func TestNativeHookRejectsHostOwnedResponseHeader(t *testing.T) {
 	assertNativeHookRejectsResponseHeader(t, nativeHookHeaderCSP, "default-src 'none'")
+}
+
+func TestNativeHookRejectsSecretBearingResponseHeaders(t *testing.T) {
+	for _, header := range []string{"Authorization", "Set-Cookie", nativeHookTestSecret} {
+		t.Run(header, func(t *testing.T) {
+			assertNativeHookRejectsResponseHeader(t, header, "secret")
+		})
+	}
 }
 
 // assertNativeHookTokenRejectedBeforePlugin verifies auth/scope failures do not invoke plugin code.
@@ -387,6 +512,7 @@ func TestNativeHookIndexOmitsDuplicateAliasBindings(t *testing.T) {
 type nativeHookTestConfig struct {
 	validator        *nativeHookTokenValidator
 	hook             NativeHook
+	hooks            []NativeHook
 	withAliasNoRoute bool
 }
 
@@ -396,14 +522,21 @@ func newNativeHookTestRouter(t *testing.T, cfg nativeHookTestConfig) *gin.Engine
 	gin.SetMode(gin.TestMode)
 
 	file := &config.FileSettings{Server: &config.ServerSection{Redis: config.Redis{Prefix: "test:"}}}
+	file.Server.DefaultHTTPRequestHeader.Password = nativeHookTestSecret
 	provider := configfx.NewProviderWithSnapshot(file)
 	router := gin.New()
+
+	hooks := cfg.hooks
+	if len(hooks) == 0 && cfg.hook.Runner != nil {
+		hooks = []NativeHook{cfg.hook}
+	}
+
 	handler := New(
 		provider,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		nil,
 		cfg.validator,
-		WithNativeHooks([]NativeHook{cfg.hook}),
+		WithNativeHooks(hooks),
 	)
 	handler.Register(router.Group("/api/v1"))
 
@@ -420,6 +553,32 @@ func newNativeHookTestRouter(t *testing.T, cfg nativeHookTestConfig) *gin.Engine
 	return router
 }
 
+// newNativeHookTestRouterForMethod returns a public hook router for one method.
+func newNativeHookTestRouterForMethod(t *testing.T, method string, maxBodyBytes int64) (*nativeHookTestRunner, *gin.Engine) {
+	t.Helper()
+
+	runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
+	router := newNativeHookTestRouter(t, nativeHookTestConfig{
+		hook: nativeHookTestBinding(runner, pluginapi.HookDescriptor{
+			Name:         nativeHookTestName,
+			Method:       method,
+			Path:         nativeHookTestPath,
+			Scope:        pluginapi.HookScopePublic,
+			Auth:         pluginapi.HookAuthNone,
+			MaxBodyBytes: maxBodyBytes,
+		}),
+	})
+
+	return runner, router
+}
+
+// nativeHookRequestOptions customizes test HTTP requests without duplicating request setup.
+type nativeHookRequestOptions struct {
+	headers       map[string][]string
+	body          string
+	authorization string
+}
+
 func nativeHookTestBinding(runner *nativeHookTestRunner, descriptor pluginapi.HookDescriptor) NativeHook {
 	return NativeHook{
 		Descriptor:    descriptor,
@@ -431,14 +590,29 @@ func nativeHookTestBinding(runner *nativeHookTestRunner, descriptor pluginapi.Ho
 	}
 }
 
+// performNativeHookRequest executes one native hook request with default test metadata.
 func performNativeHookRequest(router http.Handler, method string, path string, body string, authorization string) *httptest.ResponseRecorder {
+	return performNativeHookRequestWithOptions(router, method, path, nativeHookRequestOptions{
+		body:          body,
+		authorization: authorization,
+	})
+}
+
+// performNativeHookRequestWithOptions executes one native hook request with optional headers.
+func performNativeHookRequestWithOptions(router http.Handler, method string, path string, options nativeHookRequestOptions) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(method, path, stringsReader(body))
+	req := httptest.NewRequest(method, path, stringsReader(options.body))
 	req.RemoteAddr = "192.0.2.10:12345"
 	req.Header.Set("User-Agent", "native-hook-test")
 
-	if authorization != "" {
-		req.Header.Set("Authorization", authorization)
+	for key, values := range options.headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	if options.authorization != "" {
+		req.Header.Set("Authorization", options.authorization)
 	}
 
 	router.ServeHTTP(rec, req)

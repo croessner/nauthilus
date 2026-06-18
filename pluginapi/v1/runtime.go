@@ -17,9 +17,34 @@ package pluginapi
 
 import "context"
 
+// IDPInfo contains safe identity-provider policy inputs for a request.
+type IDPInfo struct {
+	RequestedScopes         []string
+	UserGroups              []string
+	AllowedClientScopes     []string
+	AllowedClientGrantTypes []string
+	GrantType               string
+	ClientID                string
+	ClientName              string
+	RedirectURI             string
+	MFAMethod               string
+	MFACompleted            bool
+}
+
+// RequestDiagnostics contains bounded request outcome and diagnostic metadata.
+type RequestDiagnostics struct {
+	StatusMessage     string
+	BruteForceName    string
+	EnvironmentName   string
+	LatencyMillis     int64
+	BruteForceCounter uint
+	HTTPStatus        int
+}
+
 // RequestSnapshot contains immutable, redacted request metadata visible to plugins.
 type RequestSnapshot struct {
 	Headers           map[string][]string
+	IDP               IDPInfo
 	Session           string
 	ExternalSessionID string
 	Service           string
@@ -27,19 +52,49 @@ type RequestSnapshot struct {
 	Method            string
 	Username          string
 	Account           string
+	AccountField      string
+	UniqueUserID      string
+	DisplayName       string
 	ClientIP          string
 	ClientPort        string
+	ClientNet         string
 	ClientHost        string
+	ClientID          string
 	UserAgent         string
+	LocalIP           string
+	LocalPort         string
 	OIDCCID           string
 	SAMLEntityID      string
+	AuthLoginAttempt  uint
 	TLS               TLSInfo
+	Diagnostics       RequestDiagnostics
 	Runtime           RuntimeFlags
 	HealthCheck       bool
 }
 
+// TLSLegacyInfo preserves safe legacy ssl_* request metadata without exposing server internals.
+type TLSLegacyInfo struct {
+	State            string
+	SessionID        string
+	ClientVerify     string
+	ClientDN         string
+	ClientCommonName string
+	Issuer           string
+	ClientNotBefore  string
+	ClientNotAfter   string
+	SubjectDN        string
+	IssuerDN         string
+	ClientSubjectDN  string
+	ClientIssuerDN   string
+	Protocol         string
+	CipherSuite      string
+	Serial           string
+	Fingerprint      string
+}
+
 // TLSInfo describes the accepted TLS state for a request.
 type TLSInfo struct {
+	Legacy         TLSLegacyInfo
 	ServerName     string
 	CipherSuite    string
 	PeerCommonName string
@@ -52,9 +107,17 @@ type TLSInfo struct {
 
 // RuntimeFlags describes host-derived runtime conditions for a request snapshot.
 type RuntimeFlags struct {
-	Debug         bool
-	LocalRequest  bool
-	Authenticated bool
+	Debug                    bool
+	LocalRequest             bool
+	NoAuth                   bool
+	UserFound                bool
+	Authenticated            bool
+	Authorized               bool
+	Repeating                bool
+	RWP                      bool
+	EnvironmentRejected      bool
+	EnvironmentStageExpected bool
+	SubjectStageExpected     bool
 }
 
 // RuntimeContext exposes an isolated read-only runtime context view.

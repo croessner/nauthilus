@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
 	"github.com/croessner/nauthilus/server/config"
@@ -32,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	servererrors "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/pluginloader"
 	"github.com/croessner/nauthilus/server/pluginregistry"
 	"github.com/croessner/nauthilus/server/policy"
@@ -39,6 +41,8 @@ import (
 	policyruntime "github.com/croessner/nauthilus/server/policy/runtime"
 	"github.com/croessner/nauthilus/server/secret"
 	"github.com/gin-gonic/gin"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const (
@@ -56,6 +60,29 @@ const (
 	backendTestStatusKey    = "auth.ok"
 	backendTestStatusText   = "Plugin authenticated"
 	backendTestUIDAttr      = "uid"
+	backendTestClientID     = "backend-client"
+	backendTestLocalIP      = "127.0.0.10"
+	backendTestLocalPort    = "10443"
+	backendTestPendingTOTP  = "pending-totp"
+	backendTestOldCredID    = "old-credential"
+	backendTestNewCredID    = "new-credential"
+	backendTestProtocolIMAP = "imap"
+	backendTestAttestNone   = "none"
+
+	backendTestOpVerifyPassword           = "verify-password"
+	backendTestOpListAccounts             = "list-accounts"
+	backendTestOpBeginTOTP                = "begin-totp"
+	backendTestOpFinishTOTP               = "finish-totp"
+	backendTestOpVerifyTOTP               = "verify-totp"
+	backendTestOpDeleteTOTP               = "delete-totp"
+	backendTestOpGenerateRecoveryCodes    = "generate-recovery-codes"
+	backendTestOpUseRecoveryCode          = "use-recovery-code"
+	backendTestOpDeleteRecoveryCodes      = "delete-recovery-codes"
+	backendTestOpListWebAuthnCredentials  = "list-webauthn-credentials"
+	backendTestOpSaveWebAuthnCredential   = "save-webauthn-credential"
+	backendTestOpUpdateWebAuthnCredential = "update-webauthn-credential"
+	backendTestOpDeleteWebAuthnCredential = "delete-webauthn-credential"
+	backendTestOpPublicMFAState           = "public-mfa-state"
 )
 
 func TestBackendManagerPassDBMapsAuthenticatedResult(t *testing.T) {
@@ -95,6 +122,54 @@ func TestBackendManagerPassDBMapsAuthenticatedResult(t *testing.T) {
 	defer core.PutPassDBResultToPool(result)
 
 	assertAuthenticatedPassDBResult(t, result, auth)
+}
+
+func TestBackendManagerPassDBMapsCustomAccountField(t *testing.T) {
+	backend := &fakePluginBackend{
+		verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+			return pluginapi.BackendResult{
+				Account:       backendTestMail,
+				AccountField:  backendTestMailAttr,
+				UserFound:     true,
+				Authenticated: true,
+			}, nil
+		},
+	}
+	manager := newBackendTestManager(t, backendTestModuleName, backend, false)
+	auth := newBackendTestAuth(t)
+
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		t.Fatalf("PassDB() error = %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	if result.Account != backendTestMail || result.AccountField != backendTestMailAttr {
+		t.Fatalf("account mapping = %q/%q, want %q/%q", result.Account, result.AccountField, backendTestMail, backendTestMailAttr)
+	}
+
+	if got := firstStringAttribute(result.Attributes[backendTestMailAttr]); got != backendTestMail {
+		t.Fatalf("custom account attribute = %q, want %s", got, backendTestMail)
+	}
+}
+
+func TestBackendManagerPassDBRejectsInvalidAccountField(t *testing.T) {
+	backend := &fakePluginBackend{
+		verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+			return pluginapi.BackendResult{
+				Account:      backendTestAccount,
+				AccountField: "mail primary",
+				UserFound:    true,
+			}, nil
+		},
+	}
+	manager := newBackendTestManager(t, backendTestModuleName, backend, false)
+	auth := newBackendTestAuth(t)
+
+	_, err := manager.PassDB(auth)
+	if !stderrors.Is(err, servererrors.ErrBackendTemporaryFailure) {
+		t.Fatalf("PassDB() error = %v, want ErrBackendTemporaryFailure", err)
+	}
 }
 
 func TestBackendManagerAccountDBPropagatesListAccountFactsToPolicy(t *testing.T) {
@@ -162,6 +237,10 @@ func assertBackendResultFlags(t *testing.T, result *core.PassDBResult) {
 
 	if result.Backend != definitions.BackendPlugin || result.BackendName != backendTestQualified {
 		t.Fatalf("backend = %s/%q, want plugin/%s", result.Backend, result.BackendName, backendTestQualified)
+	}
+
+	if result.AccountField != backendTestAccountAttr {
+		t.Fatalf("account field = %q, want %s", result.AccountField, backendTestAccountAttr)
 	}
 }
 
@@ -320,6 +399,222 @@ func TestBackendManagerSameArtifactConfiguredTwiceUsesIndependentPluginResources
 	secondPool := firstStringAttribute(secondResult.Attributes["pool_id"])
 	if firstPool == "" || secondPool == "" || firstPool == secondPool {
 		t.Fatalf("pool ids = %q/%q, want independent plugin-owned resources", firstPool, secondPool)
+	}
+}
+
+func TestBackendManagerTypedMFAOperationsUseTypedRequests(t *testing.T) {
+	manager, backend, auth := newTypedMFABackendTestManager(t)
+
+	exerciseTypedPasswordBackendOperations(t, manager, auth)
+	exerciseTypedTOTPBackendOperations(t, manager, auth)
+	exerciseTypedRecoveryBackendOperations(t, manager, auth)
+	exerciseTypedWebAuthnBackendOperations(t, manager, auth)
+	exerciseTypedPublicMFAStateOperation(t, manager, auth)
+
+	assertRecordedBackendOperations(t, backend)
+}
+
+func TestBackendManagerMissingOptionalMFAOperationsMapToUnknownBackend(t *testing.T) {
+	manager := newBackendTestManager(t, backendTestModuleName, &fakePluginBackend{}, false)
+	auth := newBackendTestAuth(t)
+	credential := newPersistentCredentialForTest("missing-credential")
+
+	for _, testCase := range missingOptionalMFAOperationCases(manager, auth, credential) {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.run()
+			if !stderrors.Is(err, servererrors.ErrUnknownDatabaseBackend) {
+				t.Fatalf("operation error = %v, want ErrUnknownDatabaseBackend", err)
+			}
+		})
+	}
+}
+
+// newTypedMFABackendTestManager builds the recording backend fixture used by typed MFA parity tests.
+func newTypedMFABackendTestManager(t *testing.T) (*BackendManager, *recordingPluginMFABackend, *core.AuthState) {
+	t.Helper()
+
+	backend := newRecordingPluginMFABackend()
+
+	runner := newBackendTestRunner(t, []backendTestModule{
+		{name: backendTestModuleName, backend: backend},
+	})
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	auth := newBackendTestAuth(t)
+	auth.Request.XClientID = backendTestClientID
+	auth.Request.XLocalIP = backendTestLocalIP
+	auth.Request.XPort = backendTestLocalPort
+	auth.Runtime.Context.Set("plugin.trace", "trace-1")
+
+	manager := &BackendManager{runner: runner, qualifiedName: backendTestQualified}
+
+	return manager, backend, auth
+}
+
+// exerciseTypedPasswordBackendOperations verifies the password and account typed requests.
+func exerciseTypedPasswordBackendOperations(t *testing.T, manager *BackendManager, auth *core.AuthState) {
+	t.Helper()
+
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		t.Fatalf("PassDB() error = %v", err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	accounts, err := manager.AccountDB(auth)
+	if err != nil || len(accounts) != 1 || accounts[0] != backendTestAccount {
+		t.Fatalf("AccountDB() = %#v, %v; want account", accounts, err)
+	}
+}
+
+// exerciseTypedTOTPBackendOperations verifies the typed TOTP operation family.
+func exerciseTypedTOTPBackendOperations(t *testing.T, manager *BackendManager, auth *core.AuthState) {
+	t.Helper()
+
+	registration, err := manager.BeginTOTPRegistration(auth, "begin-key")
+	if err != nil {
+		t.Fatalf("BeginTOTPRegistration() error = %v", err)
+	}
+
+	if registration.PendingRegistrationID != backendTestPendingTOTP || registration.OTPAuthURL == "" {
+		t.Fatalf("TOTP registration = %#v, want pending setup", registration)
+	}
+
+	if err := manager.FinishTOTPRegistration(auth, backendTestPendingTOTP, "123456", "finish-key"); err != nil {
+		t.Fatalf("FinishTOTPRegistration() error = %v", err)
+	}
+
+	verified, err := manager.VerifyTOTP(auth, "654321")
+	if err != nil || !verified {
+		t.Fatalf("VerifyTOTP() = %t, %v; want verified", verified, err)
+	}
+
+	if err := manager.DeleteTOTP(auth, "delete-totp-key"); err != nil {
+		t.Fatalf("DeleteTOTP() error = %v", err)
+	}
+}
+
+// exerciseTypedRecoveryBackendOperations verifies typed recovery-code requests.
+func exerciseTypedRecoveryBackendOperations(t *testing.T, manager *BackendManager, auth *core.AuthState) {
+	t.Helper()
+
+	codes, err := manager.GenerateRecoveryCodes(auth, 2, "generate-recovery-key")
+	if err != nil || len(codes) != 2 {
+		t.Fatalf("GenerateRecoveryCodes() = %#v, %v; want two codes", codes, err)
+	}
+
+	valid, err := manager.UseRecoveryCode(auth, "recovery-code", "use-recovery-key")
+	if err != nil || !valid {
+		t.Fatalf("UseRecoveryCode() = %t, %v; want valid", valid, err)
+	}
+
+	if err := manager.DeleteRecoveryCodes(auth, "delete-recovery-key"); err != nil {
+		t.Fatalf("DeleteRecoveryCodes() error = %v", err)
+	}
+
+	remainingValid, remaining, err := manager.ConsumeTOTPRecoveryCode(auth, "recovery-code")
+	if err != nil || !remainingValid || remaining != 1 {
+		t.Fatalf("ConsumeTOTPRecoveryCode() = %t/%d, %v; want valid remaining code", remainingValid, remaining, err)
+	}
+}
+
+// exerciseTypedWebAuthnBackendOperations verifies typed WebAuthn credential requests.
+func exerciseTypedWebAuthnBackendOperations(t *testing.T, manager *BackendManager, auth *core.AuthState) {
+	t.Helper()
+
+	credentials, err := manager.GetWebAuthnCredentials(auth)
+	if err != nil || len(credentials) != 1 || string(credentials[0].ID) != "list-credential" {
+		t.Fatalf("GetWebAuthnCredentials() = %#v, %v; want listed credential", credentials, err)
+	}
+
+	oldCredential := newPersistentCredentialForTest(backendTestOldCredID)
+	newCredential := newPersistentCredentialForTest(backendTestNewCredID)
+
+	if err := manager.SaveWebAuthnCredential(auth, oldCredential); err != nil {
+		t.Fatalf("SaveWebAuthnCredential() error = %v", err)
+	}
+
+	if err := manager.UpdateWebAuthnCredential(auth, oldCredential, newCredential); err != nil {
+		t.Fatalf("UpdateWebAuthnCredential() error = %v", err)
+	}
+
+	if err := manager.DeleteWebAuthnCredential(auth, newCredential); err != nil {
+		t.Fatalf("DeleteWebAuthnCredential() error = %v", err)
+	}
+}
+
+// exerciseTypedPublicMFAStateOperation verifies typed public MFA state requests.
+func exerciseTypedPublicMFAStateOperation(t *testing.T, manager *BackendManager, auth *core.AuthState) {
+	t.Helper()
+
+	state, err := manager.GetPublicMFAState(auth, true)
+	if err != nil || !state.HasTOTP || !state.HasWebAuthn || state.RecoveryCodeCount != 2 || len(state.WebAuthnCredentials) != 1 {
+		t.Fatalf("GetPublicMFAState() = %#v, %v; want public MFA state", state, err)
+	}
+}
+
+type missingOptionalMFAOperationCase struct {
+	name string
+	run  func() error
+}
+
+// missingOptionalMFAOperationCases lists optional backend calls that should use missing-backend semantics.
+func missingOptionalMFAOperationCases(
+	manager *BackendManager,
+	auth *core.AuthState,
+	credential *mfa.PersistentCredential,
+) []missingOptionalMFAOperationCase {
+	return []missingOptionalMFAOperationCase{
+		{name: "begin totp", run: func() error {
+			_, err := manager.BeginTOTPRegistration(auth, "begin-key")
+
+			return err
+		}},
+		{name: "finish totp", run: func() error {
+			return manager.FinishTOTPRegistration(auth, "pending", "123456", "finish-key")
+		}},
+		{name: "verify totp", run: func() error {
+			_, err := manager.VerifyTOTP(auth, "123456")
+
+			return err
+		}},
+		{name: "delete totp", run: func() error {
+			return manager.DeleteTOTP(auth, "delete-key")
+		}},
+		{name: "generate recovery codes", run: func() error {
+			_, err := manager.GenerateRecoveryCodes(auth, 2, "generate-key")
+
+			return err
+		}},
+		{name: "use recovery code", run: func() error {
+			_, err := manager.UseRecoveryCode(auth, "code", "use-key")
+
+			return err
+		}},
+		{name: "delete recovery codes", run: func() error {
+			return manager.DeleteRecoveryCodes(auth, "delete-recovery-key")
+		}},
+		{name: "list webauthn credentials", run: func() error {
+			_, err := manager.GetWebAuthnCredentials(auth)
+
+			return err
+		}},
+		{name: "save webauthn credential", run: func() error {
+			return manager.SaveWebAuthnCredential(auth, credential)
+		}},
+		{name: "update webauthn credential", run: func() error {
+			return manager.UpdateWebAuthnCredential(auth, credential, credential)
+		}},
+		{name: "delete webauthn credential", run: func() error {
+			return manager.DeleteWebAuthnCredential(auth, credential)
+		}},
+		{name: "public mfa state", run: func() error {
+			_, err := manager.GetPublicMFAState(auth, true)
+
+			return err
+		}},
 	}
 }
 
@@ -502,6 +797,345 @@ func (b *fakePluginBackend) ListAccounts(ctx context.Context, request pluginapi.
 	}
 
 	return b.list(ctx, request)
+}
+
+type recordedPluginBackendCall struct {
+	snapshot              pluginapi.RequestSnapshot
+	runtime               pluginapi.RuntimeContext
+	credential            pluginapi.WebAuthnCredential
+	oldCredential         pluginapi.WebAuthnCredential
+	newCredential         pluginapi.WebAuthnCredential
+	credentialID          []byte
+	operation             string
+	username              string
+	idempotencyKey        string
+	pendingRegistrationID string
+	code                  string
+	count                 uint32
+	includeWebAuthn       bool
+}
+
+type recordingPluginMFABackend struct {
+	calls []recordedPluginBackendCall
+}
+
+// newRecordingPluginMFABackend returns a fake backend covering every typed optional MFA interface.
+func newRecordingPluginMFABackend() *recordingPluginMFABackend {
+	return &recordingPluginMFABackend{}
+}
+
+// Name returns the backend component name for the recording fixture.
+func (b *recordingPluginMFABackend) Name() string {
+	return backendTestName
+}
+
+// VerifyPassword records the typed password verification request.
+func (b *recordingPluginMFABackend) VerifyPassword(_ context.Context, request pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+	b.record(backendTestOpVerifyPassword, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{})
+
+	return pluginapi.BackendResult{
+		Account:       request.Username,
+		UserFound:     true,
+		Authenticated: true,
+		BackendServer: backendOperationServerRef(),
+	}, nil
+}
+
+// ListAccounts records the typed account-list request.
+func (b *recordingPluginMFABackend) ListAccounts(_ context.Context, request pluginapi.AccountListRequest) (pluginapi.AccountListResult, error) {
+	b.record(backendTestOpListAccounts, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{})
+
+	return pluginapi.AccountListResult{Accounts: []string{request.Username}}, nil
+}
+
+// BeginTOTP records the typed TOTP begin request.
+func (b *recordingPluginMFABackend) BeginTOTP(_ context.Context, request pluginapi.TOTPBeginRequest) (pluginapi.TOTPBeginResult, error) {
+	b.record(backendTestOpBeginTOTP, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		idempotencyKey: request.IdempotencyKey,
+	})
+
+	return pluginapi.TOTPBeginResult{
+		BackendServer:         backendOperationServerRef(),
+		ExpiresAt:             time.Unix(1_750_000_000, 0),
+		PendingRegistrationID: backendTestPendingTOTP,
+		OTPAuthURL:            "otpauth://totp/nauthilus:alice",
+	}, nil
+}
+
+// FinishTOTP records the typed TOTP finish request.
+func (b *recordingPluginMFABackend) FinishTOTP(_ context.Context, request pluginapi.TOTPFinishRequest) (pluginapi.TOTPFinishResult, error) {
+	b.record(backendTestOpFinishTOTP, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		idempotencyKey:        request.IdempotencyKey,
+		pendingRegistrationID: request.PendingRegistrationID,
+		code:                  request.Code,
+	})
+
+	return pluginapi.TOTPFinishResult{BackendServer: backendOperationServerRef(), Verified: true}, nil
+}
+
+// VerifyTOTP records the typed TOTP verification request.
+func (b *recordingPluginMFABackend) VerifyTOTP(_ context.Context, request pluginapi.TOTPVerifyRequest) (pluginapi.TOTPVerifyResult, error) {
+	b.record(backendTestOpVerifyTOTP, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		code: request.Code,
+	})
+
+	return pluginapi.TOTPVerifyResult{BackendServer: backendOperationServerRef(), Verified: true}, nil
+}
+
+// DeleteTOTP records the typed TOTP delete request.
+func (b *recordingPluginMFABackend) DeleteTOTP(_ context.Context, request pluginapi.TOTPDeleteRequest) error {
+	b.record(backendTestOpDeleteTOTP, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		idempotencyKey: request.IdempotencyKey,
+	})
+
+	return nil
+}
+
+// GenerateRecoveryCodes records the typed recovery-code generation request.
+func (b *recordingPluginMFABackend) GenerateRecoveryCodes(_ context.Context, request pluginapi.RecoveryCodeGenerateRequest) (pluginapi.RecoveryCodeGenerateResult, error) {
+	b.record(backendTestOpGenerateRecoveryCodes, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		idempotencyKey: request.IdempotencyKey,
+		count:          request.Count,
+	})
+
+	return pluginapi.RecoveryCodeGenerateResult{BackendServer: backendOperationServerRef(), Codes: []string{"code-1", "code-2"}}, nil
+}
+
+// UseRecoveryCode records the typed recovery-code consumption request.
+func (b *recordingPluginMFABackend) UseRecoveryCode(_ context.Context, request pluginapi.RecoveryCodeUseRequest) (pluginapi.RecoveryCodeUseResult, error) {
+	b.record(backendTestOpUseRecoveryCode, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		idempotencyKey: request.IdempotencyKey,
+		code:           request.Code,
+	})
+
+	return pluginapi.RecoveryCodeUseResult{BackendServer: backendOperationServerRef(), Valid: true, Remaining: 1}, nil
+}
+
+// DeleteRecoveryCodes records the typed recovery-code delete request.
+func (b *recordingPluginMFABackend) DeleteRecoveryCodes(_ context.Context, request pluginapi.RecoveryCodeDeleteRequest) error {
+	b.record(backendTestOpDeleteRecoveryCodes, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		idempotencyKey: request.IdempotencyKey,
+	})
+
+	return nil
+}
+
+// ListWebAuthnCredentials records the typed WebAuthn list request.
+func (b *recordingPluginMFABackend) ListWebAuthnCredentials(_ context.Context, request pluginapi.WebAuthnListRequest) (pluginapi.WebAuthnListResult, error) {
+	b.record(backendTestOpListWebAuthnCredentials, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{})
+
+	return pluginapi.WebAuthnListResult{
+		BackendServer: backendOperationServerRef(),
+		Credentials:   []pluginapi.WebAuthnCredential{newPluginWebAuthnCredentialForTest("list-credential")},
+	}, nil
+}
+
+// SaveWebAuthnCredential records the typed WebAuthn save request.
+func (b *recordingPluginMFABackend) SaveWebAuthnCredential(_ context.Context, request pluginapi.WebAuthnSaveRequest) error {
+	b.record(backendTestOpSaveWebAuthnCredential, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		credential: request.Credential,
+	})
+
+	return nil
+}
+
+// UpdateWebAuthnCredential records the typed WebAuthn replacement request.
+func (b *recordingPluginMFABackend) UpdateWebAuthnCredential(_ context.Context, request pluginapi.WebAuthnUpdateRequest) error {
+	b.record(backendTestOpUpdateWebAuthnCredential, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		oldCredential: request.OldCredential,
+		newCredential: request.NewCredential,
+	})
+
+	return nil
+}
+
+// DeleteWebAuthnCredential records the typed WebAuthn delete request.
+func (b *recordingPluginMFABackend) DeleteWebAuthnCredential(_ context.Context, request pluginapi.WebAuthnDeleteRequest) error {
+	b.record(backendTestOpDeleteWebAuthnCredential, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		credentialID: append([]byte(nil), request.CredentialID...),
+	})
+
+	return nil
+}
+
+// PublicMFAState records the typed public MFA state request.
+func (b *recordingPluginMFABackend) PublicMFAState(_ context.Context, request pluginapi.PublicMFAStateRequest) (pluginapi.PublicMFAStateResult, error) {
+	credentials := []pluginapi.WebAuthnCredential(nil)
+	if request.IncludeWebAuthn {
+		credentials = []pluginapi.WebAuthnCredential{newPluginWebAuthnCredentialForTest("public-credential")}
+	}
+
+	b.record(backendTestOpPublicMFAState, request.Username, request.Snapshot, request.Runtime, recordedPluginBackendCall{
+		includeWebAuthn: request.IncludeWebAuthn,
+	})
+
+	return pluginapi.PublicMFAStateResult{
+		BackendServer:       backendOperationServerRef(),
+		WebAuthnCredentials: credentials,
+		RecoveryCodeCount:   2,
+		HasTOTP:             true,
+		HasWebAuthn:         true,
+	}, nil
+}
+
+// record appends one normalized call entry for later assertions.
+func (b *recordingPluginMFABackend) record(
+	operation string,
+	username string,
+	snapshot pluginapi.RequestSnapshot,
+	runtime pluginapi.RuntimeContext,
+	extra recordedPluginBackendCall,
+) {
+	extra.operation = operation
+	extra.username = username
+	extra.snapshot = snapshot
+	extra.runtime = runtime
+	b.calls = append(b.calls, extra)
+}
+
+// operations returns operation names in call order.
+func (b *recordingPluginMFABackend) operations() []string {
+	operations := make([]string, 0, len(b.calls))
+	for _, call := range b.calls {
+		operations = append(operations, call.operation)
+	}
+
+	return operations
+}
+
+// assertRecordedBackendOperations verifies every typed backend operation reached the plugin.
+func assertRecordedBackendOperations(t *testing.T, backend *recordingPluginMFABackend) {
+	t.Helper()
+
+	expected := []string{
+		backendTestOpVerifyPassword,
+		backendTestOpListAccounts,
+		backendTestOpBeginTOTP,
+		backendTestOpFinishTOTP,
+		backendTestOpVerifyTOTP,
+		backendTestOpDeleteTOTP,
+		backendTestOpGenerateRecoveryCodes,
+		backendTestOpUseRecoveryCode,
+		backendTestOpDeleteRecoveryCodes,
+		backendTestOpUseRecoveryCode,
+		backendTestOpListWebAuthnCredentials,
+		backendTestOpSaveWebAuthnCredential,
+		backendTestOpUpdateWebAuthnCredential,
+		backendTestOpDeleteWebAuthnCredential,
+		backendTestOpPublicMFAState,
+	}
+	if !sameStrings(backend.operations(), expected) {
+		t.Fatalf("operations = %#v, want %#v", backend.operations(), expected)
+	}
+
+	for _, call := range backend.calls {
+		if call.username != backendTestAccount {
+			t.Fatalf("%s username = %q, want %s", call.operation, call.username, backendTestAccount)
+		}
+
+		if call.snapshot.ClientID != backendTestClientID ||
+			call.snapshot.LocalIP != backendTestLocalIP ||
+			call.snapshot.LocalPort != backendTestLocalPort {
+			t.Fatalf("%s snapshot = %#v, want expanded safe request context", call.operation, call.snapshot)
+		}
+
+		if value, ok := call.runtime.Get("plugin.trace"); !ok || value != "trace-1" {
+			t.Fatalf("%s runtime trace = %#v/%t, want trace-1", call.operation, value, ok)
+		}
+	}
+
+	assertRecordedBackendOperationDetails(t, backend.calls)
+}
+
+// assertRecordedBackendOperationDetails verifies operation-specific typed payload fields.
+func assertRecordedBackendOperationDetails(t *testing.T, calls []recordedPluginBackendCall) {
+	t.Helper()
+
+	byOperation := make(map[string]recordedPluginBackendCall, len(calls))
+	for _, call := range calls {
+		if _, exists := byOperation[call.operation]; !exists {
+			byOperation[call.operation] = call
+		}
+	}
+
+	if byOperation[backendTestOpBeginTOTP].idempotencyKey != "begin-key" {
+		t.Fatalf("begin key = %q, want begin-key", byOperation[backendTestOpBeginTOTP].idempotencyKey)
+	}
+
+	if byOperation[backendTestOpFinishTOTP].pendingRegistrationID != backendTestPendingTOTP ||
+		byOperation[backendTestOpFinishTOTP].code != "123456" {
+		t.Fatalf("finish payload = %#v, want pending-totp/123456", byOperation[backendTestOpFinishTOTP])
+	}
+
+	if byOperation[backendTestOpGenerateRecoveryCodes].count != 2 {
+		t.Fatalf("recovery count = %d, want 2", byOperation[backendTestOpGenerateRecoveryCodes].count)
+	}
+
+	if string(byOperation[backendTestOpSaveWebAuthnCredential].credential.ID) != backendTestOldCredID {
+		t.Fatalf("save credential = %#v, want old credential", byOperation[backendTestOpSaveWebAuthnCredential].credential)
+	}
+
+	if string(byOperation[backendTestOpUpdateWebAuthnCredential].oldCredential.ID) != backendTestOldCredID ||
+		string(byOperation[backendTestOpUpdateWebAuthnCredential].newCredential.ID) != backendTestNewCredID {
+		t.Fatalf("update credentials = %#v, want old/new credentials", byOperation[backendTestOpUpdateWebAuthnCredential])
+	}
+
+	if string(byOperation[backendTestOpDeleteWebAuthnCredential].credentialID) != backendTestNewCredID {
+		t.Fatalf("delete credential id = %q, want new-credential", string(byOperation[backendTestOpDeleteWebAuthnCredential].credentialID))
+	}
+
+	if !byOperation[backendTestOpPublicMFAState].includeWebAuthn {
+		t.Fatal("public MFA state did not request WebAuthn credentials")
+	}
+}
+
+// backendOperationServerRef returns a reusable plugin backend reference for optional operation results.
+func backendOperationServerRef() *pluginapi.BackendServerRef {
+	return &pluginapi.BackendServerRef{
+		Name:     "plugin-backend-a",
+		Protocol: backendTestProtocolIMAP,
+		Address:  "192.0.2.100",
+		Port:     "993",
+	}
+}
+
+// newPluginWebAuthnCredentialForTest creates an API-level credential fixture.
+func newPluginWebAuthnCredentialForTest(id string) pluginapi.WebAuthnCredential {
+	return pluginapi.WebAuthnCredential{
+		LastUsed:       time.Unix(1_750_000_001, 0),
+		ID:             []byte(id),
+		PublicKey:      []byte("public-" + id),
+		Transports:     []string{"usb", "hybrid"},
+		AAGUID:         "aaguid-" + id,
+		Attestation:    backendTestAttestNone,
+		Authenticator:  "platform",
+		SignCount:      17,
+		BackupState:    true,
+		BackupEligible: true,
+	}
+}
+
+// newPersistentCredentialForTest creates a host-side WebAuthn credential fixture.
+func newPersistentCredentialForTest(id string) *mfa.PersistentCredential {
+	return &mfa.PersistentCredential{
+		Credential: webauthn.Credential{
+			ID:              []byte(id),
+			PublicKey:       []byte("public-" + id),
+			AttestationType: backendTestAttestNone,
+			Transport:       []protocol.AuthenticatorTransport{protocol.USB, protocol.Hybrid},
+			Flags: webauthn.CredentialFlags{
+				BackupEligible: true,
+				BackupState:    true,
+			},
+			Authenticator: webauthn.Authenticator{
+				AAGUID:     []byte("aaguid-" + id),
+				SignCount:  17,
+				Attachment: protocol.Platform,
+			},
+		},
+		Name:     id,
+		LastUsed: time.Unix(1_750_000_001, 0),
+	}
 }
 
 type sqlStylePlugin struct {

@@ -18,9 +18,11 @@ package pluginruntime
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"sync"
 
 	pluginapi "github.com/croessner/nauthilus/pluginapi/v1"
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/pluginregistry"
 	"github.com/croessner/nauthilus/server/rediscli"
 )
@@ -32,30 +34,59 @@ type HostOption func(*Host)
 
 // Host exposes process-owned services through the public plugin API.
 type Host struct {
-	serviceContext context.Context
-	logger         *slog.Logger
-	config         pluginapi.ConfigView
-	redis          pluginapi.Redis
-	ldap           pluginapi.LDAP
-	tracerFactory  func(string) pluginapi.Tracer
-	metricsFactory func(string) pluginapi.Metrics
-	workers        sync.WaitGroup
+	serviceContext    context.Context
+	logger            *slog.Logger
+	config            pluginapi.ConfigView
+	redis             pluginapi.Redis
+	helpers           pluginapi.DeterministicHelpers
+	ldap              pluginapi.LDAP
+	backendServers    pluginapi.BackendServers
+	connectionTargets pluginapi.ConnectionTargets
+	httpClient        *http.Client
+	caches            *cacheRegistry
+	redisPrefix       string
+	tracerFactory     func(string) pluginapi.Tracer
+	metricsFactory    func(string) pluginapi.Metrics
+	workers           sync.WaitGroup
 }
 
 // NewHost returns a minimal host facade for lifecycle-capable plugins.
 func NewHost(options ...HostOption) *Host {
 	host := &Host{
-		serviceContext: context.Background(),
-		logger:         slog.Default(),
-		config:         pluginregistry.NewConfigView(nil),
-		tracerFactory:  func(scope string) pluginapi.Tracer { return NewTracerFacade(scope) },
-		metricsFactory: func(scope string) pluginapi.Metrics { return NewMetricsFacade(scope) },
+		serviceContext:    context.Background(),
+		logger:            slog.Default(),
+		config:            pluginregistry.NewConfigView(nil),
+		backendServers:    NewBackendServerFacade(core.ListBackendServers),
+		connectionTargets: NewConnectionTargetFacade(nil),
+		httpClient:        &http.Client{},
+		caches:            newCacheRegistry(),
+		helpers:           NewDeterministicHelperFacade(HelperOptions{}),
+		tracerFactory:     func(scope string) pluginapi.Tracer { return NewTracerFacade(scope) },
+		metricsFactory:    func(scope string) pluginapi.Metrics { return NewMetricsFacade(scope) },
 	}
 	for _, option := range options {
 		option(host)
 	}
 
 	return host
+}
+
+// WithHTTPClient configures the HTTP transport used by host-managed plugin HTTP calls.
+func WithHTTPClient(client *http.Client) HostOption {
+	return func(host *Host) {
+		if client != nil {
+			host.httpClient = client
+		}
+	}
+}
+
+// WithConnectionTargets configures the connection-target facade exposed to plugins.
+func WithConnectionTargets(targets pluginapi.ConnectionTargets) HostOption {
+	return func(host *Host) {
+		if targets != nil {
+			host.connectionTargets = targets
+		}
+	}
 }
 
 // WithServiceContext configures the process service context exposed to plugins.
@@ -92,10 +123,29 @@ func WithRedis(redis pluginapi.Redis) HostOption {
 	}
 }
 
+// WithRedisPrefix configures the prefix used by host Redis key builders.
+func WithRedisPrefix(prefix string) HostOption {
+	return func(host *Host) {
+		host.redisPrefix = prefix
+		if facade, ok := host.redis.(*redisFacade); ok {
+			RedisFacadePrefix(prefix)(facade)
+		}
+	}
+}
+
 // WithRedisClient configures the Redis facade from the central Redis client.
 func WithRedisClient(client rediscli.Client) HostOption {
 	return func(host *Host) {
-		host.redis = NewRedisFacade(client)
+		host.redis = NewRedisFacade(client, RedisFacadePrefix(host.redisPrefix))
+	}
+}
+
+// WithHelpers configures deterministic helper behavior exposed to plugins.
+func WithHelpers(helpers pluginapi.DeterministicHelpers) HostOption {
+	return func(host *Host) {
+		if helpers != nil {
+			host.helpers = helpers
+		}
 	}
 }
 
@@ -110,6 +160,15 @@ func WithLDAP(ldap pluginapi.LDAP) HostOption {
 func WithLDAPExecutor(executor LDAPExecutor) HostOption {
 	return func(host *Host) {
 		host.ldap = NewLDAPFacade(executor)
+	}
+}
+
+// WithBackendServers configures the backend candidate facade exposed to plugins.
+func WithBackendServers(backendServers pluginapi.BackendServers) HostOption {
+	return func(host *Host) {
+		if backendServers != nil {
+			host.backendServers = backendServers
+		}
 	}
 }
 
@@ -168,6 +227,30 @@ func (h *Host) Metrics(scope string) pluginapi.Metrics {
 	return h.metricsFactory(scope)
 }
 
+// HTTP returns a scoped host-managed outbound HTTP facade.
+func (h *Host) HTTP(scope string) pluginapi.HTTPClient {
+	if h == nil {
+		return NewHTTPFacade(scope)
+	}
+
+	return NewHTTPFacade(
+		scope,
+		HTTPFacadeClient(h.httpClient),
+		HTTPFacadeLogger(h.Logger(scope)),
+		HTTPFacadeMetrics(h.Metrics(scope)),
+		HTTPFacadeTracer(h.Tracer(scope)),
+	)
+}
+
+// ConnectionTargets returns a host-owned connection target registration facade.
+func (h *Host) ConnectionTargets(string) pluginapi.ConnectionTargets {
+	if h == nil || h.connectionTargets == nil {
+		return NewConnectionTargetFacade(nil)
+	}
+
+	return h.connectionTargets
+}
+
 // Redis returns the configured host Redis facade.
 func (h *Host) Redis() pluginapi.Redis {
 	if h == nil {
@@ -177,6 +260,24 @@ func (h *Host) Redis() pluginapi.Redis {
 	return h.redis
 }
 
+// Cache returns a process-local cache isolated by plugin module scope.
+func (h *Host) Cache(scope string) (pluginapi.Cache, error) {
+	if h == nil || h.caches == nil {
+		return newCacheRegistry().Cache(scope)
+	}
+
+	return h.caches.Cache(scope)
+}
+
+// Helpers returns deterministic non-secret helper functions.
+func (h *Host) Helpers() pluginapi.DeterministicHelpers {
+	if h == nil || h.helpers == nil {
+		return NewDeterministicHelperFacade(HelperOptions{})
+	}
+
+	return h.helpers
+}
+
 // LDAP returns the configured host LDAP facade.
 func (h *Host) LDAP() pluginapi.LDAP {
 	if h == nil {
@@ -184,6 +285,15 @@ func (h *Host) LDAP() pluginapi.LDAP {
 	}
 
 	return h.ldap
+}
+
+// BackendServers returns the host-owned backend candidate facade.
+func (h *Host) BackendServers() pluginapi.BackendServers {
+	if h == nil || h.backendServers == nil {
+		return NewBackendServerFacade(nil)
+	}
+
+	return h.backendServers
 }
 
 // Config returns a host-wide read-only config view.
@@ -220,7 +330,7 @@ func (h *Host) Go(ctx context.Context, name string, fn func(context.Context) err
 		go cancelWhenDone(workerCtx, ctx, cancel)
 
 		if err := fn(workerCtx); err != nil {
-			h.Logger(name).Error(workerCtx, "plugin worker stopped with error", pluginapi.LogField{Key: "plugin_error_class", Value: "worker"})
+			h.Logger(name).Error(workerCtx, "plugin worker stopped with error", pluginapi.LogField{Key: pluginLogFieldErrorClass, Value: "worker"})
 		}
 	}()
 }

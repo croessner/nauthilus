@@ -19,14 +19,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/sha512"
-	"crypto/subtle"
-	"encoding/base64"
-	"encoding/hex"
 	stderrors "errors"
 	"fmt"
-	"hash"
 	stdlog "log"
 	"log/slog"
 	"math/big"
@@ -41,6 +35,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	pluginpassword "github.com/croessner/nauthilus/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -49,7 +44,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
-	"github.com/simia-tech/crypt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -102,52 +96,26 @@ type CryptPassword struct {
 func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg definitions.Algorithm, pwOption definitions.PasswordOption) (
 	string, error,
 ) {
-	var hashValue hash.Hash
+	password := &pluginpassword.CryptPassword{}
 
-	// Validate algorithm
-	switch alg {
-	case definitions.SSHA512:
-		hashValue = sha512.New()
-	case definitions.SSHA256:
-		hashValue = sha256.New()
-	default:
-		return "", errors.ErrUnsupportedAlgorithm
+	generated, err := password.GenerateString(
+		plainPassword,
+		salt,
+		pluginPasswordAlgorithm(alg),
+		pluginPasswordEncoding(pwOption),
+	)
+	if err != nil {
+		return "", serverPasswordError(err)
 	}
 
-	// Store algorithm and salt in the struct
 	c.Algorithm = alg
-	c.Salt = salt
+	c.PasswordOption = pwOption
 
-	// Write plainPassword and salt to hash
-	hashValue.Write([]byte(plainPassword))
-	hashValue.Write(salt)
+	c.Salt = append([]byte(nil), salt...)
+	c.Password = generated
 
-	// Get hash sum
-	hashSum := hashValue.Sum(nil)
-
-	// Prepare buffer for hash+salt
-	hashWithSalt := make([]byte, len(hashSum)+len(salt))
-	copy(hashWithSalt, hashSum)
-	copy(hashWithSalt[len(hashSum):], salt)
-
-	// Encode according to password option
-	switch pwOption {
-	case definitions.ENCB64:
-		c.Password = base64.StdEncoding.EncodeToString(hashWithSalt)
-		c.PasswordOption = definitions.ENCB64
-	case definitions.ENCHEX:
-		c.Password = hex.EncodeToString(hashWithSalt)
-		c.PasswordOption = definitions.ENCHEX
-	default:
-		return "", errors.ErrUnsupportedPasswordOption
-	}
-
-	return c.Password, nil
+	return generated, nil
 }
-
-// Pre-compiled regex pattern for password prefix matching including curly braces and capturing groups
-// Full format: {SSHA256.B64}payload or {SSHA512.HEX}payload; option and dot are optional, default B64
-var passwordPrefixPattern = regexp.MustCompile(`^\{SSHA(256|512)(?:\.(HEX|B64))?}(.+)$`)
 
 // GetParameters splits an encoded password into its components.
 // It extracts the salt, algorithm, and password option from the crypted password
@@ -155,75 +123,85 @@ var passwordPrefixPattern = regexp.MustCompile(`^\{SSHA(256|512)(?:\.(HEX|B64))?
 func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	salt []byte, alg definitions.Algorithm, pwOption definitions.PasswordOption, err error,
 ) {
-	var decodedPwSalt []byte
+	password := &pluginpassword.CryptPassword{}
 
-	alg = definitions.SSHAUNKNOWN
-	pwOption = definitions.ENCUNKNOWN
-
-	// Use regex to capture algorithm (group1), option (group2), and payload (group3)
-	subs := passwordPrefixPattern.FindStringSubmatch(cryptedPassword)
-	if len(subs) != 4 { // full match + 3 capture groups
-		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
+	salt, algorithm, encoding, err := password.GetParameters(cryptedPassword)
+	if err != nil {
+		return nil, serverPasswordAlgorithm(algorithm), serverPasswordEncoding(encoding), serverPasswordError(err)
 	}
 
-	// Determine algorithm from group 1
-	switch subs[1] {
-	case "512":
-		alg = definitions.SSHA512
-	case "256":
-		alg = definitions.SSHA256
-	default:
-		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
-	}
+	alg = serverPasswordAlgorithm(algorithm)
+	pwOption = serverPasswordEncoding(encoding)
 
 	c.Algorithm = alg
-
-	// Determine password option from group 2 (default B64)
-	switch subs[2] {
-	case "HEX":
-		pwOption = definitions.ENCHEX
-	case "B64", "":
-		pwOption = definitions.ENCB64
-	default:
-		return nil, alg, pwOption, errors.ErrUnsupportedPasswordOption
-	}
-
 	c.PasswordOption = pwOption
+	c.Password = password.Password
 
-	// Group 3 is the encoded password+salt payload
-	c.Password = subs[3]
-
-	// Decode the password based on the password option
-	switch pwOption {
-	case definitions.ENCB64:
-		decodedPwSalt, err = base64.StdEncoding.DecodeString(c.Password)
-	case definitions.ENCHEX:
-		decodedPwSalt, err = hex.DecodeString(c.Password)
-	}
-
-	if err != nil {
-		return nil, alg, pwOption, err
-	}
-
-	// Extract the salt based on the algorithm
-	switch alg {
-	case definitions.SSHA512:
-		if len(decodedPwSalt) < 65 {
-			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
-		}
-
-		salt = decodedPwSalt[64:]
-	case definitions.SSHA256:
-		if len(decodedPwSalt) < 33 {
-			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
-		}
-
-		salt = decodedPwSalt[32:]
-	}
-
-	c.Salt = salt
+	c.Salt = append([]byte(nil), salt...)
 
 	return salt, alg, pwOption, nil
+}
+
+// pluginPasswordAlgorithm maps the server enum to the public password helper enum.
+func pluginPasswordAlgorithm(algorithm definitions.Algorithm) pluginpassword.Algorithm {
+	switch algorithm {
+	case definitions.SSHA512:
+		return pluginpassword.AlgorithmSSHA512
+	case definitions.SSHA256:
+		return pluginpassword.AlgorithmSSHA256
+	default:
+		return pluginpassword.AlgorithmUnknown
+	}
+}
+
+// pluginPasswordEncoding maps the server encoding enum to the public password helper enum.
+func pluginPasswordEncoding(option definitions.PasswordOption) pluginpassword.Encoding {
+	switch option {
+	case definitions.ENCB64:
+		return pluginpassword.EncodingBase64
+	case definitions.ENCHEX:
+		return pluginpassword.EncodingHex
+	default:
+		return pluginpassword.EncodingUnknown
+	}
+}
+
+// serverPasswordAlgorithm maps the public password helper enum back to the server enum.
+func serverPasswordAlgorithm(algorithm pluginpassword.Algorithm) definitions.Algorithm {
+	switch algorithm {
+	case pluginpassword.AlgorithmSSHA512:
+		return definitions.SSHA512
+	case pluginpassword.AlgorithmSSHA256:
+		return definitions.SSHA256
+	default:
+		return definitions.SSHAUNKNOWN
+	}
+}
+
+// serverPasswordEncoding maps the public password helper enum back to the server enum.
+func serverPasswordEncoding(encoding pluginpassword.Encoding) definitions.PasswordOption {
+	switch encoding {
+	case pluginpassword.EncodingBase64:
+		return definitions.ENCB64
+	case pluginpassword.EncodingHex:
+		return definitions.ENCHEX
+	default:
+		return definitions.ENCUNKNOWN
+	}
+}
+
+// serverPasswordError preserves existing server utility error values for callers.
+func serverPasswordError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case stderrors.Is(err, pluginpassword.ErrUnsupportedAlgorithm):
+		return errors.ErrUnsupportedAlgorithm
+	case stderrors.Is(err, pluginpassword.ErrUnsupportedEncoding):
+		return errors.ErrUnsupportedPasswordOption
+	default:
+		return err
+	}
 }
 
 func PreparePassword(password string) string {
@@ -246,37 +224,16 @@ func PreparePasswordBytes(password []byte) []byte {
 		defer clear(nonce)
 	}
 
-	prepared := make([]byte, len(nonce)+1+len(password))
-	copy(prepared, nonce)
-	prepared[len(nonce)] = 0
-	copy(prepared[len(nonce)+1:], password)
-
-	return prepared
+	return pluginpassword.PrepareBytes(password, nonce)
 }
 
 // GetHash creates an SHA-256 hash of a plain text password and returns the first 128 bits.
 func GetHash(value string) string {
-	if getDefaultEnvironment().GetDevMode() {
-		return value
-	}
-
-	return getHashBytes([]byte(value))
+	return pluginpassword.ShortHash([]byte(value), getDefaultEnvironment().GetDevMode())
 }
 
 func GetHashBytes(value []byte) string {
-	if getDefaultEnvironment().GetDevMode() {
-		return string(value)
-	}
-
-	return getHashBytes(value)
-}
-
-func getHashBytes(value []byte) string {
-	hashValue := sha256.New()
-	_, _ = hashValue.Write(value)
-
-	// 32 bit is good enough
-	return hex.EncodeToString(hashValue.Sum(nil))[:8]
+	return pluginpassword.ShortHash(value, getDefaultEnvironment().GetDevMode())
 }
 
 // ResolveIPAddress returns the hostname for a given IP address.
@@ -752,42 +709,12 @@ func parseForwardedHeaderIP(value string) string {
 // both passwords are equal. If an error occurs, the result is false for the compare operation and the error is returned.
 // This function uses constant-time comparison to prevent timing attacks.
 func ComparePasswords(hashPassword string, plainPassword string) (bool, error) {
-	if strings.HasPrefix(hashPassword, "{SSHA") {
-		password := &CryptPassword{}
-
-		salt, alg, pwOption, err := password.GetParameters(hashPassword)
-		if err != nil {
-			return false, err
-		}
-
-		newPassword := &CryptPassword{}
-		_, err = newPassword.Generate(plainPassword, salt, alg, pwOption)
-		if err != nil {
-			return false, err
-		}
-
-		// Use subtle.ConstantTimeCompare for secure comparison
-		return subtle.ConstantTimeCompare([]byte(password.Password), []byte(newPassword.Password)) == 1, nil
-	}
-
-	// Supported passwords: MD5, SSHA256, SSHA512, bcrypt, Argon2i, Argon2id
-	_, _, _, pwhash, err := crypt.DecodeSettings(hashPassword)
+	matched, err := pluginpassword.CompareHashString(hashPassword, plainPassword)
 	if err != nil {
-		return false, err
+		return false, serverPasswordError(err)
 	}
 
-	settings, _, found := strings.Cut(hashPassword, pwhash)
-	if !found {
-		return false, errors.ErrUnsupportedAlgorithm
-	}
-
-	encoded, err := crypt.Crypt(plainPassword, settings)
-	if err != nil {
-		return false, err
-	}
-
-	// Use subtle.ConstantTimeCompare for secure comparison
-	return subtle.ConstantTimeCompare([]byte(encoded), []byte(hashPassword)) == 1, nil
+	return matched, nil
 }
 
 // ByteSize formats a given number of bytes into a human-readable string representation.
@@ -840,7 +767,7 @@ func NewDNSResolver(cfg config.File) (resolver *net.Resolver) {
 
 // NewHTTPClient creates and returns a new instance of http.Client configured with settings from the provided config.File.
 func NewHTTPClient(cfg config.File) *http.Client {
-	baseTransport := newHTTPTransport(cfg)
+	baseTransport := NewHTTPClientTransport(cfg)
 
 	var transport http.RoundTripper = baseTransport
 	if isHTTPClientTracingEnabled(cfg) {
@@ -859,7 +786,8 @@ func NewHTTPClient(cfg config.File) *http.Client {
 	return httpClient
 }
 
-func newHTTPTransport(cfg config.File) *http.Transport {
+// NewHTTPClientTransport creates an HTTP transport configured from server runtime settings without tracing wrappers.
+func NewHTTPClientTransport(cfg config.File) *http.Transport {
 	baseTransport := defaultHTTPTransport()
 	httpClientConfig := getHTTPClientConfig(cfg)
 
